@@ -10033,7 +10033,9 @@ const providersRoutingWarnings = () => {
       )} subscriptions; the other accounts stay unused.`
     );
   }
-  if (!isProviderChecked("codex")) {
+  // A missing subscription can still enable Codex in routing, so do not
+  // promise paid fallback while the saved selection contains one.
+  if (!isProviderChecked("codex") && missing.length === 0) {
     warnings.push("Codex is off; Codex subscription capacity stays unused.");
   }
   if (!providerSelection.has("surplus") && !providerSelection.has("openlux")) {
