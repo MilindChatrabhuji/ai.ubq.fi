@@ -26,7 +26,7 @@ import handler from "../src/handler/index.ts";
 const handlerSource = readFileSync(new URL("../src/handler/index.ts", import.meta.url), "utf8");
 import { resetOpenRouterModelsCacheForTest, type OpenRouterModelsSnapshot } from "../src/models/openrouter-models.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { buildModelCatalogSnapshot, handleModels, handlePublicModelCatalog } from "../src/models/catalog.ts";
+import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels, handlePublicModelCatalog } from "../src/models/catalog.ts";
 const openaiSource = readFileSync(new URL("../src/models/catalog.ts", import.meta.url), "utf8");
 import { CODEX_MODELS_KV_KEY, loadFullCodexModelsSnapshot } from "../src/codex/index.ts";
 import { buildRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
@@ -368,7 +368,7 @@ test("the model picker refuses to render without KV", async () => {
   });
 });
 
-test("catalog builder and public/admin handlers retain runtime ids and tiers when the optional full snapshot rejects", async () => {
+test("catalog builder, capabilities, and public/admin handlers retain runtime ids and tiers when the optional full snapshot rejects", async () => {
   const kv = new RejectingReadKv();
   kv.rejectedKeys.add(keyOf(CODEX_MODELS_KV_KEY));
   const runtime = buildRuntimeConfig({
@@ -407,6 +407,16 @@ test("catalog builder and public/admin handlers retain runtime ids and tiers whe
       assert.deepEqual(publicBody.data[0].supported_reasoning_levels, ["low", "ultra"]);
       assert.equal(publicBody.data[0].default_reasoning_effort, "ultra");
 
+      const capabilitiesResponse = await handleModelCapabilities();
+      assert.equal(capabilitiesResponse.status, 200);
+      const capabilitiesBody = await capabilitiesResponse.json();
+      assert.deepEqual(
+        capabilitiesBody.data.map((model: { id: string }) => model.id),
+        ["runtime-fallback"]
+      );
+      assert.deepEqual(capabilitiesBody.data[0].supported_reasoning_levels, ["low", "ultra"]);
+      assert.equal(capabilitiesBody.data[0].default_reasoning_effort, "ultra");
+
       const adminResponse = await handleAdminModelsCatalogGet();
       assert.equal(adminResponse.status, 200);
       const adminBody = await adminResponse.json();
@@ -421,7 +431,7 @@ test("catalog builder and public/admin handlers retain runtime ids and tiers whe
       assert.equal(adminRow.default_reasoning_effort, "ultra");
       assert.deepEqual(adminBody.data.whitelist.model_ids, ["runtime-fallback"]);
       assert.equal(adminBody.data.filter_active, true);
-      assert.equal(kv.reads.filter((read) => read.key === keyOf(CODEX_MODELS_KV_KEY) && read.consistency === "strong").length, 3);
+      assert.equal(kv.reads.filter((read) => read.key === keyOf(CODEX_MODELS_KV_KEY) && read.consistency === "strong").length, 4);
       assert.ok(kv.reads.some((read) => read.key === keyOf(RUNTIME_CONFIG_V2_KEY) && read.consistency === "strong"));
     });
   } finally {
@@ -746,6 +756,28 @@ test("provider roster completion rerenders Models after normalizing its filter",
   const modelsRender = completion.indexOf("renderModelsPicker();");
   assert.ok(filterReset >= 0, "roster completion must normalize a stale model provider filter");
   assert.ok(modelsRender > filterReset, "the Models picker must rerender after the filter reset");
+});
+
+test("provider picker edits invalidate an in-flight roster refresh", () => {
+  assert.match(adminScript, /const markProviderSelectionEdited = \(\) => \{\s*providerSelectionLoadId \+= 1;\s*\};/);
+  assert.match(adminScript, /const loadId = \+\+providerSelectionLoadId;[\s\S]*?if \(loadId !== providerSelectionLoadId\) return false;/);
+  const loadStart = adminScript.indexOf("const loadProviderSelection = async (options = {}) => {");
+  const staleGuard = adminScript.indexOf("if (loadId !== providerSelectionLoadId) return false;", loadStart);
+  const serverSelection = adminScript.indexOf("providerSelection = new Set(providersSavedSelection);", loadStart);
+  assert.ok(loadStart >= 0 && staleGuard >= 0 && serverSelection > staleGuard, "stale loads must be fenced before applying server selection");
+  const applyStart = adminScript.indexOf("const applyProvidersSelection = (mutate) => {");
+  const discardStart = adminScript.indexOf("const discardProviderChanges = () => {", applyStart);
+  const changeStart = adminScript.indexOf('providersList.addEventListener("change", (event) => {', discardStart);
+  const dropMissingStart = adminScript.indexOf('providersDropMissingBtn.addEventListener("click", () => {', changeStart);
+  assert.ok(
+    applyStart >= 0 && discardStart > applyStart && changeStart > discardStart && dropMissingStart > changeStart,
+    "provider picker handlers must stay discoverable"
+  );
+  const marker = /markProviderSelectionEdited\(\);/;
+  assert.match(adminScript.slice(applyStart, discardStart), marker);
+  assert.match(adminScript.slice(discardStart, changeStart), marker);
+  assert.match(adminScript.slice(changeStart, dropMissingStart), marker);
+  assert.match(adminScript.slice(dropMissingStart), marker);
 });
 
 test("the Providers tab renders a provider picker next to the Analytics tab", () => {
