@@ -106,12 +106,16 @@ test("formatAuthSessionLabel distinguishes fallback token and passkey auth", () 
   assert.equal(formatAuthSessionLabel({}), "Token active");
 });
 
-test("local development auth is restricted to loopback HTTP origins", () => {
+test("local development auth recognizes IPv4 loopback origins", () => {
   assert.equal(LOCAL_DEVELOPMENT_ADMIN_TOKEN, "local-dev-admin");
 
   const restoreLocal = setGlobal("location", { protocol: "http:", hostname: "localhost" });
   assert.equal(isLocalDevelopmentOrigin(), true);
   restoreLocal();
+
+  const restoreIpv4Loopback = setGlobal("location", { protocol: "http:", hostname: "127.42.9.3" });
+  assert.equal(isLocalDevelopmentOrigin(), true);
+  restoreIpv4Loopback();
 
   const restoreRemote = setGlobal("location", { protocol: "https:", hostname: "ai.ubq.fi" });
   assert.equal(isLocalDevelopmentOrigin(), false);
@@ -120,10 +124,20 @@ test("local development auth is restricted to loopback HTTP origins", () => {
   const restoreLoopbackTls = setGlobal("location", { protocol: "https:", hostname: "127.0.0.1" });
   assert.equal(isLocalDevelopmentOrigin(), false);
   restoreLoopbackTls();
+});
 
+test("local development auth recognizes IPv6 loopback origins", () => {
   const restoreIpv6Loopback = setGlobal("location", { protocol: "http:", hostname: "::1" });
-  assert.equal(isLocalDevelopmentOrigin(), false);
+  assert.equal(isLocalDevelopmentOrigin(), true);
   restoreIpv6Loopback();
+
+  const restoreBracketedIpv6Loopback = setGlobal("location", new URL("http://[::1]:8000"));
+  assert.equal(isLocalDevelopmentOrigin(), true);
+  restoreBracketedIpv6Loopback();
+
+  const restoreExpandedIpv6Loopback = setGlobal("location", { protocol: "http:", hostname: "0:0:0:0:0:0:0:1" });
+  assert.equal(isLocalDevelopmentOrigin(), true);
+  restoreExpandedIpv6Loopback();
 });
 
 const captureRegisterStartBody = async (input: { handle?: string; token: string; baseUrl?: string }): Promise<Record<string, unknown>> => {
