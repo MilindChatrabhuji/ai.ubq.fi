@@ -3,7 +3,8 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { UOS_EMBEDDINGS_JOB_ALLOWED_KEYS, UOS_SYNC_EMBEDDINGS_ALLOWED_KEYS } from "../src/embeddings/ledger.ts";
-import handler from "../src/handler/index.ts";
+import handler, { UOS_ROUTES } from "../src/handler/index.ts";
+import { UOS_TERMINAL_ROUTES } from "../src/handler/terminal-route.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { resetOpenRouterModelsCacheForTest } from "../src/models/openrouter-models.ts";
 import { CODEX_RESPONSES_EXTENSION_KEYS, DEEPSEEK_CHAT_EXTENSION_KEYS } from "../src/openai.ts";
@@ -36,9 +37,6 @@ type OpenApiDocument = Readonly<{
 
 const document = JSON.parse(readFileSync(new URL("../static/openapi.json", import.meta.url), "utf8")) as OpenApiDocument;
 const agentContract = readFileSync(new URL("../static/docs/llms-agents.md", import.meta.url), "utf8");
-// The modules that dispatch UOS routes today. Every other module under src/ is scanned as well, so a route dispatched
-// from a new module is still compared with the published contract.
-const ROUTER_SOURCES = ["handler/index.ts", "handler/terminal-route.ts"] as const;
 const SOURCE_ROOT = new URL("../src/", import.meta.url);
 const SOURCE_FILES: readonly string[] = (readdirSync(SOURCE_ROOT, { recursive: true }) as string[])
   .filter((file) => file.endsWith(".ts"))
@@ -127,7 +125,7 @@ test("published UOS embeddings request properties are exactly the runtime allowl
   assert.deepEqual(sorted(schemaNamed("EmbeddingsRequest").required ?? []), ["input", "model"]);
 });
 
-/** "METHOD /path" for every UOS operation one source file dispatches, with a prefix route as `{id}`. */
+/** Retain the literal-dispatch safety net for code introduced outside the registered route tables. */
 const dispatchedUosOperations = (text: string): string[] => {
   const operations = new Set<string>();
   for (const match of text.matchAll(/req\.method === "([A-Z]+)" && path === "(\/uos\/[^"]+)"/g)) operations.add(`${match[1]} ${match[2]}`);
@@ -136,15 +134,34 @@ const dispatchedUosOperations = (text: string): string[] => {
   return sorted(operations);
 };
 
-/** Every UOS operation dispatched anywhere under src/. */
-const runtimeUosOperations = (): string[] => {
-  const operations = new Set<string>();
-  for (const file of SOURCE_FILES) for (const operation of dispatchedUosOperations(sourceText(file))) operations.add(operation);
-  for (const file of ROUTER_SOURCES) {
-    assert.ok(dispatchedUosOperations(sourceText(file)).length > 0, `src/${file} must still dispatch UOS routes in a form this contract test can read`);
-  }
+/** Read the dispatch tables regardless of source spelling (prefix constants, joins and templates all work). */
+const runtimeUosOperations = (
+  routes: readonly Readonly<{ method: string; path: string }>[] = [
+    ...UOS_ROUTES.flatMap(({ methods, path }) => methods.map((method) => ({ method, path }))),
+    ...UOS_TERMINAL_ROUTES.map(({ method, path, prefix }) => ({ method, path: prefix ? `${path}{id}` : path })),
+  ],
+  sourceTexts: readonly string[] = SOURCE_FILES.map(sourceText)
+): string[] => {
+  const operations = new Set(routes.map(({ method, path }) => `${method} ${path}`));
+  for (const text of sourceTexts) for (const operation of dispatchedUosOperations(text)) operations.add(operation);
   return sorted(operations);
 };
+
+// Scoped to "src/file.ts: /uos/path", with a required reason. Only genuine non-route references belong here.
+const UOS_NON_ROUTE_LITERALS: Readonly<Record<string, string>> = {};
+const uosPathLiterals = (text: string): string[] => Array.from(text.matchAll(/(["'`])(\/uos\/[^"'`\s]*)\1/g), (match) => match[2]);
+const unpublishedUosLiterals = (
+  file: string,
+  text: string,
+  publishedPaths: ReadonlySet<string>,
+  allowlist: Readonly<Record<string, string>> = UOS_NON_ROUTE_LITERALS
+): string[] =>
+  uosPathLiterals(text).flatMap((literal) => {
+    const key = `${file}: ${literal}`;
+    if (Object.hasOwn(allowlist, key) && allowlist[key].trim()) return [];
+    const published = publishedPaths.has(literal) || (literal.endsWith("/") && publishedPaths.has(`${literal}{id}`));
+    return published ? [] : [key];
+  });
 
 type PublishedOperation = Readonly<{ method: HttpMethod; path: string; operation: Operation }>;
 const PUBLISHED_OPERATIONS: readonly PublishedOperation[] = Object.entries(document.paths).flatMap(([path, item]) =>
@@ -173,18 +190,46 @@ test("OpenAPI publishes exactly the UOS routes the runtime dispatches and the ag
   }
 });
 
-test("every /uos/ path literal anywhere under src/ is a published route", () => {
-  // This also covers a route dispatched in a form the patterns above cannot read, such as a path held in a constant.
+test("every /uos/ path literal anywhere under src/ is published or explicitly documented as a non-route", () => {
   const publishedPaths = new Set(PUBLISHED_OPERATIONS.map(({ path }) => path));
   const unpublished: string[] = [];
+  const seen = new Set<string>();
   for (const file of SOURCE_FILES) {
-    for (const match of sourceText(file).matchAll(/(["'`])(\/uos\/[^"'`\s]*)\1/g)) {
-      const literal = match[2];
-      const published = publishedPaths.has(literal) || (literal.endsWith("/") && publishedPaths.has(`${literal}{id}`));
-      if (!published) unpublished.push(`src/${file}: ${literal}`);
-    }
+    const text = sourceText(file);
+    for (const literal of uosPathLiterals(text)) seen.add(`src/${file}: ${literal}`);
+    unpublished.push(...unpublishedUosLiterals(`src/${file}`, text, publishedPaths));
   }
-  assert.deepEqual(unpublished, [], "a UOS path in the runtime source must be published in static/openapi.json");
+  for (const [key, reason] of Object.entries(UOS_NON_ROUTE_LITERALS)) {
+    assert.ok(reason.trim(), `${key} needs a non-route explanation`);
+    assert.ok(seen.has(key), `${key} is a stale non-route allowlist entry`);
+  }
+  assert.deepEqual(unpublished, [], "a UOS path in the runtime source must be published in static/openapi.json or explained as a non-route");
+});
+
+test("UOS table parity includes paths constructed from a slashless prefix or joined segments", () => {
+  const UOS = "/uos";
+  assert.deepEqual(
+    runtimeUosOperations(
+      [
+        { method: "GET", path: `${UOS}/probe` },
+        { method: "POST", path: ["", "uos", "joined-probe"].join("/") },
+      ],
+      []
+    ),
+    ["GET /uos/probe", "POST /uos/joined-probe"]
+  );
+});
+
+test("literal dispatch outside the UOS tables still participates in operation parity", () => {
+  assert.deepEqual(runtimeUosOperations([], ['if (req.method === "POST" && path === "/uos/auth") return probe();']), ["POST /uos/auth"]);
+});
+
+test("non-route UOS literal exceptions are file-scoped and do not mask other unpublished paths", () => {
+  const source = 'const doc = "/uos/probe"; const route = "/uos/other";';
+  const allowlist = { "src/example.ts: /uos/probe": "Documentation link, not a dispatch condition" };
+  assert.deepEqual(unpublishedUosLiterals("src/example.ts", source, new Set(), allowlist), ["src/example.ts: /uos/other"]);
+  assert.deepEqual(unpublishedUosLiterals("src/example.ts", '"/uos/probe"', new Set(), { "src/example.ts: /uos/probe": " " }), ["src/example.ts: /uos/probe"]);
+  assert.deepEqual(unpublishedUosLiterals("src/other.ts", source, new Set(), allowlist), ["src/other.ts: /uos/probe", "src/other.ts: /uos/other"]);
 });
 
 test("agent-messages publishes the kernel attestation header as required and the repository headers as optional cross-checks", () => {
