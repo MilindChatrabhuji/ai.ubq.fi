@@ -324,6 +324,11 @@ const appendToolCall = (messages: Record<string, unknown>[], call: Record<string
   const previous = messages.at(-1);
   if (previous?.role === "assistant" && Array.isArray(previous.tool_calls) && previous.content === null) {
     previous.tool_calls.push(call);
+    if (pending.reasoning) {
+      const previousReasoning = typeof previous.reasoning_content === "string" ? previous.reasoning_content : "";
+      previous.reasoning_content = previousReasoning + pending.reasoning;
+      pending.reasoning = "";
+    }
     return;
   }
   const turn: Record<string, unknown> = { role: "assistant", content: null, tool_calls: [call] };
@@ -343,7 +348,9 @@ const appendMessageItem = (
   elisions: ForwardedPayloadElision[]
 ): DeepSeekResponsesResult<void> => {
   const role = getString(item.role) ?? "user";
-  if (role !== "user" && role !== "assistant" && role !== "developer") return failure("input.role", `input role '${role}' is not supported`);
+  if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
+    return failure("input.role", `input role '${role}' is not supported`);
+  }
   const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
