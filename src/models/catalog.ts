@@ -590,7 +590,7 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   // Capabilities describe the routes the gateway can still dispatch to, so a
   // switched-off provider contributes no entries here either.
   const selection = await loadProviderSelectionCached();
-  const snapshot = await loadFullCodexModelsSnapshot();
+  const snapshot = (await loadFullCodexModelsSnapshot()) ?? (await loadCodexModelsSnapshot());
   let data =
     snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0 && isProviderEnabled("codex", selection)
       ? (snapshot.models.map(normalizeModelCapabilitiesEntry).filter(Boolean) as Record<string, unknown>[])
