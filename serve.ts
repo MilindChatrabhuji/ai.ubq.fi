@@ -135,12 +135,13 @@ export const startMacMaintenance = (kv: Kv): (() => Promise<void>) => {
 const serveHandler = createServeHandler();
 const serveUpgradeHandler = createServeUpgradeHandler();
 
-let runtimeOptions = parseServeRuntimeOptions([], { isDeploy: config.isDeploy });
+let runtimeOptions = parseServeRuntimeOptions([], config);
 
-// Imported loopback launchers must opt in explicitly; hosted/deploy listeners
-// remain unable to disable admin auth through the parser's fail-closed guard.
+// Imported loopback launchers must opt in explicitly; hosted/deploy and
+// production-timeline listeners remain unable to disable admin auth through the
+// parser's fail-closed guard.
 export const configureLoopbackServeRuntime = async (args: readonly string[]): Promise<void> => {
-  runtimeOptions = parseServeRuntimeOptions(args, { isDeploy: config.isDeploy });
+  runtimeOptions = parseServeRuntimeOptions(args, config);
   if (!runtimeOptions.disableAdminAuth) return;
   try {
     const kv = await getKv();
