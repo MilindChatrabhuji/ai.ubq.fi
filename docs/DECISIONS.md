@@ -564,10 +564,21 @@ DSH's `workspace-write` file sandbox permits writes only under the workspace roo
 `gpg: can't connect to the gpg-agent: Operation not permitted` while `GNUPGHOME` stayed at `~/.gnupg`. Committing
 therefore required a per-commit `danger-full-access` escalation.
 
-`~/bin/gpg-dsh` is installed and set as `gpg.program`. It uses the real homedir when that is genuinely writable and
-otherwise seeds a homedir under `$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg` (public keyring plus `private-keys-v1.d`),
-re-seeding when `pubring.kbx` changes. Interactive shells take the passthrough branch and are unaffected.
-`git config --global gpg.program ~/bin/gpg-dsh`.
+`~/bin/gpg-dsh` is installed from `ops/gpg-dsh.sh` and set as `gpg.program`. It uses the real homedir when that is
+genuinely writable (a probe file can be created there). Otherwise it signs from a homedir seeded under
+`$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
+Interactive shells take the passthrough branch and are unaffected.
+`install -m 0755 ops/gpg-dsh.sh ~/bin/gpg-dsh && git config --global gpg.program ~/bin/gpg-dsh`.
+
+Every seeded file invalidates the seed, not `pubring.kbx` alone. This entry first said the seed was refreshed only
+"when `pubring.kbx` changes", and the installed helper compared only that file's mtime and size. Deleting a secret key
+or changing its passphrase leaves `pubring.kbx` untouched, so the old private key stayed usable from the seed
+(corrected 2026-10-16, #587). Every sandboxed call now records the name and SHA-256 digest of each seeded file and
+compares that manifest with the one recorded when the seed was built. Any difference, including a deleted, added, or
+re-protected private key, stops the seed's `gpg-agent`, discards the seed, and rebuilds it before gpg runs. The
+manifest is written only after a complete copy, so an interrupted rebuild is rebuilt on the next call. The seed and
+its `dsh-gnupg` parent must be real directories owned by the caller and are forced to mode 0700; anything else fails
+closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
 
 Reason: the sandbox exposes no configuration hook for adding writable roots — `writableRoots` takes only the policy and
 hard-codes the three roots — so the only durable fix inside the existing policy is to put the signing homedir where the
@@ -576,8 +587,10 @@ than signing needs.
 
 Reversal risk: pointing `gpg.program` back at the real `gpg` restores the denial under `workspace-write`; copying the
 private key to a stable non-writable-root location such as `~/.local/share` looks persistent but is unwritable under the
-restricted policy and silently reintroduces the escalation. The fallback homedir is per-boot (`/var/folders`), which is
-intended: it is re-seeded from `~/.gnupg` on demand rather than becoming a second long-lived key store.
+restricted policy and silently reintroduces the escalation. The seed is not trusted to disappear by itself: `$TMPDIR`
+is not cleared at boot for every caller, and an unset `TMPDIR` falls back to `/tmp`. The manifest check on every call
+is what keeps the seed from becoming a second long-lived key store. Going back to a `pubring.kbx`-only trigger lets a
+deleted or re-protected secret key keep signing from the seed.
 
 ## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
 
@@ -1053,6 +1066,21 @@ Acceptance ran against the deployed releases, not the branch:
 - three normal completions still return `status: completed` with `incomplete_details: null`, so it does not over-fire;
 - authenticated inference through the public route succeeds, and `gpt-reserve` serves on both hosts.
 
+> **Qualified on 2026-10-16 (#608): acceptance of this release is unverified against `AGENTS.md`.** `AGENTS.md` accepts
+> a deployment only when a direct Mac-to-VPS authenticated inference request succeeds and `/health` returns the full Git
+> SHA and `vps-<full-git-sha>` in both its body and identity headers. That rule was already in `AGENTS.md` at
+> `2207a757fb6f8c362e18cbf890d59ee191d53e26`. Neither observation is recorded for this release:
+>
+> - The authenticated inference above went through the public `https://ai.ubq.fi` route. That does not show a direct
+>   Mac-to-VPS authenticated inference request succeeding.
+> - The identity table names each host's release and identity, but not where they were read. It does not record that the
+>   VPS `/health` returned `2207a757fb6f8c362e18cbf890d59ee191d53e26` and
+>   `vps-2207a757fb6f8c362e18cbf890d59ee191d53e26` in both its body and identity headers.
+>
+> The bullets above are kept as first written. They show the fix behaving as intended on both hosts; they do not show that
+> the release met the repository's acceptance rule. This note adds no new observation, and nothing in this repository
+> supplies the missing ones. Read the status line above as "deployed to both surfaces, acceptance unverified".
+
 The retracted premise is now moot in one direction: the deployed G3 is narration-independent by construction - it fires
 only when a would-be completion carries no assistant text, no refusal and no tool call, so it cannot act on the
 retracted symptom. Worth revisiting before any future change: the changelog wording that described it as a "no tool
@@ -1085,9 +1113,19 @@ survived the retraction.
 Reversal risk: deploying on the belief that the narration symptom is real, or reverting the whole program because its
 original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
 
-Next action if the program is to be deployed: re-derive G3's trigger from the surviving evidence alone - keep the
-reasoning-only and empty-output clauses, and keep the no-tool-call clause for as long as the completion-validity
-predicate treats a tool call as valid output. It rests on that predicate, not on the invalidated frequency claim.
+**Post-deployment follow-up (updated 2026-10-16, #608).** This entry first ended with a pre-deployment next action: "if
+the program is to be deployed", re-derive G3's trigger from the surviving evidence alone. The program was deployed on
+2026-09-21, so that next action is historical. The G3 bullet above now carries the re-derivation, and it keeps every
+clause of the deployed trigger: the reasoning-only and empty-output clauses stand on the surviving evidence, and the
+no-tool-call clause rests on the completion-validity predicate, not on the invalidated frequency claim. What remains
+after deployment:
+
+- Before any future change to G3, revise the changelog wording that calls it a "no tool call" guard (see above). Keep the
+  no-tool-call clause for as long as `isAnswerBearingCompletion` counts a tool call as answer-bearing output; re-derive
+  the trigger if that predicate changes.
+- Do not cite this entry as an accepted deployment under `AGENTS.md`. The missing acceptance observations were not
+  recorded while `2207a757fb` ran, and both surfaces moved to `3661bcfd13` on 2026-09-22 (see "Buffered-terminal fix
+  deployed to both surfaces" below).
 
 ## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
 
@@ -1676,9 +1714,18 @@ restores the supported previous selector and actual listener/public identity; da
 selector and issues no gateway restart. After successful ingress reload, a public verification failure retains the ready
 candidate and ingress-applied intent for nondestructive same-SHA verification retry. Candidate bytes remain immutable,
 and pruning occurs only after exact loopback and public identity acceptance. Unsupported or historical root-relative
-launchers are refused before destructive activation; successful historical restoration and first-deployment rollback
-remain separate unresolved scopes. The normal deployment command must permit the verified prior loopback port, and
-verify/CI must provide the scoped shell and loopback capabilities required by every actual launcher fixture.
+launchers are refused before destructive activation. The normal deployment command must permit the verified prior
+loopback port, and verify/CI must provide the scoped shell and loopback capabilities required by every actual launcher
+fixture.
+
+2026-10-16: A first deployment has no previous release, selector or listener to restore. If it fails before the gateway
+restart, recovery removes the selector it created and records `rolled_back`, and the same SHA starts again. After a
+restart attempt the unit can run only the candidate, so recovery leaves that candidate selected and unaccepted rather than
+removing a selector that cannot stop it. The next same-SHA run resumes at ingress when the candidate serves its exact
+loopback identity, and otherwise restarts only that verified selected candidate. Any other selector or phase state stays
+refused. Historical restoration is no longer an open scope: historical root-relative launchers stay refused before
+activation, and a Bun startup still refuses automatic rollback to a Deno release under the Bun runtime rules in
+`AGENTS.md`.
 
 ## Jev compaction upstream - 2026-10-05
 
