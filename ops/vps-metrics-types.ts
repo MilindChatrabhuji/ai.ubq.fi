@@ -79,12 +79,17 @@ export type VpsMetricEvent = {
   digest: string;
 };
 /** One proven journal slice, read once per operation and shared by every cohort that spans it. */
-export type VpsJoinSlice = { coverage: VpsJournalCoverage; events: VpsMetricEvent[] };
+export type VpsJoinSlice = {
+  coverage: VpsJournalCoverage;
+  events: VpsMetricEvent[];
+  /** Latest PID 1 exit/restart marker for the unit, never a request event. */
+  lifecycleAt: number | null;
+};
 /** Non-overlapping slices of one identity, ordered by start. Slices ending at or before `retainFrom` may be pruned. */
 export type VpsJoinLedger = { identity: VpsIdentity; retainFrom: number; slices: VpsJoinSlice[] };
 /** All a completed cohort keeps: its counts, failure kinds, and the digest over its coverage chain and member pairs. */
 export type VpsJoinSummary = { requests: number; fiveXx: number; streamFailures: number; failures: [string, number][]; coverageDigest: string };
-/** A window and the contiguous ledger range it has proven, `[scanStart, scanEnd)`. A summary marks it complete. */
+/** A window and its proven `[scanStart, scanEnd)` range. A summary marks success; `terminalLost` marks final unavailability. */
 export type VpsJoinCohort = {
   identity: VpsIdentity;
   windowStart: number;
@@ -93,9 +98,10 @@ export type VpsJoinCohort = {
   scanEnd: number;
   bootId: string | null;
   summary: VpsJoinSummary | null;
+  terminalLost: boolean;
 };
 export type VpsJoinCheckpoint = {
-  schema: 2;
+  schema: 3;
   binding: string;
   sequence: number;
   createdAt: number;
