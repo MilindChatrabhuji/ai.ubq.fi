@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import type { EventEmitter } from "node:events";
+import type { Readable } from "node:stream";
 import {
   VpsQueryBudgetError,
   VPS_METRICS_MAX_BYTES,
@@ -14,7 +16,8 @@ export function createVpsJournalReader(run: VpsBoundedJournalCommand, root: stri
     read: (start, end, limits) => {
       if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end - start > VPS_METRICS_SLICE_MS)
         throw new Error("VPS journal range is invalid");
-      return run(["--unit=ai-ubq-fi.service", `--since=@${start / 1000}`, `--until=@${end / 1000}`, "--output=json", "--no-pager"], limits, root);
+      // Without --all, journalctl writes any field over 4 KiB as null, and a long request row would become unreadable.
+      return run(["--unit=ai-ubq-fi.service", `--since=@${start / 1000}`, `--until=@${end / 1000}`, "--output=json", "--all", "--no-pager"], limits, root);
     },
   };
 }
@@ -97,12 +100,13 @@ export async function readVpsJournalProcess(child: VpsJournalProcess, limits: Vp
 /** Trusted native boundary: only journalctl with the fixed unit and bounded range. */
 export const runVpsJournalCommand: VpsBoundedJournalCommand = (args, limits, cwd) => {
   if (
-    args.length !== 5 ||
+    args.length !== 6 ||
     args[0] !== "--unit=ai-ubq-fi.service" ||
     !/^--since=@\d+(?:\.\d+)?$/.test(args[1]) ||
     !/^--until=@\d+(?:\.\d+)?$/.test(args[2]) ||
     args[3] !== "--output=json" ||
-    args[4] !== "--no-pager"
+    args[4] !== "--all" ||
+    args[5] !== "--no-pager"
   )
     throw new Error("VPS journal command refused");
   // node:child_process keeps this port loadable and runnable under Bun and the Deno bridge alike.
@@ -115,9 +119,24 @@ export const runVpsJournalCommand: VpsBoundedJournalCommand = (args, limits, cwd
       resolve({ success: code === 0 && signal === null });
     });
   });
-  const pipe = child.stdout;
-  // A failed spawn ends the body; the settled status then refuses it as unavailable.
-  const stdout = new ReadableStream<Uint8Array>({
+  return readVpsJournalProcess(
+    {
+      stdout: journalStdout(child.stdout, child),
+      status,
+      kill: (signal) => {
+        child.kill(signal);
+      },
+    },
+    limits
+  );
+};
+/**
+ * Adapts the child's stdout pipe to a byte stream. A spawn failure ends the body; the settled status then refuses it.
+ * A chunk can still arrive after the body has closed or been cancelled; it destroys the pipe instead of throwing from
+ * the pipe's listener.
+ */
+export function journalStdout(pipe: Readable, spawned: EventEmitter): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
     start(controller) {
       const end = () => {
         try {
@@ -127,7 +146,12 @@ export const runVpsJournalCommand: VpsBoundedJournalCommand = (args, limits, cwd
         }
       };
       pipe.on("data", (chunk: Buffer) => {
-        controller.enqueue(new Uint8Array(chunk));
+        try {
+          controller.enqueue(new Uint8Array(chunk));
+        } catch {
+          pipe.destroy();
+          return;
+        }
         if ((controller.desiredSize ?? 0) <= 0) pipe.pause();
       });
       pipe.once("end", end);
@@ -138,7 +162,7 @@ export const runVpsJournalCommand: VpsBoundedJournalCommand = (args, limits, cwd
           /* already settled */
         }
       });
-      child.once("error", end);
+      spawned.once("error", end);
     },
     pull() {
       pipe.resume();
@@ -147,14 +171,4 @@ export const runVpsJournalCommand: VpsBoundedJournalCommand = (args, limits, cwd
       pipe.destroy();
     },
   });
-  return readVpsJournalProcess(
-    {
-      stdout,
-      status,
-      kill: (signal) => {
-        child.kill(signal);
-      },
-    },
-    limits
-  );
-};
+}
