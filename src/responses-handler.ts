@@ -820,7 +820,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   // LithosAI has no Responses endpoint of its own, so this route is served by
   // the shared translation under the LithosAI profile rather than by a
   // provider-side endpoint. Only an explicit LithosAI id takes this branch.
-  if (requestedModel && lithosUpstreamModelFor(requestedModel)) {
+  if (requestedModel && lithosUpstreamModelFor(requestedModel) && isProviderEnabled("lithos", await loadProviderSelectionCached())) {
     return await handleLithosResponses(req, rawRecord, requestedModel, usageContext);
   }
   // Cerebras ids are owned by the Cerebras route on both wires, so they are
@@ -833,7 +833,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   // OpenRouter serves the Responses wire natively; only an id in its served
   // catalogue takes this branch, and a switched-off provider leaves its ids to
   // the ordinary availability check.
-  if (requestedModel && (await resolveOpenRouterUpstreamModel(requestedModel)) && isProviderEnabled("openrouter", await loadProviderSelectionCached())) {
+  if (requestedModel && isProviderEnabled("openrouter", await loadProviderSelectionCached()) && (await resolveOpenRouterUpstreamModel(requestedModel))) {
     return await handleOpenRouterResponses(req, rawRecord, requestedModel, usageContext);
   }
   return await runOrdinaryResponsesTail(req, rawRecord, rawBody, usageContext);

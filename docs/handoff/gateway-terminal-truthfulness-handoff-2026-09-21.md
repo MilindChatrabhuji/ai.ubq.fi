@@ -33,12 +33,21 @@ request.
 > label a turn "promise-narration" fires on 76% of all assistant messages, including ordinary mid-task narration that is
 > immediately followed by a tool call. Reading the turns to their end shows the model closing with substantive 4,000+
 > and 6,000+ character summaries after hundreds of tool calls: honest completions, not early exits. See the
-> measurement-artifact correction in `docs/DECISIONS.md` for the reconciled counts.
+> [CORRECTION: the narration symptom counts are unverified - 2026-09-21](../DECISIONS.md#correction-the-narration-symptom-counts-are-unverified---2026-09-21)
+> in `docs/DECISIONS.md` for the qualified reconciliation.
 >
 > The gateway defect this document identifies is **unaffected and still stands**: the terminal event could not
 > distinguish a truncated upstream response from a completed one, which was independently reproduced. What does not
 > stand is the claim that the narration symptom is frequent, and any model-versus-gateway contrast drawn from those
 > rates. Read the rest of this document for the terminal-truthfulness program, not for the narration diagnosis.
+
+> **Qualified on 2026-10-16 (#603): the artifact conclusion above is unverified, not established.** The reconciliation
+> it cites never states the 13:26–13:56 UTC window these counts are scoped to, and its counterexamples are followed by
+> a tool call, so the classifier defined below counts them as negatives; the 76% figure measures the bare phrase match,
+> not that classifier. No recount applying the classifier inside the window is recorded, so the counts are neither
+> reproduced nor shown to be an artifact, and still must not be quoted as a rate. See
+> [CORRECTION: the narration symptom counts are unverified - 2026-09-21](../DECISIONS.md#correction-the-narration-symptom-counts-are-unverified---2026-09-21)
+> in `docs/DECISIONS.md`.
 
 ## Diagnosed condition
 

@@ -34,7 +34,7 @@ import { loadProviderSelection, PROVIDER_SELECTION_KV_KEY, resetProviderSelectio
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "../src/catalog/types.ts";
 import { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } from "../src/provider/metered.ts";
 import { resetSurplusModelsCacheForTest } from "../src/provider/surplus.ts";
-import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
+import { DEEPSEEK_WATERFALL_LEGACY_MODEL_ID, DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps these tests on the credential-gated providers they own, and keeps
@@ -612,6 +612,11 @@ test("the model picker rejects a selection it cannot store faithfully", async ()
 test("normalizeWhitelistModelIds keeps the first spelling of every identifier", () => {
   assert.deepEqual(normalizeWhitelistModelIds([" a ", "b", "a", "", "   ", 7, null, "c"]), ["a", "b", "c"]);
   assert.deepEqual(normalizeWhitelistModelIds([]), []);
+  assert.deepEqual(
+    normalizeWhitelistModelIds([DEEPSEEK_WATERFALL_LEGACY_MODEL_ID]),
+    [DEEPSEEK_WATERFALL_MODEL_ID],
+    "the pre-rename synthetic id keeps the new model selected"
+  );
 });
 
 test("whitelist filters hide unlisted models on every model surface, and an empty list hides none", () => {
@@ -736,6 +741,14 @@ test("the Models tab renders checkbox tools instead of a free-text whitelist", (
   assert.match(modelsScript, /cerebras: "Cerebras"/);
 });
 
+test("the Remove-missing control stays visible when an empty catalog leaves saved ids missing", () => {
+  const status = /const updateModelsStatus = \(\) => \{([\s\S]*?)\n\};\n\nconst renderModelsPicker/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(status, "", "the Models status updater must stay discoverable");
+  assert.match(status, /const missing = modelsMissingIds\(\);/);
+  assert.match(status, /modelsDropMissingBtn\.disabled = saving \|\| missing\.length === 0;/);
+  assert.match(status, /modelsDropMissingBtn\.hidden = missing\.length === 0;/);
+});
+
 test("provider roster completion rerenders Models after normalizing its filter", () => {
   const completion = /const loadProviderSelection = async \(options = \{\}\) => \{([\s\S]*?)\n\};\n\nconst saveProviderSelection/.exec(adminScript)?.[1] ?? "";
   assert.notEqual(completion, "", "the provider-selection loader must stay discoverable");
@@ -788,10 +801,15 @@ test("the Providers tab renders a provider picker next to the Analytics tab", ()
   // The routing contract the panel has to explain: nothing checked is a removed
   // filter, not a gateway with every provider switched off.
   assert.match(adminHtml, /Saving an empty selection removes the filter/);
-  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| providersSelectionIsEmpty\(\)/);
+  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| !providersHasActiveTier\(\)/);
   assert.match(adminScript, /providersEmptyWarning/);
   // The waterfall order is fixed, so the picker must never claim to reorder it.
   assert.match(adminHtml, /The waterfall order itself never changes/);
+});
+
+test("stale Codex subscriptions do not promise paid fallback", () => {
+  const routingWarnings = /const providersRoutingWarnings = \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(routingWarnings, /if \(!isProviderChecked\("codex"\) && missing\.length === 0\)/);
 });
 
 test("each Codex subscription is selectable under the Codex provider", () => {
@@ -811,12 +829,21 @@ test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
 });
 
+test("admin metadata refresh does not announce an unchanged OpenRouter snapshot as success", () => {
+  const refreshHandler = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(
+    refreshHandler,
+    /if \(payload\?\.data\?\.openrouter\?\.refreshed === false\) \{[\s\S]*?toast\.error\("Metadata refresh failed", \{ description: "OpenRouter metadata was not refreshed" \}\);[\s\S]*?return;[\s\S]*?\}\s*toast\.success\("Model metadata refreshed"/
+  );
+});
+
 test("admin metadata refresh forces every upstream and reports what is cached", async () => {
   const calls: string[] = [];
   const enrichment: OpenRouterModelsSnapshot = {
     models: [
       { id: "openai/gpt-5.6-sol", context_window_tokens: 1_050_000, max_context_window_tokens: 1_050_000, reasoning: null },
       { id: "z-ai/glm-5.3", context_window_tokens: 1_310_720, max_context_window_tokens: 1_310_720, reasoning: null },
+      { id: "deepseek/deepseek-v4.1-flash-1017", context_window_tokens: 1_048_576, max_context_window_tokens: 1_048_576, reasoning: null },
     ],
     updated_at_ms: 1_789_000_000_000,
   };
@@ -832,9 +859,16 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
     refreshOpenlux: (options) => {
       calls.push(`openlux:${options?.force === true ? "force" : "plain"}`);
       return Promise.resolve({
-        models: [{ id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        models: [
+          { id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] },
+          { id: "deepseek-v4.1-flash-1017", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] },
+        ],
         updated_at_ms: 1,
       });
+    },
+    refreshLithos: (options) => {
+      calls.push(`lithos:${options?.force === true ? "force" : "plain"}`);
+      return Promise.resolve({ models: [{ id: "deepseek-ai/DeepSeek-V4.1-Flash", created: 4 }], updated_at_ms: 4 });
     },
     refreshSurplus: (options) => {
       calls.push(`surplus:${options?.force === true ? "force" : "plain"}`);
@@ -842,6 +876,7 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
         models: [
           { id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "OpenAI", supported_endpoint_types: ["openai-response"] },
           { id: "hy3", object: "model", created: 0, owned_by: "Tencent", supported_endpoint_types: ["openai-response"] },
+          { id: "deepseek-v4.1-flash-1017", object: "model", created: 0, owned_by: "DeepSeek", supported_endpoint_types: ["openai-response"] },
         ],
         updated_at_ms: 2,
       });
@@ -852,17 +887,27 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
   const body = await response.json();
   assert.deepEqual(
     [...calls].sort((left, right) => left.localeCompare(right)),
-    ["claude:force", "openlux:force", "openrouter", "surplus:force"],
+    ["claude:force", "lithos:force", "openlux:force", "openrouter", "surplus:force"],
     "every upstream is force-refreshed"
   );
   assert.deepEqual(body.data, {
-    openrouter: { upstream_models: 2, updated_at_ms: 1_789_000_000_000, refreshed: true },
-    openlux: { models: 1, updated_at_ms: 1 },
-    surplus: { models: 2, updated_at_ms: 2 },
+    openrouter: { upstream_models: 3, updated_at_ms: 1_789_000_000_000, refreshed: true },
+    openlux: { models: 2, updated_at_ms: 1 },
+    surplus: { models: 3, updated_at_ms: 2 },
+    lithos: { models: 1, updated_at_ms: 4, refreshed: true },
     claude_code: { models: 1, updated_at_ms: 3, status: "available", stale: false },
   });
 });
 
 test("admin metadata refresh is registered as an operator POST route", () => {
   assert.match(handlerSource, /\{ methods: \["POST"\], path: "\/admin\/models\/refresh", run: \(\) => handleAdminModelsRefresh\(\) \}/);
+});
+
+test("admin metadata refresh confirms before replacing a staged model selection", () => {
+  const refreshSource = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(refreshSource, "", "refreshModelsMetadata must stay declared");
+  assert.match(
+    refreshSource,
+    /if \(modelsHasUnsavedChanges\(\) && !globalThis\.confirm\("Discard the unsaved model selection and reload\?"\)\) return;\s+await loadModelsWhitelist\(\{ force: true \}\);/
+  );
 });

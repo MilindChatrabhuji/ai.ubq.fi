@@ -36,6 +36,7 @@ import {
 import { resetDebugRoutingCacheForTest } from "../src/debug-routing.ts";
 import { setKvForTest } from "../src/kv.ts";
 import type { PromptCacheAnalyticsView } from "../src/cache/prompt-analytics.ts";
+import { fetchSurplusModels, resetSurplusModelsCacheForTest } from "../src/provider/surplus.ts";
 
 type ErrorFields = Readonly<{ message?: string; code?: string; type?: string; param?: string | null }>;
 type Json = Record<string, unknown>;
@@ -585,6 +586,7 @@ test("admin models refresh reports every upstream refresh result", async () => {
     refreshEnrichment: () => Promise.resolve(null),
     refreshOpenlux: () => Promise.resolve({ models: [{ id: "gpt-5.6-sol" }, { id: "gpt-5.6-luna" }], updated_at_ms: 9 } as never),
     refreshSurplus: () => Promise.resolve(null),
+    refreshLithos: () => Promise.resolve(null),
   });
   assert.equal(failed.status, 200);
   assert.equal(failed.headers.get("cache-control"), "no-store");
@@ -592,15 +594,49 @@ test("admin models refresh reports every upstream refresh result", async () => {
   assert.deepEqual(failedPayload.openrouter, { upstream_models: 0, updated_at_ms: null, refreshed: false });
   assert.deepEqual(failedPayload.openlux, { models: 2, updated_at_ms: 9 });
   assert.deepEqual(failedPayload.surplus, { models: 0, updated_at_ms: null });
+  assert.deepEqual(failedPayload.lithos, { models: 0, updated_at_ms: null, refreshed: false });
 
   const refreshed = await handleAdminModelsRefresh({
     refreshEnrichment: () => Promise.resolve({ models: [{ id: "a" }], updated_at_ms: 11 } as never),
     refreshOpenlux: () => Promise.resolve(null),
     refreshSurplus: () => Promise.resolve({ models: [{ id: "b" }], updated_at_ms: 12 } as never),
+    refreshLithos: () => Promise.resolve({ models: [{ id: "c", created: 0 }], updated_at_ms: 13 }),
   });
   const refreshedPayload = (await bodyOf(refreshed)).data as Json;
   assert.deepEqual(refreshedPayload.openrouter, { upstream_models: 1, updated_at_ms: 11, refreshed: true });
   assert.deepEqual(refreshedPayload.surplus, { models: 1, updated_at_ms: 12 });
+  assert.deepEqual(refreshedPayload.lithos, { models: 1, updated_at_ms: 13, refreshed: true });
+});
+
+test("admin models refresh performs keyless Surplus discovery", async () => {
+  const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
+  Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+  resetSurplusModelsCacheForTest();
+  let fetchCalls = 0;
+  try {
+    const response = await handleAdminModelsRefresh({
+      refreshEnrichment: () => Promise.resolve(null),
+      refreshOpenlux: () => Promise.resolve(null),
+      refreshSurplus: (options) =>
+        fetchSurplusModels({
+          ...options,
+          fetcher: () => {
+            fetchCalls += 1;
+            return Promise.resolve(Response.json({ data: [{ id: "surplus-test-model" }] }));
+          },
+        }),
+      refreshLithos: () => Promise.resolve(null),
+      refreshClaude: () => Promise.resolve(null),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(fetchCalls, 1);
+    const data = (await bodyOf(response)).data as Json;
+    assert.equal((data.surplus as Json).models, 1);
+  } finally {
+    resetSurplusModelsCacheForTest();
+    if (originalSurplusApiKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = originalSurplusApiKey;
+  }
 });
 
 test("admin provider selection get serves the roster and reports an unavailable KV", async () => {
@@ -805,6 +841,7 @@ test("admin models refresh keeps the last good snapshots when every upstream fai
     assert.equal((data.openrouter as Json).updated_at_ms, null);
     assert.equal((data.openlux as Json).models, 0);
     assert.equal((data.surplus as Json).models, 0);
+    assert.equal((data.lithos as Json).models, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
