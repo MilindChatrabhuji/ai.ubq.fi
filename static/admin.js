@@ -9316,6 +9316,7 @@ const refreshModelsMetadata = async () => {
       toast.error("Metadata refresh failed", { description: payload?.error?.message ?? `HTTP ${response.status}` });
       return;
     }
+    if (modelsHasUnsavedChanges() && !globalThis.confirm("Discard the unsaved model selection and reload?")) return;
     await loadModelsWhitelist({ force: true });
     const upstream = payload?.data?.openrouter?.upstream_models;
     toast.success("Model metadata refreshed", {
@@ -9382,7 +9383,7 @@ const updateModelsStatus = () => {
   modelsDropMissingBtn.textContent = missing.length
     ? `Remove ${formatNumber(missing.length)} missing`
     : "Remove missing";
-  modelsDropMissingBtn.hidden = modelsCatalog.length === 0;
+  modelsDropMissingBtn.hidden = missing.length === 0;
 };
 
 const renderModelsPicker = () => {
