@@ -149,12 +149,11 @@ yield {
 `EMPTY_RESPONSE` is the **first entry** in the harness default retryable set (`dsh-llm/lib/index.js:360–366`):
 `[EMPTY_RESPONSE, "RATE_LIMIT", "SERVER", "TIMEOUT", "TRANSPORT"]`, default `maxRetries: 5`.
 
-**Our behavior.** `src/openai.ts:10134` `finishStream` in `streamDeepSeekResponses` records
-`settleTerminal("response.completed")` with no check on whether any output item exists. `src/deepseek_responses.ts:827`
-builds the terminal envelope with the literal status `"completed"`. The gateway does have exactly this guard elsewhere —
-`src/openai.ts:1270` `responsesStreamTerminalFailure`, `src/openai.ts:10448` `chatCompletionPreflightIsEmpty`,
-`src/openai.ts:10462` `rejectEmptyChatCompletion` — but the DeepSeek routes are dispatched before that machinery
-(`src/openai.ts:11838` for responses, `:10688` for chat) and never reach it.
+**Our behavior.** `finishStream` in `streamDeepSeekResponses` records `settleTerminal("response.completed")` with no
+check on whether any output item exists. The terminal envelope is built with the literal status `"completed"`. The
+gateway does have exactly this guard elsewhere — `responsesStreamTerminalFailure`, `chatCompletionPreflightIsEmpty`,
+and `rejectEmptyChatCompletion` — but the DeepSeek routes are dispatched before that machinery (`handleDeepSeekResponses`
+for responses, `handleDeepSeekChatCompletions` for chat) and never reach it.
 
 **Delta.** The vendor treats a zero-block completion as a classified, retryable failure. We treat it as success. This is
 generalized **G3**, and the vendor's existence proof strengthens it: this is not a hypothetical defensive guard, it is
@@ -330,7 +329,7 @@ Recorded so a future audit does not re-derive them as suspected defects.
 
 | Field               | Vendor client                                                                                                | Our gateway                                                                                                                                                                         | Assessment                                                                                                                        |
 | ------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `stream`            | Always `true`; the adapter is streaming-only (`lib/index.js:226`, `stream: true` at `:239`).                 | Client-controlled; supports buffered and streaming (`src/openai.ts:10007` parses the client's `stream`, `src/deepseek_responses.ts:412` writes it into the upstream body).          | Our gateway must serve both; not a delta to close.                                                                                |
+| `stream`            | Always `true`; the adapter is streaming-only (`lib/index.js:226`, `stream: true` at `:239`).                 | Client-controlled; supports buffered and streaming (the gateway parses the client's `stream` and writes it into the upstream body).                                                 | Our gateway must serve both; not a delta to close.                                                                                |
 | `stream_options`    | Always `{ include_usage: true }` (`lib/index.js:240`).                                                       | Set when streaming (`src/deepseek_responses.ts:421`), deleted when not (`src/openai.ts:9965`), because the provider answers 400 for `stream_options` without `stream: true`.        | Equivalent where it matters; ours additionally encodes a provider 400 avoidance the vendor avoids by never sending non-streaming. |
 | `tool_choice`       | Not mapped. Vendor README lists this under "Known Limitations": "not part of the core vocabulary (MVP cut)". | Mapped (`toChatToolChoice`, `src/deepseek_responses.ts:333`, written at `:393`).                                                                                                    | We do more than the vendor — and that is exactly how Delta 8 was introduced.                                                      |
 | Parallel tool calls | Not defended against; `delta?.tool_calls ?? []` iterates all entries.                                        | Verified: upstream sends the tool-call `name` in an earlier chunk than `arguments`, so our announcement gate (`src/deepseek_responses.ts:751`) does not drop a call.                | No defect found on either side.                                                                                                   |
@@ -482,15 +481,15 @@ longer true.
 
 ## Reference freshness
 
-Every `src/...` line number in this document was re-verified semantically at working state
-`48eed83fd8241f7eab0bf72037cd968bb0bff45d` — each citation was checked to still name the intended symbol, not merely to
-fall inside the file.
+The `src/...` line numbers in this document are historical pointers from the audit, not a claim that every citation has
+been semantically re-verified at the current checkout. The source has since been split, so resolve each gateway citation
+against the exact revision before acting on it.
 
 Line numbers had already drifted once during this handoff. The documents were first written against
 `2ed95f47de7205ffbc07f5dabc684f74e577a59e`; a single unrelated merge (`922c33392d`, "serve gpt-reserve under its own
 quota class", +16 lines in `src/openai.ts` across three hunks at +11/+12/+16) invalidated 26 citations. Two survived a
-naive bounds check while pointing at the wrong line, which is why the correction pass verifies the symbol and not the
-position.
+naive bounds check while pointing at the wrong line, which is why line numbers must not be used without checking the
+named symbol at the cited revision.
 
 Consequences for a future reader:
 
@@ -513,7 +512,8 @@ Consequences for a future reader:
   rejection in thinking mode, and the native Responses endpoint.
 - Gateway probes: `POST http://127.0.0.1:7999/v1/responses` for the truncation-laundering reproduction and the
   `tool_choice` pass-through capture.
-- Our gateway references were verified at `48eed83fd8241f7eab0bf72037cd968bb0bff45d` (see Reference freshness above).
+- Our gateway references are historical audit pointers; re-resolve them against the exact revision before use (see
+  Reference freshness above).
 - Enrichment: GPT Pro job `8c4a76a4-4ed9-49f0-9cde-98187297c9f7`, model `gpt-6-pro`, submitted 2026-09-21T14:02:01Z.
   Answer archived at `.data/agent-work/gpt-pro-answer-2026-09-21.md`; query at
   `.data/agent-work/gpt-pro-query-2026-09-21.md`. One claim from that research was contradicted by direct probe and is
