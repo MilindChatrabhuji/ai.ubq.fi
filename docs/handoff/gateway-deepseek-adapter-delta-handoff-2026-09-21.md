@@ -462,8 +462,9 @@ expensive to re-derive.
 
 1. Answer Q5 and Q6. Q5 gates the Delta 1 mapping table; Q6 gates whether the original symptom has any
    provider-sanctioned remedy at all.
-2. Adopt generalized G5's observability half so the effective allowance and the provider default are recorded (Delta 3).
-   No behavior change; makes every later measurement attributable.
+2. Adopt generalized G5's observability half so the effective allowance and an explicit provider-default/omitted flag are
+   recorded (Delta 3); keep the provider-default value `null` until an authoritative value exists. No behavior change;
+   makes every later measurement attributable.
 3. Adopt generalized G3 on the DeepSeek responses route, classified as `empty_upstream_completion`, and resolve Q7
    before shipping.
 4. Adopt the Delta 1 `length` mapping via generalized G1, then the unrecognized-reason handling
