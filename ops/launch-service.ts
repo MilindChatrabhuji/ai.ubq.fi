@@ -5,6 +5,7 @@ import { loadEnvFile } from "node:process";
 import { runtimePath, selectedRuntime, verifyRuntimeBinary } from "./bun-runtime.ts";
 import { verifyReleasePayload } from "./release-artifact.ts";
 import { macSandboxProfile } from "./macos-sandbox.ts";
+import { withMacSqliteTemp } from "./mac-sqlite-temp.ts";
 import { exists } from "./io.ts";
 import { rm } from "node:fs/promises";
 
@@ -44,27 +45,29 @@ if (mode === "mac") {
     control,
     ...(externalNativeAuth && (await exists(externalNativeAuth)) ? { externalNativeAuth: await realpath(externalNativeAuth) } : {}),
   });
-  const child = Bun.spawn(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", join(release, "scripts/serve-mac.ts")], {
-    cwd: root,
-    env: process.env,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
+  await withMacSqliteTemp(root, async (sqliteTemp) => {
+    const child = Bun.spawn(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", join(release, "scripts/serve-mac.ts")], {
+      cwd: root,
+      env: { ...process.env, SQLITE_TMPDIR: sqliteTemp },
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const terminate = (): void => {
+      child.kill("SIGTERM");
+    };
+    const interrupt = (): void => {
+      child.kill("SIGINT");
+    };
+    process.once("SIGTERM", terminate);
+    process.once("SIGINT", interrupt);
+    try {
+      process.exitCode = await child.exited;
+    } finally {
+      process.removeListener("SIGTERM", terminate);
+      process.removeListener("SIGINT", interrupt);
+    }
   });
-  const terminate = (): void => {
-    child.kill("SIGTERM");
-  };
-  const interrupt = (): void => {
-    child.kill("SIGINT");
-  };
-  process.once("SIGTERM", terminate);
-  process.once("SIGINT", interrupt);
-  try {
-    process.exitCode = await child.exited;
-  } finally {
-    process.removeListener("SIGTERM", terminate);
-    process.removeListener("SIGINT", interrupt);
-  }
 } else {
   const { applyLinuxPermissions } = (await import(pathToFileURL(join(release, "src/runtime/permissions-linux.ts")).href)) as {
     applyLinuxPermissions: (paths: { read: string[]; write: string[]; immutable: string[] }) => unknown;

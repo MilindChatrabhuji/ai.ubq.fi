@@ -14,7 +14,8 @@ import {
   type CapturedCutoverArtifact,
   type CutoverArtifactInput,
 } from "../cutover-artifact.ts";
-import { assertCutoverReaderAcceptance, verifyCutoverReaderAcceptance } from "../cutover-reader-gate.ts";
+import { assertCutoverReaderAcceptance, cutoverReaderGateBinding, verifyCutoverReaderAcceptance, verifyCutoverReaderGate } from "../cutover-reader-gate.ts";
+import { cutoverRequestDigest, type FirstBunCutoverInput } from "../first-bun-cutover.ts";
 import { assertCutoverMemoryLimit, boundedCutoverHolderCheck } from "../cutover-host.ts";
 import { assertCutoverDropin, assertCutoverExecStart, cutoverDropinDigest, cutoverSupervisorUnit } from "../cutover-unit.ts";
 import { executeCutoverTransition, type CutoverPhase, type CutoverTransition } from "../cutover-transition.ts";
@@ -365,6 +366,256 @@ test("reader acceptance requires pinned private bytes and unchanged retained evi
     await assert.rejects(verifyCutoverReaderAcceptance(pin, artifact));
     await writeFile(path, JSON.stringify({ ...receipt, status: "draft-unaccepted" }));
     await assert.rejects(verifyCutoverReaderAcceptance(pin, artifact));
+  }));
+
+async function ownerWaiver(root: string) {
+  const instruction = join(root, "user-instruction.json"),
+    path = join(root, "owner-waiver.json");
+  await writeFile(
+    instruction,
+    JSON.stringify({
+      v: 1,
+      status: "owner-instruction-record",
+      scope: "external-Sentinel-reader-only",
+      source: "user messages in this task",
+      instructions: ["Ignore Sentinel for this first Bun cutover"],
+      note: "Synthetic operator-recorded instruction fixture, not a signature or external acceptance.",
+    }),
+    { mode: 0o600 }
+  );
+  const { gateway, runtime } = readerContract("/unused-synthetic-evidence", h("4"));
+  const body = {
+    schemaVersion: "uos-first-bun-cutover-reader-waiver-v1",
+    scope: "external-Sentinel-reader-only",
+    status: "owner-waived",
+    gateway,
+    runtime,
+    instruction: { path: instruction, sha256: await fileDigest(instruction) },
+    issuedAt: new Date(Date.now() - 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const publish = async (value = body) => {
+    await writeFile(path, JSON.stringify(value), { mode: 0o600 });
+    return { kind: "owner-waived" as const, receipt: { path, sha256: await fileDigest(path) } };
+  };
+  return { body, publish, gate: await publish(), instruction, path };
+}
+
+test("an explicit owner waiver verifies exact artifact and instruction bytes but never passes the accepted-reader parser", async () =>
+  fixture(async (root) => {
+    const value = await ownerWaiver(root);
+    assert.equal(await verifyCutoverReaderGate(value.gate, artifact), "owner-waived");
+    assert.equal(cutoverReaderGateBinding(value.gate).kind, "owner-waived");
+    assert.throws(() => assertCutoverReaderAcceptance(value.body, artifact), /acceptance is unavailable/);
+    await assert.rejects(verifyCutoverReaderGate({ ...value.gate, kind: "accepted" }, artifact));
+    const proof = join(root, "accepted-proof");
+    await writeFile(proof, "synthetic accepted-reader evidence", { mode: 0o600 });
+    const accepted = join(root, "accepted.json");
+    await writeFile(accepted, JSON.stringify(readerContract(proof, await fileDigest(proof))), { mode: 0o600 });
+    const receipt = { path: accepted, sha256: await fileDigest(accepted) };
+    assert.equal(await verifyCutoverReaderGate({ kind: "accepted", receipt }, artifact), "accepted");
+    await assert.rejects(verifyCutoverReaderGate({ kind: "owner-waived", receipt }, artifact));
+    await writeFile(value.instruction, "changed instruction, not an authorization");
+    await assert.rejects(verifyCutoverReaderGate(value.gate, artifact));
+  }));
+
+test("missing, ambiguous, legacy and unknown gate inputs fail before any stopping intent", async () =>
+  fixture(async (root) => {
+    const value = await ownerWaiver(root);
+    const inputs: unknown[] = [
+      undefined,
+      null,
+      value.gate.receipt,
+      { ...value.gate, kind: "skip" },
+      { ...value.gate, acceptance: value.gate.receipt },
+      { ...value.gate, waiver: value.gate.receipt },
+      { ...value.gate, receipt: { ...value.gate.receipt, path: "relative.json" } },
+      { ...value.gate, receipt: { ...value.gate.receipt, extra: true } },
+    ];
+    for (const input of inputs) {
+      let stopped = false;
+      const noop = () => Promise.resolve();
+      await assert.rejects(
+        executeCutoverTransition({
+          record: noop,
+          preflight: async () => {
+            await verifyCutoverReaderGate(input, artifact);
+          },
+          stop: () => {
+            stopped = true;
+            return Promise.resolve();
+          },
+          preserve: noop,
+          convert: noop,
+          start: noop,
+          verify: noop,
+          recover: noop,
+        }),
+        /before service interruption/
+      );
+      assert.equal(stopped, false);
+    }
+  }));
+
+test("owner waiver refuses expired, forged, cross-artifact, runtime and instruction bindings before stop", async () =>
+  fixture(async (root) => {
+    const value = await ownerWaiver(root);
+    const changes: ((body: typeof value.body) => void)[] = [
+      (body) => {
+        body.status = "accepted";
+      },
+      (body) => {
+        body.scope = "all-production-gates";
+      },
+      (body) => {
+        body.expiresAt = new Date(0).toISOString();
+      },
+      (body) => {
+        body.issuedAt = new Date(Date.now() + 60_000).toISOString();
+      },
+      (body) => {
+        body.gateway.gitSha = "f".repeat(40);
+      },
+      (body) => {
+        body.gateway.artifactId++;
+      },
+      (body) => {
+        body.gateway.artifactZipSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.releaseManifestSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.sourceTreeSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.dependencyLockSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.dependencyTreeSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.permissionsTreeSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.nativeKv.artifactSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.nativeKv.provenanceSha256 = h("e");
+      },
+      (body) => {
+        body.gateway.nativeKv.inputsSha256 = h("e");
+      },
+      (body) => {
+        body.runtime.binarySha256 = h("e");
+      },
+      (body) => {
+        body.runtime.platform = "darwin";
+      },
+      (body) => {
+        body.instruction.sha256 = h("e");
+      },
+      (body) => {
+        Object.assign(body, { accepted: true });
+      },
+    ];
+    for (const change of changes) {
+      const body = structuredClone(value.body);
+      change(body);
+      const gate = await value.publish(body);
+      let stopped = false;
+      const noop = () => Promise.resolve();
+      await assert.rejects(
+        executeCutoverTransition({
+          record: noop,
+          preflight: async () => {
+            await verifyCutoverReaderGate(gate, artifact);
+          },
+          stop: () => {
+            stopped = true;
+            return Promise.resolve();
+          },
+          preserve: noop,
+          convert: noop,
+          start: noop,
+          verify: noop,
+          recover: noop,
+        }),
+        /before service interruption/
+      );
+      assert.equal(stopped, false);
+    }
+    await value.publish();
+    await chmod(value.instruction, 0o644);
+    await assert.rejects(verifyCutoverReaderGate(value.gate, artifact));
+    await chmod(value.instruction, 0o600);
+    const link = join(root, "instruction-link");
+    await symlink(value.instruction, link);
+    const body = structuredClone(value.body);
+    body.instruction.path = link;
+    await assert.rejects(verifyCutoverReaderGate(await value.publish(body), artifact));
+    await value.publish();
+    await chmod(value.path, 0o644);
+    await assert.rejects(verifyCutoverReaderGate(value.gate, artifact));
+  }));
+
+test("owner-waived kind and hash survive journal serialization and latest-state recovery ownership", async () =>
+  fixture(async (root) => {
+    const value = await ownerWaiver(root);
+    const input: FirstBunCutoverInput = {
+      artifact,
+      priorRevision: "f".repeat(40),
+      denoBinary: "/fixture/deno",
+      denoSha256: h("d"),
+      supervisorMemoryBytes: 2_147_483_648,
+      budgets: { conversionAndProofMs: 60_000, recoveryConversionMs: 60_000, recoveryProofMs: 60_000 },
+      authorization: { path: "/fixture/authorization", sha256: h("a") },
+      offlineArtifact: { path: "/fixture/offline", sha256: h("b") },
+      reader: value.gate,
+    };
+    const requestDigest = cutoverRequestDigest(input);
+    assert.notEqual(cutoverRequestDigest({ ...input, reader: { ...value.gate, kind: "accepted" } }), requestDigest);
+    assert.notEqual(cutoverRequestDigest({ ...input, reader: { ...value.gate, receipt: { ...value.gate.receipt, sha256: h("e") } } }), requestDigest);
+    const recovered = JSON.parse(JSON.stringify(input)) as FirstBunCutoverInput;
+    assert.equal(cutoverRequestDigest(recovered), requestDigest);
+    const binding = cutoverReaderGateBinding(recovered.reader),
+      journal = join(root, "operation.json");
+    let reverseLatest = false;
+    const noop = () => Promise.resolve();
+    const phase = await executeCutoverTransition({
+      record: async (phase) => {
+        await writeVpsAtomic(journal, { phase, readerGateKind: binding.kind, readerReceiptSha256: binding.sha256, requestDigest });
+      },
+      preflight: async () => {
+        assert.equal(await verifyCutoverReaderGate(recovered.reader, artifact), "owner-waived");
+      },
+      stop: noop,
+      preserve: noop,
+      convert: noop,
+      start: () => Promise.reject(new Error("Possible Bun startup requires latest-state recovery")),
+      verify: noop,
+      recover: async (started) => {
+        assert.equal(started, true);
+        const persisted = JSON.parse(await readFile(journal, "utf8")) as Record<string, unknown>;
+        assert.equal(persisted.readerGateKind, "owner-waived");
+        assert.equal(persisted.readerReceiptSha256, binding.sha256);
+        assert.equal(persisted.requestDigest, cutoverRequestDigest(recovered));
+        reverseLatest = true;
+      },
+    });
+    assert.equal(phase, "rolled_back");
+    assert.equal(reverseLatest, true);
+    assert.equal((JSON.parse(await readFile(journal, "utf8")) as { readerGateKind: string }).readerGateKind, "owner-waived");
+  }));
+
+test("relocated immutable operator imports its complete existing module closure", async () =>
+  fixture(async (root) => {
+    await cp(join(repository, "ops"), join(root, "ops"), { recursive: true });
+    await cp(join(repository, "src"), join(root, "src"), { recursive: true });
+    await copyFile(join(repository, "package.json"), join(root, "package.json"));
+    await symlink(join(repository, "node_modules"), join(root, "node_modules"));
+    const script = `const operator=await import(${JSON.stringify(join(root, "ops/first-bun-cutover.ts"))});if(typeof operator.runFirstBunCutover!=="function"||typeof operator.recoverFirstBunCutover!=="function")throw new Error("Incomplete operator closure");console.log("relocated operator imports intact");`;
+    assert.equal(await fixtureCommand(process.execPath, ["--no-env-file", "--no-install", "-e", script], root), "relocated operator imports intact");
   }));
 
 test("a global unlimited cgroup override cannot satisfy the cutover budget", () => {
