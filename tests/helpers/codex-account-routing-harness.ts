@@ -1,10 +1,11 @@
+import type { AtomicOperation, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 // Shared harness for the codex-account-routing suites, moved out of tests/codex-account-routing.test.ts.
 
 import { codexSubscriptionHash, codexSubscriptionSelectionId } from "../../src/provider/selection.ts";
 import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../../src/provider/selection.ts";
-import { CodexAuthPoolState } from "../../src/types.ts";
+import type { CodexAuthPoolState } from "../../src/types.ts";
 
-const key = (value: Deno.KvKey): string => JSON.stringify(value);
+const key = (value: KvKey): string => JSON.stringify(value);
 
 /** Canonical HTTP-date Retry-After quota fixture shared by the routing tests. */
 const httpDateQuotaResponse = (deadline: number) =>
@@ -48,7 +49,7 @@ class RoutingKv {
   values = new Map<string, unknown>();
   versions = new Map<string, number>();
 
-  get<T>(kvKey: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(kvKey: KvKey): Promise<KvEntryMaybe<T>> {
     const encoded = key(kvKey);
     const value = this.values.get(encoded) as T | undefined;
     const version = this.versions.get(encoded);
@@ -56,10 +57,10 @@ class RoutingKv {
       key: kvKey,
       value: value ?? null,
       versionstamp: version === undefined ? null : String(version).padStart(20, "0"),
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  getMany<T extends readonly unknown[]>(kvKeys: readonly Deno.KvKey[]): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+  getMany<T extends readonly unknown[]>(kvKeys: readonly KvKey[]): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     // Snapshot every value and versionstamp synchronously so one resolved tuple
     // cannot mix rows from different write generations.
     const snapshot = kvKeys.map((kvKey) => {
@@ -70,12 +71,12 @@ class RoutingKv {
         key: kvKey,
         value: value ?? null,
         versionstamp: version === undefined ? null : String(version).padStart(20, "0"),
-      } as Deno.KvEntryMaybe<T[number]>;
+      } as KvEntryMaybe<T[number]>;
     });
-    return Promise.resolve(snapshot as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
+    return Promise.resolve(snapshot as { [K in keyof T]: KvEntryMaybe<T[K]> });
   }
 
-  set(kvKey: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(kvKey: KvKey, value: unknown): Promise<KvCommitResult> {
     const encoded = key(kvKey);
     const version = (this.versions.get(encoded) ?? 0) + 1;
     this.values.set(encoded, value);
@@ -83,15 +84,15 @@ class RoutingKv {
     return Promise.resolve({ ok: true, versionstamp: String(version).padStart(20, "0") });
   }
 
-  atomic(): Deno.AtomicOperation {
-    const writes: { key: Deno.KvKey; value: unknown }[] = [];
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+  atomic(): AtomicOperation {
+    const writes: { key: KvKey; value: unknown }[] = [];
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const chain = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
-      set: (kvKey: Deno.KvKey, value: unknown) => {
+      set: (kvKey: KvKey, value: unknown) => {
         writes.push({ key: kvKey, value });
         return chain;
       },
@@ -111,7 +112,7 @@ class RoutingKv {
         return Promise.resolve({ ok: true, versionstamp: String(last).padStart(20, "0") } as const);
       },
     };
-    return chain as unknown as Deno.AtomicOperation;
+    return chain as unknown as AtomicOperation;
   }
 }
 

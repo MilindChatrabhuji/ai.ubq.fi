@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { type AtomicOperation, type Kv, type KvEntry, type KvEntryMaybe, type KvKey, type KvListIterator } from "#kv";
 import assert from "node:assert/strict";
 
 import {
@@ -57,15 +59,15 @@ const scriptedClock = (readings: readonly (number | undefined)[]): (() => number
 class FailKeyKv extends MemoryKv {
   readonly failGetKeys: string[] = [];
   commitThrows = false;
-  listEntries: Deno.KvEntry<unknown>[] = [];
+  listEntries: KvEntry<unknown>[] = [];
   listThrows = false;
 
-  override get<T>(key: Deno.KvKey, options?: unknown): Promise<Deno.KvEntryMaybe<T>> {
+  override get<T>(key: KvKey, options?: unknown): Promise<KvEntryMaybe<T>> {
     if (this.failGetKeys.some((encoded) => encoded === JSON.stringify(key))) return Promise.reject(new Error("kv read unavailable"));
     return super.get<T>(key, options);
   }
 
-  override atomic(): Deno.AtomicOperation {
+  override atomic(): AtomicOperation {
     if (!this.commitThrows) return super.atomic();
     const failing = {
       check: () => failing,
@@ -73,21 +75,21 @@ class FailKeyKv extends MemoryKv {
       delete: () => failing,
       commit: () => Promise.reject(new Error("kv commit unavailable")),
     };
-    return failing as unknown as Deno.AtomicOperation;
+    return failing as unknown as AtomicOperation;
   }
 
-  list(): Deno.KvListIterator<unknown> {
+  list(): KvListIterator<unknown> {
     if (this.listThrows) throw new Error("kv list unavailable");
     const entries = this.listEntries;
     let index = 0;
     const iterator = {
-      next: (): Promise<IteratorResult<Deno.KvEntry<unknown>>> =>
+      next: (): Promise<IteratorResult<KvEntry<unknown>>> =>
         Promise.resolve(index < entries.length ? { value: entries[index++], done: false } : { value: undefined, done: true }),
       [Symbol.asyncIterator]() {
         return this;
       },
     };
-    return iterator as unknown as Deno.KvListIterator<unknown>;
+    return iterator as unknown as KvListIterator<unknown>;
   }
 }
 
@@ -115,7 +117,7 @@ const contextOf = async (input: CodexBankedResetCandidate) => {
 
 /* ---------------------------------------------------------------- claim core */
 
-Deno.test("makeResetContext refuses an unusable candidate and an unusable hash", async () => {
+test("makeResetContext refuses an unusable candidate and an unusable hash", async () => {
   const usable = candidate();
   assert.equal(await makeResetContext({ ...usable, accountId: "" }, testHash), null);
   assert.equal(await makeResetContext({ ...usable, credentialVersion: "" }, testHash), null);
@@ -167,7 +169,7 @@ const createRecord = (
   last_error_code: null,
 });
 
-Deno.test("readClock rejects unsafe readings and a clock that throws", () => {
+test("readClock rejects unsafe readings and a clock that throws", () => {
   assert.equal(
     readClock(() => 1_700_000_000_000),
     1_700_000_000_000
@@ -189,17 +191,17 @@ Deno.test("readClock rejects unsafe readings and a clock that throws", () => {
   );
 });
 
-Deno.test("readCurrentFences refuses a candidate without usable fences and treats an exploding predicate as stale", async () => {
+test("readCurrentFences refuses a candidate without usable fences and treats an exploding predicate as stale", async () => {
   const kv = new MemoryKv();
   const input = candidate();
   await seedFences(kv, input);
 
-  const missing = await readCurrentFences(kv as unknown as Deno.Kv, { ...input, fences: [] });
+  const missing = await readCurrentFences(kv as unknown as Kv, { ...input, fences: [] });
   assert.deepEqual(missing, { kind: "failure", code: "routing_fence_missing" });
-  const malformed = await readCurrentFences(kv as unknown as Deno.Kv, { ...input, fences: [{ key: routingFenceKey(input.accountId), isCurrent: 5 }] as never });
+  const malformed = await readCurrentFences(kv as unknown as Kv, { ...input, fences: [{ key: routingFenceKey(input.accountId), isCurrent: 5 }] as never });
   assert.deepEqual(malformed, { kind: "failure", code: "routing_fence_missing" });
 
-  const exploding = await readCurrentFences(kv as unknown as Deno.Kv, {
+  const exploding = await readCurrentFences(kv as unknown as Kv, {
     ...input,
     fences: [
       {
@@ -212,16 +214,16 @@ Deno.test("readCurrentFences refuses a candidate without usable fences and treat
   });
   assert.deepEqual(exploding, { kind: "stale" }, "an unreadable predicate proves nothing about the fence");
 
-  const valid = requireKind(await readCurrentFences(kv as unknown as Deno.Kv, input), "valid", "the fixture must be a valid decision");
+  const valid = requireKind(await readCurrentFences(kv as unknown as Kv, input), "valid", "the fixture must be a valid decision");
   assert.equal(valid.entries.length, 2);
 
   const failing = new FailKeyKv();
   failing.failGetKeys.push(JSON.stringify(routingFenceKey(input.accountId)));
-  const unreadable = await readCurrentFences(failing as unknown as Deno.Kv, input);
+  const unreadable = await readCurrentFences(failing as unknown as Kv, input);
   assert.deepEqual(unreadable, { kind: "failure", code: "kv_unavailable" });
 });
 
-Deno.test("claimTransaction refuses a quota window that expired after the fence reads", async () => {
+test("claimTransaction refuses a quota window that expired after the fence reads", async () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const input = candidate();
@@ -229,13 +231,13 @@ Deno.test("claimTransaction refuses a quota window that expired after the fence 
   const context = await contextOf(input);
 
   const closedClock = scriptedClock([input.quotaResetAtMs]);
-  const claimed = await claimTransaction(kv as unknown as Deno.Kv, context, input, input.quotaResetAtMs - 1_000, closedClock, "owner-1", true);
+  const claimed = await claimTransaction(kv as unknown as Kv, context, input, input.quotaResetAtMs - 1_000, closedClock, "owner-1", true);
   assert.deepEqual(claimed, { kind: "failure", code: "quota_window_expired" }, "the window is rechecked after the asynchronous fence reads");
   assert.equal(kv.entries.size, 2, "an expired window writes nothing but its fences");
   assert.equal(clock.nowMs, 1_700_000_000_000);
 });
 
-Deno.test("claimTransaction reports an unusable KV and an exhausted compare-and-set", async () => {
+test("claimTransaction reports an unusable KV and an exhausted compare-and-set", async () => {
   const input = candidate();
   const context = await contextOf(input);
   const clock = new TestClock();
@@ -243,34 +245,34 @@ Deno.test("claimTransaction reports an unusable KV and an exhausted compare-and-
   const unreadable = new FailKeyKv();
   await seedFences(unreadable, input);
   unreadable.failGetKeys.push(JSON.stringify(routingFenceKey(input.accountId)));
-  const unavailable = await claimTransaction(unreadable as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
+  const unavailable = await claimTransaction(unreadable as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
   assert.deepEqual(unavailable, { kind: "failure", code: "kv_unavailable" }, "an unreadable fence read is reported, never retried blindly");
 
   const contending = new MemoryKv();
   await seedFences(contending, input);
   failNextCommits(contending, MAX_CAS_ATTEMPTS);
-  const exhausted = await claimTransaction(contending as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
+  const exhausted = await claimTransaction(contending as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
   assert.deepEqual(exhausted, { kind: "failure", code: "kv_cas_exhausted" });
 
   const claimThrows = new FailKeyKv();
   await seedFences(claimThrows, input);
   claimThrows.commitThrows = true;
-  const claimUnavailable = await claimTransaction(claimThrows as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
+  const claimUnavailable = await claimTransaction(claimThrows as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
   assert.deepEqual(claimUnavailable, { kind: "failure", code: "kv_unavailable" });
 });
 
-Deno.test("a takeover of an expired claim is fenced on the routing generation and survives a lost race", async () => {
+test("a takeover of an expired claim is fenced on the routing generation and survives a lost race", async () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const input = candidate();
   await seedFences(kv, input);
   const context = await contextOf(input);
-  const claimed = await claimTransaction(kv as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
+  const claimed = await claimTransaction(kv as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true);
   assert.equal(claimed.kind, "submit");
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
 
   const staleGeneration = await claimTransaction(
-    kv as unknown as Deno.Kv,
+    kv as unknown as Kv,
     context,
     { ...input, routingGeneration: input.routingGeneration + 1 },
     clock.nowMs,
@@ -283,7 +285,7 @@ Deno.test("a takeover of an expired claim is fenced on the routing generation an
   const contended = new MemoryKv();
   await seedFences(contended, input);
   const claimedThere = await claimTransaction(
-    contended as unknown as Deno.Kv,
+    contended as unknown as Kv,
     context,
     input,
     clock.nowMs - CODEX_BANKED_RESET_LEASE_MS - 1,
@@ -293,31 +295,31 @@ Deno.test("a takeover of an expired claim is fenced on the routing generation an
   );
   assert.equal(claimedThere.kind, "submit");
   failNextCommits(contended, MAX_CAS_ATTEMPTS);
-  const lostRace = await claimTransaction(contended as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-2", true);
+  const lostRace = await claimTransaction(contended as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-2", true);
   assert.deepEqual(lostRace, { kind: "failure", code: "kv_cas_exhausted" });
 
-  const exhaustedPermit = await claimTransaction(kv as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-2", false);
+  const exhaustedPermit = await claimTransaction(kv as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-2", false);
   assert.equal(exhaustedPermit.kind, "in_progress", "an expired claim without a new-submission permit is never taken over");
 
   const throwing = new FailKeyKv();
   await seedFences(throwing, input);
   const firstClock = new TestClock();
-  const claimedThrow = await claimTransaction(throwing as unknown as Deno.Kv, context, input, firstClock.nowMs, () => firstClock.nowMs, "owner-1", true);
+  const claimedThrow = await claimTransaction(throwing as unknown as Kv, context, input, firstClock.nowMs, () => firstClock.nowMs, "owner-1", true);
   assert.equal(claimedThrow.kind, "submit");
   firstClock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   throwing.commitThrows = true;
-  const takeoverUnavailable = await claimTransaction(throwing as unknown as Deno.Kv, context, input, firstClock.nowMs, () => firstClock.nowMs, "owner-2", true);
+  const takeoverUnavailable = await claimTransaction(throwing as unknown as Kv, context, input, firstClock.nowMs, () => firstClock.nowMs, "owner-2", true);
   assert.deepEqual(takeoverUnavailable, { kind: "failure", code: "kv_unavailable" });
 });
 
-Deno.test("claimTransaction reconciles an expired submitted record without a new submission permit", async () => {
+test("claimTransaction reconciles an expired submitted record without a new submission permit", async () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const input = candidate();
   await seedFences(kv, input);
   const context = await contextOf(input);
   const claimed = requireKind(
-    await claimTransaction(kv as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
+    await claimTransaction(kv as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
@@ -328,7 +330,7 @@ Deno.test("claimTransaction reconciles an expired submitted record without a new
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
 
   const reconciled = requireKind(
-    await claimTransaction(kv as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-2", false),
+    await claimTransaction(kv as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-2", false),
     "reconcile",
     "an expired submitted record is taken over for reconciliation"
   );
@@ -337,23 +339,23 @@ Deno.test("claimTransaction reconciles an expired submitted record without a new
   assert.equal(reconciled.record.fence, 2);
 });
 
-Deno.test("updateOwnedRecord writes only for the exact owner and fence", async () => {
+test("updateOwnedRecord writes only for the exact owner and fence", async () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const input = candidate();
   await seedFences(kv, input);
   const context = await contextOf(input);
   const claimed = requireKind(
-    await claimTransaction(kv as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
+    await claimTransaction(kv as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
 
-  const foreign = await rejectOwned(kv as unknown as Deno.Kv, context, { ...claimed.record, owner_token: "someone-else" }, clock.nowMs, "not_ours");
+  const foreign = await rejectOwned(kv as unknown as Kv, context, { ...claimed.record, owner_token: "someone-else" }, clock.nowMs, "not_ours");
   assert.equal(foreign, null, "another owner's record is never mutated");
-  const replaced = await rejectOwned(kv as unknown as Deno.Kv, context, { ...claimed.record, fence: claimed.record.fence + 1 }, clock.nowMs, "fence_mismatch");
+  const replaced = await rejectOwned(kv as unknown as Kv, context, { ...claimed.record, fence: claimed.record.fence + 1 }, clock.nowMs, "fence_mismatch");
   assert.equal(replaced, null, "a newer fence means this worker no longer owns the record");
-  const rejected = await rejectOwned(kv as unknown as Deno.Kv, context, claimed.record, clock.nowMs, "provider_rejected");
+  const rejected = await rejectOwned(kv as unknown as Kv, context, claimed.record, clock.nowMs, "provider_rejected");
   assert.ok(rejected);
   assert.equal(rejected.state, "rejected");
   assert.equal(rejected.last_error_code, "provider_rejected");
@@ -361,19 +363,19 @@ Deno.test("updateOwnedRecord writes only for the exact owner and fence", async (
   const throwing = new FailKeyKv();
   await seedFences(throwing, input);
   const claimedThere = requireKind(
-    await claimTransaction(throwing as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
+    await claimTransaction(throwing as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   throwing.commitThrows = true;
-  assert.equal(await rejectOwned(throwing as unknown as Deno.Kv, context, claimedThere.record, clock.nowMs, "unavailable"), null);
+  assert.equal(await rejectOwned(throwing as unknown as Kv, context, claimedThere.record, clock.nowMs, "unavailable"), null);
   const failingReads = new FailKeyKv();
   await seedFences(failingReads, input);
   failingReads.failGetKeys.push(JSON.stringify(codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration)));
-  assert.equal(await rejectOwned(failingReads as unknown as Deno.Kv, context, claimedThere.record, clock.nowMs, "unreadable"), null);
+  assert.equal(await rejectOwned(failingReads as unknown as Kv, context, claimedThere.record, clock.nowMs, "unreadable"), null);
 });
 
-Deno.test("prepareSubmission refuses a claim that lost its lease, an unreadable budget and an exhausted compare-and-set", async () => {
+test("prepareSubmission refuses a claim that lost its lease, an unreadable budget and an exhausted compare-and-set", async () => {
   const input = candidate();
   const context = await contextOf(input);
 
@@ -381,37 +383,37 @@ Deno.test("prepareSubmission refuses a claim that lost its lease, an unreadable 
   const kv = new MemoryKv();
   await seedFences(kv, input);
   const claimed = requireKind(
-    await claimTransaction(kv as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
+    await claimTransaction(kv as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-  const stale = await prepareSubmission(kv as unknown as Deno.Kv, context, input, claimed.record, clock.nowMs, () => clock.nowMs, 5);
+  const stale = await prepareSubmission(kv as unknown as Kv, context, input, claimed.record, clock.nowMs, () => clock.nowMs, 5);
   assert.deepEqual(stale, { kind: "failure", code: "stale_owner" }, "an expired lease never crosses the submission boundary");
 
   const fresh = new TestClock();
   const budgetKv = new FailKeyKv();
   await seedFences(budgetKv, input);
   const budgetClaim = requireKind(
-    await claimTransaction(budgetKv as unknown as Deno.Kv, context, input, fresh.nowMs, () => fresh.nowMs, "owner-1", true),
+    await claimTransaction(budgetKv as unknown as Kv, context, input, fresh.nowMs, () => fresh.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   budgetKv.failGetKeys.push(JSON.stringify(codexResetAccountDailyKey(context.account.accountIdHash, "2023-11-14")));
-  const unreadableBudget = await prepareSubmission(budgetKv as unknown as Deno.Kv, context, input, budgetClaim.record, fresh.nowMs, () => fresh.nowMs, 5);
+  const unreadableBudget = await prepareSubmission(budgetKv as unknown as Kv, context, input, budgetClaim.record, fresh.nowMs, () => fresh.nowMs, 5);
   assert.deepEqual(unreadableBudget, { kind: "failure", code: "kv_unavailable" });
 
   const commitClock = new TestClock();
   const commitKv = new FailKeyKv();
   await seedFences(commitKv, input);
   const commitClaim = requireKind(
-    await claimTransaction(commitKv as unknown as Deno.Kv, context, input, commitClock.nowMs, () => commitClock.nowMs, "owner-1", true),
+    await claimTransaction(commitKv as unknown as Kv, context, input, commitClock.nowMs, () => commitClock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   commitKv.commitThrows = true;
   const unavailableCommit = await prepareSubmission(
-    commitKv as unknown as Deno.Kv,
+    commitKv as unknown as Kv,
     context,
     input,
     commitClaim.record,
@@ -425,13 +427,13 @@ Deno.test("prepareSubmission refuses a claim that lost its lease, an unreadable 
   const contended = new MemoryKv();
   await seedFences(contended, input);
   const contendedClaim = requireKind(
-    await claimTransaction(contended as unknown as Deno.Kv, context, input, contendedClock.nowMs, () => contendedClock.nowMs, "owner-1", true),
+    await claimTransaction(contended as unknown as Kv, context, input, contendedClock.nowMs, () => contendedClock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   failNextCommits(contended, MAX_CAS_ATTEMPTS);
   const exhausted = await prepareSubmission(
-    contended as unknown as Deno.Kv,
+    contended as unknown as Kv,
     context,
     input,
     contendedClaim.record,
@@ -445,12 +447,12 @@ Deno.test("prepareSubmission refuses a claim that lost its lease, an unreadable 
   await seedFences(happy, input);
   const happyClock = new TestClock();
   const happyClaim = requireKind(
-    await claimTransaction(happy as unknown as Deno.Kv, context, input, happyClock.nowMs, () => happyClock.nowMs, "owner-1", true),
+    await claimTransaction(happy as unknown as Kv, context, input, happyClock.nowMs, () => happyClock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   const prepared = requireKind(
-    await prepareSubmission(happy as unknown as Deno.Kv, context, input, happyClaim.record, happyClock.nowMs, () => happyClock.nowMs, 5),
+    await prepareSubmission(happy as unknown as Kv, context, input, happyClaim.record, happyClock.nowMs, () => happyClock.nowMs, 5),
     "submitted",
     "the submission boundary must be crossed"
   );
@@ -460,42 +462,42 @@ Deno.test("prepareSubmission refuses a claim that lost its lease, an unreadable 
   assert.equal(daily?.submission_count, 1, "the daily budget is consumed exactly once at the boundary");
 });
 
-Deno.test("renewSubmittedForRedeem requires an owned submitted lease and reports a broken binding", async () => {
+test("renewSubmittedForRedeem requires an owned submitted lease and reports a broken binding", async () => {
   const input = candidate();
   const context = await contextOf(input);
   const clock = new TestClock();
   const kv = new MemoryKv();
   await seedFences(kv, input);
   const claimed = requireKind(
-    await claimTransaction(kv as unknown as Deno.Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
+    await claimTransaction(kv as unknown as Kv, context, input, clock.nowMs, () => clock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   const prepared = requireKind(
-    await prepareSubmission(kv as unknown as Deno.Kv, context, input, claimed.record, clock.nowMs, () => clock.nowMs, 5),
+    await prepareSubmission(kv as unknown as Kv, context, input, claimed.record, clock.nowMs, () => clock.nowMs, 5),
     "submitted",
     "expected a submitted record"
   );
 
-  const renewed = await renewSubmittedForRedeem(kv as unknown as Deno.Kv, context, input, prepared.record, () => clock.nowMs);
+  const renewed = await renewSubmittedForRedeem(kv as unknown as Kv, context, input, prepared.record, () => clock.nowMs);
   if (renewed.kind !== "renewed") throw new Error("expected the lease to be renewed");
   assert.equal(renewed.record.fence, prepared.record.fence + 1);
   assert.equal(renewed.record.owner_token, prepared.record.owner_token);
 
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-  const stale = await renewSubmittedForRedeem(kv as unknown as Deno.Kv, context, input, renewed.record, () => clock.nowMs);
+  const stale = await renewSubmittedForRedeem(kv as unknown as Kv, context, input, renewed.record, () => clock.nowMs);
   assert.deepEqual(stale, { kind: "failure", code: "stale_owner" });
 
   const throwing = new FailKeyKv();
   const throwingClock = new TestClock();
   await seedFences(throwing, input);
   const throwingClaim = requireKind(
-    await claimTransaction(throwing as unknown as Deno.Kv, context, input, throwingClock.nowMs, () => throwingClock.nowMs, "owner-1", true),
+    await claimTransaction(throwing as unknown as Kv, context, input, throwingClock.nowMs, () => throwingClock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   const throwingPrepared = await prepareSubmission(
-    throwing as unknown as Deno.Kv,
+    throwing as unknown as Kv,
     context,
     input,
     throwingClaim.record,
@@ -505,7 +507,7 @@ Deno.test("renewSubmittedForRedeem requires an owned submitted lease and reports
   );
   if (throwingPrepared.kind !== "submitted") throw new Error("expected a submitted record");
   throwing.commitThrows = true;
-  assert.deepEqual(await renewSubmittedForRedeem(throwing as unknown as Deno.Kv, context, input, throwingPrepared.record, () => throwingClock.nowMs), {
+  assert.deepEqual(await renewSubmittedForRedeem(throwing as unknown as Kv, context, input, throwingPrepared.record, () => throwingClock.nowMs), {
     kind: "failure",
     code: "kv_unavailable",
   });
@@ -514,12 +516,12 @@ Deno.test("renewSubmittedForRedeem requires an owned submitted lease and reports
   const contendedClock = new TestClock();
   await seedFences(contended, input);
   const contendedClaim = requireKind(
-    await claimTransaction(contended as unknown as Deno.Kv, context, input, contendedClock.nowMs, () => contendedClock.nowMs, "owner-1", true),
+    await claimTransaction(contended as unknown as Kv, context, input, contendedClock.nowMs, () => contendedClock.nowMs, "owner-1", true),
     "submit",
     "the fixture must be a submit decision"
   );
   const contendedPrepared = await prepareSubmission(
-    contended as unknown as Deno.Kv,
+    contended as unknown as Kv,
     context,
     input,
     contendedClaim.record,
@@ -529,13 +531,13 @@ Deno.test("renewSubmittedForRedeem requires an owned submitted lease and reports
   );
   if (contendedPrepared.kind !== "submitted") throw new Error("expected a submitted record");
   failNextCommits(contended, MAX_CAS_ATTEMPTS);
-  assert.deepEqual(await renewSubmittedForRedeem(contended as unknown as Deno.Kv, context, input, contendedPrepared.record, () => contendedClock.nowMs), {
+  assert.deepEqual(await renewSubmittedForRedeem(contended as unknown as Kv, context, input, contendedPrepared.record, () => contendedClock.nowMs), {
     kind: "failure",
     code: "kv_cas_exhausted",
   });
 });
 
-Deno.test("credit selection ranks finite expiry first and refuses unusable inventories", () => {
+test("credit selection ranks finite expiry first and refuses unusable inventories", () => {
   const provider = new FakeCodexUsageResetProvider();
   const nowMs = 1_700_000_000_000;
   const expired = inventory("expired", nowMs - 1_000);
@@ -596,7 +598,7 @@ Deno.test("credit selection ranks finite expiry first and refuses unusable inven
   assert.equal(neverExpires.credit.id, "earlier", "a finite expiry beats a credit that never expires");
 });
 
-Deno.test("redeem-result and receipt validation reject unusable provider output", () => {
+test("redeem-result and receipt validation reject unusable provider output", () => {
   assert.equal(validRedeemResult("completed"), false, "a non-object result is never trusted");
   assert.equal(validRedeemResult({ kind: "completed" }), false, "a terminal result without a receipt is unusable");
   assert.equal(validRedeemResult({ kind: "accepted", providerReceiptId: 7 }), false);
@@ -614,7 +616,7 @@ Deno.test("redeem-result and receipt validation reject unusable provider output"
   assert.equal(durableReceiptId(new FakeCodexUsageResetProvider(), "receipt-1"), "receipt-1");
 });
 
-Deno.test("loadLiveSubmissionConfig names every reason a live submission is closed", () => {
+test("loadLiveSubmissionConfig names every reason a live submission is closed", () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const provider = new FakeCodexUsageResetProvider();
@@ -632,32 +634,32 @@ Deno.test("loadLiveSubmissionConfig names every reason a live submission is clos
   assert.equal(loadLiveSubmissionConfig(exploding).reason, "configuration_unavailable");
 });
 
-Deno.test("readExistingRecord distinguishes an absent, a corrupt and an unreadable record", async () => {
+test("readExistingRecord distinguishes an absent, a corrupt and an unreadable record", async () => {
   const kv = new FailKeyKv();
   const input = candidate();
   const context = await contextOf(input);
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
 
-  assert.deepEqual(await readExistingRecord(kv as unknown as Deno.Kv, context), { record: null, code: null });
+  assert.deepEqual(await readExistingRecord(kv as unknown as Kv, context), { record: null, code: null });
   await kv.set(key, { v: 1, state: "claimed" });
-  assert.deepEqual(await readExistingRecord(kv as unknown as Deno.Kv, context), { record: null, code: "redemption_record_invalid" });
+  assert.deepEqual(await readExistingRecord(kv as unknown as Kv, context), { record: null, code: "redemption_record_invalid" });
   const valid = { ...createRecord(context, input) };
   await kv.set(key, valid);
-  const read = await readExistingRecord(kv as unknown as Deno.Kv, context);
+  const read = await readExistingRecord(kv as unknown as Kv, context);
   assert.ok(read.record);
   assert.equal(read.code, null);
   kv.failGetKeys.push(JSON.stringify(key));
-  assert.deepEqual(await readExistingRecord(kv as unknown as Deno.Kv, context), { record: null, code: "kv_unavailable" });
+  assert.deepEqual(await readExistingRecord(kv as unknown as Kv, context), { record: null, code: "kv_unavailable" });
   assert.equal(quotaWindowIsOpen(input, input.quotaResetAtMs - 1), true);
   assert.equal(quotaWindowIsOpen(input, input.quotaResetAtMs), false);
 });
 
-Deno.test("listCodexResetShadowDecisions reports an unavailable binding and sorts usable records", async () => {
+test("listCodexResetShadowDecisions reports an unavailable binding and sorts usable records", async () => {
   assert.equal(await listCodexResetShadowDecisions(null), null);
   const kv = new FailKeyKv();
-  assert.deepEqual(await listCodexResetShadowDecisions(kv as unknown as Deno.Kv), []);
+  assert.deepEqual(await listCodexResetShadowDecisions(kv as unknown as Kv), []);
   kv.listThrows = true;
-  assert.equal(await listCodexResetShadowDecisions(kv as unknown as Deno.Kv), null, "an unreadable store is reported instead of an empty list");
+  assert.equal(await listCodexResetShadowDecisions(kv as unknown as Kv), null, "an unreadable store is reported instead of an empty list");
 
   const decisions = new FailKeyKv();
   const decisionFence = (slot: number, suffix: string) => ({
@@ -700,7 +702,7 @@ Deno.test("listCodexResetShadowDecisions reports an unavailable binding and sort
       versionstamp: "1",
     },
   ];
-  const listed = await listCodexResetShadowDecisions(decisions as unknown as Deno.Kv);
+  const listed = await listCodexResetShadowDecisions(decisions as unknown as Kv);
   assert.deepEqual(
     listed?.map((decision) => decision.episode_hash),
     ["a", "b"],
@@ -710,7 +712,7 @@ Deno.test("listCodexResetShadowDecisions reports an unavailable binding and sort
 
 /* ------------------------------------------------------- submission routing */
 
-Deno.test("attemptCodexBankedReset reports every prerequisite it cannot satisfy", async () => {
+test("attemptCodexBankedReset reports every prerequisite it cannot satisfy", async () => {
   const input = candidate();
   const clock = new TestClock();
   const provider = new FakeCodexUsageResetProvider();
@@ -767,7 +769,7 @@ Deno.test("attemptCodexBankedReset reports every prerequisite it cannot satisfy"
   assert.equal(withoutProvider.inventoryInputs.length, 0, "an unproven provider contract is refused before any provider call");
 });
 
-Deno.test("reconcileCodexBankedReset reports both client aborts and never submits", async () => {
+test("reconcileCodexBankedReset reports both client aborts and never submits", async () => {
   const input = candidate();
   const clock = new TestClock();
   const provider = new FakeCodexUsageResetProvider();
@@ -786,7 +788,7 @@ Deno.test("reconcileCodexBankedReset reports both client aborts and never submit
   assert.equal(noTransaction.reason, "no_existing_transaction", "a reconcile-only attempt never creates a claim");
 });
 
-Deno.test("recovery lookups classify unavailable, malformed and receipt-less provider answers", async () => {
+test("recovery lookups classify unavailable, malformed and receipt-less provider answers", async () => {
   const clock = new TestClock();
   const contextInput = candidate();
 
@@ -841,7 +843,7 @@ Deno.test("recovery lookups classify unavailable, malformed and receipt-less pro
   assert.equal(failedVerify.reason, "verification_unavailable");
 });
 
-Deno.test("a recovery that cannot read its clock reports invalid_clock instead of guessing a state", async () => {
+test("a recovery that cannot read its clock reports invalid_clock instead of guessing a state", async () => {
   const clock = new TestClock();
   const input = candidate();
   const provider = new FakeCodexUsageResetProvider();
@@ -880,7 +882,7 @@ const resetRecordTo = (context: Awaited<ReturnType<typeof makeResetContext>> & o
   });
 };
 
-Deno.test("a submission whose provider throws synchronously or rejects leaves a durable unknown record", async () => {
+test("a submission whose provider throws synchronously or rejects leaves a durable unknown record", async () => {
   const clock = new TestClock();
   const input = candidate();
   const kv = new MemoryKv();
@@ -916,7 +918,7 @@ Deno.test("a submission whose provider throws synchronously or rejects leaves a 
   assert.equal(receiptless.reason, "provider_commit_unknown", "an unknown outcome is never treated as a verified reset");
 });
 
-Deno.test("a client aborted mid-submission is rejected before and after the final renewal", async () => {
+test("a client aborted mid-submission is rejected before and after the final renewal", async () => {
   const input = candidate();
   const controller = new AbortController();
   const abortedInput: CodexBankedResetCandidate = { ...input, signal: controller.signal };
@@ -968,7 +970,7 @@ Deno.test("a client aborted mid-submission is rejected before and after the fina
   assert.equal(spendingProvider.redeemInputs.length, 0);
 });
 
-Deno.test("a settled verified or rejected record is reported without a new claim", async () => {
+test("a settled verified or rejected record is reported without a new claim", async () => {
   const clock = new TestClock();
   const input = candidate();
   const provider = new FakeCodexUsageResetProvider();
@@ -1007,7 +1009,7 @@ Deno.test("a settled verified or rejected record is reported without a new claim
 
 /* ------------------------------------------------------------- pool routing */
 
-Deno.test("evaluateCodexBankedResetPool reports malformed pools, an unreadable clock and an unavailable KV", async () => {
+test("evaluateCodexBankedResetPool reports malformed pools, an unreadable clock and an unavailable KV", async () => {
   const clock = new TestClock();
   const provider = new FakeCodexUsageResetProvider();
   const input = candidate();
@@ -1056,7 +1058,7 @@ Deno.test("evaluateCodexBankedResetPool reports malformed pools, an unreadable c
   );
 });
 
-Deno.test("a live pool refuses a per-account day limit above one when an injected provider treats redeem outcomes as final", async () => {
+test("a live pool refuses a per-account day limit above one when an injected provider treats redeem outcomes as final", async () => {
   const clock = new TestClock();
   const input = candidate();
   const kv = new MemoryKv();
@@ -1078,7 +1080,7 @@ Deno.test("a live pool refuses a per-account day limit above one when an injecte
   assert.notEqual(atMostOnce.reason, "terminal_outcome_account_day_limit_must_be_one");
 });
 
-Deno.test("a shadow pool refuses an unreadable usage record and reports its read-only decision", async () => {
+test("a shadow pool refuses an unreadable usage record and reports its read-only decision", async () => {
   const clock = new TestClock();
   const input = candidate();
   const second = candidate({ accountId: "test-account-b" });

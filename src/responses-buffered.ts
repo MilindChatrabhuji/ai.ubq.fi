@@ -11,7 +11,7 @@ import {} from "./paid-fallback/removed-provider.ts";
 import {} from "./provider/removed-provider-circuit.ts";
 import { createOwnedResponsesStream, type OwnedResponsesStreamFailureDetails, responseIdFromEvents } from "./responses-failover-stream.ts";
 import { getString, isRecord } from "./utils.ts";
-import { UpstreamProvider, UsageContext, recordResponsesEventTelemetry, streamErrorResponse } from "./openai-telemetry.ts";
+import { type UpstreamProvider, type UsageContext, recordResponsesEventTelemetry, streamErrorResponse } from "./openai-telemetry.ts";
 import { withAccumulatedResponseItems, withAccumulatedResponseRefusal, withAccumulatedResponseText } from "./chat/stream-translation.ts";
 import {} from "./upstream-wire.ts";
 import {} from "./request-policy.ts";

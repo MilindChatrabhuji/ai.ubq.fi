@@ -1,3 +1,8 @@
+import { test, beforeEach, afterEach } from "bun:test";
+import { runSequence } from "./helpers/sequence.ts";
+import { installHarness, cleanupHarness } from "./helpers/openai-compat-harness.ts";
+beforeEach(installHarness);
+afterEach(cleanupHarness);
 // openai-compat suite, part 2 of 12: tests moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
@@ -33,7 +38,7 @@ import {
   withFetchMock,
 } from "./helpers/openai-compat-harness.ts";
 
-Deno.test("openai: default model requires configured model or stored snapshot", async () => {
+test("openai: default model requires configured model or stored snapshot", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const defaultModelKey = keyToString(DEFAULT_MODEL_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
@@ -68,7 +73,7 @@ Deno.test("openai: default model requires configured model or stored snapshot", 
   }
 });
 
-Deno.test("openai: configured default reasoning survives missing catalog metadata", async () => {
+test("openai: configured default reasoning survives missing catalog metadata", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const defaultModelKey = keyToString(DEFAULT_MODEL_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
@@ -122,7 +127,7 @@ Deno.test("openai: configured default reasoning survives missing catalog metadat
   }
 });
 
-Deno.test("openai: default reasoning level is accepted when supported levels are absent", async () => {
+test("openai: default reasoning level is accepted when supported levels are absent", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
   const modelWithDefaultOnly = "gpt-5-default-reasoning-only";
@@ -180,7 +185,7 @@ Deno.test("openai: default reasoning level is accepted when supported levels are
   }
 });
 
-Deno.test("openai: snapshot levels are advertised verbatim and an explicit none is still forwarded as none", async () => {
+test("openai: snapshot levels are advertised verbatim and an explicit none is still forwarded as none", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
 
@@ -239,7 +244,7 @@ Deno.test("openai: snapshot levels are advertised verbatim and an explicit none 
   }
 });
 
-Deno.test("openai: hostile catalog wire maps cannot rewrite none reasoning", async () => {
+test("openai: hostile catalog wire maps cannot rewrite none reasoning", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const defaultReasoningKey = keyToString(DEFAULT_REASONING_EFFORT_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
@@ -296,7 +301,7 @@ Deno.test("openai: hostile catalog wire maps cannot rewrite none reasoning", asy
   }
 });
 
-Deno.test("openai: models returns stored Codex snapshot without upstream fetch", async () => {
+test("openai: models returns stored Codex snapshot without upstream fetch", async () => {
   const response = await withFetchMock(
     () => {
       throw new Error("handleModels should not fetch upstream models");
@@ -319,13 +324,13 @@ Deno.test("openai: models returns stored Codex snapshot without upstream fetch",
   assert.equal(Object.prototype.hasOwnProperty.call(model, "display_name"), false);
 });
 
-Deno.test("openai: models omits provider models without OpenAI inference endpoints", async () => {
+test("openai: models omits provider models without OpenAI inference endpoints", async () => {
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-model-filter-test-key");
-  Deno.env.delete("SURPLUS_API_KEY");
+  const originalMeteredApiKey = process.env.METERED_API_KEY;
+  const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
+  process.env.METERED_API_KEY = "metered-model-filter-test-key";
+  Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
   try {
     await fetchMeteredModels({
       force: true,
@@ -379,17 +384,17 @@ Deno.test("openai: models omits provider models without OpenAI inference endpoin
   } finally {
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
-    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
-    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+    if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = originalMeteredApiKey;
+    if (originalSurplusApiKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = originalSurplusApiKey;
   }
 });
 
-Deno.test("openai: public catalog hides OpenLux-only models", async () => {
+test("openai: public catalog hides OpenLux-only models", async () => {
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  const originalMeteredKey = process.env.METERED_API_KEY;
   const runtimeConfigKey = keyToString(["uos_ai", "runtime_config", "v2"]);
   const previousRuntimeConfig = kvStore.get(runtimeConfigKey);
   const snapshot = kvStore.get(keyToString(TEST_CODEX_MODELS_KEY));
@@ -401,7 +406,7 @@ Deno.test("openai: public catalog hides OpenLux-only models", async () => {
     updated_at_ms: Date.now(),
   });
   resetRuntimeConfigCacheForTest();
-  Deno.env.set("METERED_API_KEY", "metered-public-catalog-test-key");
+  process.env.METERED_API_KEY = "metered-public-catalog-test-key";
   await fetchMeteredModels({
     force: true,
     fetcher: () =>
@@ -473,12 +478,12 @@ Deno.test("openai: public catalog hides OpenLux-only models", async () => {
     if (previousRuntimeConfig === undefined) kvStore.delete(runtimeConfigKey);
     else kvStore.set(runtimeConfigKey, previousRuntimeConfig);
     resetRuntimeConfigCacheForTest();
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalMeteredKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = originalMeteredKey;
   }
 });
 
-Deno.test("openai: models exposes API-supported hidden review models from the snapshot", async () => {
+test("openai: models exposes API-supported hidden review models from the snapshot", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
   kvStore.set(snapshotKey, {
@@ -514,7 +519,7 @@ Deno.test("openai: models exposes API-supported hidden review models from the sn
   }
 });
 
-Deno.test("openai: model capabilities are exposed outside /v1 model objects", async () => {
+test("openai: model capabilities are exposed outside /v1 model objects", async () => {
   const response = await withFetchMock(
     () => {
       throw new Error("handleModelCapabilities should not fetch upstream models");
@@ -556,7 +561,7 @@ Deno.test("openai: model capabilities are exposed outside /v1 model objects", as
   assert.ok(model.supported_endpoints?.includes("/v1/responses"));
 });
 
-Deno.test("openai: prompt-cache capability records are UOS-only and keep providers separate", async () => {
+test("openai: prompt-cache capability records are UOS-only and keep providers separate", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const runtimeConfigKey = keyToString(["uos_ai", "runtime_config", "v2"]);
   const previousSnapshot = kvStore.get(snapshotKey);
@@ -634,15 +639,15 @@ Deno.test("openai: prompt-cache capability records are UOS-only and keep provide
   }
 });
 
-Deno.test("openai: models returns an empty list when no snapshot is stored", async () => {
+test("openai: models returns an empty list when no snapshot is stored", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
   // Provider-backed entries are injected independently of the Codex snapshot,
   // so every optional provider credential must be absent for an empty list.
   const providerEnvKeys = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "OPENROUTER_API_KEY"] as const;
-  const originalApiKeys = providerEnvKeys.map((key) => [key, Deno.env.get(key)] as const);
+  const originalApiKeys = providerEnvKeys.map((key) => [key, process.env[key]] as const);
   kvStore.delete(snapshotKey);
-  for (const key of providerEnvKeys) Deno.env.delete(key);
+  for (const key of providerEnvKeys) Reflect.deleteProperty(process.env, key);
 
   try {
     const response = await withFetchMock(
@@ -660,16 +665,16 @@ Deno.test("openai: models returns an empty list when no snapshot is stored", asy
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
     for (const [key, originalApiKey] of originalApiKeys) {
-      if (originalApiKey === undefined) Deno.env.delete(key);
-      else Deno.env.set(key, originalApiKey);
+      if (originalApiKey === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = originalApiKey;
     }
   }
 });
 
-Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering the Codex catalog", async () => {
+test("openai: configured Cerebras GPT-OSS is discoverable without altering the Codex catalog", async () => {
   const envKey = "CEREBRAS_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "cerebras-test-key");
+  const originalApiKey = process.env[envKey];
+  process.env[envKey] = "cerebras-test-key";
   try {
     const models = await handleModels();
     assert.equal(models.status, 200);
@@ -733,17 +738,17 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
       }
     );
   } finally {
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+    else process.env[envKey] = originalApiKey;
   }
 });
 
-Deno.test("openai: configured DeepSeek official models are discoverable and replace a paid-fallback catalog row", async () => {
+test("openai: configured DeepSeek official models are discoverable and replace a paid-fallback catalog row", async () => {
   const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
+  const originalApiKey = process.env[envKey];
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey) as { models: unknown[] } | undefined;
-  Deno.env.set(envKey, "deepseek-test-key");
+  process.env[envKey] = "deepseek-test-key";
   // A paid-fallback discovery source may already advertise the legacy alias.
   // The official row must replace it rather than duplicate or defer to it.
   kvStore.set(snapshotKey, {
@@ -788,15 +793,15 @@ Deno.test("openai: configured DeepSeek official models are discoverable and repl
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+    else process.env[envKey] = originalApiKey;
   }
 });
 
-Deno.test("openai: DeepSeek official ids are hidden when no credential is configured", async () => {
+test("openai: DeepSeek official ids are hidden when no credential is configured", async () => {
   const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.delete(envKey);
+  const originalApiKey = process.env[envKey];
+  Reflect.deleteProperty(process.env, envKey);
   try {
     const models = await handleModels();
     assert.equal(models.status, 200);
@@ -809,11 +814,11 @@ Deno.test("openai: DeepSeek official ids are hidden when no credential is config
       );
     }
   } finally {
-    if (originalApiKey !== undefined) Deno.env.set(envKey, originalApiKey);
+    if (originalApiKey !== undefined) process.env[envKey] = originalApiKey;
   }
 });
 
-Deno.test("openai: DeepSeek request projection translates the documented wire contract", () => {
+test("openai: DeepSeek request projection translates the documented wire contract", () => {
   assert.deepEqual(
     projectDeepSeekRequest(
       {
@@ -841,15 +846,15 @@ Deno.test("openai: DeepSeek request projection translates the documented wire co
   assert.throws(() => projectDeepSeekRequest({ model: DEEPSEEK_FLASH_MODEL }, "deepseek-v4-nope"), /not configured/);
 });
 
-Deno.test("openai: DeepSeek Chat projection translates developer messages and preserves the caller's order and content", async () => {
+test("openai: DeepSeek Chat projection translates developer messages and preserves the caller's order and content", async () => {
   const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
+  const originalApiKey = process.env[envKey];
   const callerMessages = [
     { role: "developer", content: "Answer in one short sentence." },
     { role: "assistant", content: "Earlier reply." },
     { role: "user", content: "ping" },
   ];
-  Deno.env.set(envKey, "deepseek-test-key");
+  process.env[envKey] = "deepseek-test-key";
   // A captured call list rather than mutable locals: the checker does not track
   // an assignment made inside the fetch-mock closure, so a nullable local would
   // narrow to `never` at the assertions below.
@@ -900,12 +905,12 @@ Deno.test("openai: DeepSeek Chat projection translates developer messages and pr
     assert.equal(payload.object, "chat.completion");
     assert.deepEqual(payload.choices, [{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }]);
   } finally {
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+    else process.env[envKey] = originalApiKey;
   }
 });
 
-Deno.test("openai: unsupported snapshot model is rejected before upstream fetch", async () => {
+test("openai: unsupported snapshot model is rejected before upstream fetch", async () => {
   const response = await withFetchMock(
     () => {
       throw new Error("unsupported model requests should not fetch upstream");
@@ -930,7 +935,7 @@ Deno.test("openai: unsupported snapshot model is rejected before upstream fetch"
   assert.match(payload.error.message ?? "", /Use \/v1\/models/);
 });
 
-Deno.test("openai: gpt-reserve is servable and reaches the Codex upstream under its own id", async () => {
+test("openai: gpt-reserve is servable and reaches the Codex upstream under its own id", async () => {
   const codexUrls: string[] = [];
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
@@ -959,7 +964,7 @@ Deno.test("openai: gpt-reserve is servable and reaches the Codex upstream under 
   assert.match(await response.text(), /pong/);
 });
 
-Deno.test("openai: unlisted reasoning tiers pass through for upstream validation", async () => {
+test("openai: unlisted reasoning tiers pass through for upstream validation", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -984,7 +989,7 @@ Deno.test("openai: unlisted reasoning tiers pass through for upstream validation
   assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "minimal" });
 });
 
-Deno.test("openai: max reasoning is forwarded for models that support it", async () => {
+test("openai: max reasoning is forwarded for models that support it", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -1009,7 +1014,7 @@ Deno.test("openai: max reasoning is forwarded for models that support it", async
   assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
 });
 
-Deno.test("openai: catalog wire metadata maps Codex CLI ultra to upstream max", async () => {
+test("openai: catalog wire metadata maps Codex CLI ultra to upstream max", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   let recordedUserAgent: string | null = null;
   const response = await withFetchMock(
@@ -1037,7 +1042,7 @@ Deno.test("openai: catalog wire metadata maps Codex CLI ultra to upstream max", 
   assert.equal(recordedUserAgent, "codex_cli_rs/0.125.0 (ai.ubq.fi)");
 });
 
-Deno.test("openai: ultra still dispatches as max when a stored catalog has no wire map", async () => {
+test("openai: ultra still dispatches as max when a stored catalog has no wire map", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
   kvStore.set(snapshotKey, {
@@ -1082,7 +1087,7 @@ Deno.test("openai: ultra still dispatches as max when a stored catalog has no wi
   }
 });
 
-Deno.test("openai: responses applies catalog reasoning wire metadata", async () => {
+test("openai: responses applies catalog reasoning wire metadata", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -1107,235 +1112,237 @@ Deno.test("openai: responses applies catalog reasoning wire metadata", async () 
   assert.deepEqual((recordedBody as Record<string, unknown>).reasoning, { effort: "max" });
 });
 
-Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routing", async (t) => {
-  const cases = [
-    {
-      name: "chat completions parses a provider-root detail",
-      route: "chat.completions",
-      status: 400,
-      statusText: "Codex Invalid Request",
-      body: JSON.stringify({
-        detail: "The requested model is not supported with a ChatGPT account.",
-        opaque: { drop: true },
-      }),
-      retryAfter: "7",
-      expectedError: {
-        message: "The requested model is not supported with a ChatGPT account.",
-        type: "invalid_request_error",
-        code: "upstream_error",
+test("openai: Codex HTTP errors use OpenAI envelopes without changing routing", async () =>
+  runSequence(async (step) => {
+    const cases = [
+      {
+        name: "chat completions parses a provider-root detail",
+        route: "chat.completions",
+        status: 400,
+        statusText: "Codex Invalid Request",
+        body: JSON.stringify({
+          detail: "The requested model is not supported with a ChatGPT account.",
+          opaque: { drop: true },
+        }),
+        retryAfter: "7",
+        expectedError: {
+          message: "The requested model is not supported with a ChatGPT account.",
+          type: "invalid_request_error",
+          code: "upstream_error",
+        },
       },
-    },
-    {
-      name: "responses preserves an existing error envelope",
-      route: "responses",
-      status: 503,
-      statusText: "Codex Unavailable",
-      body: JSON.stringify({
-        error: {
+      {
+        name: "responses preserves an existing error envelope",
+        route: "responses",
+        status: 503,
+        statusText: "Codex Unavailable",
+        body: JSON.stringify({
+          error: {
+            message: "Codex is temporarily unavailable.",
+            type: "server_error",
+            code: "provider_unavailable",
+            param: "model",
+          },
+          opaque: { drop: true },
+        }),
+        retryAfter: null,
+        expectedError: {
           message: "Codex is temporarily unavailable.",
           type: "server_error",
           code: "provider_unavailable",
           param: "model",
         },
-        opaque: { drop: true },
-      }),
-      retryAfter: null,
-      expectedError: {
-        message: "Codex is temporarily unavailable.",
-        type: "server_error",
-        code: "provider_unavailable",
-        param: "model",
       },
-    },
-    {
-      name: "responses converts plain text",
-      route: "responses",
-      status: 422,
-      statusText: "Codex Rejected",
-      body: "Codex rejected the request body.",
-      retryAfter: null,
-      expectedError: {
-        message: "Codex rejected the request body.",
-        type: "invalid_request_error",
-        code: "upstream_error",
-      },
-    },
-    {
-      name: "responses classifies an upstream 400 separately from stream reads",
-      route: "responses",
-      status: 400,
-      statusText: "Codex Invalid Request",
-      body: "Codex rejected the request body.",
-      retryAfter: null,
-      expectedError: {
-        message: "Codex rejected the request body.",
-        type: "invalid_request_error",
-        code: "upstream_error",
-      },
-    },
-  ] as const;
-
-  for (const testCase of cases) {
-    await t.step(testCase.name, async () => {
-      let codexCalls = 0;
-      const response = await withFetchMock(
-        () => {
-          codexCalls += 1;
-          const headers = new Headers({
-            "Content-Type": "application/problem+json",
-            "X-Codex-Diagnostic": "drop-me",
-          });
-          if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
-          return new Response(testCase.body, {
-            status: testCase.status,
-            statusText: testCase.statusText,
-            headers,
-          });
+      {
+        name: "responses converts plain text",
+        route: "responses",
+        status: 422,
+        statusText: "Codex Rejected",
+        body: "Codex rejected the request body.",
+        retryAfter: null,
+        expectedError: {
+          message: "Codex rejected the request body.",
+          type: "invalid_request_error",
+          code: "upstream_error",
         },
-        () =>
-          testCase.route === "chat.completions"
-            ? handleChatCompletions(
-                new Request("https://ai.ubq.fi/v1/chat/completions", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    model: DEFAULT_TEST_MODEL,
-                    messages: [{ role: "user", content: "ping" }],
-                  }),
-                })
-              )
-            : handleResponses(
-                new Request("https://ai.ubq.fi/v1/responses", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
-                })
-              )
-      );
+      },
+      {
+        name: "responses classifies an upstream 400 separately from stream reads",
+        route: "responses",
+        status: 400,
+        statusText: "Codex Invalid Request",
+        body: "Codex rejected the request body.",
+        retryAfter: null,
+        expectedError: {
+          message: "Codex rejected the request body.",
+          type: "invalid_request_error",
+          code: "upstream_error",
+        },
+      },
+    ] as const;
 
-      assert.equal(response.status, testCase.status);
-      assert.equal(response.statusText, "");
-      assert.equal(response.headers.get("Content-Type"), "application/json");
-      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
-      assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
-      assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
-      assert.deepEqual(await response.json(), { error: testCase.expectedError });
-      if (testCase.route === "responses") {
-        const telemetry = getResponseTelemetry(response);
-        assert.ok(telemetry);
-        assert.equal(telemetry.failureKind, testCase.status >= 500 ? "upstream_http_5xx" : "upstream_http_4xx");
-        assert.equal(telemetry.streamTerminalType, "error");
-        assert.equal(telemetry.responseCreatedObserved, false);
-        assert.equal(telemetry.fallbackReason, null);
-      }
-      assert.equal(codexCalls, 1);
-    });
-  }
-});
-
-Deno.test("openai: error normalization bounds oversized and stalled upstream bodies", async (t) => {
-  const expectedError = {
-    error: {
-      message: "Upstream returned an oversized or incomplete error response.",
-      type: "invalid_request_error",
-      code: "upstream_error",
-    },
-  };
-
-  await t.step("oversized bodies are cancelled without exposing partial content", async () => {
-    let cancellations = 0;
-    const oversized = new Uint8Array(65 * 1024);
-    oversized.fill("x".charCodeAt(0));
-    const startedAt = performance.now();
-    const response = await withFetchMock(
-      () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(oversized);
-            },
-            cancel() {
-              cancellations += 1;
-            },
-          }),
-          {
-            status: 422,
-            headers: {
+    for (const testCase of cases) {
+      await step(testCase.name, async () => {
+        let codexCalls = 0;
+        const response = await withFetchMock(
+          () => {
+            codexCalls += 1;
+            const headers = new Headers({
               "Content-Type": "application/problem+json",
               "X-Codex-Diagnostic": "drop-me",
-            },
-          }
-        ),
-      () =>
-        handleResponses(
-          new Request("https://ai.ubq.fi/v1/responses", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
-          })
-        )
-    );
-
-    assert.ok(performance.now() - startedAt < 500, "oversized body must be rejected before the reader deadline");
-    assert.equal(response.status, 422);
-    assert.equal(response.headers.get("Content-Type"), "application/json");
-    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
-    assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
-    assert.deepEqual(await response.json(), expectedError);
-    assert.equal(cancellations, 1);
-  });
-
-  setStreamFirstEventDeadlineMsForTest(100);
-  try {
-    for (const route of ["responses", "chat.completions"] as const) {
-      await t.step(`${route} keeps the request deadline while reading an error body`, async () => {
-        let cancellations = 0;
-        const startedAt = performance.now();
-        const response = await withFetchMock(
+            });
+            if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
+            return new Response(testCase.body, {
+              status: testCase.status,
+              statusText: testCase.statusText,
+              headers,
+            });
+          },
           () =>
-            new Response(
-              new ReadableStream<Uint8Array>({
-                pull: () => neverSettlingPromise(),
-                cancel() {
-                  cancellations += 1;
-                },
-              }),
-              { status: 400, headers: { "Content-Type": "application/problem+json" } }
-            ),
-          () =>
-            route === "responses"
-              ? handleResponses(
-                  new Request("https://ai.ubq.fi/v1/responses", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
-                  })
-                )
-              : handleChatCompletions(
+            testCase.route === "chat.completions"
+              ? handleChatCompletions(
                   new Request("https://ai.ubq.fi/v1/chat/completions", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       model: DEFAULT_TEST_MODEL,
                       messages: [{ role: "user", content: "ping" }],
-                      stream: true,
                     }),
+                  })
+                )
+              : handleResponses(
+                  new Request("https://ai.ubq.fi/v1/responses", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
                   })
                 )
         );
 
-        assert.ok(performance.now() - startedAt < 500, route);
-        assert.equal(response.status, 400);
-        assert.deepEqual(await response.json(), expectedError);
-        assert.equal(cancellations, 1);
+        assert.equal(response.status, testCase.status);
+        assert.equal(response.statusText, "");
+        assert.equal(response.headers.get("Content-Type"), "application/json");
+        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+        assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
+        assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
+        assert.deepEqual(await response.json(), { error: testCase.expectedError });
+        if (testCase.route === "responses") {
+          const telemetry = getResponseTelemetry(response);
+          assert.ok(telemetry);
+          assert.equal(telemetry.failureKind, testCase.status >= 500 ? "upstream_http_5xx" : "upstream_http_4xx");
+          assert.equal(telemetry.streamTerminalType, "error");
+          assert.equal(telemetry.responseCreatedObserved, false);
+          assert.equal(telemetry.fallbackReason, null);
+        }
+        assert.equal(codexCalls, 1);
       });
     }
-  } finally {
-    setStreamFirstEventDeadlineMsForTest(null);
-  }
-});
+  }));
 
-Deno.test("openai: a failed half-open 2xx stream releases its routing lease", async () => {
+test("openai: error normalization bounds oversized and stalled upstream bodies", async () =>
+  runSequence(async (step) => {
+    const expectedError = {
+      error: {
+        message: "Upstream returned an oversized or incomplete error response.",
+        type: "invalid_request_error",
+        code: "upstream_error",
+      },
+    };
+
+    await step("oversized bodies are cancelled without exposing partial content", async () => {
+      let cancellations = 0;
+      const oversized = new Uint8Array(65 * 1024);
+      oversized.fill("x".charCodeAt(0));
+      const startedAt = performance.now();
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(oversized);
+              },
+              cancel() {
+                cancellations += 1;
+              },
+            }),
+            {
+              status: 422,
+              headers: {
+                "Content-Type": "application/problem+json",
+                "X-Codex-Diagnostic": "drop-me",
+              },
+            }
+          ),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+            })
+          )
+      );
+
+      assert.ok(performance.now() - startedAt < 500, "oversized body must be rejected before the reader deadline");
+      assert.equal(response.status, 422);
+      assert.equal(response.headers.get("Content-Type"), "application/json");
+      assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+      assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
+      assert.deepEqual(await response.json(), expectedError);
+      assert.equal(cancellations, 1);
+    });
+
+    setStreamFirstEventDeadlineMsForTest(100);
+    try {
+      for (const route of ["responses", "chat.completions"] as const) {
+        await step(`${route} keeps the request deadline while reading an error body`, async () => {
+          let cancellations = 0;
+          const startedAt = performance.now();
+          const response = await withFetchMock(
+            () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  pull: () => neverSettlingPromise(),
+                  cancel() {
+                    cancellations += 1;
+                  },
+                }),
+                { status: 400, headers: { "Content-Type": "application/problem+json" } }
+              ),
+            () =>
+              route === "responses"
+                ? handleResponses(
+                    new Request("https://ai.ubq.fi/v1/responses", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
+                    })
+                  )
+                : handleChatCompletions(
+                    new Request("https://ai.ubq.fi/v1/chat/completions", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        model: DEFAULT_TEST_MODEL,
+                        messages: [{ role: "user", content: "ping" }],
+                        stream: true,
+                      }),
+                    })
+                  )
+          );
+
+          assert.ok(performance.now() - startedAt < 500, route);
+          assert.equal(response.status, 400);
+          assert.deepEqual(await response.json(), expectedError);
+          assert.equal(cancellations, 1);
+        });
+      }
+    } finally {
+      setStreamFirstEventDeadlineMsForTest(null);
+    }
+  }));
+
+test("openai: a failed half-open 2xx stream releases its routing lease", async () => {
   let codexCalls = 0;
   await withFetchMock(
     () => {

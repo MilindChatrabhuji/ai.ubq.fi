@@ -1,17 +1,33 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type {
+  AtomicOperation,
+  Kv,
+  KvCommitError,
+  KvCommitResult,
+  KvEntry,
+  KvEntryMaybe,
+  KvKey,
+  KvKeyPart,
+  KvListIterator,
+  KvListOptions,
+  KvListSelector,
+} from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { setKvForTest } from "../src/kv.ts";
 import assert from "node:assert/strict";
 import type { PaidFallbackUsageRollup } from "../src/paid-fallback/rollups.ts";
 
 type StoredEntry = {
-  key: Deno.KvKey;
+  key: KvKey;
   value: unknown;
   versionstamp: string;
   expiresAtMs: number | null;
 };
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 const clone = <T>(value: T): T => structuredClone(value);
 
-const compareKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
+const compareKeyPart = (left: KvKeyPart, right: KvKeyPart): number => {
   if (left === right) return 0;
   if (typeof left === "number" && typeof right === "number") return left - right;
   const leftText = String(left);
@@ -19,7 +35,7 @@ const compareKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => 
   return leftText < rightText ? -1 : 1;
 };
 
-const compareKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
+const compareKeys = (left: KvKey, right: KvKey): number => {
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
     if (index >= left.length) return -1;
@@ -30,7 +46,7 @@ const compareKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
   return 0;
 };
 
-const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
+const startsWithKey = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
 class MemoryKv {
   readonly entries = new Map<string, StoredEntry>();
@@ -52,7 +68,7 @@ class MemoryKv {
     }
   }
 
-  #write(key: Deno.KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
+  #write(key: KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
     const expireIn = options?.expireIn;
     const expiresAtMs = typeof expireIn === "number" ? Date.now() + Math.max(0, expireIn) : null;
     this.entries.set(encodeKey(key), {
@@ -63,39 +79,39 @@ class MemoryKv {
     });
   }
 
-  versionstamp(key: Deno.KvKey): string | null {
+  versionstamp(key: KvKey): string | null {
     this.#purgeExpired();
     return this.entries.get(encodeKey(key))?.versionstamp ?? null;
   }
 
-  expiration(key: Deno.KvKey): number | null {
+  expiration(key: KvKey): number | null {
     this.#purgeExpired();
     return this.entries.get(encodeKey(key))?.expiresAtMs ?? null;
   }
 
-  get<T = unknown>(key: Deno.KvKey, _options?: Readonly<{ consistency?: "strong" | "eventual" }>): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvKey, _options?: Readonly<{ consistency?: "strong" | "eventual" }>): Promise<KvEntryMaybe<T>> {
     this.#purgeExpired();
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
       value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, options?: { expireIn?: number }): Promise<KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.#write(key, value, options, versionstamp);
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.entries.delete(encodeKey(key));
     this.#nextVersionstamp();
     return Promise.resolve();
   }
 
-  list<T = unknown>(selector: Deno.KvListSelector, options: Deno.KvListOptions = {}): Deno.KvListIterator<T> {
+  list<T = unknown>(selector: KvListSelector, options: KvListOptions = {}): KvListIterator<T> {
     if ("prefix" in selector && "start" in selector && "end" in selector) {
       throw new TypeError("Selector can not specify both 'start' and 'end' key when specifying 'prefix'");
     }
@@ -111,7 +127,7 @@ class MemoryKv {
       .sort((left, right) => compareKeys(left.key, right.key));
     if (options.reverse) entries = entries.reverse();
     if (typeof options.limit === "number") entries = entries.slice(0, options.limit);
-    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<KvEntry<T>> {
       for (const entry of entries) {
         yield {
           key: clone(entry.key),
@@ -119,28 +135,28 @@ class MemoryKv {
           versionstamp: entry.versionstamp,
         };
       }
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvListIterator<T>;
     Object.defineProperty(iterator, "cursor", { get: () => "" });
     return iterator;
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const mutations: ({ kind: "set"; key: Deno.KvKey; value: unknown; options?: { expireIn?: number } } | { kind: "delete"; key: Deno.KvKey })[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
+    const mutations: ({ kind: "set"; key: KvKey; value: unknown; options?: { expireIn?: number } } | { kind: "delete"; key: KvKey })[] = [];
     const operation = {
-      check: (entry: { key: Deno.KvKey; versionstamp: string | null }) => {
+      check: (entry: { key: KvKey; versionstamp: string | null }) => {
         checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => {
         mutations.push({ kind: "set", key: clone(key), value: clone(value), options });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ kind: "delete", key: clone(key) });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         this.#purgeExpired();
         if (this.atomicConflictOnce) {
           this.atomicConflictOnce = false;
@@ -160,17 +176,21 @@ class MemoryKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   close(): void {}
 }
 
 const memoryKv = new MemoryKv();
-const kv = memoryKv as unknown as Deno.Kv;
-const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
-const originalOpenKv = denoWithKv.openKv;
-denoWithKv.openKv = () => Promise.resolve(kv);
+const kv = memoryKv as unknown as Kv;
+setKvForTest(kv);
+beforeEach(() => {
+  setKvForTest(kv);
+});
+afterEach(() => {
+  setKvForTest(null);
+});
 
 const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api-keys.ts");
 const { recordMeteredTerminal, recordMeteredUpstreamResponse, recordSurplusUsage, reservePaidFallback } = await import("../src/paid-fallback/index.ts");
@@ -205,8 +225,6 @@ const {
 } = await import("../src/paid-fallback/ledger-stats.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
-
-denoWithKv.openKv = originalOpenKv;
 
 type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
 type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
@@ -300,18 +318,19 @@ const settleSurplus = async (reservation: Awaited<ReturnType<typeof reserve>>): 
 };
 
 const withMeteredEnv = async (run: () => Promise<void>): Promise<void> => {
-  const originalEnvGet = Deno.env.get.bind(Deno.env);
-  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet(name));
+  const originalEnvGet = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "test-metered-key";
   try {
     await run();
   } finally {
-    Deno.env.get = originalEnvGet;
+    if (originalEnvGet === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalEnvGet;
   }
 };
 
 const HOUR_MS = 60 * 60 * 1_000;
 
-Deno.test("settlement writes an hourly rollup and retains the raw row for one year", async () => {
+test("settlement writes an hourly rollup and retains the raw row for one year", async () => {
   await withMeteredEnv(async () => {
     seedKeyRecord();
     const now = Date.now();
@@ -349,7 +368,7 @@ Deno.test("settlement writes an hourly rollup and retains the raw row for one ye
   });
 });
 
-Deno.test("two requests in one hour bucket accumulate across rollup shards", async () => {
+test("two requests in one hour bucket accumulate across rollup shards", async () => {
   await withMeteredEnv(async () => {
     seedKeyRecord();
     const now = Date.now();
@@ -369,7 +388,7 @@ Deno.test("two requests in one hour bucket accumulate across rollup shards", asy
   });
 });
 
-Deno.test("rollup listing respects the requested time range", async () => {
+test("rollup listing respects the requested time range", async () => {
   await withMeteredEnv(async () => {
     seedKeyRecord();
     const now = Date.now();
@@ -400,7 +419,7 @@ Deno.test("rollup listing respects the requested time range", async () => {
   });
 });
 
-Deno.test("balance history listing uses a valid bounded KV range selector", async () => {
+test("balance history listing uses a valid bounded KV range selector", async () => {
   memoryKv.entries.clear();
   const fingerprint = "quota-projection-account";
   const now = Date.now();
@@ -431,7 +450,7 @@ Deno.test("balance history listing uses a valid bounded KV range selector", asyn
   assert.equal(retained[1]?.bucket_start_at_ms, hourStart);
 });
 
-Deno.test("365-day balance history is deterministically resampled to UTC days", () => {
+test("365-day balance history is deterministically resampled to UTC days", () => {
   const dayStart = Math.floor(Date.now() / DAY_MS) * DAY_MS;
   const sample = (bucketStartAtMs: number, observedAtMs: number, balanceQuota: number) => ({
     v: 1 as const,
@@ -463,7 +482,7 @@ Deno.test("365-day balance history is deterministically resampled to UTC days", 
   assert.equal(capped.at(-1)?.observed_at_ms, rangeEnd);
 });
 
-Deno.test("balance window accepts supported values and defaults invalid input to seven days", () => {
+test("balance window accepts supported values and defaults invalid input to seven days", () => {
   assert.equal(normalizeMeteredQuotaBalanceWindowDays(null), 7);
   for (const invalid of ["", "invalid", "0", "8", "7.5", "7days"]) {
     assert.equal(normalizeMeteredQuotaBalanceWindowDays(invalid), 7);
@@ -473,7 +492,7 @@ Deno.test("balance window accepts supported values and defaults invalid input to
   }
 });
 
-Deno.test("merge sums counters and tracks first/last request times", () => {
+test("merge sums counters and tracks first/last request times", () => {
   const base = {
     bucket_start_at_ms: 1_000,
     model: "gpt-5.6-sol",
@@ -508,7 +527,7 @@ Deno.test("merge sums counters and tracks first/last request times", () => {
   assert.equal(second.last_request_at_ms, 5_000);
 });
 
-Deno.test("terminal observations record subscription usage and skip settled providers", async () => {
+test("terminal observations record subscription usage and skip settled providers", async () => {
   memoryKv.entries.clear();
   const now = Date.now();
   const observation = {
@@ -550,7 +569,7 @@ Deno.test("terminal observations record subscription usage and skip settled prov
   }
 });
 
-Deno.test("terminal observations skip unobserved usage instead of recording zero-token rows", async () => {
+test("terminal observations skip unobserved usage instead of recording zero-token rows", async () => {
   memoryKv.entries.clear();
   const now = Date.now();
   assert.equal(
@@ -589,7 +608,7 @@ Deno.test("terminal observations skip unobserved usage instead of recording zero
   assert.equal(rollups.length, 0, "an unobserved response must not create a zero-token rollup row");
 });
 
-Deno.test("terminal observations retry a conflicting shard write instead of dropping it", async () => {
+test("terminal observations retry a conflicting shard write instead of dropping it", async () => {
   memoryKv.entries.clear();
   const now = Date.now();
   memoryKv.atomicConflictOnce = true;
@@ -611,7 +630,7 @@ Deno.test("terminal observations retry a conflicting shard write instead of drop
   assert.equal(recordedCount, 1);
 });
 
-Deno.test("subscription observations join the projection without runway estimates", async () => {
+test("subscription observations join the projection without runway estimates", async () => {
   memoryKv.entries.clear();
   const now = Date.now();
   await recordTerminalUsageRollup(
@@ -638,11 +657,11 @@ Deno.test("subscription observations join the projection without runway estimate
   assert.deepEqual(projectPaidFallbackRunway(subscription, meteredQuotaRunwayView(null), now), []);
 });
 
-Deno.test("admin projection tags settled rows paid_fallback and terminal accounting observability", async () => {
+test("admin projection tags settled rows paid_fallback and terminal accounting observability", async () => {
   await withMeteredEnv(async () => {
     memoryKv.entries.clear();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.reject(new Error("offline projection test"));
+    globalThis.fetch = createFetchMock(() => Promise.reject(new Error("offline projection test")));
     try {
       const now = Date.now();
       const bucketStartAtMs = Math.floor(now / HOUR_MS) * HOUR_MS;
@@ -690,7 +709,7 @@ Deno.test("admin projection tags settled rows paid_fallback and terminal account
   });
 });
 
-Deno.test("summarize and project offer per-window rates and exhaustion estimates", () => {
+test("summarize and project offer per-window rates and exhaustion estimates", () => {
   const now = 1_000_000_000_000;
   const hour = HOUR_MS;
   const bucket = (startAtMs: number, quotaSum: number): PaidFallbackUsageRollup => ({
@@ -765,7 +784,7 @@ Deno.test("summarize and project offer per-window rates and exhaustion estimates
   assert.equal(thirtyDay.percent_per_request_vs_baseline, 2); // 60/3000*100
 });
 
-Deno.test("token-usage and unlimited quota modes do not fabricate estimates", () => {
+test("token-usage and unlimited quota modes do not fabricate estimates", () => {
   const now = 1_000_000_000_000;
   const entry = summarizePaidFallbackUsage(
     groupPaidFallbackUsageRollups([
@@ -912,7 +931,7 @@ const settledRequestRow = (requestId: string, createdAtMs: number): PaidFallback
   updated_at_ms: createdAtMs + 1_000,
 });
 
-Deno.test("backfill folds pre-existing settled rows into rollups and applies the TTL once", async () => {
+test("backfill folds pre-existing settled rows into rollups and applies the TTL once", async () => {
   seedKeyRecord();
   const now = Date.now();
   await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-1"), settledRequestRow("bf-1", now - 2 * HOUR_MS));
@@ -940,7 +959,7 @@ Deno.test("backfill folds pre-existing settled rows into rollups and applies the
   assert.equal(after[0]?.quota_sum, 60);
 });
 
-Deno.test("settlement marks the row so a later backfill never double counts", async () => {
+test("settlement marks the row so a later backfill never double counts", async () => {
   await withMeteredEnv(async () => {
     seedKeyRecord();
     const now = Date.now();
@@ -962,7 +981,7 @@ Deno.test("settlement marks the row so a later backfill never double counts", as
   });
 });
 
-Deno.test("backfill is resumable with a limit and marks non-billable rows", async () => {
+test("backfill is resumable with a limit and marks non-billable rows", async () => {
   seedKeyRecord();
   const now = Date.now();
   await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-a"), settledRequestRow("bf-a", now - 2 * HOUR_MS));
@@ -994,7 +1013,7 @@ Deno.test("backfill is resumable with a limit and marks non-billable rows", asyn
   assert.equal(rollups[0]?.quota_sum, 60);
 });
 
-Deno.test("backfill scan budget trips before the deadline and keeps forward progress", async () => {
+test("backfill scan budget trips before the deadline and keeps forward progress", async () => {
   seedKeyRecord();
   const now = Date.now();
   // Ten marked rows precede one unmarked row; with limit=1 the scan budget
@@ -1021,7 +1040,7 @@ Deno.test("backfill scan budget trips before the deadline and keeps forward prog
   );
 });
 
-Deno.test("window TTL backfill is resumable across batches", async () => {
+test("window TTL backfill is resumable across batches", async () => {
   seedKeyRecord();
   const now = Date.now();
   const windowRow = (resetAtMs: number): PaidFallbackWindowV3 => ({
@@ -1049,7 +1068,7 @@ Deno.test("window TTL backfill is resumable across batches", async () => {
   assert.ok(memoryKv.expiration(paidFallbackWindowV3Key(keyId, now + DAY_MS)) !== null);
 });
 
-Deno.test("backfill retries a row whose shard CAS failed instead of advancing past it", async () => {
+test("backfill retries a row whose shard CAS failed instead of advancing past it", async () => {
   seedKeyRecord();
   const now = Date.now();
   await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-x"), settledRequestRow("bf-x", now - 2 * HOUR_MS));
@@ -1076,7 +1095,7 @@ Deno.test("backfill retries a row whose shard CAS failed instead of advancing pa
   );
 });
 
-Deno.test("settlement records measured ledger bytes in the daily growth counters", async () => {
+test("settlement records measured ledger bytes in the daily growth counters", async () => {
   await withMeteredEnv(async () => {
     seedKeyRecord();
     const now = Date.now();
@@ -1110,10 +1129,10 @@ Deno.test("settlement records measured ledger bytes in the daily growth counters
   });
 });
 
-Deno.test("ledger growth view derives bytes-per-row and the storage alert threshold", async () => {
+test("ledger growth view derives bytes-per-row and the storage alert threshold", async () => {
   const now = Date.now();
   const threshold = Math.floor(PAID_FALLBACK_RAW_STORE_BUDGET_BYTES * PAID_FALLBACK_RAW_STORE_ALERT_RATIO);
-  const isolated = new MemoryKv() as unknown as Deno.Kv;
+  const isolated = new MemoryKv() as unknown as Kv;
   const dayStart = paidFallbackLedgerStatsDayStart(now);
   await isolated.set(paidFallbackLedgerStatsDayKey(dayStart), {
     v: 1,
@@ -1144,7 +1163,7 @@ Deno.test("ledger growth view derives bytes-per-row and the storage alert thresh
   assert.equal(growth.leaderboard.length, 1);
   assert.equal(growth.leaderboard[0]?.projection_views, 7);
 
-  const quiet = await readPaidFallbackLedgerGrowth(new MemoryKv() as unknown as Deno.Kv, {
+  const quiet = await readPaidFallbackLedgerGrowth(new MemoryKv() as unknown as Kv, {
     nowMs: now,
     retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   });
@@ -1158,9 +1177,9 @@ Deno.test("ledger growth view derives bytes-per-row and the storage alert thresh
   );
 });
 
-Deno.test("projection views record KV read units per 7/30/90-day window", async () => {
+test("projection views record KV read units per 7/30/90-day window", async () => {
   const now = Date.now();
-  const isolated = new MemoryKv() as unknown as Deno.Kv;
+  const isolated = new MemoryKv() as unknown as Kv;
   await recordPaidFallbackLedgerProjectionStats(isolated, { windowDays: 30, readUnits: 120, rollupRows: 100, nowMs: now });
   await recordPaidFallbackLedgerProjectionStats(isolated, { windowDays: 30, readUnits: 80, rollupRows: 60, nowMs: now });
   await recordPaidFallbackLedgerProjectionStats(isolated, { windowDays: 90, readUnits: 400, rollupRows: 380, nowMs: now });
@@ -1182,11 +1201,11 @@ Deno.test("projection views record KV read units per 7/30/90-day window", async 
   assert.equal(growth.leaderboard.length, 1);
 });
 
-Deno.test("admin quota projection records and exposes the measured ledger growth", async () => {
+test("admin quota projection records and exposes the measured ledger growth", async () => {
   await withMeteredEnv(async () => {
     seedKeyRecord();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.reject(new Error("offline projection test"));
+    globalThis.fetch = createFetchMock(() => Promise.reject(new Error("offline projection test")));
     try {
       const { handleAdminProvidersQuotaProjection } = await import("../src/admin/kernel.ts");
       const dayKey = paidFallbackLedgerStatsDayKey(paidFallbackLedgerStatsDayStart(Date.now()));

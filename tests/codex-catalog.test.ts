@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { setKvForTest } from "../src/kv.ts";
+import { test } from "bun:test";
+import { type Kv, type KvEntryMaybe, type KvKey, type KvListSelector } from "#kv";
 import assert from "node:assert/strict";
 
 // This suite asserts exact fetch and KV budgets, so the event-driven maintenance
@@ -12,22 +16,22 @@ setPaidFallbackTerminalSweepForTest(() => {});
 // exact catalog shapes from stored snapshots and discovery sources only, so the
 // ambient credentials are cleared to keep them independent of the machine that
 // runs them.
-Deno.env.delete("DEEPSEEK_API_KEY");
-Deno.env.delete("LITHOSAI_API_KEY");
-Deno.env.delete("OPENROUTER_API_KEY");
+delete process.env.DEEPSEEK_API_KEY;
+delete process.env.LITHOSAI_API_KEY;
+delete process.env.OPENROUTER_API_KEY;
 
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyToString = (key: KvKey): string => JSON.stringify(key);
 const kvStore = new Map<string, { value: unknown; versionstamp: string }>();
 let versionCounter = 0;
-type AtomicTestOp = { kind: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+type AtomicTestOp = { kind: "set" | "delete"; key: KvKey; value?: unknown };
 let beforeAtomicCommit: ((ops: readonly AtomicTestOp[]) => void) | null = null;
 
 const nextVersion = (): string => String(++versionCounter).padStart(20, "0");
-const entryFor = (key: Deno.KvKey): Deno.KvEntryMaybe<unknown> => {
+const entryFor = (key: KvKey): KvEntryMaybe<unknown> => {
   const stored = kvStore.get(keyToString(key));
   return stored ? { key, value: stored.value, versionstamp: stored.versionstamp } : { key, value: null, versionstamp: null };
 };
-const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
+const matchesPrefix = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
 /** URL text of a fetch input (the transports under test always pass a string URL). */
 const fetchUrl = (input: RequestInfo | URL): string => {
@@ -37,38 +41,38 @@ const fetchUrl = (input: RequestInfo | URL): string => {
 };
 
 const kvStub = {
-  get: (key: Deno.KvKey) => Promise.resolve(entryFor(key)),
-  set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+  get: (key: KvKey) => Promise.resolve(entryFor(key)),
+  set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
     kvStore.set(keyToString(key), { value, versionstamp: nextVersion() });
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (selector: Deno.KvListSelector) {
+  list: async function* (selector: KvListSelector) {
     const prefix = "prefix" in selector ? selector.prefix : [];
     // A real Deno.KV list suspends before its first entry; keep that
     // asynchronous boundary so no consumer can rely on synchronous iteration.
     await Promise.resolve();
     for (const [encodedKey, stored] of kvStore) {
-      const key = JSON.parse(encodedKey) as Deno.KvKey;
+      const key = JSON.parse(encodedKey) as KvKey;
       if (matchesPrefix(key, prefix)) yield { key, value: stored.value, versionstamp: stored.versionstamp };
     }
   },
   atomic: () => {
-    const checks: Deno.KvEntryMaybe<unknown>[] = [];
+    const checks: KvEntryMaybe<unknown>[] = [];
     const ops: AtomicTestOp[] = [];
     const chain = {
-      check: (entry: Deno.KvEntryMaybe<unknown>) => {
+      check: (entry: KvEntryMaybe<unknown>) => {
         checks.push(entry);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
         ops.push({ kind: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ kind: "delete", key });
         return chain;
       },
@@ -86,9 +90,9 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
+} as unknown as Kv;
 
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
+setKvForTest(kvStub);
 
 const {
   CODEX_CATALOG_AUTH_GENERATION_KEY,
@@ -108,13 +112,16 @@ const { config } = await import("../src/config.ts");
 const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } =
   await import("../src/provider/metered.ts");
 const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../src/provider/surplus.ts");
-const { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest } = await import("../src/models/openrouter-models.ts");
+const { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } = await import("../src/models/openrouter-models.ts");
 const { loadRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } = await import("../src/runtime-config.ts");
+
+// Public metadata is unauthenticated; every default warm uses this local fixture.
+setOpenRouterModelsFetchForTest(() => Promise.resolve(Response.json({ data: [] })));
 
 const AUTH_GENERATION = "auth-generation-test";
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 const SNAPSHOT_KEY = ["ubq_ai", "codex_models"] as const;
-const catalogKey = (version: string): Deno.KvKey => ["ubq_ai", "codex_catalog", version];
+const catalogKey = (version: string): KvKey => ["ubq_ai", "codex_catalog", version];
 
 /** Code-unit ascending string order: exactly what an argument-less `Array.prototype.sort()` does. */
 const compareStrings = (left: string, right: string): number => {
@@ -129,6 +136,7 @@ const seedBaseState = (snapshotVersion = "0.200.0"): void => {
   resetCodexAuthCacheForTest();
   resetCodexCatalogMemoForTest();
   resetRuntimeConfigCacheForTest();
+  resetOpenRouterModelsCacheForTest();
   kvStore.set(keyToString(CODEX_CATALOG_AUTH_GENERATION_KEY), {
     value: AUTH_GENERATION,
     versionstamp: nextVersion(),
@@ -197,7 +205,7 @@ const request = (version: string, headers: HeadersInit = {}): Request => {
   return new Request(`https://ai.ubq.fi/v1/models?client_version=${version}`, { headers: requestHeaders });
 };
 
-Deno.test("codex catalog: unversioned models retain the exact OpenAI list shape", async () => {
+test("codex catalog: unversioned models retain the exact OpenAI list shape", async () => {
   seedBaseState();
   const response = await handleModels(new Request("https://ai.ubq.fi/v1/models"));
   assert.equal(response.status, 200);
@@ -206,11 +214,11 @@ Deno.test("codex catalog: unversioned models retain the exact OpenAI list shape"
   assert.equal(payload.object, "list");
 });
 
-Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and derive client ETags", async () => {
+test("codex catalog: exact versions preserve rich JSON, isolate caches, and derive client ETags", async () => {
   seedBaseState("0.100.0");
   const originalFetch = globalThis.fetch;
   const calls: { url: string; headers: Headers }[] = [];
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const upstream = new Request(input, init);
     calls.push({ url: upstream.url, headers: upstream.headers });
     const version = new URL(upstream.url).searchParams.get("client_version") ?? "missing";
@@ -220,7 +228,7 @@ Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and
         headers: { "Content-Type": "application/json; charset=utf-8", ETag: `"${version}"` },
       })
     );
-  };
+  });
 
   try {
     const first = await handleCodexCatalogModels(request("0.144.3"), "0.144.3");
@@ -251,12 +259,12 @@ Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and
   }
 });
 
-Deno.test("codex catalog: malformed versions are rejected before upstream access", async () => {
+test("codex catalog: malformed versions are rejected before upstream access", async () => {
   seedBaseState();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("invalid versions must not fetch");
-  };
+  });
   try {
     for (const version of ["0.144", "v0.144.3", "0.144.3.1", "0.144.x", ""]) {
       const response = await handleCodexCatalogModels(request(version), version);
@@ -267,7 +275,7 @@ Deno.test("codex catalog: malformed versions are rejected before upstream access
   }
 });
 
-Deno.test("codex catalog: stale catalogs survive refresh failures but expired catalogs do not", async () => {
+test("codex catalog: stale catalogs survive refresh failures but expired catalogs do not", async () => {
   seedBaseState();
   const version = "0.150.0";
   const observedAtMs = Date.now();
@@ -287,7 +295,7 @@ Deno.test("codex catalog: stale catalogs survive refresh failures but expired ca
       return Promise.reject(new Error("sentinel unavailable"));
     },
   };
-  globalThis.fetch = () => Promise.resolve(new Response("temporary failure", { status: 503 }));
+  globalThis.fetch = createFetchMock(() => Promise.resolve(new Response("temporary failure", { status: 503 })));
   try {
     const stale = await handleCodexCatalogModels(request(version), version, dependencies);
     assert.equal(stale.status, 200);
@@ -305,7 +313,7 @@ Deno.test("codex catalog: stale catalogs survive refresh failures but expired ca
   }
 });
 
-Deno.test("codex catalog: stale catalogs signal masked upstream transport failures", async () => {
+test("codex catalog: stale catalogs signal masked upstream transport failures", async () => {
   seedBaseState();
   const version = "0.150.2";
   const observedAtMs = Date.now();
@@ -317,9 +325,9 @@ Deno.test("codex catalog: stale catalogs signal masked upstream transport failur
   });
   const originalFetch = globalThis.fetch;
   const degradationSignals: number[] = [];
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("connection reset");
-  };
+  });
   try {
     const response = await handleCodexCatalogModels(request(version), version, {
       now: () => observedAtMs,
@@ -336,7 +344,7 @@ Deno.test("codex catalog: stale catalogs signal masked upstream transport failur
   }
 });
 
-Deno.test("codex catalog: account fallback signals the masked transport failure once", async () => {
+test("codex catalog: account fallback signals the masked transport failure once", async () => {
   seedBaseState();
   const version = "0.150.3";
   const observedAtMs = Date.now();
@@ -352,11 +360,11 @@ Deno.test("codex catalog: account fallback signals the masked transport failure 
   const originalFetch = globalThis.fetch;
   let upstreamCalls = 0;
   const degradationSignals: number[] = [];
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     upstreamCalls += 1;
     if (upstreamCalls === 1) throw new Error("first account connection reset");
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
-  };
+  });
   try {
     const response = await handleCodexCatalogModels(request(version), version, {
       now: () => observedAtMs,
@@ -374,7 +382,7 @@ Deno.test("codex catalog: account fallback signals the masked transport failure 
   }
 });
 
-Deno.test("codex catalog: stale catalogs signal response body transport failures", async () => {
+test("codex catalog: stale catalogs signal response body transport failures", async () => {
   seedBaseState();
   const version = "0.150.4";
   const observedAtMs = Date.now();
@@ -386,7 +394,7 @@ Deno.test("codex catalog: stale catalogs signal response body transport failures
   });
   const originalFetch = globalThis.fetch;
   const degradationSignals: number[] = [];
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(
         new ReadableStream({
@@ -396,7 +404,8 @@ Deno.test("codex catalog: stale catalogs signal response body transport failures
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       )
-    );
+    )
+  );
   try {
     const response = await handleCodexCatalogModels(request(version), version, {
       now: () => observedAtMs,
@@ -413,7 +422,7 @@ Deno.test("codex catalog: stale catalogs signal response body transport failures
   }
 });
 
-Deno.test("codex catalog: stale upstream ETags revalidate upstream without validating client bytes", async () => {
+test("codex catalog: stale upstream ETags revalidate upstream without validating client bytes", async () => {
   seedBaseState();
   const version = "0.150.1";
   await storeCodexCatalog(kvStub, {
@@ -425,10 +434,10 @@ Deno.test("codex catalog: stale upstream ETags revalidate upstream without valid
   });
   const originalFetch = globalThis.fetch;
   let upstreamIfNoneMatch: string | null = null;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     upstreamIfNoneMatch = new Request(input, init).headers.get("If-None-Match");
     return Promise.resolve(new Response(null, { status: 304, headers: { ETag: '"catalog-etag"' } }));
-  };
+  });
   try {
     const response = await handleCodexCatalogModels(request(version, { "If-None-Match": '"catalog-etag"' }), version);
     assert.equal(response.status, 200);
@@ -440,7 +449,7 @@ Deno.test("codex catalog: stale upstream ETags revalidate upstream without valid
   }
 });
 
-Deno.test("codex catalog: refresh leases suppress duplicate upstream requests", async () => {
+test("codex catalog: refresh leases suppress duplicate upstream requests", async () => {
   seedBaseState();
   const version = "0.151.0";
   await storeCodexCatalog(kvStub, {
@@ -456,10 +465,10 @@ Deno.test("codex catalog: refresh leases suppress duplicate upstream requests", 
   const originalFetch = globalThis.fetch;
   let calls = 0;
   let degradationSignals = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     calls += 1;
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
-  };
+  });
   try {
     const response = await handleCodexCatalogModels(request(version), version, {
       recordSentinelDegradation: () => {
@@ -476,7 +485,7 @@ Deno.test("codex catalog: refresh leases suppress duplicate upstream requests", 
   }
 });
 
-Deno.test("codex catalog: concurrent cold misses share one upstream refresh", async () => {
+test("codex catalog: concurrent cold misses share one upstream refresh", async () => {
   seedBaseState();
   const version = "0.151.1";
   const originalFetch = globalThis.fetch;
@@ -485,11 +494,11 @@ Deno.test("codex catalog: concurrent cold misses share one upstream refresh", as
   const fetchStarted = new Promise<void>((resolve) => (markFetchStarted = resolve));
   const deferredResponse = new Promise<Response>((resolve) => (resolveFetch = resolve));
   let calls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     calls += 1;
     markFetchStarted();
     return deferredResponse;
-  };
+  });
 
   try {
     const firstPromise = handleCodexCatalogModels(request(version), version);
@@ -506,7 +515,7 @@ Deno.test("codex catalog: concurrent cold misses share one upstream refresh", as
   }
 });
 
-Deno.test("codex catalog: auth rotation discards an in-flight old-generation refresh", async () => {
+test("codex catalog: auth rotation discards an in-flight old-generation refresh", async () => {
   seedBaseState("0.200.0");
   const version = "0.201.1";
   const replacementGeneration = "replacement-auth-generation";
@@ -516,10 +525,10 @@ Deno.test("codex catalog: auth rotation discards an in-flight old-generation ref
   let markFetchStarted!: () => void;
   const fetchStarted = new Promise<void>((resolve) => (markFetchStarted = resolve));
   const deferredResponse = new Promise<Response>((resolve) => (resolveFetch = resolve));
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     markFetchStarted();
     return deferredResponse;
-  };
+  });
 
   try {
     const responsePromise = handleCodexCatalogModels(request(version), version);
@@ -564,7 +573,7 @@ Deno.test("codex catalog: auth rotation discards an in-flight old-generation ref
   }
 });
 
-Deno.test("codex catalog: slow refreshes renew their lease", async () => {
+test("codex catalog: slow refreshes renew their lease", async () => {
   seedBaseState();
   const version = "0.151.2";
   const leaseStorageKey = keyToString([...CODEX_CATALOG_LEASE_PREFIX, version]);
@@ -573,10 +582,10 @@ Deno.test("codex catalog: slow refreshes renew their lease", async () => {
   let markFetchStarted!: () => void;
   const fetchStarted = new Promise<void>((resolve) => (markFetchStarted = resolve));
   const deferredResponse = new Promise<Response>((resolve) => (resolveFetch = resolve));
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     markFetchStarted();
     return deferredResponse;
-  };
+  });
 
   try {
     const responsePromise = handleCodexCatalogModels(request(version), version);
@@ -592,7 +601,7 @@ Deno.test("codex catalog: slow refreshes renew their lease", async () => {
   }
 });
 
-Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a refresh", async () => {
+test("codex catalog: gzip chunks are bounded and integrity failures force a refresh", async () => {
   seedBaseState();
   const version = "0.152.0";
   const noisyModels = Array.from({ length: 4_000 }, (_, index) => ({
@@ -609,7 +618,7 @@ Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a
     true
   );
   const chunkEntries = [...kvStore.entries()].filter(([encoded]) => {
-    const key = JSON.parse(encoded) as Deno.KvKey;
+    const key = JSON.parse(encoded) as KvKey;
     return matchesPrefix(key, [...CODEX_CATALOG_CHUNK_PREFIX, version]);
   });
   assert.ok(chunkEntries.length > 1);
@@ -631,7 +640,7 @@ Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a
   let codexRefreshCalls = 0;
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = fetchUrl(input);
     fetchedUrls.push(url);
     if (url.startsWith(`${codexModelsUrl}?client_version=`)) {
@@ -643,7 +652,7 @@ Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a
     }
     // Unrecognized URLs and inference endpoints are rejected outright.
     return Promise.resolve(new Response(`unexpected fetch ${url}`, { status: 500 }));
-  };
+  });
   try {
     const response = await handleCodexCatalogModels(request(version), version);
     assert.equal(response.status, 502);
@@ -657,7 +666,7 @@ Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a
   }
 });
 
-Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async () => {
+test("codex catalog: replacing metadata reclaims superseded chunks", async () => {
   seedBaseState();
   const version = "0.152.1";
   assert.equal(
@@ -696,7 +705,7 @@ Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async 
   }
 });
 
-Deno.test("codex catalog: rejected old-generation writes reclaim their chunks", async () => {
+test("codex catalog: rejected old-generation writes reclaim their chunks", async () => {
   seedBaseState();
   const version = "0.152.2";
   assert.equal(
@@ -708,14 +717,14 @@ Deno.test("codex catalog: rejected old-generation writes reclaim their chunks", 
     false
   );
   const orphanChunks = [...kvStore.keys()].filter((encoded) => {
-    const key = JSON.parse(encoded) as Deno.KvKey;
+    const key = JSON.parse(encoded) as KvKey;
     return matchesPrefix(key, [...CODEX_CATALOG_CHUNK_PREFIX, version]);
   });
   assert.equal(orphanChunks.length, 0);
   assert.equal(kvStore.has(keyToString(catalogKey(version))), false);
 });
 
-Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bound", async () => {
+test("codex catalog: version cache evicts the oldest catalog beyond its bound", async () => {
   seedBaseState();
   const totalVersions = CODEX_CATALOG_MAX_VERSIONS + 3;
   for (let index = 0; index < totalVersions; index += 1) {
@@ -735,7 +744,7 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
   }
 
   const metadataEntries = [...kvStore.entries()].filter(([encoded, stored]) => {
-    const key = JSON.parse(encoded) as Deno.KvKey;
+    const key = JSON.parse(encoded) as KvKey;
     return (
       matchesPrefix(key, CODEX_CATALOG_PREFIX) &&
       key.length === CODEX_CATALOG_PREFIX.length + 1 &&
@@ -747,7 +756,7 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
     const version = `1.0.${index}`;
     assert.equal(kvStore.has(keyToString(catalogKey(version))), false);
     const chunks = [...kvStore.keys()].filter((encoded) => {
-      const key = JSON.parse(encoded) as Deno.KvKey;
+      const key = JSON.parse(encoded) as KvKey;
       return matchesPrefix(key, [...CODEX_CATALOG_CHUNK_PREFIX, version]);
     });
     assert.equal(chunks.length, 0);
@@ -761,10 +770,10 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
   assert.equal(memoVersions.at(-1), `1.0.${totalVersions - 1}`);
 });
 
-Deno.test("codex catalog: only same-or-newer clients update the normalized snapshot", async () => {
+test("codex catalog: only same-or-newer clients update the normalized snapshot", async () => {
   seedBaseState("0.200.0");
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const version = new URL(input instanceof Request ? input.url : input.toString()).searchParams.get("client_version");
     assert.ok(version, "the client_version query parameter must be present");
     return Promise.resolve(
@@ -794,7 +803,7 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
         }
       )
     );
-  };
+  });
   try {
     assert.equal((await handleCodexCatalogModels(request("0.199.0"), "0.199.0")).status, 200);
     const olderSnapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as { client_version: string };
@@ -835,7 +844,7 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
   }
 });
 
-Deno.test("codex catalog: normalized snapshot retry preserves a concurrent admin default", async () => {
+test("codex catalog: normalized snapshot retry preserves a concurrent admin default", async () => {
   seedBaseState("0.200.0");
   const currentSnapshot = {
     source: "chatgpt_codex",
@@ -864,12 +873,13 @@ Deno.test("codex catalog: normalized snapshot retry preserves a concurrent admin
     { slug: "admin-default", supported_reasoning_levels: ["high"] },
   ];
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(catalogBody("0.201.0", { models: nextModels }), {
         headers: { "Content-Type": "application/json" },
       })
-    );
+    )
+  );
 
   beforeAtomicCommit = (ops) => {
     if (!ops.some((op) => keyToString(op.key) === keyToString(RUNTIME_CONFIG_V2_KEY))) return;
@@ -906,7 +916,7 @@ Deno.test("codex catalog: normalized snapshot retry preserves a concurrent admin
   }
 });
 
-Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-cache probe evidence", async () => {
+test("codex catalog: normalized refresh retries preserve same-slug prompt-cache probe evidence", async () => {
   seedBaseState("0.200.0");
   const promptCache = {
     version: 1,
@@ -945,7 +955,7 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
   resetRuntimeConfigCacheForTest();
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(
         catalogBody("0.201.0", {
@@ -953,7 +963,8 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
         }),
         { headers: { "Content-Type": "application/json" } }
       )
-    );
+    )
+  );
 
   beforeAtomicCommit = (ops) => {
     if (!ops.some((op) => keyToString(op.key) === keyToString(SNAPSHOT_KEY))) return;
@@ -982,15 +993,15 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
   }
 });
 
-Deno.test("codex catalog: model picker receives the complete unique union of paid provider models", async () => {
+test("codex catalog: model picker receives the complete unique union of paid provider models", async () => {
   seedBaseState("0.200.0");
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   const originalFetch = globalThis.fetch;
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-catalog-test-key");
-  Deno.env.set("SURPLUS_API_KEY", "surplus-catalog-test-key");
+  const originalMeteredKey = process.env.METERED_API_KEY;
+  const originalSurplusKey = process.env.SURPLUS_API_KEY;
+  process.env.METERED_API_KEY = "metered-catalog-test-key";
+  process.env.SURPLUS_API_KEY = "surplus-catalog-test-key";
   await fetchMeteredModels({
     force: true,
     fetcher: () =>
@@ -1034,10 +1045,10 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
         })
       ),
   });
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const version = new URL(fetchUrl(input)).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
-  };
+  });
 
   try {
     const response = await handleCodexCatalogModels(request("0.148.0"), "0.148.0");
@@ -1079,22 +1090,22 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
     globalThis.fetch = originalFetch;
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
-    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
+    if (originalSurplusKey === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = originalSurplusKey;
   }
 });
 
-Deno.test("codex catalog: cold provider caches cannot publish the incomplete Codex-only catalog", async () => {
+test("codex catalog: cold provider caches cannot publish the incomplete Codex-only catalog", async () => {
   seedBaseState("0.200.0");
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   const originalFetch = globalThis.fetch;
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-cold-catalog-test-key");
-  Deno.env.set("SURPLUS_API_KEY", "surplus-cold-catalog-test-key");
+  const originalMeteredKey = process.env.METERED_API_KEY;
+  const originalSurplusKey = process.env.SURPLUS_API_KEY;
+  process.env.METERED_API_KEY = "metered-cold-catalog-test-key";
+  process.env.SURPLUS_API_KEY = "surplus-cold-catalog-test-key";
   setMeteredModelsFetchForTest(() =>
     Promise.resolve(
       Response.json({
@@ -1102,14 +1113,14 @@ Deno.test("codex catalog: cold provider caches cannot publish the incomplete Cod
       })
     )
   );
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = fetchUrl(input);
     if (url === "https://api.surplusintelligence.ai/v1/models") {
       return Promise.resolve(Response.json({ data: [{ id: "deepseek-v4-flash", provider: "surplus" }] }));
     }
     const version = new URL(url).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
-  };
+  });
 
   try {
     const response = await handleCodexCatalogModels(request("0.203.0"), "0.203.0");
@@ -1128,17 +1139,17 @@ Deno.test("codex catalog: cold provider caches cannot publish the incomplete Cod
     setMeteredModelsFetchForTest(null);
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
-    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
+    if (originalSurplusKey === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = originalSurplusKey;
   }
 });
 
-Deno.test("paid-provider model caches ignore out-of-order Metered refreshes", async () => {
+test("paid-provider model caches ignore out-of-order Metered refreshes", async () => {
   resetMeteredModelsCacheForTest();
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-cache-race-test-key");
+  const originalMeteredKey = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-cache-race-test-key";
   let calls = 0;
   let resolveOlder!: (response: Response) => void;
   let resolveNewer!: (response: Response) => void;
@@ -1176,12 +1187,12 @@ Deno.test("paid-provider model caches ignore out-of-order Metered refreshes", as
     assert.equal(calls, 2);
   } finally {
     resetMeteredModelsCacheForTest();
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
   }
 });
 
-Deno.test("paid-provider model caches ignore out-of-order Surplus refreshes", async () => {
+test("paid-provider model caches ignore out-of-order Surplus refreshes", async () => {
   resetSurplusModelsCacheForTest();
   let calls = 0;
   let resolveOlder!: (response: Response) => void;
@@ -1215,13 +1226,13 @@ Deno.test("paid-provider model caches ignore out-of-order Surplus refreshes", as
   }
 });
 
-Deno.test("paid-provider model refresh failures use a cooldown", async () => {
+test("paid-provider model refresh failures use a cooldown", async () => {
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   const originalNow = Date.now;
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  const originalMeteredKey = process.env.METERED_API_KEY;
   const baseNow = originalNow();
-  Deno.env.set("METERED_API_KEY", "metered-cache-backoff-test-key");
+  process.env.METERED_API_KEY = "metered-cache-backoff-test-key";
   Date.now = () => baseNow;
 
   try {
@@ -1261,19 +1272,19 @@ Deno.test("paid-provider model refresh failures use a cooldown", async () => {
     Date.now = originalNow;
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
   }
 });
 
-Deno.test("codex catalog: expired paid-provider caches schedule background refreshes", async () => {
+test("codex catalog: expired paid-provider caches schedule background refreshes", async () => {
   seedBaseState("0.200.0");
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+  const originalMeteredKey = process.env.METERED_API_KEY;
+  const originalSurplusKey = process.env.SURPLUS_API_KEY;
   const baseNow = originalNow();
   const staleNow = baseNow + Math.max(METERED_MODELS_CACHE_TTL_MS, SURPLUS_MODELS_CACHE_TTL_MS) + 1;
   let meteredRefreshes = 0;
@@ -1282,8 +1293,8 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
   let resolveSurplusRefresh!: (response: Response) => void;
   const meteredRefreshResponse = new Promise<Response>((resolve) => (resolveMeteredRefresh = resolve));
   const surplusRefreshResponse = new Promise<Response>((resolve) => (resolveSurplusRefresh = resolve));
-  Deno.env.set("METERED_API_KEY", "metered-catalog-stale-test-key");
-  Deno.env.set("SURPLUS_API_KEY", "surplus-catalog-stale-test-key");
+  process.env.METERED_API_KEY = "metered-catalog-stale-test-key";
+  process.env.SURPLUS_API_KEY = "surplus-catalog-stale-test-key";
   Date.now = () => baseNow;
   await fetchMeteredModels({
     force: true,
@@ -1307,7 +1318,7 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
     meteredRefreshes += 1;
     return meteredRefreshResponse;
   });
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = fetchUrl(input);
     if (url === "https://api.openlux.ai/v1/models") {
       meteredRefreshes += 1;
@@ -1323,7 +1334,7 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
     }
     const version = new URL(url).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
-  };
+  });
 
   try {
     const response = await handleCodexCatalogModels(request("0.202.0"), "0.202.0");
@@ -1352,20 +1363,20 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
     setMeteredModelsFetchForTest(null);
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
-    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
+    if (originalSurplusKey === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = originalSurplusKey;
   }
 });
 
-Deno.test("codex catalog: third-party enrichment fills rows no first-party source describes", async () => {
+test("codex catalog: third-party enrichment fills rows no first-party source describes", async () => {
   seedBaseState("0.200.0");
   resetSurplusModelsCacheForTest();
   resetOpenRouterModelsCacheForTest();
   const originalFetch = globalThis.fetch;
-  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.set("SURPLUS_API_KEY", "surplus-catalog-test-key");
+  const originalSurplusKey = process.env.SURPLUS_API_KEY;
+  process.env.SURPLUS_API_KEY = "surplus-catalog-test-key";
   await fetchSurplusModels({
     apiKey: "surplus-catalog-test-key",
     force: true,
@@ -1387,10 +1398,10 @@ Deno.test("codex catalog: third-party enrichment fills rows no first-party sourc
         })
       ),
   });
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const version = new URL(fetchUrl(input)).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
-  };
+  });
 
   try {
     const response = await handleCodexCatalogModels(request("0.148.0"), "0.148.0");
@@ -1400,8 +1411,8 @@ Deno.test("codex catalog: third-party enrichment fills rows no first-party sourc
     assert.ok(deepseek, "the discovery-only id is still advertised");
     assert.deepEqual(
       (deepseek.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
-      ["max", "high", "low"],
-      "the advertised tiers pass through verbatim"
+      ["low", "high", "max"],
+      "external tiers retain their strings in ascending native picker order"
     );
     assert.equal(deepseek.default_reasoning_level, "high");
     assert.equal(deepseek.context_window, 1_048_576);
@@ -1413,18 +1424,18 @@ Deno.test("codex catalog: third-party enrichment fills rows no first-party sourc
     globalThis.fetch = originalFetch;
     resetSurplusModelsCacheForTest();
     resetOpenRouterModelsCacheForTest();
-    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+    if (originalSurplusKey === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = originalSurplusKey;
   }
 });
 
-Deno.test("codex catalog: a Codex-served id advertises the widest window a source states", async () => {
+test("codex catalog: a Codex-served id advertises the widest window a source states", async () => {
   seedBaseState("0.200.0");
   resetSurplusModelsCacheForTest();
   resetOpenRouterModelsCacheForTest();
   const originalFetch = globalThis.fetch;
-  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.set("SURPLUS_API_KEY", "surplus-catalog-test-key");
+  const originalSurplusKey = process.env.SURPLUS_API_KEY;
+  process.env.SURPLUS_API_KEY = "surplus-catalog-test-key";
   // The endpoint's catalog says 272k/872k and understates what it accepts; the
   // gateway advertises the model's real window so a client can choose its budget.
   await fetchSurplusModels({
@@ -1448,10 +1459,10 @@ Deno.test("codex catalog: a Codex-served id advertises the widest window a sourc
         })
       ),
   });
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const version = new URL(fetchUrl(input)).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
-  };
+  });
 
   try {
     // A version with no stored catalog takes the paid-only path.
@@ -1478,7 +1489,7 @@ Deno.test("codex catalog: a Codex-served id advertises the widest window a sourc
     globalThis.fetch = originalFetch;
     resetSurplusModelsCacheForTest();
     resetOpenRouterModelsCacheForTest();
-    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+    if (originalSurplusKey === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = originalSurplusKey;
   }
 });

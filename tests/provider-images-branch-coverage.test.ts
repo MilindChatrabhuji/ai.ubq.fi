@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { extractImagesFromResponses, handleImages, resolveImageBaseModel } from "../src/images.ts";
@@ -34,31 +35,31 @@ const failureBody = async (response: Response): Promise<{ error: { message: stri
 
 /** Runs one test with a configured image base model and restores the environment. */
 const withImageBaseModel = async (run: () => Promise<void>): Promise<void> => {
-  const previous = Deno.env.get("IMAGE_BASE_MODEL");
-  Deno.env.set("IMAGE_BASE_MODEL", "gpt-5.6-sol");
+  const previous = process.env.IMAGE_BASE_MODEL;
+  process.env.IMAGE_BASE_MODEL = "gpt-5.6-sol";
   try {
     await run();
   } finally {
-    if (previous === undefined) Deno.env.delete("IMAGE_BASE_MODEL");
-    else Deno.env.set("IMAGE_BASE_MODEL", previous);
+    if (previous === undefined) delete process.env.IMAGE_BASE_MODEL;
+    else process.env.IMAGE_BASE_MODEL = previous;
   }
 };
 
-Deno.test("the base model resolves from the environment and never invents one", async () => {
+test("the base model resolves from the environment and never invents one", async () => {
   await withImageBaseModel(async () => {
     assert.equal(await resolveImageBaseModel(), "gpt-5.6-sol", "a configured base model is used verbatim");
   });
-  const previous = Deno.env.get("IMAGE_BASE_MODEL");
-  Deno.env.delete("IMAGE_BASE_MODEL");
+  const previous = process.env.IMAGE_BASE_MODEL;
+  delete process.env.IMAGE_BASE_MODEL;
   try {
     const fallback = await resolveImageBaseModel();
     assert.ok(fallback === null || fallback.length > 0, "an unconfigured base model either falls back to a default or reports absence");
   } finally {
-    if (previous !== undefined) Deno.env.set("IMAGE_BASE_MODEL", previous);
+    if (previous !== undefined) process.env.IMAGE_BASE_MODEL = previous;
   }
 });
 
-Deno.test("image requests reject unusable bodies before any dispatch", async () => {
+test("image requests reject unusable bodies before any dispatch", async () => {
   await withImageBaseModel(async () => {
     const dispatch = (): Promise<Response> => Promise.resolve(new Response("{}", { status: 599 }));
     const run = (body: unknown) => handleImages(generationRequest(body), "generations", undefined, { dispatch });
@@ -106,7 +107,7 @@ Deno.test("image requests reject unusable bodies before any dispatch", async () 
   });
 });
 
-Deno.test("image generation fans out one upstream call per requested image", async () => {
+test("image generation fans out one upstream call per requested image", async () => {
   await withImageBaseModel(async () => {
     const seen: Request[] = [];
     const single = await handleImages(generationRequest({ prompt: "a cat" }), "generations", undefined, {
@@ -134,7 +135,7 @@ Deno.test("image generation fans out one upstream call per requested image", asy
   });
 });
 
-Deno.test("image aggregation reports every upstream failure shape", async () => {
+test("image aggregation reports every upstream failure shape", async () => {
   await withImageBaseModel(async () => {
     const nonJson = await handleImages(generationRequest({ prompt: "a cat" }), "generations", undefined, {
       dispatch: () => Promise.resolve(new Response("<html>gateway</html>", { status: 200 })),
@@ -171,7 +172,7 @@ Deno.test("image aggregation reports every upstream failure shape", async () => 
   });
 });
 
-Deno.test("image extraction reads only complete image-generation items", () => {
+test("image extraction reads only complete image-generation items", () => {
   assert.deepEqual(extractImagesFromResponses(null), []);
   assert.deepEqual(extractImagesFromResponses({ output: "not-an-array" }), []);
   assert.deepEqual(
@@ -184,7 +185,7 @@ Deno.test("image extraction reads only complete image-generation items", () => {
   ]);
 });
 
-Deno.test("multipart image edits validate every part before dispatch", async () => {
+test("multipart image edits validate every part before dispatch", async () => {
   await withImageBaseModel(async () => {
     const editUrl = "https://ai.ubq.fi/v1/images/edits";
     const form = (parts: Record<string, Blob | string>): FormData => {
@@ -239,7 +240,7 @@ Deno.test("multipart image edits validate every part before dispatch", async () 
   });
 });
 
-Deno.test("a multipart edit with an unusable declaration or body is refused", async () => {
+test("a multipart edit with an unusable declaration or body is refused", async () => {
   await withImageBaseModel(async () => {
     const editUrl = "https://ai.ubq.fi/v1/images/edits";
     const declaredLength = (value: string): Request => {

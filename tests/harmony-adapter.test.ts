@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { buildCerebrasHarmonyRequest, createCerebrasTransport, normalizeHarmonyChatCompletion, runHarmonyTurn } from "../src/harmony/adapter.ts";
@@ -28,7 +29,7 @@ const okResponse = (body: string): Response =>
     headers: { "Content-Type": "application/json" },
   });
 
-Deno.test("generic request carries normalized tools, reasoning effort and no analysis", () => {
+test("generic request carries normalized tools, reasoning effort and no analysis", () => {
   const conversation = createConversation([
     { role: "user", content: "Weather?" },
     {
@@ -62,7 +63,7 @@ Deno.test("generic request carries normalized tools, reasoning effort and no ana
   assert.ok(!JSON.stringify(built.body).includes("Need to use function get_weather"));
 });
 
-Deno.test("native request renders Harmony system/developer and omits tools and reasoning_effort fields", () => {
+test("native request renders Harmony system/developer and omits tools and reasoning_effort fields", () => {
   const conversation = createConversation([{ role: "user", content: "Weather?" }]);
   const built = buildCerebrasHarmonyRequest({
     style: "native",
@@ -86,7 +87,7 @@ Deno.test("native request renders Harmony system/developer and omits tools and r
   assert.match(developer, /type get_weather = \(_: \{/);
 });
 
-Deno.test("tools combined with a structured response format is blocked unless probed", () => {
+test("tools combined with a structured response format is blocked unless probed", () => {
   const conversation = createConversation([{ role: "user", content: "Weather?" }]);
   assert.throws(
     () =>
@@ -109,7 +110,7 @@ Deno.test("tools combined with a structured response format is blocked unless pr
   assert.ok(Array.isArray(probed.body.tools));
 });
 
-Deno.test("preserve mode keeps per-tool strictness flags for protocol evidence", () => {
+test("preserve mode keeps per-tool strictness flags for protocol evidence", () => {
   const conversation = createConversation([{ role: "user", content: "Weather?" }]);
   const built = buildCerebrasHarmonyRequest({
     style: "generic",
@@ -121,7 +122,7 @@ Deno.test("preserve mode keeps per-tool strictness flags for protocol evidence",
   assert.deepEqual(strictValues, [true, undefined]);
 });
 
-Deno.test("normalizes reasoning_content, tool calls and finish reason from provider payloads", () => {
+test("normalizes reasoning_content, tool calls and finish reason from provider payloads", () => {
   const normalized = normalizeHarmonyChatCompletion(
     JSON.parse(
       chatCompletion({
@@ -153,7 +154,7 @@ Deno.test("normalizes reasoning_content, tool calls and finish reason from provi
   assert.equal(normalized.shape.reasoningField, "reasoning_content");
 });
 
-Deno.test("parses Harmony raw output from content when the provider does not translate calls", () => {
+test("parses Harmony raw output from content when the provider does not translate calls", () => {
   const normalized = normalizeHarmonyChatCompletion(
     JSON.parse(
       chatCompletion({
@@ -183,7 +184,7 @@ Deno.test("parses Harmony raw output from content when the provider does not tra
   ]);
 });
 
-Deno.test("supports multiple parallel tool calls with distinct ids", () => {
+test("supports multiple parallel tool calls with distinct ids", () => {
   const normalized = normalizeHarmonyChatCompletion(
     JSON.parse(
       chatCompletion({
@@ -214,13 +215,13 @@ Deno.test("supports multiple parallel tool calls with distinct ids", () => {
   assert.equal(normalized.toolCalls[1].id, "call_b");
 });
 
-Deno.test("rejects a model mismatch in the upstream reply", () => {
+test("rejects a model mismatch in the upstream reply", () => {
   const normalized = normalizeHarmonyChatCompletion(JSON.parse(chatCompletion({ model: "some-other-model" })));
   assert.ok("error" in normalized);
   assert.match(normalized.error as string, /instead of/);
 });
 
-Deno.test("runHarmonyTurn surfaces upstream validation errors as sanitized fingerprints", async () => {
+test("runHarmonyTurn surfaces upstream validation errors as sanitized fingerprints", async () => {
   const transport = createCerebrasTransport({
     apiKey: "test-key",
     fetcher: () =>
@@ -242,7 +243,7 @@ Deno.test("runHarmonyTurn surfaces upstream validation errors as sanitized finge
   assert.match(result.upstreamError.message ?? "", /mixed values/);
 });
 
-Deno.test("runHarmonyTurn completes a tool call then a final answer through the real transport", async () => {
+test("runHarmonyTurn completes a tool call then a final answer through the real transport", async () => {
   const requestBodies: Record<string, unknown>[] = [];
   const transport = createCerebrasTransport({
     apiKey: "test-key",
@@ -307,7 +308,7 @@ Deno.test("runHarmonyTurn completes a tool call then a final answer through the 
   assert.deepEqual(secondMessages[1].tool_calls, [{ id: "call_a", type: "function", function: { name: "get_weather", arguments: '{"location":"SF"}' } }]);
 });
 
-Deno.test("native user-role replay renders the tool result as a user message", () => {
+test("native user-role replay renders the tool result as a user message", () => {
   const conversation = appendToolResult(createConversation([{ role: "user", content: "Weather?" }]), "call_a", "get_weather", '{"sunny": true}');
   const built = buildCerebrasHarmonyRequest({
     style: "native",
@@ -320,7 +321,7 @@ Deno.test("native user-role replay renders the tool result as a user message", (
   assert.match(messages[3].content as string, /^Tool result from get_weather:\n/);
 });
 
-Deno.test("consecutive generic turns keep the conversation consistent", async () => {
+test("consecutive generic turns keep the conversation consistent", async () => {
   const transport = createCerebrasTransport({
     apiKey: "test-key",
     fetcher: () =>

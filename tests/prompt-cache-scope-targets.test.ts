@@ -1,8 +1,10 @@
+import type { Kv, KvCommitResult, KvEntry, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { derivePromptCacheScopeTargetInventory, loadPromptCacheScopeTargetInventory } from "../src/cache/scope-targets.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot } from "../src/codex/index.ts";
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 
 const qualifiedControls = {
   key: true,
@@ -53,7 +55,7 @@ const derive = async (overrides: Partial<Parameters<typeof derivePromptCacheScop
     ...overrides,
   });
 
-Deno.test("target inventory sorts and de-duplicates catalog IDs without inferring model families", async () => {
+test("target inventory sorts and de-duplicates catalog IDs without inferring model families", async () => {
   const first = await derive({
     snapshot: makeSnapshot([makeModel("gpt-5.6-mini"), makeModel("gpt-5.6"), makeModel("gpt-5.6-mini")]),
   });
@@ -77,7 +79,7 @@ Deno.test("target inventory sorts and de-duplicates catalog IDs without inferrin
   }
 });
 
-Deno.test("Codex capability identity and terminal telemetry identity stay distinct", async () => {
+test("Codex capability identity and terminal telemetry identity stay distinct", async () => {
   const inventory = await derive();
   const target = inventory.targets.find((candidate) => candidate.provider === "codex_chatgpt");
   assert.ok(target);
@@ -86,7 +88,7 @@ Deno.test("Codex capability identity and terminal telemetry identity stay distin
   assert.ok(target.id.includes(":codex_chatgpt:chatgpt_codex:codex_account_pool:"));
 });
 
-Deno.test("only a usable two-slot Codex pool is probeable", async () => {
+test("only a usable two-slot Codex pool is probeable", async () => {
   const twoSlots = await derive();
   const oneSlot = await derive({ codexAuthPool: makePool(1) });
   const noSlots = await derive({ codexAuthPool: makePool(0), codexAuthPoolVersionstamp: null });
@@ -101,7 +103,7 @@ Deno.test("only a usable two-slot Codex pool is probeable", async () => {
   assert.deepEqual(noSlots.targets[0]?.probeability, { status: "unprobeable", reason: "two_codex_slots_required" });
 });
 
-Deno.test("the Codex account-pool identity fences membership changes without retaining raw account IDs", async () => {
+test("the Codex account-pool identity fences membership changes without retaining raw account IDs", async () => {
   const initial = await derive({
     codexAuthPool: makeNamedPool(["account-sentinel-one", "account-sentinel-two"], "initial"),
   });
@@ -134,7 +136,7 @@ Deno.test("the Codex account-pool identity fences membership changes without ret
   assert.equal(serialized.includes("account-sentinel-two"), false);
 });
 
-Deno.test("Codex cache qualification comes from existing catalog capability metadata", async () => {
+test("Codex cache qualification comes from existing catalog capability metadata", async () => {
   const inventory = await derive({
     snapshot: makeSnapshot([
       makeModel("qualified"),
@@ -177,7 +179,7 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
   assert.deepEqual(explicitOptionsOnly.probeability, { status: "probeable", adapter: "codex_two_slot" });
 });
 
-Deno.test("an authoritative metered roster creates only catalog intersections and reports the rest", async () => {
+test("an authoritative metered roster creates only catalog intersections and reports the rest", async () => {
   const inventory = await derive({
     meteredFallbackRoster: { status: "authoritative", model_ids: ["missing", "gpt-5.6-mini", "gpt-5.6-mini"] },
   });
@@ -194,7 +196,7 @@ Deno.test("an authoritative metered roster creates only catalog intersections an
   });
 });
 
-Deno.test("Metered targets describe their single-credential topology and current adapter boundary", async () => {
+test("Metered targets describe their single-credential topology and current adapter boundary", async () => {
   const inventory = await derive({
     meteredFallbackRoster: { status: "authoritative", model_ids: ["gpt-5.6"] },
   });
@@ -212,7 +214,7 @@ Deno.test("Metered targets describe their single-credential topology and current
   assert.equal(target.codex_auth_pool_identity_fingerprint, null);
 });
 
-Deno.test("the same exact model has isolated Codex and metered target identities", async () => {
+test("the same exact model has isolated Codex and metered target identities", async () => {
   const inventory = await derive({
     meteredFallbackRoster: { status: "authoritative", model_ids: ["gpt-5.6"] },
   });
@@ -232,7 +234,7 @@ Deno.test("the same exact model has isolated Codex and metered target identities
   );
 });
 
-Deno.test("published scope evidence does not change the dispatch capability or inventory identity", async () => {
+test("published scope evidence does not change the dispatch capability or inventory identity", async () => {
   const baseline = await derive();
   const scopedModel = {
     ...makeModel("gpt-5.6"),
@@ -268,7 +270,7 @@ Deno.test("published scope evidence does not change the dispatch capability or i
   assert.equal(published.inventory_fingerprint, baseline.inventory_fingerprint);
 });
 
-Deno.test("an unknown metered roster fails closed with no metered targets", async () => {
+test("an unknown metered roster fails closed with no metered targets", async () => {
   const inventory = await derive({ meteredFallbackRoster: { status: "unknown" } });
 
   assert.equal(inventory.metered_fallback_roster.status, "unknown");
@@ -278,13 +280,13 @@ Deno.test("an unknown metered roster fails closed with no metered targets", asyn
   );
 });
 
-Deno.test("the inventory loader has a two-key read-only KV footprint", async () => {
+test("the inventory loader has a two-key read-only KV footprint", async () => {
   class ReadOnlyKv {
     readonly reads: string[] = [];
     listCalls = 0;
     writeCalls = 0;
 
-    get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+    get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
       assert.deepEqual(options, { consistency: "strong" });
       this.reads.push(encodeKey(key));
       if (encodeKey(key) === encodeKey(CODEX_MODELS_KV_KEY)) {
@@ -292,27 +294,27 @@ Deno.test("the inventory loader has a two-key read-only KV footprint", async () 
           key,
           value: makeSnapshot([makeModel("gpt-5.6")]) as T,
           versionstamp: "catalog-v1",
-        } as Deno.KvEntryMaybe<T>);
+        } as KvEntryMaybe<T>);
       }
       if (encodeKey(key) === encodeKey(CODEX_AUTH_POOL_KV_KEY)) {
-        return Promise.resolve({ key, value: makePool(2) as T, versionstamp: "auth-v1" } as Deno.KvEntryMaybe<T>);
+        return Promise.resolve({ key, value: makePool(2) as T, versionstamp: "auth-v1" } as KvEntryMaybe<T>);
       }
       throw new Error(`unexpected KV key: ${encodeKey(key)}`);
     }
 
-    list(): AsyncIterable<Deno.KvEntry<unknown>> {
+    list(): AsyncIterable<KvEntry<unknown>> {
       this.listCalls += 1;
       throw new Error("target inventory must not list KV records");
     }
 
-    set(): Promise<Deno.KvCommitResult> {
+    set(): Promise<KvCommitResult> {
       this.writeCalls += 1;
       throw new Error("target inventory must not write KV records");
     }
   }
 
   const kv = new ReadOnlyKv();
-  const inventory = await loadPromptCacheScopeTargetInventory({ kv: kv as unknown as Deno.Kv });
+  const inventory = await loadPromptCacheScopeTargetInventory({ kv: kv as unknown as Kv });
 
   assert.equal(inventory.status, "ready");
   assert.deepEqual(new Set(kv.reads), new Set([encodeKey(CODEX_MODELS_KV_KEY), encodeKey(CODEX_AUTH_POOL_KV_KEY)]));
@@ -321,7 +323,7 @@ Deno.test("the inventory loader has a two-key read-only KV footprint", async () 
   assert.equal(kv.writeCalls, 0);
 });
 
-Deno.test("missing or invalid catalogs fail closed", async () => {
+test("missing or invalid catalogs fail closed", async () => {
   const missing = await derive({ snapshot: null });
   const invalid = await derive({
     snapshot: { source: "chatgpt_codex", updated_at_ms: 1, models: [] },

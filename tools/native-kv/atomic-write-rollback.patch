@@ -1,0 +1,21 @@
+--- a/sqlite/backend.rs
++++ b/sqlite/backend.rs
+@@ -291,12 +291,18 @@
+       let mut has_enqueues = false;
+       let mut commit_results = Vec::with_capacity(writes.len());
+       for write in &writes {
++        // Each atomic write must roll back independently within the batch.
++        tx.execute_batch("SAVEPOINT denokv_atomic_write")?;
+         match Self::atomic_write_once(tx, rng, write) {
+           Ok((this_has_enqueue, commit_result)) => {
++            tx.execute_batch("RELEASE denokv_atomic_write")?;
+             has_enqueues |= this_has_enqueue;
+             commit_results.push(Ok(commit_result));
+           }
+           Err(e) => {
++            tx.execute_batch(
++              "ROLLBACK TO denokv_atomic_write; RELEASE denokv_atomic_write",
++            )?;
+             commit_results.push(Err(e));
+           }
+         }

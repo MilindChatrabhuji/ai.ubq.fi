@@ -131,7 +131,7 @@ export const fetchOpenRouterResponses = async (
 
 export const readOpenRouterApiKey = (): string | null => {
   try {
-    const value = Deno.env.get(OPENROUTER_API_KEY_ENV)?.trim();
+    const value = process.env[OPENROUTER_API_KEY_ENV]?.trim();
     if (!value) return null;
     return value;
   } catch {

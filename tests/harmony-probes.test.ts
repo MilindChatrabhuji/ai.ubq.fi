@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import type { HarmonyTransport } from "../src/harmony/adapter.ts";
@@ -97,7 +98,7 @@ const responseFormatsOf = (body: Record<string, unknown>): boolean => {
   return messages.some((message) => message.role === "developer" && typeof message.content === "string" && message.content.includes("# Response Formats"));
 };
 
-Deno.test("the manifest covers every required protocol question exactly once", () => {
+test("the manifest covers every required protocol question exactly once", () => {
   const ids = PROBE_SCENARIOS.map((scenario) => scenario.id);
   assert.equal(new Set(ids).size, ids.length);
   assert.deepEqual(
@@ -134,7 +135,7 @@ Deno.test("the manifest covers every required protocol question exactly once", (
   assert.ok(byId.get("tools.generic.sequence")?.style === "generic");
 });
 
-Deno.test("reasoning effort probe runs deterministically through the fake transport", async () => {
+test("reasoning effort probe runs deterministically through the fake transport", async () => {
   const { transport } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   const scenario = PROBE_SCENARIOS.find((candidate) => candidate.id === "reasoning.effort.low");
@@ -149,7 +150,7 @@ Deno.test("reasoning effort probe runs deterministically through the fake transp
   assert.equal(result.durationMs, 0);
 });
 
-Deno.test("generic tool sequence reproduces call/result shape and replays the result", async () => {
+test("generic tool sequence reproduces call/result shape and replays the result", async () => {
   const { transport, bodies } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   const scenario = PROBE_SCENARIOS.find((candidate) => candidate.id === "tools.generic.sequence");
@@ -173,7 +174,7 @@ Deno.test("generic tool sequence reproduces call/result shape and replays the re
   assert.ok(!JSON.stringify(bodies[1]).includes("Private chain of thought"));
 });
 
-Deno.test("mixed strictness probe records the upstream rejection and matches its expectation", async () => {
+test("mixed strictness probe records the upstream rejection and matches its expectation", async () => {
   const { transport } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   const scenario = PROBE_SCENARIOS.find((candidate) => candidate.id === "strictness.mixed");
@@ -185,7 +186,7 @@ Deno.test("mixed strictness probe records the upstream rejection and matches its
   assert.match(result.turns[0].upstreamError?.message ?? "", /mixed values/);
 });
 
-Deno.test("structured output with tools is recorded without being normalized away", async () => {
+test("structured output with tools is recorded without being normalized away", async () => {
   const { transport } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   const scenario = PROBE_SCENARIOS.find((candidate) => candidate.id === "structured.with-tools");
@@ -195,7 +196,7 @@ Deno.test("structured output with tools is recorded without being normalized awa
   assert.equal(result.turns[0].request?.responseFormat, "json_schema");
 });
 
-Deno.test("classifier probe returns a literal true verdict", async () => {
+test("classifier probe returns a literal true verdict", async () => {
   const { transport } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   const scenario = PROBE_SCENARIOS.find((candidate) => candidate.id === "classifier.low");
@@ -205,7 +206,7 @@ Deno.test("classifier probe returns a literal true verdict", async () => {
   assert.deepEqual(result.verdict, { verdict: "true", raw: "true" });
 });
 
-Deno.test("the native tool result replay is sent as a user message in the user-role variant", async () => {
+test("the native tool result replay is sent as a user message in the user-role variant", async () => {
   const { transport, bodies } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   const scenario = PROBE_SCENARIOS.find((candidate) => candidate.id === "tools.native.user-result");
@@ -221,7 +222,7 @@ Deno.test("the native tool result replay is sent as a user message in the user-r
   assert.match(String(secondMessages[4].content), /^Tool result from get_weather:\n/);
 });
 
-Deno.test("probe results are sanitized: no prompts, reasoning, keys or observation data", async () => {
+test("probe results are sanitized: no prompts, reasoning, keys or observation data", async () => {
   const { transport } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   const results = [];
@@ -253,7 +254,7 @@ Deno.test("probe results are sanitized: no prompts, reasoning, keys or observati
   }
 });
 
-Deno.test("the full manifest completes under the scripted transport with no harness failures", async () => {
+test("the full manifest completes under the scripted transport with no harness failures", async () => {
   const { transport } = scriptedTransport();
   const ctx = createProbeContext(transport, () => new Date(0));
   for (const scenario of PROBE_SCENARIOS) {

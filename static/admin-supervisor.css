@@ -135,18 +135,24 @@ body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-st
 }
 
 /* A session waiting on a human is the one case worth pulling out of the row's state. */
-body[data-page="admin"] #supervisor-list [data-key="supervisor-session"]:has([data-role="supervisor-state"][data-waiting="true"]) {
+body[data-page="admin"]
+  #supervisor-list
+  [data-key="supervisor-session"]:has([data-role="supervisor-state"][data-waiting="true"]) {
   --key-accent: var(--warning);
 }
 
 body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="stale"]::before,
 body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="system_error"]::before,
-body[data-page="admin"] #supervisor-list [data-key="supervisor-session"]:has([data-role="supervisor-state"][data-waiting="true"])::before {
+body[data-page="admin"]
+  #supervisor-list
+  [data-key="supervisor-session"]:has([data-role="supervisor-state"][data-waiting="true"])::before {
   content: "";
 }
 
 /* Follow selection already lives on the pressed button; the overview restates it as a tint. */
-body[data-page="admin"] #supervisor-list [data-key="supervisor-session"]:has([data-action="follow"][aria-pressed="true"]) {
+body[data-page="admin"]
+  #supervisor-list
+  [data-key="supervisor-session"]:has([data-action="follow"][aria-pressed="true"]) {
   background: var(--selection);
 }
 
@@ -463,7 +469,9 @@ body[data-page="admin"] #supervisor-brief {
   }
 
   /* Two columns only while a section is open, so no empty column is reserved. */
-  body[data-page="admin"] #view-supervisor [data-supervisor-columns]:has([data-supervisor-inspector] > section:not([hidden])) {
+  body[data-page="admin"]
+    #view-supervisor
+    [data-supervisor-columns]:has([data-supervisor-inspector] > section:not([hidden])) {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
   }
 }

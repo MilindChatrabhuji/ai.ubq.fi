@@ -1,3 +1,6 @@
+import { test } from "bun:test";
+import { runCommand } from "../../process.ts";
+import { rmSync } from "node:fs";
 import {
   bridgeEventToTrajectory,
   CODEX_INFINITY_SOURCE_PIN,
@@ -10,7 +13,7 @@ import { runOne } from "../../runner.ts";
 import { validateTrajectoryEvent } from "../../schemas.ts";
 import { freshRunOptions, nav001 } from "./helpers.ts";
 
-Deno.test("B: implements the BenchmarkAdapter contract and is refused by default", () => {
+test("B: implements the BenchmarkAdapter contract and is refused by default", () => {
   const adapter = createBaselineB();
   if (adapter.configId !== "B") throw new Error(`configId must be B, got ${adapter.configId}`);
   if (adapter.name !== "codex-infinity-bridge") throw new Error(`unexpected name ${adapter.name}`);
@@ -18,7 +21,7 @@ Deno.test("B: implements the BenchmarkAdapter contract and is refused by default
   if (typeof adapter.run !== "function") throw new Error("run must be a function");
 });
 
-Deno.test("B: default instance refuses to run without cloning or spawning", async () => {
+test("B: default instance refuses to run without cloning or spawning", async () => {
   const opts = freshRunOptions();
   try {
     const { result } = await runOne(nav001(), createBaselineB(), opts);
@@ -30,11 +33,11 @@ Deno.test("B: default instance refuses to run without cloning or spawning", asyn
       throw new Error(`unexpected refusal text: ${detail}`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("B: live driver is refused without the explicit allowLiveProcess opt-in", async () => {
+test("B: live driver is refused without the explicit allowLiveProcess opt-in", async () => {
   const opts = freshRunOptions();
   try {
     const adapter = createBaselineB({ driver: "live" });
@@ -46,11 +49,11 @@ Deno.test("B: live driver is refused without the explicit allowLiveProcess opt-i
       throw new Error(`expected the allowLiveProcess refusal, got ${result.failure_detail}`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("B: scripted driver completes nav-001 and records bridge events", async () => {
+test("B: scripted driver completes nav-001 and records bridge events", async () => {
   const opts = freshRunOptions();
   try {
     const task = nav001();
@@ -72,11 +75,11 @@ Deno.test("B: scripted driver completes nav-001 and records bridge events", asyn
       .join(",");
     if (requestIds !== "1,2") throw new Error(`expected monotonic bridge request ids, got ${requestIds}`);
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("B: pinned provenance record matches the live primary-source facts", () => {
+test("B: pinned provenance record matches the live primary-source facts", () => {
   // Read through a widened view on purpose: the pin's own fields are literal
   // types, so a literal-vs-literal comparison is decided statically and would
   // stop catching drift the moment the pin is edited.
@@ -92,7 +95,7 @@ Deno.test("B: pinned provenance record matches the live primary-source facts", (
   if (pin.npmPackage !== "@codex-infinity/codex-infinity") throw new Error("npm package drifted");
 });
 
-Deno.test("B: assumed JSONL parser maps events and skips unverified lines", () => {
+test("B: assumed JSONL parser maps events and skips unverified lines", () => {
   const request = parseCodexProcessLine(JSON.stringify({ type: "model_request", id: 1, model: "cerebras/gpt-oss-120b", message_count: 2 }));
   if (request?.kind !== "model_request" || request.id !== 1 || request.model !== "cerebras/gpt-oss-120b") {
     throw new Error("model_request line did not map");
@@ -115,7 +118,7 @@ Deno.test("B: assumed JSONL parser maps events and skips unverified lines", () =
   }
 });
 
-Deno.test("B: bridge event mapping produces schema-valid trajectory events", () => {
+test("B: bridge event mapping produces schema-valid trajectory events", () => {
   const event = bridgeEventToTrajectory(
     {
       kind: "tool_call",
@@ -130,7 +133,7 @@ Deno.test("B: bridge event mapping produces schema-valid trajectory events", () 
   if (event.type !== "tool_call" || !event.valid) throw new Error("tool_call mapping failed");
 });
 
-Deno.test("B: child stderr is drained without waiting for stdout", async () => {
+test("B: child stderr is drained without waiting for stdout", async () => {
   let stderrPulls = 0;
   let releaseStdout!: () => void;
   const stderrReady = new Promise<void>((resolve) => (releaseStdout = resolve));
@@ -168,4 +171,22 @@ Deno.test("B: child stderr is drained without waiting for stdout", async () => {
     throw new Error("stdout was not released after concurrent stderr drain");
   }
   if (stderrPulls !== 4) throw new Error(`expected all stderr chunks to drain, got ${stderrPulls}`);
+});
+
+test("B: native child emits stdout after stderr exceeds pipe capacity", async () => {
+  const script = 'await new Promise(resolve => process.stderr.write("x".repeat(512 * 1024), resolve)); process.stdout.write("stdout-ready");';
+  const result = await runCommand([process.execPath, "--no-env-file", "-e", script]);
+  if (result.code !== 0 || result.stdout !== "stdout-ready" || result.stderr.length !== 512 * 1024) {
+    throw new Error("native child output was lost or its pipes did not drain concurrently");
+  }
+});
+
+test("B: native child settles when its caller aborts", async () => {
+  const signal = AbortSignal.timeout(100);
+  try {
+    const result = await runCommand([process.execPath, "--no-env-file", "-e", "setTimeout(() => {}, 10_000);"], { signal });
+    if (!signal.aborted || result.code === 0) throw new Error("the native child did not stop on cancellation");
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "AbortError") throw error;
+  }
 });

@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -38,7 +39,7 @@ const chunk = (overrides: Record<string, unknown> = {}): Record<string, unknown>
   ...overrides,
 });
 
-Deno.test("lithos: relays the measured prompt, completion, total, cache and reasoning counters", () => {
+test("lithos: relays the measured prompt, completion, total, cache and reasoning counters", () => {
   const result = normalizeLithosChatCompletion(
     completion({
       usage: {
@@ -63,7 +64,7 @@ Deno.test("lithos: relays the measured prompt, completion, total, cache and reas
   assert.equal(result.value.model, REQUESTED_MODEL);
 });
 
-Deno.test("lithos: an explicit null details object stays absent instead of becoming a measured zero", () => {
+test("lithos: an explicit null details object stays absent instead of becoming a measured zero", () => {
   const result = normalizeLithosChatCompletion(
     completion({
       usage: {
@@ -100,7 +101,7 @@ Deno.test("lithos: an explicit null details object stays absent instead of becom
   });
 });
 
-Deno.test("lithos: present-and-null message fields stay absent while a tool call keeps its opaque id", () => {
+test("lithos: present-and-null message fields stay absent while a tool call keeps its opaque id", () => {
   const plain = normalizeLithosChatCompletion(completion(), REQUESTED_MODEL);
   if (!plain.ok) throw new Error(plain.message);
   // `reasoning_content: null` and `tool_calls: null` are how this provider
@@ -139,7 +140,7 @@ Deno.test("lithos: present-and-null message fields stay absent while a tool call
   ]);
 });
 
-Deno.test("lithos: the chunk normalizer accepts the empty-choices totals frame and relays its usage", () => {
+test("lithos: the chunk normalizer accepts the empty-choices totals frame and relays its usage", () => {
   // The authoritative totals arrive on a trailing chunk whose `choices` is an
   // EMPTY ARRAY. Rejecting this frame loses every streamed token measurement,
   // so it is accepted explicitly and its usage is relayed ungated.
@@ -206,7 +207,7 @@ Deno.test("lithos: the chunk normalizer accepts the empty-choices totals frame a
   assert.deepEqual(terminal.value.choices, [{ index: 0, delta: {}, finish_reason: "stop" }]);
 });
 
-Deno.test("lithos: a malformed payload is refused with a message instead of throwing", () => {
+test("lithos: a malformed payload is refused with a message instead of throwing", () => {
   const malformedCompletions: readonly unknown[] = [
     null,
     "not a chat completion",
@@ -236,7 +237,7 @@ Deno.test("lithos: a malformed payload is refused with a message instead of thro
   }
 });
 
-Deno.test("lithos: model resolution is case-insensitive and returns the canonical id", () => {
+test("lithos: model resolution is case-insensitive and returns the canonical id", () => {
   assert.equal(LITHOS_MODEL_IDS.length, 8);
   for (const id of LITHOS_MODEL_IDS) assert.equal(lithosUpstreamModelFor(id), id);
   assert.equal(lithosUpstreamModelFor("moonshotai/kimi-k3-ultra-chat"), "moonshotai/Kimi-K3-ultra-chat");
@@ -246,7 +247,7 @@ Deno.test("lithos: model resolution is case-insensitive and returns the canonica
   assert.equal(lithosUpstreamModelFor("constructor"), null);
 });
 
-Deno.test("lithos: a supplied key wins and a missing key fails closed", () => {
+test("lithos: a supplied key wins and a missing key fails closed", () => {
   assert.equal(requireLithosApiKey("lith_sk_fixture"), "lith_sk_fixture");
   assert.throws(
     () => requireLithosApiKey("   "),
@@ -254,7 +255,7 @@ Deno.test("lithos: a supplied key wins and a missing key fails closed", () => {
   );
 });
 
-Deno.test("lithos: the ultra-chat tier's normalized /models/ echo is accepted and the requested id is echoed back", () => {
+test("lithos: the ultra-chat tier's normalized /models/ echo is accepted and the requested id is echoed back", () => {
   // Probed live on 2026-09-23: every completion for this tier came back with
   // the engine's own base slug, while GET /v1/models/<full id> still reported
   // the full id. An exact-equality check would refuse every real response.
@@ -285,7 +286,7 @@ Deno.test("lithos: the ultra-chat tier's normalized /models/ echo is accepted an
   assert.equal(streamed.value.model, ultraChat);
 });
 
-Deno.test("lithos: an absent, matching or slug-normalized model echo is accepted while a different model is refused", () => {
+test("lithos: an absent, matching or slug-normalized model echo is accepted while a different model is refused", () => {
   // Rule 1: an absent echo claims nothing about the model, so it is no mismatch.
   for (const model of [null, undefined]) {
     const result = normalizeLithosChatCompletion(completion({ model }), REQUESTED_MODEL);

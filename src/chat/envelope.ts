@@ -9,6 +9,7 @@ import { deepSeekUpstreamModelFor } from "../deepseek/index.ts";
 import { lithosUpstreamModelFor } from "../provider/lithos.ts";
 import { resolveOpenRouterUpstreamModel } from "../provider/openrouter.ts";
 import { handleOpenRouterChatCompletions } from "../provider/openrouter-handlers.ts";
+import { openRouterPromptCacheRequestExtensions, validateOpenRouterPromptCacheRequestControl } from "../provider/openrouter-request-controls.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "../provider/selection.ts";
 import { type ReasoningEffort } from "../defaults.ts";
 import { openaiError } from "../http.ts";
@@ -19,11 +20,11 @@ import { type PreparedResponsesStream, prepareResponsesStreamForCommit } from ".
 import { getString, isRecord } from "../utils.ts";
 import type { ChatCompletionRequest, MessageContentItem, ResponseInputItem } from "../types.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
+  type UsageTokens,
   attachResponseTelemetry,
   classifyPreHeaderFailure,
   classifyStreamFailure,
@@ -44,7 +45,7 @@ import {
   streamErrorResponse,
   streamPreflightFailureResponse,
   supportsReasoningProgressRelease,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "../openai-telemetry.ts";
 import { normalizeChatMessage, normalizeModelForCodex, validatePromptCacheControls } from "../input-normalization.ts";
 import {
@@ -55,9 +56,9 @@ import {
 } from "./stream-translation.ts";
 import { logRedactedUpstreamError, toOpenAiUpstreamErrorResponse, toPreHeaderErrorResponse } from "../upstream-wire.ts";
 import {
-  CodexModelMetadata,
-  CodexModelReasoning,
-  PassthroughToolSchemaKey,
+  type CodexModelMetadata,
+  type CodexModelReasoning,
+  type PassthroughToolSchemaKey,
   applyPassthroughToCodexRequest,
   buildIgnoredWarnings,
   getCodexModelMetadata,
@@ -113,9 +114,14 @@ const parseChatCompletionsEnvelope = async (
   // read for its documented semantics (it selects thinking mode) and is not
   // forwarded verbatim: `projectDeepSeekRequest` owns the wire translation.
   const isDeepSeekRoute = deepSeekUpstreamModelFor(getString(rawRecord.model)?.trim() ?? "") !== null;
-  const unknownKey = findUnknownKey(rawRecord, CHAT_COMPLETIONS_ALLOWED_KEYS, isDeepSeekRoute ? DEEPSEEK_CHAT_EXTENSION_KEYS : undefined);
+  const providerExtensions = isDeepSeekRoute ? DEEPSEEK_CHAT_EXTENSION_KEYS : await openRouterPromptCacheRequestExtensions(rawRecord);
+  const unknownKey = findUnknownKey(rawRecord, CHAT_COMPLETIONS_ALLOWED_KEYS, providerExtensions);
   if (unknownKey) {
     return { ok: false, response: openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error") };
+  }
+  if (providerExtensions?.has("cache_control")) {
+    const invalidCacheControl = validateOpenRouterPromptCacheRequestControl(rawRecord);
+    if (invalidCacheControl) return { ok: false, response: invalidCacheControl };
   }
   const promptCacheControls = validatePromptCacheControls(rawRecord);
   if (!promptCacheControls.ok) {

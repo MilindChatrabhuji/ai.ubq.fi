@@ -8,6 +8,23 @@ Autonomous agents should start at `https://ai.ubq.fi/llms.txt`. The machine-read
 `https://ai.ubq.fi/openapi.json`, and the complete integration guide is served at `https://ai.ubq.fi/llms-full.txt` from
 [`static/docs/llms-agents.md`](static/docs/llms-agents.md).
 
+## Runtime and checks
+
+First-party TypeScript runs directly with Bun 1.4.0, pinned by `package.json` and CI. Require the committed lockfile before installing the root dependency graph, then run the repository gates:
+
+```bash
+test -f bun.lock && test -f tools/lint/bun.lock && bun --no-env-file install --frozen-lockfile
+bun --no-env-file run verify
+```
+
+The public scripts are `bun run build`, `bun run test`, and `bun run verify`. For isolated execution, use `bun --no-env-file run <script>`. `build` delegates to strict no-emit TypeScript checking; executing TypeScript with Bun does not type-check it. `test` retains the deterministic repository segments, and `verify` aggregates type, format, lint, dead-code, size, and configured test gates. Run build and test after a lint autofix. [Quality tooling](tools/lint/README.md) owns the exact segment and formatter contract.
+
+Isolated test children disable dotenv and auto-install, use sparse named environment profiles and disposable state, and require the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected. Do not invoke live or paid-provider checks as part of migration verification.
+
+TypeScript starts directly from verified immutable releases. Runtime/dependency/native artifacts must be prepared and manifest-bound before publication; launchers use `--no-env-file --no-install`, explicitly load the repository-root `.env`, and fail closed without downloading, installing, or compiling at startup. `build:native` prepares auxiliary native guard artifacts separately; it is not an application TypeScript compile step. Merging this source does not activate production or convert its database.
+
+The migration requires settled canonical verification and CI, exact native/runtime artifact proof, real platform confinement acceptance, and the requested gateway checks before readiness can be claimed. Real macOS Seatbelt and the standalone Sentinel frozen-reader acceptance remain separate prerequisites; this document records no pass for them. [The 2026-10-14 decision](docs/DECISIONS.md#bun-executes-first-party-typescript-live-cutover-remains-separate---2026-10-14) records the runtime, storage, and rollout boundaries.
+
 ## Development hooks
 
 Enable the repository pre-commit hook once per checkout:
@@ -18,12 +35,12 @@ git config core.hooksPath .githooks
 
 The hook automatically formats and applies safe lint fixes to staged files, then checks the gateway-owned source tree,
 lint, build, and deterministic repository test program. It does not rewrite the pinned `lib/codex` checkout or run the
-external Metered stress test; run `deno task test:stress` only when an explicitly approved local load test is required.
+external Metered stress test; run `bun run test:stress` only when an explicitly approved local load test is required.
 
 ## How auth works
 
 - Clients authenticate to `ai.ubq.fi` with a **UOS gateway token**: `Authorization: Bearer <token>`.
-  - Accepted tokens come from `UOS_AI_TOKEN` and/or API keys stored in Deno KV (created via `/admin/api-keys`).
+  - Accepted tokens come from `UOS_AI_TOKEN` and/or API keys stored in the SQLite-backed KV (created via `/admin/api-keys`).
   - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
 - The gateway **does not use or forward your client token upstream**.
   - For upstream requests, it uses a durable pool of up to two **Codex CLI ChatGPT auth** accounts. The first local seed
@@ -85,7 +102,7 @@ curl -sS 'https://ai.ubq.fi/v1/models?client_version=0.144.3' \
 The unversioned response remains the strict OpenAI `{ "object": "list", "data": [...] }` contract. Supplying one exact
 `X.Y.Z` `client_version` switches to the separate Codex compatibility contract and returns Codex's rich upstream
 `{ "models": [...] }` payload without reducing its model records to OpenAI list objects. The gateway fetches this JSON
-with server-held Codex authentication, caches each version independently in Deno KV for five minutes, and can serve its
+with server-held Codex authentication, caches each version independently in durable KV for five minutes, and can serve its
 last valid copy for up to 24 hours during a temporary upstream failure. It forwards the upstream `ETag` and honors
 `If-None-Match`; client bearer tokens, cookies, and upstream credentials are never mixed or exposed.
 
@@ -186,7 +203,7 @@ receives the update after its first inference response; opening `/status` before
 
 Quota monitoring uses the non-billable OpenLux `GET /api/usage/token/` endpoint with the existing `METERED_API_KEY`
 (`Authorization: Bearer ...`). It does not send `New-Api-User` or make inference requests. The reported token totals are
-cached in Deno KV for five minutes, guarded by a durable refresh lease, retained for 24 hours, and served stale during
+cached in durable KV for five minutes, guarded by a durable refresh lease, retained for 24 hours, and served stale during
 temporary Metered failures. Signed `total_available` and `total_granted` values are kept as token usage data and are
 never converted into refill-cycle credits. When `unlimited_quota` is true, the admin diagnostics show Unlimited, total
 usage, and the observation time instead of a fabricated balance or reset window.
@@ -207,7 +224,7 @@ curl -sS https://ai.ubq.fi/uos/embeddings \
   }'
 ```
 
-`POST /uos/embeddings` is a UOS endpoint backed by Voyage and cached in Deno KV. It accepts text strings only, so it is
+`POST /uos/embeddings` is a UOS endpoint backed by Voyage and cached in durable KV. It accepts text strings only, so it is
 not presented as a fully OpenAI-compatible embeddings endpoint: OpenAI's endpoint also accepts token arrays, while
 Voyage's text API does not. The response remains the familiar OpenAI-style `{object:"list", data, model, usage}` shape.
 
@@ -276,59 +293,61 @@ Notes:
 - When queued, the gateway responds `202` with `Retry-After` and `retry_after_seconds`; poll until `status="succeeded"`.
 - Jobs are scoped to the authenticated client identity; poll using credentials that resolve to the same identity scope
   used to create the job (same API key, or for GitHub/kernel auth the same `{owner, repo}` attestation context).
-- Inputs are stored encrypted in Deno KV for up to 24h to allow deferred processing, and deleted once the job completes.
+- Inputs are stored encrypted in durable KV for up to 24h to allow deferred processing, and deleted once the job completes.
 
 ## CLI (ubq-ai)
 
 Run from this repo:
 
 ```bash
-# Run from an existing ai.ubq.fi checkout (the directory containing deno.json).
+# Run from an existing ai.ubq.fi checkout (the directory containing package.json and bun.lock).
 cd "$(git rev-parse --show-toplevel)"
 export UOS_AI_TOKEN="..."
-deno task ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
+bun run ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
 ```
 
 Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when `UOS_AI_TOKEN` is unset.
 
-Install on your machine:
+Run the first-party CLI directly with Bun from the checkout:
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-deno install -g --allow-env --allow-net --allow-read -n ubq-ai scripts/ubq-ai.ts
+bun run ubq-ai --help
 ```
 
 Examples:
 
 ```bash
 export UOS_AI_TOKEN="..."
-ubq-ai whoami | jq
-ubq-ai models | jq
-ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
-ubq-ai chat --system "You are a helpful assistant." --reasoning-effort high "Solve: 24*7."
-ubq-ai chat --system "You are a helpful assistant." --stream "Say hello in 5 different ways."
-ubq-ai responses --instructions "You are a helpful assistant." "Summarize this in 1 sentence: ..."
-ubq-ai responses --instructions "You are a helpful assistant." --reasoning-effort high "Write a short proof sketch for the pigeonhole principle."
+bun run ubq-ai whoami | jq
+bun run ubq-ai models | jq
+bun run ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
+bun run ubq-ai chat --system "You are a helpful assistant." --reasoning-effort high "Solve: 24*7."
+bun run ubq-ai chat --system "You are a helpful assistant." --stream "Say hello in 5 different ways."
+bun run ubq-ai responses --instructions "You are a helpful assistant." "Summarize this in 1 sentence: ..."
+bun run ubq-ai responses --instructions "You are a helpful assistant." --reasoning-effort high "Write a short proof sketch for the pigeonhole principle."
 ```
 
 Debug (prints useful env/token fingerprints to stderr, never raw secrets):
 
 ```bash
-ubq-ai -v models
+bun run ubq-ai -v models
 ```
 
 Health probe (cron-friendly):
 
 ```bash
 # Public release liveness only:
-deno task health:check --url https://ai.ubq.fi
+bun run health:check --url https://ai.ubq.fi
 
 # Operational diagnostics require admin authentication:
 curl -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" https://ai.ubq.fi/health/providers
 curl -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" https://ai.ubq.fi/health/upstream
 ```
 
-### Manual Deno Deploy usage monitoring and rollback record
+### Historical Deno Deploy usage monitoring and rollback record
+
+This retained procedure records the former Deno Deploy billing audit. Production hosting is on the VPS; these thresholds and old deployment-workflow references are not Bun runtime or live-cutover instructions.
 
 This is an operator-run monitoring procedure. It does not add a gateway metric, an environment variable, a cron job, or
 an automated alert. Use the Deno Deploy organization **Billing** and **Metrics** dashboards for usage data; the gateway
@@ -368,19 +387,21 @@ Admin examples (uses `DENO_DEPLOY_TOKEN`):
 
 ```bash
 export DENO_DEPLOY_TOKEN="..."
-ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
-ubq-ai admin upload-auth --auth-json /secure/path/to/second-account-auth.json | jq
-ubq-ai admin keys create "example key"
-ubq-ai admin keys create "tmp key" --expires week
-ubq-ai admin keys list | jq
+bun run ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
+bun run ubq-ai admin upload-auth --auth-json /secure/path/to/second-account-auth.json | jq
+bun run ubq-ai admin keys create "example key"
+bun run ubq-ai admin keys create "tmp key" --expires week
+bun run ubq-ai admin keys list | jq
 ```
 
 ## Runtime env
 
+The retained `DENO_DEPLOY_TOKEN` name identifies an admin credential; it does not select Deno Deploy hosting or change with the Bun runtime.
+
 - `CODEX_AUTH_JSON_B64` (required for the initial seed): base64 of `~/.codex/auth.json` from a machine that ran
   `codex login`. It seeds one account; use the admin upload flow for the durable two-account pool.
 - `UOS_AI_TOKEN` (optional): Comma- or newline-separated client tokens accepted via `Authorization: Bearer ...`. The
-  gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
+  gateway can also accept API keys stored in durable KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CEREBRAS_API_KEY` (optional): Server-side credential for explicit non-streaming Chat Completions requests to Cerebras
@@ -389,12 +410,38 @@ ubq-ai admin keys list | jq
   (`https://api.deepseek.com`) for the `deepseek-flash` model and its interchangeable `deepseek-v4-flash` alias. It is
   never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
-  Deno KV at `["uos_ai","voyage_api_key"]`.
+  durable KV at `["uos_ai","voyage_api_key"]`.
 - `METERED_API_KEY` (optional): OpenLux business API key used only by the server for paid fallback and the non-billable
   token-usage quota snapshot. It is never sent to gateway clients.
 - `SURPLUS_API_KEY` (optional): Surplus Intelligence API key used only by the server for paid fallback. It is never sent
   to gateway clients. When both paid-provider keys are configured, the gateway selects the provider by model family and
   fails over between them on provider authentication, quota, and upstream failures.
+- `CLAUDE_API_KEY` (optional): Claude subscription credential used by the `claude_code` tier. It accepts the Console API
+  key the operator created for the subscription (including organization-scoped `sk-ant-usr-` keys) and travels as
+  `x-api-key`; an organization-scoped key discovers its `anthropic-workspace-id` once through
+  `/v1/organizations/workspaces` and caches it in KV. A credential stored from the admin console wins over this
+  environment value. It is never sent to gateway clients or exposed by health responses.
+- `CLAUDE_CODE_OAUTH_TOKEN` (optional): The legacy owner-gated Claude Code subscription credential (the one-year token
+  printed by `claude setup-token`), still accepted when `CLAUDE_API_KEY` is absent. It travels as
+  `Authorization:
+Bearer` with the documented OAuth beta. Present alone it changes nothing: the route also needs the
+  requesting principal's key id in `CLAUDE_CODE_ALLOWED_KEY_IDS`, so subscription capacity can never serve a caller the
+  owner did not name. It is never sent to gateway clients or exposed by health responses.
+- `CLAUDE_CODE_WORKSPACE_ID` (optional): Pins the `anthropic-workspace-id` the subscription tier names for an
+  organization-scoped credential (a `wrkspc_` id). When absent, the first rejection that requires a workspace triggers
+  one discovery call and the result is cached in KV; the admin panel can also pin or clear the workspace without a
+  restart.
+- `CLAUDE_CODE_ALLOWED_KEY_IDS` (optional): Comma- or whitespace-separated API key ids allowed to use the subscription
+  route. Empty or absent disables the route for everyone; there is no wildcard. The allowlist is checked per request and
+  teammates outside it always fall through to the paid providers.
+- Claude subscription admin surface: `GET`/`POST`/`DELETE /admin/providers/claude-code/auth` reads, stores (validated
+  against the Anthropic models listing), and clears the credential plus an optional workspace pin;
+  `POST /admin/providers/claude-code/quota/clear` drops a recorded exhaustion block, cooldown, or configuration error.
+  `/admin/providers` and the admin panel's Claude subscription card report credential provenance, the workspace
+  selection, the routing gates, unified and standard rate-limit windows, the last upstream outcome, and health.
+  `/admin/providers/capacity` additionally carries a live `claude` analytics row (credential direction, workspace,
+  windows, guards, last error) that the Analytics capacity list renders next to the Codex subscription rows; the stored
+  Codex/metered capacity snapshot record keeps its own three sources, so the event sampler pays no extra KV reads.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
@@ -473,7 +520,7 @@ Multi-turn tool use round-trips: a `function_call` plus its `function_call_outpu
 
 ## Admin: upload/validate Codex auth.json
 
-This validates a posted `auth.json` against the upstream Codex endpoint and stores it in a two-account Deno KV pool.
+This validates a posted `auth.json` against the upstream Codex endpoint and stores it in a two-account durable KV pool.
 Uploading a different `account_id` fills the empty slot; uploading an existing `account_id` rotates that account's
 tokens without changing its slot. A third distinct account is rejected with `409 codex_auth_pool_full`.
 
@@ -489,11 +536,11 @@ previously cached versioned catalogs. Future Codex versions are fetched dynamica
 Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
 ```bash
-# Run from an existing ai.ubq.fi checkout (the directory containing deno.json and scripts/upload-codex-auth.ts).
+# Run from an existing ai.ubq.fi checkout (the directory containing package.json and scripts/upload-codex-auth.ts).
 cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
-deno task upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
-deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
+bun run upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
+bun run upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
 ```
 
 The helper CLI uses `DENO_DEPLOY_TOKEN`. If a local `codex` package is available, the helper sends its client version as
@@ -502,7 +549,7 @@ deploying this change, upload both intended accounts because a pre-cutover singl
 
 ## Admin: create/manage UBQ API keys
 
-API keys are stored in Deno KV (hashed) and are only returned once on creation. Keys are prefixed with `u_` for easy
+API keys are stored in durable KV (hashed) and are only returned once on creation. Keys are prefixed with `u_` for easy
 identification.
 
 **Default Limits:**
@@ -528,25 +575,25 @@ Create (token only):
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
-deno task ubq-ai admin keys create "example key"
+bun run ubq-ai admin keys create "example key"
 ```
 
 Create (expires in a week):
 
 ```bash
-deno task ubq-ai admin keys create "tmp key" --expires week
+bun run ubq-ai admin keys create "tmp key" --expires week
 ```
 
 Create (with custom usage limit):
 
 ```bash
-deno task ubq-ai admin keys create "high-volume key" --usage-limit 1000
+bun run ubq-ai admin keys create "high-volume key" --usage-limit 1000
 ```
 
 Create (unlimited usage):
 
 ```bash
-deno task ubq-ai admin keys create "unlimited key" --usage-limit unlimited
+bun run ubq-ai admin keys create "unlimited key" --usage-limit unlimited
 ```
 
 ## Admin: kernel auth usage limits (GitHub token)
@@ -598,22 +645,22 @@ curl -sS https://ai.ubq.fi/admin/kernel-usage \
 CLI:
 
 ```bash
-deno task ubq-ai admin kernel-usage get --owner acme --repo demo
-deno task ubq-ai admin kernel-usage get --owner acme --scope org
-deno task ubq-ai admin kernel-usage set --owner acme --repo demo --usage-limit 500 --reset-usage
-deno task ubq-ai admin kernel-usage set --owner acme --scope org --usage-limit 1 --window-ms 60000 --reset-usage
+bun run ubq-ai admin kernel-usage get --owner acme --repo demo
+bun run ubq-ai admin kernel-usage get --owner acme --scope org
+bun run ubq-ai admin kernel-usage set --owner acme --repo demo --usage-limit 500 --reset-usage
+bun run ubq-ai admin kernel-usage set --owner acme --scope org --usage-limit 1 --window-ms 60000 --reset-usage
 ```
 
 List (admin):
 
 ```bash
-deno task ubq-ai admin keys list
+bun run ubq-ai admin keys list
 ```
 
 Revoke (admin):
 
 ```bash
-deno task ubq-ai admin keys revoke --id "<id>"
+bun run ubq-ai admin keys revoke --id "<id>"
 ```
 
 ## Supported routes
@@ -653,30 +700,33 @@ deno task ubq-ai admin keys revoke --id "<id>"
 ```bash
 export UOS_AI_TOKEN="dev-token"
 export CODEX_AUTH_JSON_B64="$(base64 < ~/.codex/auth.json | tr -d '\n')"
-deno task dev
+bun run dev
 ```
 
-`deno task dev` binds to loopback, disables admin authentication for the loopback server, and injects the admin token
+`bun run dev` binds to loopback, disables admin authentication for the loopback server, and injects the admin token
 set as `DENO_DEPLOY_TOKEN` from the fallback chain `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` → `DENO_DEPLOY_TOKEN` →
 `local-dev-admin` (the `.env` file is read first). The `/admin` dashboard therefore opens with super-admin access and no
 sign-in on `http://127.0.0.1:8000`. The injected token lives in the server process only — `.env` values are not
-re-exported to your shell, and the admin credential never flows into separate commands. `deno task dev:local` behaves
-the same way; `deno task admin:models` (and its `:spark` variant) use `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` or
+re-exported to your shell, and the admin credential never flows into separate commands. `bun run dev:local` behaves
+the same way; `bun run admin:models` (and its `:spark` variant) use `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` or
 `DENO_DEPLOY_TOKEN` from your shell when set. A token is optional for a loopback `BASE_URL` (the default), but an
 exported token is still sent as `Authorization: Bearer ...`; unset both variables if the listener must receive no
 deployment credential. A non-loopback `BASE_URL` requires one, exactly like the loopback server itself, which has admin
 authentication disabled.
 
+The dev wrappers explicitly source `.env` before invoking Bun with `--no-env-file`; `dev:local` retains its existing optional native-auth seed. Direct commands below do not discover dotenv files, so export their intended credentials first. The named `application` export and explicit entry point use the receipt-preserving `node:http` server, not Bun's automatic default-export server startup.
+
 Admin authentication is disabled only when the server's actual TCP listener, the request's TCP peer, and the request URL
 are all loopback. A local reverse proxy or tunnel that forwards an external request to this loopback server is
 indistinguishable from a direct local connection (its upstream peer is loopback and the `Host` header is client
 controlled), so the bypass also applies there: never expose the loopback dev server to the network. Startup fails if you
-make the listener public (e.g. `--host 0.0.0.0`), in Deno Deploy, with a duplicated flag, or with an unknown server
-argument. To require a real admin token even on loopback (for example to exercise the sign-in flow), start the server
+pass a listener override, run in Deno Deploy, duplicate a flag, or supply an unknown server argument; the direct entry
+is fixed to `127.0.0.1:8000`. To require a real admin token even on loopback (for example to exercise the sign-in flow), start the server
 directly without the baked-in flag:
 
 ```bash
-deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts
+export DENO_DEPLOY_TOKEN="..."
+bun --no-env-file --no-install serve.ts
 ```
 
 A loopback server with disabled admin authentication also provisions one unrestricted API key named
@@ -690,14 +740,25 @@ paid-provider routing off — local requests then fall back to the policy-free p
 pricing. Provisioning is gated on the loopback-only `--disable-admin-auth` flag, so it never runs on a hosted
 deployment.
 
-The equivalent direct command that mirrors the dev task's behavior must place the application flag after the entry
-point:
+To start the same loopback listener directly with the development auth bypass, place the existing application flag after the entry point:
 
 ```bash
-deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth
+bun --no-env-file --no-install serve.ts --disable-admin-auth
 ```
 
-## Deno KV migration
+## Legacy database conversion for Bun
+
+The shared SQLite backend does not make Deno V8 values compatible with Bun's JavaScriptCore serialization. The Bun target is the explicitly marked `.data/kv-bun.sqlite3`; the legacy `.data/kv.sqlite3` remains untouched. Stop and drain all source writers, preserve a verified consistent backup, and convert offline into a new destination. Validate raw keys, revisions, absolute expiry, typed values, and the complete conversion receipt. Startup and deployment must not convert the live database automatically.
+
+`bun --no-env-file run kv:convert` runs the explicit converter. Its required arguments are `--direction deno-to-bun|bun-to-deno`, `--source`, `--destination`, `--receipt`, `--deno`, and `--deno-sha256`. The checksum-pinned Deno 2.9.7 child is only an offline V8 codec tool with an empty environment; it is not the application runtime or a normal build/test/CI requirement. Ordinary raw remote Deno KV helpers fail closed; the historical remote commands below are not a Bun migration path.
+
+Rollback to an accepted Bun code release preserves the latest marked Bun database. Returning to Deno after Bun has written data requires stopping Bun and reverse-converting its latest durable state into a new Deno destination with a verified private receipt before restoring the supported legacy release/profile. Reusing the original Deno database or migration backup discards later writes. Follow [VPS operations](ops/README.md#bun-runtime-and-offline-cutover) only for a separately authorized cutover or rollback; the PR and disposable fixture tests authorize no live conversion or restart.
+
+Production Bun cutover also requires the standalone Sentinel integration owner's accepted frozen-source reader update: trusted offline Bun/runtime dependencies and hashes, disabled dotenv/installs, equivalent OS isolation, and proved process-execution denial. This gateway work grants no Sentinel checkout or caller-write authority; old captures stay bound to their recorded source SHA.
+
+## Historical Deno-to-Deno KV migration
+
+The following commands and import profiles are retained as the old Deno 1/Classic to Deno 2 migration record. They do not convert a Deno V8 database to the Bun codec and must not be used as the Bun rollout procedure.
 
 Use the KV migration helper to inspect a Deno 1/Classic KV database, export it, map it into a local Deno 2 KV, and
 validate it before any production import.

@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvKey } from "#kv";
 // Prompt cache analytics core: counters, keys and the recording path, split out of src/prompt_cache_analytics.ts.
 
 import { getKv } from "../kv.ts";
@@ -80,7 +81,7 @@ export type PromptCacheAnalyticsEvent = Readonly<{
 }>;
 
 export type PromptCacheAnalyticsOptions = Readonly<{
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   release?: string;
   now?: () => number;
 }>;
@@ -247,7 +248,7 @@ const recordedReason = (usage: PromptCacheAnalyticsUsage): PromptCacheAnalyticsR
 const recordedResult = (bucketStartAtMs: number, usage: PromptCacheAnalyticsUsage): PromptCacheAnalyticsRecordResult =>
   recordResult("recorded", recordedReason(usage), bucketStartAtMs);
 
-const resolveKv = async (options: PromptCacheAnalyticsOptions): Promise<Deno.Kv | null> => {
+const resolveKv = async (options: PromptCacheAnalyticsOptions): Promise<Kv | null> => {
   try {
     return options.kv === undefined ? await getKv() : options.kv;
   } catch {
@@ -260,13 +261,13 @@ const dimensionPrefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "dimension"] as co
 const overflowPrefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "overflow"] as const;
 const metaPrefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "meta"] as const;
 
-export const promptCacheAnalyticsBucketKey = (bucketStartAtMs: number): Deno.KvKey => [...aggregatePrefix, bucketStartAtMs];
+export const promptCacheAnalyticsBucketKey = (bucketStartAtMs: number): KvKey => [...aggregatePrefix, bucketStartAtMs];
 
 /**
  * This is the aggregate counter helper kept for capacity callers and focused
  * fixtures. Dimension counters remain private to this module.
  */
-export const promptCacheAnalyticsCounterKey = (bucketStartAtMs: number, counter: Counter): Deno.KvKey => [
+export const promptCacheAnalyticsCounterKey = (bucketStartAtMs: number, counter: Counter): KvKey => [
   ...promptCacheAnalyticsBucketKey(bucketStartAtMs),
   counter,
 ];
@@ -282,27 +283,27 @@ const dimensionValues = (
   cohort.fallback,
 ];
 
-const dimensionCounterKey = (bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort, counter: Counter): Deno.KvKey => [
+const dimensionCounterKey = (bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort, counter: Counter): KvKey => [
   ...dimensionPrefix,
   bucketStartAtMs,
   ...dimensionValues(cohort),
   counter,
 ];
 
-const dimensionMarkerKey = (bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort): Deno.KvKey => [
+const dimensionMarkerKey = (bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort): KvKey => [
   ...dimensionPrefix,
   bucketStartAtMs,
   ...dimensionValues(cohort),
   "marker",
 ];
 
-const overflowCounterKey = (bucketStartAtMs: number, counter: Counter): Deno.KvKey => [...overflowPrefix, bucketStartAtMs, counter];
+const overflowCounterKey = (bucketStartAtMs: number, counter: Counter): KvKey => [...overflowPrefix, bucketStartAtMs, counter];
 
-const cardinalityKey = (bucketStartAtMs: number): Deno.KvKey => [...metaPrefix, bucketStartAtMs, "cardinality"];
+const cardinalityKey = (bucketStartAtMs: number): KvKey => [...metaPrefix, bucketStartAtMs, "cardinality"];
 
 const isKnownCounter = (value: unknown): value is Counter => typeof value === "string" && (COUNTERS as readonly string[]).includes(value);
 
-const incrementCounters = (operation: Deno.AtomicOperation, keys: (counter: Counter) => Deno.KvKey, deltas: CounterDeltas): Deno.AtomicOperation => {
+const incrementCounters = (operation: AtomicOperation, keys: (counter: Counter) => KvKey, deltas: CounterDeltas): AtomicOperation => {
   let next = operation;
   for (const counter of COUNTERS) {
     const amount = deltas[counter];
@@ -367,7 +368,7 @@ const resolveCohort = async (
   };
 };
 
-const commitAggregateAndOverflow = async (kv: Deno.Kv, bucketStartAtMs: number, deltas: CounterDeltas): Promise<boolean> => {
+const commitAggregateAndOverflow = async (kv: Kv, bucketStartAtMs: number, deltas: CounterDeltas): Promise<boolean> => {
   try {
     let operation = incrementCounters(kv.atomic(), (counter) => overflowCounterKey(bucketStartAtMs, counter), deltas);
     operation = incrementCounters(operation, (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter), deltas);
@@ -378,24 +379,19 @@ const commitAggregateAndOverflow = async (kv: Deno.Kv, bucketStartAtMs: number, 
 };
 
 /** Adds this cohort's dimension counters and the shared aggregate counters. */
-const addCohortCounters = (
-  operation: Deno.AtomicOperation,
-  bucketStartAtMs: number,
-  cohort: PromptCacheAnalyticsCohort,
-  deltas: CounterDeltas
-): Deno.AtomicOperation => {
+const addCohortCounters = (operation: AtomicOperation, bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort, deltas: CounterDeltas): AtomicOperation => {
   let next = incrementCounters(operation, (counter) => dimensionCounterKey(bucketStartAtMs, cohort, counter), deltas);
   next = incrementCounters(next, (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter), deltas);
   return next;
 };
 
-const commitCohortCounters = async (kv: Deno.Kv, bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort, deltas: CounterDeltas): Promise<boolean> => {
+const commitCohortCounters = async (kv: Kv, bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort, deltas: CounterDeltas): Promise<boolean> => {
   const operation = addCohortCounters(kv.atomic(), bucketStartAtMs, cohort, deltas);
   return (await operation.commit()).ok;
 };
 
 /** Records a cohort that arrived after the per-bucket cohort cap was reached. */
-const commitCappedCohort = async (kv: Deno.Kv, bucketStartAtMs: number, deltas: CounterDeltas): Promise<PromptCacheAnalyticsRecordResult> => {
+const commitCappedCohort = async (kv: Kv, bucketStartAtMs: number, deltas: CounterDeltas): Promise<PromptCacheAnalyticsRecordResult> => {
   const cappedDeltas: CounterDeltas = {
     ...deltas,
     dimension_cardinality_limited_sample_count: 1n,
@@ -407,12 +403,12 @@ const commitCappedCohort = async (kv: Deno.Kv, bucketStartAtMs: number, deltas: 
 };
 
 type CohortAdmission = Readonly<{
-  kv: Deno.Kv;
+  kv: Kv;
   bucketStartAtMs: number;
   cohort: PromptCacheAnalyticsCohort;
   usage: PromptCacheAnalyticsUsage;
-  markerKey: Deno.KvKey;
-  bucketCardinalityKey: Deno.KvKey;
+  markerKey: KvKey;
+  bucketCardinalityKey: KvKey;
 }>;
 
 /**
@@ -466,7 +462,7 @@ const promptCacheAnalyticsTarget = (
  * maximum number of conflicts must therefore observe this marker or cap.
  */
 const commitCohortOutcome = async (
-  kv: Deno.Kv,
+  kv: Kv,
   bucketStartAtMs: number,
   cohort: PromptCacheAnalyticsCohort,
   usage: PromptCacheAnalyticsUsage,
@@ -527,7 +523,7 @@ export const recordPromptCacheAnalytics = async (
  * messages, request bodies, credentials and raw usage strings never enter it.
  */
 
-const storageBucketStart = (key: Deno.KvKey): number | null => {
+const storageBucketStart = (key: KvKey): number | null => {
   const namespace = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length];
   const bucketStartAtMs = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length + 1];
   if ((namespace !== "all" && namespace !== "dimension" && namespace !== "overflow" && namespace !== "meta") || !safeCounter(bucketStartAtMs)) {
@@ -536,7 +532,7 @@ const storageBucketStart = (key: Deno.KvKey): number | null => {
   return bucketStartAtMs;
 };
 
-const legacyStorageBucketStart = (key: Deno.KvKey): number | null => {
+const legacyStorageBucketStart = (key: KvKey): number | null => {
   const bucketStartAtMs = key[LEGACY_PROMPT_CACHE_ANALYTICS_V1_KV_PREFIX.length];
   return safeCounter(bucketStartAtMs) ? bucketStartAtMs : null;
 };
@@ -549,7 +545,7 @@ const legacyStorageBucketStart = (key: Deno.KvKey): number | null => {
  */
 let lastPrunedBucketStartAtMs = 0;
 
-const pruneRetentionOnEvent = (kv: Deno.Kv, bucketStartAtMs: number, nowMs: number): void => {
+const pruneRetentionOnEvent = (kv: Kv, bucketStartAtMs: number, nowMs: number): void => {
   if (bucketStartAtMs <= lastPrunedBucketStartAtMs) return;
   lastPrunedBucketStartAtMs = bucketStartAtMs;
   void prunePromptCacheAnalytics({ kv, now: () => nowMs }).catch(() => {});
@@ -563,7 +559,7 @@ export const prunePromptCacheAnalytics = async (options: Pick<PromptCacheAnalyti
   if (!kv) return { status: "unavailable", deleted: 0 };
 
   let deleted = 0;
-  let batch: Deno.KvKey[] = [];
+  let batch: KvKey[] = [];
   const deleteBatch = async (): Promise<void> => {
     const current = batch;
     batch = [];

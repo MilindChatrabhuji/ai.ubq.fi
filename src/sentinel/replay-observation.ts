@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 // Sentinel replay capture and client observation, split out of src/sentinel_replay_capture.ts.
 
 import { runtimeDeploymentId, runtimeGitSha } from "../config.ts";
@@ -64,20 +65,20 @@ export const isSentinelReplayCaptureStatusRow = (value: unknown): value is Senti
 };
 
 export type SentinelReplayPersistResult =
-  | Readonly<{ status: "stored"; manifest: SentinelReplayManifest; manifest_key?: Deno.KvKey }>
-  | Readonly<{ status: "duplicate"; fingerprint: string; manifest_key?: Deno.KvKey }>
+  | Readonly<{ status: "stored"; manifest: SentinelReplayManifest; manifest_key?: KvKey }>
+  | Readonly<{ status: "duplicate"; fingerprint: string; manifest_key?: KvKey }>
   | Readonly<{ status: "disabled"; reason: "key_missing" | "kv_unavailable" }>
   | Readonly<{ status: "incomplete"; reason: typeof SENTINEL_REPLAY_STORAGE_FULL_REASON | typeof SENTINEL_REPLAY_ACCOUNTING_REASON }>;
 
 type PersistDependencies = Readonly<{
-  kv: Deno.Kv;
+  kv: Kv;
   keyBytes: Uint8Array<ArrayBuffer>;
   now?: () => number;
   /** Fresh wall-clock seam for reservation lease checks. */
   currentNow?: () => number;
   randomUuid?: () => string;
   randomBytes?: (length: number) => Uint8Array<ArrayBuffer>;
-  incidentEvent?: Deno.KvEntry<SentinelIncidentFailureEvent>;
+  incidentEvent?: KvEntry<SentinelIncidentFailureEvent>;
   /** Test seam: an injectable small retention budget; production uses the fixed 1 GiB default. */
   budgetBytes?: number;
 }>;

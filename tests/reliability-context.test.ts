@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { type Conversation, createConversation } from "../src/harmony/conversation.ts";
@@ -127,7 +128,7 @@ function stateOf(conversation: Conversation) {
   return deriveStateWithMeta({ observations, finals: [], modelCalls: 0 }, replayMeta(observations, policy));
 }
 
-Deno.test("context: token estimation is deterministic and monotone", () => {
+test("context: token estimation is deterministic and monotone", () => {
   assert.equal(estimateTokens(""), 1);
   assert.equal(estimateTokens("a"), 1);
   assert.equal(estimateTokens("a".repeat(4000)), 1000);
@@ -135,7 +136,7 @@ Deno.test("context: token estimation is deterministic and monotone", () => {
   assert.equal(estimateConversationTokens(scaffold()), estimateConversationTokens(scaffold()));
 });
 
-Deno.test("context: tool-result serialization round-trips", () => {
+test("context: tool-result serialization round-trips", () => {
   const line = serializeToolResultContent({ ok: false, error_code: "duplicate_call", error: "dup", output: null });
   const parsed = parseToolResultContent(line);
   assert.ok(parsed);
@@ -145,7 +146,7 @@ Deno.test("context: tool-result serialization round-trips", () => {
   assert.equal(parseToolResultContent("not json"), null);
 });
 
-Deno.test("context: short tier drops stale reads and old explore pairs", () => {
+test("context: short tier drops stale reads and old explore pairs", () => {
   const conversation = scaffold();
   const result = compactTranscript(conversation, { budget: "short" });
   const kinds = result.drops.map((d) => d.kind);
@@ -161,7 +162,7 @@ Deno.test("context: short tier drops stale reads and old explore pairs", () => {
   assert.ok(result.estimatedTokens < estimateConversationTokens(conversation));
 });
 
-Deno.test("context: compaction preserves the structured state contract at every budget", () => {
+test("context: compaction preserves the structured state contract at every budget", () => {
   const conversation = scaffold();
   const full = stateOf(conversation);
   const fullContract = stateContract(full);
@@ -173,21 +174,21 @@ Deno.test("context: compaction preserves the structured state contract at every 
   }
 });
 
-Deno.test("context: large keeps more reads per path than short", () => {
+test("context: large keeps more reads per path than short", () => {
   const conversation = scaffold();
   const shortReads = compactTranscript(conversation, { budget: "short" }).drops.filter((d) => d.kind === "stale_read").length;
   const largeReads = compactTranscript(conversation, { budget: "large" }).drops.filter((d) => d.kind === "stale_read").length;
   assert.ok(shortReads > largeReads, `short ${shortReads} > large ${largeReads}`);
 });
 
-Deno.test("context: budgets are ordered and per-tier policies are stable", () => {
+test("context: budgets are ordered and per-tier policies are stable", () => {
   assert.ok(COMPACTION_POLICIES.short.targetTokens < COMPACTION_POLICIES.medium.targetTokens);
   assert.ok(COMPACTION_POLICIES.medium.targetTokens < COMPACTION_POLICIES.large.targetTokens);
   assert.equal(COMPACTION_POLICIES.short.readsPerPath, 1);
   assert.equal(COMPACTION_POLICIES.large.readsPerPath, 2);
 });
 
-Deno.test("context: structured context is cheaper than a full transcript replay", () => {
+test("context: structured context is cheaper than a full transcript replay", () => {
   const conversation = scaffold();
   const state = stateOf(conversation);
   const full = estimateConversationTokens(conversation);
@@ -201,7 +202,7 @@ Deno.test("context: structured context is cheaper than a full transcript replay"
   }
 });
 
-Deno.test("context: the broad experimental surface is larger than the compact one", () => {
+test("context: the broad experimental surface is larger than the compact one", () => {
   const compact = compactToolSurface();
   const broad = broadToolSurface();
   assert.equal(compact.definitions.length, 9);

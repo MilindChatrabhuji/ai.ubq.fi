@@ -11,6 +11,7 @@ import { cerebrasUpstreamModelFor } from "./provider/cerebras.ts";
 import { lithosUpstreamModelFor } from "./provider/lithos.ts";
 import { resolveOpenRouterUpstreamModel } from "./provider/openrouter.ts";
 import { handleOpenRouterResponses } from "./provider/openrouter-handlers.ts";
+import { openRouterPromptCacheRequestExtensions } from "./provider/openrouter-request-controls.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import { createStreamFirstEventDeadline, createStreamSemanticDeadline, STREAM_FAILOVER_RESERVE_MS } from "./inference-deadline.ts";
 import { ResponsesStreamError, type ResponsesStreamEvent, withSseKeepalive } from "./responses-stream.ts";
@@ -34,10 +35,10 @@ import { getString, isRecord } from "./utils.ts";
 import type { ResponsesRequest } from "./types.ts";
 import { loadDebugRoutingConfig } from "./debug-routing.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
   classifyPreHeaderFailure,
   classifyStreamFailure,
   countExplicitPromptCacheBreakpoints,
@@ -63,10 +64,10 @@ import { recordResponsesTerminal } from "./chat/stream-translation.ts";
 import { logRedactedUpstreamError, toPreHeaderErrorResponse } from "./upstream-wire.ts";
 import { isTemporaryFreeSurplusModel, WARNING_KEY_MAP, responseWarnings, validateKnownUnsupportedPromptCacheUse, withUosWarning } from "./request-policy.ts";
 import {
-  FailedResponsesAttempt,
-  PreparedResponsesAttempt,
-  ResponsesRouteAttempt,
-  ResponsesRouteFailure,
+  type FailedResponsesAttempt,
+  type PreparedResponsesAttempt,
+  type ResponsesRouteAttempt,
+  type ResponsesRouteFailure,
   failureKindForResponsesAttemptTrigger,
   fetchAndPreparePrimaryResponses,
   fetchAndPrepareRemovedProviderResponses,
@@ -78,12 +79,12 @@ import {
 import { collectBufferedResponses } from "./responses-buffered.ts";
 import { canAttemptPaidFallback, createMeteredTransportLifecycle } from "./paid-fallback/health.ts";
 import {
-  ResponsesCircuitRoute,
-  ResponsesDeliveryState,
-  ResponsesHandlerState,
-  ResponsesRequestState,
-  ResponsesRoutingState,
-  ResponsesStep,
+  type ResponsesCircuitRoute,
+  type ResponsesDeliveryState,
+  type ResponsesHandlerState,
+  type ResponsesRequestState,
+  type ResponsesRoutingState,
+  type ResponsesStep,
   buildResponsesUpstreamBodies,
   normalizeResponsesInput,
   readResponsesRequest,
@@ -799,7 +800,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const request = await readResponsesRequest(req, parsedBody);
   if (!request.ok) return request.response;
   const { rawRecord, rawBody } = request.value;
-  const invalidField = validateResponsesRequestFields(rawRecord, rawBody);
+  const invalidField = validateResponsesRequestFields(rawRecord, rawBody, await openRouterPromptCacheRequestExtensions(rawRecord));
   if (invalidField) return invalidField;
   // DeepSeek official models are dispatched from the Responses adapter before
   // the Codex catalog lookup, exactly as the Chat Completions route is

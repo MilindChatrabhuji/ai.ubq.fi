@@ -1,3 +1,5 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 const {
@@ -85,7 +87,7 @@ const withLocalStorage = async (items: Record<string, string>, fn: (store: Map<s
 
 const bufferFromText = (value: string): ArrayBuffer => new TextEncoder().encode(value).buffer;
 
-Deno.test("hasAuthPasskeyCredential recognizes passkey sessions and credential counts", () => {
+test("hasAuthPasskeyCredential recognizes passkey sessions and credential counts", () => {
   assert.equal(hasAuthPasskeyCredential({ method: { kind: "passkey_session" } }), true);
   assert.equal(hasAuthPasskeyCredential({ method: { kind: "passkey_session", user: { credential_count: 0 } } }), true);
   assert.equal(hasAuthPasskeyCredential({ method: { kind: "admin_allowlist" } }), false);
@@ -94,7 +96,7 @@ Deno.test("hasAuthPasskeyCredential recognizes passkey sessions and credential c
   assert.equal(hasAuthPasskeyCredential({ user: { credential_count: 0 } }), false);
 });
 
-Deno.test("formatAuthSessionLabel distinguishes fallback token and passkey auth", () => {
+test("formatAuthSessionLabel distinguishes fallback token and passkey auth", () => {
   assert.equal(formatAuthSessionLabel({ method: { kind: "passkey_session" } }), "Passkey signed in");
   assert.equal(formatAuthSessionLabel({ method: { kind: "admin_allowlist" } }), "Fallback token active");
   assert.equal(formatAuthSessionLabel({ method: { kind: "auth_tokens_allowlist" } }), "Allowlist token active");
@@ -104,7 +106,7 @@ Deno.test("formatAuthSessionLabel distinguishes fallback token and passkey auth"
   assert.equal(formatAuthSessionLabel({}), "Token active");
 });
 
-Deno.test("local development auth is restricted to loopback HTTP origins", () => {
+test("local development auth is restricted to loopback HTTP origins", () => {
   assert.equal(LOCAL_DEVELOPMENT_ADMIN_TOKEN, "local-dev-admin");
 
   const restoreLocal = setGlobal("location", { protocol: "http:", hostname: "localhost" });
@@ -127,7 +129,7 @@ Deno.test("local development auth is restricted to loopback HTTP origins", () =>
 const captureRegisterStartBody = async (input: { handle?: string; token: string; baseUrl?: string }): Promise<Record<string, unknown>> => {
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  globalThis.fetch = createFetchMock((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     requestBody = parseCapturedJsonBody(init?.body);
     return Promise.resolve(
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
@@ -135,7 +137,7 @@ const captureRegisterStartBody = async (input: { handle?: string; token: string;
         headers: { "Content-Type": "application/json" },
       })
     );
-  };
+  });
   try {
     await assert.rejects(() => registerPasskey({ baseUrl: "https://ai.ubq.fi", ...input }), /Unauthorized/);
     assert.ok(requestBody);
@@ -153,7 +155,7 @@ const captureLoginStartBody = async (input: {
 }): Promise<Record<string, unknown>> => {
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  globalThis.fetch = createFetchMock((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     requestBody = parseCapturedJsonBody(init?.body);
     return Promise.resolve(
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
@@ -161,7 +163,7 @@ const captureLoginStartBody = async (input: {
         headers: { "Content-Type": "application/json" },
       })
     );
-  };
+  });
   try {
     await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi", ...input }), /Unauthorized/);
     assert.ok(requestBody);
@@ -171,21 +173,21 @@ const captureLoginStartBody = async (input: {
   }
 };
 
-Deno.test("signInWithPasskey ignores stored username by default", async () => {
+test("signInWithPasskey ignores stored username by default", async () => {
   await withPasskeyBrowser(async () => {
     const body = await captureLoginStartBody({ handle: "uos-passkey-stale" });
     assert.equal(Object.prototype.hasOwnProperty.call(body, "handle"), false);
   });
 });
 
-Deno.test("signInWithPasskey sends username only when explicitly requested", async () => {
+test("signInWithPasskey sends username only when explicitly requested", async () => {
   await withPasskeyBrowser(async () => {
     const body = await captureLoginStartBody({ handle: " Admin Laptop ", useHandle: true });
     assert.equal(body.handle, "admin-laptop");
   });
 });
 
-Deno.test("signInWithPasskey sends the relay audience only when requested", async () => {
+test("signInWithPasskey sends the relay audience only when requested", async () => {
   await withPasskeyBrowser(async () => {
     const body = await captureLoginStartBody({
       audienceOrigin: "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net",
@@ -194,15 +196,15 @@ Deno.test("signInWithPasskey sends the relay audience only when requested", asyn
   });
 });
 
-Deno.test("signOut clears a relay cookie without sending an empty bearer header", async () => {
+test("signOut clears a relay cookie without sending an empty bearer header", async () => {
   let requestUrl = "";
   let requestInit: RequestInit | undefined;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     requestUrl = requestUrlOf(input);
     requestInit = init;
     return Promise.resolve(new Response(null, { status: 204 }));
-  };
+  });
   try {
     const audienceOrigin = "https://telegram-daily-exporter.0x4007.deno.net";
     await signOut({ baseUrl: "https://ai.ubq.fi", corsOrigin: audienceOrigin });
@@ -214,7 +216,7 @@ Deno.test("signOut clears a relay cookie without sending an empty bearer header"
   }
 });
 
-Deno.test("signInWithPasskey does not restrict discoverable login to cached credential ids", async () => {
+test("signInWithPasskey does not restrict discoverable login to cached credential ids", async () => {
   await withPasskeyBrowser(async () => {
     await withLocalStorage(
       {
@@ -234,13 +236,14 @@ Deno.test("signInWithPasskey does not restrict discoverable login to cached cred
           },
         });
         const originalFetch = globalThis.fetch;
-        globalThis.fetch = () =>
+        globalThis.fetch = createFetchMock(() =>
           Promise.resolve(
             new Response(JSON.stringify({ publicKey: { challenge: "AAAA", rpId: "localhost" } }), {
               status: 200,
               headers: { "Content-Type": "application/json" },
             })
-          );
+          )
+        );
         try {
           await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi" }), /stop after credential/);
           assert.ok(requestOptions);
@@ -255,7 +258,7 @@ Deno.test("signInWithPasskey does not restrict discoverable login to cached cred
   });
 });
 
-Deno.test("signInWithPasskey clears stale cached passkey metadata when server does not know the credential", async () => {
+test("signInWithPasskey clears stale cached passkey metadata when server does not know the credential", async () => {
   await withPasskeyBrowser(async () => {
     await withLocalStorage(
       {
@@ -283,7 +286,7 @@ Deno.test("signInWithPasskey clears stale cached passkey metadata when server do
         });
         const originalFetch = globalThis.fetch;
         let requestIndex = 0;
-        globalThis.fetch = () => {
+        globalThis.fetch = createFetchMock(() => {
           requestIndex += 1;
           if (requestIndex === 1) {
             return Promise.resolve(
@@ -299,7 +302,7 @@ Deno.test("signInWithPasskey clears stale cached passkey metadata when server do
               headers: { "Content-Type": "application/json" },
             })
           );
-        };
+        });
         try {
           await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi" }), /Unknown passkey/);
           assert.equal(store.has(STORAGE_KEYS.passkeyHandle), false);
@@ -313,14 +316,14 @@ Deno.test("signInWithPasskey clears stale cached passkey metadata when server do
   });
 });
 
-Deno.test("registerPasskey leaves handle blank for passkey session registration", async () => {
+test("registerPasskey leaves handle blank for passkey session registration", async () => {
   await withPasskeyBrowser(async () => {
     const body = await captureRegisterStartBody({ token: "uos_ai_session_existing" });
     assert.equal(Object.prototype.hasOwnProperty.call(body, "handle"), false);
   });
 });
 
-Deno.test("registerPasskey sends explicit normalized handle when provided", async () => {
+test("registerPasskey sends explicit normalized handle when provided", async () => {
   await withPasskeyBrowser(async () => {
     const body = await captureRegisterStartBody({
       handle: " Admin Laptop ",

@@ -1,14 +1,15 @@
-type DenoWithKv = typeof Deno & {
-  openKv?: () => Promise<Deno.Kv>;
-};
+import { openKv, type Kv } from "#kv";
 
-let openPromise: Promise<Deno.Kv | null> | null = null;
-let openedKv: Deno.Kv | null = null;
+export type KvOpener = () => Promise<Kv | null>;
+
+let selectedOpener: KvOpener = openKv;
+let openPromise: Promise<Kv | null> | null = null;
+let openedKv: Kv | null = null;
 let nextOpenAttemptAtMs = 0;
 let openFailureCount = 0;
 
 /** Install the persistent database before the VPS starts accepting requests. */
-export const initializeKv = (kv: Deno.Kv): void => {
+export const initializeKv = (kv: Kv): void => {
   if (openedKv || openPromise) throw new Error("KV has already been initialized");
   openedKv = kv;
 };
@@ -30,11 +31,9 @@ const retryDelayMs = (failureCount: number): number => {
   return Math.trunc(capped * (0.75 + randomUnitInterval() * 0.5));
 };
 
-const openKv = async (): Promise<Deno.Kv | null> => {
-  const denoOpenKv = (Deno as DenoWithKv).openKv;
-  if (typeof denoOpenKv !== "function") return null;
+const attemptOpenKv = async (): Promise<Kv | null> => {
   try {
-    const kv = await denoOpenKv();
+    const kv = await selectedOpener();
     openedKv = kv;
     openFailureCount = 0;
     nextOpenAttemptAtMs = 0;
@@ -42,25 +41,30 @@ const openKv = async (): Promise<Deno.Kv | null> => {
   } catch (error) {
     openFailureCount += 1;
     nextOpenAttemptAtMs = Date.now() + retryDelayMs(openFailureCount);
-    console.error("[ai.ubq.fi] Failed to open Deno KV; a later request will retry:", error);
+    console.error("[ai.ubq.fi] Failed to open KV; a later request will retry:", error);
     return null;
   }
 };
 
-export const getKv = (): Promise<Deno.Kv | null> => {
+export const getKv = (): Promise<Kv | null> => {
   if (openedKv) return Promise.resolve(openedKv);
-  const denoOpenKv = (Deno as DenoWithKv).openKv;
-  if (typeof denoOpenKv !== "function") return Promise.resolve(null);
   if (Date.now() < nextOpenAttemptAtMs) return Promise.resolve(null);
-  openPromise ??= openKv().finally(() => {
+  openPromise ??= attemptOpenKv().finally(() => {
     openPromise = null;
   });
   return openPromise;
 };
 
-export const setKvForTest = (kv: Deno.Kv | null): void => {
+/** A null fixture disables disk fallback; a supplied opener exercises reconnects. */
+export const setKvForTest = (kv: Kv | null, opener?: KvOpener): void => {
   openedKv = kv;
+  selectedOpener = opener ?? (() => Promise.resolve(kv));
   openPromise = null;
   openFailureCount = 0;
   nextOpenAttemptAtMs = 0;
+};
+
+/** Restore runtime opening after a scoped test has finished. */
+export const resetKvForTest = (): void => {
+  setKvForTest(null, openKv);
 };

@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../src/api-key-policy.ts";
@@ -60,7 +61,7 @@ const rejectOnAbort = (signal: AbortSignal | null | undefined): Promise<Response
 
 const isLithosError = (code: string, status: number) => (error: unknown) => error instanceof LithosError && error.code === code && error.status === status;
 
-Deno.test("lithos transport: projects max_completion_tokens to max_tokens and keeps reasoning_effort verbatim", () => {
+test("lithos transport: projects max_completion_tokens to max_tokens and keeps reasoning_effort verbatim", () => {
   const body: Record<string, unknown> = {
     model: REQUESTED_MODEL,
     messages: [{ role: "user", content: "hi" }],
@@ -93,7 +94,7 @@ Deno.test("lithos transport: projects max_completion_tokens to max_tokens and ke
   assert.throws(() => projectLithosRequest({}, ""), isLithosError("lithos_request_invalid", 400));
 });
 
-Deno.test("lithos transport: a buffered dispatch sends the projected body and reports its lifecycle in order", async () => {
+test("lithos transport: a buffered dispatch sends the projected body and reports its lifecycle in order", async () => {
   const events: string[] = [];
   let dispatchedInit: RequestInit | undefined;
   let dispatchedBody: Record<string, unknown> | null = null;
@@ -178,7 +179,7 @@ Deno.test("lithos transport: a buffered dispatch sends the projected body and re
   );
 });
 
-Deno.test("lithos transport: classifies unreachable, deadline, caller abort and quota failures without rewriting them", async () => {
+test("lithos transport: classifies unreachable, deadline, caller abort and quota failures without rewriting them", async () => {
   const failedRecorder = createSentinelUpstreamRecorder();
   await assert.rejects(
     fetchLithosChatCompletions({ model: REQUESTED_MODEL }, REQUESTED_MODEL, {
@@ -263,7 +264,7 @@ Deno.test("lithos transport: classifies unreachable, deadline, caller abort and 
   );
 });
 
-Deno.test("lithos transport: relays reason-only deltas, a tool-call delta and the empty-choices totals frame until [DONE]", async () => {
+test("lithos transport: relays reason-only deltas, a tool-call delta and the empty-choices totals frame until [DONE]", async () => {
   const frames = [
     chunk({ role: "assistant", content: "" }),
     chunk({ reasoning_content: "Let me think" }),
@@ -318,7 +319,7 @@ Deno.test("lithos transport: relays reason-only deltas, a tool-call delta and th
   assert.equal(terminated.length, 1);
 });
 
-Deno.test("lithos transport: fails closed on a malformed, truncated or oversized stream", async () => {
+test("lithos transport: fails closed on a malformed, truncated or oversized stream", async () => {
   // Malformed JSON is never skipped: dropping a frame would truncate the answer.
   await assert.rejects(readStream('data: {"id":\n\n'), isLithosError("lithos_upstream_invalid_response", 502));
   // A frame that is JSON but not a valid chunk is refused the same way.
@@ -346,7 +347,7 @@ Deno.test("lithos transport: fails closed on a malformed, truncated or oversized
   await assert.rejects(reading, (error: unknown) => error instanceof Error && error.name === "AbortError");
 });
 
-Deno.test("lithos transport: the provider correlation seam reads no header and the detail counters keep their guards", () => {
+test("lithos transport: the provider correlation seam reads no header and the detail counters keep their guards", () => {
   const response = new Response("{}", { status: 200, headers: { "x-request-id": "lithos-1", "x-lithos-request-id": "lithos-2" } });
   assert.equal(getLithosProviderRequestId(response), null);
   assert.equal(normalizeLithosProviderRequestId("lithos-correlation-1"), "lithos-correlation-1");

@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 // Prompt cache scope experiment target binding, telemetry baseline and leases, split out of src/prompt_cache_scope_experiment.ts.
 
 import { PROMPT_CACHE_SCOPE_PROBE_PROFILE } from "../models/codex-models.ts";
@@ -42,7 +43,7 @@ import type {
 type ResolvedScopeTarget = Readonly<{ binding: PromptCacheScopeTargetBinding }>;
 type ScopeTargetResolution = Readonly<{ status: "resolved"; value: ResolvedScopeTarget }> | Readonly<{ status: "inconclusive"; reason: InconclusiveReason }>;
 
-const loadRuntimeBinding = async (kv: Deno.Kv): Promise<RuntimeBinding | null> => {
+const loadRuntimeBinding = async (kv: Kv): Promise<RuntimeBinding | null> => {
   const entry = await kv.get<RuntimeConfigV2>(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" });
   const runtime = normalizeRuntimeConfig(entry.value);
   if (!runtime || !entry.versionstamp) return null;
@@ -105,7 +106,7 @@ const sameTargetCore = (left: PromptCacheScopeTargetBinding, right: PromptCacheS
   left.auth_pool_identity_fingerprint === right.auth_pool_identity_fingerprint &&
   left.catalog_client_version === right.catalog_client_version;
 
-const loadInventoryAndRuntime = async (kv: Deno.Kv): Promise<Readonly<{ inventory: PromptCacheScopeTargetInventory; runtime: RuntimeBinding }> | null> => {
+const loadInventoryAndRuntime = async (kv: Kv): Promise<Readonly<{ inventory: PromptCacheScopeTargetInventory; runtime: RuntimeBinding }> | null> => {
   const [inventory, runtime] = await Promise.all([loadPromptCacheScopeTargetInventory({ kv }), loadRuntimeBinding(kv)]);
   if (inventory.status !== "ready" || !runtime) return null;
   return { inventory, runtime };
@@ -116,7 +117,7 @@ const loadInventoryAndRuntime = async (kv: Deno.Kv): Promise<Readonly<{ inventor
  * changes are harmless when the exact target is stable. Catalog capability,
  * inventory, auth-pool, and client-version bindings instead fence dispatch.
  */
-const resolveBoundTarget = async (kv: Deno.Kv, expected: PromptCacheScopeTargetBinding): Promise<ScopeTargetResolution> => {
+const resolveBoundTarget = async (kv: Kv, expected: PromptCacheScopeTargetBinding): Promise<ScopeTargetResolution> => {
   const loaded = await loadInventoryAndRuntime(kv);
   if (!loaded) return { status: "inconclusive", reason: "target_catalog_drift" };
   const current = loaded.inventory.targets.find((target) => target.id === expected.id);
@@ -148,7 +149,7 @@ type TargetCampaignRecord = Readonly<{ binding: PromptCacheScopeTargetBinding; s
  * stable ordering. Malformed durable state/evidence is a hard no-dispatch
  * condition rather than an invitation to overwrite it.
  */
-const selectCampaignTarget = async (kv: Deno.Kv, inventory: PromptCacheScopeTargetInventory, runtime: RuntimeBinding): Promise<SelectedCampaignTarget> => {
+const selectCampaignTarget = async (kv: Kv, inventory: PromptCacheScopeTargetInventory, runtime: RuntimeBinding): Promise<SelectedCampaignTarget> => {
   const bindings = inventory.targets
     .map((target) => targetBindingFromInventory(inventory, target, runtime))
     .filter((target): target is PromptCacheScopeTargetBinding => target !== null);
@@ -275,13 +276,13 @@ type AcquiredCycle = Readonly<{ state: ExperimentState; cycle_owner: string }>;
 const hasActiveLease = (value: unknown): boolean => isRecord(value) && isSafeNonNegativeInteger(value.lease_until_ms) && value.lease_until_ms > Date.now();
 
 type CycleEntries = Readonly<{
-  state: Deno.KvEntryMaybe<ExperimentState>;
-  evidence: Deno.KvEntryMaybe<StoredEvidence>;
-  campaign: Deno.KvEntryMaybe<CampaignLease>;
-  cycle: Deno.KvEntryMaybe<ExperimentLease>;
+  state: KvEntryMaybe<ExperimentState>;
+  evidence: KvEntryMaybe<StoredEvidence>;
+  campaign: KvEntryMaybe<CampaignLease>;
+  cycle: KvEntryMaybe<ExperimentLease>;
 }>;
 
-const loadCycleEntries = async (kv: Deno.Kv, target: PromptCacheScopeTargetBinding): Promise<CycleEntries> => {
+const loadCycleEntries = async (kv: Kv, target: PromptCacheScopeTargetBinding): Promise<CycleEntries> => {
   const [state, evidence, campaign, cycle] = await Promise.all([
     kv.get<ExperimentState>(stateKey(target), { consistency: "strong" }),
     kv.get<StoredEvidence>(evidenceKey(target), { consistency: "strong" }),
@@ -348,7 +349,7 @@ const resolveCampaignState = (
   return { campaignOwner: activeState.campaign_owner, state: { ...activeState, target } };
 };
 
-const acquireCycle = async (kv: Deno.Kv, target: PromptCacheScopeTargetBinding, authPoolVersionstamp: string): Promise<AcquiredCycle> => {
+const acquireCycle = async (kv: Kv, target: PromptCacheScopeTargetBinding, authPoolVersionstamp: string): Promise<AcquiredCycle> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entries = await loadCycleEntries(kv, target);
     const existing = readCycleRecords(entries).state;
@@ -383,7 +384,7 @@ const acquireCycle = async (kv: Deno.Kv, target: PromptCacheScopeTargetBinding, 
   throw new PromptCacheScopeExperimentBusyError();
 };
 
-const renewLease = async (kv: Deno.Kv, state: ExperimentState, cycleOwner: string): Promise<void> => {
+const renewLease = async (kv: Kv, state: ExperimentState, cycleOwner: string): Promise<void> => {
   const cycleKey = cycleLeaseKey(state.target);
   const campaignKey = campaignLeaseKey(state.target);
   for (let attempt = 0; attempt < 3; attempt += 1) {

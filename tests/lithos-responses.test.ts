@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { DEEPSEEK_RESPONSES_PROFILE, LITHOS_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
@@ -69,7 +70,7 @@ const terminalOf = (events: readonly Record<string, unknown>[]): { type: string;
   return last as { type: string; response: Record<string, unknown> };
 };
 
-Deno.test("lithos responses: a buffered completion maps reasoning_content and the answer", () => {
+test("lithos responses: a buffered completion maps reasoning_content and the answer", () => {
   const completion = normalizedCompletion(
     rawCompletion({ role: "assistant", content: "pong", reasoning_content: "The request asked for one word.", refusal: null, tool_calls: null }, "stop")
   );
@@ -102,7 +103,7 @@ Deno.test("lithos responses: a buffered completion maps reasoning_content and th
   });
 });
 
-Deno.test("lithos responses: streaming accepts the empty-choices totals frame and reports its usage", () => {
+test("lithos responses: streaming accepts the empty-choices totals frame and reports its usage", () => {
   const translator = createDeepSeekResponsesStreamTranslator(MODEL, "resp_lithos_stream", echo, 1_780_000_000, new Map(), new Set(), LITHOS_RESPONSES_PROFILE);
   const events: Record<string, unknown>[] = [];
   events.push(
@@ -164,7 +165,7 @@ Deno.test("lithos responses: streaming accepts the empty-choices totals frame an
   ]);
 });
 
-Deno.test("lithos responses: length truncation maps to response.incomplete with max_output_tokens", () => {
+test("lithos responses: length truncation maps to response.incomplete with max_output_tokens", () => {
   // Recorded live: a small `max_tokens` request returned `content: ""`, a filled
   // `reasoning_content` and `finish_reason: "length"`.
   const truncated = normalizedCompletion(
@@ -192,7 +193,7 @@ Deno.test("lithos responses: length truncation maps to response.incomplete with 
   assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
 });
 
-Deno.test("lithos responses: tool calls map to function_call items on both transports", () => {
+test("lithos responses: tool calls map to function_call items on both transports", () => {
   const call = { id: "get_weather:0", type: "function", function: { name: "get_weather", arguments: '{"city":"x"}' } };
   const buffered = normalizedCompletion(
     rawCompletion({ role: "assistant", content: null, reasoning_content: "Calling the tool.", refusal: null, tool_calls: [call] }, "tool_calls")
@@ -255,7 +256,7 @@ Deno.test("lithos responses: tool calls map to function_call items on both trans
   ]);
 });
 
-Deno.test("lithos responses: forwards every accepted reasoning tier verbatim", () => {
+test("lithos responses: forwards every accepted reasoning tier verbatim", () => {
   // The seven tiers the provider accepted on 2026-09-23, 1:1 with the wire.
   for (const effort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const) {
     const result = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort } }, MODEL, false, LITHOS_RESPONSES_PROFILE);
@@ -275,7 +276,7 @@ Deno.test("lithos responses: forwards every accepted reasoning tier verbatim", (
   assert.match(lithos.message, /'ultra' is not supported by LithosAI/);
 });
 
-Deno.test("lithos responses: refuses an effort outside the seven accepted tiers", () => {
+test("lithos responses: refuses an effort outside the seven accepted tiers", () => {
   for (const effort of ["ultra", "summary", "bogus", "x-high"]) {
     const result = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort } }, MODEL, false, LITHOS_RESPONSES_PROFILE);
     assert.equal(result.ok, false);
@@ -284,7 +285,7 @@ Deno.test("lithos responses: refuses an effort outside the seven accepted tiers"
   }
 });
 
-Deno.test("lithos responses: does not request the DeepSeek stream usage option", () => {
+test("lithos responses: does not request the DeepSeek stream usage option", () => {
   const result = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "medium" } }, MODEL, true, LITHOS_RESPONSES_PROFILE);
   assert.equal(result.ok, true);
   assert.equal(result.value.body.stream, true);
@@ -296,7 +297,7 @@ Deno.test("lithos responses: does not request the DeepSeek stream usage option",
   assert.deepEqual(deepSeekStream.value.body.stream_options, { include_usage: true });
 });
 
-Deno.test("lithos responses: adds no Kimi K3 sampling constraints of its own", () => {
+test("lithos responses: adds no Kimi K3 sampling constraints of its own", () => {
   const result = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "high" } }, KIMI, false, LITHOS_RESPONSES_PROFILE);
   assert.equal(result.ok, true);
   assert.equal(result.value.body.model, KIMI);
@@ -308,7 +309,7 @@ Deno.test("lithos responses: adds no Kimi K3 sampling constraints of its own", (
   }
 });
 
-Deno.test("lithos responses: resolves the vendor's eight ids and refuses other models", () => {
+test("lithos responses: resolves the vendor's eight ids and refuses other models", () => {
   const ids = [
     "deepseek-ai/DeepSeek-V4.1-Flash",
     "deepseek-ai/DeepSeek-V4.1-Flash-fast",
@@ -331,7 +332,7 @@ Deno.test("lithos responses: resolves the vendor's eight ids and refuses other m
   assert.match(wrong.message, /model 'deepseek-flash' is not a LithosAI official model/);
 });
 
-Deno.test("lithos responses: maps the provider's usage counters onto the Responses shape", () => {
+test("lithos responses: maps the provider's usage counters onto the Responses shape", () => {
   assert.deepEqual(
     toResponsesUsage(
       {
@@ -380,7 +381,7 @@ Deno.test("lithos responses: maps the provider's usage counters onto the Respons
   assert.equal(toResponsesUsage(null, LITHOS_RESPONSES_PROFILE), null);
 });
 
-Deno.test("lithos responses: the profile reuses the shared finish vocabulary without laundering", () => {
+test("lithos responses: the profile reuses the shared finish vocabulary without laundering", () => {
   assert.equal(LITHOS_RESPONSES_PROFILE.id, "lithos");
   assert.equal(LITHOS_RESPONSES_PROFILE.label, "LithosAI");
   assert.deepEqual(LITHOS_RESPONSES_PROFILE.finishDisposition("stop"), { kind: "completed" });

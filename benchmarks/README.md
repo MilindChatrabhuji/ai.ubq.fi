@@ -195,7 +195,7 @@ nine tools: `filesystem.read/find/search`, `browser.search/open/find`, `shell.ex
 - Machine-readable envelopes: every `runTool` call returns `{ ok, output?, error?, error_code? }` plus
   `exit_code/stdout/stderr` for `shell.exec`; failures use the closed set
   `invalid_args | path_escape | write_scope |
-  not_found | exec_failed | timeout | patch_failed | unavailable | internal`.
+not_found | exec_failed | timeout | patch_failed | unavailable | internal`.
 - Boundaries: paths are normalized inside the workspace root (absolute paths and `..` segments are `path_escape`
   rejections) and writes must match the manifest `allowed_write_scope` (`write_scope`).
 - Replaceable backends: `WorkspaceBackend`/`BrowserBackend`/`PlanBackend` are injected; `fixture.ts` is bridged into the
@@ -212,7 +212,7 @@ failed commands with identical bookkeeping.
 
 - `file_checks`: `exists | equals | contains | regex` (with `invert`),
 - `git_checks`: `commit_count | head_message | worktree_clean |
-  file_committed` — fail closed when the task declares
+file_committed` — fail closed when the task declares
   no git repository.
 
 Git fixtures (`nav-005`, `seq-004`) initialize a repository rooted inside the disposable workspace, so git never touches

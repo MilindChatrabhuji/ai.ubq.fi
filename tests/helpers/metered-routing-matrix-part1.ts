@@ -1,9 +1,10 @@
+import type { SequenceStep } from "./sequence.ts";
 // Metered paid fallback routing matrix, part 1 of 2, moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
-  CodexAuthPoolState,
+  type CodexAuthPoolState,
   DEBUG_ROUTING_KEY,
   DEFAULT_TEST_MODEL,
   TEXT_ENCODER,
@@ -37,11 +38,11 @@ import {
   withTerminalRequestLog,
 } from "./openai-compat-harness.ts";
 
-export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Promise<void> => {
-  const originalApiKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
+export const runMeteredPaidFallbackMatrixPart1 = async (step: SequenceStep): Promise<void> => {
+  const originalApiKey = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-test-key";
   try {
-    await t.step("already-loaded disabled policy bypasses paid fallback reservation", async () => {
+    await step("already-loaded disabled policy bypasses paid fallback reservation", async () => {
       const keyId = "fallback-policy-bypass";
       seedPaidFallbackKey(keyId, { enabled: true });
       let calls = 0;
@@ -75,7 +76,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       assert.equal(stored.paid_fallback_reservation_request_id, null);
     });
 
-    await t.step("disabled, unpriced, and exhausted keys retain the primary 429", async () => {
+    await step("disabled, unpriced, and exhausted keys retain the primary 429", async () => {
       const cases = [
         {
           id: "fallback-disabled",
@@ -138,7 +139,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("fallback admission infrastructure failure retains the authoritative primary 429", async () => {
+    await step("fallback admission infrastructure failure retains the authoritative primary 429", async () => {
       const keyId = "fallback-admission-failure";
       seedPaidFallbackKey(keyId);
       setAtomicCommitFailure((ops) =>
@@ -177,7 +178,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("primary 402, errors, and network failures other than 429 never dispatch Metered", async () => {
+    await step("primary 402, errors, and network failures other than 429 never dispatch Metered", async () => {
       for (const scenario of ["http_402", "http_500", "network"] as const) {
         const keyId = `fallback-${scenario}`;
         seedPaidFallbackKey(keyId);
@@ -213,7 +214,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("primary 401 and 403 fail closed without paid dispatch", async () => {
+    await step("primary 401 and 403 fail closed without paid dispatch", async () => {
       const debugKey = keyToString(DEBUG_ROUTING_KEY);
       const previousDebugRouting = kvStore.get(debugKey);
       try {
@@ -263,7 +264,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("a legacy timeout marker does not authorize paid fallback", async () => {
+    await step("a legacy timeout marker does not authorize paid fallback", async () => {
       const keyId = "fallback-upstream-degraded";
       const requestId = "request-fallback-upstream-degraded";
       seedPaidFallbackKey(keyId);
@@ -312,7 +313,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       await response.text();
     });
 
-    await t.step("cancellation before fallback admission creates no paid exposure", async () => {
+    await step("cancellation before fallback admission creates no paid exposure", async () => {
       const keyId = "fallback-cancel-before-dispatch";
       const requestId = "request-fallback-cancel-before-dispatch";
       seedPaidFallbackKey(keyId);
@@ -377,7 +378,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       assert.equal(window, undefined);
     });
 
-    await t.step("Responses strips only Codex-incompatible controls before Metered fallback", async () => {
+    await step("Responses strips only Codex-incompatible controls before Metered fallback", async () => {
       const keyId = "fallback-responses-success";
       seedPaidFallbackKey(keyId);
       const bodies: Record<string, unknown>[] = [];
@@ -507,7 +508,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       assert.equal("affinityOutcome" in recordedAnalyticsEvent, false);
     });
 
-    await t.step("streaming Responses closes after Metered's terminal event even when its socket stays open", async () => {
+    await step("streaming Responses closes after Metered's terminal event even when its socket stays open", async () => {
       const keyId = "fallback-responses-hanging-socket";
       seedPaidFallbackKey(keyId);
       let upstreamCancelled = false;
@@ -570,7 +571,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       assert.equal(upstreamCancelled, true);
     });
 
-    await t.step("Chat Completions also falls back through Metered Responses once", async () => {
+    await step("Chat Completions also falls back through Metered Responses once", async () => {
       const keyId = "fallback-chat-success";
       seedPaidFallbackKey(keyId);
       const urls: string[] = [];
@@ -612,7 +613,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       assert.deepEqual(urls, ["https://chatgpt.com/backend-api/codex/responses", "https://api.openlux.ai/v1/responses"]);
     });
 
-    await t.step("all recognized terminal events are recorded across routes and stream modes", async () => {
+    await step("all recognized terminal events are recorded across routes and stream modes", async () => {
       const terminalCases = [
         { eventType: "response.completed", terminalState: "completed" },
         { eventType: "response.failed", terminalState: "failed" },
@@ -727,7 +728,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("Metered network ambiguity returns an attributed 502 without retrying", async () => {
+    await step("Metered network ambiguity returns an attributed 502 without retrying", async () => {
       const routeCases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -831,12 +832,12 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("Surplus network ambiguity fails closed on Surplus and retains the spend cap", async () => {
-      const previousMeteredApiKey = Deno.env.get("METERED_API_KEY");
-      const previousSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+    await step("Surplus network ambiguity fails closed on Surplus and retains the spend cap", async () => {
+      const previousMeteredApiKey = process.env.METERED_API_KEY;
+      const previousSurplusApiKey = process.env.SURPLUS_API_KEY;
       try {
-        Deno.env.set("METERED_API_KEY", "metered-test-key");
-        Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+        process.env.METERED_API_KEY = "metered-test-key";
+        process.env.SURPLUS_API_KEY = "surplus-test-key";
         resetMeteredModelsCacheForTest();
         resetSurplusModelsCacheForTest();
         await fetchMeteredModels({
@@ -969,14 +970,14 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       } finally {
         resetMeteredModelsCacheForTest();
         resetSurplusModelsCacheForTest();
-        if (previousMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-        else Deno.env.set("METERED_API_KEY", previousMeteredApiKey);
-        if (previousSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-        else Deno.env.set("SURPLUS_API_KEY", previousSurplusApiKey);
+        if (previousMeteredApiKey === undefined) delete process.env.METERED_API_KEY;
+        else process.env.METERED_API_KEY = previousMeteredApiKey;
+        if (previousSurplusApiKey === undefined) delete process.env.SURPLUS_API_KEY;
+        else process.env.SURPLUS_API_KEY = previousSurplusApiKey;
       }
     });
 
-    await t.step("failed RemovedProvider fallback restores primary Codex correlation", async () => {
+    await step("failed RemovedProvider fallback restores primary Codex correlation", async () => {
       const debugKey = keyToString(DEBUG_ROUTING_KEY);
       const previousDebugRouting = kvStore.get(debugKey);
       const originalInfo = console.info;
@@ -1041,7 +1042,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("Codex primary 400 never advances to RemovedProvider or paid transport", async () => {
+    await step("Codex primary 400 never advances to RemovedProvider or paid transport", async () => {
       const debugKey = keyToString(DEBUG_ROUTING_KEY);
       const previousDebugRouting = kvStore.get(debugKey);
       const codexResponsesUrl = "https://chatgpt.com/backend-api/codex/responses";
@@ -1112,7 +1113,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("RemovedProvider recovery clears failed Codex request metadata", async () => {
+    await step("RemovedProvider recovery clears failed Codex request metadata", async () => {
       const debugKey = keyToString(DEBUG_ROUTING_KEY);
       const previousDebugRouting = kvStore.get(debugKey);
       const originalInfo = console.info;
@@ -1169,7 +1170,7 @@ export const runMeteredPaidFallbackMatrixPart1 = async (t: Deno.TestContext): Pr
     kvStore.delete(keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY));
     resetCodexAccountRoutingForTest();
     resetCodexAuthCacheForTest();
-    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalApiKey;
   }
 };

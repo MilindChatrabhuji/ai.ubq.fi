@@ -1,21 +1,8 @@
-# Prettier owns TypeScript only in this repo.
-#
-# `deno fmt` keeps JSON, Markdown, CSS, HTML and the static browser JS that CI
-# already gates with `deno fmt --check`. Two formatters must never share a file
-# (LINTING.md 2.6), so those types are excluded here and `*.ts` is excluded from
-# deno fmt's config in deno.json.
-*.json
-*.jsonc
-*.md
-*.js
-*.cjs
-*.css
-*.html
-*.yml
-*.yaml
+# Prettier owns all supported first-party file types. TypeScript keeps 160 columns;
+# the former Deno-owned file types keep 120 columns through .prettierrc overrides.
 *.sh
 
-# Generated: `deno task types`
+# Retired generated runtime declarations must never become source inputs.
 .deno-types.d.ts
 
 # Vendored: openai/codex git submodule
@@ -23,6 +10,9 @@ lib/
 
 # Dev scratch, generated output and immutable release copies
 node_modules/
+.bun-cache/
+.tmp/
+.cleanup-evidence/
 .codex-worktrees/
 .data/
 .release/
@@ -32,3 +22,11 @@ node_modules/
 logs/
 benchmark-runs/
 .git/
+
+# Generated benchmark output excluded by the previous formatter too.
+benchmarks/fixtures/
+benchmarks/provider-waterfall/results/
+benchmarks/provider-waterfall/cost/
+
+# Integrity-bound benchmark corpus fixture; its bytes are pinned in corpus-v1.manifest.json.
+benchmarks/provider-waterfall/fixtures/codex-tools-0.160.1.json

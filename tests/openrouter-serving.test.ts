@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import assert from "node:assert/strict";
 
 import { ApiKeyQuotaDispatchError, apiKeyPolicyFromHashRecord, reserveApiKeyUsageV3 } from "../src/api-key-policy.ts";
@@ -28,21 +31,21 @@ const catalogue = {
 
 const jsonResponse = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const withServedCatalogue = async (fn: () => Promise<void> | void): Promise<void> => {
+const withServedCatalogue = async (fn: () => Promise<void> | void, payload: unknown = catalogue): Promise<void> => {
   resetOpenRouterModelsCacheForTest();
-  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
-  setOpenRouterModelsFetchForTest((() => Promise.resolve(jsonResponse(catalogue))) as typeof fetch);
+  process.env.OPENROUTER_API_KEY = "fixture-openrouter-key";
+  setOpenRouterModelsFetchForTest(createFetchMock(() => Promise.resolve(jsonResponse(payload))));
   try {
     await fetchOpenRouterModels();
     await fn();
   } finally {
     setOpenRouterModelsFetchForTest(null);
     resetOpenRouterModelsCacheForTest();
-    Deno.env.delete("OPENROUTER_API_KEY");
+    Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
   }
 };
 
-Deno.test("openrouter serves every cached catalogue id and refuses the rest", async () => {
+test("openrouter serves every cached catalogue id and refuses the rest", async () => {
   await withServedCatalogue(() => {
     assert.equal(openRouterUpstreamModelFor("vendor/alpha"), "vendor/alpha");
     assert.equal(openRouterUpstreamModelFor("vendor/beta"), "vendor/beta");
@@ -50,7 +53,7 @@ Deno.test("openrouter serves every cached catalogue id and refuses the rest", as
   });
 });
 
-Deno.test("openrouter chat forwards the client body with the served model", async () => {
+test("openrouter chat forwards the client body with the served model", async () => {
   await withServedCatalogue(async () => {
     const captured: { body: Record<string, unknown> | null } = { body: null };
     const response = await handleOpenRouterChatCompletions(
@@ -80,7 +83,7 @@ Deno.test("openrouter chat forwards the client body with the served model", asyn
   });
 });
 
-Deno.test("openrouter refuses a model outside the catalogue on both wires", async () => {
+test("openrouter refuses a model outside the catalogue on both wires", async () => {
   await withServedCatalogue(async () => {
     const chat = await handleOpenRouterChatCompletions(
       new Request("https://ai.ubq.fi/v1/chat/completions", { method: "POST" }),
@@ -97,7 +100,7 @@ Deno.test("openrouter refuses a model outside the catalogue on both wires", asyn
   });
 });
 
-Deno.test("openrouter responses forwards the client body and reports the upstream", async () => {
+test("openrouter responses forwards the client body and reports the upstream", async () => {
   await withServedCatalogue(async () => {
     const captured: { body: Record<string, unknown> | null } = { body: null };
     const response = await handleOpenRouterResponses(
@@ -131,16 +134,16 @@ const dispatchCases = [
   { path: "/v1/responses", body: { input: "hi" }, handle: handleOpenRouterResponses },
 ] as const;
 
-Deno.test("openrouter rethrows local quota-hook refusals before either transport starts", async () => {
+test("openrouter rethrows local quota-hook refusals before either transport starts", async () => {
   await withServedCatalogue(async () => {
     const kv = new CountingKv();
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
-    globalThis.fetch = () => {
+    globalThis.fetch = createFetchMock(() => {
       fetchCalls += 1;
       return Promise.reject(new Error("a local quota refusal must never fetch"));
-    };
-    setKvForTest(kv as unknown as Deno.Kv);
+    });
+    setKvForTest(kv as unknown as Kv);
     resetProviderHealthThrottleForTest();
     try {
       for (const scenario of dispatchCases) {
@@ -186,14 +189,14 @@ Deno.test("openrouter rethrows local quota-hook refusals before either transport
   });
 });
 
-Deno.test("openrouter terminal routes retain real deferred-quota 429 bodies and headers with zero dispatch", async () => {
+test("openrouter terminal routes retain real deferred-quota 429 bodies and headers with zero dispatch", async () => {
   await withServedCatalogue(async () => {
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
-    globalThis.fetch = () => {
+    globalThis.fetch = createFetchMock(() => {
       fetchCalls += 1;
       return Promise.reject(new Error("an exhausted key must never fetch"));
-    };
+    });
     try {
       for (const scenario of dispatchCases) {
         const kv = new CountingKv();
@@ -216,12 +219,12 @@ Deno.test("openrouter terminal routes retain real deferred-quota 429 bodies and 
           paid_fallback_reservation_request_id: null,
         };
         kv.seed(apiKeyHashKey(tokenHash), record);
-        setKvForTest(kv as unknown as Deno.Kv);
+        setKvForTest(kv as unknown as Kv);
         resetProviderSelectionCacheForTest();
         resetProviderHealthThrottleForTest();
         const policy = apiKeyPolicyFromHashRecord(tokenHash, record, now);
         assert.ok(policy);
-        const charged = await reserveApiKeyUsageV3(policy, "already-dispatched", scenario.path, { kv: kv as unknown as Deno.Kv });
+        const charged = await reserveApiKeyUsageV3(policy, "already-dispatched", scenario.path, { kv: kv as unknown as Kv });
         assert.equal(charged.ok, true);
         (await charged.reservation.beforeProviderDispatch("openrouter"))?.markTransportStarted();
         const request = new Request(`https://ai.ubq.fi${scenario.path}`, {
@@ -250,19 +253,19 @@ Deno.test("openrouter terminal routes retain real deferred-quota 429 bodies and 
   });
 });
 
-Deno.test("openrouter keeps ordinary transport failures as upstream 502s on both wires", async () => {
+test("openrouter keeps ordinary transport failures as upstream 502s on both wires", async () => {
   await withServedCatalogue(async () => {
     const originalFetch = globalThis.fetch;
     try {
       for (const scenario of dispatchCases) {
         const kv = new CountingKv();
-        setKvForTest(kv as unknown as Deno.Kv);
+        setKvForTest(kv as unknown as Kv);
         resetProviderHealthThrottleForTest();
         let fetchCalls = 0;
-        globalThis.fetch = () => {
+        globalThis.fetch = createFetchMock(() => {
           fetchCalls += 1;
           return Promise.reject(new TypeError("fixture network refusal"));
-        };
+        });
         const telemetry = createResponseTelemetryState();
         const response = await scenario.handle(
           new Request(`https://ai.ubq.fi${scenario.path}`, { method: "POST" }),
@@ -285,32 +288,32 @@ Deno.test("openrouter keeps ordinary transport failures as upstream 502s on both
   });
 });
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 /** Minimal Deno.Kv stand-in for the model-listing paths. */
 class CatalogKv {
   readonly values = new Map<string, unknown>();
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
       versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
   }
 }
 
-Deno.test("the public catalogue lists only operator-enabled ids while an empty whitelist filters none", async () => {
-  const meteredKey = Deno.env.get("METERED_API_KEY");
-  const surplusKey = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.delete("METERED_API_KEY");
-  Deno.env.delete("SURPLUS_API_KEY");
+test("the public catalogue lists only operator-enabled ids while an empty whitelist filters none", async () => {
+  const meteredKey = process.env.METERED_API_KEY;
+  const surplusKey = process.env.SURPLUS_API_KEY;
+  Reflect.deleteProperty(process.env, "METERED_API_KEY");
+  Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
   const kv = new CatalogKv();
   const codexSnapshot = {
     source: "chatgpt_codex",
@@ -329,7 +332,7 @@ Deno.test("the public catalogue lists only operator-enabled ids while an empty w
   kv.values.set(keyOf([...CODEX_MODELS_WHITELIST_KV_KEY]), { model_ids: ["listed-codex-id", "vendor/alpha"], updated_at_ms: 1 });
   resetProviderSelectionCacheForTest();
   resetRuntimeConfigCacheForTest();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     await withServedCatalogue(async () => {
       const list = await handleModels();
@@ -384,14 +387,14 @@ Deno.test("the public catalogue lists only operator-enabled ids while an empty w
     setKvForTest(null);
     resetProviderSelectionCacheForTest();
     resetRuntimeConfigCacheForTest();
-    if (meteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", meteredKey);
-    if (surplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", surplusKey);
+    if (meteredKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = meteredKey;
+    if (surplusKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = surplusKey;
   }
 });
 
-Deno.test("openrouter codex rows carry only source-stated metadata", async () => {
+test("openrouter codex rows carry only source-stated metadata", async () => {
   await withServedCatalogue(() => {
     const rows = withOpenRouterModels([{ slug: "vendor/alpha", display_name: "stored alpha" }]);
     assert.deepEqual(
@@ -431,7 +434,7 @@ const streamUsageContext = (responseTelemetry: ResponseTelemetryState) => ({
   responseTelemetry,
 });
 
-Deno.test("openrouter chat relays validated stream frames and records usage", async () => {
+test("openrouter chat relays validated stream frames and records usage", async () => {
   await withServedCatalogue(async () => {
     const telemetry = createResponseTelemetryState();
     const chunks = [
@@ -462,7 +465,7 @@ Deno.test("openrouter chat relays validated stream frames and records usage", as
   });
 });
 
-Deno.test("openrouter chat reports a malformed stream frame as a stream error", async () => {
+test("openrouter chat reports a malformed stream frame as a stream error", async () => {
   await withServedCatalogue(async () => {
     const telemetry = createResponseTelemetryState();
     const response = await handleOpenRouterChatCompletions(
@@ -480,7 +483,7 @@ Deno.test("openrouter chat reports a malformed stream frame as a stream error", 
   });
 });
 
-Deno.test("openrouter responses relays native events and records the terminal", async () => {
+test("openrouter responses relays native events and records the terminal", async () => {
   await withServedCatalogue(async () => {
     const telemetry = createResponseTelemetryState();
     const events = [
@@ -504,14 +507,16 @@ Deno.test("openrouter responses relays native events and records the terminal", 
   });
 });
 
-Deno.test("openrouter resolves a served id from a cold catalogue and stays cache-authoritative once warm", async () => {
+test("openrouter resolves a served id from a cold catalogue and stays cache-authoritative once warm", async () => {
   resetOpenRouterModelsCacheForTest();
-  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+  process.env.OPENROUTER_API_KEY = "fixture-openrouter-key";
   let fetches = 0;
-  setOpenRouterModelsFetchForTest((() => {
-    fetches += 1;
-    return Promise.resolve(jsonResponse(catalogue));
-  }) as typeof fetch);
+  setOpenRouterModelsFetchForTest(
+    createFetchMock(() => {
+      fetches += 1;
+      return Promise.resolve(jsonResponse(catalogue));
+    })
+  );
   try {
     resetOpenRouterModelsCacheForTest();
     assert.equal(await resolveOpenRouterUpstreamModel("gpt-5-codex"), null, "a Codex-shaped id does not refresh a cold catalogue");
@@ -520,13 +525,191 @@ Deno.test("openrouter resolves a served id from a cold catalogue and stays cache
     assert.equal(fetches, 1);
     assert.equal(await resolveOpenRouterUpstreamModel("vendor/gamma"), null, "a warm cache stays authoritative");
     assert.equal(fetches, 1, "no extra refresh once the catalogue is warm");
-    Deno.env.delete("OPENROUTER_API_KEY");
+    Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
     resetOpenRouterModelsCacheForTest();
     assert.equal(await resolveOpenRouterUpstreamModel("vendor/alpha"), null, "an unconfigured upstream never fetches");
     assert.equal(fetches, 1);
   } finally {
     setOpenRouterModelsFetchForTest(null);
     resetOpenRouterModelsCacheForTest();
-    Deno.env.delete("OPENROUTER_API_KEY");
+    Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
   }
+});
+
+const claudeCacheModels = ["~anthropic/claude-opus-latest", "anthropic/claude-sonnet-4"] as const;
+const cacheCatalogue = { data: [...claudeCacheModels.map((id) => ({ id })), { id: "vendor/alpha" }] };
+
+const cacheUsageFor = (path: string, details?: Record<string, number>): Record<string, unknown> =>
+  path === "/v1/responses"
+    ? { input_tokens: 1_000, output_tokens: 20, total_tokens: 1_020, ...(details === undefined ? {} : { input_tokens_details: details }) }
+    : { prompt_tokens: 1_000, completion_tokens: 20, total_tokens: 1_020, ...(details === undefined ? {} : { prompt_tokens_details: details }) };
+
+const cacheResponseFor = (
+  path: string,
+  stream: boolean,
+  usage: Record<string, unknown>
+): Readonly<{ response: Response; payload: Record<string, unknown> }> => {
+  const payload: Record<string, unknown> =
+    path === "/v1/responses"
+      ? {
+          id: "resp_cache_fixture",
+          object: "response",
+          status: "completed",
+          output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "cached reply" }] }],
+          usage,
+        }
+      : {
+          id: "gen_cache_fixture",
+          object: "chat.completion",
+          choices: [{ index: 0, message: { role: "assistant", content: "cached reply" }, finish_reason: "stop" }],
+          usage,
+        };
+  if (!stream) return { response: jsonResponse(payload), payload };
+  const frames =
+    path === "/v1/responses"
+      ? [
+          { type: "response.created", response: { id: payload.id } },
+          { type: "response.output_text.delta", delta: "cached reply" },
+          { type: "response.completed", response: payload },
+        ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+      : [
+          `data: ${JSON.stringify({ id: payload.id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "cached reply" }, finish_reason: "stop" }] })}\n\n`,
+          `data: ${JSON.stringify({ id: payload.id, object: "chat.completion.chunk", choices: [], usage })}\n\n`,
+          "data: [DONE]\n\n",
+        ];
+  return { response: sseResponse(frames), payload };
+};
+
+test("openrouter Claude caching keeps native request and response shapes on both streamed and buffered wires", async () => {
+  await withServedCatalogue(async () => {
+    for (const scenario of dispatchCases) {
+      for (const model of claudeCacheModels) {
+        for (const stream of [false, true]) {
+          const telemetry = createResponseTelemetryState();
+          const rawRecord = {
+            model,
+            ...scenario.body,
+            stream,
+            prompt_cache_key: "stable-session-key",
+            ...(scenario.path === "/v1/responses"
+              ? { instructions: "Stable developer instructions", reasoning: { effort: "max" } }
+              : { reasoning_effort: "max" }),
+            tools: [{ type: "function", name: "lookup", parameters: { type: "object", properties: { cache_control: { type: "string" } } } }],
+          };
+          const original = JSON.stringify(rawRecord);
+          const usage = cacheUsageFor(scenario.path, { cached_tokens: 200, cache_write_tokens: 300 });
+          const fixture = cacheResponseFor(scenario.path, stream, usage);
+          let calls = 0;
+          const transport = (body: Readonly<Record<string, unknown>>): Promise<Response> => {
+            calls += 1;
+            const expected: Record<string, unknown> = { ...rawRecord, cache_control: { type: "ephemeral" } };
+            if (scenario.path === "/v1/chat/completions" && stream) expected.stream_options = { include_usage: true };
+            assert.deepEqual(body, expected);
+            assert.equal(JSON.stringify(rawRecord), original, "upstream cache hints must not mutate captured client input");
+            return Promise.resolve(fixture.response);
+          };
+          const response = await scenario.handle(
+            new Request(`https://ai.ubq.fi${scenario.path}`, { method: "POST" }),
+            rawRecord,
+            model,
+            streamUsageContext(telemetry),
+            { fetchChat: transport, fetchResponses: transport }
+          );
+          assert.equal(calls, 1);
+          assert.equal(response.status, 200);
+          if (stream) {
+            const text = await response.text();
+            assert.ok(text.includes(JSON.stringify(usage)), "upstream usage stays in the native SSE payload");
+            assert.match(text, /cached reply/);
+          } else {
+            assert.deepEqual(await response.json(), fixture.payload);
+          }
+          assert.equal(telemetry.promptCacheMode, "implicit");
+          assert.equal(telemetry.reasoning, "max");
+          assert.equal(telemetry.promptCacheKeyPresent, true);
+          assert.equal(telemetry.explicitBreakpointCount, 0);
+          assert.equal(telemetry.cachedInputTokens, 200);
+          assert.equal(telemetry.cacheWriteInputTokens, 300);
+          assert.equal(telemetry.usageTelemetryStatus, "reported");
+        }
+      }
+    }
+  }, cacheCatalogue);
+});
+
+test("openrouter preserves explicit cache controls and records their mode and count", async () => {
+  await withServedCatalogue(async () => {
+    for (const scenario of dispatchCases) {
+      const contentType = scenario.path === "/v1/responses" ? "input_text" : "text";
+      const inputsKey = scenario.path === "/v1/responses" ? "input" : "messages";
+      const controls = [
+        { body: { cache_control: { type: "ephemeral", ttl: "1h" } }, mode: "implicit", count: 0 },
+        {
+          body: { [inputsKey]: [{ role: "user", content: [{ type: contentType, text: "static prefix", cache_control: { type: "ephemeral", ttl: "1h" } }] }] },
+          mode: "explicit",
+          count: 1,
+        },
+        {
+          body: { [inputsKey]: [{ role: "user", content: [{ type: contentType, text: "static prefix", prompt_cache_breakpoint: { mode: "explicit" } }] }] },
+          mode: "explicit",
+          count: 1,
+        },
+        { body: { tools: [{ type: "function", name: "lookup", cache_control: { type: "ephemeral" } }] }, mode: "explicit", count: 1 },
+        { body: { prompt_cache_options: { mode: "explicit" } }, mode: "explicit", count: 0 },
+      ];
+      for (const control of controls) {
+        const model = claudeCacheModels[0];
+        const rawRecord = { model, ...scenario.body, ...control.body };
+        const original = JSON.stringify(rawRecord);
+        const telemetry = createResponseTelemetryState();
+        const transport = (body: Readonly<Record<string, unknown>>): Promise<Response> => {
+          assert.deepEqual(body, scenario.path === "/v1/chat/completions" ? { ...rawRecord, stream: false } : rawRecord);
+          return Promise.resolve(cacheResponseFor(scenario.path, false, cacheUsageFor(scenario.path)).response);
+        };
+        const response = await scenario.handle(
+          new Request(`https://ai.ubq.fi${scenario.path}`, { method: "POST" }),
+          rawRecord,
+          model,
+          streamUsageContext(telemetry),
+          { fetchChat: transport, fetchResponses: transport }
+        );
+        await response.json();
+        assert.equal(JSON.stringify(rawRecord), original);
+        assert.equal(telemetry.promptCacheMode, control.mode);
+        assert.equal(telemetry.explicitBreakpointCount, control.count);
+        assert.equal(telemetry.promptCacheKeyPresent, false);
+      }
+    }
+  }, cacheCatalogue);
+});
+
+test("openrouter leaves other models unchanged and missing cache counters unknown", async () => {
+  await withServedCatalogue(async () => {
+    for (const scenario of dispatchCases) {
+      for (const stream of [false, true]) {
+        for (const details of [undefined, { cached_tokens: 0 }]) {
+          const rawRecord = { model: "vendor/alpha", ...scenario.body, stream };
+          const telemetry = createResponseTelemetryState();
+          const transport = (body: Readonly<Record<string, unknown>>): Promise<Response> => {
+            const expected: Record<string, unknown> = { ...rawRecord };
+            if (scenario.path === "/v1/chat/completions" && stream) expected.stream_options = { include_usage: true };
+            assert.deepEqual(body, expected);
+            return Promise.resolve(cacheResponseFor(scenario.path, stream, cacheUsageFor(scenario.path, details)).response);
+          };
+          const response = await scenario.handle(
+            new Request(`https://ai.ubq.fi${scenario.path}`, { method: "POST" }),
+            rawRecord,
+            "vendor/alpha",
+            streamUsageContext(telemetry),
+            { fetchChat: transport, fetchResponses: transport }
+          );
+          await response.text();
+          assert.equal(telemetry.promptCacheMode, "unspecified");
+          assert.equal(telemetry.cachedInputTokens, details === undefined ? null : 0);
+          assert.equal(telemetry.cacheWriteInputTokens, null);
+          assert.equal(telemetry.usageTelemetryStatus, details === undefined ? "partial" : "reported");
+        }
+      }
+    }
+  }, cacheCatalogue);
 });

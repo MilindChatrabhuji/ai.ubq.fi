@@ -22,8 +22,7 @@ body[data-page="chat"] [data-chat-shell] {
   max-width: 1600px;
   height: 100vh;
   margin: 0 auto;
-  padding: calc(22px + env(safe-area-inset-top)) clamp(20px, 3vw, 44px)
-    calc(22px + env(safe-area-inset-bottom));
+  padding: calc(22px + env(safe-area-inset-top)) clamp(20px, 3vw, 44px) calc(22px + env(safe-area-inset-bottom));
 }
 
 /* The shared header only takes its grid slot here; its surface, border, and radius stay shared. */
@@ -290,7 +289,9 @@ body[data-page="chat"] [data-chat-compose] {
 
 body[data-page="chat"] [data-chat-compose]:focus-within {
   border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px var(--focus-ring-soft), var(--shadow-soft);
+  box-shadow:
+    0 0 0 3px var(--focus-ring-soft),
+    var(--shadow-soft);
 }
 
 /* The textarea is borderless inside the compose surface, so the surface carries the focus ring. */

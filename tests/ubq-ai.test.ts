@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { runUbqAi, type UbqAiRuntime } from "../scripts/ubq-ai.ts";
 
@@ -91,7 +92,7 @@ const makeRuntime = (
   };
 };
 
-Deno.test("ubq-ai: health prints JSON", async () => {
+test("ubq-ai: health prints JSON", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     fetch: (_req, recorded) => {
       assert.ok(recorded.url.endsWith("/health"));
@@ -114,7 +115,7 @@ Deno.test("ubq-ai: health prints JSON", async () => {
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: info prints JSON", async () => {
+test("ubq-ai: info prints JSON", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     fetch: (_req, recorded) => {
       assert.equal(new URL(recorded.url).pathname, "/");
@@ -130,7 +131,7 @@ Deno.test("ubq-ai: info prints JSON", async () => {
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: whoami uses client token and prints JSON", async () => {
+test("ubq-ai: whoami uses client token and prints JSON", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
@@ -148,7 +149,7 @@ Deno.test("ubq-ai: whoami uses client token and prints JSON", async () => {
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: whoami falls back to admin token when client token missing", async () => {
+test("ubq-ai: whoami falls back to admin token when client token missing", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -166,7 +167,7 @@ Deno.test("ubq-ai: whoami falls back to admin token when client token missing", 
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: models uses client token and prints JSON", async () => {
+test("ubq-ai: models uses client token and prints JSON", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
@@ -184,7 +185,7 @@ Deno.test("ubq-ai: models uses client token and prints JSON", async () => {
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: models falls back to admin token when client token missing", async () => {
+test("ubq-ai: models falls back to admin token when client token missing", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -202,7 +203,7 @@ Deno.test("ubq-ai: models falls back to admin token when client token missing", 
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: -v prints debug without leaking secrets", async () => {
+test("ubq-ai: -v prints debug without leaking secrets", async () => {
   const secret = "ubq_ai_test_token_super_secret_1234567890";
   const { runtime, outText, errText } = makeRuntime({
     env: { UOS_AI_TOKEN: secret },
@@ -219,7 +220,7 @@ Deno.test("ubq-ai: -v prints debug without leaking secrets", async () => {
   assert.equal(errText().includes(secret), false);
 });
 
-Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", async () => {
+test("ubq-ai: chat --stream does not consume prompt and prints deltas", async () => {
   const { runtime, requests, outText, errText } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
@@ -255,7 +256,7 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
   assert.match(requests[0].headers.authorization, /^Bearer /i);
 });
 
-Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
+test("ubq-ai: chat (non-stream) prints assistant content", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
@@ -278,7 +279,7 @@ Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {
   assert.equal(outText(), "hi\n");
 });
 
-Deno.test("ubq-ai: chat passes a Codex CLI reasoning tier through", async () => {
+test("ubq-ai: chat passes a Codex CLI reasoning tier through", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
@@ -303,7 +304,7 @@ Deno.test("ubq-ai: chat passes a Codex CLI reasoning tier through", async () => 
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: chat falls back to admin token when client token missing", async () => {
+test("ubq-ai: chat falls back to admin token when client token missing", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -327,7 +328,7 @@ Deno.test("ubq-ai: chat falls back to admin token when client token missing", as
   assert.equal(outText(), "hi\n");
 });
 
-Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", async () => {
+test("ubq-ai: responses (non-stream) prints extracted assistant text", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
@@ -354,7 +355,7 @@ Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", asyn
   assert.equal(outText(), "Summary.\n");
 });
 
-Deno.test("ubq-ai: responses passes a Codex CLI reasoning tier through", async () => {
+test("ubq-ai: responses passes a Codex CLI reasoning tier through", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { UOS_AI_TOKEN: "ubq_ai_test_token_1234567890" },
     fetch: (_req, recorded) => {
@@ -383,7 +384,7 @@ Deno.test("ubq-ai: responses passes a Codex CLI reasoning tier through", async (
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: responses falls back to admin token when client token missing", async () => {
+test("ubq-ai: responses falls back to admin token when client token missing", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -411,7 +412,7 @@ Deno.test("ubq-ai: responses falls back to admin token when client token missing
   assert.equal(outText(), "Summary.\n");
 });
 
-Deno.test("ubq-ai: admin keys list uses admin token (DENO_DEPLOY_TOKEN)", async () => {
+test("ubq-ai: admin keys list uses admin token (DENO_DEPLOY_TOKEN)", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -429,7 +430,7 @@ Deno.test("ubq-ai: admin keys list uses admin token (DENO_DEPLOY_TOKEN)", async 
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: admin keys create prints token", async () => {
+test("ubq-ai: admin keys create prints token", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -448,7 +449,7 @@ Deno.test("ubq-ai: admin keys create prints token", async () => {
   assert.equal(outText(), "ubq_ai_token_value\n");
 });
 
-Deno.test("ubq-ai: admin keys create --expires week sends expires_at_ms", async () => {
+test("ubq-ai: admin keys create --expires week sends expires_at_ms", async () => {
   const originalNow = Date.now;
   Date.now = () => 1_000_000;
   try {
@@ -473,7 +474,7 @@ Deno.test("ubq-ai: admin keys create --expires week sends expires_at_ms", async 
   }
 });
 
-Deno.test("ubq-ai: admin keys create --expires forever sends -1", async () => {
+test("ubq-ai: admin keys create --expires forever sends -1", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -492,7 +493,7 @@ Deno.test("ubq-ai: admin keys create --expires forever sends -1", async () => {
   assert.equal(outText(), "ubq_ai_token_value\n");
 });
 
-Deno.test("ubq-ai: admin keys create errors when both expires flags are set", async () => {
+test("ubq-ai: admin keys create errors when both expires flags are set", async () => {
   const { runtime, errText, requests } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: () => {
@@ -506,7 +507,7 @@ Deno.test("ubq-ai: admin keys create errors when both expires flags are set", as
   assert.equal(requests.length, 0);
 });
 
-Deno.test("ubq-ai: admin keys create --json prints full JSON response", async () => {
+test("ubq-ai: admin keys create --json prints full JSON response", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -523,7 +524,7 @@ Deno.test("ubq-ai: admin keys create --json prints full JSON response", async ()
   assert.ok(outText().includes('"token": "token_value"'));
 });
 
-Deno.test("ubq-ai: admin keys revoke posts id", async () => {
+test("ubq-ai: admin keys revoke posts id", async () => {
   const { runtime, outText, errText, requests } = makeRuntime({
     env: { DENO_DEPLOY_TOKEN: "deploy_token_1234567890_abcdefghijklmnopqrstuvwxyz" },
     fetch: (_req, recorded) => {
@@ -545,7 +546,7 @@ Deno.test("ubq-ai: admin keys revoke posts id", async () => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
+test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
   const { runtime, outText, errText, requests } = makeRuntime({
@@ -579,7 +580,7 @@ Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: admin upload-auth includes codex client version hint", async () => {
+test("ubq-ai: admin upload-auth includes codex client version hint", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
   const { runtime, outText, errText, requests } = makeRuntime({
@@ -622,7 +623,7 @@ Deno.test("ubq-ai: admin upload-auth includes codex client version hint", async 
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: admin upload-auth prefers Codex model cache version over stale npm metadata", async () => {
+test("ubq-ai: admin upload-auth prefers Codex model cache version over stale npm metadata", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
   let packageMetadataRead = false;
@@ -657,7 +658,7 @@ Deno.test("ubq-ai: admin upload-auth prefers Codex model cache version over stal
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: admin upload-auth falls back to local version file", async () => {
+test("ubq-ai: admin upload-auth falls back to local version file", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };
   const authJson = JSON.stringify(authObject);
   const versionJson = JSON.stringify({ latest_version: "0.88.1" });
@@ -698,7 +699,7 @@ Deno.test("ubq-ai: admin upload-auth falls back to local version file", async ()
   assert.equal(requests.length, 1);
 });
 
-Deno.test("ubq-ai: missing admin token returns exit code 2", async () => {
+test("ubq-ai: missing admin token returns exit code 2", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: {},
     fetch: () => jsonResponse(500, { error: "fetch should not be called" }),
@@ -710,7 +711,7 @@ Deno.test("ubq-ai: missing admin token returns exit code 2", async () => {
   assert.match(errText(), /Missing admin token/);
 });
 
-Deno.test("ubq-ai: user token does not grant admin access", async () => {
+test("ubq-ai: user token does not grant admin access", async () => {
   const { runtime, outText, errText } = makeRuntime({
     env: { UOS_AI_TOKEN: "client_only_token" },
     fetch: () => {

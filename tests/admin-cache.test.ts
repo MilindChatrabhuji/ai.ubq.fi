@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { createAdminSnapshotCache } from "../static/admin-cache.js";
@@ -39,7 +40,7 @@ const deferredEmptyCursorRequest = (records: Map<string, unknown>, transaction: 
   return request;
 };
 
-Deno.test("admin cache retries IndexedDB after a temporary open failure", async () => {
+test("admin cache retries IndexedDB after a temporary open failure", async () => {
   let openCalls = 0;
   const transaction: {
     onabort?: () => void;
@@ -80,7 +81,7 @@ Deno.test("admin cache retries IndexedDB after a temporary open failure", async 
   assert.equal(openCalls, 2);
 });
 
-Deno.test("admin cache serializes invalidation behind a pending write", async () => {
+test("admin cache serializes invalidation behind a pending write", async () => {
   const records = new Map<string, unknown>();
   const database = {
     transaction: () => {
@@ -138,7 +139,7 @@ Deno.test("admin cache serializes invalidation behind a pending write", async ()
   assert.equal(records.size, 0);
 });
 
-Deno.test("admin cache reads wait for a queued invalidation", async () => {
+test("admin cache reads wait for a queued invalidation", async () => {
   const records = new Map<string, unknown>();
   const database = {
     transaction: () => {

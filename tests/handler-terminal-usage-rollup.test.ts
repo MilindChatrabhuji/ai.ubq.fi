@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { Kv } from "#kv";
 import assert from "node:assert/strict";
 
 import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
@@ -60,7 +62,7 @@ const terminalOptions = (requestId: string, extra: Partial<TerminalLogInput> = {
   ...extra,
 });
 
-Deno.test("terminal usage accounting records one observation with the observed request hour and usage", async () => {
+test("terminal usage accounting records one observation with the observed request hour and usage", async () => {
   const observations: UsageRollupInput[] = [];
   const requestStartedAtMs = Date.parse("2026-09-22T16:00:00Z");
   const response = await withTerminalRequestLog(
@@ -88,7 +90,7 @@ Deno.test("terminal usage accounting records one observation with the observed r
   });
 });
 
-Deno.test("terminal usage accounting falls back to the terminal clock when no request start is supplied", async () => {
+test("terminal usage accounting falls back to the terminal clock when no request start is supplied", async () => {
   const observations: UsageRollupInput[] = [];
   const before = Date.now();
   const response = await withTerminalRequestLog(
@@ -112,7 +114,7 @@ Deno.test("terminal usage accounting falls back to the terminal clock when no re
   );
 });
 
-Deno.test("a failed terminal usage-rollup write never changes the terminal response", async () => {
+test("a failed terminal usage-rollup write never changes the terminal response", async () => {
   let attempts = 0;
   const response = await withTerminalRequestLog(
     codexResponse(),
@@ -129,9 +131,9 @@ Deno.test("a failed terminal usage-rollup write never changes the terminal respo
   assert.equal(await response.text(), "complete");
 });
 
-Deno.test("terminal usage accounting performs no KV work for settled, aggregate, route-less or unobserved terminals", async () => {
+test("terminal usage accounting performs no KV work for settled, aggregate, route-less or unobserved terminals", async () => {
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     for (const provider of ["metered", "surplus", "mixed"]) {
       const response = await withTerminalRequestLog(
@@ -156,9 +158,9 @@ Deno.test("terminal usage accounting performs no KV work for settled, aggregate,
   }
 });
 
-Deno.test("one observed terminal response writes exactly one rollup merge with actual tokens and no ledger charge", async () => {
+test("one observed terminal response writes exactly one rollup merge with actual tokens and no ledger charge", async () => {
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     const requestStartedAtMs = Date.parse("2026-09-22T16:00:00Z");
     const response = await withTerminalRequestLog(codexResponseWithUsage(), terminalOptions("handler-usage-rollup-observed", { requestStartedAtMs }));
@@ -175,7 +177,7 @@ Deno.test("one observed terminal response writes exactly one rollup merge with a
       "the writer merges once without a retry"
     );
 
-    const rollups = await listPaidFallbackUsageRollups(kv as unknown as Deno.Kv, { sinceMs: requestStartedAtMs - 1, nowMs: requestStartedAtMs + 1 });
+    const rollups = await listPaidFallbackUsageRollups(kv as unknown as Kv, { sinceMs: requestStartedAtMs - 1, nowMs: requestStartedAtMs + 1 });
     assert.equal(rollups.length, 1);
     assert.equal(rollups[0]?.provider, "chatgpt_codex");
     assert.equal(rollups[0]?.model, "gpt-5.6-sol");

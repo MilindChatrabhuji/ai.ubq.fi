@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/provider-capacity-harness.ts";
 // Named additional-rate-limit coverage moved beside tests/provider-capacity.test.ts:
 // that file sits at the 1500-line test cap enforced by scripts/file-size-ratchet.ts,
 // and the PR899 head pushed it to 1515 lines, which failed `size:check`.
@@ -12,7 +14,10 @@ import {
 } from "../src/provider/capacity.ts";
 import { createFetcher, keyToString, kvStore, kvStub, nowMs, seed } from "./helpers/provider-capacity-harness.ts";
 
-Deno.test("sampler carries named Codex model limits alongside null secondary windows", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("sampler carries named Codex model limits alongside null secondary windows", async () => {
   seed();
   const live = await refreshProviderCapacity({
     kv: kvStub,
@@ -63,7 +68,7 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   assert.equal(routingObservation.includes("GPT-5.3-Codex-Spark"), true);
 });
 
-Deno.test("sampler keeps unused additional limits visible while deferring them from routing", async () => {
+test("sampler keeps unused additional limits visible while deferring them from routing", async () => {
   seed();
   const live = await refreshProviderCapacity({
     kv: kvStub,
@@ -89,7 +94,7 @@ Deno.test("sampler keeps unused additional limits visible while deferring them f
   assert.equal(routingObservation.includes("GPT-5.3-Codex-Spark"), false);
 });
 
-Deno.test("sampler keeps named limits on the reporting account only", async () => {
+test("sampler keeps named limits on the reporting account only", async () => {
   seed();
   const live = await refreshProviderCapacity({
     kv: kvStub,

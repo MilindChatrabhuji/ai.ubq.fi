@@ -1,3 +1,4 @@
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 // corpus-build.ts — CLI entry for the DeepSeek V4.1 Flash provider waterfall corpus.
 // Orchestrates build/verify/selfcheck/report; all parsing, selection, sanitizer and rendering helpers
 // live in corpus-build-support.ts. Both files are deterministic, offline, and byte-identical in
@@ -50,7 +51,7 @@ const build = async (): Promise<void> => {
   }
 
   const { chosen, smallMode } = selectEntries(sessions);
-  const fixtureBytes = await Deno.readFile(TOOLS_FIXTURE_PATH);
+  const fixtureBytes = await readFile(TOOLS_FIXTURE_PATH);
   const tools = JSON.parse(new TextDecoder().decode(fixtureBytes)) as JsonValue[];
   if (!Array.isArray(tools)) throw new Error("tools fixture is not a JSON array");
 
@@ -89,9 +90,9 @@ const build = async (): Promise<void> => {
     encryptedTotal
   );
 
-  await Deno.mkdir(CORPUS_DIR, { recursive: true });
-  await Deno.writeFile(JSONL_PATH, jsonlBytes);
-  await Deno.writeTextFile(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + "\n");
+  await mkdir(CORPUS_DIR, { recursive: true });
+  await writeFile(JSONL_PATH, jsonlBytes);
+  await writeFile(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + "\n");
   printBuildSummary(
     entries,
     jsonlBytes,
@@ -111,10 +112,10 @@ const build = async (): Promise<void> => {
 // --------------------------------------------------------------------------------------------------- verify
 const verify = async (): Promise<void> => {
   const issues: string[] = [];
-  const manifest = JSON.parse(await Deno.readTextFile(MANIFEST_PATH)) as JsonObject;
-  const jsonlBytes = await Deno.readFile(JSONL_PATH);
+  const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8")) as JsonObject;
+  const jsonlBytes = await readFile(JSONL_PATH);
   const sha = await sha256Hex(jsonlBytes);
-  const fixtureBytes = await Deno.readFile(TOOLS_FIXTURE_PATH);
+  const fixtureBytes = await readFile(TOOLS_FIXTURE_PATH);
   const fixtureSha = await sha256Hex(fixtureBytes);
   const fixture = JSON.parse(new TextDecoder().decode(fixtureBytes)) as JsonValue[];
   const corpus = isObject(manifest.corpus) ? manifest.corpus : null;
@@ -145,7 +146,7 @@ const verify = async (): Promise<void> => {
   if (issues.length) {
     console.error(`verify FAILED (${issues.length} issues):`);
     for (const issue of issues) console.error(`  - ${issue}`);
-    Deno.exit(1);
+    process.exit(1);
   }
   console.log(`verify OK: 30 entries, sha256 ${sha}, class counts 6/9/9/6, tools fixture ${fixtureSha}`);
 };
@@ -161,7 +162,7 @@ const selfcheck = (): void => {
   console.log("selfcheck idempotence: ok");
   if (failures.length) {
     console.error(`selfcheck FAILED: ${failures.join("; ")}`);
-    Deno.exit(1);
+    process.exit(1);
   }
   console.log("selfcheck OK: all credential shapes redacted and counted");
 };
@@ -230,7 +231,7 @@ export const renderLimitations = (entries: readonly JsonValue[], sources: JsonOb
 };
 
 const report = async (): Promise<void> => {
-  const manifest = JSON.parse(await Deno.readTextFile(MANIFEST_PATH)) as JsonObject;
+  const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8")) as JsonObject;
   const corpus = isObject(manifest.corpus) ? manifest.corpus : {};
   const counts = isObject(manifest.counts_by_class) ? manifest.counts_by_class : {};
   const sanitizer = isObject(manifest.sanitizer) ? manifest.sanitizer : {};
@@ -285,20 +286,20 @@ const report = async (): Promise<void> => {
     "- `corpus-build.ts selfcheck` feeds one fixture string per credential shape through the sanitizer and asserts redaction, counting and idempotence."
   );
   lines.push("");
-  await Deno.writeTextFile(REPORT_PATH, lines.join("\n"));
+  await writeFile(REPORT_PATH, lines.join("\n"));
   console.log(`report written: ${REPORT_PATH}`);
 };
 
 // ----------------------------------------------------------------------------------------------------- main
 
 if (import.meta.main) {
-  const mode = Deno.args[0] ?? "build";
+  const mode = process.argv.slice(2)[0] ?? "build";
   if (mode === "build") await build();
   else if (mode === "verify") await verify();
   else if (mode === "selfcheck") selfcheck();
   else if (mode === "report") await report();
   else {
     console.error(`unknown mode: ${mode} (expected build|verify|selfcheck|report)`);
-    Deno.exit(2);
+    process.exit(2);
   }
 }
