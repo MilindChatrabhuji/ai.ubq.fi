@@ -344,7 +344,9 @@ const appendMessageItem = (
   elisions: ForwardedPayloadElision[]
 ): DeepSeekResponsesResult<void> => {
   const role = getString(item.role) ?? "user";
-  if (role !== "user" && role !== "assistant" && role !== "developer") return failure("input.role", `input role '${role}' is not supported`);
+  if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
+    return failure("input.role", `input role '${role}' is not supported`);
+  }
   const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
