@@ -27,6 +27,7 @@ import {
   recordStreamTerminalType,
   recordTerminalUsage,
   type PromptCacheMode,
+  type ResponseStreamTerminalType,
   type UsageContext,
   type UsageTokens,
 } from "../openai-telemetry.ts";
@@ -309,13 +310,11 @@ export const handleOpenRouterResponses = async (
   const usage = extractUsageTokens(payload.usage);
   if (payload.status !== "incomplete" && !hasAnswerBearingOutput)
     return respondOpenRouterEmptyBufferedCompletion(usageContext, usage, dispatched.providerRequestId);
-  if (payload.status === "incomplete") {
-    recordTerminalUsage(usageContext, usage, false);
-    recordStreamTerminalType(usageContext, "response.incomplete");
-  } else {
-    await recordCompletionUsage(usageContext, usage);
-    recordStreamTerminalType(usageContext, "response.completed");
-  }
+  let terminalType: ResponseStreamTerminalType = "response.completed";
+  if (payload.status === "incomplete") terminalType = "response.incomplete";
+  else if (payload.status === "failed") terminalType = "response.failed";
+  await recordCompletionUsage(usageContext, usage, terminalType === "response.completed");
+  recordStreamTerminalType(usageContext, terminalType);
   return json(200, payload, { "x-uos-upstream": OPENROUTER_UPSTREAM_LABEL });
 };
 

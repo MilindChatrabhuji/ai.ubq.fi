@@ -106,13 +106,12 @@ test("chat projection: a message item normalizes its role and content shapes", (
   assert.deepEqual(messagesOf([{ type: "message", role: "assistant", content: [{ type: "refusal", refusal: "no" }] }]), [{ role: "assistant", content: "no" }]);
 });
 
+test("chat projection: a system message item is forwarded as a system turn", () => {
+  assert.deepEqual(messagesOf([{ type: "message", role: "system", content: "system rules" }]), [{ role: "system", content: "system rules" }]);
+});
+
 test("chat projection: every malformed content shape is rejected with its param", () => {
   assert.deepEqual(rejectionOf([42]), { ok: false, param: "input", message: "input items must be objects" });
-  assert.deepEqual(rejectionOf([{ type: "message", role: "system", content: "x" }]), {
-    ok: false,
-    param: "input.role",
-    message: "input role 'system' is not supported",
-  });
   assert.deepEqual(rejectionOf([{ type: "message", role: "user", content: 42 }]), {
     ok: false,
     param: "input.content",
@@ -210,6 +209,28 @@ test("chat projection: tool call and tool result items round-trip", () => {
   // An unpaired output has no Chat destination, so it is skipped rather than
   // rejected: the projection succeeds with no message for that item.
   assert.deepEqual(messagesOf([{ type: "function_call_output", output: "42" }]), []);
+});
+
+test("chat projection: merged tool calls retain intervening reasoning", () => {
+  assert.deepEqual(
+    messagesOf([
+      { type: "reasoning", summary: [{ type: "summary_text", text: "A" }] },
+      { type: "function_call", name: "first", arguments: "{}", call_id: "call_a" },
+      { type: "reasoning", summary: [{ type: "summary_text", text: "B" }] },
+      { type: "function_call", name: "second", arguments: "{}", call_id: "call_b" },
+    ]),
+    [
+      {
+        role: "assistant",
+        content: null,
+        reasoning_content: "AB",
+        tool_calls: [
+          { id: "call_a", type: "function", function: { name: "first", arguments: "{}" } },
+          { id: "call_b", type: "function", function: { name: "second", arguments: "{}" } },
+        ],
+      },
+    ]
+  );
 });
 
 test("chat projection: replayed reasoning is carried onto the following assistant turn", () => {

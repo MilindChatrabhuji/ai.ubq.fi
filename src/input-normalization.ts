@@ -577,6 +577,7 @@ export const configuredOpenRouterModels = (): Record<string, unknown>[] =>
 export const configuredOpenRouterModelCapabilities = (): Record<string, unknown>[] =>
   openRouterServedModels().map((model) => {
     const resolved = resolveModelMetadata(model.id);
+    const defaultReasoningEffort = model.id === OPENROUTER_SERVED_MODEL_ID ? "none" : resolved.default_reasoning_effort;
     return {
       id: model.id,
       object: "uos.model_capabilities",
@@ -585,7 +586,9 @@ export const configuredOpenRouterModelCapabilities = (): Record<string, unknown>
       upstream_provider: "openrouter",
       supported_endpoints: [...model.endpoints],
       supported_reasoning_levels: model.id === OPENROUTER_SERVED_MODEL_ID ? ["none"] : (resolved.supported_reasoning_levels ?? ["none"]),
-      default_reasoning_effort: model.id === OPENROUTER_SERVED_MODEL_ID ? "none" : (resolved.default_reasoning_effort ?? "none"),
+      ...(defaultReasoningEffort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_effort: defaultReasoningEffort ?? "none" }),
       reasoning_effort_wire_map: {},
       context_window_tokens: model.id === OPENROUTER_SERVED_MODEL_ID ? null : resolved.context_window_tokens,
       max_context_window_tokens: model.id === OPENROUTER_SERVED_MODEL_ID ? null : resolved.max_context_window_tokens,
