@@ -52,9 +52,10 @@ route; never put its contents in a client request or commit it.
 
 When using a GitHub token for any `/v1/*` route, include:
 
-- `X-GitHub-Owner: <owner>`
-- `X-GitHub-Repo: <repo>`
 - `X-Ubiquity-Kernel-Token: <jwt>`
+
+The attestation names the repository. `X-GitHub-Owner: <owner>` and `X-GitHub-Repo: <repo>` are optional cross-checks:
+when both are sent, they must equal the repository the attestation names.
 
 If the kernel attestation includes `installation_id`, also send:
 
@@ -566,9 +567,12 @@ attestation.
 Required headers:
 
 - `Authorization: Bearer <github_token>`
+- `X-Ubiquity-Kernel-Token: <jwt>`
+
+Optional cross-check headers, compared with the attested repository only when both are sent:
+
 - `X-GitHub-Owner: <owner>`
 - `X-GitHub-Repo: <repo>`
-- `X-Ubiquity-Kernel-Token: <jwt>`
 
 If the kernel attestation includes `installation_id`, also send:
 
