@@ -2,7 +2,11 @@ import { RELEASE_GIT_SHA } from "./release.ts";
 
 export type Config = Readonly<{
   isDeploy: boolean;
-  /** `DENO_TIMELINE=production`: the production VPS service, which never grants development auth bypasses. */
+  /**
+   * `DENO_TIMELINE=production`: the production VPS service, which never grants development auth bypasses:
+   * `--disable-admin-auth` fails at parse time, an enabled listener or Mac bypass grants nothing, and the
+   * loopback hostname fallback is off (#262).
+   */
   isProductionTimeline: boolean;
   allowOrigin: string;
   authTokens: ReadonlySet<string>;
