@@ -726,6 +726,14 @@ test("the Models tab renders checkbox tools instead of a free-text whitelist", (
   assert.match(modelsScript, /cerebras: "Cerebras"/);
 });
 
+test("the Remove-missing control stays visible when an empty catalog leaves saved ids missing", () => {
+  const status = /const updateModelsStatus = \(\) => \{([\s\S]*?)\n\};\n\nconst renderModelsPicker/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(status, "", "the Models status updater must stay discoverable");
+  assert.match(status, /const missing = modelsMissingIds\(\);/);
+  assert.match(status, /modelsDropMissingBtn\.disabled = saving \|\| missing\.length === 0;/);
+  assert.match(status, /modelsDropMissingBtn\.hidden = missing\.length === 0;/);
+});
+
 test("provider roster completion rerenders Models after normalizing its filter", () => {
   const completion = /const loadProviderSelection = async \(options = \{\}\) => \{([\s\S]*?)\n\};\n\nconst saveProviderSelection/.exec(adminScript)?.[1] ?? "";
   assert.notEqual(completion, "", "the provider-selection loader must stay discoverable");

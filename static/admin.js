@@ -9386,7 +9386,7 @@ const updateModelsStatus = () => {
   modelsDropMissingBtn.textContent = missing.length
     ? `Remove ${formatNumber(missing.length)} missing`
     : "Remove missing";
-  modelsDropMissingBtn.hidden = modelsCatalog.length === 0;
+  modelsDropMissingBtn.hidden = missing.length === 0;
 };
 
 const renderModelsPicker = () => {
