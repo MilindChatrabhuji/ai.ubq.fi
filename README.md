@@ -395,6 +395,13 @@ ubq-ai admin keys list | jq
 - `SURPLUS_API_KEY` (optional): Surplus Intelligence API key used only by the server for paid fallback. It is never sent
   to gateway clients. When both paid-provider keys are configured, the gateway selects the provider by model family and
   fails over between them on provider authentication, quota, and upstream failures.
+- `CLAUDE_CODE_OAUTH_TOKEN` (optional): Owner-only Claude Code subscription credential (the one-year token printed by
+  `claude setup-token`). Present alone it changes nothing: the route also needs the requesting principal's key id in
+  `CLAUDE_CODE_ALLOWED_KEY_IDS`, so subscription capacity can never serve a caller the owner did not name. It is never
+  sent to gateway clients or exposed by health responses.
+- `CLAUDE_CODE_ALLOWED_KEY_IDS` (optional): Comma- or whitespace-separated API key ids allowed to use the subscription
+  route. Empty or absent disables the route for everyone; there is no wildcard. The allowlist is checked per request and
+  teammates outside it always fall through to the paid providers.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.

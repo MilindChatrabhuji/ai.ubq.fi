@@ -1303,9 +1303,16 @@ gives:
 | `finish_reason: "length"`                            | `{ kind: "max-tokens" }`, a first-class turn-end reason with its own UI notice    |
 
 So the harness is **not** a backstop for the gateway's completion-validity rule: it maps the wire faithfully and accepts
-a degenerate `stop` as a success. Codex is the stricter client of the two. That is the reason the gateway owns G3 rather
-than delegating it to the client, and it is why the Chat Completions route keeps its current shape: a client-side
-backstop does not exist to lean on.
+a degenerate `stop` as a success. Codex is the stricter client of the two. G3 is gateway-owned where a route implements
+it, but this does **not** mean that G3 protects DeepSeek Chat Completions.
+
+The DeepSeek Chat Completions route deliberately carries no gateway completion-validity guard. On the streamed route,
+`relayChatCompletionStream`'s `finishStream` records completion usage, settles `response.completed`, records success
+health, and emits `[DONE]` without testing `chatCompletionHasAnswerBearingOutput`; on the buffered route,
+`handleDeepSeekChatCompletions` uses that predicate only to mark telemetry before returning HTTP 200. A reasoning-only
+or empty-content `stop` is therefore reported as success to the harness. If a guard is added later, the route-local
+terminal seams are `finishStream` for streaming and the buffered handler immediately before its successful 200 response,
+not the harness.
 
 **The truncated-generation path itself is unchanged for the harness.** `length` maps to `max-tokens` on both the pi-ai
 adapter and the vendored `dsh-llm-deepseek` adapter, so a truncation the gateway reports stays reported. The gap is
@@ -1337,8 +1344,9 @@ all three were on routes that already had them:
 | `src/openai.ts:10683` | `rejectEmptyChatCompletion` | the shared Chat preflight, not the DeepSeek branch |
 
 The DeepSeek routes bypass `rejectEmptyChatCompletion` by dispatch order: both DeepSeek handlers return before the
-shared preflight runs. That is why the original G3 landed as a route-local guard rather than as a reuse of that
-function, and it is why the buffered branch below needed its own guard rather than inheriting one.
+shared preflight runs. The Responses route therefore implements G3 in its own streamed and buffered terminal seams;
+DeepSeek Chat Completions deliberately does not implement a completion-validity guard and cannot inherit one from that
+shared preflight.
 
 ### The buffered DeepSeek Responses branch was missing G3
 
@@ -1624,3 +1632,25 @@ the last resort rather than be skipped by a chat-only wire record, and the pin c
 found. Reversal risk: the paid hops depend on their own tier credentials and catalog records, so a model missing from
 one paid catalog now fails that hop closed instead of advancing to the sibling tier within the same hop; the next hop in
 the waterfall still runs, and the pin only narrows one request's paid selection.
+
+## Owner-only Claude Code subscription tier - 2026-10-11
+
+`claude_code` is a new selectable provider, second in roster order after `codex` and first for Claude models on the
+request path. It speaks the native Anthropic Messages wire (`https://api.anthropic.com/v1/messages`) with the
+subscriber's own credential through `Authorization: Bearer` plus `anthropic-version: 2023-06-01` and
+`anthropic-beta: oauth-2025-04-20`, and no synthesized client fingerprint. Every gate is conjunctive and deliberate: the
+operator selection must keep the provider on, `CLAUDE_CODE_OAUTH_TOKEN` must hold a credential (v1: the documented
+one-year `claude setup-token` token), the request principal's key id must be in `CLAUDE_CODE_ALLOWED_KEY_IDS` (no
+wildcard, empty allowlist means nobody), and no authoritative quota window may still block. Any missing gate leaves the
+request on the unchanged paid path, and a dormant tier costs no storage read. Durable exhaustion is recorded only from
+the documented `anthropic-ratelimit-unified-*` evidence on a rejection, blocked until the upstream reset plus a margin;
+a generic 429 becomes only a short local cooldown, and 401/403 never permanently label the account. The tier is off by
+default: no credential and no allowlist exist in the deployment until the owner adds them.
+
+Reason: the operator asked to add Claude Code subscription support to the gateway; the 2026-10-11 research (docs/
+research/claude-code-subscription-2026-10-11.md) rates a hosted gateway serving other users on the owner's Pro/Max
+credentials RED and an owner-gated proxy AMBER, so the implemented scope is strictly owner-only, fails over to the paid
+waterfall on every failure, and never reuses the Codex plumbing to serve team traffic. Reversal risk: the AMBER verdict
+means Anthropic has not clearly authorized this exact bridge; the owner must accept that residual account risk in
+writing before live activation, and a stored provider selection written after this change must include `claude_code` to
+keep the tier servable, exactly like every other provider.

@@ -84,6 +84,7 @@ const UPSTREAM_CHUNK_BYTES = 64 * 1_024;
  */
 const REPLAY_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Object.freeze({
   chatgpt_codex: "https://recorded-upstream.invalid/codex/responses",
+  claude_code: "https://recorded-upstream.invalid/anthropic/v1/messages",
   surplus: "https://recorded-upstream.invalid/surplus/v1/responses",
   metered: "https://recorded-upstream.invalid/metered/v1/responses",
   cerebras: "https://recorded-upstream.invalid/cerebras/v1/chat/completions",
