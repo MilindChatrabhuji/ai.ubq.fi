@@ -2015,3 +2015,30 @@ Switching the active subscription and advancing to paid providers are separate d
 Claude historical windows and hourly rollups are additive to the existing Codex and metered history contracts. Persist actual upstream observations through the quota writer's accepted-observation seam, registered before the first inference; admin reads never create samples. The source observation clock is the gateway receipt time of raw upstream headers, not a provider-issued timestamp; sampling/persistence time is separate. Preserve missing observation times as null, absent windows and gaps across staleness, cohorts and reset anchors. Bounded sampling, retention and truncation remain explicit. Claude window series share the existing Analytics chart without altering the Codex capacity denominator. Retained legacy unbound evidence is not silently relabeled as an account's history, and host-local persistence is not a claim of cross-host synchronization.
 
 Feature parity does not justify invented upstream operations: expose only capabilities supported by the supplied credentials and actual provider contracts. A setup token without refresh material does not establish automatic refresh, a second live account has not been supplied for live failover acceptance, and local fixtures do not establish live banked-reset or redemption support.
+
+## Versionless DeepSeek Flash synthetic model and provider aliases - 2026-10-17
+
+DeepSeek's 2026-10-17 release is `DeepSeek-V4.1-Flash-1017`, a dated refresh of the same Flash family. The official API
+keeps `deepseek-flash` on the latest snapshot; OpenRouter, LithosAI, Surplus, and OpenLux expose provider-owned base
+aliases for the same Flash route. A synthetic name that encoded `V4.1`, or a gateway-side release pin that encoded a
+snapshot date, would force a rename or code edit on every DeepSeek refresh.
+
+The gateway-owned model is now `ubiquity/deepseek-flash` with display name `Ubiquity DeepSeek Flash`. The previous
+`ubiquity/deepseek-v4.1-flash` remains accepted as a hidden compatibility alias, and saved whitelist entries migrate to
+the new id. The waterfall always includes every configured provider and resolves its latest alias from the cached
+provider catalogue: `deepseek-flash` always for the official API, an explicit `~deepseek/deepseek-flash-latest` for
+OpenRouter when present, and the undated base id of the newest Flash entry for LithosAI, Surplus, and OpenLux. The
+static aliases are cold-start fallbacks only. No release number or snapshot date is pinned by the gateway, so a new
+provider base id such as `deepseek-v4.2-flash` is selected automatically.
+
+LithosAI has already republished `deepseek-ai/DeepSeek-V4.1-Flash` under the same base id with a new catalogue creation
+instant while retaining its old `-0910` snapshots, confirming that the base alias tracks the current weights. The admin
+metadata-refresh button force-fetches provider catalogues, but the synthetic route never waits for or depends on a dated
+catalogue row.
+
+Reason: the operator asked for a versionless synthetic model that follows DeepSeek's frequent releases, assumes every
+upstream provider will host the latest Flash route, and does not want the gateway to specify a release version or date.
+Reversal risk: the provider-owned base ids must actually track the latest weights; if a provider freezes an alias, the
+gateway cannot detect that from a dated row. OpenRouter's `~deepseek/deepseek-flash-latest` alias must remain routable.
+The paid hops use `deepseek-v4.1-flash`, so paid key policies keep their existing base model id rather than requiring a
+new dated snapshot.
