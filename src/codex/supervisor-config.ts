@@ -1,4 +1,6 @@
 // Supervisor configuration, shared types and small helpers, split out of src/codex_supervisor.ts.
+import { readFile } from "node:fs/promises";
+import { hostname } from "node:os";
 
 const SUPERVISOR_CONFIG_PATH = ".data/codex-supervisor.json";
 
@@ -19,7 +21,7 @@ const OVERALL_DEADLINE_MS = 9_000;
 const SNAPSHOT_TTL_MS = 4_000;
 const RECENT_METADATA_LIMIT = 60;
 const STATE_DATABASE_PATTERN = /^state_(\d+)\.sqlite$/;
-const SQLITE_MODULE_SPECIFIER = "node:sqlite";
+const SQLITE_MODULE_SPECIFIER = "bun:sqlite";
 
 const FOLLOW_POLL_MS = 2_000;
 const FOLLOW_HEARTBEAT_EVERY = 5;
@@ -175,7 +177,7 @@ const nowMs = (): number => Date.now();
 
 const readHostname = (): string | null => {
   try {
-    return Deno.hostname();
+    return hostname();
   } catch {
     return null;
   }
@@ -279,24 +281,25 @@ export const defaultSupervisorSource = (env: (name: string) => string | undefine
 
 const readEnvironment = (name: string): string | undefined => {
   try {
-    return Deno.env.get(name);
+    return process.env[name];
   } catch {
     return undefined;
   }
 };
 
 export const resolveSupervisorConfig = async (options?: { cwd?: string; env?: (name: string) => string | undefined }): Promise<SupervisorConfig> => {
-  const cwd = options?.cwd ?? Deno.cwd();
+  const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? readEnvironment;
   const configPath = joinPath(cwd, SUPERVISOR_CONFIG_PATH);
   const notes: string[] = [];
   let raw: unknown = null;
   let configLoaded = false;
   try {
-    raw = JSON.parse(await Deno.readTextFile(configPath));
+    raw = JSON.parse(await readFile(configPath, "utf8"));
     configLoaded = true;
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) notes.push(`${SUPERVISOR_CONFIG_PATH} could not be read; using the default local source`);
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+      notes.push(`${SUPERVISOR_CONFIG_PATH} could not be read; using the default local source`);
   }
   if (configLoaded) {
     const parsed = parseSupervisorConfig(raw);

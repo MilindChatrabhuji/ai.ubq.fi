@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "sdk": {
+    "name": "@deno/kv",
+    "version": "0.14.0"
+  },
+  "source": {
+    "url": "https://codeload.github.com/denoland/denokv/tar.gz/9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5",
+    "commit": "9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5",
+    "archiveSha256": "ab71a0516b6b2440f1f9a8bfde70199ac5e75c3c69816d68b3f80bc45285c899",
+    "upstreamLockSha256": "b7983602221c4e3a99a212106c6eff51457e0b900a5e3ec1daa406f9f4431bc1",
+    "licenseSha256": "66b30351011fffa6e21474ddf51ddc1bba4d1dce79ff3fbb7fed8f09db8b321c"
+  },
+  "patches": [
+    {
+      "file": "atomic-write-rollback.patch",
+      "sha256": "f79d5356ddae5f1d5d8658671f9e842452e566240cb637d77c0458f58c89bf98"
+    },
+    {
+      "file": "napi-workspace.patch",
+      "sha256": "1e4232e144be4e08630e17e537737b054935830d1cff36e2f876b53ddffbcec8"
+    }
+  ],
+  "lock": {
+    "file": "Cargo.lock",
+    "sha256": "2210697da22cf5a3db0c826b2e8ea96fcb3652e8d9ede3b280e36256e2f6ece5",
+    "auditFile": "lock-derivation.json",
+    "auditSha256": "b9452ea731a5a13d62c0cc0a9a11b04cdcae24bcbf57e5af8465a82d3eddf85f",
+    "preservedPackages": 304,
+    "registryPackages": 316,
+    "registryChecksumsSha256": "751c644c10034c0bbf00ccc0b0fe072f3f070ab15aa50b88e6854518b0719ae3"
+  },
+  "toolchain": {
+    "version": "1.98.1",
+    "rustcVersion": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargoVersion": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "rustcSha256": "766eda9d8f53afd6fc7f27b3cd2e444dd22afacb5afa710a5625fc8e45b8c941",
+    "cargoSha256": "6e17e865f3a20dd55a1d212f849f58b77124179f0de7c52973096d84ba34118d",
+    "channelManifestSha256": "a7c8774a5fd8441c997d94c029776cbc5eb111e9d72ab5d256fa69866644347e",
+    "treeAlgorithm": "sha256-json-sorted-path-sha256",
+    "components": [
+      {
+        "name": "rustc",
+        "archiveUrl": "https://static.rust-lang.org/dist/2026-09-03/rustc-1.98.1-aarch64-apple-darwin.tar.xz",
+        "archiveSha256": "738e3f60114b20550fcf4f8a57c9cea0544239f214709f45594ff3fde327f577",
+        "directory": "rustc-1.98.1-aarch64-apple-darwin/rustc",
+        "treeSha256": "e676a8f5c67b5c7f75baa02673c03bda32226d8c1c774adcbceb7a8b877dfaff",
+        "files": 44
+      },
+      {
+        "name": "cargo",
+        "archiveUrl": "https://static.rust-lang.org/dist/2026-09-03/cargo-1.98.1-aarch64-apple-darwin.tar.xz",
+        "archiveSha256": "de51d4fade4f31ad8ec405261cc96bedc000d905f98980027610d6e288dbe21b",
+        "directory": "cargo-1.98.1-aarch64-apple-darwin/cargo",
+        "treeSha256": "490a000cba690bdd43ae9247849deddfade6cf8e7bf5434eda474660cd29b12e",
+        "files": 45
+      },
+      {
+        "name": "rust-std",
+        "archiveUrl": "https://static.rust-lang.org/dist/2026-09-03/rust-std-1.98.1-aarch64-apple-darwin.tar.xz",
+        "archiveSha256": "2de831ef563ce772519a4d18ba2659f0f7428d497ef66dad24b5a35e8f8cd177",
+        "directory": "rust-std-1.98.1-aarch64-apple-darwin/rust-std-aarch64-apple-darwin",
+        "treeSha256": "d20d6341501d23aa9ab5fdcb744a426e60ace2bf51f41eeeffdbe1b68ee153af",
+        "files": 60
+      }
+    ]
+  },
+  "artifact": {
+    "file": "native-kv.node",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "target": "aarch64-apple-darwin",
+    "napiVersion": 4
+  },
+  "recipe": {
+    "package": "deno-kv-napi",
+    "profile": "release",
+    "jobs": 1,
+    "locked": true,
+    "lto": true,
+    "maximumDurationMs": 1800000,
+    "argv": [
+      "cargo",
+      "build",
+      "--locked",
+      "--release",
+      "--jobs",
+      "1",
+      "--package",
+      "deno-kv-napi",
+      "--target",
+      "aarch64-apple-darwin",
+      "--manifest-path",
+      "source/Cargo.toml",
+      "--color",
+      "never"
+    ],
+    "library": "libdeno_kv_napi.dylib",
+    "deploymentTarget": "13.0",
+    "supervisor": "detached-stopped-posix-process-group",
+    "killGraceMs": 10000
+  }
+}

@@ -1,17 +1,18 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 const getBaseUrl = (): URL => {
   // A missing or empty BASE_URL falls back to the public gateway origin.
-  const rawBaseUrl = Deno.env.get("BASE_URL")?.trim();
+  const rawBaseUrl = process.env.BASE_URL?.trim();
   const value = rawBaseUrl === undefined || rawBaseUrl === "" ? "https://ai.ubq.fi" : rawBaseUrl;
   return new URL(value);
 };
 
 const getToken = (): string => {
   // An empty or whitespace-only variable falls through to the next source.
-  const uosToken = Deno.env.get("UOS_AI_TOKEN")?.trim();
+  const uosToken = process.env.UOS_AI_TOKEN?.trim();
   if (uosToken) return uosToken;
-  const deployToken = Deno.env.get("DENO_DEPLOY_TOKEN")?.trim();
+  const deployToken = process.env.DENO_DEPLOY_TOKEN?.trim();
   if (deployToken) return deployToken;
   throw new Error("Set UOS_AI_TOKEN or DENO_DEPLOY_TOKEN to run the live default-model e2e test.");
 };
@@ -62,37 +63,33 @@ const extractChatText = (payload: Record<string, unknown>): string => {
   return typeof content === "string" ? content : "";
 };
 
-Deno.test({
-  name: "live: default model is listed and used by no-model requests",
-  permissions: { env: ["BASE_URL", "UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"], net: true },
-  async fn() {
-    const baseUrl = getBaseUrl();
-    const token = getToken();
-    const authHeaders = { Authorization: `Bearer ${token}` };
+test("live: default model is listed and used by no-model requests", async () => {
+  const baseUrl = getBaseUrl();
+  const token = getToken();
+  const authHeaders = { Authorization: `Bearer ${token}` };
 
-    const modelsPayload = await fetchJson(baseUrl, "/v1/models", { headers: authHeaders });
-    const models = Array.isArray(modelsPayload.data) ? modelsPayload.data : [];
-    const modelIds = models
-      .map((model) => (typeof model === "object" && model !== null ? (model as { id?: unknown }).id : null))
-      .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
-    assert.ok(modelIds.length > 0, "/v1/models did not include any model IDs");
+  const modelsPayload = await fetchJson(baseUrl, "/v1/models", { headers: authHeaders });
+  const models = Array.isArray(modelsPayload.data) ? modelsPayload.data : [];
+  const modelIds = models
+    .map((model) => (typeof model === "object" && model !== null ? (model as { id?: unknown }).id : null))
+    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  assert.ok(modelIds.length > 0, "/v1/models did not include any model IDs");
 
-    const responsesPayload = await fetchJson(baseUrl, "/v1/responses", {
-      method: "POST",
-      headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ input: "Reply exactly with pong." }),
-    });
-    const defaultModel = typeof responsesPayload.model === "string" ? responsesPayload.model : "";
-    assert.ok(defaultModel, "no-model responses request did not return a model");
-    assert.ok(modelIds.includes(defaultModel), `default model was not listed: ${defaultModel}`);
-    assert.equal(extractResponsesText(responsesPayload).trim(), "pong");
+  const responsesPayload = await fetchJson(baseUrl, "/v1/responses", {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ input: "Reply exactly with pong." }),
+  });
+  const defaultModel = typeof responsesPayload.model === "string" ? responsesPayload.model : "";
+  assert.ok(defaultModel, "no-model responses request did not return a model");
+  assert.ok(modelIds.includes(defaultModel), `default model was not listed: ${defaultModel}`);
+  assert.equal(extractResponsesText(responsesPayload).trim(), "pong");
 
-    const chatPayload = await fetchJson(baseUrl, "/v1/chat/completions", {
-      method: "POST",
-      headers: { ...authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: [{ role: "user", content: "Reply exactly with pong." }] }),
-    });
-    assert.equal(chatPayload.model, defaultModel);
-    assert.equal(extractChatText(chatPayload).trim(), "pong");
-  },
-});
+  const chatPayload = await fetchJson(baseUrl, "/v1/chat/completions", {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: [{ role: "user", content: "Reply exactly with pong." }] }),
+  });
+  assert.equal(chatPayload.model, defaultModel);
+  assert.equal(extractChatText(chatPayload).trim(), "pong");
+}, 300_000);

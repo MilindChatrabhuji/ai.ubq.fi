@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { getKv } from "../kv.ts";
 import { getString, isRecord, sha256Hex } from "../utils.ts";
 import { GATEWAY_PROVIDER_ID } from "./presentation.ts";
@@ -20,7 +21,7 @@ export const PROVIDER_SELECTION_CACHE_TTL_MS = 5_000;
  * `ubiquity/deepseek-v4.1-flash` route; in an active selection its absence
  * switches that route off like any other unchecked provider.
  */
-export const SELECTABLE_PROVIDER_IDS = ["codex", "surplus", "openlux", "deepseek", "cerebras", "lithos", "openrouter", "ubiquity"] as const;
+export const SELECTABLE_PROVIDER_IDS = ["codex", "claude_code", "surplus", "openlux", "deepseek", "cerebras", "lithos", "openrouter", "ubiquity"] as const;
 
 export type SelectableProviderId = (typeof SELECTABLE_PROVIDER_IDS)[number];
 
@@ -123,7 +124,7 @@ export const normalizeProviderSelection = (value: unknown): ProviderSelection | 
 
 // ── KV helpers ───────────────────────────────────────────────────────────────
 
-export const loadProviderSelection = async (kv: Deno.Kv | null): Promise<ProviderSelection | null> => {
+export const loadProviderSelection = async (kv: Kv | null): Promise<ProviderSelection | null> => {
   if (!kv) return null;
   const entry = await kv.get(PROVIDER_SELECTION_KV_KEY, { consistency: "strong" });
   return normalizeProviderSelection(entry.value);
@@ -134,7 +135,7 @@ export const loadProviderSelection = async (kv: Deno.Kv | null): Promise<Provide
  * written, so an operator sees the effect of a save on the next request
  * instead of waiting out the cache TTL. Returns `null` when KV rejected it.
  */
-export const storeProviderSelection = async (kv: Deno.Kv, providerIds: readonly ProviderSelectionId[]): Promise<ProviderSelection | null> => {
+export const storeProviderSelection = async (kv: Kv, providerIds: readonly ProviderSelectionId[]): Promise<ProviderSelection | null> => {
   const selection: ProviderSelection = { provider_ids: normalizeSelectedProviderIds(providerIds), updated_at_ms: Date.now() };
   try {
     await kv.set(PROVIDER_SELECTION_KV_KEY, selection);

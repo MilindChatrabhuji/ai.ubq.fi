@@ -1,17 +1,20 @@
+import { test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import type { HarmonyTransport } from "../../src/harmony/adapter.ts";
 import { canonicalAdapter, CanonicalAdapterError, createCanonicalAdapter } from "../adapter.ts";
 import { loadTasks } from "../manifest.ts";
 import { runBenchmarks, runOne } from "../runner.ts";
-import { BenchmarkResult, TaskManifest, validateTrajectoryEvent } from "../schemas.ts";
+import { type BenchmarkResult, type TaskManifest, validateTrajectoryEvent } from "../schemas.ts";
 
-const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
-const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
+const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
 function freshOptions() {
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const runsRoot = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const runsRoot = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   return { runsRoot };
 }
 
@@ -96,7 +99,7 @@ export function trailTransport(task: TaskManifest): HarmonyTransport {
   };
 }
 
-Deno.test("canonical: registered C is external-inference by default and inert without an approved gate", async () => {
+test("canonical: registered C is external-inference by default and inert without an approved gate", async () => {
   assert.equal(canonicalAdapter.configId, "C");
   assert.equal(canonicalAdapter.requiresExternalInference, true);
   await assert.rejects(() => createCanonicalAdapter().run(null as never), CanonicalAdapterError);
@@ -116,11 +119,11 @@ Deno.test("canonical: registered C is external-inference by default and inert wi
     }
     assert.equal(refused, true, "the runner must refuse the default C adapter");
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("canonical: a fake-transport C run completes a task with guard evidence", async () => {
+test("canonical: a fake-transport C run completes a task with guard evidence", async () => {
   const { runsRoot } = freshOptions();
   try {
     const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
@@ -155,11 +158,11 @@ Deno.test("canonical: a fake-transport C run completes a task with guard evidenc
     assert.ok(guards.length >= 1);
     assert.equal(guards[0].kind, "unverified_write");
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("canonical: the C-fake matrix succeeds on every manifest with deterministic reliability evidence", async () => {
+test("canonical: the C-fake matrix succeeds on every manifest with deterministic reliability evidence", async () => {
   const { runsRoot } = freshOptions();
   const tasks = loadTasks(TASKS_DIR);
   assert.equal(tasks.length, 25);
@@ -198,11 +201,11 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
       assert.equal(typeof result.reliability.state_contract, "string");
     }
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("canonical: a stalled transport stops at the task timeout and is classified as timeout", async () => {
+test("canonical: a stalled transport stops at the task timeout and is classified as timeout", async () => {
   const { runsRoot } = freshOptions();
   try {
     const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
@@ -227,11 +230,11 @@ Deno.test("canonical: a stalled transport stops at the task timeout and is class
     assert.equal(result.failure_class, "timeout");
     assert.match(result.failure_detail ?? "", /timed out after 300ms/);
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("canonical: the compact surface never exposes experimental broad tools", async () => {
+test("canonical: the compact surface never exposes experimental broad tools", async () => {
   const { runsRoot } = freshOptions();
   try {
     const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
@@ -252,11 +255,11 @@ Deno.test("canonical: the compact surface never exposes experimental broad tools
     const requestEvents = JSON.stringify(result);
     assert.equal(requestEvents.includes("filesystem.write"), false);
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("canonical: unused config selection still rejects unknown ids", async () => {
+test("canonical: unused config selection still rejects unknown ids", async () => {
   const { runsRoot } = freshOptions();
   try {
     let threw = false;
@@ -273,6 +276,6 @@ Deno.test("canonical: unused config selection still rejects unknown ids", async 
     }
     assert.equal(threw, true);
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });

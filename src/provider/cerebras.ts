@@ -114,7 +114,7 @@ const nonNegativeInteger = (value: unknown): number | null => {
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }
@@ -294,17 +294,22 @@ const projectCerebrasMessages = (messages: unknown): unknown => {
 const isCerebrasSystemMessage = (message: unknown): message is Record<string, unknown> =>
   isRecord(message) && !Array.isArray(message) && message.role === "system";
 
-/** One part of a `system` message's content: a string part whole, a record part's text, else nothing. */
+/** Reject content Cerebras cannot represent instead of silently dropping it. */
+const rejectUnsupportedCerebrasSystemContent = (): never => {
+  throw new CerebrasError("Cerebras supports only text content in system and developer messages.", "cerebras_request_invalid", 400);
+};
+
+/** One part of a `system` message's content: a string part whole, or a record part's text. */
 const cerebrasSystemPartText = (part: unknown): string => {
   if (typeof part === "string") return part;
   if (isRecord(part) && !Array.isArray(part) && typeof part.text === "string") return part.text;
-  return "";
+  return rejectUnsupportedCerebrasSystemContent();
 };
 
 /** One `system` message's own text: a string whole, or the concatenation of its text parts. */
 const cerebrasSystemContentText = (content: unknown): string => {
   if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
+  if (!Array.isArray(content)) return rejectUnsupportedCerebrasSystemContent();
   return content.map(cerebrasSystemPartText).join("");
 };
 
@@ -320,16 +325,21 @@ const cerebrasSystemContentText = (content: unknown): string => {
  * single leading message the template accepts.
  *
  * Every `system` message's text is kept, in original order, joined with a blank
- * line; all other messages keep their relative order. A body that already holds
- * at most one `system` message, at index 0, is returned unchanged, so an
- * ordinary request is never rewritten. The collapse runs for both ids on this
- * route: `gpt-oss-120b`'s harmony template tolerates the extra message, but one
- * wire shape must not drift by model.
+ * line; unsupported content is rejected before dispatch rather than dropped.
+ * All other messages keep their relative order. A body that already holds at
+ * most one text-only `system` message, at index 0, is returned unchanged, so
+ * an ordinary request is never rewritten. The collapse runs for both ids on
+ * this route: `gpt-oss-120b`'s harmony template tolerates the extra message,
+ * but one wire shape must not drift by model.
  */
 export const collapseCerebrasSystemMessages = (messages: unknown): unknown => {
   if (!Array.isArray(messages)) return messages;
   const systems = messages.filter(isCerebrasSystemMessage);
-  if (systems.length === 0 || (systems.length === 1 && isCerebrasSystemMessage(messages[0]))) return messages;
+  if (systems.length === 0) return messages;
+  if (systems.length === 1 && isCerebrasSystemMessage(messages[0])) {
+    cerebrasSystemContentText(systems[0].content);
+    return messages;
+  }
   const texts = systems.map((message) => cerebrasSystemContentText(message.content)).filter((text) => text !== "");
   return [{ ...systems[0], content: texts.join("\n\n") }, ...messages.filter((message) => !isCerebrasSystemMessage(message))];
 };
@@ -388,7 +398,8 @@ export const fetchCerebrasChatCompletions = async (body: Record<string, unknown>
   let encodedBody: string;
   try {
     encodedBody = JSON.stringify(projectCerebrasRequest(body));
-  } catch {
+  } catch (error) {
+    if (error instanceof CerebrasError) throw error;
     throw new CerebrasError("Chat Completions requests must use a JSON-serializable body.", "cerebras_request_invalid", 400);
   }
   if (typeof encodedBody !== "string") {

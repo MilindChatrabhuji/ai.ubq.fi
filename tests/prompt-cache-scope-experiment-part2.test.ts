@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/prompt-cache-scope-experiment-harness.ts";
 // Suite part: tests moved out of the original file.
 
 import assert from "node:assert/strict";
@@ -22,7 +26,10 @@ import {
   sseCompleted,
 } from "./helpers/prompt-cache-scope-experiment-harness.ts";
 
-Deno.test("a catalog client-version drift stops before the next paid sample", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("a catalog client-version drift stops before the next paid sample", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
@@ -32,7 +39,7 @@ Deno.test("a catalog client-version drift stops before the next paid sample", as
     updated_at_ms: number;
     models: Record<string, unknown>[];
   };
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") {
       throw new Error("client-version drift must stop before credential refresh");
@@ -42,7 +49,7 @@ Deno.test("a catalog client-version drift stops before the next paid sample", as
       kv.put(CODEX_MODELS_KV_KEY, { ...snapshot, client_version: "0.202.0", updated_at_ms: Date.now() });
     }
     return Promise.resolve(sseCompleted(0, 2_560));
-  };
+  });
 
   try {
     const result = await runExperiment();
@@ -57,7 +64,7 @@ Deno.test("a catalog client-version drift stops before the next paid sample", as
   }
 });
 
-Deno.test("scope promotion rejects unknown dimensions and a renamed target model without mutating the catalog", async () => {
+test("scope promotion rejects unknown dimensions and a renamed target model without mutating the catalog", async () => {
   seed();
   const lease = {
     key: leaseKey(MODEL),
@@ -71,7 +78,7 @@ Deno.test("scope promotion rejects unknown dimensions and a renamed target model
     source: "live_probe" as const,
     verified_at_ms: Date.now(),
   };
-  const unknown = await promoteCodexPromptCacheScope(kv as unknown as Deno.Kv, {
+  const unknown = await promoteCodexPromptCacheScope(kv as unknown as Kv, {
     model: MODEL,
     lease,
     authPoolVersionstamp: await authPoolVersionstamp(),
@@ -91,7 +98,7 @@ Deno.test("scope promotion rejects unknown dimensions and a renamed target model
     updated_at_ms: number;
   };
   kv.put(CODEX_MODELS_KV_KEY, { ...snapshot, models: [{ slug: `${MODEL}-renamed` }] });
-  const renamed = await promoteCodexPromptCacheScope(kv as unknown as Deno.Kv, {
+  const renamed = await promoteCodexPromptCacheScope(kv as unknown as Kv, {
     model: MODEL,
     lease,
     authPoolVersionstamp: await authPoolVersionstamp(),
@@ -107,7 +114,7 @@ Deno.test("scope promotion rejects unknown dimensions and a renamed target model
   assert.equal(JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY))).includes('"scope"'), false);
 });
 
-Deno.test("scope promotion publishes a non-default target and preserves the runtime default", async () => {
+test("scope promotion publishes a non-default target and preserves the runtime default", async () => {
   seed();
   const alternateModel = `${MODEL}-alternate`;
   const initialSnapshot = kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)) as {
@@ -158,7 +165,7 @@ Deno.test("scope promotion publishes a non-default target and preserves the runt
   const snapshotBeforePromotion = JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)));
   const runtimeBeforePromotion = JSON.stringify(kv.values.get(encodeKey(RUNTIME_CONFIG_V2_KEY)));
 
-  const result = await promoteCodexPromptCacheScope(kv as unknown as Deno.Kv, {
+  const result = await promoteCodexPromptCacheScope(kv as unknown as Kv, {
     model: MODEL,
     lease,
     authPoolVersionstamp: await authPoolVersionstamp(),
@@ -193,14 +200,14 @@ Deno.test("scope promotion publishes a non-default target and preserves the runt
   assert.equal(snapshotBeforePromotion.includes('"scope"'), false);
 });
 
-Deno.test("successful scope promotion atomically extends its same-owner lease", async () => {
+test("successful scope promotion atomically extends its same-owner lease", async () => {
   seed();
   const lease = { key: leaseKey(MODEL), owner: "promotion-handoff-owner" };
   const beforePromotionMs = Date.now();
   const nearExpiryMs = beforePromotionMs + 1_000;
   kv.put(lease.key, { owner: lease.owner, lease_until_ms: nearExpiryMs });
 
-  const result = await promoteCodexPromptCacheScope(kv as unknown as Deno.Kv, {
+  const result = await promoteCodexPromptCacheScope(kv as unknown as Kv, {
     model: MODEL,
     lease,
     authPoolVersionstamp: await authPoolVersionstamp(),
@@ -231,7 +238,7 @@ Deno.test("successful scope promotion atomically extends its same-owner lease", 
   assert.equal(renewedUntilMs > nearExpiryMs, true);
 });
 
-Deno.test("scope promotion fences auth-pool drift before catalog publication", async () => {
+test("scope promotion fences auth-pool drift before catalog publication", async () => {
   seed();
   const expectedAuthPoolVersionstamp = await authPoolVersionstamp();
   const lease = { key: leaseKey(MODEL), owner: "auth-pool-fence-owner" };
@@ -261,7 +268,7 @@ Deno.test("scope promotion fences auth-pool drift before catalog publication", a
     updated_at_ms: Date.now(),
   });
 
-  const result = await promoteCodexPromptCacheScope(kv as unknown as Deno.Kv, {
+  const result = await promoteCodexPromptCacheScope(kv as unknown as Kv, {
     model: MODEL,
     lease,
     authPoolVersionstamp: expectedAuthPoolVersionstamp,

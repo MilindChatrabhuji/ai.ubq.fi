@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 /**
  * Shared provider-capacity storage keys. Keeping the key outside the sampler
  * avoids a routing-to-sampler import cycle while allowing routing to reconcile
@@ -87,6 +88,57 @@ export type ProviderCapacitySource =
       }>;
     }>;
 
+/**
+ * The Claude subscription analytics row. It is computed live for the admin
+ * read from the tier's own credential, workspace, guard, and quota state, so
+ * it never depends on the stored Codex/metered snapshot record.
+ */
+export type ProviderCapacityClaudeWindow = Readonly<{
+  status: string | null;
+  /** Percentage of the window consumed, normalized from the upstream fraction. */
+  used_percent: number | null;
+  reset_at_ms: number | null;
+  observed_at_ms: number | null;
+}>;
+
+export type ProviderCapacityClaudeStandardLimit = Readonly<{
+  family: string;
+  limit: number | null;
+  remaining: number | null;
+  reset_at_ms: number | null;
+}>;
+
+export type ProviderCapacityClaudeError = Readonly<{
+  kind: string;
+  status: number | null;
+  message: string | null;
+  at_ms: number;
+}>;
+
+export type ProviderCapacityClaudeSource = Readonly<{
+  source: "claude_code";
+  label: "Claude subscription";
+  account_id?: string | null;
+  account_cohort_id?: string | null;
+  state: CapacityState;
+  source_observed_at_ms: number | null;
+  snapshot_at_ms: number;
+  failure_kind: ProviderCapacityFailureKind | null;
+  failure_status: number | null;
+  /** Resolved credential direction, never the secret itself. */
+  credential_kind: "api_key" | "oauth" | null;
+  /** The workspace the tier would name, from KV, environment, or discovery. */
+  workspace_id: string | null;
+  windows: Readonly<{
+    five_hour: ProviderCapacityClaudeWindow | null;
+    seven_day: ProviderCapacityClaudeWindow | null;
+  }>;
+  standard: readonly ProviderCapacityClaudeStandardLimit[];
+  blocked_until_ms: number | null;
+  cooldown_until_ms: number | null;
+  last_error: ProviderCapacityClaudeError | null;
+}>;
+
 export type ProviderCapacityCodexSource = Extract<ProviderCapacitySource, { source: "codex" }>;
 export type ProviderCapacityMeteredSource = Extract<ProviderCapacitySource, { source: "metered" }>;
 
@@ -104,6 +156,14 @@ export type ProviderCapacityHistoryPoint = Readonly<{
 
 export type ProviderCapacityView = Readonly<
   ProviderCapacitySnapshot & {
+    /**
+     * Claude subscription analytics row. Present on admin reads; absent from
+     * internal callers that only need the Codex/metered snapshot.
+     */
+    claude?: ProviderCapacityClaudeSource | null;
+    /** Validated configured roster; `claude` remains the exact active projection. */
+    claude_accounts?: readonly ProviderCapacityClaudeSource[];
+    claude_history?: ClaudeCapacityHistoryView;
     cache_state: ProviderCapacityViewState;
     history: readonly ProviderCapacityHistoryPoint[];
     reset_events: readonly ProviderCapacityResetEvent[];
@@ -112,10 +172,37 @@ export type ProviderCapacityView = Readonly<
   }
 >;
 
+/** Additive Claude evidence; never widen the persisted Codex/metered tuple. */
+export type ClaudeCapacityHistoryPoint = Readonly<{
+  v: 1;
+  point_id: string;
+  bucket_start_at_ms: number;
+  sampled_at_ms: number;
+  source_observed_at_ms: number | null;
+  account_id: string;
+  account_cohort_id: string;
+  credential_kind: "oauth" | "api_key";
+  workspace_id: string | null;
+  state: "available" | "unavailable";
+  response_status: number | null;
+  windows: Readonly<{ five_hour: ProviderCapacityClaudeWindow | null; seven_day: ProviderCapacityClaudeWindow | null }>;
+  standard: readonly Readonly<ProviderCapacityClaudeStandardLimit & { observed_at_ms: number | null }>[];
+}>;
+
+export type ClaudeCapacityHistoryView = Readonly<{
+  v: 1;
+  scan: "ok" | "unavailable";
+  truncated: boolean;
+  bucket_ms: number;
+  retention_ms: number;
+  stale_after_ms: number;
+  points: readonly ClaudeCapacityHistoryPoint[];
+}>;
+
 export type ProviderCapacityFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ProviderCapacitySnapshotOptions = Readonly<{
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   fetcher?: ProviderCapacityFetch;
   now?: () => number;
   signal?: AbortSignal;

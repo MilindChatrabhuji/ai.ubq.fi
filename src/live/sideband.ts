@@ -5,6 +5,7 @@
 // `new Response(...)` wrapper drops the socket associated with the 101.
 
 import type WebSocket from "ws";
+import { loadWebSocketModule, type WebSocketUpgrade } from "#http";
 import { CodexError, getAuthPoolEntry } from "../codex/auth.ts";
 import { getCurrentAccountEntry, getValidAuth } from "../codex/auth-refresh.ts";
 import { openaiError } from "../http.ts";
@@ -20,7 +21,7 @@ import {
   retireLiveCallMapping,
 } from "./upstream.ts";
 
-type DownstreamSocket = ReturnType<typeof Deno.upgradeWebSocket>["socket"];
+type DownstreamSocket = WebSocket;
 
 type UpstreamSocket = WebSocket;
 
@@ -43,7 +44,7 @@ let upstreamWebSocketConstructor: UpstreamWebSocketConstructor | null = null;
  */
 const loadUpstreamWebSocketConstructor = async (): Promise<UpstreamWebSocketConstructor> => {
   if (upstreamWebSocketConstructor) return upstreamWebSocketConstructor;
-  const module: unknown = await import("ws");
+  const module: unknown = await loadWebSocketModule();
   const candidate = isRecord(module) ? module.default : undefined;
   if (typeof candidate !== "function") throw new Error("ws module did not expose a WebSocket constructor");
   upstreamWebSocketConstructor = candidate as UpstreamWebSocketConstructor;
@@ -162,11 +163,10 @@ const bridgeLiveSideband = async (input: LiveSidebandBridge): Promise<void> => {
     }
   };
 
-  // Deno delivers the downstream events to the handler attached when they
-  // arrive and discards the rest, so these come before the first await: a frame
+  // Attach downstream handlers before the first await: a frame
   // the client sends right after the 101, or its disconnect, has to be queued
   // (or acted on) instead of lost while the upstream constructor loads.
-  downstream.onmessage = (event: MessageEvent) => {
+  downstream.onmessage = (event) => {
     if (relay.settled) return;
     if (frameBytes(event.data) > LIVE_SIDEBAND_MAX_PAYLOAD_BYTES) {
       finish(SIDEBAND_FAILURE_CLOSE_CODE, "realtime sideband frame exceeds payload limit");
@@ -191,7 +191,7 @@ const bridgeLiveSideband = async (input: LiveSidebandBridge): Promise<void> => {
     }
     sendUpstreamFrame(text);
   };
-  downstream.onclose = (event: CloseEvent) => {
+  downstream.onclose = (event) => {
     finish(event.code, event.reason);
   };
   downstream.onerror = () => {
@@ -300,7 +300,7 @@ const liveCallAccountToken = async (accountId: string): Promise<LiveCallAccountT
  * refused with 403 *before* the upgrade, deliberately without a permissive
  * compatibility fallback.
  */
-export const handleLiveSideband = async (req: Request, callId: string, principal: string): Promise<Response> => {
+export const prepareLiveSidebandUpgrade = async (req: Request, callId: string, principal: string): Promise<Response | WebSocketUpgrade> => {
   const mapping = await readLiveCallMapping(callId);
   if (mapping === null) {
     logLiveSideband("rejected", { call_id: callId, reason: "unknown_call" });
@@ -319,7 +319,17 @@ export const handleLiveSideband = async (req: Request, callId: string, principal
     return openaiError(426, "The realtime sideband requires a WebSocket upgrade.", "invalid_request_error");
   }
 
-  const upgrade = Deno.upgradeWebSocket(req);
-  void bridgeLiveSideband({ downstream: upgrade.socket, callId, accountId: mapping.accountId, accessToken: account.accessToken });
-  return upgrade.response;
+  return {
+    maxPayloadBytes: LIVE_SIDEBAND_MAX_PAYLOAD_BYTES,
+    payloadLimitClose: { code: SIDEBAND_FAILURE_CLOSE_CODE, reason: "realtime sideband frame exceeds payload limit" },
+    accept: (downstream) => {
+      void bridgeLiveSideband({ downstream, callId, accountId: mapping.accountId, accessToken: account.accessToken });
+    },
+  };
+};
+
+/** Ordinary HTTP dispatch never manufactures a switching-protocols Response. */
+export const handleLiveSideband = async (req: Request, callId: string, principal: string): Promise<Response> => {
+  const prepared = await prepareLiveSidebandUpgrade(req, callId, principal);
+  return prepared instanceof Response ? prepared : openaiError(426, "The realtime sideband requires a WebSocket upgrade.", "invalid_request_error");
 };

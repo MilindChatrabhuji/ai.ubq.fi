@@ -15,7 +15,7 @@ import { readBoundedResponseBody } from "../bounded-response-body.ts";
 import { json, openaiError } from "../http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
 import { isRecord } from "../utils.ts";
-import { UsageContext, extractChatUsageTokens, recordCompletionUsage, recordRequestUsage, recordStreamTerminalType } from "../openai-telemetry.ts";
+import { type UsageContext, extractChatUsageTokens, recordCompletionUsage, recordRequestUsage, recordStreamTerminalType } from "../openai-telemetry.ts";
 import { markChatSemanticOutput } from "../chat/stream-translation.ts";
 import { chatCompletionHasAnswerBearingOutput, deepseekResponseHeaders } from "../upstream-wire.ts";
 import { parseStreamField } from "../request-policy.ts";
@@ -33,8 +33,8 @@ import { DEEPSEEK_RESPONSES_PROFILE, type OriginalToolName } from "./responses.t
 import { ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
 import { recordDeepSeekProviderHealth } from "../provider/health.ts";
 import {
-  ResponseStreamTerminalType,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type UsageTokens,
   recordAttemptedProvider,
   recordErrorUsage,
   recordFirstProviderDispatch,
@@ -381,7 +381,7 @@ export const respondDeepSeekChatIncompleteCapture = async (
  * iterator yields these frames directly; the LithosAI normalizer maps the
  * chunks its transport validates onto the same shape.
  */
-import { ProviderStreamAdapter, relayChatCompletionStream } from "../provider/stream-relay.ts";
+import { type ProviderStreamAdapter, relayChatCompletionStream } from "../provider/stream-relay.ts";
 
 export const deepseekStreamAdapter: ProviderStreamAdapter = {
   responseHeaders: deepseekResponseHeaders,

@@ -1,3 +1,5 @@
+import { serveHttp } from "#http";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { assertPublicRelease, PUBLIC_HEALTH_URL, reloadCaddyIngress } from "../ops/deploy.ts";
 
@@ -31,7 +33,7 @@ const releaseResponse = (options: { status?: number; body?: string; headers?: He
  */
 const withLoopbackServer = async (respond: () => Response, run: (url: string) => Promise<void>): Promise<void> => {
   const listening = Promise.withResolvers<number>();
-  const server = Deno.serve(
+  const server = serveHttp(
     {
       hostname: "127.0.0.1",
       port: 0,
@@ -70,11 +72,11 @@ const mismatches: { label: string; response: () => Response }[] = [
   { label: "a non-JSON body", response: () => releaseResponse({ body: "502 Bad Gateway" }) },
 ];
 
-Deno.test("the deploy contract targets the documented public health route", () => {
+test("the deploy contract targets the documented public health route", () => {
   assert.equal(PUBLIC_HEALTH_URL, "https://ai.ubq.fi/health");
 });
 
-Deno.test("the public health check accepts the exact release identity over HTTP", async () => {
+test("the public health check accepts the exact release identity over HTTP", async () => {
   await withLoopbackServer(
     () => releaseResponse(),
     async (url) => {
@@ -83,11 +85,12 @@ Deno.test("the public health check accepts the exact release identity over HTTP"
   );
 });
 
-Deno.test("the public health check fails closed on every identity mismatch", async () => {
+test("the public health check fails closed on every identity mismatch", async () => {
   let current = releaseResponse();
   await withLoopbackServer(
     () => current,
     async (url) => {
+      await assertPublicRelease(REVISION, url);
       for (const mismatch of mismatches) {
         current = mismatch.response();
         await assert.rejects(() => assertPublicRelease(REVISION, url), /did not serve release/, `${mismatch.label} must fail the public check`);
@@ -100,7 +103,7 @@ Deno.test("the public health check fails closed on every identity mismatch", asy
   );
 });
 
-Deno.test("the Caddy reload applies the validated configuration and a reload failure fails the deployment", async () => {
+test("the Caddy reload applies the validated configuration and a reload failure fails the deployment", async () => {
   const calls: { program: string; args: string[] }[] = [];
   await reloadCaddyIngress((program, args) => {
     calls.push({ program, args });

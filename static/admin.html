@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -7,10 +7,7 @@
     <meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
     <title>UbiquityOS — AI Admin Console</title>
-    <meta
-      name="description"
-      content="Admin console for ai.ubq.fi. Manage gateway API keys with an admin token."
-    />
+    <meta name="description" content="Admin console for ai.ubq.fi. Manage gateway API keys with an admin token." />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
     <link rel="stylesheet" href="/style.css?v=passport-design-20260922" />
@@ -67,8 +64,9 @@
             >
               Providers
             </button>
-            <button id="view-tab-models" type="button" role="tab" aria-controls="view-models"
-              aria-selected="false">Models</button>
+            <button id="view-tab-models" type="button" role="tab" aria-controls="view-models" aria-selected="false"
+              >Models</button
+            >
             <button id="view-tab-defaults" type="button" role="tab" aria-controls="view-defaults" aria-selected="false">
               Defaults
             </button>
@@ -226,15 +224,12 @@
                 />
               </label>
               <label data-check data-unlimited-toggle>
-                <input
-                  id="key-usage-limit-unlimited"
-                  type="checkbox"
-                  aria-controls="key-usage-limit"
-                />
+                <input id="key-usage-limit-unlimited" type="checkbox" aria-controls="key-usage-limit" />
                 <span>Unlimited requests</span>
               </label>
               <small id="key-usage-limit-unlimited-help" data-field-help>
-                Unchecked uses the finite request limit above; a checked box sends the gateway's existing unlimited policy value.
+                Unchecked uses the finite request limit above; a checked box sends the gateway's existing unlimited
+                policy value.
               </small>
               <label data-field>
                 <span data-label>Rate-limit window</span>
@@ -294,18 +289,13 @@
                     </small>
                   </div>
                   <p id="key-paid-fallback-warning" data-paid-fallback-warning>
-                    Enabling fallback can send prompts, code, tools, and attachments to Metered.
-                    Pricing is checked only when this key is enabled; re-enabling checks it again.
-                    Ordinary requests never recheck it.
+                    Enabling fallback can send prompts, code, tools, and attachments to Metered. Pricing is checked only
+                    when this key is enabled; re-enabling checks it again. Ordinary requests never recheck it.
                   </p>
                 </div>
               </section>
               <div data-layout="row">
-                <button
-                  id="create-key"
-                  type="button"
-                  data-variant="primary"
-                >
+                <button id="create-key" type="button" data-variant="primary">
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <line x1="12" y1="8" x2="12" y2="16" />
                     <line x1="8" y1="12" x2="16" y2="12" />
@@ -323,28 +313,14 @@
               <div>
                 <h2 id="card-keys">API keys</h2>
               </div>
-              <span id="keys-badge" data-badge data-state="unknown" role="status" aria-live="polite">
-                Not loaded
-              </span>
+              <span id="keys-badge" data-badge data-state="unknown" role="status" aria-live="polite"> Not loaded </span>
             </header>
             <div data-card-body>
               <div data-tabs role="tablist" aria-label="API keys view">
-                <button
-                  id="keys-tab-active"
-                  type="button"
-                  role="tab"
-                  aria-controls="keys-list"
-                  aria-selected="true"
-                >
+                <button id="keys-tab-active" type="button" role="tab" aria-controls="keys-list" aria-selected="true">
                   Active
                 </button>
-                <button
-                  id="keys-tab-revoked"
-                  type="button"
-                  role="tab"
-                  aria-controls="keys-list"
-                  aria-selected="false"
-                >
+                <button id="keys-tab-revoked" type="button" role="tab" aria-controls="keys-list" aria-selected="false">
                   Revoked
                 </button>
                 <button id="keys-tab-all" type="button" role="tab" aria-controls="keys-list" aria-selected="false">
@@ -431,6 +407,23 @@
                   <div data-auth-meta>
                     <span data-auth-label>Expires</span>
                     <span data-auth-value id="access-upstream-expiry">—</span>
+                  </div>
+                </div>
+                <div data-auth-item>
+                  <div data-auth-head>
+                    <h3 data-auth-title>Upstream (Claude)</h3>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Source</span>
+                    <span data-auth-value id="access-claude-source">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Health</span>
+                    <span data-auth-value id="access-claude-health">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Workspace</span>
+                    <span data-auth-value id="access-claude-workspace">—</span>
                   </div>
                 </div>
               </div>
@@ -707,11 +700,11 @@
             <header>
               <h2 id="card-providers">Active providers</h2>
               <p>
-                Check every provider the gateway may dispatch to. Unchecked providers leave inference routing,
-                and the models only they serve disappear from <code>/v1/models</code>, the public catalog, and
-                the Codex catalog. Each configured Codex subscription is selectable on its own, so the
-                subscription tier can be narrowed to one account. The waterfall order itself never changes.
-                Saving an empty selection removes the filter, so every provider is active again.
+                Check every provider the gateway may dispatch to. Unchecked providers leave inference routing, and the
+                models only they serve disappear from <code>/v1/models</code>, the public catalog, and the Codex
+                catalog. Each configured Codex subscription is selectable on its own, so the subscription tier can be
+                narrowed to one account. The waterfall order itself never changes. Saving an empty selection removes the
+                filter, so every provider is active again.
               </p>
             </header>
             <div data-card-body>
@@ -769,6 +762,77 @@
               <p data-field-help>
                 To test one provider in isolation: uncheck every provider, check only the one under test, then save.
               </p>
+              <div id="claude-subscription-controls" data-provider-subscriptions hidden>
+                <details data-provider-details>
+                  <summary>Manage credential</summary>
+                  <div data-card-body>
+                    <p id="claude-credential-summary" data-help>Credential status unavailable.</p>
+                    <label data-field>
+                      <span data-label>Local account</span>
+                      <select id="claude-account-select" aria-describedby="claude-credential-help"></select>
+                    </label>
+                    <div data-action-row>
+                      <button id="claude-account-activate" type="button">Make active</button>
+                    </div>
+                    <label data-field>
+                      <span data-label>Local label (optional, not a verified profile)</span>
+                      <input id="claude-account-label" type="text" autocomplete="off" maxlength="64" />
+                    </label>
+                    <label data-field>
+                      <span data-label>Credential</span>
+                      <input
+                        id="claude-credential-input"
+                        type="password"
+                        inputmode="text"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="sk-ant-..."
+                        aria-describedby="claude-credential-help"
+                      />
+                    </label>
+                    <label data-field>
+                      <span data-label>Workspace id (optional)</span>
+                      <input
+                        id="claude-workspace-input"
+                        type="text"
+                        inputmode="text"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="wrkspc_..."
+                        aria-describedby="claude-credential-help"
+                      />
+                    </label>
+                    <small id="claude-credential-help" data-field-help>
+                      Choose an account before replacing its credential, or choose Add account to import another one.
+                      Import does not grant access. Save an empty workspace to remove its pin. Clear guards permits a
+                      retry, not a subscription reset. Provider profile, refresh and banked-reset actions are not
+                      established.
+                    </small>
+                    <div data-action-row>
+                      <button id="claude-credential-save" type="button" data-variant="primary">Save credential</button>
+                      <button id="claude-workspace-save" type="button">Save workspace</button>
+                      <button id="claude-credential-clear" type="button">Clear credential</button>
+                      <button id="claude-quota-clear" type="button">Clear guards</button>
+                    </div>
+                    <p id="claude-subscription-status" data-field-help role="status" aria-live="polite"></p>
+                    <label data-field>
+                      <span data-label>Allowed API key IDs</span>
+                      <textarea
+                        id="claude-access-input"
+                        rows="3"
+                        autocomplete="off"
+                        spellcheck="false"
+                        aria-describedby="claude-access-help"
+                      ></textarea>
+                    </label>
+                    <small id="claude-access-help" data-field-help
+                      >One non-secret key ID per line; an empty list denies everyone.</small
+                    >
+                    <p id="claude-access-source" data-field-help></p>
+                    <div data-action-row><button id="claude-access-save" type="button">Save access</button></div>
+                  </div>
+                </details>
+              </div>
             </div>
           </article>
         </section>
@@ -791,14 +855,21 @@
                 <span id="errors-badge" data-badge data-state="unknown">Not loaded</span>
                 <span id="errors-updated" data-muted>Waiting for history</span>
               </div>
-              <p id="errors-retention" data-muted role="status"
-                aria-live="polite">Capture storage status unavailable.</p>
+              <p id="errors-retention" data-muted role="status" aria-live="polite"
+                >Capture storage status unavailable.</p
+              >
               <div id="errors-list" data-key-list role="list" aria-live="polite"></div>
             </div>
           </article>
         </section>
-        <section id="view-models" data-view="models" data-layout="grid" role="tabpanel"
-          aria-labelledby="view-tab-models" hidden>
+        <section
+          id="view-models"
+          data-view="models"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-models"
+          hidden
+        >
           <article data-card aria-labelledby="card-models">
             <header>
               <h2 id="card-models">Model Whitelist</h2>
@@ -900,15 +971,21 @@
               </div>
               <p id="supervisor-summary" data-muted></p>
               <div id="supervisor-quota" data-supervisor-quota hidden>
-                <p
-                  data-quota-scope>Codex account quota · one shared account-wide window, not per session and not additive across machines</p>
+                <p data-quota-scope
+                  >Codex account quota · one shared account-wide window, not per session and not additive across
+                  machines</p
+                >
                 <div id="supervisor-quota-list" data-quota-list></div>
               </div>
               <div data-supervisor-controls>
                 <label data-field>
                   <span data-label>Search</span>
-                  <input id="supervisor-search" type="search" placeholder="Title, id, repo, branch, model"
-                    autocomplete="off" />
+                  <input
+                    id="supervisor-search"
+                    type="search"
+                    placeholder="Title, id, repo, branch, model"
+                    autocomplete="off"
+                  />
                 </label>
                 <label data-field>
                   <span data-label>Machine</span>
@@ -1078,6 +1155,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=admin-credit-expiry-intl-fix-20261005"></script>
+    <script type="module" src="/admin.js?v=admin-supervisor-v4-20261009"></script>
   </body>
 </html>

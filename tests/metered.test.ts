@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   fetchMeteredResponses,
@@ -27,7 +28,7 @@ const requestBodyText = (body: BodyInit | null | undefined): string => {
   return body;
 };
 
-Deno.test("initializeMeteredPricing intersects the current Codex catalog and returns a compact snapshot", async () => {
+test("initializeMeteredPricing intersects the current Codex catalog and returns a compact snapshot", async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: MeteredFetch = (input, init) => {
     const url = requestUrl(input);
@@ -92,7 +93,7 @@ Deno.test("initializeMeteredPricing intersects the current Codex catalog and ret
   }
 });
 
-Deno.test("initializeMeteredPricing fails closed and never returns an earlier snapshot", async () => {
+test("initializeMeteredPricing fails closed and never returns an earlier snapshot", async () => {
   let statusIsValid = true;
   const fetcher: MeteredFetch = (input) => {
     if (requestUrl(input).endsWith("/api/ratio_config")) {
@@ -130,7 +131,7 @@ Deno.test("initializeMeteredPricing fails closed and never returns an earlier sn
   );
 });
 
-Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forwards cancellation", async () => {
+test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forwards cancellation", async () => {
   const controller = new AbortController();
   const canonicalBody = {
     model: "gpt-5.6-sol",
@@ -179,7 +180,7 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
   assert.equal(result.request_id, "metered-request-1");
 });
 
-Deno.test("Metered billing correlation prefers provider IDs over generic trace IDs", async () => {
+test("Metered billing correlation prefers provider IDs over generic trace IDs", async () => {
   const billingRequestId = "openlux-billing-request";
   const fetcher: MeteredFetch = (input) => {
     const url = requestUrl(input);
@@ -226,7 +227,7 @@ Deno.test("Metered billing correlation prefers provider IDs over generic trace I
   assert.equal(logs[0]?.request_id, result.request_id);
 });
 
-Deno.test("fetchMeteredResponses maps no-reasoning and ultra Sol presets to live aliases", async () => {
+test("fetchMeteredResponses maps no-reasoning and ultra Sol presets to live aliases", async () => {
   const bodies: Record<string, unknown>[] = [];
   const fetcher: MeteredFetch = (_input, init) => {
     bodies.push(JSON.parse(requestBodyText(init?.body)) as Record<string, unknown>);
@@ -242,7 +243,7 @@ Deno.test("fetchMeteredResponses maps no-reasoning and ultra Sol presets to live
   ]);
 });
 
-Deno.test("fetchMeteredResponses propagates client cancellation through the header deadline signal", async () => {
+test("fetchMeteredResponses propagates client cancellation through the header deadline signal", async () => {
   const controller = new AbortController();
   const observed = { signal: null as AbortSignal | null };
   const fetcher: MeteredFetch = (_input, init) => {
@@ -277,7 +278,7 @@ Deno.test("fetchMeteredResponses propagates client cancellation through the head
   assert.equal(observedSignal.reason, cancellation);
 });
 
-Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields", async () => {
+test("fetchMeteredTokenLogs returns only strict allowlisted billing fields", async () => {
   let capturedUrl = "";
   let capturedInit: RequestInit | undefined;
   const fetcher: MeteredFetch = (input, init) => {
@@ -345,7 +346,7 @@ Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields"
   assert.deepEqual(Object.keys(logs[0]), ["request_id", "quota", "prompt_tokens", "completion_tokens", "model", "created_at"]);
 });
 
-Deno.test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded timeout", async () => {
+test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded timeout", async () => {
   const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
   const timeoutController = new AbortController();
   let observedSignal: AbortSignal | null = null;

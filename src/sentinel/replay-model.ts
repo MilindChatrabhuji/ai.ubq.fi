@@ -1,3 +1,4 @@
+import type { KvKey } from "#kv";
 // Sentinel replay constants, record types and byte primitives, split out of src/sentinel_replay_capture.ts.
 
 import { MAX_ACCEPTED_JSON_BODY_BYTES } from "../request.ts";
@@ -256,7 +257,7 @@ export type SentinelReplayCaptureStatusRow = Readonly<{
   status: SentinelReplayCaptureStatus;
   reason: string | null;
   captured_at_ms: number;
-  manifest_key: Deno.KvKey | null;
+  manifest_key: KvKey | null;
   fingerprint: string | null;
   expires_at_ms: number | null;
 }>;
@@ -282,7 +283,7 @@ const stableHeaderText = (headers: SentinelCompatibilityHeaders): string =>
 
 const randomBytes = (length: number): Uint8Array<ArrayBuffer> => crypto.getRandomValues(new Uint8Array(length));
 
-const requestStatusKey = (requestId: string): Deno.KvKey => [...SENTINEL_REPLAY_REQUEST_PREFIX, requestId];
+const requestStatusKey = (requestId: string): KvKey => [...SENTINEL_REPLAY_REQUEST_PREFIX, requestId];
 
 export {
   AES_GCM_IV_BYTES,

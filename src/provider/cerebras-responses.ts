@@ -6,13 +6,7 @@ import { json, openaiError } from "../http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
 import { isRecord } from "../utils.ts";
 import { cerebrasProviderHint, parseStreamField } from "../request-policy.ts";
-import {
-  cerebrasUpstreamModelFor,
-  collapseCerebrasSystemMessages,
-  fetchCerebrasChatCompletions,
-  getCerebrasProviderRequestId,
-  normalizeCerebrasProviderRequestId,
-} from "./cerebras.ts";
+import { cerebrasUpstreamModelFor, fetchCerebrasChatCompletions, getCerebrasProviderRequestId, normalizeCerebrasProviderRequestId } from "./cerebras.ts";
 import {
   cerebrasReasoningEffortRefusal,
   readCerebrasChatCompletion,
@@ -313,11 +307,10 @@ export const handleCerebrasResponses = async (
   // for a stream: a client's `stream: true` is answered by the replay below.
   const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, false, CEREBRAS_RESPONSES_PROFILE);
   if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
-  // The shared translation emits one `system` message per `instructions` and
-  // one per `developer` input item, and this provider's chat template accepts
-  // exactly one, at index 0, so the translated body is collapsed before it is
-  // dispatched. The same array the Chat wire sends for the same turn.
-  const chatBody: Record<string, unknown> = { ...translated.value.body, messages: collapseCerebrasSystemMessages(translated.value.body.messages) };
+  // The Cerebras transport projects and collapses the translated messages in
+  // its final JSON-encoding step, shared with the Chat wire. That is also where
+  // unsupported system/developer content is rejected before dispatch.
+  const chatBody: Record<string, unknown> = { ...translated.value.body };
   const { toolNames, customToolNames } = translated.value;
   if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
   // The provider's tier contract is per id, and it is the route's own decision:

@@ -38,7 +38,7 @@ const abortError = (reason: unknown): Error => {
   return error;
 };
 
-const abortableRead = async <T>(reader: ReadableStreamDefaultReader<T>, signal: AbortSignal): Promise<ReadableStreamReadResult<T>> => {
+const abortableRead = async <T>(reader: ReadableStreamDefaultReader<T>, signal: AbortSignal): Promise<Awaited<ReturnType<typeof reader.read>>> => {
   let onAbort = (): void => {};
   const aborted = new Promise<never>((_, reject) => {
     onAbort = () => {

@@ -1,9 +1,13 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { readFileSync } from "node:fs";
+import type { AtomicCheck, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
 import assert from "node:assert/strict";
 
-import adminHtml from "../static/admin.html" with { type: "text" };
-import adminScript from "../static/admin.js" with { type: "text" };
-import modelsScript from "../static/models.js" with { type: "text" };
-import adminCodexSource from "../src/admin/codex.ts" with { type: "text" };
+const adminHtml = readFileSync(new URL("../static/admin.html", import.meta.url), "utf8");
+const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
+const modelsScript = readFileSync(new URL("../static/models.js", import.meta.url), "utf8");
+const adminCodexSource = readFileSync(new URL("../src/admin/codex.ts", import.meta.url), "utf8");
 import {
   handleAdminCodexModelsWhitelistGet,
   handleAdminCodexModelsWhitelistSet,
@@ -19,11 +23,11 @@ import {
   type CodexModelsWhitelist,
 } from "../src/models/codex-models-whitelist.ts";
 import handler from "../src/handler/index.ts";
-import handlerSource from "../src/handler/index.ts" with { type: "text" };
+const handlerSource = readFileSync(new URL("../src/handler/index.ts", import.meta.url), "utf8");
 import { resetOpenRouterModelsCacheForTest, type OpenRouterModelsSnapshot } from "../src/models/openrouter-models.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { buildModelCatalogSnapshot, handleModels, handlePublicModelCatalog } from "../src/models/catalog.ts";
-import openaiSource from "../src/models/catalog.ts" with { type: "text" };
+const openaiSource = readFileSync(new URL("../src/models/catalog.ts", import.meta.url), "utf8");
 import { CODEX_MODELS_KV_KEY, loadFullCodexModelsSnapshot } from "../src/codex/index.ts";
 import { buildRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
 import { loadProviderSelection, PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
@@ -35,29 +39,70 @@ import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps these tests on the credential-gated providers they own, and keeps
 // the discovery fetches from reaching a network the test task does not allow.
-Deno.env.delete("METERED_API_KEY");
-Deno.env.delete("SURPLUS_API_KEY");
+delete process.env.METERED_API_KEY;
+delete process.env.SURPLUS_API_KEY;
 
 const WHITELIST_URL = "https://ai.ubq.fi/admin/models/whitelist";
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
-/** Minimal Deno.Kv stand-in: the whitelist paths only read and write one key. */
+/** Minimal Kv stand-in: the whitelist paths only read and write one key. */
 class WhitelistKv {
   readonly values = new Map<string, unknown>();
+  private readonly _versions = new Map<string, string>();
+  private _revision = 1;
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  private _version(key: KvKey): string | null {
+    return this.values.has(keyOf(key)) ? (this._versions.get(keyOf(key)) ?? "00000000000000000001") : null;
+  }
+
+  atomic() {
+    const checks: AtomicCheck[] = [];
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (...entries: AtomicCheck[]) => {
+        checks.push(...entries);
+        return operation;
+      },
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => {
+          this.values.set(keyOf(key), value);
+          this._versions.set(keyOf(key), String(this._revision).padStart(20, "0"));
+        });
+        return operation;
+      },
+      delete: (key: KvKey) => {
+        writes.push(() => {
+          this.values.delete(keyOf(key));
+          this._versions.delete(keyOf(key));
+        });
+        return operation;
+      },
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
+        if (checks.some((entry) => entry.versionstamp !== this._version(entry.key))) return Promise.resolve({ ok: false });
+        this._revision++;
+        for (const write of writes) write();
+        return Promise.resolve({ ok: true, versionstamp: String(this._revision).padStart(20, "0") });
+      },
+    };
+    return operation;
+  }
+
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
-      versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+      versionstamp: this._version(key),
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+    this._revision++;
+    const versionstamp = String(this._revision).padStart(20, "0");
+    this._versions.set(keyOf(key), versionstamp);
+    return Promise.resolve({ ok: true, versionstamp });
   }
 
   storedWhitelist(): CodexModelsWhitelist | null {
@@ -70,7 +115,7 @@ class RejectingReadKv extends WhitelistKv {
   readonly rejectedKeys = new Set<string>();
   readonly reads: { key: string; consistency?: "strong" | "eventual" }[] = [];
 
-  override get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  override get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const encodedKey = keyOf(key);
     this.reads.push({ key: encodedKey, consistency: options?.consistency });
     if (this.rejectedKeys.has(encodedKey)) return Promise.reject(new Error("fixture KV read unavailable"));
@@ -92,6 +137,7 @@ const catalogFixture = () => ({
     },
   ],
   sources: {
+    claude_code: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
     codex: { status: "available" as const, count: 2, updated_at_ms: 1 },
     openlux: { status: "unavailable" as const, count: 0, updated_at_ms: null },
     surplus: { status: "available" as const, count: 1, updated_at_ms: 2 },
@@ -105,7 +151,7 @@ const catalogFixture = () => ({
 });
 
 const withKv = async (kv: WhitelistKv | null, run: () => Promise<void>): Promise<void> => {
-  setKvForTest(kv as unknown as Deno.Kv | null);
+  setKvForTest(kv as unknown as Kv | null);
   try {
     await run();
   } finally {
@@ -113,7 +159,20 @@ const withKv = async (kv: WhitelistKv | null, run: () => Promise<void>): Promise
   }
 };
 
-Deno.test("admin model picker lists every discovered model alongside the saved selection", async () => {
+let fixtureFetch = globalThis.fetch;
+beforeEach(() => {
+  fixtureFetch = globalThis.fetch;
+  globalThis.fetch = createFetchMock(() => Promise.reject(new Error("Provider discovery requires an explicit local fixture")));
+  resetOpenRouterModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+});
+afterEach(() => {
+  globalThis.fetch = fixtureFetch;
+  resetOpenRouterModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+});
+
+test("admin model picker lists every discovered model alongside the saved selection", async () => {
   const kv = new WhitelistKv();
   kv.values.set(keyOf([...CODEX_MODELS_WHITELIST_KV_KEY]), { model_ids: ["gpt-5.6-sol"], updated_at_ms: 1_700_000_000_000 });
   await withKv(kv, async () => {
@@ -140,7 +199,7 @@ Deno.test("admin model picker lists every discovered model alongside the saved s
   });
 });
 
-Deno.test("an empty stored whitelist is reported as no filter, not as nothing selected", async () => {
+test("an empty stored whitelist is reported as no filter, not as nothing selected", async () => {
   const kv = new WhitelistKv();
   await withKv(kv, async () => {
     const empty = await handleAdminModelsCatalogGet({ buildCatalog: () => Promise.resolve(catalogFixture()) });
@@ -155,9 +214,13 @@ Deno.test("an empty stored whitelist is reported as no filter, not as nothing se
   });
 });
 
-Deno.test("the official DeepSeek ids are cataloged as their own provider category", async () => {
-  Deno.env.delete("CEREBRAS_API_KEY");
-  Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+test("the official DeepSeek ids are cataloged as their own provider category", async () => {
+  resetSurplusModelsCacheForTest();
+  resetOpenRouterModelsCacheForTest();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = createFetchMock(() => Promise.reject(new Error("Provider discovery is unavailable in this fixture")));
+  delete process.env.CEREBRAS_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
   try {
     const catalog = await buildModelCatalogSnapshot();
     // The gateway waterfall model also carries a deepseek hop row and is
@@ -181,16 +244,19 @@ Deno.test("the official DeepSeek ids are cataloged as their own provider categor
     assert.deepEqual(catalog.sources.deepseek, { status: "available", count: 3, updated_at_ms: null, configured: true });
     assert.deepEqual(catalog.sources.cerebras, { status: "unavailable", count: 0, updated_at_ms: null, configured: false });
   } finally {
-    Deno.env.delete("DEEPSEEK_API_KEY");
+    globalThis.fetch = originalFetch;
+    resetSurplusModelsCacheForTest();
+    resetOpenRouterModelsCacheForTest();
+    delete process.env.DEEPSEEK_API_KEY;
   }
 });
 
-Deno.test("the gateway waterfall model is cataloged with one provider row per usable hop in cost-first order", async () => {
-  Deno.env.delete("DEEPSEEK_API_KEY");
-  Deno.env.delete("LITHOSAI_API_KEY");
-  Deno.env.delete("CEREBRAS_API_KEY");
-  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
-  Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+test("the gateway waterfall model is cataloged with one provider row per usable hop in cost-first order", async () => {
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.LITHOSAI_API_KEY;
+  delete process.env.CEREBRAS_API_KEY;
+  process.env.OPENROUTER_API_KEY = "fixture-openrouter-key";
+  process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
   try {
     const catalog = await buildModelCatalogSnapshot();
     const row = catalog.models.find((model) => model.id === DEEPSEEK_WATERFALL_MODEL_ID);
@@ -207,18 +273,18 @@ Deno.test("the gateway waterfall model is cataloged with one provider row per us
     assert.deepEqual(row.supported_reasoning_levels, ["low", "high", "max"]);
     assert.equal(row.default_reasoning_effort, "high");
   } finally {
-    Deno.env.delete("OPENROUTER_API_KEY");
-    Deno.env.delete("DEEPSEEK_API_KEY");
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
   }
 });
 
-Deno.test("the gateway waterfall model lists the paid hops, OpenLux last, when their credentials are configured", async () => {
-  Deno.env.delete("DEEPSEEK_API_KEY");
-  Deno.env.delete("LITHOSAI_API_KEY");
-  Deno.env.delete("CEREBRAS_API_KEY");
-  Deno.env.delete("OPENROUTER_API_KEY");
-  Deno.env.set("SURPLUS_API_KEY", "fixture-surplus-key");
-  Deno.env.set("METERED_API_KEY", "fixture-metered-key");
+test("the gateway waterfall model lists the paid hops, OpenLux last, when their credentials are configured", async () => {
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.LITHOSAI_API_KEY;
+  delete process.env.CEREBRAS_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
+  process.env.SURPLUS_API_KEY = "fixture-surplus-key";
+  process.env.METERED_API_KEY = "fixture-metered-key";
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   try {
@@ -238,16 +304,16 @@ Deno.test("the gateway waterfall model lists the paid hops, OpenLux last, when t
     assert.deepEqual(row.supported_reasoning_levels, ["low", "high", "max"]);
     assert.equal(row.default_reasoning_effort, "high");
   } finally {
-    Deno.env.delete("SURPLUS_API_KEY");
-    Deno.env.delete("METERED_API_KEY");
+    delete process.env.SURPLUS_API_KEY;
+    delete process.env.METERED_API_KEY;
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
   }
 });
 
-Deno.test("a credential-gated provider with no key is absent instead of unavailable", async () => {
-  Deno.env.delete("DEEPSEEK_API_KEY");
-  Deno.env.delete("CEREBRAS_API_KEY");
+test("a credential-gated provider with no key is absent instead of unavailable", async () => {
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.CEREBRAS_API_KEY;
   try {
     const catalog = await buildModelCatalogSnapshot();
     assert.equal(
@@ -262,14 +328,14 @@ Deno.test("a credential-gated provider with no key is absent instead of unavaila
     assert.equal(catalog.sources.deepseek.status, "unavailable");
     assert.equal(catalog.sources.cerebras.configured, false);
   } finally {
-    Deno.env.delete("DEEPSEEK_API_KEY");
-    Deno.env.delete("CEREBRAS_API_KEY");
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
   }
 });
 
-Deno.test("Cerebras claims its id unless the Codex snapshot already owns it", async () => {
-  Deno.env.delete("DEEPSEEK_API_KEY");
-  Deno.env.set("CEREBRAS_API_KEY", "fixture-cerebras-key");
+test("Cerebras claims its id unless the Codex snapshot already owns it", async () => {
+  delete process.env.DEEPSEEK_API_KEY;
+  process.env.CEREBRAS_API_KEY = "fixture-cerebras-key";
   try {
     const catalog = await buildModelCatalogSnapshot();
     const row = catalog.models.find((model) => model.id === "gpt-oss-120b");
@@ -287,11 +353,11 @@ Deno.test("Cerebras claims its id unless the Codex snapshot already owns it", as
     );
     assert.deepEqual(catalog.sources.cerebras, { status: "available", count: 2, updated_at_ms: null, configured: true });
   } finally {
-    Deno.env.delete("CEREBRAS_API_KEY");
+    delete process.env.CEREBRAS_API_KEY;
   }
 });
 
-Deno.test("the model picker refuses to render without KV", async () => {
+test("the model picker refuses to render without KV", async () => {
   await withKv(null, async () => {
     const response = await handleAdminModelsCatalogGet({
       buildCatalog: () => Promise.reject(new Error("the catalog must not be built without KV")),
@@ -302,7 +368,7 @@ Deno.test("the model picker refuses to render without KV", async () => {
   });
 });
 
-Deno.test("catalog builder and public/admin handlers retain runtime ids and tiers when the optional full snapshot rejects", async () => {
+test("catalog builder and public/admin handlers retain runtime ids and tiers when the optional full snapshot rejects", async () => {
   const kv = new RejectingReadKv();
   kv.rejectedKeys.add(keyOf(CODEX_MODELS_KV_KEY));
   const runtime = buildRuntimeConfig({
@@ -364,7 +430,7 @@ Deno.test("catalog builder and public/admin handlers retain runtime ids and tier
   }
 });
 
-Deno.test("optional snapshot failure containment preserves snapshot shape checks and critical control read failures", async () => {
+test("optional snapshot failure containment preserves snapshot shape checks and critical control read failures", async () => {
   const kv = new RejectingReadKv();
   const validSnapshot = { models: [{ slug: "valid-model" }], source: "fixture", updated_at_ms: 1 };
   await withKv(kv, async () => {
@@ -385,13 +451,13 @@ Deno.test("optional snapshot failure containment preserves snapshot shape checks
     kv.rejectedKeys.add(keyOf(PROVIDER_SELECTION_KV_KEY));
     assert.equal(await loadFullCodexModelsSnapshot(), null);
     await assert.rejects(() => handleAdminModelsCatalogGet(), /fixture KV read unavailable/);
-    await assert.rejects(() => loadProviderSelection(kv as unknown as Deno.Kv), /fixture KV read unavailable/);
+    await assert.rejects(() => loadProviderSelection(kv as unknown as Kv), /fixture KV read unavailable/);
     const unauthenticated = await handler(new Request("https://ai.ubq.fi/admin/models/catalog"));
     assert.equal(unauthenticated.status, 401);
   });
 });
 
-Deno.test("versioned rich paid catalog survives rejected optional snapshots without invented enrichment or relaxed controls", async () => {
+test("versioned rich paid catalog survives rejected optional snapshots without invented enrichment or relaxed controls", async () => {
   const kv = new RejectingReadKv();
   // A cold, unreadable catalog generation takes the real paid recovery branch.
   kv.rejectedKeys.add(keyOf(CODEX_CATALOG_AUTH_GENERATION_KEY));
@@ -399,12 +465,12 @@ Deno.test("versioned rich paid catalog survives rejected optional snapshots with
   kv.values.set(keyOf(PROVIDER_SELECTION_KV_KEY), { provider_ids: ["openlux"], updated_at_ms: 1_800_000_000_000 });
   kv.values.set(keyOf(CODEX_MODELS_WHITELIST_KV_KEY), { model_ids: ["paid-fallback-fixture"], updated_at_ms: 1_800_000_000_001 });
   const originalFetch = globalThis.fetch;
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+  const originalMeteredKey = process.env.METERED_API_KEY;
+  const originalSurplusKey = process.env.SURPLUS_API_KEY;
   let paidFetches = 0;
   let unexpectedFetches = 0;
-  Deno.env.set("METERED_API_KEY", "fixture-paid-catalog-key");
-  Deno.env.set("SURPLUS_API_KEY", "fixture-disabled-surplus-key");
+  process.env.METERED_API_KEY = "fixture-paid-catalog-key";
+  process.env.SURPLUS_API_KEY = "fixture-disabled-surplus-key";
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   resetOpenRouterModelsCacheForTest();
@@ -422,10 +488,10 @@ Deno.test("versioned rich paid catalog survives rejected optional snapshots with
       })
     );
   });
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     unexpectedFetches += 1;
     return Promise.reject(new Error("unexpected provider fetch"));
-  };
+  });
   const request = () => new Request("https://ai.ubq.fi/v1/models?client_version=0.203.0");
   try {
     await withKv(kv, async () => {
@@ -481,14 +547,14 @@ Deno.test("versioned rich paid catalog survives rejected optional snapshots with
     resetSurplusModelsCacheForTest();
     resetOpenRouterModelsCacheForTest();
     resetProviderSelectionCacheForTest();
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
-    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
+    if (originalSurplusKey === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = originalSurplusKey;
   }
 });
 
-Deno.test("saving a selection trims, de-duplicates, and preserves the operator's order", async () => {
+test("saving a selection trims, de-duplicates, and preserves the operator's order", async () => {
   const kv = new WhitelistKv();
   await withKv(kv, async () => {
     const saved = await handleAdminCodexModelsWhitelistSet(
@@ -512,7 +578,7 @@ Deno.test("saving a selection trims, de-duplicates, and preserves the operator's
   });
 });
 
-Deno.test("the model picker rejects a selection it cannot store faithfully", async () => {
+test("the model picker rejects a selection it cannot store faithfully", async () => {
   const kv = new WhitelistKv();
   await withKv(kv, async () => {
     for (const body of ['{"model_ids":"gpt-5.6-sol"}', '{"model_ids":[42]}', "not json", "{}"]) {
@@ -533,12 +599,12 @@ Deno.test("the model picker rejects a selection it cannot store faithfully", asy
   });
 });
 
-Deno.test("normalizeWhitelistModelIds keeps the first spelling of every identifier", () => {
+test("normalizeWhitelistModelIds keeps the first spelling of every identifier", () => {
   assert.deepEqual(normalizeWhitelistModelIds([" a ", "b", "a", "", "   ", 7, null, "c"]), ["a", "b", "c"]);
   assert.deepEqual(normalizeWhitelistModelIds([]), []);
 });
 
-Deno.test("whitelist filters hide unlisted models on every model surface, and an empty list hides none", () => {
+test("whitelist filters hide unlisted models on every model surface, and an empty list hides none", () => {
   const listModels = [{ id: "a" }, { id: "b" }, { id: "c" }];
   const catalogModels = [{ slug: "a" }, { id: "b" }, { name: "c" }];
   const entries = [{ id: "a" }, { id: "b" }, { id: "c" }];
@@ -571,14 +637,14 @@ Deno.test("whitelist filters hide unlisted models on every model surface, and an
   );
 });
 
-Deno.test("the model picker route is registered and stays behind admin auth", async () => {
+test("the model picker route is registered and stays behind admin auth", async () => {
   const unauthenticated = await handler(new Request("https://ai.ubq.fi/admin/models/catalog"));
   assert.equal(unauthenticated.status, 401, "an unauthenticated catalog read reaches the admin gate instead of 404");
   const unknown = await handler(new Request("https://ai.ubq.fi/admin/models/catalog-unknown"));
   assert.equal(unknown.status, 404);
 });
 
-Deno.test("the public and admin catalogs are built by one shared unfiltered snapshot", () => {
+test("the public and admin catalogs are built by one shared unfiltered snapshot", () => {
   // Drift guard: the admin picker must list models the whitelist hides, and the
   // public catalog must apply the whitelist to the very same snapshot with no
   // row, OpenRouter's dynamic entries included, bypassing it afterwards.
@@ -598,7 +664,7 @@ Deno.test("the public and admin catalogs are built by one shared unfiltered snap
   assert.doesNotMatch(adminHandler, /filterCatalogEntriesByProviderSelection/, "a switched-off provider's models must stay pickable");
 });
 
-Deno.test("the Models tab renders checkbox tools instead of a free-text whitelist", () => {
+test("the Models tab renders checkbox tools instead of a free-text whitelist", () => {
   assert.match(adminHtml, /id="models-whitelist-list" data-model-picker/);
   assert.doesNotMatch(adminHtml, /models-whitelist-input/);
   assert.doesNotMatch(adminScript, /modelsWhitelistInput/);
@@ -660,7 +726,16 @@ Deno.test("the Models tab renders checkbox tools instead of a free-text whitelis
   assert.match(modelsScript, /cerebras: "Cerebras"/);
 });
 
-Deno.test("the Providers tab renders a provider picker next to the Analytics tab", () => {
+test("provider roster completion rerenders Models after normalizing its filter", () => {
+  const completion = /const loadProviderSelection = async \(options = \{\}\) => \{([\s\S]*?)\n\};\n\nconst saveProviderSelection/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(completion, "", "the provider-selection loader must stay discoverable");
+  const filterReset = completion.indexOf('modelsProviderFilter = "all";');
+  const modelsRender = completion.indexOf("renderModelsPicker();");
+  assert.ok(filterReset >= 0, "roster completion must normalize a stale model provider filter");
+  assert.ok(modelsRender > filterReset, "the Models picker must rerender after the filter reset");
+});
+
+test("the Providers tab renders a provider picker next to the Analytics tab", () => {
   assert.match(adminHtml, /id="providers-selection-list" data-provider-picker/);
   assert.match(adminHtml, /id="view-analytics"[\s\S]*?id="provider-capacity-chart"/, "the analytics view keeps the capacity chart");
   assert.match(adminHtml, /id="view-providers"[\s\S]*?id="providers-selection-list"/, "the providers view owns the picker");
@@ -709,7 +784,7 @@ Deno.test("the Providers tab renders a provider picker next to the Analytics tab
   assert.match(adminHtml, /The waterfall order itself never changes/);
 });
 
-Deno.test("each Codex subscription is selectable under the Codex provider", () => {
+test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminHtml, /Each configured Codex subscription is selectable on its own/);
   assert.match(adminScript, /list\.dataset\.providerSubscriptions = ""/);
   assert.match(adminScript, /dataset\.providerSubscriptionToggle = subscription\.id/);
@@ -726,7 +801,7 @@ Deno.test("each Codex subscription is selectable under the Codex provider", () =
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
 });
 
-Deno.test("admin metadata refresh forces every upstream and reports what is cached", async () => {
+test("admin metadata refresh forces every upstream and reports what is cached", async () => {
   const calls: string[] = [];
   const enrichment: OpenRouterModelsSnapshot = {
     models: [
@@ -736,6 +811,10 @@ Deno.test("admin metadata refresh forces every upstream and reports what is cach
     updated_at_ms: 1_789_000_000_000,
   };
   const response = await handleAdminModelsRefresh({
+    refreshClaude: (options) => {
+      calls.push(`claude:${options?.force === true ? "force" : "plain"}`);
+      return Promise.resolve({ models: [{ id: "claude-observed", created: 0 }], updated_at_ms: 3 });
+    },
     refreshEnrichment: () => {
       calls.push("openrouter");
       return Promise.resolve(enrichment);
@@ -763,16 +842,17 @@ Deno.test("admin metadata refresh forces every upstream and reports what is cach
   const body = await response.json();
   assert.deepEqual(
     [...calls].sort((left, right) => left.localeCompare(right)),
-    ["openlux:force", "openrouter", "surplus:force"],
+    ["claude:force", "openlux:force", "openrouter", "surplus:force"],
     "every upstream is force-refreshed"
   );
   assert.deepEqual(body.data, {
     openrouter: { upstream_models: 2, updated_at_ms: 1_789_000_000_000, refreshed: true },
     openlux: { models: 1, updated_at_ms: 1 },
     surplus: { models: 2, updated_at_ms: 2 },
+    claude_code: { models: 1, updated_at_ms: 3, status: "available", stale: false },
   });
 });
 
-Deno.test("admin metadata refresh is registered as an operator POST route", () => {
+test("admin metadata refresh is registered as an operator POST route", () => {
   assert.match(handlerSource, /\{ methods: \["POST"\], path: "\/admin\/models\/refresh", run: \(\) => handleAdminModelsRefresh\(\) \}/);
 });

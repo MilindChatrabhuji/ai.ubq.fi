@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { apiKeyHashKey, apiKeyIdKey } from "../api-keys.ts";
 import { apiKeyPolicyFromHashRecord } from "../api-key-policy.ts";
 
@@ -6,7 +7,7 @@ import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyRequestLogRecord } from "../
 
 import { KV_READ_INCIDENT_V2_MIGRATION_KEY, apiKeyHashPolicyMatches } from "./kv-migration-paid-fallback.ts";
 import { currentLegacyUsage, inspectStrictApiKeyPairs, migrateBoundedCounterHandoff, migrateKernelQuotaV2, migrationPolicyNow } from "./kv-migration-usage.ts";
-import { LegacyPaidFallbackLedgerCandidate, inspectPendingPaidFallbackLedgers, projectLegacyPaidFallbackV3 } from "./kv-migration-projection.ts";
+import { type LegacyPaidFallbackLedgerCandidate, inspectPendingPaidFallbackLedgers, projectLegacyPaidFallbackV3 } from "./kv-migration-projection.ts";
 export {
   classifyKvMigrationKey,
   defaultIncludeLegacyForProfile,
@@ -43,7 +44,7 @@ type ApiKeyMigrationProgress = {
 
 /** Upgrades one api-key pair to the V3 quota ledger and migrates its counter. */
 const migrateApiKeyQuotaV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   record: ApiKeyRecord,
   migrationNowMs: number,
   handoffAlreadyInitialized: boolean,
@@ -91,7 +92,7 @@ const boundedCounterHandoffPhase = (boundedCounters: number, reconciled: number)
 };
 
 /** Copies every pending legacy ledger row into the dedicated ledger. */
-const migratePendingPaidFallbackLedgers = async (kv: Deno.Kv, candidates: readonly LegacyPaidFallbackLedgerCandidate[]): Promise<number> => {
+const migratePendingPaidFallbackLedgers = async (kv: Kv, candidates: readonly LegacyPaidFallbackLedgerCandidate[]): Promise<number> => {
   let paidFallbackRecords = 0;
   for (const { value, ledgerKey, existing } of candidates) {
     if (existing.value === null) {
@@ -108,7 +109,7 @@ const migratePendingPaidFallbackLedgers = async (kv: Deno.Kv, candidates: readon
   return paidFallbackRecords;
 };
 
-export const migrateKvReadIncidentV2 = async (kv: Deno.Kv): Promise<KvReadIncidentV2MigrationResult> => {
+export const migrateKvReadIncidentV2 = async (kv: Kv): Promise<KvReadIncidentV2MigrationResult> => {
   const migrationNowMs = Date.now();
   const previousMigration = await kv.get<{
     counter_handoff_version?: unknown;

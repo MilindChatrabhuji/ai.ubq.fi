@@ -1,15 +1,18 @@
+import { test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { runBenchmarks } from "../runner.ts";
 
-Deno.test("matrix: every manifest completes successfully with the hermetic reference adapter", async () => {
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const runsRoot = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+test("matrix: every manifest completes successfully with the hermetic reference adapter", async () => {
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const runsRoot = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   try {
     const results = await runBenchmarks({
       configs: ["reference"],
       taskSelectors: ["*"],
       runsRoot,
-      tasksDir: `${Deno.cwd()}/benchmarks/tasks`,
-      fixturesDir: `${Deno.cwd()}/benchmarks/fixtures`,
+      tasksDir: `${process.cwd()}/benchmarks/tasks`,
+      fixturesDir: `${process.cwd()}/benchmarks/fixtures`,
     });
     const failures = results.filter((r) => !r.success);
     if (failures.length > 0) {
@@ -41,7 +44,7 @@ Deno.test("matrix: every manifest completes successfully with the hermetic refer
 
     // Trajectories for every run are persisted and parseable.
     for (const result of results) {
-      const text = Deno.readTextFileSync(`${runsRoot}/${result.trajectory}`);
+      const text = readFileSync(`${runsRoot}/${result.trajectory}`, "utf8");
       const first = text.trimEnd().split("\n")[0];
       const parsed = JSON.parse(first);
       if (parsed.type !== "run" || parsed.run_id !== result.run_id) {
@@ -49,6 +52,6 @@ Deno.test("matrix: every manifest completes successfully with the hermetic refer
       }
     }
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });

@@ -51,7 +51,7 @@ implements; they map onto the Harmony semantics of `gpt-oss-120b`:
 7. **Reasoning effort.** `low` / `medium` / `high` are the supported surface; `none` is rejected by the gateway for
    `gpt-oss-120b` with the exact message
    `reasoning_effort 'none' is not supported for gpt-oss-120b. Use low, medium,
-   or high.`
+or high.`
    (`src/openai.ts:8652-8656`). Classifier experiments start at `low` and compare `medium`
    (`src/harmony/classifier.ts:8-9`).
 
@@ -145,17 +145,17 @@ Verified 2026-08-29 in the m03 record (`docs/research/cerebras-agent-baselines.m
 Any quirk marked **LIVE-VERIFY** comes from a source comment, documentation or reasoning in this repository, not from a
 live observation.
 
-| # | Quirk                                                                                                            | Source anchor                                               | Status                                                  |
-| - | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------- |
-| 1 | Mixed `strict` values in one request are rejected                                                                | `src/harmony/types.ts:38-42`                                | LIVE-VERIFY (exact error string/status)                 |
-| 2 | JSON-Schema subset: bounded fields dropped, `const`→`enum`, `oneOf`→`anyOf`, object root required for parameters | `src/cerebras.ts:10-20,133-219`                             | source-anchored; server-side enforcement authoritative  |
-| 3 | `reasoning_effort: "none"` rejected for `gpt-oss-120b`                                                           | `src/openai.ts:8652-8656`                                   | source-anchored (gateway enforces it deterministically) |
-| 4 | Reasoning fields never relayed by the gateway normalizer (dropped, not logged)                                   | `src/cerebras.ts:397-402`                                   | source-anchored                                         |
-| 5 | `usage` may be absent from a non-streaming completion                                                            | m03 adapter-A LIVE-VERIFY                                   | LIVE-VERIFY (adapter records 0 tokens when absent)      |
-| 6 | Tools + structured output unproven; defaults to error in the Harmony adapter                                     | `src/harmony/adapter.ts:147-153`                            | LIVE-VERIFY via probe `structured.with-tools`           |
-| 7 | Harmony-native output may arrive untranslated inside `content` (parser required)                                 | `normalizeHarmonyChatCompletion` (`src/harmony/adapter.ts`) | LIVE-VERIFY via probes `tools.native.*`, `reasoning.*`  |
-| 8 | Revenue/quota surface: existing `CEREBRAS_API_KEY` is the only credential; no new secret/flag is introduced      | plan §Benchmark design; `src/cerebras.ts:111`               | source-anchored                                         |
-| 9 | `stream: false` for every baseline/probe request; bounded `max_completion_tokens` for the classifier             | plan §Protocol defaults; `src/harmony/classifier.ts:26,101` | source-anchored                                         |
+| #   | Quirk                                                                                                            | Source anchor                                               | Status                                                  |
+| --- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------- |
+| 1   | Mixed `strict` values in one request are rejected                                                                | `src/harmony/types.ts:38-42`                                | LIVE-VERIFY (exact error string/status)                 |
+| 2   | JSON-Schema subset: bounded fields dropped, `const`→`enum`, `oneOf`→`anyOf`, object root required for parameters | `src/cerebras.ts:10-20,133-219`                             | source-anchored; server-side enforcement authoritative  |
+| 3   | `reasoning_effort: "none"` rejected for `gpt-oss-120b`                                                           | `src/openai.ts:8652-8656`                                   | source-anchored (gateway enforces it deterministically) |
+| 4   | Reasoning fields never relayed by the gateway normalizer (dropped, not logged)                                   | `src/cerebras.ts:397-402`                                   | source-anchored                                         |
+| 5   | `usage` may be absent from a non-streaming completion                                                            | m03 adapter-A LIVE-VERIFY                                   | LIVE-VERIFY (adapter records 0 tokens when absent)      |
+| 6   | Tools + structured output unproven; defaults to error in the Harmony adapter                                     | `src/harmony/adapter.ts:147-153`                            | LIVE-VERIFY via probe `structured.with-tools`           |
+| 7   | Harmony-native output may arrive untranslated inside `content` (parser required)                                 | `normalizeHarmonyChatCompletion` (`src/harmony/adapter.ts`) | LIVE-VERIFY via probes `tools.native.*`, `reasoning.*`  |
+| 8   | Revenue/quota surface: existing `CEREBRAS_API_KEY` is the only credential; no new secret/flag is introduced      | plan §Benchmark design; `src/cerebras.ts:111`               | source-anchored                                         |
+| 9   | `stream: false` for every baseline/probe request; bounded `max_completion_tokens` for the classifier             | plan §Protocol defaults; `src/harmony/classifier.ts:26,101` | source-anchored                                         |
 
 ## 7. Implemented architecture (what exists and where)
 
@@ -199,7 +199,7 @@ Design guarantees that matter for the recommendation:
 - **The runner is hermetic by construction**: `defaultAdapters()` = `reference` + `C`; `C` carries no transport and is
   `requiresExternalInference: true`, so `--configs=all` fails with the exact refusal
   `refusing to run external-inference
-  adapters (C): the hermetic runner only executes deterministic adapters; live runs are staged and gated by m03/m05`
+adapters (C): the hermetic runner only executes deterministic adapters; live runs are staged and gated by m03/m05`
   (verified exit 2, 2026-08-29). No environment variable, CLI flag or secret is read by the runner.
 - **Adapters are passive**: success is never decided from model text; the runner always runs the declared verification
   command and oracle (plan §Verification; `benchmarks/runner.ts:257-271`).

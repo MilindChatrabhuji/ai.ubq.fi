@@ -1,10 +1,23 @@
+import { KvU64 } from "#kv";
+import type {
+  AtomicOperation,
+  KvCommitError,
+  KvCommitResult,
+  KvEntry,
+  KvEntryMaybe,
+  KvKey,
+  KvKeyPart,
+  KvListIterator,
+  KvListOptions,
+  KvListSelector,
+} from "#kv";
 type StoredEntry = {
-  key: Deno.KvKey;
+  key: KvKey;
   value: unknown;
   versionstamp: string;
 };
 
-type AtomicMutation = { kind: "set"; key: Deno.KvKey; value: unknown } | { kind: "delete"; key: Deno.KvKey } | { kind: "sum"; key: Deno.KvKey; value: bigint };
+type AtomicMutation = { kind: "set"; key: KvKey; value: unknown } | { kind: "delete"; key: KvKey } | { kind: "sum"; key: KvKey; value: bigint };
 
 export type KvMeasurementClassification = "mandatory_correctness" | "optional_telemetry" | "background";
 
@@ -19,7 +32,7 @@ export type KvCommandRecord = Readonly<{
   scenario: string | null;
   command: KvCommandName;
   classification: KvMeasurementClassification;
-  keys: readonly Deno.KvKey[];
+  keys: readonly KvKey[];
   keyCount: number;
   atomicChecks: number;
   atomicMutations: number;
@@ -44,9 +57,10 @@ export type KvOperationBudget = Readonly<{
   latency_ms: number | null;
 }>;
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 
 const clone = <T>(value: T): T => {
+  if (value instanceof KvU64) return new KvU64(value.value) as T;
   try {
     return structuredClone(value);
   } catch {
@@ -54,9 +68,9 @@ const clone = <T>(value: T): T => {
   }
 };
 
-const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => Object.is(part, key[index]));
+const startsWithKey = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => Object.is(part, key[index]));
 
-const keyPartText = (part: Deno.KvKeyPart): string => {
+const keyPartText = (part: KvKeyPart): string => {
   if (typeof part === "string" || typeof part === "number" || typeof part === "bigint" || typeof part === "boolean") {
     return String(part);
   }
@@ -69,7 +83,7 @@ const keyPartText = (part: Deno.KvKeyPart): string => {
  * optional stays outside the optional-telemetry bucket, so test reports never
  * present a correctness write as safely removable telemetry.
  */
-export const classifyKvKey = (key: Deno.KvKey): KvMeasurementClassification => {
+export const classifyKvKey = (key: KvKey): KvMeasurementClassification => {
   const parts = key.map(keyPartText);
   const joined = parts.join("/").toLowerCase();
   if (joined.includes("prompt_cache") || joined.includes("telemetry") || joined.includes("provider_health") || joined.includes("provider_capacity")) {
@@ -88,7 +102,7 @@ export const classifyKvKey = (key: Deno.KvKey): KvMeasurementClassification => {
   return "background";
 };
 
-const atomicClassification = (checks: { key: Deno.KvKey }[], mutations: AtomicMutation[]): KvMeasurementClassification => {
+const atomicClassification = (checks: { key: KvKey }[], mutations: AtomicMutation[]): KvMeasurementClassification => {
   const classifications = [...checks.map((entry) => classifyKvKey(entry.key)), ...mutations.map((mutation) => classifyKvKey(mutation.key))];
   if (classifications.includes("mandatory_correctness")) return "mandatory_correctness";
   if (classifications.includes("optional_telemetry")) return "optional_telemetry";
@@ -114,7 +128,7 @@ const emptyBudget = (context: KvMeasurementContext): KvOperationBudget => ({
 });
 
 /**
- * A test-only in-memory Deno.Kv substitute. It records every public KV
+ * A test-only in-memory Kv substitute. It records every public KV
  * command and each atomic commit while keeping the same CAS boundary used by
  * the V3 ledger tests. Seeds are deliberately uncounted so a scenario budget
  * starts at ingress rather than fixture construction.
@@ -137,7 +151,7 @@ export class CountingKv {
     this.#activeScenario = null;
   }
 
-  seed(key: Deno.KvKey, value: unknown): void {
+  seed(key: KvKey, value: unknown): void {
     this.entries.set(encodeKey(key), {
       key: clone(key),
       value: clone(value),
@@ -174,20 +188,20 @@ export class CountingKv {
     return [...this.#budgets.values()].sort((left, right) => left.scenario.localeCompare(right.scenario));
   }
 
-  get<T = unknown>(key: Deno.KvKey, _options?: Readonly<{ consistency?: "strong" | "eventual" }>): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvKey, _options?: Readonly<{ consistency?: "strong" | "eventual" }>): Promise<KvEntryMaybe<T>> {
     this.#record("get", classifyKvKey(key), [key]);
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
       value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
   getMany<T extends readonly unknown[]>(
-    keys: readonly Deno.KvKey[],
+    keys: readonly KvKey[],
     _options?: Readonly<{ consistency?: "strong" | "eventual" }>
-  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+  ): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     const classification = this.#classifyCommands(keys);
     this.#record("getMany", classification, keys);
     return Promise.resolve(
@@ -198,31 +212,31 @@ export class CountingKv {
           value: entry ? clone(entry.value) : null,
           versionstamp: entry?.versionstamp ?? null,
         };
-      }) as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> }
+      }) as { [K in keyof T]: KvEntryMaybe<T[K]> }
     );
   }
 
-  set(key: Deno.KvKey, value: unknown, _options?: Readonly<{ expireIn?: number }>): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, _options?: Readonly<{ expireIn?: number }>): Promise<KvCommitResult> {
     this.#record("set", classifyKvKey(key), [key], { writeMutations: 1 });
     const versionstamp = this.#nextVersionstamp();
     this.entries.set(encodeKey(key), { key: clone(key), value: clone(value), versionstamp });
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.#record("delete", classifyKvKey(key), [key], { writeMutations: 1 });
     this.entries.delete(encodeKey(key));
     this.#nextVersionstamp();
     return Promise.resolve();
   }
 
-  list<T = unknown>(selector: Deno.KvListSelector, _options?: Deno.KvListOptions): Deno.KvListIterator<T> {
+  list<T = unknown>(selector: KvListSelector, _options?: KvListOptions): KvListIterator<T> {
     const prefix = "prefix" in selector ? selector.prefix : [];
     this.#record("list", classifyKvKey(prefix), [prefix]);
     const selected = [...this.entries.values()]
       .filter((entry) => startsWithKey(entry.key, prefix))
       .sort((left, right) => encodeKey(left.key).localeCompare(encodeKey(right.key)));
-    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<KvEntry<T>> {
       for (const entry of selected) {
         yield {
           key: clone(entry.key),
@@ -230,32 +244,32 @@ export class CountingKv {
           versionstamp: entry.versionstamp,
         };
       }
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvListIterator<T>;
     Object.defineProperty(iterator, "cursor", { get: () => "" });
     return iterator;
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const mutations: AtomicMutation[] = [];
     const operation = {
-      check: (entry: { key: Deno.KvKey; versionstamp: string | null }) => {
+      check: (entry: { key: KvKey; versionstamp: string | null }) => {
         checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, _options?: Readonly<{ expireIn?: number }>) => {
+      set: (key: KvKey, value: unknown, _options?: Readonly<{ expireIn?: number }>) => {
         mutations.push({ kind: "set", key: clone(key), value: clone(value) });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ kind: "delete", key: clone(key) });
         return operation;
       },
-      sum: (key: Deno.KvKey, value: bigint) => {
+      sum: (key: KvKey, value: bigint) => {
         mutations.push({ kind: "sum", key: clone(key), value });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         const classification = atomicClassification(checks, mutations);
         const changed = checks.some((check) => {
           const current = this.entries.get(encodeKey(check.key));
@@ -267,7 +281,7 @@ export class CountingKv {
             atomicMutations: mutations.length,
             atomicResult: "conflict",
           });
-          return Promise.resolve({ ok: false } as Deno.KvCommitError);
+          return Promise.resolve({ ok: false } as KvCommitError);
         }
         const versionstamp = this.#nextVersionstamp();
         for (const mutation of mutations) {
@@ -278,10 +292,10 @@ export class CountingKv {
             this.entries.set(encoded, { key: clone(mutation.key), value: clone(mutation.value), versionstamp });
           } else {
             const current = this.entries.get(encoded)?.value;
-            const currentValue = current instanceof Deno.KvU64 ? current.value : 0n;
+            const currentValue = current instanceof KvU64 ? current.value : 0n;
             this.entries.set(encoded, {
               key: clone(mutation.key),
-              value: new Deno.KvU64(currentValue + mutation.value),
+              value: new KvU64(currentValue + mutation.value),
               versionstamp,
             });
           }
@@ -295,12 +309,12 @@ export class CountingKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   close(): void {}
 
-  #classifyCommands(keys: readonly Deno.KvKey[]): KvMeasurementClassification {
+  #classifyCommands(keys: readonly KvKey[]): KvMeasurementClassification {
     if (keys.some((key) => classifyKvKey(key) === "mandatory_correctness")) return "mandatory_correctness";
     if (keys.some((key) => classifyKvKey(key) === "optional_telemetry")) return "optional_telemetry";
     return "background";
@@ -325,7 +339,7 @@ export class CountingKv {
   #record(
     command: KvCommandName,
     classification: KvMeasurementClassification,
-    keys: readonly Deno.KvKey[],
+    keys: readonly KvKey[],
     details: Readonly<{
       writeMutations?: number;
       atomicChecks?: number;

@@ -1,20 +1,20 @@
 // Codex routing account evaluation and accumulation, split out of src/codex_account_routing.ts.
 
 import { getString, isRecord } from "../utils.ts";
-import { CodexAuthPoolState, CodexAuthState } from "../types.ts";
+import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
 import { parseCodexAuthPool } from "./auth.ts";
 import {
-  CodexAccountRoutingState,
-  CodexActiveAccountSnapshot,
-  CodexActiveAccountTransitionReason,
-  CodexBlockedRoutingAccount,
-  CodexCapacityRoutingObservation,
-  CodexProbeCircuit,
-  CodexQuotaClass,
-  CodexQuotaClassBlock,
-  CodexRoutingSlot,
-  RouteSelection,
-  RoutingAccount,
+  type CodexAccountRoutingState,
+  type CodexActiveAccountSnapshot,
+  type CodexActiveAccountTransitionReason,
+  type CodexBlockedRoutingAccount,
+  type CodexCapacityRoutingObservation,
+  type CodexProbeCircuit,
+  type CodexQuotaClass,
+  type CodexQuotaClassBlock,
+  type CodexRoutingSlot,
+  type RouteSelection,
+  type RoutingAccount,
   isSafeMs,
 } from "./routing-state.ts";
 import {
@@ -312,7 +312,8 @@ const classifyCodexRouteSelection = (
   fullCohortExhausted = false,
   activeSnapshot: CodexActiveAccountSnapshot = { selection: null },
   poolSnapshotJson: string | null = null,
-  capacitySnapshotJson: string | null = null
+  capacitySnapshotJson: string | null = null,
+  fullCohortUnavailable = false
 ): RouteSelection => {
   const { available, blockedAccounts, skipped, retryAt, hasQuotaBlock, hasUpstreamTimeoutBlock, modelUnavailable } = accumulated;
   if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped, blockedAccounts };
@@ -326,6 +327,7 @@ const classifyCodexRouteSelection = (
       retryAtMs: retryAt,
       blockedAccounts,
       fullCohortExhausted,
+      ...(fullCohortUnavailable ? { fullCohortUnavailable } : {}),
       activeSnapshot,
       poolSnapshotJson,
       capacitySnapshotJson,
@@ -336,7 +338,7 @@ const classifyCodexRouteSelection = (
   if (modelUnavailable !== null) {
     return { kind: "model_unavailable", model: modelUnavailable.model, detail: modelUnavailable.detail, skippedSlots: skipped };
   }
-  return { kind: "credentials_invalid", skippedSlots: skipped };
+  return { kind: "credentials_invalid", skippedSlots: skipped, ...(fullCohortUnavailable ? { fullCohortUnavailable } : {}) };
 };
 
 const parseCodexAuthPoolSnapshot = (value: unknown): CodexAuthPoolState | null => {
@@ -346,8 +348,7 @@ const parseCodexAuthPoolSnapshot = (value: unknown): CodexAuthPoolState | null =
     if (!isRecord(candidate)) return null;
     const accountId = getString(candidate.account_id);
     const accessToken = getString(candidate.access_token);
-    const refreshToken = getString(candidate.refresh_token);
-    if (!accountId || !accessToken || !refreshToken || !isSafeMs(candidate.updated_at_ms) || accountIds.has(accountId)) return null;
+    if (!accountId || !accessToken || !isSafeMs(candidate.updated_at_ms) || accountIds.has(accountId)) return null;
     accountIds.add(accountId);
   }
   // Preserve validated ownership and the canonical maximum-pool bound.

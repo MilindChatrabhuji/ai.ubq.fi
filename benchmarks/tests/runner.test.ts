@@ -1,14 +1,17 @@
-import { BenchmarkAdapter, referenceAdapter } from "../adapter.ts";
+import { test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { type BenchmarkAdapter, referenceAdapter } from "../adapter.ts";
 import { loadTasks } from "../manifest.ts";
-import { runBenchmarks, runOne, RunOptions } from "../runner.ts";
-import { TaskManifest, validateTrajectoryEvent } from "../schemas.ts";
+import { runBenchmarks, runOne, type RunOptions } from "../runner.ts";
+import { type TaskManifest, validateTrajectoryEvent } from "../schemas.ts";
 
-const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
-const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
+const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
 function freshOptions(): RunOptions & { runsRoot: string } {
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const runsRoot = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const runsRoot = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   return {
     configs: ["reference"],
     taskSelectors: [],
@@ -24,7 +27,7 @@ function nav001(): TaskManifest {
   return task;
 }
 
-Deno.test("runner: reference run succeeds with recorded trajectory and metrics", async () => {
+test("runner: reference run succeeds with recorded trajectory and metrics", async () => {
   const opts = freshOptions();
   try {
     const { result, events } = await runOne(nav001(), referenceAdapter, opts);
@@ -37,17 +40,17 @@ Deno.test("runner: reference run succeeds with recorded trajectory and metrics",
     }
     if (events.length !== result.metrics.tool_calls * 2 + 2) throw new Error("unexpected event count"); // run + verify + call/result pairs
     for (const event of events) validateTrajectoryEvent(event);
-    const traj = Deno.readTextFileSync(`${opts.runsRoot}/${result.trajectory}`);
+    const traj = readFileSync(`${opts.runsRoot}/${result.trajectory}`, "utf8");
     const lines = traj.trimEnd().split("\n");
     if (lines.length !== events.length) throw new Error("trajectory.jsonl row count mismatch");
-    const summary = Deno.readTextFileSync(`${opts.runsRoot}/runs/${result.run_id}/result.jsonl`);
+    const summary = readFileSync(`${opts.runsRoot}/runs/${result.run_id}/result.jsonl`, "utf8");
     if (summary.trimEnd().split("\n").length !== 1) throw new Error("result.jsonl must be one record");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: verification failure is classified", async () => {
+test("runner: verification failure is classified", async () => {
   const opts = freshOptions();
   try {
     const task = { ...nav001(), verify: { command: "false" } };
@@ -57,11 +60,11 @@ Deno.test("runner: verification failure is classified", async () => {
     }
     if (!result.verification.ran || result.verification.exit_code !== 1) throw new Error("verify evidence missing");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: min_tool_calls not met is classified", async () => {
+test("runner: min_tool_calls not met is classified", async () => {
   const opts = freshOptions();
   try {
     const task = { ...nav001(), min_tool_calls: 10 };
@@ -70,11 +73,11 @@ Deno.test("runner: min_tool_calls not met is classified", async () => {
       throw new Error(`expected min_calls_not_met, got ${result.failure_class}: ${result.failure_detail}`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: tool_call_limit is classified", async () => {
+test("runner: tool_call_limit is classified", async () => {
   const opts = freshOptions();
   try {
     const task = { ...nav001(), max_tool_calls: 2 };
@@ -84,11 +87,11 @@ Deno.test("runner: tool_call_limit is classified", async () => {
     }
     if (result.metrics.tool_calls !== 2) throw new Error(`expected 2 recorded calls, got ${result.metrics.tool_calls}`);
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: whole-run timeout cancels in-flight shell and classifies", async () => {
+test("runner: whole-run timeout cancels in-flight shell and classifies", async () => {
   const opts = freshOptions();
   try {
     const task: TaskManifest = {
@@ -106,11 +109,11 @@ Deno.test("runner: whole-run timeout cancels in-flight shell and classifies", as
     if (result.wall_time_ms > 4000) throw new Error(`timeout did not cancel work: ${result.wall_time_ms}ms`);
     if (result.metrics.tool_errors < 1) throw new Error("expected the interrupted tool error to be recorded");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: fixture revision mismatch fails before the adapter runs", async () => {
+test("runner: fixture revision mismatch fails before the adapter runs", async () => {
   const opts = freshOptions();
   try {
     const task = { ...nav001(), fixture_revision: "sha256:" + "0".repeat(64) };
@@ -120,11 +123,11 @@ Deno.test("runner: fixture revision mismatch fails before the adapter runs", asy
     }
     if (events.some((e) => e.type === "tool_call")) throw new Error("adapter must not run on revision mismatch");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: refuses unused configs and external-inference adapters", async () => {
+test("runner: refuses unused configs and external-inference adapters", async () => {
   const opts = freshOptions();
   try {
     let threw = false;
@@ -149,11 +152,11 @@ Deno.test("runner: refuses unused configs and external-inference adapters", asyn
     }
     if (!refused) throw new Error("expected external-inference refusal");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: selection and limit flags compose", async () => {
+test("runner: selection and limit flags compose", async () => {
   const opts = freshOptions();
   try {
     const results = await runBenchmarks({
@@ -167,11 +170,11 @@ Deno.test("runner: selection and limit flags compose", async () => {
       throw new Error("unexpected selection");
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("runner: parseRunArgs accepts the deno-task '--' separator", async () => {
+test("runner: parseRunArgs accepts the task '--' separator", async () => {
   const { parseRunArgs } = await import("../runner.ts");
   const opts = parseRunArgs(["--", "--configs=reference", "--tasks=nav-001,code-*", "--limit=3"]);
   if ("help" in opts) throw new Error("unexpected help");

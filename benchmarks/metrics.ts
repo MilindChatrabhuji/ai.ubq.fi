@@ -6,7 +6,7 @@
  * per-task×config groups consumed by the summarize command and later reports.
  */
 
-import { BenchmarkResult, BenchmarkSummary, ConfigGroup, RunMetrics, TaskConfigGroup, TrajectoryEvent } from "./schemas.ts";
+import { type BenchmarkResult, type BenchmarkSummary, type ConfigGroup, type RunMetrics, type TaskConfigGroup, type TrajectoryEvent } from "./schemas.ts";
 
 /** Deterministic canonical form of tool arguments for duplicate detection. */
 export function canonicalArgs(args: Record<string, unknown>): string {

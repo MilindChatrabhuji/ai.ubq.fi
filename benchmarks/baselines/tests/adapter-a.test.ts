@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { rmSync } from "node:fs";
 import { createBaselineA } from "../adapter-a.ts";
 import { BaselineAdapterError } from "../errors.ts";
 import { runOne } from "../../runner.ts";
@@ -7,7 +9,7 @@ const FIND = { name: "filesystem.find", args: { path: "docs", pattern: "*.txt" }
 const READ = { name: "filesystem.read", args: { path: "docs/spec.txt" } };
 const PATCH = { name: "editor.apply_patch", args: { path: "answer.txt", add: true, new: "docs/spec.txt" } };
 
-Deno.test("A: implements the BenchmarkAdapter contract and is refused by default", () => {
+test("A: implements the BenchmarkAdapter contract and is refused by default", () => {
   const adapter = createBaselineA({
     transport: () => Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({}) }),
   });
@@ -17,7 +19,7 @@ Deno.test("A: implements the BenchmarkAdapter contract and is refused by default
   if (typeof adapter.run !== "function") throw new Error("run must be a function");
 });
 
-Deno.test("A: completes nav-001 through the fake transport with schema-valid events", async () => {
+test("A: completes nav-001 through the fake transport with schema-valid events", async () => {
   const opts = freshRunOptions();
   try {
     const fake = scriptedTransport([{ toolCalls: [FIND, READ, PATCH] }, { content: "docs/spec.txt is the largest document" }], gatewayCompletionBody);
@@ -50,11 +52,11 @@ Deno.test("A: completes nav-001 through the fake transport with schema-valid eve
       throw new Error("expected one recorded filesystem.find call");
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("A: records a model request before an upstream failure", async () => {
+test("A: records a model request before an upstream failure", async () => {
   const opts = freshRunOptions();
   try {
     const adapter = createBaselineA({
@@ -74,11 +76,11 @@ Deno.test("A: records a model request before an upstream failure", async () => {
       throw new Error("failed dispatch must retain its zero-usage model_request event");
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("A: sends the gateway wire shape (no stream, medium effort, official tools)", async () => {
+test("A: sends the gateway wire shape (no stream, medium effort, official tools)", async () => {
   const opts = freshRunOptions();
   try {
     const fake = scriptedTransport([{ content: "done" }], gatewayCompletionBody);
@@ -98,11 +100,11 @@ Deno.test("A: sends the gateway wire shape (no stream, medium effort, official t
     }
     if ((body.messages as unknown[]).length !== 2) throw new Error("expected system + user messages");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("A: invalid tool arguments become valid:false calls and continue the loop", async () => {
+test("A: invalid tool arguments become valid:false calls and continue the loop", async () => {
   const opts = freshRunOptions();
   try {
     const fake = scriptedTransport([{ toolCalls: [{ name: "filesystem.read", args: { path: 42 } }] }, { content: "recovered" }], gatewayCompletionBody);
@@ -120,11 +122,11 @@ Deno.test("A: invalid tool arguments become valid:false calls and continue the l
     // The loop must continue after the failure and produce a final turn.
     if (result.metrics.model_calls !== 2) throw new Error("expected a second model request after the failed call");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("A: mirrors the gateway rejection of reasoning_effort 'none'", () => {
+test("A: mirrors the gateway rejection of reasoning_effort 'none'", () => {
   let threw = false;
   try {
     createBaselineA({
@@ -138,7 +140,7 @@ Deno.test("A: mirrors the gateway rejection of reasoning_effort 'none'", () => {
   if (!threw) throw new Error("'none' must be rejected exactly like the gateway");
 });
 
-Deno.test("A: an upstream model mismatch becomes a classified adapter error", async () => {
+test("A: an upstream model mismatch becomes a classified adapter error", async () => {
   const opts = freshRunOptions();
   try {
     const fake = scriptedTransport([{ content: "done" }], (step) => ({
@@ -154,6 +156,6 @@ Deno.test("A: an upstream model mismatch becomes a classified adapter error", as
       throw new Error(`model mismatch must be reported, got ${result.failure_detail}`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });

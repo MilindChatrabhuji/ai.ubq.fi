@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { runSequence } from "./helpers/sequence.ts";
 // codex-banked-reset suite part: tests moved out of tests/codex-banked-reset.test.ts.
 
 import assert from "node:assert/strict";
@@ -6,14 +8,14 @@ import {
   CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS,
   CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS,
   CODEX_BANKED_RESET_LEASE_MS,
-  CodexBankedResetConfig,
+  type CodexBankedResetConfig,
   Deferred,
   FakeCodexUsageResetProvider,
-  FakeProviderCall,
-  GeneratedResetScenario,
+  type FakeProviderCall,
+  type GeneratedResetScenario,
   MemoryKv,
-  RedeemResetResult,
-  ResetInventory,
+  type RedeemResetResult,
+  type ResetInventory,
   TestClock,
   applyBankedResetEvent,
   assertBankedResetInvariants,
@@ -39,7 +41,7 @@ import {
   testHash,
 } from "./helpers/codex-banked-reset-harness.ts";
 
-Deno.test("generated banked-reset event sequences retain the durable state-machine invariants", async () => {
+test("generated banked-reset event sequences retain the durable state-machine invariants", async () => {
   const sequenceCount = 48;
   let seed = 0x41c6_0de5;
   const next = (): number => {
@@ -108,7 +110,7 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
   }
 });
 
-Deno.test("two different accounts can each redeem once in the same UTC day", async () => {
+test("two different accounts can each redeem once in the same UTC day", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -136,7 +138,7 @@ Deno.test("two different accounts can each redeem once in the same UTC day", asy
   );
 });
 
-Deno.test("an inventory failure leaves the account's daily submission budget available", async () => {
+test("an inventory failure leaves the account's daily submission budget available", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -163,7 +165,7 @@ Deno.test("an inventory failure leaves the account's daily submission budget ava
   );
 });
 
-Deno.test("a claim held across UTC midnight cannot bypass the next day's per-account redemption cap", async () => {
+test("a claim held across UTC midnight cannot bypass the next day's per-account redemption cap", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -204,7 +206,7 @@ Deno.test("a claim held across UTC midnight cannot bypass the next day's per-acc
   );
 });
 
-Deno.test("empty or unsupported inventory and provider rejection become durable terminal rejections", async () => {
+test("empty or unsupported inventory and provider rejection become durable terminal rejections", async () => {
   const scenarios: Readonly<{
     name: string;
     configure: (provider: FakeCodexUsageResetProvider) => void;
@@ -265,7 +267,7 @@ Deno.test("empty or unsupported inventory and provider rejection become durable 
   }
 });
 
-Deno.test("stale or future inventory cannot authorize a redemption", async () => {
+test("stale or future inventory cannot authorize a redemption", async () => {
   const cases: Readonly<{ name: string; observedAtDeltaMs: number }>[] = [
     { name: "stale", observedAtDeltaMs: -(CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS + 1) },
     { name: "future", observedAtDeltaMs: 1 },
@@ -290,7 +292,7 @@ Deno.test("stale or future inventory cannot authorize a redemption", async () =>
   }
 });
 
-Deno.test("KV outage and claim CAS exhaustion fail closed before any provider interaction", async () => {
+test("KV outage and claim CAS exhaustion fail closed before any provider interaction", async () => {
   const clock = new TestClock();
 
   const unavailableKv = new MemoryKv();
@@ -320,7 +322,7 @@ Deno.test("KV outage and claim CAS exhaustion fail closed before any provider in
   assert.equal(casProvider.commitCount, 0);
 });
 
-Deno.test("a transient CAS conflict at every happy-path transition retains one logical redemption", async () => {
+test("a transient CAS conflict at every happy-path transition retains one logical redemption", async () => {
   // A normal successful path has five durable writes: claim, submitted,
   // final renewal, receipt persistence, and verification. Each operation
   // retries its own CAS conflict without issuing another provider mutation or
@@ -341,7 +343,7 @@ Deno.test("a transient CAS conflict at every happy-path transition retains one l
   }
 });
 
-Deno.test("KV unavailability after claim, after submission, and during verification never opens a second spend path", async () => {
+test("KV unavailability after claim, after submission, and during verification never opens a second spend path", async () => {
   {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();
@@ -405,7 +407,7 @@ Deno.test("KV unavailability after claim, after submission, and during verificat
   }
 });
 
-Deno.test("a stale owner cannot finalize verified after a lease-takeover reconciliation", async () => {
+test("a stale owner cannot finalize verified after a lease-takeover reconciliation", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -436,7 +438,7 @@ Deno.test("a stale owner cannot finalize verified after a lease-takeover reconci
   assert.equal(kv.redemptionRecord(codexResetRedemptionKey(requiredHash(takeover.accountIdHash), requiredHash(takeover.quotaGeneration)))?.state, "unknown");
 });
 
-Deno.test("receipt CAS loss leaves the transaction pending and recovery uses lookup instead of resubmission", async () => {
+test("receipt CAS loss leaves the transaction pending and recovery uses lookup instead of resubmission", async () => {
   const kv = new MemoryKv();
   // Claim, submitted state, and the final pre-redeem lease renewal are commits
   // 1 through 3. Exhaust every receipt-persist CAS retry.
@@ -463,7 +465,7 @@ Deno.test("receipt CAS loss leaves the transaction pending and recovery uses loo
   assert.equal(provider.commitCount, 1);
 });
 
-Deno.test("sanitized provider fixtures accept only complete known boundary results", async () => {
+test("sanitized provider fixtures accept only complete known boundary results", async () => {
   const successfulFixtures: Readonly<{
     name: string;
     result: RedeemResetResult;
@@ -551,7 +553,7 @@ Deno.test("sanitized provider fixtures accept only complete known boundary resul
   }
 });
 
-Deno.test("provider rejection matrix keeps definitive failures terminal and ambiguous failures unknown", async () => {
+test("provider rejection matrix keeps definitive failures terminal and ambiguous failures unknown", async () => {
   const cases: Readonly<{
     name: string;
     configure: (provider: FakeCodexUsageResetProvider) => void;
@@ -631,7 +633,7 @@ Deno.test("provider rejection matrix keeps definitive failures terminal and ambi
   }
 });
 
-Deno.test("timeout and crash matrix never creates a second logical redemption", async () => {
+test("timeout and crash matrix never creates a second logical redemption", async () => {
   const timeoutCases: Readonly<{
     name: string;
     configure: (provider: FakeCodexUsageResetProvider) => void;
@@ -733,7 +735,7 @@ Deno.test("timeout and crash matrix never creates a second logical redemption", 
   assert.equal(provider.redeemInputs.length, 1);
 });
 
-Deno.test("client aborts before submission and after a possible commit fail closed without resubmission", async () => {
+test("client aborts before submission and after a possible commit fail closed without resubmission", async () => {
   const beforeKv = new MemoryKv();
   const beforeProvider = new FakeCodexUsageResetProvider();
   const beforeClock = new TestClock();
@@ -776,7 +778,7 @@ Deno.test("client aborts before submission and after a possible commit fail clos
   assert.equal(afterProvider.redeemInputs.length, 1);
 });
 
-Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing resumes", async () => {
+test("a stalled blocked-cohort inventory is bounded before healthy routing resumes", async () => {
   const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
   const timeoutController = new AbortController();
   let observedSignal: AbortSignal | null = null;
@@ -830,7 +832,7 @@ Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing 
   }
 });
 
-Deno.test("full-pool shadow reads each account inventory, selects the earliest exact credit, and persists one redacted decision", async () => {
+test("full-pool shadow reads each account inventory, selects the earliest exact credit, and persists one redacted decision", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const first = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -869,7 +871,7 @@ Deno.test("full-pool shadow reads each account inventory, selects the earliest e
   assert.equal(JSON.stringify(decision).includes("credit-b-earlier"), false);
 });
 
-Deno.test("a new persistent-live episode auto-arms without spending, then consumes exactly once", async () => {
+test("a new persistent-live episode auto-arms without spending, then consumes exactly once", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -917,7 +919,7 @@ Deno.test("a new persistent-live episode auto-arms without spending, then consum
   assert.equal(provider.commitCount, 1);
 });
 
-Deno.test("concurrent initial persistent-live evaluations only arm before a later single consume", async () => {
+test("concurrent initial persistent-live evaluations only arm before a later single consume", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -972,75 +974,76 @@ Deno.test("concurrent initial persistent-live evaluations only arm before a late
   assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
 });
 
-Deno.test("invalid or ineligible live inventory cannot arm or consume", async (t) => {
-  for (const scenario of [
-    {
-      name: "invalid",
-      inventory: {
-        availableCount: 2,
-        observedAtMs: 1_700_000_000_000,
-        credits: [
-          {
-            id: "incomplete-credit",
-            status: "available",
-            resetType: "codex_rate_limits",
-            expiresAtMs: null,
-          },
-        ],
+test("invalid or ineligible live inventory cannot arm or consume", () =>
+  runSequence(async (step) => {
+    for (const scenario of [
+      {
+        name: "invalid",
+        inventory: {
+          availableCount: 2,
+          observedAtMs: 1_700_000_000_000,
+          credits: [
+            {
+              id: "incomplete-credit",
+              status: "available",
+              resetType: "codex_rate_limits",
+              expiresAtMs: null,
+            },
+          ],
+        },
+        reason: "inventory_response_invalid_or_expired",
       },
-      reason: "inventory_response_invalid_or_expired",
-    },
-    {
-      name: "ineligible",
-      inventory: {
-        availableCount: 1,
-        observedAtMs: 1_700_000_000_000,
-        credits: [
-          {
-            id: "unsupported-credit",
-            status: "available",
-            resetType: "unsupported_reset",
-            expiresAtMs: null,
-          },
-        ],
+      {
+        name: "ineligible",
+        inventory: {
+          availableCount: 1,
+          observedAtMs: 1_700_000_000_000,
+          credits: [
+            {
+              id: "unsupported-credit",
+              status: "available",
+              resetType: "unsupported_reset",
+              expiresAtMs: null,
+            },
+          ],
+        },
+        reason: "inventory_no_eligible_codex_credit",
       },
-      reason: "inventory_no_eligible_codex_credit",
-    },
-  ] satisfies readonly {
-    name: string;
-    inventory: ResetInventory;
-    reason: string;
-  }[]) {
-    await t.step(scenario.name, async () => {
-      const clock = new TestClock();
-      const kv = new MemoryKv();
-      const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
-      await seedFences(kv, reset);
-      const provider = new FakeCodexUsageResetProvider();
-      provider.inventory = scenario.inventory;
-      const events: string[] = [];
-      const live = config({
-        mode: "live",
-        maxPerAccountPerDay: 1,
+    ] satisfies readonly {
+      name: string;
+      inventory: ResetInventory;
+      reason: string;
+    }[]) {
+      await step(scenario.name, async () => {
+        const clock = new TestClock();
+        const kv = new MemoryKv();
+        const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
+        await seedFences(kv, reset);
+        const provider = new FakeCodexUsageResetProvider();
+        provider.inventory = scenario.inventory;
+        const events: string[] = [];
+        const live = config({
+          mode: "live",
+          maxPerAccountPerDay: 1,
+        });
+
+        const result = await evaluateCodexBankedResetPool(
+          [{ slot: 0, candidate: reset, provider }],
+          dependencies(kv, provider, clock, live, { event: (event) => events.push(event) })
+        );
+
+        assert.equal(result.kind, "skipped");
+        assert.equal(result.reason, scenario.reason);
+        assert.equal(provider.inventoryInputs.length, 1);
+        assert.equal(provider.redeemInputs.length, 0);
+        assert.equal(provider.commitCount, 0);
+        assert.equal(events.includes("codex_reset_shadow_candidate"), false);
+        assert.equal(kv.entries.size, 2);
       });
+    }
+  }));
 
-      const result = await evaluateCodexBankedResetPool(
-        [{ slot: 0, candidate: reset, provider }],
-        dependencies(kv, provider, clock, live, { event: (event) => events.push(event) })
-      );
-
-      assert.equal(result.kind, "skipped");
-      assert.equal(result.reason, scenario.reason);
-      assert.equal(provider.inventoryInputs.length, 1);
-      assert.equal(provider.redeemInputs.length, 0);
-      assert.equal(provider.commitCount, 0);
-      assert.equal(events.includes("codex_reset_shadow_candidate"), false);
-      assert.equal(kv.entries.size, 2);
-    });
-  }
-});
-
-Deno.test("sequential shadow duplicates skip inventory only after current strong fences pass", async () => {
+test("sequential shadow duplicates skip inventory only after current strong fences pass", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const first = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -1079,7 +1082,7 @@ Deno.test("sequential shadow duplicates skip inventory only after current strong
   assert.equal(secondProvider.inventoryInputs.length, 1);
 });
 
-Deno.test("an unreadable settings record on the shadow duplicate path returns configuration_unavailable", async () => {
+test("an unreadable settings record on the shadow duplicate path returns configuration_unavailable", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -1118,7 +1121,7 @@ Deno.test("an unreadable settings record on the shadow duplicate path returns co
   assert.equal(shadowDecisionFrom(kv).selected_account_id_hash, await testHash(reset.accountId));
 });
 
-Deno.test("a subscription disabled after its shadow decision stays fenced on the duplicate path", async () => {
+test("a subscription disabled after its shadow decision stays fenced on the duplicate path", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -1156,7 +1159,7 @@ Deno.test("a subscription disabled after its shadow decision stays fenced on the
   assert.equal(shadowDecisionFrom(kv).selected_account_id_hash, await testHash(reset.accountId));
 });
 
-Deno.test("concurrent shadow observations deduplicate one episode, and live consumes only the matching audited account credit", async () => {
+test("concurrent shadow observations deduplicate one episode, and live consumes only the matching audited account credit", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const first = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -1201,7 +1204,7 @@ Deno.test("concurrent shadow observations deduplicate one episode, and live cons
   assert.equal(secondProvider.redeemInputs.length, 1);
 });
 
-Deno.test("one blocked candidate promotes from shadow to one concurrent live redemption and one daily-cap increment", async () => {
+test("one blocked candidate promotes from shadow to one concurrent live redemption and one daily-cap increment", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
   const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
@@ -1244,65 +1247,66 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
   assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
 });
 
-Deno.test("incomplete, duplicate, expired, and changed inventories never select or consume a shadow-audited credit", async (t) => {
-  for (const scenario of ["incomplete", "duplicate", "expired", "changed"] as const) {
-    await t.step(scenario, async () => {
-      const clock = new TestClock();
-      const kv = new MemoryKv();
-      const first = candidate({ accountId: "test-account-a", routingGeneration: 7 });
-      const second = candidate({ accountId: "test-account-b", routingGeneration: 8 });
-      await seedFences(kv, first);
-      await seedFences(kv, second);
-      const firstProvider = new FakeCodexUsageResetProvider();
-      const secondProvider = new FakeCodexUsageResetProvider();
-      firstProvider.inventory = inventory("credit-a", clock.nowMs + 40_000);
-      secondProvider.inventory = inventory("credit-b", clock.nowMs + 20_000);
-      const shadow = config({
-        mode: "shadow",
-        maxPerAccountPerDay: 1,
-      });
-      const pool = fullPool(first, firstProvider, second, secondProvider);
-      if (scenario === "incomplete" || scenario === "duplicate") {
-        secondProvider.inventory = {
-          availableCount: scenario === "incomplete" ? 2 : 1,
-          observedAtMs: clock.nowMs,
-          credits:
-            scenario === "incomplete"
-              ? [{ id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }]
-              : [
-                  { id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null },
-                  { id: "credit-b", status: "unavailable", resetType: "codex_rate_limits", expiresAtMs: null },
-                ],
-        };
-        const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
-        assert.equal(result.kind, "shadow");
-        assert.equal(result.selected, null);
-        assert.equal(shadowDecisionFrom(kv).decision_reason, "inventory_response_invalid_or_expired");
-        const firstInventoryCount = firstProvider.inventoryInputs.length;
-        const secondInventoryCount = secondProvider.inventoryInputs.length;
-        const repeat = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
-        assert.equal(repeat.kind, "shadow");
-        assert.equal(repeat.reason, "inventory_response_invalid_or_expired");
-        assert.equal(repeat.selected, null);
-        assert.equal(firstProvider.inventoryInputs.length, firstInventoryCount);
-        assert.equal(secondProvider.inventoryInputs.length, secondInventoryCount);
-      } else {
-        const shadowResult = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
-        assert.equal(shadowResult.kind, "shadow");
-        if (scenario === "expired") {
-          secondProvider.inventory = inventory("credit-b", clock.nowMs - 1);
-        } else {
-          secondProvider.inventory = inventory("credit-b-changed", clock.nowMs + 20_000);
-        }
-        const live = config({
-          mode: "live",
+test("incomplete, duplicate, expired, and changed inventories never select or consume a shadow-audited credit", () =>
+  runSequence(async (step) => {
+    for (const scenario of ["incomplete", "duplicate", "expired", "changed"] as const) {
+      await step(scenario, async () => {
+        const clock = new TestClock();
+        const kv = new MemoryKv();
+        const first = candidate({ accountId: "test-account-a", routingGeneration: 7 });
+        const second = candidate({ accountId: "test-account-b", routingGeneration: 8 });
+        await seedFences(kv, first);
+        await seedFences(kv, second);
+        const firstProvider = new FakeCodexUsageResetProvider();
+        const secondProvider = new FakeCodexUsageResetProvider();
+        firstProvider.inventory = inventory("credit-a", clock.nowMs + 40_000);
+        secondProvider.inventory = inventory("credit-b", clock.nowMs + 20_000);
+        const shadow = config({
+          mode: "shadow",
           maxPerAccountPerDay: 1,
         });
-        const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
-        assert.equal(result.kind, "skipped");
-        assert.match(result.reason, /shadow_decision_drift|inventory_response_invalid_or_expired/);
-      }
-      assert.equal(firstProvider.redeemInputs.length + secondProvider.redeemInputs.length, 0);
-    });
-  }
-});
+        const pool = fullPool(first, firstProvider, second, secondProvider);
+        if (scenario === "incomplete" || scenario === "duplicate") {
+          secondProvider.inventory = {
+            availableCount: scenario === "incomplete" ? 2 : 1,
+            observedAtMs: clock.nowMs,
+            credits:
+              scenario === "incomplete"
+                ? [{ id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }]
+                : [
+                    { id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null },
+                    { id: "credit-b", status: "unavailable", resetType: "codex_rate_limits", expiresAtMs: null },
+                  ],
+          };
+          const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
+          assert.equal(result.kind, "shadow");
+          assert.equal(result.selected, null);
+          assert.equal(shadowDecisionFrom(kv).decision_reason, "inventory_response_invalid_or_expired");
+          const firstInventoryCount = firstProvider.inventoryInputs.length;
+          const secondInventoryCount = secondProvider.inventoryInputs.length;
+          const repeat = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
+          assert.equal(repeat.kind, "shadow");
+          assert.equal(repeat.reason, "inventory_response_invalid_or_expired");
+          assert.equal(repeat.selected, null);
+          assert.equal(firstProvider.inventoryInputs.length, firstInventoryCount);
+          assert.equal(secondProvider.inventoryInputs.length, secondInventoryCount);
+        } else {
+          const shadowResult = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
+          assert.equal(shadowResult.kind, "shadow");
+          if (scenario === "expired") {
+            secondProvider.inventory = inventory("credit-b", clock.nowMs - 1);
+          } else {
+            secondProvider.inventory = inventory("credit-b-changed", clock.nowMs + 20_000);
+          }
+          const live = config({
+            mode: "live",
+            maxPerAccountPerDay: 1,
+          });
+          const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
+          assert.equal(result.kind, "skipped");
+          assert.match(result.reason, /shadow_decision_drift|inventory_response_invalid_or_expired/);
+        }
+        assert.equal(firstProvider.redeemInputs.length + secondProvider.redeemInputs.length, 0);
+      });
+    }
+  }));

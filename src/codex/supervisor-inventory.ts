@@ -22,6 +22,7 @@
  * can never add a path.
  */
 
+import { readdir } from "node:fs/promises";
 import { openSupervisorConnection, type SupervisorConnection } from "./supervisor-transport.ts";
 import {
   EXTRA_LOADED_LIMIT,
@@ -82,15 +83,15 @@ type ThreadMetadata = {
 
 type SqliteStatementLike = { all: (...params: unknown[]) => unknown[] };
 type SqliteDatabaseLike = { prepare: (sql: string) => SqliteStatementLike; close: () => void };
-type SqliteDatabaseConstructor = new (path: string, options?: { readOnly?: boolean }) => SqliteDatabaseLike;
+type SqliteDatabaseConstructor = new (path: string, options?: { readonly?: boolean; create?: boolean }) => SqliteDatabaseLike;
 
 const openReadOnlySqlite = async (path: string): Promise<SqliteDatabaseLike | null> => {
   try {
     const module: unknown = await import(SQLITE_MODULE_SPECIFIER);
     if (!isRecord(module)) return null;
-    const { DatabaseSync } = module;
-    if (typeof DatabaseSync !== "function") return null;
-    return new (DatabaseSync as SqliteDatabaseConstructor)(path, { readOnly: true });
+    const { Database } = module;
+    if (typeof Database !== "function") return null;
+    return new (Database as SqliteDatabaseConstructor)(path, { readonly: true, create: false });
   } catch {
     return null;
   }
@@ -99,8 +100,8 @@ const openReadOnlySqlite = async (path: string): Promise<SqliteDatabaseLike | nu
 const findStateDatabase = async (codexHome: string): Promise<string | null> => {
   let best: { path: string; version: number } | null = null;
   try {
-    for await (const entry of Deno.readDir(codexHome)) {
-      if (!entry.isFile) continue;
+    for (const entry of await readdir(codexHome, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
       const match = STATE_DATABASE_PATTERN.exec(entry.name);
       if (!match) continue;
       const version = Number(match[1]);

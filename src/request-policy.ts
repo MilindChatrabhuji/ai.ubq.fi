@@ -90,6 +90,9 @@ import { getString, isRecord } from "./utils.ts";
 import type { ResponseInputItem } from "./types.ts";
 import { fetchMeteredModels } from "./provider/metered.ts";
 import { fetchSurplusModels } from "./provider/surplus.ts";
+import { isSurplusClaudeModel } from "./provider/surplus-claude-request.ts";
+import { fetchClaudeCodeModels, claudeCodeReasoningLevels } from "./provider/claude-code-models.ts";
+import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import { countExplicitPromptCacheBreakpoints } from "./openai-telemetry.ts";
 
 export type CodexModelReasoning = Readonly<{
@@ -160,6 +163,12 @@ export const getCodexModelReasoning = (record: Record<string, unknown> | null): 
   };
 };
 
+const findClaudeCodeModel = async (model: string) => {
+  if (!isSurplusClaudeModel(model) || !isProviderEnabled("claude_code", await loadProviderSelectionCached())) return null;
+  const snapshot = await fetchClaudeCodeModels();
+  return snapshot?.models.find((candidate) => candidate.id === model) ?? null;
+};
+
 export const getCodexModelMetadata = async (model: string, route: "chat.completions" | "responses"): Promise<CodexModelMetadata> => {
   if (isTemporaryFreeSurplusModel(model)) {
     // This non-Codex routing record deliberately omits reasoning capability
@@ -176,6 +185,22 @@ export const getCodexModelMetadata = async (model: string, route: "chat.completi
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
   if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record), supportedEndpoints: null };
+  const claudeModel = await findClaudeCodeModel(model);
+  if (claudeModel) {
+    // The native subscription adapter serves both wires. A same-id paid row
+    // cannot remove that route, but only this credential's observed IDs add it.
+    const subscriptionRecord = {
+      slug: model,
+      supported_reasoning_levels: claudeCodeReasoningLevels(claudeModel),
+      ...(claudeModel.supports_disabled_thinking === true ? { default_reasoning_level: "none" } : {}),
+    };
+    return {
+      snapshot,
+      record: subscriptionRecord,
+      reasoning: getCodexModelReasoning(subscriptionRecord),
+      supportedEndpoints: ["openai", "openai-response"],
+    };
+  }
   const [metered, surplus] = await Promise.all([fetchMeteredModels(), fetchSurplusModels()]);
   const meteredRecord = metered?.models.find((candidate) => candidate.id === model);
   const surplusRecord = surplus?.models.find((candidate) => candidate.id === model);

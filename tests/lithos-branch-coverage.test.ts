@@ -1,3 +1,5 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -24,14 +26,14 @@ const API_KEY_ENV = "METERED_API_KEY";
 
 /** Runs `run` with a discovery key in the environment and a clean models cache. */
 const withDiscoveryKey = async (run: () => Promise<void>): Promise<void> => {
-  const previous = Deno.env.get(API_KEY_ENV);
-  Deno.env.set(API_KEY_ENV, "metered-fixture-key");
+  const previous = process.env[API_KEY_ENV];
+  process.env[API_KEY_ENV] = "metered-fixture-key";
   resetMeteredModelsCacheForTest();
   try {
     await run();
   } finally {
-    if (previous === undefined) Deno.env.delete(API_KEY_ENV);
-    else Deno.env.set(API_KEY_ENV, previous);
+    if (previous === undefined) Reflect.deleteProperty(process.env, API_KEY_ENV);
+    else process.env[API_KEY_ENV] = previous;
     resetMeteredModelsCacheForTest();
   }
 };
@@ -46,7 +48,7 @@ const urlOf = (input: RequestInfo | URL): string => {
 
 const emptyModelsResponse = (): Response => jsonResponse({ data: [] });
 
-Deno.test("metered models: discovery reads the upstream list, normalizes each row and skips duplicates", async () => {
+test("metered models: discovery reads the upstream list, normalizes each row and skips duplicates", async () => {
   await withDiscoveryKey(async () => {
     const payload = {
       data: [
@@ -98,7 +100,7 @@ Deno.test("metered models: discovery reads the upstream list, normalizes each ro
   });
 });
 
-Deno.test("metered models: an unusable payload, a rejecting fetch and a missing key all keep the cache", async () => {
+test("metered models: an unusable payload, a rejecting fetch and a missing key all keep the cache", async () => {
   await withDiscoveryKey(async () => {
     // A successful first read publishes a snapshot.
     const published = await fetchMeteredModels({ fetcher: () => Promise.resolve(jsonResponse({ data: [{ id: "gpt-6-astra" }] })) });
@@ -134,7 +136,7 @@ Deno.test("metered models: an unusable payload, a rejecting fetch and a missing 
   });
 });
 
-Deno.test("metered models: the cached snapshot is served for a fresh cache and for cachedOnly callers", async () => {
+test("metered models: the cached snapshot is served for a fresh cache and for cachedOnly callers", async () => {
   await withDiscoveryKey(async () => {
     let calls = 0;
     const fetcher = () => {
@@ -153,19 +155,19 @@ Deno.test("metered models: the cached snapshot is served for a fresh cache and f
   });
 
   // Without a discovery key there is nothing to fetch.
-  const previous = Deno.env.get(API_KEY_ENV);
-  Deno.env.delete(API_KEY_ENV);
+  const previous = process.env[API_KEY_ENV];
+  Reflect.deleteProperty(process.env, API_KEY_ENV);
   resetMeteredModelsCacheForTest();
   try {
     const withoutKey = await fetchMeteredModels({ force: true, fetcher: () => Promise.resolve(emptyModelsResponse()) });
     assert.equal(withoutKey, null);
   } finally {
-    if (previous !== undefined) Deno.env.set(API_KEY_ENV, previous);
+    if (previous !== undefined) process.env[API_KEY_ENV] = previous;
     resetMeteredModelsCacheForTest();
   }
 });
 
-Deno.test("metered models: the test fetch seam is used when no fetcher is supplied", async () => {
+test("metered models: the test fetch seam is used when no fetcher is supplied", async () => {
   await withDiscoveryKey(async () => {
     setMeteredModelsFetchForTest((input) => {
       const url = urlOf(input);
@@ -200,7 +202,7 @@ const pricingFetcher = (pricing: Response, status: Response) => (input: RequestI
   return Promise.resolve(url.endsWith("/api/ratio_config") ? pricing : status);
 };
 
-Deno.test("metered pricing: a well-formed pair publishes the coefficients for the eligible Codex ids", async () => {
+test("metered pricing: a well-formed pair publishes the coefficients for the eligible Codex ids", async () => {
   const pricing = jsonResponse({
     success: true,
     data: {
@@ -225,7 +227,7 @@ Deno.test("metered pricing: a well-formed pair publishes the coefficients for th
   assert.deepEqual(snapshot.model_quota_coefficients, { "gpt-6-astra": 0.5, "ratio-only": 6 });
 });
 
-Deno.test("metered pricing: every malformed envelope and configuration is rejected by code", async () => {
+test("metered pricing: every malformed envelope and configuration is rejected by code", async () => {
   const expectRejection = async (fetcher: (input: RequestInfo | URL) => Promise<Response>, code: string, status?: number) => {
     const error = await initializeMeteredPricing({ codexModelIds: ["gpt-6-astra"], fetcher }).catch((reason: unknown) => reason);
     assert.ok(error instanceof MeteredError, `expected a MeteredError, got ${String(error)}`);
@@ -283,7 +285,7 @@ Deno.test("metered pricing: every malformed envelope and configuration is reject
   assert.equal(idError.code, "metered_pricing_invalid");
 });
 
-Deno.test("metered responses: the projection refuses unusable bodies and applies the reasoning suffix", async () => {
+test("metered responses: the projection refuses unusable bodies and applies the reasoning suffix", async () => {
   const rejection = await fetchMeteredResponses("not-an-object", { apiKey: "sk-test" }).catch((reason: unknown) => reason);
   assert.ok(rejection instanceof MeteredError);
   assert.equal(rejection.code, "metered_request_invalid");
@@ -328,7 +330,7 @@ Deno.test("metered responses: the projection refuses unusable bodies and applies
   assert.equal(JSON.parse(bodies[4]).model, "gpt-5.6-sol-high");
 });
 
-Deno.test("metered responses: dispatch admission, abort and transport failures keep their own identity", async () => {
+test("metered responses: dispatch admission, abort and transport failures keep their own identity", async () => {
   // An already-aborted caller signal fails before the transport is touched.
   const controller = new AbortController();
   const reason = new Error("client left");
@@ -407,19 +409,19 @@ Deno.test("metered responses: dispatch admission, abort and transport failures k
   );
 
   // Without a configured key the paid provider reports itself unavailable.
-  const previous = Deno.env.get(API_KEY_ENV);
-  Deno.env.delete(API_KEY_ENV);
+  const previous = process.env[API_KEY_ENV];
+  Reflect.deleteProperty(process.env, API_KEY_ENV);
   try {
     const missingKey = await fetchMeteredResponses({ model: "gpt-6-astra" }, { apiKey: "" }).catch((error: unknown) => error);
     assert.ok(missingKey instanceof MeteredError);
     assert.equal(missingKey.code, "metered_api_key_missing");
     assert.equal(missingKey.status, 503);
   } finally {
-    if (previous !== undefined) Deno.env.set(API_KEY_ENV, previous);
+    if (previous !== undefined) process.env[API_KEY_ENV] = previous;
   }
 });
 
-Deno.test("metered token logs: a successful page is parsed, filtered and paginated", async () => {
+test("metered token logs: a successful page is parsed, filtered and paginated", async () => {
   const entries = [
     { request_id: "req-1", model_name: "gpt-6-astra", quota: 1, prompt_tokens: 2, cached_prompt_tokens: 1, completion_tokens: 3, created_at: 10 },
     { request_id: "  ", other: '{"request_id":"req-2"}', model_name: "gpt-6-astra", quota: 1, prompt_tokens: 2, completion_tokens: 3, created_at: 10 },
@@ -463,7 +465,7 @@ Deno.test("metered token logs: a successful page is parsed, filtered and paginat
   assert.equal(logs[0].created_at, 10);
 });
 
-Deno.test("metered token logs: a bare array page and an enveloped empty page both terminate the walk", async () => {
+test("metered token logs: a bare array page and an enveloped empty page both terminate the walk", async () => {
   // A bare array page carries no total, so the page's own length ends the walk.
   let bareCalls = 0;
   const bareFetcher = () => {
@@ -489,7 +491,7 @@ Deno.test("metered token logs: a bare array page and an enveloped empty page bot
   assert.equal(envelopedCalls, 2);
 });
 
-Deno.test("metered token logs: every malformed envelope is rejected with its code", async () => {
+test("metered token logs: every malformed envelope is rejected with its code", async () => {
   const rejectionFor = (fetcher: (input: RequestInfo | URL) => Promise<Response>) =>
     fetchMeteredTokenLogs({ apiKey: "sk-test", fetcher }).catch((reason: unknown) => reason);
 
@@ -521,11 +523,11 @@ Deno.test("metered token logs: every malformed envelope is rejected with its cod
   assert.deepEqual(empty, []);
 });
 
-Deno.test("metered base url is the documented host", () => {
+test("metered base url is the documented host", () => {
   assert.equal(METERED_BASE_URL, "https://api.openlux.ai");
 });
 
-Deno.test("metered discovery and pricing cover the stale-generation, unusable-fetch and overflow guards", async () => {
+test("metered discovery and pricing cover the stale-generation, unusable-fetch and overflow guards", async () => {
   await withDiscoveryKey(async () => {
     // A failure that lands after the cache generation moved on must not arm the
     // backoff, so the next ordinary call still reaches upstream.
@@ -553,10 +555,10 @@ Deno.test("metered discovery and pricing cover the stale-generation, unusable-fe
     setMeteredModelsFetchForTest(null);
     const originalFetch = globalThis.fetch;
     let replacedFetchCalls = 0;
-    globalThis.fetch = () => {
+    globalThis.fetch = createFetchMock(() => {
       replacedFetchCalls += 1;
       return Promise.reject(new Error("replaced fetch"));
-    };
+    });
     try {
       const cachedOnly = await fetchMeteredModels({ force: true });
       assert.equal(cachedOnly?.models[0].id, "after-reset");
@@ -587,7 +589,7 @@ Deno.test("metered discovery and pricing cover the stale-generation, unusable-fe
   });
 });
 
-Deno.test("metered responses and logs reject unserializable bodies and wrap a non-Error abort reason", async () => {
+test("metered responses and logs reject unserializable bodies and wrap a non-Error abort reason", async () => {
   // JSON.stringify resolving to undefined (a `toJSON` probe) is not a usable body.
   const unserializable = await fetchMeteredResponses({ toJSON: () => undefined }, { apiKey: "sk-test" }).catch((error: unknown) => error);
   assert.ok(unserializable instanceof MeteredError);
