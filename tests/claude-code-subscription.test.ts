@@ -1,6 +1,7 @@
 import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { CLAUDE_CODE_ACCOUNTS_KEY } from "../src/provider/claude-code-accounts.ts";
 import {
   buildClaudeCodeRequest,
   CLAUDE_CODE_DEFAULT_MAX_OUTPUT_TOKENS,
@@ -53,6 +54,23 @@ const keyOf = (key: KvKey): string => JSON.stringify(key);
 class QuotaKv {
   readonly values = new Map<string, unknown>();
   failWrites = false;
+
+  atomic() {
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (..._entries: unknown[]) => operation,
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => this.values.set(keyOf(key), value));
+        return operation;
+      },
+      commit: () => {
+        if (this.failWrites) return Promise.reject(new Error("KV write failed"));
+        for (const write of writes) write();
+        return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+      },
+    };
+    return operation;
+  }
 
   get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
@@ -126,7 +144,7 @@ test("credential kinds and partial hints never expose the secret", () => {
   assert.equal(partialClaudeCodeCredentialHint("short"), "configured");
 });
 
-test("a stored credential beats the environment and clearing restores it", async () => {
+test("a stored credential beats the bootstrapped environment and removal never resurrects it", async () => {
   resetClaudeCodeCredentialCacheForTest();
   const kv = new QuotaKv();
   const env = envLookup({ CLAUDE_API_KEY: "sk-ant-usr-env-key" });
@@ -143,16 +161,15 @@ test("a stored credential beats the environment and clearing restores it", async
   assert.equal(resolved.secret, "sk-ant-usr-kv-key");
   assert.equal(resolved.label, "primary");
   assert.equal(resolved.updated_at_ms !== null, true);
-  assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])), true);
+  assert.equal(kv.values.has(keyOf(CLAUDE_CODE_ACCOUNTS_KEY)), true);
 
   const loaded = await loadClaudeCodeStoredCredential(kv as unknown as Kv);
   assert.equal(loaded?.secret, "sk-ant-usr-kv-key");
-  assert.equal((kv.values.get(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])) as { secret?: string }).secret, "sk-ant-usr-kv-key");
+  assert.equal(kv.values.has(keyOf(CLAUDE_CODE_AUTH_KV_KEY)), false, "new roster credentials do not overwrite retained singleton keys");
 
   await clearClaudeCodeStoredCredential(kv as unknown as Kv);
   const afterClear = await resolveClaudeCodeCredential(kv as unknown as Kv, env);
-  assert.equal(afterClear?.source, "CLAUDE_API_KEY");
-  assert.equal(afterClear.secret, "sk-ant-usr-env-key");
+  assert.equal(afterClear, null);
   assert.equal(CLAUDE_CODE_CREDENTIAL_CACHE_TTL_MS, 60_000);
   resetClaudeCodeCredentialCacheForTest();
 });

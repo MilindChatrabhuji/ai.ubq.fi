@@ -1,10 +1,12 @@
 import { copyOps, seedStore } from "./fixture-release.ts";
 import { test } from "bun:test";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { spawnFixture, runFixture, outputFixture, fsError, type FixtureChild } from "./fixture-process.ts";
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { MAC_RUNTIME, prepareMacRuntime } from "../mac-runtime.ts";
+import { dirname, join, resolve } from "node:path";
+import { withMacSqliteTemp } from "../mac-sqlite-temp.ts";
 
 const FIXTURES = fileURLToPath(new URL("../../.cleanup-evidence/mac-runtime-fixtures", import.meta.url));
 const decoder = new TextDecoder();
@@ -274,3 +276,158 @@ for (const failure of [false, true]) {
     }
   });
 }
+
+const fixture = async (run: (root: string) => Promise<void>): Promise<void> => {
+  const base = resolve(".cleanup-evidence/mac-sqlite-temp");
+  await mkdir(base, { recursive: true });
+  const root = await realpath(await mkdtemp(join(base, "case-")));
+  await mkdir(join(root, ".data"), { mode: 0o700 });
+  try {
+    await run(root);
+  } finally {
+    await rm(root, { recursive: true });
+  }
+};
+
+test("Mac SQLite temp storage is exclusive, physical and private until its callback settles", async () => {
+  await fixture(async (root) => {
+    let selected = "";
+    await withMacSqliteTemp(root, async (directory) => {
+      selected = directory;
+      assert.equal(dirname(directory), join(root, ".data"));
+      assert.equal(await realpath(directory), directory);
+      const stat = await lstat(directory);
+      assert(stat.isDirectory() && !stat.isSymbolicLink());
+      assert.equal(stat.mode & 0o777, 0o700);
+      assert.equal(stat.uid, process.getuid?.());
+      await writeFile(join(directory, "owned-temporary-bytes"), "private");
+      await Promise.resolve();
+      assert.equal(await readFile(join(directory, "owned-temporary-bytes"), "utf8"), "private");
+    });
+    await assert.rejects(lstat(selected), { code: "ENOENT" });
+  });
+});
+
+test("separate Mac launches never adopt or clean a retained older temp directory", async () => {
+  await fixture(async (root) => {
+    const stale = join(root, ".data/sqlite-tmp-retained");
+    await mkdir(stale, { mode: 0o700 });
+    await writeFile(join(stale, "preserve"), "older-launch");
+    const paths = await Promise.all([withMacSqliteTemp(root, (path) => Promise.resolve(path)), withMacSqliteTemp(root, (path) => Promise.resolve(path))]);
+    assert.notEqual(paths[0], paths[1]);
+    assert.deepEqual(await readdir(join(root, ".data")), ["sqlite-tmp-retained"]);
+    assert.equal(await readFile(join(stale, "preserve"), "utf8"), "older-launch");
+  });
+});
+
+test("Mac temp cleanup preserves the original callback error after settling its directory", async () => {
+  await fixture(async (root) => {
+    const failure = new Error("settled child failed");
+    await assert.rejects(
+      withMacSqliteTemp(root, () => Promise.reject(failure)),
+      (error) => error === failure
+    );
+    assert.deepEqual(await readdir(join(root, ".data")), []);
+  });
+});
+
+for (const replacement of ["directory", "symlink", "mode"] as const) {
+  test(`Mac temp cleanup refuses a changed lifetime ${replacement} without deleting foreign bytes`, async () => {
+    await fixture(async (root) => {
+      let selected = "";
+      const foreign = join(root, "foreign");
+      await mkdir(foreign, { mode: 0o700 });
+      await writeFile(join(foreign, "preserve"), "foreign-bytes");
+      await assert.rejects(
+        withMacSqliteTemp(root, async (directory) => {
+          selected = directory;
+          if (replacement === "mode") await chmod(directory, 0o755);
+          else {
+            await rename(directory, directory + "-retained");
+            if (replacement === "symlink") await symlink(foreign, directory);
+            else {
+              await mkdir(directory, { mode: 0o700 });
+              await writeFile(join(directory, "preserve"), "replacement-bytes");
+            }
+          }
+        }),
+        /cleanup refused; preserved/
+      );
+      assert.equal(await readFile(join(foreign, "preserve"), "utf8"), "foreign-bytes");
+      assert(await lstat(selected));
+      if (replacement === "directory") assert.equal(await readFile(join(selected, "preserve"), "utf8"), "replacement-bytes");
+    });
+  });
+}
+
+test("Mac temp cleanup preserves both anchors when the data directory is replaced during a launch", async () => {
+  await fixture(async (root) => {
+    let selected = "";
+    await assert.rejects(
+      withMacSqliteTemp(root, async (directory) => {
+        selected = directory;
+        await rename(join(root, ".data"), join(root, "retained-data"));
+        await mkdir(join(root, ".data"), { mode: 0o700 });
+        await writeFile(join(root, ".data/foreign"), "preserve");
+      }),
+      /cleanup refused; preserved/
+    );
+    assert.equal(await readFile(join(root, ".data/foreign"), "utf8"), "preserve");
+    assert((await lstat(join(root, "retained-data", selected.slice(selected.lastIndexOf("/") + 1)))).isDirectory());
+  });
+});
+
+for (const invalid of ["relative-root", "symlink-root", "symlink-data", "shared-write-data"] as const) {
+  test(`Mac temp preparation refuses ${invalid} before invoking a child`, async () => {
+    await fixture(async (root) => {
+      let anchor = root;
+      if (invalid === "relative-root") anchor = ".";
+      else if (invalid === "symlink-root") {
+        anchor = root + "-link";
+        await symlink(root, anchor);
+      } else if (invalid === "symlink-data") {
+        await rename(join(root, ".data"), join(root, "retained-data"));
+        await symlink(join(root, "retained-data"), join(root, ".data"));
+      } else await chmod(join(root, ".data"), 0o777);
+      let invoked = false;
+      try {
+        await assert.rejects(
+          withMacSqliteTemp(anchor, () => {
+            invoked = true;
+            return Promise.resolve();
+          })
+        );
+        assert.equal(invoked, false);
+      } finally {
+        if (invalid === "symlink-root") await rm(anchor);
+      }
+    });
+  });
+}
+
+test("the Mac launcher overrides only child SQLite temp after explicit root dotenv loading", async () => {
+  const source = await readFile(new URL("../launch-service.ts", import.meta.url), "utf8");
+  const mac = source.slice(source.indexOf('if (mode === "mac")'), source.indexOf("} else {", source.indexOf('if (mode === "mac")')));
+  assert(source.indexOf('loadEnvFile(join(root, ".env"))') < source.indexOf("await withMacSqliteTemp(root"));
+  assert.match(mac, /env: \{ \.\.\.process\.env, SQLITE_TMPDIR: sqliteTemp \}/);
+  assert.match(mac, /await child\.exited/);
+  assert.match(mac, /"--no-env-file", "--no-install"/);
+  assert.doesNotMatch(source.slice(source.indexOf("} else {", source.indexOf('if (mode === "mac")'))), /SQLITE_TMPDIR|withMacSqliteTemp/);
+});
+
+test("copied service launcher ops retain every static relative dependency on both platform branches", async () => {
+  await fixture(async (root) => {
+    const destination = join(root, "ops");
+    await mkdir(destination);
+    await copyOps(destination);
+    const entry = new URL("../launch-service.ts", import.meta.url);
+    const source = await readFile(entry, "utf8");
+    const imports = Array.from(source.matchAll(/from "(\.\/[^"]+)"/g), (match) => match[1]);
+    assert(imports.includes("./mac-sqlite-temp.ts"));
+    for (const specifier of imports) {
+      assert.equal(await readFile(join(destination, specifier), "utf8"), await readFile(new URL(specifier, entry), "utf8"), specifier);
+    }
+    const copied: unknown = await import(pathToFileURL(join(destination, "mac-sqlite-temp.ts")).href);
+    assert(copied !== null && typeof copied === "object" && "withMacSqliteTemp" in copied && typeof copied.withMacSqliteTemp === "function");
+  });
+});

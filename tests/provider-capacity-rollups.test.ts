@@ -247,3 +247,50 @@ test("capacity rollups route requires admin authentication through the request r
   const response = await handler(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups"));
   assert.equal(response.status, 401);
 });
+
+test("additive Claude rollups retain source order, true zero and cohort/reset boundaries", async () => {
+  const { mergeClaudeCapacityRollup, claudeCapacityRollupKey, readClaudeCapacityRollup } = await import("../src/provider/claude-capacity-rollups.ts");
+  const point = {
+    v: 1 as const,
+    point_id: "one",
+    bucket_start_at_ms: Math.floor(nowMs / 900_000) * 900_000,
+    account_id: "local-a",
+    account_cohort_id: "cohort-a",
+    credential_kind: "oauth" as const,
+    workspace_id: null,
+    sampled_at_ms: nowMs,
+    source_observed_at_ms: nowMs,
+    state: "available" as const,
+    response_status: 200,
+    windows: { five_hour: { status: "allowed", used_percent: 0, reset_at_ms: nowMs + 18_000_000, observed_at_ms: nowMs }, seven_day: null },
+    standard: [],
+  };
+  const first = mergeClaudeCapacityRollup(null, point, "five_hour");
+  assert.equal(first.min_used_percent, 0);
+  assert.equal(first.last_used_percent, 0);
+  assert.equal(first.samples, 1);
+  const next = {
+    ...point,
+    point_id: "two",
+    sampled_at_ms: nowMs + 1_000,
+    source_observed_at_ms: nowMs + 1_000,
+    windows: { ...point.windows, five_hour: { ...point.windows.five_hour, used_percent: 25, observed_at_ms: nowMs + 1_000 } },
+  };
+  const second = mergeClaudeCapacityRollup(first, next, "five_hour");
+  assert.equal(second.samples, 2);
+  assert.equal(second.min_used_percent, 0);
+  assert.equal(second.max_used_percent, 25);
+  assert.equal(second.last_used_percent, 25);
+  const late = mergeClaudeCapacityRollup(second, point, "five_hour");
+  assert.equal(late.last_used_percent, 25, "late telemetry cannot replace the newest actual observed value");
+  assert.equal(readClaudeCapacityRollup(second)?.last_used_percent, 25);
+  assert.equal(readClaudeCapacityRollup({ ...second, samples: 99 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, min_used_percent: 80, max_used_percent: 20 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, last_used_percent: 26 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, last_source_observed_at_ms: second.last_sampled_at_ms + 1 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, first_source_observed_at_ms: null }), null);
+  const reset = { ...point, windows: { ...point.windows, five_hour: { ...point.windows.five_hour, reset_at_ms: nowMs + 36_000_000 } } };
+  assert.notDeepEqual(claudeCapacityRollupKey(reset, "five_hour"), claudeCapacityRollupKey(point, "five_hour"));
+  assert.throws(() => mergeClaudeCapacityRollup(first, reset, "five_hour"), /binding mismatch/);
+  assert.throws(() => mergeClaudeCapacityRollup(first, { ...point, account_cohort_id: "replacement" }, "five_hour"), /binding mismatch/);
+});
