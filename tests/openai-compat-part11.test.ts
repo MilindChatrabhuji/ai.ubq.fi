@@ -621,6 +621,29 @@ Deno.test("openai: the DeepSeek route accepts the provider's own `thinking` fiel
       assert.equal(res.status, 200);
       assert.equal(seen[0]?.reasoning_effort, "high");
     });
+    await t.step("tool_choice follows the canonical resolved thinking mode", async () => {
+      const tools = [{ type: "function", function: { name: "exec", parameters: { type: "object" } } }];
+
+      seen.length = 0;
+      const disabled = await withFetchMock(ok, () =>
+        post({ thinking: { type: "enabled" }, reasoning_effort: "none", tools, tool_choice: "required" })
+      );
+      await disabled.json();
+      assert.equal(disabled.status, 200);
+      assert.equal(seen[0]?.reasoning_effort, "none");
+      assert.equal("thinking" in (seen[0] ?? {}), false);
+
+      seen.length = 0;
+      const enabled = await withFetchMock(ok, () =>
+        post({ thinking: { type: "disabled" }, reasoning_effort: "max", tools, tool_choice: "required" })
+      );
+      assert.equal(enabled.status, 400);
+      const error = (await enabled.json()) as { error: { message: string; param: string } };
+      assert.equal(error.error.param, "tool_choice");
+      assert.match(error.error.message, /tool_choice 'required'/);
+      assert.match(error.error.message, /reasoning_effort/);
+      assert.equal(seen.length, 0);
+    });
     await t.step("a non-DeepSeek route still rejects `thinking`", async () => {
       const res = await withFetchMock(ok, () =>
         handleChatCompletions(
