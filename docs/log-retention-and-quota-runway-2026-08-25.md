@@ -180,6 +180,14 @@ accumulates.
   rows, and the 5 GiB `budget_bytes` figure only sets the growth alert; nothing is evicted when it is reached. If a
   byte budget ever becomes necessary, it would need timestamp-ordered keys or a global age index — note the legacy
   analytics key shape `[keyId, createdAtMs, requestId]` as a precedent.
+- Imported raw rows have no expiry until the backfill rewrites them. The 2026-09-10 Deno export carries no expiry
+  (`ops/README.md`), so the generic import wrote those rows without one (`src/cache/kv-migration-base.ts`), and the
+  365-day TTL above does not bound them yet. The growth alert does not count them either, because its counters start
+  with live settlements; the whole store was under about 0.3 GiB at migration, so the total is small. Only the
+  quota-projection backfill re-applies the anchored TTL to them, and the automatic backfill may never run again once its
+  completion marker exists. Run `POST /admin/providers/quota-projection/backfill` until it reports `completed: true`,
+  and record the date it was done here. Any future generic KV export and import drops expiry the same way, so run the
+  backfill again after it.
 - The provider-capacity chart view stays at seven days on purpose. Long-run capacity research reads the separate
   forever-kept hourly rollups through `GET /admin/providers/capacity/rollups?window_days=N` (default 90, capped at 365):
   every persisted capacity sample folds its per-slot window summaries into the same atomic as the 15-minute history
