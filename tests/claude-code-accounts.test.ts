@@ -487,9 +487,10 @@ test("quota proof is exact-model and expires at its recorded reset boundary", as
   await recordClaudeCodeQuotaOutcome(kv, {
     binding: first,
     model_id: routeModel,
-    observation: observation("1"),
+    observation: observation("1", now),
     exhaustion: { window: "5h", reset_at_ms: now + 60_000 },
     response_status: 429,
+    nowMs: now,
   });
   const state = await loadClaudeCodeQuotaState(kv, first);
   assert(claudeCodePoolProofForModel(state, first, routeModel, now));
