@@ -29,12 +29,15 @@ export type TestSelection = ChangeScope &
 
 export type CiScope = TestSelection &
   Readonly<{
+    completeCheckSet: boolean;
     docsOnly: boolean;
+    needsDocs: boolean;
     needsValidate: boolean;
     needsNativeKv: boolean;
     needsNativeBuild: boolean;
     needsMacContainment: boolean;
     needsDarwinNative: boolean;
+    needsDarwinTests: boolean;
     needsArtifact: boolean;
   }>;
 
@@ -189,21 +192,35 @@ export const detectTestSelection = (): TestSelection => {
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
 
-export const ciScopeForSelection = (selection: TestSelection, root = ROOT): CiScope => {
+export const ciScopeForSelection = (selection: TestSelection, root = ROOT, environment: NodeJS.ProcessEnv = process.env): CiScope => {
+  // Sentinel compares head failures with same-name base checks. Exercise every
+  // real job for its heads, development baselines and CI-policy changes without
+  // changing the dependency-scoped test selection.
+  const changesCiPolicy = selection.paths.some((path) => path === ".github/workflows/deno-deploy.yml" || path === "scripts/test-scope.ts");
+  const completeCheckSet =
+    environment.GITHUB_EVENT_NAME === "merge_group" ||
+    (environment.GITHUB_EVENT_NAME === "push" && environment.GITHUB_REF === "refs/heads/development") ||
+    (environment.GITHUB_EVENT_NAME === "pull_request" &&
+      (environment.GITHUB_BASE_REF === "queue-canary" ||
+        (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));
   const docsOnly = selection.reason === "documentation-only";
   const needsNativeKv =
     selection.runAll ||
     selection.paths.some((path) => NATIVE_PATH.test(path)) ||
     (!docsOnly && selection.affectedTests.some((path) => testRequiresNativeKv(path, root)));
-  const needsArtifact = !docsOnly && selection.paths.some((path) => RELEASE_PATH.test(path));
+  const needsArtifact = completeCheckSet || (!docsOnly && selection.paths.some((path) => RELEASE_PATH.test(path)));
+  const needsDarwinTests = !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path)));
   return {
     ...selection,
+    completeCheckSet,
     docsOnly,
-    needsValidate: !docsOnly,
+    needsDocs: completeCheckSet || docsOnly,
+    needsValidate: completeCheckSet || !docsOnly,
     needsNativeKv,
     needsNativeBuild: needsNativeKv || needsArtifact,
-    needsMacContainment: !docsOnly && (selection.runAll || selection.paths.some((path) => MAC_PATH.test(path))),
-    needsDarwinNative: !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path))),
+    needsMacContainment: completeCheckSet || (!docsOnly && (selection.runAll || selection.paths.some((path) => MAC_PATH.test(path)))),
+    needsDarwinNative: completeCheckSet || needsDarwinTests,
+    needsDarwinTests,
     needsArtifact,
   };
 };
