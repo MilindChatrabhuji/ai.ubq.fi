@@ -34,7 +34,7 @@ import { loadProviderSelection, PROVIDER_SELECTION_KV_KEY, resetProviderSelectio
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "../src/catalog/types.ts";
 import { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } from "../src/provider/metered.ts";
 import { resetSurplusModelsCacheForTest } from "../src/provider/surplus.ts";
-import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
+import { DEEPSEEK_WATERFALL_LEGACY_MODEL_ID, DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps these tests on the credential-gated providers they own, and keeps
@@ -657,6 +657,11 @@ test("the model picker rejects a selection it cannot store faithfully", async ()
 test("normalizeWhitelistModelIds keeps the first spelling of every identifier", () => {
   assert.deepEqual(normalizeWhitelistModelIds([" a ", "b", "a", "", "   ", 7, null, "c"]), ["a", "b", "c"]);
   assert.deepEqual(normalizeWhitelistModelIds([]), []);
+  assert.deepEqual(
+    normalizeWhitelistModelIds([DEEPSEEK_WATERFALL_LEGACY_MODEL_ID]),
+    [DEEPSEEK_WATERFALL_MODEL_ID],
+    "the pre-rename synthetic id keeps the new model selected"
+  );
 });
 
 test("whitelist filters hide unlisted models on every model surface, and an empty list hides none", () => {
@@ -883,6 +888,7 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
     models: [
       { id: "openai/gpt-5.6-sol", context_window_tokens: 1_050_000, max_context_window_tokens: 1_050_000, reasoning: null },
       { id: "z-ai/glm-5.3", context_window_tokens: 1_310_720, max_context_window_tokens: 1_310_720, reasoning: null },
+      { id: "deepseek/deepseek-v4.1-flash-1017", context_window_tokens: 1_048_576, max_context_window_tokens: 1_048_576, reasoning: null },
     ],
     updated_at_ms: 1_789_000_000_000,
   };
@@ -898,7 +904,10 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
     refreshOpenlux: (options) => {
       calls.push(`openlux:${options?.force === true ? "force" : "plain"}`);
       return Promise.resolve({
-        models: [{ id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        models: [
+          { id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] },
+          { id: "deepseek-v4.1-flash-1017", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] },
+        ],
         updated_at_ms: 1,
       });
     },
@@ -908,6 +917,7 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
         models: [
           { id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "OpenAI", supported_endpoint_types: ["openai-response"] },
           { id: "hy3", object: "model", created: 0, owned_by: "Tencent", supported_endpoint_types: ["openai-response"] },
+          { id: "deepseek-v4.1-flash-1017", object: "model", created: 0, owned_by: "DeepSeek", supported_endpoint_types: ["openai-response"] },
         ],
         updated_at_ms: 2,
       });
@@ -922,9 +932,9 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
     "every upstream is force-refreshed"
   );
   assert.deepEqual(body.data, {
-    openrouter: { upstream_models: 2, updated_at_ms: 1_789_000_000_000, refreshed: true },
-    openlux: { models: 1, updated_at_ms: 1 },
-    surplus: { models: 2, updated_at_ms: 2 },
+    openrouter: { upstream_models: 3, updated_at_ms: 1_789_000_000_000, refreshed: true },
+    openlux: { models: 2, updated_at_ms: 1 },
+    surplus: { models: 3, updated_at_ms: 2 },
     claude_code: { models: 1, updated_at_ms: 3, status: "available", stale: false },
   });
 });
