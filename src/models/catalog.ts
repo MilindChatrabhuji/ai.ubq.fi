@@ -576,7 +576,9 @@ const discoveredModelCapabilitiesEntry = (
     upstream_provider: provider,
     supported_endpoints: supportedEndpoints,
     supported_reasoning_levels: resolved.supported_reasoning_levels ?? ["none"],
-    default_reasoning_effort: resolved.default_reasoning_effort ?? "none",
+    ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+      ? {}
+      : { default_reasoning_effort: resolved.default_reasoning_effort ?? "none" }),
     reasoning_effort_wire_map: {},
     context_window_tokens: resolved.context_window_tokens,
     max_context_window_tokens: resolved.max_context_window_tokens,
