@@ -1,8 +1,9 @@
 // Authenticated ingest for another gateway's capacity observations.
 //
-// The Mac pushes its local seven-day history here; the VPS stores it in the
-// analytics-only namespace and merges it into the admin chart response. The
-// operational history, leases, reset events, and routing keys are untouched.
+// The Mac service pushes its new local samples here; the VPS stores them in the
+// analytics-only namespace and uses them only to fill chart buckets it did not
+// observe itself (see capacity-analytics.ts). The operational history, leases,
+// reset events, and routing keys are untouched.
 
 import type { Kv } from "#kv";
 import { json, openaiError } from "../http.ts";
@@ -42,9 +43,10 @@ const readBoundedBody = async (request: Request): Promise<string | null> => {
  *
  * Body: { "host": "mac", "history": ProviderCapacityHistoryPoint[] }
  *
- * The route is inside the authenticated admin table. A malformed envelope or
- * any malformed observation rejects the whole batch instead of storing partial
- * evidence.
+ * The route is inside the authenticated admin table. A malformed envelope, more
+ * than MAX_REMOTE_CAPACITY_OBSERVATIONS rows, or any malformed, unaligned, or
+ * out-of-bucket observation rejects the whole batch instead of storing partial
+ * evidence. A failed write answers 503 so the pusher keeps the rows pending.
  */
 export const handleCapacityObservationIngest = async (request: Request, options: Readonly<{ kv?: Kv | null; now?: () => number }> = {}): Promise<Response> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -65,6 +67,11 @@ export const handleCapacityObservationIngest = async (request: Request, options:
   const points = parseRemoteCapacityObservations(envelope.history);
   if (!points) return openaiError(400, "Invalid capacity observations", "invalid_request_error");
   const nowMs = Math.trunc((options.now ?? Date.now)());
-  const accepted = await storeRemoteCapacityObservations(kv, envelope.host, points, nowMs);
+  let accepted: number;
+  try {
+    accepted = await storeRemoteCapacityObservations(kv, envelope.host, points, nowMs);
+  } catch {
+    return openaiError(503, "Capacity observation storage unavailable", "server_error");
+  }
   return json(200, { accepted, host: envelope.host }, { "Cache-Control": "no-store" });
 };
