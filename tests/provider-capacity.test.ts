@@ -757,8 +757,13 @@ test("stale default read delivers the changed upstream Codex quota value", async
   seed();
   let primaryUsed = 80;
   const usage = () => [primaryUsed, 20] as const;
-  await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher([], null, {}, usage), now: () => nowMs - 40_000 });
-  const before = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs - 39_000 });
+  const staleSnapshotAtMs = nowMs - PROVIDER_CAPACITY_READ_FRESH_MS - 10_000;
+  await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([], null, {}, usage),
+    now: () => staleSnapshotAtMs,
+  });
+  const before = await getPersistedProviderCapacityView({ kv: kvStub, now: () => staleSnapshotAtMs + 1_000 });
   assert.equal(codexSourceAt(before.sources, 1)?.windows.primary?.used_percent, 80);
   assert.equal(before.cache_state, "persisted");
 

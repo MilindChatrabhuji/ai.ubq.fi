@@ -48,8 +48,9 @@ or the log remains unavailable, admission stays fail-closed.
 
 - Capacity history converges on the next request or the next admin read: a normal capacity read uses the 30-second
   window (`PROVIDER_CAPACITY_READ_FRESH_MS`) to trigger revalidation, but if revalidation throws, the read returns the
-  last known snapshot, which may be older than 30 seconds. The durable capacity history bucket remains fifteen minutes.
-  Paid-fallback terminal events and ledger reads schedule best-effort reconciliation; a ledger read can return before
-  settlement. `?refresh=live` on the capacity endpoint still forces an immediate probe.
+  last known snapshot, which may be older than 30 seconds. The fifteen-minute
+  (`PROVIDER_CAPACITY_HISTORY_BUCKET_MS`) interval coalesces history points; it is not an age bound for the persisted
+  view. Paid-fallback terminal events and ledger reads schedule best-effort reconciliation; a ledger read can return
+  before settlement. `?refresh=live` on the capacity endpoint still forces an immediate probe.
 - On a busy gateway the events arrive continuously, so cadence is effectively the same as the retired jobs were, without
   the idle-time work.
