@@ -1,7 +1,7 @@
 import { serveHttp } from "#http";
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { assertPublicRelease, PUBLIC_HEALTH_URL, reloadCaddyIngress } from "../ops/deploy.ts";
+import { assertPublicRelease, PUBLIC_HEALTH_URL, reloadCaddyIngress } from "../ops/vps-ingress.ts";
 
 const REVISION = "a1b2c3d4".repeat(5);
 const OTHER_REVISION = "b".repeat(40);

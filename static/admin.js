@@ -9066,6 +9066,24 @@ const modelsHasUnsavedChanges = () =>
 const modelsSelectionFromIds = (ids) =>
   new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : []);
 
+/**
+ * The staged selection once a save lands. Checkboxes stay live while the save
+ * is pending, so the saved list is the base and every check or uncheck made
+ * after Save was clicked is replayed on top: a later edit stays staged, and
+ * unsaved, instead of being replaced by the response.
+ */
+const modelsSelectionAfterSave = (submittedIds) => {
+  const submitted = new Set(submittedIds);
+  const next = new Set(modelsSavedSelection);
+  for (const id of submitted) {
+    if (!modelsSelection.has(id)) next.delete(id);
+  }
+  for (const id of modelsSelection) {
+    if (!submitted.has(id)) next.add(id);
+  }
+  return next;
+};
+
 const modelsPositiveTokenCount = (value) =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 
@@ -9503,16 +9521,19 @@ const saveModelsWhitelist = async () => {
     return;
   }
   if (modelsSaving || !modelsHasUnsavedChanges()) return;
+  const saveId = modelsLoadId;
   modelsSaving = true;
   modelsSaveError = "";
   updateModelsStatus();
+  const submittedIds = modelsSelectedIds();
   try {
     const response = await fetch(apiUrl("/admin/models/whitelist"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ model_ids: modelsSelectedIds() }),
+      body: JSON.stringify({ model_ids: submittedIds }),
     });
     const payload = await response.json().catch(() => null);
+    if (saveId !== modelsLoadId) return;
     if (!response.ok) {
       modelsSaving = false;
       modelsSaveError = "Failed to save";
@@ -9522,20 +9543,23 @@ const saveModelsWhitelist = async () => {
     }
     modelsSaving = false;
     modelsSaveError = "";
-    modelsSavedSelection = modelsSelectionFromIds(payload?.model_ids ?? modelsSelectedIds());
-    modelsSelection = new Set(modelsSavedSelection);
+    // Only what was sent is saved: a check made while the request was pending
+    // must not be recorded as saved when the response omits the stored list.
+    modelsSavedSelection = modelsSelectionFromIds(Array.isArray(payload?.model_ids) ? payload.model_ids : submittedIds);
+    modelsSelection = modelsSelectionAfterSave(submittedIds);
     modelsLoadedAt = Date.now();
     renderModelsPicker();
     toast.success(
-      modelsSelection.size === 0 ? "Filter cleared" : `${formatNumber(modelsSelection.size)} models listed`,
+      modelsSavedSelection.size === 0 ? "Filter cleared" : `${formatNumber(modelsSavedSelection.size)} models listed`,
       {
         description:
-          modelsSelection.size === 0
+          modelsSavedSelection.size === 0
             ? "Every discovered model is listed again."
             : "Unchecked models are hidden from the public catalog.",
       }
     );
   } catch (error) {
+    if (saveId !== modelsLoadId) return;
     modelsSaving = false;
     modelsSaveError = "Save error";
     toast.error("Save failed", { description: "Offline" });
@@ -9729,10 +9753,10 @@ const providerSubscriptionSelected = (subscriptionId) =>
   providerSelection.has("codex") || providerSelection.has(subscriptionId);
 
 /** A tier is active when its own id is checked, or when any of its subscriptions is. */
-const isProviderChecked = (providerId) =>
+const isProviderChecked = (providerId, selection = providerSelection) =>
   providerId === "codex"
-    ? providerSelection.has("codex") || providerCodexSelection().selected > 0
-    : providerSelection.has(providerId);
+    ? selection.has("codex") || providerSubscriptions().some((subscription) => selection.has(subscription.id))
+    : selection.has(providerId);
 
 const providerCodexSelection = () => {
   const subscriptions = providerSubscriptions();
@@ -9762,18 +9786,30 @@ const providersHasUnsavedChanges = () =>
 
 const providersSelectionIsEmpty = () => providerSelection.size === 0;
 
+const providersHasActiveTier = () => providersRosterIds().some((id) => isProviderChecked(id));
+
 /**
- * Selected ids in roster order, then the narrowed subscriptions, or an empty
- * list when every active provider is checked (which is the no-filter state).
+ * Selected ids in roster order, then the narrowed subscriptions, then staged
+ * ids the roster no longer describes, or an empty list when every active
+ * provider is checked (which is the no-filter state). A missing id is part of
+ * the operator's restriction until "Remove missing" drops it, so it is never
+ * silently left out: a selection of only missing ids would otherwise serialize
+ * to the empty list and re-enable every provider. The `codex` umbrella already
+ * covers every configured subscription, so a missing subscription beside it is
+ * not sent, exactly as the API would absorb it.
  */
 const providersSelectedIds = () => {
   const rosterIds = providersRosterIds();
   if (providersSelectionIsEmpty() || rosterIds.every((id) => providerSelection.has(id))) return [];
   const selected = rosterIds.filter((id) => providerSelection.has(id));
+  const umbrella = providerSelection.has("codex");
   for (const subscription of providerSubscriptions()) {
-    if (providerSubscriptionSelected(subscription.id) && !providerSelection.has("codex")) {
+    if (providerSubscriptionSelected(subscription.id) && !umbrella) {
       selected.push(subscription.id);
     }
+  }
+  for (const id of providersMissingSelectionIds()) {
+    if (!(umbrella && id.startsWith("codex:"))) selected.push(id);
   }
   return selected;
 };
@@ -10061,7 +10097,11 @@ const updateProvidersStatus = () => {
   const total = providerRoster.length;
   const selected = providerSelection.size;
   const visibleCount = providersVisibleIds.size;
-  const visibleChecked = [...providersVisibleIds].filter((id) => providerSelection.has(id)).length;
+  // A narrowed Codex tier stores subscription ids, not `codex`, so its row is
+  // checked without being full: Uncheck shown counts every checked row, while
+  // Check shown stays enabled until each shown row is fully selected.
+  const visibleChecked = [...providersVisibleIds].filter((id) => isProviderChecked(id)).length;
+  const visibleFull = [...providersVisibleIds].filter((id) => providerSelection.has(id)).length;
   const unsaved = providersHasUnsavedChanges();
   const saving = providerSelectionSaving;
   const missingSelectionIds = providersMissingSelectionIds();
@@ -10086,8 +10126,11 @@ const updateProvidersStatus = () => {
       total
     )} providers checked: no filter is saved, so every provider is active.`;
   } else {
+    // A restriction naming only missing subscriptions leaves no tier active;
+    // the routing warnings below say why.
+    const activeList = activeLabels.length ? `: ${activeLabels.join(", ")}` : "";
     providersSummary.textContent =
-      `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active: ${activeLabels.join(", ")}.` +
+      `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active${activeList}.` +
       (visibleCount < total ? ` Showing ${formatNumber(visibleCount)}.` : "");
   }
 
@@ -10099,13 +10142,13 @@ const updateProvidersStatus = () => {
   else if (providerSelectionSaveError) setProvidersSelectionBadge("bad", providerSelectionSaveError);
   else if (unsaved) setProvidersSelectionBadge("warning", "Unsaved changes");
   else if (providerSelectionLoadedAt) {
-    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id)).length;
+    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
     setProvidersSelectionBadge("ok", filterActive ? `${formatNumber(activeTiers)} active` : "No filter");
   } else setProvidersSelectionBadge("unknown", "Not loaded");
 
   updateProviderTierFilterChips();
 
-  providersCheckAllBtn.disabled = saving || visibleCount === 0 || visibleChecked === visibleCount;
+  providersCheckAllBtn.disabled = saving || visibleCount === 0 || visibleFull === visibleCount;
   providersUncheckAllBtn.disabled = saving || visibleChecked === 0;
   providersInvertBtn.disabled = saving || visibleCount === 0;
   const scoped = providersFilterIsActive();
@@ -10121,9 +10164,9 @@ const updateProvidersStatus = () => {
     : "Remove missing";
   providersDropMissingBtn.hidden = providerRoster.length === 0;
   providersDiscardBtn.disabled = saving || !unsaved;
-  // Saving nothing is not a state the API can store: an empty list clears the
-  // filter, so the button stays disabled until at least one provider is checked.
-  providersSelectionSave.disabled = saving || !unsaved || providersSelectionIsEmpty();
+  // Empty lists clear the filter, and missing-only selections cannot route.
+  // Require at least one checked roster tier before saving either restriction.
+  providersSelectionSave.disabled = saving || !unsaved || !providersHasActiveTier();
 };
 
 const renderProvidersPicker = () => {
@@ -10251,7 +10294,9 @@ const saveProviderSelection = async () => {
     setProvidersSelectionBadge("bad", "Missing token");
     return;
   }
-  if (providerSelectionSaving || !providersHasUnsavedChanges() || providersSelectionIsEmpty()) return;
+  if (providerSelectionSaving || !providersHasUnsavedChanges() || !providersHasActiveTier()) return;
+  const submittedSelection = new Set(providerSelection);
+  const submittedIds = providersSelectedIds();
   providerSelectionSaving = true;
   providerSelectionSaveError = "";
   updateProvidersStatus();
@@ -10259,7 +10304,7 @@ const saveProviderSelection = async () => {
     const response = await fetch(apiUrl("/admin/providers/selection"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ provider_ids: providersSelectedIds() }),
+      body: JSON.stringify({ provider_ids: submittedIds }),
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
@@ -10271,13 +10316,25 @@ const saveProviderSelection = async () => {
     }
     providerSelectionSaving = false;
     providerSelectionSaveError = "";
-    const savedIds = Array.isArray(payload?.provider_ids) ? payload.provider_ids : providersSelectedIds();
+    const savedIds = Array.isArray(payload?.provider_ids) ? payload.provider_ids : submittedIds;
     providersSavedSelection = providersSelectionFromIds(savedIds);
-    providerSelection = new Set(providersSavedSelection);
+    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
+    // Replay later checkbox edits on the saved set, not on the serialized ids:
+    // all checked providers serialize to [], and Codex subscriptions share an umbrella.
+    const nextSelection = new Set(providersSavedSelection);
+    for (const id of submittedSelection) {
+      if (!providerSelection.has(id)) nextSelection.delete(id);
+    }
+    for (const id of providerSelection) {
+      if (!submittedSelection.has(id)) nextSelection.add(id);
+    }
+    providerSelection = nextSelection;
     providerSelectionLoadedAt = Date.now();
     renderProvidersPicker();
     toast.success(
-      savedIds.length === 0 ? "Filter cleared" : `${formatNumber(providerSelection.size)} providers active`,
+      savedIds.length === 0
+        ? "Filter cleared"
+        : `${formatNumber(activeTiers)} provider${activeTiers === 1 ? "" : "s"} active`,
       {
         description:
           savedIds.length === 0
@@ -10345,7 +10402,13 @@ const setProviderChecked = (providerId, checked) => {
   }
   for (const subscription of providerSubscriptions()) providerSelection.delete(subscription.id);
   if (checked) providerSelection.add("codex");
-  else providerSelection.delete("codex");
+  else {
+    providerSelection.delete("codex");
+    // Turning the tier off also covers subscriptions no longer in the roster.
+    for (const id of providerSelection) {
+      if (id.startsWith("codex:")) providerSelection.delete(id);
+    }
+  }
 };
 
 /** Narrowing to one subscription expands the umbrella, then drops that account. */
