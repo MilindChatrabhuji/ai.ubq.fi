@@ -156,7 +156,9 @@ test("one real parent build is reused across files and separate original profile
     mkdirSync(join(directory, "tests"));
     writeFileSync(join(directory, "bun.lock"), "{}\n");
     writeFileSync(join(directory, "scripts/test-runner.ts"), readFileSync(join(ROOT, "scripts/test-runner.ts")));
-    for (const name of ["test-network.ts", "test-native-kv.ts"]) symlinkSync(join(ROOT, "scripts", name), join(directory, "scripts", name));
+    for (const name of ["test-network.ts", "test-native-kv.ts", "test-scope.ts"]) {
+      symlinkSync(join(ROOT, "scripts", name), join(directory, "scripts", name));
+    }
     for (const name of ["one.test.ts", "two.test.ts", "usage-optimization-measurement.test.ts"]) {
       writeFileSync(
         join(directory, "tests", name),
