@@ -9445,6 +9445,7 @@ const loadProviderSelection = async (options = {}) => {
     renderModelProviderFilters();
     renderProviderTierFilters();
     renderProvidersPicker();
+    renderModelsPicker();
     return true;
   } catch (error) {
     if (loadId !== providerSelectionLoadId) return false;

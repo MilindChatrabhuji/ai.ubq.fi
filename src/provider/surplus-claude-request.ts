@@ -10,7 +10,7 @@ export type SurplusClaudeRequest = Readonly<{
 }>;
 export type ClaudeNativeReplayEntry = Readonly<{ type: "original"; item: JsonRecord }> | Readonly<{ type: "native_assistant"; blocks: JsonRecord[] }>;
 export type SurplusClaudeRequestOptions = Readonly<{
-  provider?: "surplus" | "metered";
+  provider?: "surplus" | "metered" | "claude_code";
   reasoningReplayScope?: string;
   /** A provider-specific contract proof is required before translating an explicit effort. */
   supportsNativeReasoningEffort?: boolean;

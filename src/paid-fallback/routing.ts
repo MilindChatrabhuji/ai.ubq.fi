@@ -41,6 +41,7 @@ import {
 } from "../openai-telemetry.ts";
 import { cancelResponseBody, normalizeProviderRequestId, providerRequestIdFromResponse } from "../upstream-wire.ts";
 import { isTemporaryFreeSurplusModel, responseWarnings } from "../request-policy.ts";
+import { attemptClaudeCodeSubscription } from "./claude-code-route.ts";
 import {
   bestEffortPaidFallbackBookkeeping,
   codexCacheScopeForUsageContext,
@@ -685,6 +686,11 @@ export const fetchResponsesWithPaidFallback = async (
   if (isTemporaryFreeSurplusModel(options.model) && isProviderEnabled("surplus", selection)) {
     return fetchTemporaryFreeSurplusRoutedResponses(body, options);
   }
+  // The owner-gated Claude Code subscription hop runs before the paid route
+  // for Claude models. A null result means "not eligible" or "failed"; the
+  // request then continues through the unchanged paid waterfall below.
+  const subscription = await attemptClaudeCodeSubscription(body, { model: options.model, signal: options.signal, usageContext: options.usageContext });
+  if (subscription) return subscription;
   const catalogs = await loadPaidResponsesCatalogs(body, options, selection);
   const { codexModelKnown, endpointType, requestUsesTools } = catalogs;
   const meteredCatalog = catalogs.meteredCatalog;
