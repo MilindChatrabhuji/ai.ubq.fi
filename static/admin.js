@@ -9338,6 +9338,10 @@ const refreshModelsMetadata = async () => {
     if (modelsHasUnsavedChanges() && !globalThis.confirm("Discard the unsaved model selection and reload?")) return;
     await loadModelsWhitelist({ force: true });
     const upstream = payload?.data?.openrouter?.upstream_models;
+    if (payload?.data?.openrouter?.refreshed === false) {
+      toast.error("Metadata refresh failed", { description: "OpenRouter metadata was not refreshed" });
+      return;
+    }
     toast.success("Model metadata refreshed", {
       description: typeof upstream === "number" ? `${formatNumber(upstream)} upstream models` : undefined,
     });

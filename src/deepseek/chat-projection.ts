@@ -325,6 +325,11 @@ const appendToolCall = (messages: Record<string, unknown>[], call: Record<string
   const previous = messages.at(-1);
   if (previous?.role === "assistant" && Array.isArray(previous.tool_calls) && previous.content === null) {
     previous.tool_calls.push(call);
+    if (pending.reasoning) {
+      const previousReasoning = typeof previous.reasoning_content === "string" ? previous.reasoning_content : "";
+      previous.reasoning_content = previousReasoning + pending.reasoning;
+      pending.reasoning = "";
+    }
     return;
   }
   const turn: Record<string, unknown> = { role: "assistant", content: null, tool_calls: [call] };
