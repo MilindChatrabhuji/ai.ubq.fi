@@ -189,14 +189,18 @@ const getRequestPath = (req: Request): string => {
 /**
  * How a local development request is admitted. `"admin"` is the fully checked
  * listener bypass (a bound loopback peer plus origin checks); `"legacy"` is the
- * hostname-only fallback for a checkout whose Git revision is unknown, which
- * stays policy-free. `null` means neither applies.
+ * hostname-only fallback for a development checkout whose Git revision is
+ * unknown, which stays policy-free. `null` means neither applies.
+ *
+ * The production timeline never takes the hostname-only fallback: the VPS
+ * serves Caddy-proxied public traffic on its loopback listener, so a loopback
+ * URL there proves nothing about the caller (#262).
  */
 type LocalClientAuthMode = "admin" | "legacy" | null;
 
 const resolveLocalClientAuthMode = (req: Request): LocalClientAuthMode => {
   if (isAdminAuthDisabledForRequest(req)) return "admin";
-  if (config.isDeploy || runtimeGitSha() !== "unknown") return null;
+  if (config.isDeploy || config.isProductionTimeline || runtimeGitSha() !== "unknown") return null;
   try {
     const hostname = new URL(req.url).hostname.toLowerCase();
     return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]" ? "legacy" : null;
