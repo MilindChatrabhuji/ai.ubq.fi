@@ -9066,6 +9066,24 @@ const modelsHasUnsavedChanges = () =>
 const modelsSelectionFromIds = (ids) =>
   new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : []);
 
+/**
+ * The staged selection once a save lands. Checkboxes stay live while the save
+ * is pending, so the saved list is the base and every check or uncheck made
+ * after Save was clicked is replayed on top: a later edit stays staged, and
+ * unsaved, instead of being replaced by the response.
+ */
+const modelsSelectionAfterSave = (submittedIds) => {
+  const submitted = new Set(submittedIds);
+  const next = new Set(modelsSavedSelection);
+  for (const id of submitted) {
+    if (!modelsSelection.has(id)) next.delete(id);
+  }
+  for (const id of modelsSelection) {
+    if (!submitted.has(id)) next.add(id);
+  }
+  return next;
+};
+
 const modelsPositiveTokenCount = (value) =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 
@@ -9506,11 +9524,12 @@ const saveModelsWhitelist = async () => {
   modelsSaving = true;
   modelsSaveError = "";
   updateModelsStatus();
+  const submittedIds = modelsSelectedIds();
   try {
     const response = await fetch(apiUrl("/admin/models/whitelist"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ model_ids: modelsSelectedIds() }),
+      body: JSON.stringify({ model_ids: submittedIds }),
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
@@ -9522,15 +9541,17 @@ const saveModelsWhitelist = async () => {
     }
     modelsSaving = false;
     modelsSaveError = "";
-    modelsSavedSelection = modelsSelectionFromIds(payload?.model_ids ?? modelsSelectedIds());
-    modelsSelection = new Set(modelsSavedSelection);
+    // Only what was sent is saved: a check made while the request was pending
+    // must not be recorded as saved when the response omits the stored list.
+    modelsSavedSelection = modelsSelectionFromIds(Array.isArray(payload?.model_ids) ? payload.model_ids : submittedIds);
+    modelsSelection = modelsSelectionAfterSave(submittedIds);
     modelsLoadedAt = Date.now();
     renderModelsPicker();
     toast.success(
-      modelsSelection.size === 0 ? "Filter cleared" : `${formatNumber(modelsSelection.size)} models listed`,
+      modelsSavedSelection.size === 0 ? "Filter cleared" : `${formatNumber(modelsSavedSelection.size)} models listed`,
       {
         description:
-          modelsSelection.size === 0
+          modelsSavedSelection.size === 0
             ? "Every discovered model is listed again."
             : "Unchecked models are hidden from the public catalog.",
       }
@@ -9758,17 +9779,27 @@ const providersHasUnsavedChanges = () =>
 const providersSelectionIsEmpty = () => providerSelection.size === 0;
 
 /**
- * Selected ids in roster order, then the narrowed subscriptions, or an empty
- * list when every active provider is checked (which is the no-filter state).
+ * Selected ids in roster order, then the narrowed subscriptions, then staged
+ * ids the roster no longer describes, or an empty list when every active
+ * provider is checked (which is the no-filter state). A missing id is part of
+ * the operator's restriction until "Remove missing" drops it, so it is never
+ * silently left out: a selection of only missing ids would otherwise serialize
+ * to the empty list and re-enable every provider. The `codex` umbrella already
+ * covers every configured subscription, so a missing subscription beside it is
+ * not sent, exactly as the API would absorb it.
  */
 const providersSelectedIds = () => {
   const rosterIds = providersRosterIds();
   if (providersSelectionIsEmpty() || rosterIds.every((id) => providerSelection.has(id))) return [];
   const selected = rosterIds.filter((id) => providerSelection.has(id));
+  const umbrella = providerSelection.has("codex");
   for (const subscription of providerSubscriptions()) {
-    if (providerSubscriptionSelected(subscription.id) && !providerSelection.has("codex")) {
+    if (providerSubscriptionSelected(subscription.id) && !umbrella) {
       selected.push(subscription.id);
     }
+  }
+  for (const id of providersMissingSelectionIds()) {
+    if (!(umbrella && id.startsWith("codex:"))) selected.push(id);
   }
   return selected;
 };
@@ -10081,8 +10112,11 @@ const updateProvidersStatus = () => {
       total
     )} providers checked: no filter is saved, so every provider is active.`;
   } else {
+    // A restriction naming only missing subscriptions leaves no tier active;
+    // the routing warnings below say why.
+    const activeList = activeLabels.length ? `: ${activeLabels.join(", ")}` : "";
     providersSummary.textContent =
-      `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active: ${activeLabels.join(", ")}.` +
+      `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active${activeList}.` +
       (visibleCount < total ? ` Showing ${formatNumber(visibleCount)}.` : "");
   }
 
