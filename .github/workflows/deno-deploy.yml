@@ -20,18 +20,24 @@ permissions:
   contents: read
 
 env:
+  # All job wrappers must resolve the same push diff as the initial scope job.
   GITHUB_EVENT_BEFORE: ${{ github.event.before }}
 
 jobs:
   scope:
     runs-on: ubuntu-latest
+    env:
+      # PR author is stable across owner reruns; github.actor is the initiator.
+      GITHUB_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
+      needs_docs: ${{ steps.scope.outputs.needs_docs }}
       needs_validate: ${{ steps.scope.outputs.needs_validate }}
       needs_native: ${{ steps.scope.outputs.needs_native }}
       needs_native_build: ${{ steps.scope.outputs.needs_native_build }}
       needs_mac: ${{ steps.scope.outputs.needs_mac }}
       needs_darwin: ${{ steps.scope.outputs.needs_darwin }}
+      needs_darwin_tests: ${{ steps.scope.outputs.needs_darwin_tests }}
       needs_artifact: ${{ steps.scope.outputs.needs_artifact }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -48,21 +54,23 @@ jobs:
           bun --no-env-file --no-install scripts/test-scope.ts --ci-json | tee "$RUNNER_TEMP/scope.json"
           {
             echo "docs_only=$(jq -r '.docsOnly' "$RUNNER_TEMP/scope.json")"
+            echo "needs_docs=$(jq -r '.needsDocs' "$RUNNER_TEMP/scope.json")"
             echo "needs_validate=$(jq -r '.needsValidate' "$RUNNER_TEMP/scope.json")"
             echo "needs_native=$(jq -r '.needsNativeKv' "$RUNNER_TEMP/scope.json")"
             echo "needs_native_build=$(jq -r '.needsNativeBuild' "$RUNNER_TEMP/scope.json")"
             echo "needs_mac=$(jq -r '.needsMacContainment' "$RUNNER_TEMP/scope.json")"
             echo "needs_darwin=$(jq -r '.needsDarwinNative' "$RUNNER_TEMP/scope.json")"
+            echo "needs_darwin_tests=$(jq -r '.needsDarwinTests' "$RUNNER_TEMP/scope.json")"
             echo "needs_artifact=$(jq -r '.needsArtifact' "$RUNNER_TEMP/scope.json")"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### CI scope"
-            jq -r '"reason: `\(.reason)`", "changed paths: `\(.paths | length)`", "affected tests: `\(.affectedTests | length)`", "native tests: `\(.needsNativeKv)`", "artifact: `\(.needsArtifact)`"' "$RUNNER_TEMP/scope.json"
+            jq -r '"reason: `\(.reason)`", "complete check set: `\(.completeCheckSet)`", "changed paths: `\(.paths | length)`", "affected tests: `\(.affectedTests | length)`", "native tests: `\(.needsNativeKv)`", "artifact: `\(.needsArtifact)`"' "$RUNNER_TEMP/scope.json"
           } >> "$GITHUB_STEP_SUMMARY"
 
   docs:
     needs: scope
-    if: ${{ needs.scope.outputs.docs_only == 'true' }}
+    if: ${{ needs.scope.outputs.needs_docs == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -74,7 +82,7 @@ jobs:
       - name: Frozen lint dependencies
         working-directory: tools/lint
         run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
-      - name: Validate changed documentation only
+      - name: Validate changed-file formatting
         run: |
           set -euo pipefail
           git diff --check
@@ -216,6 +224,7 @@ jobs:
           '
           bun --no-env-file --no-install ops/verify-mac-sandbox.ts "--native-kv-binding=$binding"
       - name: Sandboxed-signing helper on its macOS target
+        if: ${{ needs.scope.outputs.needs_darwin_tests == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
