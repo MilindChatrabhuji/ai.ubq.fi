@@ -116,6 +116,7 @@ Codex compatibility endpoints:
 UOS gateway endpoints:
 
 - `GET /uos/auth`
+- `GET /uos/models/catalog` (public, no bearer token)
 - `GET /uos/models/capabilities`
 - `POST /uos/embeddings`
 - `POST /uos/embedding-jobs`

@@ -48,6 +48,7 @@ import {
   evaluateSerialRoutingAccounts,
   readStrongCodexRoutingRows,
   selectSerialCodexRoutingAccounts,
+  selectedCodexSubscriptionPool,
   withCodexAdmission,
 } from "./routing-serial.ts";
 export {
@@ -82,10 +83,10 @@ export const isCodexActiveAccountSnapshotCurrent = (value: unknown, snapshot: Co
 /**
  * Elect the account a verified banked reset selected. The original active
  * snapshot must still be current, the candidate's pool credential and quota
- * routing fence must match, and every current pool account must still be
- * authoritatively exhausted: a concurrent active switch, a recovered sibling,
- * or newly eligible ordinary capacity wins over the stale reset. The same
- * account keeps its active generation; an account change advances it.
+ * routing fence must match, and every current selected pool account must still
+ * be authoritatively exhausted: a concurrent active switch, a recovered
+ * sibling, or newly eligible ordinary capacity wins over the stale reset. The
+ * same account keeps its active generation; an account change advances it.
  */
 /**
  * A ledger record that predates later routing transitions cannot satisfy the
@@ -163,12 +164,15 @@ const prepareCodexResetRecoveryElection = async (
     ? staleResetRoutingIdentityCurrent(rows.routingEntry.value, account, quotaResetAtMs)
     : isCodexQuotaBlockFenceCurrent(rows.routingEntry.value, account, quotaResetAtMs, routingGeneration);
   if (!currentSlot || !resetCandidateSlotMatches(currentSlot, account, routingIdentityCurrent)) return null;
+  const selectedPool = await selectedCodexSubscriptionPool(pool);
+  if (!selectedPool.accounts.some((auth) => auth.account_id === currentAuth.account_id)) return null;
   const accountIdHash = currentSlot.account_id_hash;
   if (accountIdHash === null) return null;
   const observations = parseStoredCapacityObservationStore(rows.capacityEntry.value);
-  const evaluations = await evaluateSerialRoutingAccounts(normalized, pool, account.requestedModel ?? null, observations, Date.now());
+  const evaluations = await evaluateSerialRoutingAccounts(normalized, selectedPool, account.requestedModel ?? null, observations, Date.now(), pool);
   const fullCohortExhausted =
-    pool.accounts.length > 0 && pool.accounts.every((auth) => evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason === "quota_exhausted");
+    selectedPool.accounts.length > 0 &&
+    selectedPool.accounts.every((auth) => evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason === "quota_exhausted");
   if (!fullCohortExhausted) return null;
   const routedCandidate: RoutingAccount = {
     ...account,

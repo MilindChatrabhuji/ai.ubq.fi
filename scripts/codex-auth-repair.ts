@@ -606,12 +606,12 @@ const applyPlannedRepair = async (
   flags: Flags,
   pool: CodexAuthPoolState,
   versionstamp: string,
-  plan: ReturnType<typeof planCodexAuthRepair>,
-  nowMs: number
+  plan: ReturnType<typeof planCodexAuthRepair>
 ): Promise<ApplyOutcome> => {
   if (!flags.apply || plan.selections.length === 0) return { ok: true, applied: false };
-  const next = applyCodexAuthPlan(pool, plan, nowMs);
-  if (!next) return { ok: false, exitCode: 2, message: "the plan could not be represented in the auth pool; nothing was written" };
+  const writeNowMs = Date.now();
+  const next = applyCodexAuthPlan(pool, plan, writeNowMs);
+  if (!next) return { ok: false, exitCode: 2, message: "the plan was stale or could not be represented in the auth pool; nothing was written" };
   const written = await writeLocalPool(flags.kv, versionstamp, next);
   if (!written.ok) return { ok: false, exitCode: 1, message: written.error };
   return { ok: true, applied: true };
@@ -716,10 +716,9 @@ const main = async (): Promise<number> => {
 
   const externalExit = await dispatchExternalRepair(flags, local);
   if (externalExit !== null) return externalExit;
-
-  const nowMs = Date.now();
   const localProbes = await probeLocalPool(local.pool, flags.codexBaseUrl);
-  const anyNeedsRepair = anyCodexAuthSlotNeedsRepair(localProbes, nowMs);
+  const localNowMs = Date.now();
+  const anyNeedsRepair = anyCodexAuthSlotNeedsRepair(localProbes, localNowMs);
   // SSH and every candidate probe are paid only when a slot needs repair, or
   // when the caller explicitly asked for a divergence report. An inconclusive
   // probe is not a repair need, so it never triggers them on its own.
@@ -727,9 +726,10 @@ const main = async (): Promise<number> => {
   const candidates = readSources ? await collectCandidates(flags, warn) : [];
   const assessed = readSources ? await assessCandidates(candidates, flags.codexBaseUrl) : [];
   const accounts = buildRepairAccounts(localProbes, candidates);
-  const plan = planCodexAuthRepair({ accounts, candidates: assessed, nowMs });
+  const planNowMs = Date.now();
+  const plan = planCodexAuthRepair({ accounts, candidates: assessed, nowMs: planNowMs });
 
-  const write = await applyPlannedRepair(flags, local.pool, local.versionstamp, plan, nowMs);
+  const write = await applyPlannedRepair(flags, local.pool, local.versionstamp, plan);
   if (!write.ok) {
     console.error(`codex-auth-repair: ${write.message}`);
     return write.exitCode;

@@ -1,8 +1,10 @@
 import { test } from "bun:test";
 import { runSequence } from "../../tests/helpers/sequence.ts";
 import assert from "node:assert/strict";
-import { VpsJournalMetrics, type VpsJournalReader } from "../vps-release-metrics.ts";
+import { readFile } from "node:fs/promises";
+import { type VpsJournalReader } from "../vps-release-metrics.ts";
 import type { VpsIdentity } from "../vps-release-contract.ts";
+import { metricsFixture, boundedRows } from "./vps-metrics-fixture.ts";
 
 const identity: VpsIdentity = {
   runtime: "vps",
@@ -11,6 +13,7 @@ const identity: VpsIdentity = {
   sourceArchiveSha256: "b".repeat(64),
   immutableTreeSha256: "c".repeat(64),
 };
+
 const start = 1_800_000_000_000;
 const entry = (name: string, at: number, extra: Record<string, unknown> = {}): string =>
   JSON.stringify({
@@ -20,10 +23,42 @@ const entry = (name: string, at: number, extra: Record<string, unknown> = {}): s
     __REALTIME_TIMESTAMP: String(at * 1000),
     MESSAGE: `[ai.ubq.fi] request_${name} ${JSON.stringify({ request_id: "request-fixture", git_sha: identity.gitSha, deno_revision: identity.deploymentId, ...extra })}`,
   });
+test("VPS metrics: supported healthy long completion matures its original admission cohort", async () => {
+  const rows = [
+    entry("accepted", start + 29_500),
+    entry("terminal", start + 69_500, { status: 200, stream: false, failure_kind: null, admission_stage: "accepted" }),
+  ];
+  const reader: VpsJournalReader = {
+    read: (from, to) =>
+      Promise.resolve(
+        rows
+          .filter((row) => {
+            const at = Number(JSON.parse(row).__REALTIME_TIMESTAMP) / 1000;
+            return at >= from && at < to;
+          })
+          .join("\n")
+      ),
+    coverage: (windowStart, windowEnd) =>
+      Promise.resolve({
+        complete: true,
+        unit: "ai-ubq-fi.service",
+        windowStart,
+        windowEnd,
+        bootId: "fixture-boot",
+        firstCursor: "first",
+        lastCursor: "last",
+        digest: "d".repeat(64),
+      }),
+  };
+  const { metrics } = await metricsFixture(identity, reader, () => start + 100_000);
+  const sample = await metrics.sample({ identity, windowStart: start, windowEnd: start + 30_000 });
+  assert.equal(sample.coverage, "complete", "a healthy supported 40-second request must not remain unavailable forever");
+  assert.equal(sample.requestCount, 1);
+});
 test("VPS metrics: actual accepted/terminal producer fields join adjacent windows with exact denominator", async () => {
   const raw = [entry("accepted", start + 29_999), entry("terminal", start + 30_001, { status: 502, stream: true, failure_kind: "gateway_timeout" })].join("\n");
   const reader: VpsJournalReader = {
-    read: () => Promise.resolve(raw),
+    read: (from, to) => Promise.resolve(boundedRows(raw, from, to)),
     coverage: (from, to) =>
       Promise.resolve({
         complete: true,
@@ -36,7 +71,7 @@ test("VPS metrics: actual accepted/terminal producer fields join adjacent window
         digest: "d".repeat(64),
       }),
   };
-  const metrics = new VpsJournalMetrics(reader, () => start + 65_000, 5000, ["gateway_timeout"], []);
+  const { metrics } = await metricsFixture(identity, reader, () => start + 65_000, start, ["gateway_timeout"]);
   const sample = await metrics.sample({ identity, windowStart: start, windowEnd: start + 30_000 });
   assert.equal(sample.coverage, "complete");
   assert.equal(sample.requestCount, 1);
@@ -46,15 +81,17 @@ test("VPS metrics: actual accepted/terminal producer fields join adjacent window
 });
 test("VPS metrics: absent independent coverage and dropped journal evidence never become zero-rate success", async () => {
   const reader: VpsJournalReader = { read: () => Promise.resolve(""), coverage: () => Promise.resolve(null) };
-  const sample = await new VpsJournalMetrics(reader, () => start + 65_000, 5000, [], []).sample({ identity, windowStart: start, windowEnd: start + 30_000 });
+  const { metrics } = await metricsFixture(identity, reader, () => start + 65_000);
+  const sample = await metrics.sample({ identity, windowStart: start, windowEnd: start + 30_000 });
   assert.equal(sample.coverage, "incomplete");
   assert.equal(sample.requestCount, null);
 });
 
-const sampleRaw = (raw: string) =>
-  new VpsJournalMetrics(
+const sampleRaw = async (raw: string) => {
+  const { metrics } = await metricsFixture(
+    identity,
     {
-      read: () => Promise.resolve(raw),
+      read: (from, to) => Promise.resolve(boundedRows(raw, from, to)),
       coverage: (windowStart, windowEnd) =>
         Promise.resolve({
           complete: true,
@@ -67,11 +104,10 @@ const sampleRaw = (raw: string) =>
           digest: "d".repeat(64),
         }),
     },
-    () => start + 65_000,
-    5000,
-    [],
-    []
-  ).sample({ identity, windowStart: start, windowEnd: start + 30_000 });
+    () => start + 65_000
+  );
+  return metrics.sample({ identity, windowStart: start, windowEnd: start + 30_000 });
+};
 const terminalEntry = (admissionStage?: unknown) =>
   entry("terminal", start + 2, {
     status: 200,
@@ -127,4 +163,20 @@ test("VPS metrics: actual journal suppression notice refuses coverage while appl
   const ordinary = await sampleRaw(JSON.stringify({ ...row, MESSAGE: '[ai.ubq.fi] diagnostic {"suppressed":false,"dropped":0,"rate_limit_wait_ms":0}' }));
   assert.equal(ordinary.coverage, "complete");
   assert.equal(ordinary.requestCount, 0);
+});
+
+test("VPS metrics: the bridge-loaded journal metrics graph never imports a Bun-only specifier", async () => {
+  const seen = new Set<string>();
+  const visit = async (url: URL): Promise<void> => {
+    if (seen.has(url.href)) return;
+    seen.add(url.href);
+    const source = await readFile(url, "utf8");
+    for (const [, specifier] of source.matchAll(/^(?:import|export)\b[^;]*?\bfrom\s+"([^"]+)"/gm)) {
+      assert.equal(specifier.startsWith("bun:"), false, `${url.pathname} imports ${specifier}`);
+      if (specifier.startsWith(".")) await visit(new URL(specifier, url));
+    }
+  };
+  await visit(new URL("../vps-release-metrics.ts", import.meta.url));
+  assert.ok([...seen].some((href) => href.endsWith("/ops/vps-metrics-join.ts")));
+  assert.ok([...seen].some((href) => href.endsWith("/ops/vps-journal-reader.ts")));
 });
