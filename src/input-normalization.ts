@@ -643,7 +643,10 @@ const normalizeResponseTextContentItem = (
   if (partType === "output_text" && role !== "assistant") {
     return invalidNormalizedField(`${param}.type`, `${param}.type is only valid for assistant messages`);
   }
-  const unknown = findUnknownContentField(value, partType === "output_text" ? ["type", "text", "annotations"] : ["type", "text", "prompt_cache_breakpoint"]);
+  const unknown = findUnknownContentField(
+    value,
+    partType === "output_text" ? ["type", "text", "annotations", "logprobs"] : ["type", "text", "prompt_cache_breakpoint"]
+  );
   if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
   if (typeof value.text !== "string") {
     return invalidNormalizedField(`${param}.text`, `${param}.text must be a string`);
@@ -651,6 +654,10 @@ const normalizeResponseTextContentItem = (
   if (partType === "output_text" && value.annotations !== undefined && !Array.isArray(value.annotations)) {
     return invalidNormalizedField(`${param}.annotations`, `${param}.annotations must be an array`);
   }
+  if (partType === "output_text" && value.logprobs !== undefined && !Array.isArray(value.logprobs)) {
+    return invalidNormalizedField(`${param}.logprobs`, `${param}.logprobs must be an array`);
+  }
+  // Replayed output metadata is accepted but does not belong in provider input.
   if (partType === "output_text") return { ok: true, value: { type: partType, text: value.text } };
   const breakpoint = normalizePromptCacheBreakpoint(value.prompt_cache_breakpoint, `${param}.prompt_cache_breakpoint`);
   if (!breakpoint.ok) return breakpoint;
