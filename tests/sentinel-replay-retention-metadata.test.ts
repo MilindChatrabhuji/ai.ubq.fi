@@ -663,3 +663,68 @@ test("a recount that loses to a concurrent writer, or a stale or corrupt marker,
     kv.close();
   }
 });
+
+test("a due recount that meets a corrupt metadata row backs off for the interval instead of rescanning on every poll", async () => {
+  const kv = await openKv(":memory:");
+  const pollIntervalMs = 30_000;
+  try {
+    await pollMaintenance(kv, NOW, BUDGET_BYTES);
+    for (let index = 0; index < 3; index += 1) assert.equal(await admitStatus(kv, `backoff-${index}`, 3_600_000), true);
+    // Sorted after the three healthy rows, so a due scan reads all of them before it meets the corrupt one.
+    const corruptKey = sentinelReplayRequestStatusKey("zz-corrupt-owner");
+    await kv.set(corruptKey, statusRow("different-owner"));
+    const due = NOW + SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS;
+    const failed = await pollMaintenance(kv, due, BUDGET_BYTES);
+    assert.equal(failed.scanned, 4, "the due recount reads up to the corrupt row");
+    assert.equal(failed.ledger_written, false);
+    assert.equal(await reconciledAt(kv), NOW, "a failed scan never records a recount");
+
+    const inside: number[] = [];
+    for (let at = due + pollIntervalMs; at < due + SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS; at += pollIntervalMs) {
+      inside.push((await pollMaintenance(kv, at, BUDGET_BYTES)).scanned);
+    }
+    assert.equal(inside.length, SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS / pollIntervalMs - 1);
+    assert.deepEqual(
+      inside,
+      inside.map(() => 0),
+      "polls inside the failure backoff do not repeat the scan"
+    );
+
+    const retried = await pollMaintenance(kv, due + SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS, BUDGET_BYTES);
+    assert.equal(retried.scanned, 4, "the scan is retried once the backoff ends");
+    await kv.delete(corruptKey);
+    assert.equal((await pollMaintenance(kv, due + SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS + 1, BUDGET_BYTES)).scanned, 0);
+    const recovered = await pollMaintenance(kv, due + 2 * SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS, BUDGET_BYTES);
+    assert.equal(recovered.scanned, 3, "after the repair the next due poll recounts the live rows");
+    assert.equal(await reconciledAt(kv), due + 2 * SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS);
+    assert.equal(recovered.status.status_records, 3);
+  } finally {
+    kv.close();
+  }
+});
+
+test("of two concurrent due recounts only the first to commit records the marker, so it never moves back", async () => {
+  const kv = await openKv(":memory:");
+  try {
+    await pollMaintenance(kv, NOW, BUDGET_BYTES);
+    assert.equal(await admitStatus(kv, "concurrent-recount", 3_600_000), true);
+    const due = NOW + SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS;
+    const later = due + 5_000;
+    const outcomes: boolean[] = [];
+    // The earlier poll reads the marker, scans, and then loses the commit race to a later poll.
+    const raced = raceFirstLedgerCommit(
+      kv,
+      async () => {
+        await runSentinelReplayRetentionMaintenance(kv, { now_ms: later, budget_bytes: BUDGET_BYTES });
+        assert.equal(await reconciledAt(kv), later);
+      },
+      outcomes
+    );
+    await runSentinelReplayRetentionMaintenance(raced, { now_ms: due, budget_bytes: BUDGET_BYTES });
+    assert.deepEqual(outcomes, [false], "the stale poll's marker check rejects its commit");
+    assert.equal(await reconciledAt(kv), later, "the marker keeps the later recount");
+    assert.equal((await pollMaintenance(kv, later + 1, BUDGET_BYTES)).scanned, 0, "and the committed recount still defers the next one");
+  } finally {
+    kv.close();
+  }
+});

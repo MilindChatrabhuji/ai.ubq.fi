@@ -1,10 +1,11 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { LIVE_E2E_DEFAULT_BASE_URL } from "../scripts/test-network.ts";
 
 const getBaseUrl = (): URL => {
-  // A missing or empty BASE_URL falls back to the public gateway origin.
+  // A missing or empty BASE_URL falls back to the origin the test runner approves for this segment.
   const rawBaseUrl = process.env.BASE_URL?.trim();
-  const value = rawBaseUrl === undefined || rawBaseUrl === "" ? "https://ai.ubq.fi" : rawBaseUrl;
+  const value = rawBaseUrl === undefined || rawBaseUrl === "" ? LIVE_E2E_DEFAULT_BASE_URL : rawBaseUrl;
   return new URL(value);
 };
 
