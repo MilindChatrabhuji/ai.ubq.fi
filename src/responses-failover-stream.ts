@@ -148,6 +148,9 @@ const responsesEventSemanticKindWithIgnoredOutputItem = (event: ResponsesStreamE
 export const responsesEventSemanticKind = (event: ResponsesStreamEvent): ResponsesSemanticKind | null =>
   responsesEventSemanticKindWithIgnoredOutputItem(event, null);
 
+/** Buffered Responses payloads use the same answer-bearing output-item rule as streamed events. */
+export const responsesPayloadHasAnswerBearingOutput = (payload: Record<string, unknown>): boolean => semanticKindFromOutput(payload.output) !== null;
+
 /** Reports active hidden-reasoning work without classifying it as client-visible output. */
 export const responsesEventReportsProgress = (event: ResponsesStreamEvent): boolean => {
   const textField = reasoningTextProgressFields.get(event.type);
