@@ -817,6 +817,11 @@ test("the Providers tab renders a provider picker next to the Analytics tab", ()
   assert.match(adminHtml, /The waterfall order itself never changes/);
 });
 
+test("stale Codex subscriptions do not promise paid fallback", () => {
+  const routingWarnings = /const providersRoutingWarnings = \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(routingWarnings, /if \(!isProviderChecked\("codex"\) && missing\.length === 0\)/);
+});
+
 test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminHtml, /Each configured Codex subscription is selectable on its own/);
   assert.match(adminScript, /list\.dataset\.providerSubscriptions = ""/);
@@ -832,6 +837,14 @@ test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminScript, /providersMissingSelectionIds/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/selection"\), \{/);
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
+});
+
+test("admin metadata refresh does not announce an unchanged OpenRouter snapshot as success", () => {
+  const refreshHandler = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(
+    refreshHandler,
+    /if \(payload\?\.data\?\.openrouter\?\.refreshed === false\) \{[\s\S]*?toast\.error\("Metadata refresh failed", \{ description: "OpenRouter metadata was not refreshed" \}\);[\s\S]*?return;[\s\S]*?\}\s*toast\.success\("Model metadata refreshed"/
+  );
 });
 
 test("admin metadata refresh forces every upstream and reports what is cached", async () => {
