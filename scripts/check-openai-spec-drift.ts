@@ -6,10 +6,14 @@
  * commit, the SHA-256 of its openapi.yaml, and the two request surfaces extracted from it, so the default gate is
  * offline and deterministic.
  *
- *   bun run spec:drift                       compare the runtime allowlists with the pinned surfaces (CI gate)
- *   bun run spec:drift --spec <file|url>     also verify a copy of the pinned specification: digest and surfaces
- *   bun run spec:drift --verify-source       the same, fetching the pinned source URL
- *   bun run spec:drift --repin <commit>      fetch that revision (or read --spec), rewrite the pin, then gate
+ *   bun run spec:drift                       compare the runtime allowlists with the pinned surfaces, offline
+ *   bun run spec:drift --verify-source       also fetch the pinned source URL and verify its digest and surfaces (CI gate)
+ *   bun run spec:drift --spec <file|url>     the same, verifying a local or mirrored copy instead of the pinned URL
+ *   bun run spec:drift --repin <commit>      fetch that revision's official source, rewrite the pin, then gate
+ *
+ * The offline mode proves only that the runtime allowlists and the hand-editable pin agree; --verify-source proves the
+ * pin is the official revision it names. The source URL is commit-addressed, so only its availability can change, and
+ * a transient fetch failure is retried. Each mode takes its own flags; any other argument is a usage error (exit 2).
  *
  * Gateway compatibility extensions (Codex CLI, DeepSeek, OpenRouter) are separate sets and never enter this check.
  */
@@ -138,26 +142,86 @@ export const verifySpecAgainstPin = (pin: OpenAiSpecPin, specText: string): stri
 type SpecDriftDependencies = Readonly<{
   readSpec?: (location: string) => Promise<string>;
   writePin?: (pin: OpenAiSpecPin) => Promise<void>;
+  sleep?: (milliseconds: number) => Promise<void>;
   log?: (line: string) => void;
   error?: (line: string) => void;
 }>;
 
-const readSpecLocation = async (location: string): Promise<string> => {
-  if (!location.startsWith("https://")) return await readFile(location, "utf8");
-  const response = await fetch(location);
-  if (!response.ok) throw new Error(`Failed to fetch OpenAI spec: ${response.status} ${response.statusText}`);
-  return await response.text();
+const FETCH_ATTEMPTS = 3;
+const FETCH_RETRY_DELAY_MS = 5_000;
+const FETCH_ATTEMPT_TIMEOUT_MS = 60_000;
+const sleepFor = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+class PermanentFetchFailure extends Error {}
+
+/** Fetches one specification URL, retrying network failures, timeouts, 429 and 5xx; any other refusal is final. */
+const fetchSpecText = async (location: string, sleep: (milliseconds: number) => Promise<void>): Promise<string> => {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const response = await fetch(location, { signal: AbortSignal.timeout(FETCH_ATTEMPT_TIMEOUT_MS) });
+      const failure = `Failed to fetch OpenAI spec: ${response.status} ${response.statusText}`;
+      if (response.ok) return await response.text();
+      await response.body?.cancel();
+      if (response.status !== 429 && response.status < 500) throw new PermanentFetchFailure(failure);
+      throw new Error(failure);
+    } catch (error) {
+      if (error instanceof PermanentFetchFailure || attempt >= FETCH_ATTEMPTS) throw error;
+    }
+    await sleep(FETCH_RETRY_DELAY_MS * attempt);
+  }
 };
+
+const readSpecLocation = async (location: string, sleep: (milliseconds: number) => Promise<void>): Promise<string> =>
+  location.startsWith("https://") ? await fetchSpecText(location, sleep) : await readFile(location, "utf8");
 
 const writePinFile = async (pin: OpenAiSpecPin): Promise<void> => {
   await writeFile(PIN_URL, `${JSON.stringify(pin, null, 2)}\n`);
 };
 
-const argumentValue = (args: readonly string[], name: string): string | null => {
-  const index = args.indexOf(name);
-  if (index !== -1) return args[index + 1] ?? null;
-  const inline = args.find((arg) => arg.startsWith(`${name}=`));
-  return inline === undefined ? null : inline.slice(name.length + 1);
+const VALUE_FLAGS = new Set(["--spec", "--repin"]);
+const KNOWN_FLAGS = new Set([...VALUE_FLAGS, "--verify-source"]);
+
+type FlagReading = Readonly<{ flags: ReadonlyMap<string, string | null>; error: string | null }>;
+
+/** Each flag once with its value: inline after "=", or for --spec and --repin the next argument. */
+const readFlags = (args: readonly string[]): FlagReading => {
+  const flags = new Map<string, string | null>();
+  const pending = [...args];
+  for (let arg = pending.shift(); arg !== undefined; arg = pending.shift()) {
+    const separator = arg.startsWith("--") ? arg.indexOf("=") : -1;
+    const name = separator === -1 ? arg : arg.slice(0, separator);
+    if (!KNOWN_FLAGS.has(name)) return { flags, error: `Unknown argument: ${arg}` };
+    if (flags.has(name)) return { flags, error: `${name} may be given only once` };
+    const inline = separator === -1 ? null : arg.slice(separator + 1);
+    flags.set(name, inline ?? (VALUE_FLAGS.has(name) ? (pending.shift() ?? null) : null));
+  }
+  return { flags, error: null };
+};
+
+/** The usage error in a set of known flags, or null when they select exactly one mode. */
+const flagError = (flags: ReadonlyMap<string, string | null>): string | null => {
+  for (const [name, value] of flags) {
+    if (!VALUE_FLAGS.has(name) && value !== null) return `${name} takes no value`;
+    if (VALUE_FLAGS.has(name) && (!value || value.startsWith("--"))) return `${name} requires a value`;
+  }
+  if (flags.has("--repin") && flags.size > 1) {
+    return "--repin reads only the commit's own official source; it cannot be combined with --spec or --verify-source";
+  }
+  if (flags.has("--spec") && flags.has("--verify-source")) return "--spec verifies a copy instead of the pinned source; use either --spec or --verify-source";
+  return null;
+};
+
+type SpecDriftArguments = Readonly<{ spec: string | null; verifySource: boolean; repin: string | null; error: string | null }>;
+
+/** The selected mode, with the usage error that makes the invocation exit 2 instead of running a different check. */
+const parseArguments = (args: readonly string[]): SpecDriftArguments => {
+  const { flags, error } = readFlags(args);
+  return {
+    spec: flags.get("--spec") ?? null,
+    verifySource: flags.has("--verify-source"),
+    repin: flags.get("--repin") ?? null,
+    error: error ?? flagError(flags),
+  };
 };
 
 /** Runs the gate and returns its exit code: 0 aligned, 1 drift or verification failure, 2 usage error. */
@@ -172,24 +236,24 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
     ((line: string) => {
       console.error(line);
     });
-  const readSpec = dependencies.readSpec ?? readSpecLocation;
-  const known = new Set(["--spec", "--verify-source", "--repin"]);
-  const unknown = args.find((arg) => arg.startsWith("--") && !known.has(arg.split("=")[0]));
-  if (unknown) {
-    error(`Unknown argument: ${unknown}`);
+  const sleep = dependencies.sleep ?? sleepFor;
+  const readSpec = dependencies.readSpec ?? ((location: string) => readSpecLocation(location, sleep));
+  const parsed = parseArguments(args);
+  if (parsed.error !== null) {
+    error(parsed.error);
+    error("Usage: spec:drift [--verify-source | --spec <file|url> | --repin <commit>]");
     return 2;
   }
 
-  const specLocation = argumentValue(args, "--spec");
-  const repin = argumentValue(args, "--repin");
+  const { spec: specLocation, repin } = parsed;
   let pin: OpenAiSpecPin;
-  if (args.includes("--repin") || args.some((arg) => arg.startsWith("--repin="))) {
-    if (!repin || !/^[0-9a-f]{40}$/.test(repin)) {
+  if (repin !== null) {
+    if (!/^[0-9a-f]{40}$/.test(repin)) {
       error("--repin requires a full 40-character openai/openai-openapi commit SHA");
       return 2;
     }
     const source = pinnedSpecSource(repin);
-    const specText = await readSpec(specLocation ?? source);
+    const specText = await readSpec(source);
     pin = {
       repository: OFFICIAL_REPOSITORY,
       commit: repin,
@@ -200,7 +264,7 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
     };
     await (dependencies.writePin ?? writePinFile)(pin);
     log(`Pinned ${OFFICIAL_REPOSITORY}@${repin} (${pin.sha256})`);
-  } else if (specLocation !== null || args.includes("--verify-source")) {
+  } else if (specLocation !== null || parsed.verifySource) {
     pin = await readOpenAiSpecPin();
     const location = specLocation ?? pin.source;
     const failures = verifySpecAgainstPin(pin, await readSpec(location));

@@ -110,22 +110,35 @@ const OWNER_PREFIXES = new Set([SENTINEL_REPLAY_ACCOUNTING_PREFIX, SENTINEL_REPL
 const isOwnerPrefix = (prefix: KvKey): boolean => OWNER_PREFIXES.has(prefix.join("/"));
 const isChunkPrefix = (prefix: KvKey): boolean => prefix.join("/") === SENTINEL_REPLAY_CHUNK_PREFIX.join("/");
 /**
+ * An owner-index slice list: an owner prefix read a whole slice at a time. The
+ * sweep's own accounting and manifest pages list at most BOOTSTRAP_BATCH_ENTRIES,
+ * so in fixtures whose owner prefixes hold whole slices this is only the index.
+ */
+const isOwnerIndexSlice = (prefix: KvKey, options?: KvListOptions): boolean => isOwnerPrefix(prefix) && options?.limit === BOOTSTRAP_OWNER_SCAN_ENTRIES;
+type ListReads = { count: number; largest?: number };
+/**
  * A separate handle on the same store (as another process would hold) that
  * counts every row a matching list actually yields (accounting/manifest rows
- * by default), so a test can bound one bootstrap batch through its real consumer.
+ * by default), and the most any one list yielded, so a test can bound the
+ * reads of the real consumer.
  */
-const countListReads = (kv: Kv, reads: { count: number }, counts: (prefix: KvKey) => boolean = isOwnerPrefix): Kv => ({
+const countListReads = (kv: Kv, reads: ListReads, counts: (prefix: KvKey, options?: KvListOptions) => boolean = isOwnerPrefix): Kv => ({
   ...kv,
   list: <T>(selector: KvListSelector, options?: KvListOptions): KvListIterator<T> => {
     const iterator = kv.list<T>(selector, options);
-    if (!("prefix" in selector) || !counts(selector.prefix)) return iterator;
+    if (!("prefix" in selector) || !counts(selector.prefix, options)) return iterator;
+    let yielded = 0;
     const counted: KvListIterator<T> = {
       get cursor() {
         return iterator.cursor;
       },
       next: async () => {
         const result = await iterator.next();
-        if (!result.done) reads.count += 1;
+        if (!result.done) {
+          yielded += 1;
+          reads.count += 1;
+          reads.largest = Math.max(reads.largest ?? 0, yielded);
+        }
         return result;
       },
       [Symbol.asyncIterator]: () => counted,
@@ -133,6 +146,10 @@ const countListReads = (kv: Kv, reads: { count: number }, counts: (prefix: KvKey
     return counted;
   },
 });
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 /** Stored-charge manifests keep a large owner fixture far inside the test budget. */
 const ownedManifests = (count: number): SentinelReplayManifest[] =>
   Array.from({ length: count }, (_, index) => ({ ...manifestFor(index + 1), stored_bytes: 1_024 }));
@@ -174,13 +191,13 @@ const holdPoint = () => {
  * yields. With `afterFirstRow` it is held once its first row has been read, so
  * that row keeps the versionstamp it had before the hold.
  */
-const holdNextList = (kv: Kv, holds: (prefix: KvKey) => boolean, afterFirstRow = false) => {
+const holdNextList = (kv: Kv, holds: (prefix: KvKey, options?: KvListOptions) => boolean, afterFirstRow = false) => {
   const point = holdPoint();
   const released: KvKey[] = [];
   const handle: Kv = {
     ...kv,
     list: <T>(selector: KvListSelector, options?: KvListOptions): KvListIterator<T> => {
-      const hold = "prefix" in selector && holds(selector.prefix) ? point.take() : null;
+      const hold = "prefix" in selector && holds(selector.prefix, options) ? point.take() : null;
       if (hold === null) return kv.list<T>(selector, options);
       let inner: KvListIterator<T> | null = afterFirstRow ? kv.list<T>(selector, options) : null;
       let waiting = true;
@@ -238,35 +255,37 @@ const holdNextLedgerCommit = (kv: Kv) => {
   };
   return { handle, arm: point.arm };
 };
+/** A concurrently refused admission records its skip reason: the ledger write recordSkipReason makes, which leaves the sweep in place. */
+const writeSkipReason = async (kv: Kv): Promise<void> => {
+  const state = await readLedger(kv, budget);
+  if (state.kind === "corrupt") throw new Error("unexpected corrupt fixture ledger");
+  const skipped = { ...state.ledger, last_skip_reason: SENTINEL_REPLAY_ACCOUNTING_REASON, last_warning_at_ms: now };
+  const committed = await kv
+    .atomic()
+    .check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp: state.versionstamp })
+    .set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, skipped)
+    .commit();
+  assert.ok(committed.ok, "the interposed skip reason must land");
+};
 /**
- * A handle on which, once armed, the next ledger read is answered and then a
- * concurrently refused admission records its skip reason (the ledger write
- * recordSkipReason makes) before the reader can commit.
+ * A handle on which each armed step runs, in order, once a ledger read has been
+ * answered and before that reader resumes, so the reader acts on the value it
+ * read while the step changes the store.
  */
-const interposeSkipReason = (kv: Kv) => {
-  let armed = false;
+const interposeLedgerReads = (kv: Kv) => {
+  const steps: (() => Promise<void>)[] = [];
   const handle: Kv = {
     ...kv,
     get: async <T>(key: KvKey, options?: Parameters<Kv["get"]>[1]): Promise<KvEntryMaybe<T>> => {
       const entry = await kv.get<T>(key, options);
-      if (!armed || key.join("/") !== SENTINEL_REPLAY_BUDGET_LEDGER_KEY.join("/")) return entry;
-      armed = false;
-      const state = await readLedger(kv, budget);
-      if (state.kind === "corrupt") throw new Error("unexpected corrupt fixture ledger");
-      const skipped = { ...state.ledger, last_skip_reason: SENTINEL_REPLAY_ACCOUNTING_REASON, last_warning_at_ms: now };
-      const committed = await kv
-        .atomic()
-        .check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp: state.versionstamp })
-        .set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, skipped)
-        .commit();
-      assert.ok(committed.ok, "the interposed skip reason must land");
+      if (key.join("/") === SENTINEL_REPLAY_BUDGET_LEDGER_KEY.join("/")) await steps.shift()?.();
       return entry;
     },
   };
   return {
     handle,
-    arm: () => {
-      armed = true;
+    arm: (...next: (() => Promise<void>)[]) => {
+      steps.push(...next);
     },
   };
 };
@@ -303,6 +322,39 @@ const captureFailure: SentinelFailureObservation = {
   synthetic_terminal_type: null,
   provider_route: "chatgpt_codex",
 };
+const replayKeyBytes = new Uint8Array(32).fill(3);
+/** A capture request whose body, and so its dedupe fingerprint, is distinct per request id unless given. */
+const captureInput = (
+  requestId: string,
+  body: Uint8Array<ArrayBuffer> = new TextEncoder().encode(JSON.stringify({ model: "gpt-5.6-sol", request: requestId }))
+): AcceptedSentinelReplayInput => ({
+  endpoint: "/v1/responses",
+  method: "POST",
+  body,
+  content_type: "application/json",
+  compatibility_headers: {},
+  request_id: requestId,
+  git_sha: "a".repeat(40),
+  deno_revision: "bootstrap-retry",
+});
+/** Admit, stage and publish one capture through the real store, as `kv`. */
+const publishCapture = (kv: Kv, captureId: string, input: AcceptedSentinelReplayInput) =>
+  persistEncryptedSentinelReplay(input, captureFailure, {
+    kv,
+    keyBytes: replayKeyBytes,
+    now: () => now,
+    randomUuid: () => captureId,
+    randomBytes: (length) => new Uint8Array(length).fill(7),
+    budgetBytes: budget,
+  });
+/** Reserved accounting rows for captures that have staged nothing yet: owners without chunks. */
+const stagingOwners = (count: number): SentinelReplayAccountingRow[] =>
+  Array.from({ length: count }, (_, index) => ({
+    ...accountingFor(manifestFor(10_000 + index)),
+    capture_id: `staging-${index}`,
+    state: "reserved",
+    bytes: 1_024,
+  }));
 
 test("bootstrap retry: orphan chunks are reclaimed instead of being ignored", async () => {
   const kv = await openKv(":memory:");
@@ -465,9 +517,9 @@ test("bootstrap retry: a recovered legacy charge expires and releases exactly on
   }
 });
 
-test("bootstrap retry: chunk owner lookups stay bounded per batch and linear overall", async () => {
+test("bootstrap retry: chunk owner lookups stay bounded per list and linear overall", async () => {
   const kv = await openKv(":memory:");
-  const reads = { count: 0 };
+  const reads: ListReads = { count: 0, largest: 0 };
   const gateway = countListReads(kv, reads);
   // Half the owners are legacy manifests the sweep materializes later; the rest are already accounted.
   const owned = ownedManifests(2 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
@@ -475,24 +527,18 @@ test("bootstrap retry: chunk owner lookups stay bounded per batch and linear ove
   const live: SentinelReplayAccountingRow = { ...accountingFor(manifestFor(owned.length + 1)), capture_id: "live-reserved", state: "reserved", bytes: 2_048 };
   const orphans = ["orphan-a", "orphan-b", "orphan-c"];
   const ownerRows = owned.length + Math.ceil(owned.length / 2) + 1;
-  const batchBound = BOOTSTRAP_OWNER_SCAN_ENTRIES + BOOTSTRAP_BATCH_ENTRIES;
   try {
     for (const [index, manifest] of owned.entries()) await seedManifest(kv, manifest, index % 2 === 0);
     await kv.set(sentinelReplayAccountingKey(live.created_at_ms, live.capture_id), live);
     await kv.set(chunkKey(live.capture_id), new Uint8Array(64));
     for (const orphan of orphans) for (const index of [0, 1]) await kv.set(chunkKey(orphan, index), new Uint8Array(32));
-    assert.ok(ownerRows > batchBound, "the fixture must hold more owner rows than one bounded batch may read");
+    assert.ok(ownerRows > 2 * BOOTSTRAP_OWNER_SCAN_ENTRIES, "the fixture must hold more owner rows than two owner index slices");
     let ledger: SentinelReplayBudgetLedger | null = null;
-    let total = 0;
-    for (let call = 0; call < 1_000 && ledger === null; call += 1) {
-      reads.count = 0;
-      ledger = await bootstrapBeforeMutation(gateway, budget, now);
-      assert.ok(reads.count <= batchBound, `bootstrap call ${call} read ${reads.count} owner rows; the bound is ${batchBound}`);
-      total += reads.count;
-    }
+    for (let call = 0; call < 1_000 && ledger === null; call += 1) ledger = await bootstrapBeforeMutation(gateway, budget, now);
     if (ledger === null) throw new Error("bounded bootstrap did not finish");
+    assert.ok((reads.largest ?? 0) <= BOOTSTRAP_OWNER_SCAN_ENTRIES, `one owner list read ${reads.largest} rows; the bound is ${BOOTSTRAP_OWNER_SCAN_ENTRIES}`);
     // A lone caller reads each owner row once in its own sweep phase and once for the chunk owner index, never once per chunk.
-    assert.ok(total <= 2 * ownerRows, `the whole sweep read ${total} owner rows for ${ownerRows}`);
+    assert.ok(reads.count <= 2 * ownerRows, `the whole sweep read ${reads.count} owner rows for ${ownerRows}`);
     for (const orphan of orphans) {
       for (const index of [0, 1]) assert.equal((await kv.get(chunkKey(orphan, index))).value, null, `${orphan}/${index} is reclaimed`);
     }
@@ -520,173 +566,317 @@ test("bootstrap retry: chunk owner lookups stay bounded per batch and linear ove
   }
 });
 
-test("bootstrap retry: a chunk owner index is rebuilt after another writer moves the sweep", async () => {
+test("bootstrap retry: an owner index never serves another sweep, even one reset to the same cursor", async () => {
   const kv = await openKv(":memory:");
-  const first = countListReads(kv, { count: 0 });
-  const second = countListReads(kv, { count: 0 });
+  // Two handles on one store: the shape of two processes.
+  const first: Kv = { ...kv };
+  const second: Kv = { ...kv };
   const owned = ownedManifests(2 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
-  const late: SentinelReplayAccountingRow = { ...accountingFor(manifestFor(owned.length + 1)), capture_id: "zz-late-owner", state: "reserved", bytes: 2_048 };
-  const cursor = (): Promise<string | null> => ledgerCursor(kv);
-  try {
-    for (const manifest of owned) await seedManifest(kv, manifest, true);
-    await kv.set(chunkKey("zz-orphan"), new Uint8Array(32));
-    // The first handle finishes its owner index and starts judging chunks.
-    for (let call = 0; call < 1_000 && !/^1\|./.test((await cursor()) ?? ""); call += 1) assert.equal(await bootstrapBeforeMutation(first, budget, now), null);
-    assert.match((await cursor()) ?? "", /^1\|./);
-    // An owner the first handle never saw (after an unobserved ledger reset, for example) witnesses whether its index is reused.
-    await kv.set(sentinelReplayAccountingKey(late.created_at_ms, late.capture_id), late);
-    await kv.set(chunkKey(late.capture_id), new Uint8Array(64));
-    const left = await cursor();
-    for (let call = 0; call < 1_000 && (await cursor()) === left; call += 1) assert.equal(await bootstrapBeforeMutation(second, budget, now), null);
-    assert.notEqual(await cursor(), left, "the second handle moved the durable sweep");
+  // As many captures as one batch scans, so their accounting rows leave the reset sweep's chunk pages where the first sweep's were.
+  const admitted = Array.from({ length: BOOTSTRAP_BATCH_ENTRIES }, (_, index) => `zz-admitted-${index}`);
+  const sweepUntil = async (handle: Kv, reached: (cursor: string | null) => boolean): Promise<void> => {
+    for (let call = 0; call < 1_000 && !reached(await ledgerCursor(kv)); call += 1) assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+  };
+  const finish = async (handle: Kv): Promise<SentinelReplayBudgetLedger | null> => {
     let ledger: SentinelReplayBudgetLedger | null = null;
-    for (let call = 0; call < 1_000 && ledger === null; call += 1) ledger = await bootstrapBeforeMutation(first, budget, now);
-    assert.equal(ledger?.bootstrap_complete, true);
-    assert.notEqual((await kv.get(chunkKey(late.capture_id))).value, null, "a stale owner index must not reclaim the late owner's payload");
-    assert.equal((await kv.get(chunkKey("zz-orphan"))).value, null, "a true orphan is still reclaimed");
-  } finally {
-    kv.close();
-  }
-});
-
-test("bootstrap retry: a batch that outlives sweep completion keeps a capture published meanwhile", async () => {
-  const kv = await openKv(":memory:");
-  const pausing = holdNextList(kv, isChunkPrefix);
-  // One handle for every caller: the shape of one process with concurrent requests.
-  const handle = pausing.handle;
-  const owned = ownedManifests(2);
-  const orphans = ["orphan-a", "orphan-b", "orphan-c", "orphan-d"];
-  const keyBytes = new Uint8Array(32).fill(3);
-  const requestId = "bootstrap-straddle";
-  const liveCaptureId = "zz-live-capture";
-  const body = multiChunkBody();
-  const input: AcceptedSentinelReplayInput = {
-    endpoint: "/v1/responses",
-    method: "POST",
-    body,
-    content_type: "application/json",
-    compatibility_headers: {},
-    request_id: requestId,
-    git_sha: "a".repeat(40),
-    deno_revision: "bootstrap-straddle",
+    for (let call = 0; call < 1_000 && ledger === null; call += 1) ledger = await bootstrapBeforeMutation(handle, budget, now);
+    return ledger;
   };
   try {
     for (const manifest of owned) await seedManifest(kv, manifest, true);
-    for (const orphan of orphans) await kv.set(chunkKey(orphan), new Uint8Array(32));
-    // Run until a committed batch has judged chunks, so the next batch reuses its retained owner index.
-    for (let call = 0; call < 100 && !/^1\|./.test((await ledgerCursor(kv)) ?? ""); call += 1) {
-      assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
-    }
-    assert.match((await ledgerCursor(kv)) ?? "", /^1\|./);
-    // Batch A has read the incomplete ledger and is held at its next chunk page.
-    const hold = pausing.arm();
-    const outlived = bootstrapBeforeMutation(handle, budget, now);
-    await hold.reached;
-    // Meanwhile another request finishes the sweep, and a capture is admitted, staged and published.
-    let completed: SentinelReplayBudgetLedger | null = null;
-    for (let call = 0; call < 100 && completed === null; call += 1) completed = await bootstrapBeforeMutation(handle, budget, now);
-    assert.equal(completed?.bootstrap_complete, true);
-    const stored = await persistEncryptedSentinelReplay(input, captureFailure, {
-      kv: handle,
-      keyBytes,
-      now: () => now,
-      randomUuid: () => liveCaptureId,
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-      budgetBytes: budget,
-    });
-    assert.equal(stored.status, "stored");
-    assert.ok(stored.manifest.chunk_count > 1, "the live capture spans several chunks");
-    hold.release();
-    assert.equal((await outlived)?.bootstrap_complete, true);
-    assert.ok(
-      pausing.released.some((key) => key[4] === liveCaptureId),
-      "the outlived batch judged the published capture's chunks against its pre-admission owner index"
-    );
-    const exported = await listEncryptedSentinelReplaysByRequestId(kv, requestId, now);
-    assert.equal(exported.captures.length, 1, "the published capture stays exportable");
-    const plaintext = await decryptExportedSentinelReplay(exported.captures[0], keyBytes);
-    assert.deepEqual(plaintext.body, body, "the published capture keeps its whole payload");
-    const state = await readLedger(kv, budget);
-    if (state.kind === "corrupt") throw new Error("unexpected corrupt fixture ledger");
-    assert.equal(state.ledger.bootstrap_complete, true);
-    assert.equal(state.ledger.accounting_error, null, "a refused delete never leaves an invalid-row error behind");
-    assert.equal(state.ledger.records, owned.length + 1);
-    for (const orphan of orphans) assert.equal((await kv.get(chunkKey(orphan))).value, null, `${orphan} is reclaimed`);
+    // The first handle indexes every owner and judges its first chunk page.
+    await sweepUntil(first, (cursor) => /^1\|./.test(cursor ?? ""));
+    const held = await ledgerCursor(kv);
+    assert.match(held ?? "", /^1\|./);
+    // The second handle finishes that sweep, and captures are then admitted, staged and published.
+    assert.equal((await finish(second))?.bootstrap_complete, true);
+    for (const captureId of admitted) assert.equal((await publishCapture(second, captureId, captureInput(captureId))).status, "stored");
+    // The ledger is reset outside the normal path, and a new sweep reaches the cursor the first handle last judged at.
+    await kv.delete(SENTINEL_REPLAY_BUDGET_LEDGER_KEY);
+    await sweepUntil(second, (cursor) => cursor === held);
+    assert.equal(await ledgerCursor(kv), held, "the reset sweep reached the same chunk cursor");
+    // The first handle resumes the new sweep: the owners it indexed for the earlier one must not judge these chunks.
+    const ledger = await finish(first);
+    assert.equal(ledger?.bootstrap_complete, true);
+    assert.equal(ledger.accounting_error, null);
+    assert.equal(ledger.records, owned.length + admitted.length);
+    for (const captureId of admitted)
+      assert.notEqual((await kv.get(chunkKey(captureId))).value, null, `${captureId}, admitted after the earlier sweep, keeps its payload`);
+    for (const manifest of owned) assert.notEqual((await kv.get(chunkKey(manifest.capture_id))).value, null, `${manifest.capture_id} keeps its payload`);
   } finally {
     kv.close();
   }
 });
 
-for (const schedule of ["skip-reason", "overlapping-batches"] as const) {
-  test(`bootstrap retry: lost ledger commits keep the chunk owner index, so a contended sweep finishes (${schedule})`, async () => {
+for (const finisher of ["the same handle", "a second handle"] as const) {
+  test(`bootstrap retry: a batch that outlives sweep completion keeps a capture published meanwhile (finished on ${finisher})`, async () => {
     const kv = await openKv(":memory:");
-    const reads = { count: 0 };
-    const interposing = interposeSkipReason(countListReads(kv, reads, () => true));
-    const pausing = holdNextList(interposing.handle, isOwnerPrefix);
+    const pausing = holdNextList(kv, isChunkPrefix);
     const handle = pausing.handle;
-    const owned = ownedManifests(3 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+    // The same handle is one process with concurrent requests; a second handle is another process.
+    const other: Kv = finisher === "the same handle" ? handle : { ...kv };
+    const owned = ownedManifests(2);
+    // Owners still staging fill the accounting prefix to one whole slice, so the owner index needs a second
+    // slice for the manifests, and the accounting phase ends on a batch boundary.
+    const staging = stagingOwners(BOOTSTRAP_OWNER_SCAN_ENTRIES - owned.length);
     const orphans = ["orphan-a", "orphan-b", "orphan-c", "orphan-d"];
-    const ownerRows = 2 * owned.length;
-    const sweptRows = ownerRows + owned.length + 2 * orphans.length;
-    // One batch lists at most one owner-index slice, one chunk probe and its sweep entries.
-    const batchReads = BOOTSTRAP_OWNER_SCAN_ENTRIES + 1 + BOOTSTRAP_BATCH_ENTRIES;
-    // Contention may cost every other batch its commit, never the owners already indexed.
-    const callBound = 2 * (Math.ceil(sweptRows / BOOTSTRAP_BATCH_ENTRIES) + Math.ceil(ownerRows / BOOTSTRAP_OWNER_SCAN_ENTRIES) + 8);
-    const callFor = (call: number): Promise<SentinelReplayBudgetLedger | null> => {
-      if (call % 2 === 0) interposing.arm();
-      return bootstrapBeforeMutation(handle, budget, now);
-    };
-    /** Batch X is held at its first owner read while batch Y reads the same ledger; X then commits first and Y loses. */
-    const overlappingRound = async (): Promise<SentinelReplayBudgetLedger | null> => {
-      const holdX = pausing.arm();
-      const x = bootstrapBeforeMutation(handle, budget, now);
-      await Promise.race([holdX.reached, x]);
-      holdX.disarm();
-      const holdY = pausing.arm();
-      const y = bootstrapBeforeMutation(handle, budget, now);
-      await Promise.race([holdY.reached, y]);
-      holdY.disarm();
-      holdX.release();
-      const first = await x;
-      holdY.release();
-      const second = await y;
-      return first ?? second;
-    };
+    const requestId = "bootstrap-straddle";
+    const liveCaptureId = "zz-live-capture";
+    const body = multiChunkBody();
     try {
       for (const manifest of owned) await seedManifest(kv, manifest, true);
-      for (const orphan of orphans) for (const index of [0, 1]) await kv.set(chunkKey(orphan, index), new Uint8Array(32));
-      assert.ok(ownerRows > 2 * BOOTSTRAP_OWNER_SCAN_ENTRIES, "the owner index must need more slices than one lost commit can cost");
-      let ledger: SentinelReplayBudgetLedger | null = null;
-      let calls = 0;
-      while (ledger === null && calls < callBound) {
-        reads.count = 0;
-        if (schedule === "skip-reason") {
-          ledger = await callFor(calls);
-          calls += 1;
-          assert.ok(reads.count <= batchReads, `bootstrap call ${calls} listed ${reads.count} rows; the bound is ${batchReads}`);
-        } else {
-          ledger = await overlappingRound();
-          calls += 2;
-          assert.ok(reads.count <= 2 * batchReads, `overlapping round ending at call ${calls} listed ${reads.count} rows; the bound is ${2 * batchReads}`);
-        }
+      for (const row of staging) await kv.set(sentinelReplayAccountingKey(row.created_at_ms, row.capture_id), row);
+      for (const orphan of orphans) await kv.set(chunkKey(orphan), new Uint8Array(32));
+      // Run until a committed batch has judged chunks, so the next batch judges with the complete owner index.
+      for (let call = 0; call < 100 && !/^1\|./.test((await ledgerCursor(kv)) ?? ""); call += 1) {
+        assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
       }
-      assert.equal(ledger?.bootstrap_complete, true, `the contended sweep finished within ${callBound} bootstrap calls (cursor ${await ledgerCursor(kv)})`);
-      for (const orphan of orphans) {
-        for (const index of [0, 1]) assert.equal((await kv.get(chunkKey(orphan, index))).value, null, `${orphan}/${index} is reclaimed`);
-      }
-      for (const manifest of owned) assert.notEqual((await kv.get(chunkKey(manifest.capture_id))).value, null, `${manifest.capture_id} keeps its payload`);
-      assert.deepEqual(liveCounters(ledger), {
-        stored_bytes: owned.length * 1_024,
-        reserved_bytes: 0,
-        records: owned.length,
-        status_records: 0,
-        metadata_bytes: 0,
-      });
+      assert.match((await ledgerCursor(kv)) ?? "", /^1\|./);
+      // Batch A has read the incomplete ledger and is held at its next chunk page.
+      const hold = pausing.arm();
+      const outlived = bootstrapBeforeMutation(handle, budget, now);
+      await hold.reached;
+      // Meanwhile another request finishes the sweep, and a capture is admitted, staged and published.
+      let completed: SentinelReplayBudgetLedger | null = null;
+      for (let call = 0; call < 100 && completed === null; call += 1) completed = await bootstrapBeforeMutation(other, budget, now);
+      assert.equal(completed?.bootstrap_complete, true);
+      const stored = await publishCapture(other, liveCaptureId, captureInput(requestId, body));
+      assert.equal(stored.status, "stored");
+      assert.ok(stored.manifest.chunk_count > 1, "the live capture spans several chunks");
+      hold.release();
+      assert.equal((await outlived)?.bootstrap_complete, true);
+      assert.ok(
+        pausing.released.some((key) => key[4] === liveCaptureId),
+        "the outlived batch judged the published capture's chunks against its pre-admission owner index"
+      );
+      const exported = await listEncryptedSentinelReplaysByRequestId(kv, requestId, now);
+      assert.equal(exported.captures.length, 1, "the published capture stays exportable");
+      const plaintext = await decryptExportedSentinelReplay(exported.captures[0], replayKeyBytes);
+      assert.deepEqual(plaintext.body, body, "the published capture keeps its whole payload");
+      const state = await readLedger(kv, budget);
+      if (state.kind === "corrupt") throw new Error("unexpected corrupt fixture ledger");
+      assert.equal(state.ledger.bootstrap_complete, true);
+      assert.equal(state.ledger.accounting_error, null, "a refused delete never leaves an invalid-row error behind");
+      assert.equal(state.ledger.records, owned.length + 1);
+      for (const orphan of orphans) assert.equal((await kv.get(chunkKey(orphan))).value, null, `${orphan} is reclaimed`);
     } finally {
       kv.close();
     }
   });
 }
+
+test("bootstrap retry: lost ledger commits keep the chunk owner index, so a contended sweep finishes", async () => {
+  const kv = await openKv(":memory:");
+  const reads: ListReads = { count: 0 };
+  const interposing = interposeLedgerReads(countListReads(kv, reads, isOwnerIndexSlice));
+  const handle = interposing.handle;
+  const owned = ownedManifests(3 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+  const orphans = ["orphan-a", "orphan-b", "orphan-c", "orphan-d"];
+  const ownerRows = 2 * owned.length;
+  const sweptRows = ownerRows + owned.length + 2 * orphans.length;
+  // A lost commit may cost its batch the page it scanned, never the owners already indexed.
+  const callBound = 2 * (Math.ceil(sweptRows / BOOTSTRAP_BATCH_ENTRIES) + Math.ceil(ownerRows / BOOTSTRAP_OWNER_SCAN_ENTRIES) + 8);
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, true);
+    for (const orphan of orphans) for (const index of [0, 1]) await kv.set(chunkKey(orphan, index), new Uint8Array(32));
+    assert.ok(ownerRows > 2 * BOOTSTRAP_OWNER_SCAN_ENTRIES, "the owner index must need more slices than one lost commit can cost");
+    let ledger: SentinelReplayBudgetLedger | null = null;
+    let calls = 0;
+    for (; ledger === null && calls < callBound; calls += 1) {
+      // Every other request loses its commit: a refused admission records its skip reason after the batch reads the ledger.
+      if (calls % 2 === 0) interposing.arm(() => writeSkipReason(kv));
+      ledger = await bootstrapBeforeMutation(handle, budget, now);
+    }
+    assert.equal(ledger?.bootstrap_complete, true, `the contended sweep finished within ${callBound} bootstrap calls (cursor ${await ledgerCursor(kv)})`);
+    assert.ok(reads.count <= ownerRows, `the owner index read ${reads.count} rows for ${ownerRows} owners across lost commits`);
+    await assertOrphansReclaimed(kv, orphans, owned);
+    assert.deepEqual(liveCounters(ledger), {
+      stored_bytes: owned.length * 1_024,
+      reserved_bytes: 0,
+      records: owned.length,
+      status_records: 0,
+      metadata_bytes: 0,
+    });
+  } finally {
+    kv.close();
+  }
+});
+
+test("bootstrap retry: a process that restarts every few calls still finishes the sweep", async () => {
+  const kv = await openKv(":memory:");
+  // Legacy manifests only, so the owner index needs more slices than one handle lives calls.
+  const owned = ownedManifests(200);
+  const orphans = ["orphan-a", "orphan-b"];
+  const restartEvery = 3;
+  // An uninterrupted sweep scans every chunk and every manifest once, a few entries per call.
+  const callBound = 2 * Math.ceil((2 * owned.length + orphans.length) / BOOTSTRAP_BATCH_ENTRIES);
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, false);
+    for (const orphan of orphans) await kv.set(chunkKey(orphan), new Uint8Array(32));
+    assert.ok(Math.ceil(owned.length / BOOTSTRAP_OWNER_SCAN_ENTRIES) > restartEvery, "one handle must live fewer calls than its owner index needs slices");
+    let ledger: SentinelReplayBudgetLedger | null = null;
+    let handle: Kv = kv;
+    for (let call = 0; call < callBound && ledger === null; call += 1) {
+      // A fresh handle holds none of the last one's in-memory state: a restarted process.
+      if (call % restartEvery === 0) handle = { ...kv };
+      ledger = await bootstrapBeforeMutation(handle, budget, now);
+    }
+    assert.equal(ledger?.bootstrap_complete, true, `the sweep finished within ${callBound} calls across restarts (cursor ${await ledgerCursor(kv)})`);
+    assert.equal(ledger.accounting_error, null);
+    assert.equal(ledger.records, owned.length);
+    await assertOrphansReclaimed(kv, orphans, owned);
+  } finally {
+    kv.close();
+  }
+});
+
+test("bootstrap retry: the owner index fills without further requests, and a request waits for it only briefly without writing the ledger", async () => {
+  const kv = await openKv(":memory:");
+  const reads: ListReads = { count: 0 };
+  const pausing = holdNextList(countListReads(kv, reads), isOwnerIndexSlice);
+  const handle = pausing.handle;
+  const owned = ownedManifests(3 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+  const orphans = ["orphan-a", "orphan-b"];
+  let hold: ReturnType<typeof pausing.arm> | null = null;
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, false);
+    for (const orphan of orphans) await kv.set(chunkKey(orphan), new Uint8Array(32));
+    // The first request starts the sweep, which reaches the chunk phase at once (there are no accounting
+    // rows) and needs the owner index, whose first slice is held.
+    hold = pausing.arm();
+    const request = bootstrapBeforeMutation(handle, budget, now);
+    await hold.reached;
+    // The sweep's id is durable before the request waits on the fill, so a concurrently refused admission's
+    // skip reason cannot cost the fill its sweep.
+    assert.equal(await ledgerCursor(kv), "1|", "the sweep's id was committed before the wait");
+    await writeSkipReason(kv);
+    const outcome = await Promise.race([request.then(() => "returned" as const), sleep(5_000).then(() => "still waiting" as const)]);
+    assert.equal(outcome, "returned", "a request does not wait for a slow owner index fill");
+    assert.equal(await request, null);
+    assert.equal(await ledgerCursor(kv), "1|", "the sweep waits at its chunk phase");
+    // A request that comes while the fill is still held judges no chunk and leaves the ledger alone.
+    const before = (await kv.get(SENTINEL_REPLAY_BUDGET_LEDGER_KEY)).versionstamp;
+    assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    assert.equal((await kv.get(SENTINEL_REPLAY_BUDGET_LEDGER_KEY)).versionstamp, before, "a request that judged no chunk leaves the ledger alone");
+    hold.release();
+    // No further request is made, yet the fill reads every owner row.
+    for (const deadline = Date.now() + 5_000; reads.count < owned.length && Date.now() < deadline;) await sleep(5);
+    assert.equal(reads.count, owned.length, "the owner index filled without further requests");
+    // The next request judges chunks at once.
+    assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    assert.match((await ledgerCursor(kv)) ?? "", /^1\|./, "the next request judged chunks with the filled index");
+    let ledger: SentinelReplayBudgetLedger | null = null;
+    for (let call = 0; call < 1_000 && ledger === null; call += 1) ledger = await bootstrapBeforeMutation(handle, budget, now);
+    assert.equal(ledger?.bootstrap_complete, true);
+    await assertOrphansReclaimed(kv, orphans, owned);
+  } finally {
+    hold?.release();
+    kv.close();
+  }
+});
+
+test("bootstrap retry: concurrent requests share one owner index fill", async () => {
+  const kv = await openKv(":memory:");
+  const reads: ListReads = { count: 0 };
+  const gateway = countListReads(kv, reads, isOwnerIndexSlice);
+  const owned = ownedManifests(3 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+  const orphans = ["orphan-a", "orphan-b", "orphan-c", "orphan-d"];
+  const ownerRows = 2 * owned.length;
+  const concurrency = 4;
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, true);
+    for (const orphan of orphans) for (const index of [0, 1]) await kv.set(chunkKey(orphan, index), new Uint8Array(32));
+    // Another handle brings the sweep to its chunk phase, so this handle starts with no owner index.
+    for (let call = 0; call < 1_000 && !((await ledgerCursor(kv)) ?? "").startsWith("1|"); call += 1)
+      assert.equal(await bootstrapBeforeMutation(kv, budget, now), null);
+    assert.ok(((await ledgerCursor(kv)) ?? "").startsWith("1|"));
+    let ledger: SentinelReplayBudgetLedger | null = null;
+    for (let round = 0; round < 1_000 && ledger === null; round += 1) {
+      const results = await Promise.all(Array.from({ length: concurrency }, () => bootstrapBeforeMutation(gateway, budget, now)));
+      ledger = results.find((result) => result !== null) ?? null;
+    }
+    assert.equal(ledger?.bootstrap_complete, true);
+    assert.equal(ledger.accounting_error, null);
+    assert.ok(reads.count <= ownerRows, `${concurrency} concurrent requests read ${reads.count} rows for an index of ${ownerRows} owners`);
+    await assertOrphansReclaimed(kv, orphans, owned);
+  } finally {
+    kv.close();
+  }
+});
+
+test("bootstrap retry: a batch left behind by the chunk phase starts no second owner index fill", async () => {
+  const kv = await openKv(":memory:");
+  const reads: ListReads = { count: 0 };
+  const interposing = interposeLedgerReads(countListReads(kv, reads, isOwnerIndexSlice));
+  // One handle for every caller: the shape of one process with concurrent requests.
+  const handle = interposing.handle;
+  // A last owned capture, sorting after every other chunk, leaves the final chunk page partial and ending in a live chunk.
+  const owned = [...ownedManifests(2 * BOOTSTRAP_OWNER_SCAN_ENTRIES), { ...manifestFor(9_999), capture_id: "zz-last", stored_bytes: 1_024 }];
+  const chunksLeft = async (): Promise<number> => {
+    const cursor = (await ledgerCursor(kv)) ?? "";
+    if (!cursor.startsWith("1|")) return Number.POSITIVE_INFINITY;
+    return (await Array.fromAsync(kv.list({ prefix: SENTINEL_REPLAY_CHUNK_PREFIX }, { cursor: cursor.slice(2) || undefined }))).length;
+  };
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, true);
+    // Run until the next batch judges the last chunk page and moves past the chunk phase.
+    for (let call = 0; call < 1_000 && (await chunksLeft()) >= BOOTSTRAP_BATCH_ENTRIES; call += 1)
+      assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    const left = await chunksLeft();
+    assert.ok(left > 0 && left < BOOTSTRAP_BATCH_ENTRIES, `the next page holds the last ${left} chunks`);
+    // Batch X reads the ledger; batch Y then judges that page and commits past the chunk phase before X resumes.
+    interposing.arm(async () => {
+      assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    });
+    reads.count = 0;
+    assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    assert.ok(!((await ledgerCursor(kv)) ?? "").startsWith("1|"), "Y moved the sweep past its chunk phase");
+    assert.equal(reads.count, 0, "X, left at a chunk cursor, does not index the owners again");
+    let ledger: SentinelReplayBudgetLedger | null = null;
+    for (let call = 0; call < 1_000 && ledger === null; call += 1) ledger = await bootstrapBeforeMutation(handle, budget, now);
+    assert.equal(ledger?.bootstrap_complete, true);
+    assert.equal(ledger.records, owned.length);
+    await assertOrphansReclaimed(kv, [], owned);
+  } finally {
+    kv.close();
+  }
+});
+
+test("bootstrap retry: a lost commit does not rewind the shared owner index, so the next batch reuses it", async () => {
+  const kv = await openKv(":memory:");
+  const reads: ListReads = { count: 0 };
+  const interposing = interposeLedgerReads(countListReads(kv, reads));
+  // One handle for every caller: the shape of one process with concurrent requests.
+  const handle = interposing.handle;
+  const owned = ownedManifests(2 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, true);
+    // Run until a committed batch has judged chunks, so the complete owner index is shared on this handle.
+    for (let call = 0; call < 1_000 && !/^1\|./.test((await ledgerCursor(kv)) ?? ""); call += 1)
+      assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    const start = await ledgerCursor(kv);
+    assert.match(start ?? "", /^1\|./);
+    // Batch X reads the ledger, and a refused admission then records its skip reason, so X's commit loses. X
+    // rereads the ledger, still at the same cursor, and batch Y commits the next page before X resumes.
+    let y: SentinelReplayBudgetLedger | null | undefined;
+    interposing.arm(
+      () => writeSkipReason(kv),
+      async () => {
+        y = await bootstrapBeforeMutation(handle, budget, now);
+      }
+    );
+    assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    assert.equal(y, null);
+    const moved = await ledgerCursor(kv);
+    assert.notEqual(moved, start, "Y committed the next page");
+    reads.count = 0;
+    assert.equal(await bootstrapBeforeMutation(handle, budget, now), null);
+    assert.notEqual(await ledgerCursor(kv), moved, "the next batch judged its page");
+    assert.equal(reads.count, 0, "the next batch reused the shared owner index instead of rebuilding it");
+  } finally {
+    kv.close();
+  }
+});
 
 for (const consumer of ["bootstrapBeforeMutation", "reserveSentinelReplayCapacity"] as const) {
   test(`bootstrap retry: a slow batch judging chunks shares the complete owner index, so concurrent batches still advance (${consumer})`, async () => {
