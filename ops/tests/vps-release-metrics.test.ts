@@ -180,3 +180,67 @@ test("VPS metrics: the bridge-loaded journal metrics graph never imports a Bun-o
   assert.ok([...seen].some((href) => href.endsWith("/ops/vps-metrics-join.ts")));
   assert.ok([...seen].some((href) => href.endsWith("/ops/vps-journal-reader.ts")));
 });
+
+test("VPS metrics: PID 1 rows about the unit, such as an activation restart, never hold a window open", async () => {
+  await runSequence(async (step) => {
+    const accepted = entry("accepted", start + 1);
+    const terminal = entry("terminal", start + 2, { status: 200, stream: false, failure_kind: null, admission_stage: "accepted", latency_ms: 1 });
+    const fromPid1 = (at: number, message: unknown, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        _SYSTEMD_UNIT: "init.scope",
+        _PID: "1",
+        UNIT: "ai-ubq-fi.service",
+        _BOOT_ID: "fixture-boot",
+        __CURSOR: `systemd-${at}`,
+        __REALTIME_TIMESTAMP: String(at * 1000),
+        MESSAGE: message,
+        ...extra,
+      });
+    await step("restart rows", async () => {
+      const restart = [
+        fromPid1(start + 3, "Stopping ai-ubq-fi.service - ai.ubq.fi gateway..."),
+        fromPid1(start + 4, "ai-ubq-fi.service: Deactivated successfully."),
+        fromPid1(start + 5, "Started ai-ubq-fi.service - ai.ubq.fi gateway."),
+        fromPid1(start + 6, null),
+      ];
+      const sample = await sampleRaw([accepted, terminal, ...restart].join("\n"));
+      assert.equal(sample.coverage, "complete");
+      assert.equal(sample.requestCount, 1);
+    });
+    await step("a PID 1 row on another boot still refuses", async () => {
+      const sample = await sampleRaw([accepted, terminal, fromPid1(start + 3, "Started ai-ubq-fi.service.", { _BOOT_ID: "other-boot" })].join("\n"));
+      assert.equal(sample.coverage, "incomplete");
+    });
+    await step("another process's row about the unit still refuses", async () => {
+      const journald = JSON.stringify({
+        _SYSTEMD_UNIT: "systemd-journald.service",
+        _PID: "312",
+        OBJECT_SYSTEMD_UNIT: "ai-ubq-fi.service",
+        _BOOT_ID: "fixture-boot",
+        __CURSOR: "journald",
+        __REALTIME_TIMESTAMP: String((start + 3) * 1000),
+        MESSAGE: "Suppressed 42 messages from ai-ubq-fi.service",
+      });
+      const sample = await sampleRaw([accepted, terminal, journald].join("\n"));
+      assert.equal(sample.coverage, "incomplete");
+      assert.equal(sample.requestCount, null);
+    });
+  });
+});
+
+test("VPS metrics: request rows journalctl encodes as bytes are decoded and a missing message still refuses", async () => {
+  const accepted = entry("accepted", start + 1);
+  const terminal = JSON.parse(
+    entry("terminal", start + 2, { status: 200, stream: false, failure_kind: null, admission_stage: "accepted", latency_ms: 1, model: "gpt\u0085x" })
+  ) as Record<string, unknown>;
+  const encoded = JSON.stringify({ ...terminal, MESSAGE: [...new TextEncoder().encode(String(terminal.MESSAGE))] });
+  const decoded = await sampleRaw([accepted, encoded].join("\n"));
+  assert.equal(decoded.coverage, "complete", "a C1 control character makes journalctl emit the message as a byte array");
+  assert.equal(decoded.requestCount, 1);
+  const binary = JSON.stringify({ ...terminal, __CURSOR: "binary", MESSAGE: [0xff, 0xfe, 0x00] });
+  const skipped = await sampleRaw([accepted, JSON.stringify(terminal), binary].join("\n"));
+  assert.equal(skipped.coverage, "complete", "invalid UTF-8 cannot be a request row");
+  assert.equal(skipped.requestCount, 1);
+  const missing = await sampleRaw([accepted, JSON.stringify({ ...terminal, MESSAGE: null })].join("\n"));
+  assert.equal(missing.coverage, "incomplete", "a null message could hide a request row");
+});
