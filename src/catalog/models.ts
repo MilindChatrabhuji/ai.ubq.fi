@@ -303,7 +303,7 @@ const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]):
 };
 
 /**
- * Codex catalog record for the gateway-owned `ubiquity/deepseek-v4.1-flash`
+ * Codex catalog record for the gateway-owned `ubiquity/deepseek-flash`
  * waterfall model. The advertised reasoning tiers are the intersection every
  * candidate hop accepts verbatim (low/high/max); the waterfall boundary
  * rejects anything else rather than letting a hop refuse it later.
