@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
 import { FORWARDED_PAYLOAD_POLICY } from "../src/deepseek/forwarded-payload-policy.ts";
@@ -25,7 +26,7 @@ const request = (output: string, truncation?: string): Record<string, unknown> =
 
 // These positions distinguish the later reduction seams from the already
 // guarded initial slice. Both original payloads contain complete emoji pairs.
-Deno.test("forwarded payload Unicode: fixtures reach the byte loop and marker reservation", () => {
+test("forwarded payload Unicode: fixtures reach the byte loop and marker reservation", () => {
   const byteLoopOutput = withEmoji(byteLoopPrefix);
   assert.equal(byteLength(byteLoopOutput.slice(0, limit)) > limit, true);
   assert.equal(byteLength(byteLoopOutput.slice(0, 58_982)) > limit, true);
@@ -42,7 +43,7 @@ Deno.test("forwarded payload Unicode: fixtures reach the byte loop and marker re
 
 for (const fixture of fixtures) {
   for (const truncation of [undefined, "auto"]) {
-    Deno.test(`forwarded payload Unicode: ${fixture.name} (${truncation ?? "default"})`, () => {
+    test(`forwarded payload Unicode: ${fixture.name} (${truncation ?? "default"})`, () => {
       assert.equal(fixture.output.isWellFormed(), true);
       const result = toDeepSeekResponsesChatBody(request(fixture.output, truncation), "deepseek-flash", false);
       if (!result.ok) throw new Error(result.message);
@@ -73,7 +74,7 @@ for (const fixture of fixtures) {
   }
 }
 
-Deno.test("forwarded payload Unicode: in-budget emoji and BMP content stays verbatim", () => {
+test("forwarded payload Unicode: in-budget emoji and BMP content stays verbatim", () => {
   const output = "é😀".repeat(10_000);
   assert.equal(byteLength(output) <= limit, true);
   const result = toDeepSeekResponsesChatBody(request(output), "deepseek-flash", false);
@@ -83,7 +84,7 @@ Deno.test("forwarded payload Unicode: in-budget emoji and BMP content stays verb
   assert.deepEqual(result.value.elisions, []);
 });
 
-Deno.test("forwarded payload Unicode: disabled truncation rejects without reduction", () => {
+test("forwarded payload Unicode: disabled truncation rejects without reduction", () => {
   const output = withEmoji(markerPrefix);
   const result = toDeepSeekResponsesChatBody(request(output, "disabled"), "deepseek-flash", false);
   if (result.ok) throw new Error("expected oversized Unicode output to be rejected");

@@ -35,10 +35,10 @@ import { getString, isRecord } from "./utils.ts";
 import type { ResponsesRequest } from "./types.ts";
 import { loadDebugRoutingConfig } from "./debug-routing.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
   classifyPreHeaderFailure,
   classifyStreamFailure,
   countExplicitPromptCacheBreakpoints,
@@ -64,10 +64,10 @@ import { recordResponsesTerminal } from "./chat/stream-translation.ts";
 import { logRedactedUpstreamError, toPreHeaderErrorResponse } from "./upstream-wire.ts";
 import { isTemporaryFreeSurplusModel, WARNING_KEY_MAP, responseWarnings, validateKnownUnsupportedPromptCacheUse, withUosWarning } from "./request-policy.ts";
 import {
-  FailedResponsesAttempt,
-  PreparedResponsesAttempt,
-  ResponsesRouteAttempt,
-  ResponsesRouteFailure,
+  type FailedResponsesAttempt,
+  type PreparedResponsesAttempt,
+  type ResponsesRouteAttempt,
+  type ResponsesRouteFailure,
   failureKindForResponsesAttemptTrigger,
   fetchAndPreparePrimaryResponses,
   fetchAndPrepareRemovedProviderResponses,
@@ -79,12 +79,12 @@ import {
 import { collectBufferedResponses } from "./responses-buffered.ts";
 import { canAttemptPaidFallback, createMeteredTransportLifecycle } from "./paid-fallback/health.ts";
 import {
-  ResponsesCircuitRoute,
-  ResponsesDeliveryState,
-  ResponsesHandlerState,
-  ResponsesRequestState,
-  ResponsesRoutingState,
-  ResponsesStep,
+  type ResponsesCircuitRoute,
+  type ResponsesDeliveryState,
+  type ResponsesHandlerState,
+  type ResponsesRequestState,
+  type ResponsesRoutingState,
+  type ResponsesStep,
   buildResponsesUpstreamBodies,
   normalizeResponsesInput,
   readResponsesRequest,
@@ -833,7 +833,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   // OpenRouter serves the Responses wire natively; only an id in its served
   // catalogue takes this branch, and a switched-off provider leaves its ids to
   // the ordinary availability check.
-  if (requestedModel && (await resolveOpenRouterUpstreamModel(requestedModel)) && isProviderEnabled("openrouter", await loadProviderSelectionCached())) {
+  if (requestedModel && isProviderEnabled("openrouter", await loadProviderSelectionCached()) && (await resolveOpenRouterUpstreamModel(requestedModel))) {
     return await handleOpenRouterResponses(req, rawRecord, requestedModel, usageContext);
   }
   return await runOrdinaryResponsesTail(req, rawRecord, rawBody, usageContext);

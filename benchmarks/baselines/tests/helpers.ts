@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { join } from "node:path";
 /**
  * Shared deterministic fixtures for the m03 baseline tests.
  *
@@ -16,12 +18,12 @@ import { loadTasks } from "../../manifest.ts";
 import type { RunOptions } from "../../runner.ts";
 import type { ChatTransport, ChatTransportResponse } from "../transport.ts";
 
-export const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
-export const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+export const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
+export const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
 export function freshRunOptions(): RunOptions & { runsRoot: string } {
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const runsRoot = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const runsRoot = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   return {
     configs: [],
     taskSelectors: [],

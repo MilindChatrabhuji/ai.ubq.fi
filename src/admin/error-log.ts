@@ -1,3 +1,5 @@
+import type { Kv } from "#kv";
+import { stat } from "node:fs/promises";
 import { getKv } from "../kv.ts";
 import { json, openaiError } from "../http.ts";
 import { SENTINEL_REPLAY_BUDGET_BYTES } from "../sentinel/replay-limits.ts";
@@ -35,7 +37,7 @@ const bounded = (value: string | null | undefined, fallback: string, maximum = 1
 
 export const recordAdminError = async (
   input: Omit<AdminErrorLogRecord, "version" | "terminal_type" | "failure_kind"> & Readonly<{ terminal_type: string | null; failure_kind: string | null }>,
-  kvOverride?: Deno.Kv | null
+  kvOverride?: Kv | null
 ): Promise<void> => {
   // Authentication failures are not inference failures and must retain the
   // request path's zero-KV budget.
@@ -165,13 +167,13 @@ const unavailableRetention = (): SentinelReplayRetentionStatus => ({
 });
 
 const readAdminLogFileSizes = async (): Promise<AdminLogFileSizes> => {
-  const paths = Deno.build.os === "darwin" ? MAC_TEXT_LOG_PATHS : [];
+  const paths = process.platform === "darwin" ? MAC_TEXT_LOG_PATHS : [];
   const files: { path: string; bytes: number | null }[] = [];
   // No measured paths (e.g. journald on Linux) stays unknown, never zero.
   let total: number | null = paths.length === 0 ? null : 0;
   for (const path of paths) {
     try {
-      files.push({ path, bytes: (await Deno.stat(path)).size });
+      files.push({ path, bytes: (await stat(path)).size });
       if (total !== null) total += files[files.length - 1].bytes ?? 0;
     } catch {
       files.push({ path, bytes: null });
@@ -180,7 +182,7 @@ const readAdminLogFileSizes = async (): Promise<AdminLogFileSizes> => {
   }
   return {
     scope: "host_text_logs",
-    platform: Deno.build.os,
+    platform: process.platform,
     files,
     total_bytes: total,
     warning: total !== null && total >= SENTINEL_REPLAY_BUDGET_BYTES,
@@ -193,7 +195,7 @@ const readAdminLogFileSizes = async (): Promise<AdminLogFileSizes> => {
  * capture-retention status is composed by the HTTP handler instead of being
  * collected here.
  */
-export const listAdminErrorHistory = async (limit = DEFAULT_LIMIT, kvOverride?: Deno.Kv | null): Promise<AdminErrorHistoryScan> => {
+export const listAdminErrorHistory = async (limit = DEFAULT_LIMIT, kvOverride?: Kv | null): Promise<AdminErrorHistoryScan> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return { data: [], five_xx_buckets: [] };
   const boundedLimit = Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit)));

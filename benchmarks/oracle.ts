@@ -8,7 +8,7 @@
  */
 
 import { FixtureWorkspace } from "./fixture.ts";
-import { FileCheck, GitCheck, OracleCheckOutcome, OracleOutcome, TaskManifest, VerificationOutcome } from "./schemas.ts";
+import { type FileCheck, type GitCheck, type OracleCheckOutcome, type OracleOutcome, type TaskManifest, type VerificationOutcome } from "./schemas.ts";
 
 export const VERIFY_OUTPUT_LIMIT = 4000;
 

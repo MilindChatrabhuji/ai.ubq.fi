@@ -1,10 +1,11 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { normalizeCodexModelsPayload } from "../src/models/codex-models.ts";
 
 import { deriveAutoCompactTokenLimit, resolvedAutoCompactTokenLimit } from "../src/recent-model-context.ts";
 
-Deno.test("auto-compaction uses the earlier 85 percent or 50k-reserve boundary", () => {
+test("auto-compaction uses the earlier 85 percent or 50k-reserve boundary", () => {
   assert.equal(deriveAutoCompactTokenLimit(1_000_000), 850_000);
   assert.equal(deriveAutoCompactTokenLimit(400_000), 340_000);
   assert.equal(deriveAutoCompactTokenLimit(262_144), 212_144);
@@ -12,7 +13,7 @@ Deno.test("auto-compaction uses the earlier 85 percent or 50k-reserve boundary",
   assert.throws(() => deriveAutoCompactTokenLimit(50_000), RangeError);
 });
 
-Deno.test("a declared auto-compaction threshold inside the window outranks the derived one", () => {
+test("a declared auto-compaction threshold inside the window outranks the derived one", () => {
   assert.equal(resolvedAutoCompactTokenLimit(272_000, 200_000), 200_000);
   assert.equal(resolvedAutoCompactTokenLimit(272_000, null), 222_000);
   // A threshold larger than the window it belongs to is not a usable limit.
@@ -20,7 +21,7 @@ Deno.test("a declared auto-compaction threshold inside the window outranks the d
   assert.equal(resolvedAutoCompactTokenLimit(272_000, undefined), 222_000);
 });
 
-Deno.test("Codex snapshot normalization preserves native effective context percentage", () => {
+test("Codex snapshot normalization preserves native effective context percentage", () => {
   const snapshot = normalizeCodexModelsPayload({
     models: [
       {

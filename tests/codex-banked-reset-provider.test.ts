@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { runSequence } from "./helpers/sequence.ts";
 import assert from "node:assert/strict";
 import {
   type CodexUsageResetFetch,
@@ -43,7 +45,7 @@ const provider = (fetch: CodexUsageResetFetch) =>
     now: () => 1_700_000_000_000,
   });
 
-Deno.test("upstream reset adapter derives the Codex reset-credit routes", () => {
+test("upstream reset adapter derives the Codex reset-credit routes", () => {
   assert.deepEqual(resolveCodexUsageResetCreditEndpoints("https://chatgpt.com/backend-api/codex"), {
     inventoryUrl: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
     consumeUrl: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
@@ -56,7 +58,7 @@ Deno.test("upstream reset adapter derives the Codex reset-credit routes", () => 
   assert.throws(() => resolveCodexUsageResetCreditEndpoints("http://chatgpt.com/backend-api/codex"), CodexUsageResetProviderConfigurationError);
 });
 
-Deno.test("upstream reset adapter parses inventory and sends the selected credit contract", async () => {
+test("upstream reset adapter parses inventory and sends the selected credit contract", async () => {
   const calls: Readonly<{ url: string; init: RequestInit | undefined }>[] = [];
   const responses = [
     new Response(
@@ -110,40 +112,42 @@ Deno.test("upstream reset adapter parses inventory and sends the selected credit
   assert.equal(headers.get("originator"), null);
 });
 
-Deno.test("upstream reset adapter maps documented 2xx codes and preserves the exact request id", async (t) => {
-  for (const [status, code, expected] of [
-    [200, "reset", { kind: "completed", providerReceiptId: "upstream-reset" }],
-    [201, "already_redeemed", { kind: "already_redeemed", providerReceiptId: "upstream-already-redeemed" }],
-    [299, "nothing_to_reset", { kind: "rejected", reason: "nothing_to_reset" }],
-    [200, "no_credit", { kind: "rejected", reason: "no_credit" }],
-  ] as const) {
-    await t.step(`${status} ${code}`, async () => {
-      let body: string | null = null;
-      const resetProvider = provider((_input, init) => {
-        body = typeof init?.body === "string" ? init.body : null;
-        return Promise.resolve(new Response(JSON.stringify({ code }), { status }));
+test("upstream reset adapter maps documented 2xx codes and preserves the exact request id", () =>
+  runSequence(async (step) => {
+    for (const [status, code, expected] of [
+      [200, "reset", { kind: "completed", providerReceiptId: "upstream-reset" }],
+      [201, "already_redeemed", { kind: "already_redeemed", providerReceiptId: "upstream-already-redeemed" }],
+      [299, "nothing_to_reset", { kind: "rejected", reason: "nothing_to_reset" }],
+      [200, "no_credit", { kind: "rejected", reason: "no_credit" }],
+    ] as const) {
+      await step(`${status} ${code}`, async () => {
+        let body: string | null = null;
+        const resetProvider = provider((_input, init) => {
+          body = typeof init?.body === "string" ? init.body : null;
+          return Promise.resolve(new Response(JSON.stringify({ code }), { status }));
+        });
+        assert.deepEqual(await resetProvider.redeem({ ...redeem(), idempotencyKey: "  stable-id  " }, signal()), expected);
+        assert.equal(body, '{"redeem_request_id":"  stable-id  ","credit_id":"credit-selected"}');
       });
-      assert.deepEqual(await resetProvider.redeem({ ...redeem(), idempotencyKey: "  stable-id  " }, signal()), expected);
-      assert.equal(body, '{"redeem_request_id":"  stable-id  ","credit_id":"credit-selected"}');
-    });
-  }
-});
+    }
+  }));
 
-Deno.test("upstream reset adapter treats non-2xx and malformed 2xx consume replies as ambiguous", async (t) => {
-  for (const response of [
-    new Response(null, { status: 204 }),
-    new Response("not json", { status: 200 }),
-    new Response(JSON.stringify({ code: "unrecognized" }), { status: 200 }),
-    new Response("not relevant", { status: 429 }),
-  ]) {
-    await t.step(String(response.status), async () => {
-      const resetProvider = provider(() => Promise.resolve(response));
-      assert.deepEqual(await resetProvider.redeem(redeem(), signal()), { kind: "unknown", providerReceiptId: null });
-    });
-  }
-});
+test("upstream reset adapter treats non-2xx and malformed 2xx consume replies as ambiguous", () =>
+  runSequence(async (step) => {
+    for (const response of [
+      new Response(null, { status: 204 }),
+      new Response("not json", { status: 200 }),
+      new Response(JSON.stringify({ code: "unrecognized" }), { status: 200 }),
+      new Response("not relevant", { status: 429 }),
+    ]) {
+      await step(String(response.status), async () => {
+        const resetProvider = provider(() => Promise.resolve(response));
+        assert.deepEqual(await resetProvider.redeem(redeem(), signal()), { kind: "unknown", providerReceiptId: null });
+      });
+    }
+  }));
 
-Deno.test("upstream reset adapter rejects malformed inventory and makes no transport call for invalid inputs", async () => {
+test("upstream reset adapter rejects malformed inventory and makes no transport call for invalid inputs", async () => {
   const badInventory = provider(() => Promise.resolve(new Response("{}", { status: 200 })));
   await assert.rejects(() => badInventory.readInventory(context(), signal()), CodexUsageResetProviderConfigurationError);
   const unavailableInventory = provider(() => Promise.resolve(new Response(null, { status: 503 })));
@@ -165,27 +169,28 @@ Deno.test("upstream reset adapter rejects malformed inventory and makes no trans
   assert.equal(calls, 0);
 });
 
-Deno.test("upstream reset adapter rejects summary-only, capped, malformed, or duplicate detailed inventories", async (t) => {
-  const completeCredit = {
-    id: "credit-one",
-    reset_type: "codex_rate_limits",
-    status: "available",
-    expires_at: null,
-  };
-  for (const [name, payload] of [
-    ["summary only", { available_count: 1, credits: null }],
-    ["capped details", { available_count: 2, credits: [completeCredit] }],
-    ["malformed expiry", { available_count: 1, credits: [{ ...completeCredit, expires_at: "not-a-date" }] }],
-    ["duplicate opaque ID", { available_count: 2, credits: [completeCredit, { ...completeCredit }] }],
-  ] as const) {
-    await t.step(name, async () => {
-      const resetProvider = provider(() => Promise.resolve(new Response(JSON.stringify(payload), { status: 200 })));
-      await assert.rejects(() => resetProvider.readInventory(context(), signal()), CodexUsageResetProviderConfigurationError);
-    });
-  }
-});
+test("upstream reset adapter rejects summary-only, capped, malformed, or duplicate detailed inventories", () =>
+  runSequence(async (step) => {
+    const completeCredit = {
+      id: "credit-one",
+      reset_type: "codex_rate_limits",
+      status: "available",
+      expires_at: null,
+    };
+    for (const [name, payload] of [
+      ["summary only", { available_count: 1, credits: null }],
+      ["capped details", { available_count: 2, credits: [completeCredit] }],
+      ["malformed expiry", { available_count: 1, credits: [{ ...completeCredit, expires_at: "not-a-date" }] }],
+      ["duplicate opaque ID", { available_count: 2, credits: [completeCredit, { ...completeCredit }] }],
+    ] as const) {
+      await step(name, async () => {
+        const resetProvider = provider(() => Promise.resolve(new Response(JSON.stringify(payload), { status: 200 })));
+        await assert.rejects(() => resetProvider.readInventory(context(), signal()), CodexUsageResetProviderConfigurationError);
+      });
+    }
+  }));
 
-Deno.test("display reset counts use only inventory GET and preserve zero and unavailable", async () => {
+test("display reset counts use only inventory GET and preserve zero and unavailable", async () => {
   for (const count of [0, 3]) {
     const result = await readCodexResetAvailableCount(
       {

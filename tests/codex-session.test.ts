@@ -1,11 +1,13 @@
+import { test } from "bun:test";
+import { type Kv } from "#kv";
 import assert from "node:assert/strict";
 import { observeCodexSession } from "../src/codex/session.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
 
-Deno.test("codex session observer classifies first, continuing, and hour-idle requests", async () => {
+test("codex session observer classifies first, continuing, and hour-idle requests", async () => {
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     const first = await observeCodexSession("key-a", { session_id: "session-a" }, 1_000_000);
     assert.equal(first.state, "new");
@@ -34,9 +36,9 @@ Deno.test("codex session observer classifies first, continuing, and hour-idle re
   }
 });
 
-Deno.test("codex session observer resets the continuation window on a new session", async () => {
+test("codex session observer resets the continuation window on a new session", async () => {
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     await observeCodexSession("key-a", { session_id: "session-a" }, 2_000_000);
     const newSession = await observeCodexSession("key-a", { session_id: "session-b" }, 2_000_000 + 60 * 60 * 1000);
@@ -52,7 +54,7 @@ Deno.test("codex session observer resets the continuation window on a new sessio
   }
 });
 
-Deno.test("codex session observer fails closed for missing metadata or KV", async () => {
+test("codex session observer fails closed for missing metadata or KV", async () => {
   setKvForTest(null);
   const missing = await observeCodexSession("key-a", undefined, 3_000_000);
   assert.deepEqual(missing, {

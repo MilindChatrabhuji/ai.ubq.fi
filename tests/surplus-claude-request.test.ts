@@ -1,9 +1,10 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { buildSurplusClaudeRequest } from "../src/provider/surplus-claude-request.ts";
 
 const base = (): Record<string, unknown> => ({ model: "claude-opus-5.5", input: "hello", max_output_tokens: 128, stream: true, store: false });
 
-Deno.test("Surplus Claude native request keeps instructions and caller input unchanged", () => {
+test("Surplus Claude native request keeps instructions and caller input unchanged", () => {
   const body = {
     ...base(),
     instructions: "global instructions",
@@ -33,7 +34,7 @@ Deno.test("Surplus Claude native request keeps instructions and caller input unc
   assert.equal(JSON.stringify(body), before);
 });
 
-Deno.test("Surplus Claude replay preserves function names, call IDs, arguments, result and order", () => {
+test("Surplus Claude replay preserves function names, call IDs, arguments, result and order", () => {
   const result = buildSurplusClaudeRequest({
     ...base(),
     input: [
@@ -64,7 +65,7 @@ Deno.test("Surplus Claude replay preserves function names, call IDs, arguments, 
   assert.deepEqual(result.body.tool_choice, { type: "auto", disable_parallel_tool_use: true });
 });
 
-Deno.test("Surplus Claude images retain base64 media type and remote URL without fetching", () => {
+test("Surplus Claude images retain base64 media type and remote URL without fetching", () => {
   const result = buildSurplusClaudeRequest({
     ...base(),
     input: [
@@ -89,7 +90,7 @@ Deno.test("Surplus Claude images retain base64 media type and remote URL without
   ]);
 });
 
-Deno.test("Surplus Claude explicit block policies suppress automatic markers and preserve lifetime", () => {
+test("Surplus Claude explicit block policies suppress automatic markers and preserve lifetime", () => {
   const result = buildSurplusClaudeRequest({
     ...base(),
     input: [
@@ -112,7 +113,7 @@ Deno.test("Surplus Claude explicit block policies suppress automatic markers and
   ]);
 });
 
-Deno.test("Surplus Claude translates an explicit Responses breakpoint in a tool result", () => {
+test("Surplus Claude translates an explicit Responses breakpoint in a tool result", () => {
   const result = buildSurplusClaudeRequest({
     ...base(),
     input: [
@@ -130,7 +131,7 @@ Deno.test("Surplus Claude translates an explicit Responses breakpoint in a tool 
   ]);
 });
 
-Deno.test("Surplus Claude keeps explicit cache breakpoints on tool call and result blocks", () => {
+test("Surplus Claude keeps explicit cache breakpoints on tool call and result blocks", () => {
   const result = buildSurplusClaudeRequest({
     ...base(),
     input: [
@@ -147,7 +148,7 @@ Deno.test("Surplus Claude keeps explicit cache breakpoints on tool call and resu
   assert.deepEqual(messages[2].content[0].cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
-Deno.test("Surplus Claude explicit mode with no breakpoints stays without automatic caching", () => {
+test("Surplus Claude explicit mode with no breakpoints stays without automatic caching", () => {
   const result = buildSurplusClaudeRequest({ ...base(), prompt_cache_options: { mode: "explicit" } });
   assert.ok(result);
   assert.equal(result.promptCacheMode, "explicit");
@@ -155,7 +156,7 @@ Deno.test("Surplus Claude explicit mode with no breakpoints stays without automa
   assert.deepEqual(result.body.messages, [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
 });
 
-Deno.test("Surplus Claude reasoning preserves requested effort and the Codex ultra translation", () => {
+test("Surplus Claude reasoning preserves requested effort and the Codex ultra translation", () => {
   assert.equal(buildSurplusClaudeRequest({ ...base(), reasoning: { effort: "max" } }), null);
   for (const [requested, expected] of [
     ["low", "low"],
@@ -174,14 +175,28 @@ Deno.test("Surplus Claude reasoning preserves requested effort and the Codex ult
   }
 });
 
-Deno.test("Surplus Claude has no invented output cap when the caller omitted one", () => {
+test("native none requires independent disabled-thinking proof, never an effort or model-name guess", () => {
+  const body = { ...base(), reasoning: { effort: "none", summary: "none" } };
+  const before = JSON.stringify(body);
+  assert.equal(buildSurplusClaudeRequest(body), null);
+  assert.equal(buildSurplusClaudeRequest(body, undefined, { supportsNativeReasoningEffort: true }), null);
+  assert.equal(buildSurplusClaudeRequest(body, undefined, { supportsNativeDisabledThinking: false }), null);
+  const result = buildSurplusClaudeRequest(body, undefined, { supportsNativeDisabledThinking: true, supportsNativeReasoningEffort: false });
+  assert.ok(result);
+  assert.deepEqual(result.body.thinking, { type: "disabled" });
+  assert.equal(result.body.output_config, undefined);
+  assert.equal(JSON.stringify(body), before);
+  assert.equal(buildSurplusClaudeRequest({ ...base(), reasoning: { effort: "high" } }, undefined, { supportsNativeDisabledThinking: true }), null);
+});
+
+test("Surplus Claude has no invented output cap when the caller omitted one", () => {
   const body = { ...base(), max_output_tokens: null };
   assert.equal(buildSurplusClaudeRequest(body), null);
   assert.equal(buildSurplusClaudeRequest(body, 128000)?.body.max_tokens, 128000);
   assert.equal(buildSurplusClaudeRequest(body, -1), null);
 });
 
-Deno.test("Surplus native adapter returns incompatible inputs intact to the existing Responses route", () => {
+test("Surplus native adapter returns incompatible inputs intact to the existing Responses route", () => {
   const bodies = [
     { ...base(), model: "deepseek-v4.1-flash" },
     { ...base(), model: "gpt-6-sol" },

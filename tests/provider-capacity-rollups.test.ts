@@ -1,3 +1,5 @@
+import type { Kv } from "#kv";
+import { test } from "bun:test";
 // Rollup coverage moved beside tests/provider-capacity.test.ts: that file sits
 // at the 1500-line test cap enforced by scripts/file-size-ratchet.ts, and the
 // original PR's additions pushed it to 1514 lines, which failed `size:check`.
@@ -51,10 +53,10 @@ const seed = (): void => {
     latest_refill_amount_credits: 10,
     latest_refill_completed_at_ms: nowMs - 5_000,
   });
-  Deno.env.set("METERED_API_KEY", "metered-api-key");
+  process.env.METERED_API_KEY = "metered-api-key";
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
 };
 
 // `String(input)` would render a `Request` as "[object Request]" instead of its URL.
@@ -116,10 +118,10 @@ const rollupTestInput = (bucketStartAtMs: number, sampledAtMs: number, primaryUs
   ] as const,
 });
 
-Deno.test("capacity sampling folds an hourly capacity rollup into the persisted history atomic", async () => {
+test("capacity sampling folds an hourly capacity rollup into the persisted history atomic", async () => {
   seed();
   await refreshProviderCapacity({
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     fetcher: createFetcher((account) => (account === "account-one" ? [12.5, 38] : [67, 81.25])),
     now: () => nowMs,
   });
@@ -127,7 +129,7 @@ Deno.test("capacity sampling folds an hourly capacity rollup into the persisted 
   const stored = (await kv.get(providerCapacityRollupKey(bucketStartAtMs))).value;
   assert.notEqual(stored, null);
 
-  const first = await listProviderCapacityRollups(kv as unknown as Deno.Kv, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs });
+  const first = await listProviderCapacityRollups(kv as unknown as Kv, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs });
   assert.equal(first.length, 1);
   const point = first[0];
   assert.ok(point);
@@ -142,11 +144,11 @@ Deno.test("capacity sampling folds an hourly capacity rollup into the persisted 
 
   // A later sample in the same hour merges into the existing rollup record.
   await refreshProviderCapacity({
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     fetcher: createFetcher((account) => (account === "account-one" ? [20.5, 30] : [10, 90])),
     now: () => nowMs + 60_000,
   });
-  const merged = await listProviderCapacityRollups(kv as unknown as Deno.Kv, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs: nowMs + 60_000 });
+  const merged = await listProviderCapacityRollups(kv as unknown as Kv, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs: nowMs + 60_000 });
   assert.equal(merged.length, 1);
   assert.equal(merged[0]?.sample_count, 2);
   assert.equal(merged[0]?.slots[0].primary.min_used_percent, 12.5);
@@ -156,15 +158,15 @@ Deno.test("capacity sampling folds an hourly capacity rollup into the persisted 
   assert.equal(merged[0]?.slots[1].primary.max_used_percent, 67);
 });
 
-Deno.test("the event sampler records the hourly rollup on the request-terminal hook path", async () => {
+test("the event sampler records the hourly rollup on the request-terminal hook path", async () => {
   seed();
   await sampleProviderCapacityOnEvent({
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     fetcher: createFetcher((account) => (account === "account-one" ? [5, 15] : [25, 35])),
     now: () => nowMs,
     createLeaseOwner: () => "event-sampler",
   });
-  const points = await listProviderCapacityRollups(kv as unknown as Deno.Kv, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs });
+  const points = await listProviderCapacityRollups(kv as unknown as Kv, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs });
   assert.equal(points.length, 1);
   assert.equal(points[0]?.sample_count, 1);
   assert.equal(points[0]?.slots[0].last_state, "available");
@@ -172,7 +174,7 @@ Deno.test("the event sampler records the hourly rollup on the request-terminal h
   assert.equal(points[0]?.slots[1].primary.last_used_percent, 25);
 });
 
-Deno.test("research rollups keep hourly capacity summaries beyond the seven-day raw history window", async () => {
+test("research rollups keep hourly capacity summaries beyond the seven-day raw history window", async () => {
   seed();
   const researchNowMs = nowMs + 30 * 24 * 60 * 60_000;
   const oldBucketStartAtMs = providerCapacityRollupBucketStartAtMs(nowMs - 30 * 24 * 60 * 60_000);
@@ -186,7 +188,7 @@ Deno.test("research rollups keep hourly capacity summaries beyond the seven-day 
     mergeProviderCapacityRollup(null, rollupTestInput(nowBucketStartAtMs, nowBucketStartAtMs + 1_000, 7, "unavailable"))
   );
 
-  const long = await listProviderCapacityRollups(kv as unknown as Deno.Kv, { sinceMs: researchNowMs - 90 * 24 * 60 * 60_000, nowMs: researchNowMs });
+  const long = await listProviderCapacityRollups(kv as unknown as Kv, { sinceMs: researchNowMs - 90 * 24 * 60 * 60_000, nowMs: researchNowMs });
   assert.deepEqual(
     long.map((entry) => entry.bucket_start_at_ms),
     [oldBucketStartAtMs, nowBucketStartAtMs]
@@ -194,20 +196,20 @@ Deno.test("research rollups keep hourly capacity summaries beyond the seven-day 
   assert.equal(long[0]?.slots[0].primary.max_used_percent, 42);
   assert.equal(long[1]?.slots[0].last_state, "unavailable");
 
-  const recent = await listProviderCapacityRollups(kv as unknown as Deno.Kv, { sinceMs: researchNowMs - 7 * 24 * 60 * 60_000, nowMs: researchNowMs });
+  const recent = await listProviderCapacityRollups(kv as unknown as Kv, { sinceMs: researchNowMs - 7 * 24 * 60 * 60_000, nowMs: researchNowMs });
   assert.deepEqual(
     recent.map((entry) => entry.bucket_start_at_ms),
     [nowBucketStartAtMs]
   );
 });
 
-Deno.test("capacity rollups research route returns the requested window", async () => {
+test("capacity rollups research route returns the requested window", async () => {
   seed();
   const bucketStartAtMs = providerCapacityRollupBucketStartAtMs(nowMs);
   kv.seed(providerCapacityRollupKey(bucketStartAtMs), mergeProviderCapacityRollup(null, rollupTestInput(bucketStartAtMs, nowMs, 33)));
 
   const response = await handleProviderCapacityRollups(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups?window_days=365"), {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => nowMs,
   });
   assert.equal(response.status, 200);
@@ -228,20 +230,67 @@ Deno.test("capacity rollups research route returns the requested window", async 
   assert.equal(body.rollups[0].slots[0].primary.last_used_percent, 33);
 
   const defaults = await handleProviderCapacityRollups(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups?window_days=nope"), {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => nowMs,
   });
   assert.equal(((await defaults.json()) as { window_days?: number }).window_days, PROVIDER_CAPACITY_RESEARCH_DEFAULT_WINDOW_DAYS);
 
   const capped = await handleProviderCapacityRollups(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups?window_days=100000"), {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => nowMs,
   });
   assert.equal(((await capped.json()) as { window_days?: number }).window_days, PROVIDER_CAPACITY_RESEARCH_MAX_WINDOW_DAYS);
 });
 
-Deno.test("capacity rollups route requires admin authentication through the request router", async () => {
+test("capacity rollups route requires admin authentication through the request router", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups"));
   assert.equal(response.status, 401);
+});
+
+test("additive Claude rollups retain source order, true zero and cohort/reset boundaries", async () => {
+  const { mergeClaudeCapacityRollup, claudeCapacityRollupKey, readClaudeCapacityRollup } = await import("../src/provider/claude-capacity-rollups.ts");
+  const point = {
+    v: 1 as const,
+    point_id: "one",
+    bucket_start_at_ms: Math.floor(nowMs / 900_000) * 900_000,
+    account_id: "local-a",
+    account_cohort_id: "cohort-a",
+    credential_kind: "oauth" as const,
+    workspace_id: null,
+    sampled_at_ms: nowMs,
+    source_observed_at_ms: nowMs,
+    state: "available" as const,
+    response_status: 200,
+    windows: { five_hour: { status: "allowed", used_percent: 0, reset_at_ms: nowMs + 18_000_000, observed_at_ms: nowMs }, seven_day: null },
+    standard: [],
+  };
+  const first = mergeClaudeCapacityRollup(null, point, "five_hour");
+  assert.equal(first.min_used_percent, 0);
+  assert.equal(first.last_used_percent, 0);
+  assert.equal(first.samples, 1);
+  const next = {
+    ...point,
+    point_id: "two",
+    sampled_at_ms: nowMs + 1_000,
+    source_observed_at_ms: nowMs + 1_000,
+    windows: { ...point.windows, five_hour: { ...point.windows.five_hour, used_percent: 25, observed_at_ms: nowMs + 1_000 } },
+  };
+  const second = mergeClaudeCapacityRollup(first, next, "five_hour");
+  assert.equal(second.samples, 2);
+  assert.equal(second.min_used_percent, 0);
+  assert.equal(second.max_used_percent, 25);
+  assert.equal(second.last_used_percent, 25);
+  const late = mergeClaudeCapacityRollup(second, point, "five_hour");
+  assert.equal(late.last_used_percent, 25, "late telemetry cannot replace the newest actual observed value");
+  assert.equal(readClaudeCapacityRollup(second)?.last_used_percent, 25);
+  assert.equal(readClaudeCapacityRollup({ ...second, samples: 99 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, min_used_percent: 80, max_used_percent: 20 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, last_used_percent: 26 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, last_source_observed_at_ms: second.last_sampled_at_ms + 1 }), null);
+  assert.equal(readClaudeCapacityRollup({ ...second, first_source_observed_at_ms: null }), null);
+  const reset = { ...point, windows: { ...point.windows, five_hour: { ...point.windows.five_hour, reset_at_ms: nowMs + 36_000_000 } } };
+  assert.notDeepEqual(claudeCapacityRollupKey(reset, "five_hour"), claudeCapacityRollupKey(point, "five_hour"));
+  assert.throws(() => mergeClaudeCapacityRollup(first, reset, "five_hour"), /binding mismatch/);
+  assert.throws(() => mergeClaudeCapacityRollup(first, { ...point, account_cohort_id: "replacement" }, "five_hour"), /binding mismatch/);
 });

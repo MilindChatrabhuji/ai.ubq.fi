@@ -4,15 +4,15 @@ import { type PreflightedResponsesStream, ResponsesStreamError, type ResponsesSt
 import { type PreparedResponsesStream } from "../responses-failover-stream.ts";
 import { getString, isRecord } from "../utils.ts";
 import {
-  ResponseStreamTerminalType,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type UsageContext,
+  type UsageTokens,
   extractUsageTokens,
   recordCompletionUsage,
   recordResponsesEventTelemetry,
   recordStreamTerminalType,
   recordTerminalUsage,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "../openai-telemetry.ts";
 
 export const recordResponsesTerminal = (event: ResponsesStreamEvent, usageContext?: UsageContext): void => {

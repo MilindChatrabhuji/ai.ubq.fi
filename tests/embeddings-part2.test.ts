@@ -1,9 +1,14 @@
+import { test, beforeEach, afterEach } from "bun:test";
+import type { KvKey } from "#kv";
+import { installHarness, cleanupHarness } from "./helpers/embeddings-harness.ts";
+beforeEach(installHarness);
+afterEach(cleanupHarness);
 // embeddings suite part: tests moved out of tests/embeddings.test.ts.
 
 import assert from "node:assert/strict";
 import {
   EMBEDDINGS_JOB_TTL_MS,
-  TestDimension,
+  type TestDimension,
   VOYAGE_RATE_LIMIT_KEY,
   embeddingsCacheKey,
   embeddingsJobKey,
@@ -17,8 +22,6 @@ import {
   keyToString,
   kvExpirations,
   kvStore,
-  originalOpenKv,
-  originalVoyageApiKey,
   resetVoyageRateLimit,
   responseErrorCode,
   setFailNextAtomicCommit,
@@ -31,7 +34,7 @@ import {
   withFetchMock,
 } from "./helpers/embeddings-harness.ts";
 
-Deno.test("uos embeddings: returns 502 when upstream vector length does not match the resolved dimension", async () => {
+test("uos embeddings: returns 502 when upstream vector length does not match the resolved dimension", async () => {
   resetVoyageRateLimit();
   const response = await withFetchMock(
     () =>
@@ -63,7 +66,7 @@ Deno.test("uos embeddings: returns 502 when upstream vector length does not matc
   assert.match(String(payload.error.message), /length 255; expected 256/);
 });
 
-Deno.test("uos embeddings: sync retry reuses the exact resolved Voyage options", async () => {
+test("uos embeddings: sync retry reuses the exact resolved Voyage options", async () => {
   resetVoyageRateLimit();
   const bodies: Record<string, unknown>[] = [];
   const input = `sync-retry-options-${crypto.randomUUID()}`;
@@ -109,7 +112,7 @@ Deno.test("uos embeddings: sync retry reuses the exact resolved Voyage options",
   });
 });
 
-Deno.test("uos embeddings: exhausted upstream 429 preserves status and Retry-After", async () => {
+test("uos embeddings: exhausted upstream 429 preserves status and Retry-After", async () => {
   resetVoyageRateLimit();
   const bodies: Record<string, unknown>[] = [];
   const input = `sync-exhausted-429-${crypto.randomUUID()}`;
@@ -148,7 +151,7 @@ Deno.test("uos embeddings: exhausted upstream 429 preserves status and Retry-Aft
   assert.equal(payload.error.code, "rate_limit_exceeded");
 });
 
-Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () => {
+test("embeddings: 429 includes Retry-After when KV rate limited", async () => {
   const kv = await getKv();
   assert.ok(kv);
   await kv.set(VOYAGE_RATE_LIMIT_KEY, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
@@ -178,7 +181,7 @@ Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () 
   }
 });
 
-Deno.test("embedding jobs: create returns job + result when not rate limited", async () => {
+test("embedding jobs: create returns job + result when not rate limited", async () => {
   resetVoyageRateLimit();
   const input = `job-ok-${crypto.randomUUID()}`;
   const response = await withFetchMock(
@@ -225,7 +228,7 @@ Deno.test("embedding jobs: create returns job + result when not rate limited", a
   assert.ok(Array.isArray(payload.result.data));
 });
 
-Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job", async () => {
+test("embedding jobs: wrong-length upstream vector is a terminal failed job", async () => {
   resetVoyageRateLimit();
   const authToken = `wrong-length-token-${crypto.randomUUID()}`;
   const created = await withFetchMock(
@@ -278,7 +281,7 @@ Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job
   assert.equal(polledPayload.error?.code, "embeddings_job_upstream_dimension_mismatch");
 });
 
-Deno.test("embedding jobs: remain resolvable across token refresh when scoped to kernel repo", async () => {
+test("embedding jobs: remain resolvable across token refresh when scoped to kernel repo", async () => {
   resetVoyageRateLimit();
   const usageContext = {
     keyId: null,
@@ -324,10 +327,10 @@ Deno.test("embedding jobs: remain resolvable across token refresh when scoped to
   assert.equal(gotPayload.status, "succeeded");
 });
 
-Deno.test("embedding jobs: create queues with 202 + Retry-After when KV rate limited", async () => {
+test("embedding jobs: create queues with 202 + Retry-After when KV rate limited", async () => {
   const kv = await getKv();
   assert.ok(kv);
-  const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+  const rateKey: KvKey = ["embeddings", "v1", "rate", "voyage"];
   await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
   try {
     const input = `job-queued-${crypto.randomUUID()}`;
@@ -363,7 +366,7 @@ Deno.test("embedding jobs: create queues with 202 + Retry-After when KV rate lim
   }
 });
 
-Deno.test("embedding jobs: queued query and document profiles persist through poll", async () => {
+test("embedding jobs: queued query and document profiles persist through poll", async () => {
   const kv = await getKv();
   assert.ok(kv);
   await kv.set(VOYAGE_RATE_LIMIT_KEY, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
@@ -502,7 +505,7 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
   }
 });
 
-Deno.test("embedding jobs: retryable upstream failures requeue and preserve the resolved profile", async () => {
+test("embedding jobs: retryable upstream failures requeue and preserve the resolved profile", async () => {
   const retryableStatuses = [429, 500, 502, 503, 504] as const;
 
   for (const status of retryableStatuses) {
@@ -589,7 +592,7 @@ Deno.test("embedding jobs: retryable upstream failures requeue and preserve the 
   }
 });
 
-Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voyage", async () => {
+test("embedding jobs: locked and CAS-contention 202 responses identify Voyage", async () => {
   const kv = await getKv();
   assert.ok(kv);
   await kv.set(VOYAGE_RATE_LIMIT_KEY, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
@@ -656,10 +659,10 @@ Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voya
   }
 });
 
-Deno.test("embedding jobs: poll runs queued job to completion", async () => {
+test("embedding jobs: poll runs queued job to completion", async () => {
   const kv = await getKv();
   assert.ok(kv);
-  const rateKey: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+  const rateKey: KvKey = ["embeddings", "v1", "rate", "voyage"];
   await kv.set(rateKey, { window_start_ms: Date.now(), requests: 3, tokens: 0 });
 
   const input = `job-poll-${crypto.randomUUID()}`;
@@ -722,7 +725,7 @@ Deno.test("embedding jobs: poll runs queued job to completion", async () => {
   assert.equal((payload.result.data[0]?.embedding as unknown[]).length, 512);
 });
 
-Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 guard", async () => {
+test("handler: /uos/embeddings reaches authentication instead of the 404 guard", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(
     new Request("https://ai.ubq.fi/uos/embeddings", {
@@ -740,7 +743,7 @@ Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 gu
   assert.notEqual(response.status, 404);
 });
 
-Deno.test("handler: embeddings preflight permits browser idempotency keys", async () => {
+test("handler: embeddings preflight permits browser idempotency keys", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(
     new Request("https://ai.ubq.fi/uos/embeddings", {
@@ -759,7 +762,7 @@ Deno.test("handler: embeddings preflight permits browser idempotency keys", asyn
   assert.ok(allowedHeaders.includes("idempotency-key"));
 });
 
-Deno.test("handler: an exhausted key still serves local embeddings paths but blocks a dispatch", async () => {
+test("handler: an exhausted key still serves local embeddings paths but blocks a dispatch", async () => {
   const { handleAdminApiKeysCreate } = await import("../src/admin/index.ts");
   const { default: handler } = await import("../src/handler/index.ts");
   const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
@@ -810,13 +813,13 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
   const cacheInput = `exhausted-cache-${crypto.randomUUID()}`;
   const cacheHash = await sha256Hex(cacheInput);
   kvStore.set(keyToString(embeddingsCacheKey(cacheHash)), { embedding: testVector(1024, 7.7), created_at: new Date().toISOString() });
-  const quotaWindowPrefix: Deno.KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
-  const quotaEntry = [...kvStore.entries()].find(([rawKey]) => keyHasPrefix(JSON.parse(rawKey) as Deno.KvKey, quotaWindowPrefix));
+  const quotaWindowPrefix: KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
+  const quotaEntry = [...kvStore.entries()].find(([rawKey]) => keyHasPrefix(JSON.parse(rawKey) as KvKey, quotaWindowPrefix));
   assert.ok(quotaEntry);
   const [rawQuotaKey, rawQuotaWindow] = quotaEntry;
   const quotaKv = await getKv();
   assert.ok(quotaKv);
-  await quotaKv.set(JSON.parse(rawQuotaKey) as Deno.KvKey, {
+  await quotaKv.set(JSON.parse(rawQuotaKey) as KvKey, {
     ...(rawQuotaWindow as Record<string, unknown>),
     committed_requests: 1,
     reserved_requests: 0,
@@ -874,7 +877,7 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
   }
 });
 
-Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without Voyage dispatch", async () => {
+test("handler: authenticated legacy v1 embeddings is a generic 404 without Voyage dispatch", async () => {
   const { handleAdminApiKeysCreate } = await import("../src/admin/index.ts");
   const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
   const created = await handleAdminApiKeysCreate(
@@ -893,10 +896,10 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
   const createdPayload = (await created.json()) as { id?: unknown };
   assert.equal(typeof createdPayload.id, "string");
   const keyId = createdPayload.id as string;
-  const quotaWindowPrefix: Deno.KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
+  const quotaWindowPrefix: KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
   const quotaWindow = (): { committed_requests?: unknown; reserved_requests?: unknown } | null => {
     for (const [rawKey, value] of kvStore.entries()) {
-      const key = JSON.parse(rawKey) as Deno.KvKey;
+      const key = JSON.parse(rawKey) as KvKey;
       if (keyHasPrefix(key, quotaWindowPrefix)) {
         return value as { committed_requests?: unknown; reserved_requests?: unknown };
       }
@@ -938,7 +941,7 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
   assert.equal(quotaAfter.reserved_requests, 0);
 });
 
-Deno.test("handler: idempotency preserves account scopes", async () => {
+test("handler: idempotency preserves account scopes", async () => {
   const { resolveIdempotencyPrincipal } = await import("../src/handler/http.ts");
 
   for (const kind of ["auth_tokens_allowlist", "admin_allowlist", "deno_deploy_token"] as const) {
@@ -995,7 +998,7 @@ Deno.test("handler: idempotency preserves account scopes", async () => {
 
 /** Bounded wait for the admission guard's asynchronous bookkeeping. */
 
-Deno.test("handler: saturated admission refuses a queued embedding-job poll before Voyage", async () => {
+test("handler: saturated admission refuses a queued embedding-job poll before Voyage", async () => {
   const { handleAdminApiKeysCreate } = await import("../src/admin/index.ts");
   const { default: handler } = await import("../src/handler/index.ts");
   const { setInferenceAdmissionControllerForTest } = await import("../src/handler/admission.ts");
@@ -1119,10 +1122,4 @@ Deno.test("handler: saturated admission refuses a queued embedding-job poll befo
     setInferenceAdmissionControllerForTest(null);
     resetVoyageRateLimit();
   }
-});
-
-addEventListener("unload", () => {
-  (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
-  if (originalVoyageApiKey === undefined) Deno.env.delete("VOYAGEAI_API_KEY");
-  else Deno.env.set("VOYAGEAI_API_KEY", originalVoyageApiKey);
 });

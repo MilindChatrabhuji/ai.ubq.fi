@@ -1,3 +1,5 @@
+import type { KvEntry, KvKey, KvKeyPart, KvListIterator, KvListOptions, KvListSelector } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "../src/agent-messages.ts";
 
@@ -30,7 +32,7 @@ const makeAuth =
       method: { kind: "github_token" as const, owner, repo, state_id: stateId, limit_scope: "org" as const },
     });
 
-const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
+const compareKvKeyPart = (left: KvKeyPart, right: KvKeyPart): number => {
   if (left === right) return 0;
   if (typeof left === "number" && typeof right === "number") return left - right;
   if (typeof left === "string" && typeof right === "string") return left < right ? -1 : 1;
@@ -40,7 +42,7 @@ const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number =
   return leftStr < rightStr ? -1 : 1;
 };
 
-const compareKvKey = (left: Deno.KvKey, right: Deno.KvKey): number => {
+const compareKvKey = (left: KvKey, right: KvKey): number => {
   const max = Math.max(left.length, right.length);
   for (let i = 0; i < max; i += 1) {
     if (i >= left.length) return -1;
@@ -51,42 +53,42 @@ const compareKvKey = (left: Deno.KvKey, right: Deno.KvKey): number => {
   return 0;
 };
 
-const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
+const matchesPrefix = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
 class MemoryKv {
   #counter = 0;
-  entries: Deno.KvEntry<unknown>[] = [];
+  entries: KvEntry<unknown>[] = [];
 
-  set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): Promise<{ ok: true }> {
+  set(key: KvKey, value: unknown, _options?: { expireIn?: number }): Promise<{ ok: true }> {
     this.#counter += 1;
     this.entries.push({ key, value, versionstamp: String(this.#counter) });
     return Promise.resolve({ ok: true });
   }
 
-  list<T>(selector: Deno.KvListSelector, options: Deno.KvListOptions = {}): MemoryKvListIterator<T> {
+  list<T>(selector: KvListSelector, options: KvListOptions = {}): MemoryKvListIterator<T> {
     const prefix = "prefix" in selector ? selector.prefix : [];
     let results = this.entries.filter((entry) => matchesPrefix(entry.key, prefix));
     results = results.sort((a, b) => compareKvKey(a.key, b.key));
 
     if ("start" in selector) {
-      // `"start" in selector` narrows Deno.KvListSelector to a variant whose
-      // `start` is a required Deno.KvKey, so it can never be nullish here.
+      // `"start" in selector` narrows KvListSelector to a variant whose
+      // `start` is a required KvKey, so it can never be nullish here.
       results = results.filter((entry) => compareKvKey(entry.key, selector.start) >= 0);
     }
 
     const limit = options.limit ?? results.length;
     const sliced = results.slice(0, limit);
     const cursor = results.length > sliced.length ? "next" : "";
-    return new MemoryKvListIterator<T>(sliced as Deno.KvEntry<T>[], cursor);
+    return new MemoryKvListIterator<T>(sliced as KvEntry<T>[], cursor);
   }
 }
 
-class MemoryKvListIterator<T> implements Deno.KvListIterator<T> {
-  #entries: Deno.KvEntry<T>[];
+class MemoryKvListIterator<T> implements KvListIterator<T> {
+  #entries: KvEntry<T>[];
   #cursor: string;
   #index = 0;
 
-  constructor(entries: Deno.KvEntry<T>[], cursor: string) {
+  constructor(entries: KvEntry<T>[], cursor: string) {
     this.#entries = entries;
     this.#cursor = cursor;
   }
@@ -95,7 +97,7 @@ class MemoryKvListIterator<T> implements Deno.KvListIterator<T> {
     return this.#cursor;
   }
 
-  next(): Promise<IteratorResult<Deno.KvEntry<T>>> {
+  next(): Promise<IteratorResult<KvEntry<T>>> {
     if (this.#index >= this.#entries.length) {
       return Promise.resolve({ done: true, value: undefined });
     }
@@ -104,12 +106,12 @@ class MemoryKvListIterator<T> implements Deno.KvListIterator<T> {
     return Promise.resolve({ done: false, value });
   }
 
-  [Symbol.asyncIterator](): AsyncIterableIterator<Deno.KvEntry<T>> {
+  [Symbol.asyncIterator](): AsyncIterableIterator<KvEntry<T>> {
     return this;
   }
 }
 
-Deno.test("agent-messages: post stores a message", async () => {
+test("agent-messages: post stores a message", async () => {
   const kv = new MemoryKv();
   const req = jsonRequest("https://ai.ubq.fi/uos/agent-messages", {
     agent_id: "agent-1",
@@ -141,7 +143,7 @@ Deno.test("agent-messages: post stores a message", async () => {
   assert.equal(kv.entries.length, 1);
 });
 
-Deno.test("agent-messages: list returns messages and cursor info", async () => {
+test("agent-messages: list returns messages and cursor info", async () => {
   const kv = new MemoryKv();
   const auth = makeAuth();
 
@@ -179,7 +181,7 @@ Deno.test("agent-messages: list returns messages and cursor info", async () => {
   assert.equal(payload.next_cursor, "next");
 });
 
-Deno.test("agent-messages: list returns null next_since when empty", async () => {
+test("agent-messages: list returns null next_since when empty", async () => {
   const kv = new MemoryKv();
   const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-messages"), {
     authenticateClient: makeAuth(),

@@ -75,8 +75,8 @@ export const clearLithosFailoverWindows = (): void => {
   lithosFailoverWindows.clear();
 };
 
-/** Records the sibling that served a request whose own tier refused it. */
-export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {
+/** Records the final tier that served a request, or clears it when the requested tier served. */
+export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string | null): void => {
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;
 };
 
@@ -158,15 +158,20 @@ export const logLithosRateLimitWait = (fields: LithosRateLimitLogFields): void =
   }
 };
 
+const lithosRetryAbortError = (signal: AbortSignal): Error => {
+  const reason: unknown = signal.reason;
+  if (reason instanceof Error) return reason;
+  if (reason === undefined) return new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError");
+  const error = new Error("The request was aborted while waiting for the LithosAI rate limit to reset.", { cause: reason });
+  error.name = "AbortError";
+  return error;
+};
+
 /** Abort-aware sleep: an abandoned request never keeps waiting for a provider window. */
 export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): Promise<void> => {
   if (milliseconds <= 0) return Promise.resolve();
   if (signal.aborted) {
-    return Promise.reject(
-      signal.reason === undefined
-        ? new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
-        : signal.reason
-    );
+    return Promise.reject(lithosRetryAbortError(signal));
   }
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -175,11 +180,7 @@ export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): P
     }, milliseconds);
     function onAbort(): void {
       clearTimeout(timer);
-      reject(
-        signal.reason === undefined
-          ? new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
-          : signal.reason
-      );
+      reject(lithosRetryAbortError(signal));
     }
     signal.addEventListener("abort", onAbort, { once: true });
   });

@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 /**
  * Live Harmony/Cerebras protocol probe (plan m01, acceptance surface 1).
  *
@@ -15,7 +16,7 @@
  * keys never appear; only request metadata, response metadata and a short
  * final-content preview are recorded.
  *
- * Run with: deno run --allow-env=CEREBRAS_API_KEY --allow-net=api.cerebras.ai --allow-write=docs/probes scripts/probes/cerebras-harmony-probes.ts
+ * Run with: bun run scripts/probes/cerebras-harmony-probes.ts
  */
 
 import { readCerebrasApiKey } from "../../src/provider/cerebras.ts";
@@ -29,9 +30,9 @@ const API_KEY_MISSING_NOTICE = "CEREBRAS_API_KEY is not set; live Harmony protoc
 const utcStamp = (date: Date): string => date.toISOString().replaceAll(":", "-").replaceAll(".", "-").slice(0, 19);
 
 const writeJsonl = async (path: URL, results: readonly ProbeScenarioResult[]): Promise<void> => {
-  await Deno.mkdir(new URL(".", path), { recursive: true }).catch(() => {});
+  await mkdir(new URL(".", path), { recursive: true }).catch(() => {});
   const lines = results.map((result) => JSON.stringify({ probeVersion: "m01", ...result }));
-  await Deno.writeTextFile(path, `${lines.join("\n")}\n`);
+  await writeFile(path, `${lines.join("\n")}\n`);
 };
 
 const runManifest = async (ctx: ProbeContext): Promise<ProbeScenarioResult[]> => {
@@ -64,7 +65,7 @@ console.log(`Harmony/Cerebras protocol probes (m01) — model gpt-oss-120b`);
 const apiKey = readCerebrasApiKey();
 if (!apiKey) {
   console.error(API_KEY_MISSING_NOTICE);
-  Deno.exit(0);
+  process.exit(0);
 }
 
 const transport = createCerebrasTransport({ apiKey });

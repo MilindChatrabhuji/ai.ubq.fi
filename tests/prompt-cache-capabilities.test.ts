@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { mergeCodexModelPromptCacheCapabilities, normalizeCodexModelsPayload, normalizePromptCacheCapabilities } from "../src/models/codex-models.ts";
 
@@ -43,7 +44,7 @@ const promptCacheEvidence = {
   ],
 };
 
-Deno.test("Codex model normalization retains only versioned prompt-cache metadata", () => {
+test("Codex model normalization retains only versioned prompt-cache metadata", () => {
   const snapshot = normalizeCodexModelsPayload({
     source: "catalog-fixture",
     updated_at_ms: 1_100,
@@ -71,7 +72,7 @@ Deno.test("Codex model normalization retains only versioned prompt-cache metadat
   assert.equal(Object.prototype.hasOwnProperty.call(snapshot.models[2], "prompt_cache"), false);
 });
 
-Deno.test("prompt-cache metadata rejects unknown shape and duplicate provider identities", () => {
+test("prompt-cache metadata rejects unknown shape and duplicate provider identities", () => {
   assert.equal(normalizePromptCacheCapabilities({ version: 2, providers: [] }), null);
   assert.equal(normalizePromptCacheCapabilities({ version: 1, providers: [] }), null);
   assert.equal(
@@ -90,7 +91,7 @@ Deno.test("prompt-cache metadata rejects unknown shape and duplicate provider id
   );
 });
 
-Deno.test("prompt-cache metadata exposes only gateway-supported cache controls", () => {
+test("prompt-cache metadata exposes only gateway-supported cache controls", () => {
   const normalized = normalizePromptCacheCapabilities({
     version: 1,
     providers: [
@@ -130,7 +131,7 @@ Deno.test("prompt-cache metadata exposes only gateway-supported cache controls",
   });
 });
 
-Deno.test("prompt-cache scope requires three reproducible cycles before publication", () => {
+test("prompt-cache scope requires three reproducible cycles before publication", () => {
   const earlyScope = {
     version: 1,
     providers: [
@@ -220,7 +221,7 @@ Deno.test("prompt-cache scope requires three reproducible cycles before publicat
   assert.equal(normalizePromptCacheCapabilities(priorExperimentDefinition), null);
 });
 
-Deno.test("catalog prompt-cache merges retain same-slug provider evidence without cross-provider collapse", () => {
+test("catalog prompt-cache merges retain same-slug provider evidence without cross-provider collapse", () => {
   const previous = normalizeCodexModelsPayload({
     source: "probe",
     updated_at_ms: 1_200,

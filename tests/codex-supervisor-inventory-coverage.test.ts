@@ -1,3 +1,10 @@
+import { test, beforeAll, afterAll } from "bun:test";
+import { hostname, tmpdir } from "node:os";
+import { join } from "node:path";
+import { mkdir, mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { buildPermissionsNative } from "../scripts/build-permissions.ts";
+import { applyLinuxPermissions } from "../src/runtime/permissions-linux.ts";
 import assert from "node:assert/strict";
 
 import { classifySupervisorState, ensureSupervisorSnapshot, newestTurnOf, quotaFromRateLimits, sessionFromParts } from "../src/codex/supervisor-inventory.ts";
@@ -23,9 +30,42 @@ import {
   type SupervisorBriefContext,
 } from "../src/codex/supervisor-brief.ts";
 
+// This disposable test process uses actual kernel read/exec denial, not a JS permission facade.
+const INITIAL_CWD = process.cwd();
+const CONFINED_CWD = await mkdtemp(join(tmpdir(), "m09-supervisor-"));
+const CONFIG_DIR = join(CONFINED_CWD, ".data");
+const CONFIG_FILE = join(CONFIG_DIR, "codex-supervisor.json");
+const NATIVE_DIR = join(CONFINED_CWD, "native");
+await mkdir(CONFIG_DIR);
+await writeFile(CONFIG_FILE, JSON.stringify({ sources: [] }), { flag: "wx" });
+const artifact = await buildPermissionsNative(NATIVE_DIR);
+beforeAll(() => {
+  assert.equal(process.env.HOME, undefined);
+  assert.equal(process.env.CODEX_HOME, undefined);
+  process.chdir(CONFINED_CWD);
+  applyLinuxPermissions(
+    { read: ["src", "tests", "scripts", "node_modules", "package.json"].map((path) => join(INITIAL_CWD, path)), write: [CONFINED_CWD] },
+    artifact
+  );
+  assert.throws(
+    () => readFileSync(CONFIG_FILE),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "EACCES"
+  );
+});
+afterAll(async () => {
+  process.chdir(INITIAL_CWD);
+  await unlink(CONFIG_FILE);
+  await unlink(join(NATIVE_DIR, "manifest.json"));
+  await unlink(artifact.path);
+  await rmdir(CONFIG_DIR);
+  await rmdir(NATIVE_DIR);
+  // Its parent is outside the child write grants; the worker removes this empty root after exit.
+  console.info("m09-supervisor-fixture:", CONFINED_CWD);
+});
+
 /* --------------------------------------------------- inventory: projections */
 
-Deno.test("quotaFromRateLimits falls back to the account-wide bucket when no per-limit map exists", () => {
+test("quotaFromRateLimits falls back to the account-wide bucket when no per-limit map exists", () => {
   const quota = quotaFromRateLimits({ rateLimits: { limitId: "codex", primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1_790_000_000 } } });
   assert.ok(quota, "a single account-wide bucket must still be reported");
   assert.equal(quota.accountScope, "shared_codex_account");
@@ -43,7 +83,7 @@ Deno.test("quotaFromRateLimits falls back to the account-wide bucket when no per
   ]);
 });
 
-Deno.test("quotaFromRateLimits ignores non-object buckets and prefers explicit bucket fields over the legacy primary window", () => {
+test("quotaFromRateLimits ignores non-object buckets and prefers explicit bucket fields over the legacy primary window", () => {
   const quota = quotaFromRateLimits({
     rateLimits: { limitId: "codex" },
     rateLimitsByLimitId: {
@@ -63,7 +103,7 @@ Deno.test("quotaFromRateLimits ignores non-object buckets and prefers explicit b
   assert.equal(quota.buckets[0].reachedType, "primary");
 });
 
-Deno.test("quotaFromRateLimits reads the fallback bucket fields from the nested primary window", () => {
+test("quotaFromRateLimits reads the fallback bucket fields from the nested primary window", () => {
   const quota = quotaFromRateLimits({ rateLimits: { limitId: null, primary: { usedPercent: 7, windowDurationMins: 5, resetsAt: 1_790_000_200 } } });
   assert.ok(quota);
   assert.deepEqual(quota.buckets[0], {
@@ -77,7 +117,7 @@ Deno.test("quotaFromRateLimits reads the fallback bucket fields from the nested 
   });
 });
 
-Deno.test("newestTurnOf reports only a well-formed turn record", () => {
+test("newestTurnOf reports only a well-formed turn record", () => {
   assert.equal(newestTurnOf(null), null);
   assert.equal(newestTurnOf({ data: "not-an-array" }), null);
   assert.equal(newestTurnOf({ data: [null] }), null);
@@ -89,7 +129,7 @@ Deno.test("newestTurnOf reports only a well-formed turn record", () => {
   assert.equal(newestTurnOf({ data: [7, { id: "turn-2", status: null }] }), null, "only the newest record is read, so a non-record head means no turn");
 });
 
-Deno.test("classifySupervisorState and sessionFromParts keep a source that answered nothing honestly unknown", () => {
+test("classifySupervisorState and sessionFromParts keep a source that answered nothing honestly unknown", () => {
   assert.equal(classifySupervisorState({ runtimeStatus: null, turnStatus: null, loaded: false }), "unknown");
   const source: SupervisorSource = { id: "local", name: "This Mac", socketPath: "/var/lib/uos-supervisor/local.sock", codexHome: "/home/tester/.codex" };
   const session = sessionFromParts({
@@ -116,9 +156,9 @@ Deno.test("classifySupervisorState and sessionFromParts keep a source that answe
 
 /* ----------------------------------------------- inventory: snapshot assembly */
 
-Deno.test("ensureSupervisorSnapshot reports an empty inventory when no source can be resolved and caches the single sampling round", async () => {
-  // The prescribed test command grants no read or env access, so neither the
-  // optional configuration file nor HOME/CODEX_HOME can be read: the honest
+test("ensureSupervisorSnapshot reports an empty inventory when no source can be resolved and caches the single sampling round", async () => {
+  // The kernel denies the existing configuration file and the sparse profile omits
+  // HOME/CODEX_HOME: the honest
   // result is zero sources and zero sessions, never an invented local source.
   const [first, concurrent] = await Promise.all([ensureSupervisorSnapshot(), ensureSupervisorSnapshot()]);
   assert.equal(first, concurrent, "two polls that overlap must share one sampling round");
@@ -140,16 +180,16 @@ Deno.test("ensureSupervisorSnapshot reports an empty inventory when no source ca
 
 /* ------------------------------------------------------- supervisor-config */
 
-Deno.test("uniqueStrings keeps first-seen order and readHostname never invents a hostname", () => {
+test("uniqueStrings keeps first-seen order and readHostname never invents a hostname", () => {
   assert.deepEqual(uniqueStrings(["b", "a", "b", "c", "a"]), ["b", "a", "c"]);
   assert.deepEqual(uniqueStrings([]), []);
-  // `Deno.hostname()` needs sys permission, which the test command does not grant.
-  assert.equal(readHostname(), null, "an unavailable hostname is reported as null");
+  // Bun exposes the actual OS hostname independently of filesystem confinement.
+  assert.equal(readHostname(), hostname(), "the available hostname is reported without invention");
   assert.equal(boundedText("short", 10), "short");
   assert.equal(boundedText("0123456789", 5), "01234…");
 });
 
-Deno.test("waitForPoll resolves on its own deadline and immediately on abort", async () => {
+test("waitForPoll resolves on its own deadline and immediately on abort", async () => {
   const startedAt = performance.now();
   await waitForPoll(25, new AbortController().signal);
   assert.ok(performance.now() - startedAt >= 20, "an unaborted poll waits for its deadline");
@@ -162,7 +202,7 @@ Deno.test("waitForPoll resolves on its own deadline and immediately on abort", a
   assert.ok(performance.now() - abortedStart < 1_000, "an aborted poll must not wait out its deadline");
 });
 
-Deno.test("mapWithConcurrency preserves result order and never exceeds its concurrency limit", async () => {
+test("mapWithConcurrency preserves result order and never exceeds its concurrency limit", async () => {
   let active = 0;
   let peak = 0;
   const results = await mapWithConcurrency([1, 2, 3, 4, 5], 2, async (item) => {
@@ -177,7 +217,7 @@ Deno.test("mapWithConcurrency preserves result order and never exceeds its concu
   assert.deepEqual(await mapWithConcurrency([], 4, () => Promise.resolve("unused")), []);
 });
 
-Deno.test("parseSupervisorConfig names every reason a source was ignored", () => {
+test("parseSupervisorConfig names every reason a source was ignored", () => {
   const longName = "n".repeat(65);
   const parsed = parseSupervisorConfig({
     sources: [
@@ -198,7 +238,7 @@ Deno.test("parseSupervisorConfig names every reason a source was ignored", () =>
   assert.ok(parsed.notes.some((note) => note.includes("socketPath must be an absolute path") || note.includes("id must match")));
 });
 
-Deno.test("parseSupervisorConfig caps the usable source list and says so", () => {
+test("parseSupervisorConfig caps the usable source list and says so", () => {
   const sources = Array.from({ length: 9 }, (_value, index) => ({
     id: `source-${index}`,
     name: `Source ${index}`,
@@ -210,8 +250,8 @@ Deno.test("parseSupervisorConfig caps the usable source list and says so", () =>
   assert.ok(parsed.notes.includes("only the first 8 sources are used"));
 });
 
-Deno.test("resolveSupervisorConfig falls back to the local source and reports an unreadable configuration", async () => {
-  const missing = await resolveSupervisorConfig({ cwd: "/definitely/not/a/repository", env: () => undefined });
+test("resolveSupervisorConfig falls back to the local source and reports an unreadable configuration", async () => {
+  const missing = await resolveSupervisorConfig({ cwd: CONFINED_CWD, env: () => undefined });
   assert.equal(missing.configLoaded, false);
   assert.deepEqual(missing.sources, [], "no environment and no config file means no source at all");
   assert.ok(missing.notes.some((note) => note.includes(".data/codex-supervisor.json could not be read")));
@@ -219,7 +259,7 @@ Deno.test("resolveSupervisorConfig falls back to the local source and reports an
   assert.ok(missing.configPath.endsWith(".data/codex-supervisor.json"));
 
   const fromHome = await resolveSupervisorConfig({
-    cwd: "/definitely/not/a/repository",
+    cwd: CONFINED_CWD,
     env: (name) => (name === "HOME" ? "/home/tester/" : undefined),
   });
   assert.deepEqual(fromHome.sources, [
@@ -233,7 +273,7 @@ Deno.test("resolveSupervisorConfig falls back to the local source and reports an
   assert.equal(fromHome.configLoaded, false);
 
   const fromCodexHome = await resolveSupervisorConfig({
-    cwd: "/definitely/not/a/repository",
+    cwd: CONFINED_CWD,
     env: (name) => (name === "CODEX_HOME" ? "/custom/codex" : "/home/tester"),
   });
   assert.equal(fromCodexHome.sources[0]?.codexHome, "/custom/codex");
@@ -369,7 +409,7 @@ const withScriptedSockets = async (run: () => Promise<void>): Promise<void> => {
 
 const deferredSignal = (): AbortSignal => new AbortController().signal;
 
-Deno.test("the transport handshakes, targets the configured socket and resolves read-only calls", async () => {
+test("the transport handshakes, targets the configured socket and resolves read-only calls", async () => {
   await withScriptedSockets(async () => {
     const responder: RpcResponder = (method) => {
       if (method === "thread/read") return { thread: { id: "thread-1", name: "Covered" } };
@@ -404,7 +444,7 @@ Deno.test("the transport handshakes, targets the configured socket and resolves 
   });
 });
 
-Deno.test("the transport closes cleanly: close frame, termination, failed pending calls and a no-op second close", async () => {
+test("the transport closes cleanly: close frame, termination, failed pending calls and a no-op second close", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan((method) => (method === "initialize" ? {} : DEFER));
     const connection = await openSupervisorConnection("/var/lib/uos-supervisor/closing.sock");
@@ -422,7 +462,7 @@ Deno.test("the transport closes cleanly: close frame, termination, failed pendin
   });
 });
 
-Deno.test("a close whose frame fails is still terminated", async () => {
+test("a close whose frame fails is still terminated", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan(() => ({}));
     const connection = await openSupervisorConnection("/var/lib/uos-supervisor/close-throws.sock");
@@ -433,7 +473,7 @@ Deno.test("a close whose frame fails is still terminated", async () => {
   });
 });
 
-Deno.test("a socket that already reported itself closed is not closed twice", async () => {
+test("a socket that already reported itself closed is not closed twice", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan(() => ({}));
     const connection = await openSupervisorConnection("/var/lib/uos-supervisor/already-closed.sock");
@@ -445,7 +485,7 @@ Deno.test("a socket that already reported itself closed is not closed twice", as
   });
 });
 
-Deno.test("calls fail fast on a closed socket, an aborted signal and a send failure", async () => {
+test("calls fail fast on a closed socket, an aborted signal and a send failure", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan(() => ({}));
     const connection = await openSupervisorConnection("/var/lib/uos-supervisor/fail-fast.sock");
@@ -468,7 +508,7 @@ Deno.test("calls fail fast on a closed socket, an aborted signal and a send fail
   });
 });
 
-Deno.test("an aborted call signal rejects the exact pending call", async () => {
+test("an aborted call signal rejects the exact pending call", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan((method) => (method === "initialize" ? {} : DEFER));
     const connection = await openSupervisorConnection("/var/lib/uos-supervisor/abort-pending.sock");
@@ -479,7 +519,7 @@ Deno.test("an aborted call signal rejects the exact pending call", async () => {
   });
 });
 
-Deno.test("an aborted sampling signal never opens a socket", async () => {
+test("an aborted sampling signal never opens a socket", async () => {
   await withScriptedSockets(async () => {
     const controller = new AbortController();
     controller.abort();
@@ -488,7 +528,7 @@ Deno.test("an aborted sampling signal never opens a socket", async () => {
   });
 });
 
-Deno.test("message frames are decoded as text, bytes or multipart arrays and malformed frames are ignored", async () => {
+test("message frames are decoded as text, bytes or multipart arrays and malformed frames are ignored", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan((method) => (method === "initialize" ? {} : DEFER));
     const connection = await openSupervisorConnection("/var/lib/uos-supervisor/frames.sock");
@@ -515,7 +555,7 @@ Deno.test("message frames are decoded as text, bytes or multipart arrays and mal
   });
 });
 
-Deno.test("an error frame rejects the pending call with the bounded upstream message", async () => {
+test("an error frame rejects the pending call with the bounded upstream message", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan((method) => (method === "initialize" ? {} : DEFER));
     const connection = await openSupervisorConnection("/var/lib/uos-supervisor/errors.sock");
@@ -535,7 +575,7 @@ Deno.test("an error frame rejects the pending call with the bounded upstream mes
 });
 /* ---------------------------------------------------- supervisor-brief */
 
-Deno.test("collectSupervisorBriefContext reads one redacted transcript through the read-only allowlist", async () => {
+test("collectSupervisorBriefContext reads one redacted transcript through the read-only allowlist", async () => {
   await withScriptedSockets(async () => {
     const thread = {
       id: "thread-1",
@@ -607,7 +647,7 @@ Deno.test("collectSupervisorBriefContext reads one redacted transcript through t
   });
 });
 
-Deno.test("collectSupervisorBriefContext tolerates unusable pages and skips malformed turns and items", async () => {
+test("collectSupervisorBriefContext tolerates unusable pages and skips malformed turns and items", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan((method, params) => {
       if (method === "thread/read") return { thread: { id: "thread-1", status: { type: "idle" } } };
@@ -651,7 +691,7 @@ Deno.test("collectSupervisorBriefContext tolerates unusable pages and skips malf
   });
 });
 
-Deno.test("assembleBriefContext spends the budget newest-first, drops content-free turns and reports truncation", () => {
+test("assembleBriefContext spends the budget newest-first, drops content-free turns and reports truncation", () => {
   const item = (text: string) => ({ type: "assistant", text });
   const turnOf = (id: string, items: { type: string; text: string }[], extra: { droppedItems?: number; startedAtMs?: number } = {}) => ({
     id,
@@ -702,7 +742,7 @@ Deno.test("assembleBriefContext spends the budget newest-first, drops content-fr
   assert.doesNotMatch(redaction.turns[0]?.items.map((entry) => entry.text).join("\n") ?? "", /abcdefghijklmnop/);
 });
 
-Deno.test("appendRolloutTailTurn drops stale, duplicate and empty events and keeps the newest items", () => {
+test("appendRolloutTailTurn drops stale, duplicate and empty events and keeps the newest items", () => {
   const turns = [
     {
       id: "turn-1",
@@ -750,7 +790,7 @@ Deno.test("appendRolloutTailTurn drops stale, duplicate and empty events and kee
   assert.equal(cappedTail.droppedItems, 2);
 });
 
-Deno.test("parseSupervisorBriefOutput accepts only a usable two-field JSON object", () => {
+test("parseSupervisorBriefOutput accepts only a usable two-field JSON object", () => {
   assert.deepEqual(parseSupervisorBriefOutput('{"about":"a","status":"b"}'), { about: "a", status: "b" });
   assert.deepEqual(parseSupervisorBriefOutput('```json\n{"about":"a","status":"b"}\n```'), { about: "a", status: "b" });
   assert.deepEqual(parseSupervisorBriefOutput('{"about":"  spaced \\n out ","status":"ok"}'), { about: "spaced out", status: "ok" });
@@ -766,7 +806,7 @@ Deno.test("parseSupervisorBriefOutput accepts only a usable two-field JSON objec
   assert.equal(parseSupervisorBriefOutput(""), null);
 });
 
-Deno.test("buildSupervisorBriefRequestBody bounds the prompt, names unavailable metadata and keeps the model contract", () => {
+test("buildSupervisorBriefRequestBody bounds the prompt, names unavailable metadata and keeps the model contract", () => {
   const emptyContext: SupervisorBriefContext = {
     sourceId: "vps",
     machine: "vps.pavelcik.com",
@@ -826,7 +866,7 @@ Deno.test("buildSupervisorBriefRequestBody bounds the prompt, names unavailable 
   assert.ok(hugeMessages[1].content.endsWith("…"));
 });
 
-Deno.test("handleAdminCodexSupervisorBrief validates the request body and refuses an unknown source", async () => {
+test("handleAdminCodexSupervisorBrief validates the request body and refuses an unknown source", async () => {
   const send = (body: string): Promise<Response> =>
     handleAdminCodexSupervisorBrief(
       new Request("https://ai.ubq.fi/admin/codex/supervisor/brief", { method: "POST", body, headers: { "Content-Type": "application/json" } })
@@ -849,7 +889,7 @@ Deno.test("handleAdminCodexSupervisorBrief validates the request body and refuse
   assert.equal(((await unknownSource.json()) as { error: { message: string } }).error.message, "Unknown supervisor source");
 });
 
-Deno.test("a repeated opening turn is merged and an empty newest turn is enriched from the single frame-safe full read", async () => {
+test("a repeated opening turn is merged and an empty newest turn is enriched from the single frame-safe full read", async () => {
   await withScriptedSockets(async () => {
     const thread = { id: "thread-1", name: "Enrichment", updatedAt: 1_790_001_500 };
     const fullRequests: Record<string, unknown>[] = [];
@@ -935,7 +975,7 @@ Deno.test("a repeated opening turn is merged and an empty newest turn is enriche
   });
 });
 
-Deno.test("brief tail pages keep the newest items, skip content-free parts and tolerate a repeated turn with no opening request", async () => {
+test("brief tail pages keep the newest items, skip content-free parts and tolerate a repeated turn with no opening request", async () => {
   await withScriptedSockets(async () => {
     ScriptedSocket.plan((method, params) => {
       if (method === "thread/read") return { thread: { id: "thread-1", status: { type: "idle" } } };
@@ -991,7 +1031,7 @@ Deno.test("brief tail pages keep the newest items, skip content-free parts and t
   });
 });
 
-Deno.test("parseSupervisorConfig reports a duplicate id and a relative socket path", () => {
+test("parseSupervisorConfig reports a duplicate id and a relative socket path", () => {
   const parsed = parseSupervisorConfig({
     sources: [
       { id: "dupe", name: "First", socketPath: "/var/lib/uos-supervisor/a.sock" },
@@ -1007,7 +1047,7 @@ Deno.test("parseSupervisorConfig reports a duplicate id and a relative socket pa
   assert.ok(parsed.notes.includes("ignored source relative: socketPath must be an absolute path"));
 });
 
-Deno.test("handleAdminCodexSupervisorBrief refuses a JSON body that is not an object", async () => {
+test("handleAdminCodexSupervisorBrief refuses a JSON body that is not an object", async () => {
   const response = await handleAdminCodexSupervisorBrief(
     new Request("https://ai.ubq.fi/admin/codex/supervisor/brief", {
       method: "POST",
@@ -1019,7 +1059,7 @@ Deno.test("handleAdminCodexSupervisorBrief refuses a JSON body that is not an ob
   assert.equal(((await response.json()) as { error: { message: string } }).error.message, "Expected a JSON body with source and id");
 });
 
-Deno.test("an empty opening turn older than the newest turn keeps its honest absence while the newest turn is enriched", async () => {
+test("an empty opening turn older than the newest turn keeps its honest absence while the newest turn is enriched", async () => {
   await withScriptedSockets(async () => {
     const fullCalls: Record<string, unknown>[] = [];
     ScriptedSocket.plan((method, params) => {

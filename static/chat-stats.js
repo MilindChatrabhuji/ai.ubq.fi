@@ -25,12 +25,14 @@ export const readChatCompletionUsage = (value) => {
 
   const details = value.prompt_tokens_details;
   const promptTokenDetails = details && typeof details === "object" && !Array.isArray(details) ? details : null;
-  const cachedInputTokens = promptTokenDetails && "cached_tokens" in promptTokenDetails
-    ? getNonNegativeInteger(promptTokenDetails.cached_tokens)
-    : null;
-  const cacheWriteInputTokens = promptTokenDetails && "cache_write_tokens" in promptTokenDetails
-    ? getNonNegativeInteger(promptTokenDetails.cache_write_tokens)
-    : null;
+  const cachedInputTokens =
+    promptTokenDetails && "cached_tokens" in promptTokenDetails
+      ? getNonNegativeInteger(promptTokenDetails.cached_tokens)
+      : null;
+  const cacheWriteInputTokens =
+    promptTokenDetails && "cache_write_tokens" in promptTokenDetails
+      ? getNonNegativeInteger(promptTokenDetails.cache_write_tokens)
+      : null;
 
   return {
     inputTokens,
@@ -124,7 +126,7 @@ export const recordCompletedChatResponse = (stats, sample = {}) => {
 export const formatChatTokens = (tokens) => {
   const value = getNonNegativeInteger(tokens);
   if (value === null) return null;
-  const scaled = (number) => number >= 100 ? String(Math.round(number)) : String(Math.round(number * 10) / 10);
+  const scaled = (number) => (number >= 100 ? String(Math.round(number)) : String(Math.round(number * 10) / 10));
   if (value < 1_000) return String(value);
   if (value < 1_000_000) return `${scaled(value / 1_000)}K`;
   return `${scaled(value / 1_000_000)}M`;
@@ -153,9 +155,7 @@ const roundedIntegerPercent = (cacheReadTokens, denominator) => {
   while (lower < upper) {
     const candidate = Math.floor((lower + upper + 1) / 2);
     const factor = candidate * 2 - 1;
-    if (
-      cacheReadTokens >= factor * denominatorQuotient + Math.ceil(factor * denominatorRemainder / 200)
-    ) {
+    if (cacheReadTokens >= factor * denominatorQuotient + Math.ceil((factor * denominatorRemainder) / 200)) {
       lower = candidate;
     } else {
       upper = candidate - 1;
@@ -186,7 +186,7 @@ export const formatCacheHitPercent = (cacheReadTokens, inputTokens) => {
   let roundedLoss = 5;
   for (let loss = 1; loss < 5; loss += 1) {
     const factor = loss * 2 + 1;
-    const threshold = factor * denominatorTens + Math.floor(factor * denominatorOnes / 10);
+    const threshold = factor * denominatorTens + Math.floor((factor * denominatorOnes) / 10);
     if (scaledDoubleGap <= threshold) {
       roundedLoss = loss;
       break;
@@ -225,7 +225,10 @@ export const formatChatStatsLine = (stats = {}) => {
   const usageSamples = getNonNegativeInteger(stats.usageSamples);
   const hasCompleteUsage = usageSamples !== null && usageSamples === turns;
   if (
-    hasCompleteUsage && throughputSamples === turns && throughputTokens !== null && throughputMs !== null &&
+    hasCompleteUsage &&
+    throughputSamples === turns &&
+    throughputTokens !== null &&
+    throughputMs !== null &&
     throughputMs > 0
   ) {
     const throughput = formatTokensPerSecond(throughputTokens / (throughputMs / 1_000));
@@ -291,16 +294,16 @@ export const parseChatCompletionStreamEvent = (dataText) => {
   const error = payload.error;
   if (error !== undefined && error !== null) {
     if (typeof error !== "object" || Array.isArray(error)) return { kind: "invalid" };
-    const message = typeof error.message === "string" && error.message.trim()
-      ? error.message.trim()
-      : "The response stream failed.";
+    const message =
+      typeof error.message === "string" && error.message.trim() ? error.message.trim() : "The response stream failed.";
     return { kind: "error", message };
   }
 
   if (!Array.isArray(payload.choices)) return { kind: "invalid" };
   if (payload.usage !== undefined && payload.usage !== null) {
     if (
-      typeof payload.usage !== "object" || Array.isArray(payload.usage) ||
+      typeof payload.usage !== "object" ||
+      Array.isArray(payload.usage) ||
       readChatCompletionUsage(payload.usage) === null
     ) {
       return { kind: "invalid" };

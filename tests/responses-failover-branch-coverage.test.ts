@@ -1,3 +1,5 @@
+import { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { test } from "bun:test";
 // Branch-coverage tests for src/responses-failover-stream.ts.
 //
 // The module is a pure event classifier plus one owned ReadableStream. These
@@ -32,7 +34,7 @@ const event = (value: Record<string, unknown>): ResponsesStreamEvent => response
 // asynchronous source exactly like the upstream reader does.
 const iterator = (events: readonly ResponsesStreamEvent[]): ResponsesStreamIterator =>
   (async function* () {
-    yield* ReadableStream.from(events);
+    yield* NodeReadableStream.from(events);
   })();
 
 /** An iterator whose first read rejects, built without a yield-less generator body. */
@@ -77,7 +79,7 @@ const flushMicrotasks = async (): Promise<void> => {
 const sseData = (text: string): Record<string, unknown>[] =>
   [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1] as string) as Record<string, unknown>);
 
-Deno.test("semantic classifier rejects incomplete executable tool call items", () => {
+test("semantic classifier rejects incomplete executable tool call items", () => {
   const kinds = [
     event({ type: "response.output_item.done", item: { type: "function_call", name: "lookup", arguments: "{}" } }),
     event({ type: "response.output_item.done", item: { type: "function_call", call_id: "call_1", arguments: "{}" } }),
@@ -98,7 +100,7 @@ Deno.test("semantic classifier rejects incomplete executable tool call items", (
   );
 });
 
-Deno.test("semantic classifier accepts hosted tool lifecycles and ignores other statuses", () => {
+test("semantic classifier accepts hosted tool lifecycles and ignores other statuses", () => {
   for (const status of ["in_progress", "completed", "failed"]) {
     assert.equal(responsesEventSemanticKind(event({ type: "response.output_item.done", item: { type: "web_search_call", status } })), "tool_call", status);
   }
@@ -109,7 +111,7 @@ Deno.test("semantic classifier accepts hosted tool lifecycles and ignores other 
   assert.equal(responsesEventSemanticKind(event({ type: "response.web_search_call.searching" })), null);
 });
 
-Deno.test("semantic classifier reads output payloads, content parts and image partials", () => {
+test("semantic classifier reads output payloads, content parts and image partials", () => {
   const payload = (output: unknown): ResponsesStreamEvent => event({ type: "response.completed", response: { id: "resp_1", output } });
   assert.equal(responsesEventSemanticKind(payload([{ type: "message", content: [{ type: "output_text", text: "hello" }] }])), "text");
   assert.equal(responsesEventSemanticKind(payload([{ type: "message", content: [{ type: "output_text", text: "" }] }])), null);
@@ -136,7 +138,7 @@ Deno.test("semantic classifier reads output payloads, content parts and image pa
   assert.equal(responsesEventSemanticKind(event({ type: "response.image_generation_call.partial_image" })), null);
 });
 
-Deno.test("progress detector reports reasoning work and ignores unusable identifiers", () => {
+test("progress detector reports reasoning work and ignores unusable identifiers", () => {
   assert.equal(responsesEventReportsProgress(event({ type: "response.reasoning_summary_part.added", summary_index: 2 })), true);
   assert.equal(responsesEventReportsProgress(event({ type: "response.reasoning_summary_part.added" })), false);
   assert.equal(responsesEventReportsProgress(event({ type: "response.reasoning_summary_text.delta", delta: "x", summary_index: "0" })), false);
@@ -148,7 +150,7 @@ Deno.test("progress detector reports reasoning work and ignores unusable identif
   assert.equal(responsesEventReportsProgress(event({ type: "response.output_text.delta", delta: "visible" })), false);
 });
 
-Deno.test("precommit buffering enforces its event and character budgets", () => {
+test("precommit buffering enforces its event and character budgets", () => {
   const buffered: ResponsesStreamEvent[] = [];
   const single = event({ type: "response.output_text.delta", delta: "x" });
   assert.equal(appendResponsesPrecommitEvent(buffered, single, 0), single.raw.length);
@@ -166,7 +168,7 @@ Deno.test("precommit buffering enforces its event and character budgets", () => 
   );
 });
 
-Deno.test("precommit preparation stops at semantic output, terminal events and premature EOF", async () => {
+test("precommit preparation stops at semantic output, terminal events and premature EOF", async () => {
   const semantic = event({ type: "response.output_text.delta", delta: "hello" });
   const prepared = await prepareResponsesStreamForCommit(iterator([event({ type: "response.created" }), semantic]));
   assert.equal(prepared.semantic, semantic);
@@ -218,7 +220,7 @@ Deno.test("precommit preparation stops at semantic output, terminal events and p
   await assert.rejects(() => prepareResponsesStreamForCommit(failingIterator(failure)), failure);
 });
 
-Deno.test("warning helpers identify exactly the injected assistant notice", () => {
+test("warning helpers identify exactly the injected assistant notice", () => {
   const { item, events } = buildFailoverWarningEvents("gpt-5.6-sol", "resp_1", 5);
   assert.equal(isGatewayFailoverWarningItem(item), true);
   assert.equal(events.length, 6);
@@ -247,7 +249,7 @@ Deno.test("warning helpers identify exactly the injected assistant notice", () =
   assert.equal(isGatewayFailoverWarningItem({ ...item, content: [{ type: "output_text", text: failoverWarningText("m").slice(0, -1) }] }), false);
 });
 
-Deno.test("warning rewrites increment output indexes and prefix terminal outputs", () => {
+test("warning rewrites increment output indexes and prefix terminal outputs", () => {
   const { item } = buildFailoverWarningEvents("gpt-5.6-sol", "resp_1");
   const delta = event({ type: "response.output_text.delta", output_index: 2, delta: "x" });
   const rewritten = rewriteResponsesEventForWarning(delta, item, 7);
@@ -276,7 +278,7 @@ Deno.test("warning rewrites increment output indexes and prefix terminal outputs
   assert.equal(rewriteResponsesEventSequence(delta, 3).value.sequence_number, 3);
 });
 
-Deno.test("event builders reject unusable payloads and tag synthetic failures", () => {
+test("event builders reject unusable payloads and tag synthetic failures", () => {
   assert.throws(
     () => responseEventFromValue({ type: "  " }),
     (error: unknown) => error instanceof ResponsesStreamError && error.kind === "malformed_event"
@@ -303,7 +305,7 @@ Deno.test("event builders reject unusable payloads and tag synthetic failures", 
   assert.equal((withObject.value.response as { object: string }).object, "chat.completion");
 });
 
-Deno.test("response identifiers are read from both places and conflicts are rejected", () => {
+test("response identifiers are read from both places and conflicts are rejected", () => {
   assert.equal(responseIdFromEvents([]), null);
   assert.equal(responseIdFromEvents([event({ type: "response.created", response_id: " resp_1 " })]), "resp_1");
   assert.equal(responseIdFromEvents([event({ type: "response.created", response: { id: "resp_1" } })]), "resp_1");
@@ -317,7 +319,7 @@ Deno.test("response identifiers are read from both places and conflicts are reje
     (error: unknown) => error instanceof ResponsesStreamError && error.kind === "malformed_event"
   );
 });
-Deno.test("owned stream forwards initial and upstream events verbatim and closes at its terminal", async () => {
+test("owned stream forwards initial and upstream events verbatim and closes at its terminal", async () => {
   const created = event({ type: "response.created", response_id: "resp_1", sequence_number: 4 });
   const queued = event({ type: "response.in_progress", response_id: "resp_1" });
   const delta = event({ type: "response.output_text.delta", delta: "hi", response_id: "resp_1", sequence_number: 5 });
@@ -341,7 +343,7 @@ Deno.test("owned stream forwards initial and upstream events verbatim and closes
   assert.deepEqual(delivered, [created, queued, delta, completed]);
 });
 
-Deno.test("owned stream replaces a premature EOF with a terminal event", async () => {
+test("owned stream replaces a premature EOF with a terminal event", async () => {
   const observed: ResponsesStreamEvent[] = [];
   const failures: { kind: string; terminal: string | null }[] = [];
   const beforeCommit = createOwnedResponsesStream({
@@ -383,7 +385,7 @@ Deno.test("owned stream replaces a premature EOF with a terminal event", async (
   assert.equal(failure.output[0].content[0].text, "partial text");
 });
 
-Deno.test("owned stream fails an empty upstream completion instead of forwarding it", async () => {
+test("owned stream fails an empty upstream completion instead of forwarding it", async () => {
   const failures: string[] = [];
   const stream = createOwnedResponsesStream({
     initial: [event({ type: "response.created", response_id: "resp_2" })],
@@ -403,7 +405,7 @@ Deno.test("owned stream fails an empty upstream completion instead of forwarding
   assert.deepEqual(failures, ["empty_upstream_completion"]);
 });
 
-Deno.test("owned stream cancellation aborts upstream once and a cancelled read closes quietly", async () => {
+test("owned stream cancellation aborts upstream once and a cancelled read closes quietly", async () => {
   let abortedWith: unknown = null;
   let cancelledWith: unknown = null;
   const cancellable = createOwnedResponsesStream({
@@ -440,7 +442,7 @@ Deno.test("owned stream cancellation aborts upstream once and a cancelled read c
   assert.deepEqual(failures, [{ kind: "read_error", terminal: null }]);
 });
 
-Deno.test("owned stream survives observers that throw, sync or async", async () => {
+test("owned stream survives observers that throw, sync or async", async () => {
   const stream = createOwnedResponsesStream({
     initial: [],
     iterator: iterator([]),
@@ -457,7 +459,7 @@ Deno.test("owned stream survives observers that throw, sync or async", async () 
   );
 });
 
-Deno.test("RemovedProvider preamble reorders setup events and refuses an unusable preamble", () => {
+test("RemovedProvider preamble reorders setup events and refuses an unusable preamble", () => {
   assert.throws(
     () =>
       createOwnedResponsesStream({
@@ -480,7 +482,7 @@ Deno.test("RemovedProvider preamble reorders setup events and refuses an unusabl
   );
 });
 
-Deno.test("RemovedProvider preamble sequences created, setup, warning and payload events", async () => {
+test("RemovedProvider preamble sequences created, setup, warning and payload events", async () => {
   const validated: ResponsesStreamEvent[] = [];
   const stream = createOwnedResponsesStream({
     initial: [
@@ -516,7 +518,7 @@ Deno.test("RemovedProvider preamble sequences created, setup, warning and payloa
   assert.equal(validated.length, 5);
 });
 
-Deno.test("owned stream rejects a changed response identifier before and after the queue", async () => {
+test("owned stream rejects a changed response identifier before and after the queue", async () => {
   const readFailure: string[] = [];
   const fromIterator = createOwnedResponsesStream({
     initial: [event({ type: "response.created", response_id: "resp_7" })],
@@ -549,7 +551,7 @@ Deno.test("owned stream rejects a changed response identifier before and after t
   assert.deepEqual(queuedFailure, ["malformed_event"]);
 });
 
-Deno.test("owned stream recovers observed items, compatibility output and streamed text into a failure", async () => {
+test("owned stream recovers observed items, compatibility output and streamed text into a failure", async () => {
   const recovered = event({ type: "response.output_text.delta", delta: "kept", response_id: "resp_10", output_index: 0 });
   const stream = createOwnedResponsesStream({
     initial: [
@@ -628,7 +630,7 @@ Deno.test("owned stream recovers observed items, compatibility output and stream
   );
 });
 
-Deno.test("owned stream reports a failover warning item in its failure output", async () => {
+test("owned stream reports a failover warning item in its failure output", async () => {
   const stream = createOwnedResponsesStream({
     initial: [
       event({ type: "response.created", response_id: "resp_11" }),

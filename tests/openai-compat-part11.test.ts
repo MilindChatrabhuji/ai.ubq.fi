@@ -1,11 +1,18 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import { runSequence } from "./helpers/sequence.ts";
+import { installHarness, cleanupHarness } from "./helpers/openai-compat-harness.ts";
+beforeEach(installHarness);
+afterEach(cleanupHarness);
 // openai-compat suite, part 11 of 12: tests moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
+import { resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } from "../src/models/openrouter-models.ts";
 import {
   DEEPSEEK_FLASH_MODEL,
   DEFAULT_TEST_MODEL,
   MAX_RESPONSES_SSE_EVENT_BYTES,
-  OpenAiAtomicOp,
+  type OpenAiAtomicOp,
   TEXT_ENCODER,
   atomicCommitObservation,
   atomicWritesForKey,
@@ -44,718 +51,721 @@ import {
   withTerminalRequestLog,
 } from "./helpers/openai-compat-harness.ts";
 
-Deno.test("openai: DeepSeek routes report the effective output allowance without inventing one", async (t) => {
-  const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "deepseek-test-key");
-  const streamChunk = deepSeekStreamChunk;
-  const bufferedCompletion = (): Record<string, unknown> => ({
-    id: "deepseek-allowance-buffered",
-    object: "chat.completion",
-    created: 1_780_000_201,
-    model: DEEPSEEK_FLASH_MODEL,
-    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
-    usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
-  });
-  const upstreamBodies: Record<string, unknown>[] = [];
-  try {
-    await t.step("reports the client's Responses cap in the terminal telemetry and sends exactly that cap", async () => {
-      const logs: unknown[][] = [];
-      const originalInfo = console.info;
-      console.info = (...args: unknown[]) => logs.push(args);
-      try {
+test("openai: DeepSeek routes report the effective output allowance without inventing one", async () =>
+  runSequence(async (step) => {
+    const envKey = "DEEPSEEK_API_KEY";
+    const originalApiKey = process.env[envKey];
+    process.env[envKey] = "deepseek-test-key";
+    const streamChunk = deepSeekStreamChunk;
+    const bufferedCompletion = (): Record<string, unknown> => ({
+      id: "deepseek-allowance-buffered",
+      object: "chat.completion",
+      created: 1_780_000_201,
+      model: DEEPSEEK_FLASH_MODEL,
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+    });
+    const upstreamBodies: Record<string, unknown>[] = [];
+    try {
+      await step("reports the client's Responses cap in the terminal telemetry and sends exactly that cap", async () => {
+        const logs: unknown[][] = [];
+        const originalInfo = console.info;
+        console.info = (...args: unknown[]) => logs.push(args);
+        try {
+          upstreamBodies.length = 0;
+          const response = await withFetchMock(
+            (_url, bodyText) => {
+              upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+              return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+            },
+            () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, max_output_tokens: 512 }))
+          );
+          const logged = await withTerminalRequestLog(response, {
+            route: "responses",
+            telemetryResponse: response,
+            startedAtMonotonicMs: performance.now(),
+            requestId: "deepseek-allowance-cap",
+          });
+          await logged.text();
+          assert.equal(upstreamBodies.length, 1);
+          assert.equal(upstreamBodies[0].max_tokens, 512);
+          assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 512);
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            if (logs.some((entry) => entry[0] === "[ai.ubq.fi] request_terminal")) break;
+            await new Promise<void>((resolve) => setTimeout(resolve, 1));
+          }
+          const terminal = logs
+            .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+            .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
+          assert.equal(terminal.length, 1);
+          assert.equal(terminal[0].output_token_allowance, 512);
+        } finally {
+          console.info = originalInfo;
+        }
+      });
+
+      await step("reports the allowance on the buffered Responses branch too", async () => {
+        upstreamBodies.length = 0;
+        const response = await withFetchMock(
+          (_url, bodyText) => {
+            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+            return Response.json(bufferedCompletion());
+          },
+          () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false, max_output_tokens: 256 }))
+        );
+        await response.json();
+        assert.equal(upstreamBodies[0].max_tokens, 256);
+        assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 256);
+      });
+
+      await step("a truncated buffered completion is not recorded as completed", async () => {
+        // The buffered path must report the terminal the client receives. Before
+        // this, `recordCompletionUsage` ran before the payload's own status was
+        // read, so a truncated buffered reply was persisted as `completed: true`.
+        upstreamBodies.length = 0;
+        const truncated = {
+          ...bufferedCompletion(),
+          choices: [{ index: 0, message: { role: "assistant", content: "cut off" }, finish_reason: "length" }],
+        };
+        const response = await withFetchMock(
+          (_url, bodyText) => {
+            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+            return Response.json(truncated);
+          },
+          () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }))
+        );
+        const payload = (await response.json()) as Record<string, unknown>;
+        assert.equal(payload.status, "incomplete");
+        assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.streamTerminalType, "response.incomplete");
+        assert.equal(telemetry.completed, false);
+        assert.equal(telemetry.failureKind, "incomplete_response");
+      });
+
+      await step("keeps an omitted cap unknown at a tier whose provider default was never measured", async () => {
         upstreamBodies.length = 0;
         const response = await withFetchMock(
           (_url, bodyText) => {
             upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
             return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
           },
-          () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, max_output_tokens: 512 }))
+          // No `reasoning` at all is the provider's `high` default, and omitting
+          // the cap must not be reported as a gateway-invented allowance.
+          () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }))
         );
-        const logged = await withTerminalRequestLog(response, {
-          route: "responses",
-          telemetryResponse: response,
-          startedAtMonotonicMs: performance.now(),
-          requestId: "deepseek-allowance-cap",
-        });
-        await logged.text();
+        await response.text();
         assert.equal(upstreamBodies.length, 1);
-        assert.equal(upstreamBodies[0].max_tokens, 512);
-        assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 512);
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          if (logs.some((entry) => entry[0] === "[ai.ubq.fi] request_terminal")) break;
-          await new Promise<void>((resolve) => setTimeout(resolve, 1));
-        }
-        const terminal = logs
-          .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
-          .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
-        assert.equal(terminal.length, 1);
-        assert.equal(terminal[0].output_token_allowance, 512);
-      } finally {
-        console.info = originalInfo;
-      }
-    });
+        assert.equal("max_tokens" in upstreamBodies[0], false, "the gateway must not invent a cap on the wire");
+        assert.equal(getResponseTelemetry(response)?.reasoning, "high");
+        assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, null);
+      });
 
-    await t.step("reports the allowance on the buffered Responses branch too", async () => {
-      upstreamBodies.length = 0;
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          return Response.json(bufferedCompletion());
-        },
-        () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false, max_output_tokens: 256 }))
-      );
-      await response.json();
-      assert.equal(upstreamBodies[0].max_tokens, 256);
-      assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 256);
-    });
+      await step("reports the provider's measured default for the tier that has one", async () => {
+        upstreamBodies.length = 0;
+        const response = await withFetchMock(
+          (_url, bodyText) => {
+            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+            return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+          },
+          () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, reasoning: { effort: "none" } }))
+        );
+        await response.text();
+        assert.equal(upstreamBodies[0].reasoning_effort, "none");
+        assert.equal("max_tokens" in upstreamBodies[0], false);
+        // 8,192 is the measured `none`-tier default (handoff 2026-09-21, Delta 3).
+        assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 8192);
+      });
 
-    await t.step("a truncated buffered completion is not recorded as completed", async () => {
-      // The buffered path must report the terminal the client receives. Before
-      // this, `recordCompletionUsage` ran before the payload's own status was
-      // read, so a truncated buffered reply was persisted as `completed: true`.
-      upstreamBodies.length = 0;
-      const truncated = {
-        ...bufferedCompletion(),
-        choices: [{ index: 0, message: { role: "assistant", content: "cut off" }, finish_reason: "length" }],
-      };
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          return Response.json(truncated);
-        },
+      await step("reports the Chat route's cap and keeps an omitted one unknown", async () => {
+        const withCap = await withFetchMock(
+          () => Response.json(bufferedCompletion()),
+          () =>
+            handleChatCompletions(
+              specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages: [{ role: "user", content: "hi" }], max_completion_tokens: 321 })
+            )
+        );
+        await withCap.json();
+        assert.equal(getResponseTelemetry(withCap)?.outputTokenAllowance, 321);
+
+        const withoutCap = await withFetchMock(
+          () => Response.json(bufferedCompletion()),
+          () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages: [{ role: "user", content: "hi" }] }))
+        );
+        await withoutCap.json();
+        assert.equal(getResponseTelemetry(withoutCap)?.reasoning, "high");
+        assert.equal(getResponseTelemetry(withoutCap)?.outputTokenAllowance, null);
+      });
+    } finally {
+      if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+      else process.env[envKey] = originalApiKey;
+    }
+  }));
+
+test("openai: a reasoning-only DeepSeek Responses stream fails closed instead of completing", async () =>
+  runSequence(async (step) => {
+    const envKey = "DEEPSEEK_API_KEY";
+    const originalApiKey = process.env[envKey];
+    process.env[envKey] = "deepseek-test-key";
+    const responsesBody = deepSeekResponsesRequest;
+    const chunk = deepSeekStreamChunk;
+    const responsesEvents = parseResponsesSseEvents;
+    const request = (): Promise<Response> => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }));
+    try {
+      await step("a stream whose only output is reasoning is empty_upstream_completion", async () => {
+        const response = await withFetchMock(
+          () =>
+            sseResponse([
+              chunk({ role: "assistant", reasoning_content: "The whole budget went into thinking." }),
+              chunk({}, { finish_reason: "stop" }),
+              "data: [DONE]\n\n",
+            ]),
+          request
+        );
+        assert.equal(response.status, 200);
+        const events = responsesEvents(await response.text());
+        assert.deepEqual(
+          events.map((event) => event.type),
+          [
+            "response.created",
+            "response.in_progress",
+            "response.output_item.added",
+            "response.reasoning_summary_part.added",
+            "response.reasoning_summary_text.delta",
+            "response.failed",
+          ]
+        );
+        const failed = events.at(-1) as { response: Record<string, unknown> };
+        assert.equal(failed.response.status, "failed");
+        assert.deepEqual(failed.response.error, {
+          code: "empty_upstream_completion",
+          message: "Upstream response completed with no translated semantic output.",
+        });
+        assert.deepEqual(failed.response.output ?? [], []);
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.streamTerminalType, "response.failed");
+        assert.equal(telemetry.failureKind, "empty_upstream_completion");
+        assert.equal(telemetry.completed, false);
+        assert.equal(telemetry.semanticOutputObserved, false);
+      });
+
+      await step("a normal text completion is untouched", async () => {
+        const response = await withFetchMock(
+          () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+          request
+        );
+        const events = responsesEvents(await response.text());
+        const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
+        assert.equal(completed.type, "response.completed");
+        assert.equal(completed.response.status, "completed");
+        assert.deepEqual(
+          (completed.response.output as Record<string, unknown>[]).map((item) => item.type),
+          ["message"]
+        );
+        assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.completed");
+        assert.equal(getResponseTelemetry(response)?.completed, true);
+        assert.equal(getResponseTelemetry(response)?.failureKind, null);
+      });
+
+      await step("a normal tool-call completion is untouched", async () => {
+        const response = await withFetchMock(
+          () =>
+            sseResponse([
+              chunk(
+                {
+                  role: "assistant",
+                  tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }],
+                },
+                { finish_reason: "tool_calls" }
+              ),
+              "data: [DONE]\n\n",
+            ]),
+          request
+        );
+        const events = responsesEvents(await response.text());
+        const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
+        assert.equal(completed.type, "response.completed");
+        assert.deepEqual(
+          (completed.response.output as Record<string, unknown>[]).map((item) => item.type),
+          ["function_call"]
+        );
+        assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.completed");
+        assert.equal(getResponseTelemetry(response)?.completed, true);
+      });
+    } finally {
+      if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+      else process.env[envKey] = originalApiKey;
+    }
+  }));
+
+test("openai: a truncated DeepSeek Responses stream reports response.incomplete", async () =>
+  runSequence(async (step) => {
+    const envKey = "DEEPSEEK_API_KEY";
+    const originalApiKey = process.env[envKey];
+    process.env[envKey] = "deepseek-test-key";
+    const responsesBody = deepSeekResponsesRequest;
+    const chunk = deepSeekStreamChunk;
+    const responsesEvents = parseResponsesSseEvents;
+    const request = (): Promise<Response> => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, max_output_tokens: 16 }));
+    try {
+      await step("length becomes response.incomplete with max_output_tokens", async () => {
+        const response = await withFetchMock(
+          () =>
+            sseResponse([chunk({ role: "assistant", content: "the visible start of an answer" }), chunk({}, { finish_reason: "length" }), "data: [DONE]\n\n"]),
+          request
+        );
+        const events = responsesEvents(await response.text());
+        const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+        assert.equal(terminal.type, "response.incomplete");
+        assert.equal(terminal.response.status, "incomplete");
+        assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
+        assert.equal(terminal.response.error, null);
+        assert.deepEqual(
+          (terminal.response.output as Record<string, unknown>[]).map((item) => item.type),
+          ["message"]
+        );
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.streamTerminalType, "response.incomplete");
+        assert.equal(telemetry.completed, false);
+        assert.equal(telemetry.outputTokenAllowance, 16);
+        // A truncation is classified, not left indistinguishable from a clean
+        // completion; the classification matches the buffered path.
+        assert.equal(telemetry.failureKind, "incomplete_response");
+      });
+
+      await step("an empty length completion is incomplete, not a fail-closed empty completion", async () => {
+        // G1 wins over G3: the upstream said why it stopped.
+        const response = await withFetchMock(
+          () =>
+            sseResponse([
+              chunk({ role: "assistant", reasoning_content: "thinking used the whole budget" }),
+              chunk({}, { finish_reason: "length" }),
+              "data: [DONE]\n\n",
+            ]),
+          request
+        );
+        const events = responsesEvents(await response.text());
+        const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+        assert.equal(terminal.type, "response.incomplete");
+        assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.streamTerminalType, "response.incomplete");
+        assert.equal(telemetry.failureKind, "incomplete_response");
+        assert.equal(telemetry.completed, false);
+      });
+
+      await step("stop and tool_calls still complete", async () => {
+        const stopped = await withFetchMock(
+          () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+          request
+        );
+        const stoppedEvents = responsesEvents(await stopped.text());
+        assert.equal((stoppedEvents.at(-1) as { type: string }).type, "response.completed");
+        assert.equal(getResponseTelemetry(stopped)?.completed, true);
+
+        const toolCalls = await withFetchMock(
+          () =>
+            sseResponse([
+              chunk(
+                {
+                  role: "assistant",
+                  tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }],
+                },
+                { finish_reason: "tool_calls" }
+              ),
+              "data: [DONE]\n\n",
+            ]),
+          request
+        );
+        const toolEvents = responsesEvents(await toolCalls.text());
+        assert.equal((toolEvents.at(-1) as { type: string }).type, "response.completed");
+        assert.equal(getResponseTelemetry(toolCalls)?.completed, true);
+      });
+
+      await step("an unrecognized reason fails visibly instead of completing", async () => {
+        const response = await withFetchMock(
+          () => sseResponse([chunk({ role: "assistant", content: "partial" }, { finish_reason: "insufficient_system_resource" }), "data: [DONE]\n\n"]),
+          request
+        );
+        const events = responsesEvents(await response.text());
+        assert.equal((events.at(-1) as { type: string }).type, "response.failed");
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.streamTerminalType, "response.failed");
+        assert.equal(telemetry.completed, false);
+        assert.equal(telemetry.failureKind, "deepseek_finish_reason:insufficient_system_resource");
+      });
+    } finally {
+      if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+      else process.env[envKey] = originalApiKey;
+    }
+  }));
+
+test("openai: the buffered DeepSeek Responses path fails a degenerate completion closed too", async () =>
+  runSequence(async (step) => {
+    // The streamed path (previous test) already fails closed. The buffered path
+    // is a different branch of the same route, and before this test it reported
+    // the same degenerate completion as `completed` with `error: null` - one
+    // request shape must not report success on one transport and failure on the
+    // other.
+    const envKey = "DEEPSEEK_API_KEY";
+    const originalApiKey = process.env[envKey];
+    process.env[envKey] = "deepseek-test-key";
+    const buffered = (choices: readonly Record<string, unknown>[]): Promise<Response> =>
+      withFetchMock(
+        () =>
+          Response.json({
+            id: "deepseek-buffered-terminal",
+            object: "chat.completion",
+            created: 1_780_000_600,
+            model: DEEPSEEK_FLASH_MODEL,
+            choices,
+            usage: { prompt_tokens: 5, completion_tokens: 30, total_tokens: 35 },
+          }),
         () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }))
       );
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "incomplete");
-      assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
-      const telemetry = getResponseTelemetry(response);
-      assert.ok(telemetry);
-      assert.equal(telemetry.streamTerminalType, "response.incomplete");
-      assert.equal(telemetry.completed, false);
-      assert.equal(telemetry.failureKind, "incomplete_response");
-    });
-
-    await t.step("keeps an omitted cap unknown at a tier whose provider default was never measured", async () => {
-      upstreamBodies.length = 0;
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
-        },
-        // No `reasoning` at all is the provider's `high` default, and omitting
-        // the cap must not be reported as a gateway-invented allowance.
-        () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }))
-      );
-      await response.text();
-      assert.equal(upstreamBodies.length, 1);
-      assert.equal("max_tokens" in upstreamBodies[0], false, "the gateway must not invent a cap on the wire");
-      assert.equal(getResponseTelemetry(response)?.reasoning, "high");
-      assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, null);
-    });
-
-    await t.step("reports the provider's measured default for the tier that has one", async () => {
-      upstreamBodies.length = 0;
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
-        },
-        () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, reasoning: { effort: "none" } }))
-      );
-      await response.text();
-      assert.equal(upstreamBodies[0].reasoning_effort, "none");
-      assert.equal("max_tokens" in upstreamBodies[0], false);
-      // 8,192 is the measured `none`-tier default (handoff 2026-09-21, Delta 3).
-      assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 8192);
-    });
-
-    await t.step("reports the Chat route's cap and keeps an omitted one unknown", async () => {
-      const withCap = await withFetchMock(
-        () => Response.json(bufferedCompletion()),
-        () =>
-          handleChatCompletions(
-            specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages: [{ role: "user", content: "hi" }], max_completion_tokens: 321 })
-          )
-      );
-      await withCap.json();
-      assert.equal(getResponseTelemetry(withCap)?.outputTokenAllowance, 321);
-
-      const withoutCap = await withFetchMock(
-        () => Response.json(bufferedCompletion()),
-        () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages: [{ role: "user", content: "hi" }] }))
-      );
-      await withoutCap.json();
-      assert.equal(getResponseTelemetry(withoutCap)?.reasoning, "high");
-      assert.equal(getResponseTelemetry(withoutCap)?.outputTokenAllowance, null);
-    });
-  } finally {
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
-  }
-});
-
-Deno.test("openai: a reasoning-only DeepSeek Responses stream fails closed instead of completing", async (t) => {
-  const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "deepseek-test-key");
-  const responsesBody = deepSeekResponsesRequest;
-  const chunk = deepSeekStreamChunk;
-  const responsesEvents = parseResponsesSseEvents;
-  const request = (): Promise<Response> => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }));
-  try {
-    await t.step("a stream whose only output is reasoning is empty_upstream_completion", async () => {
-      const response = await withFetchMock(
-        () =>
-          sseResponse([
-            chunk({ role: "assistant", reasoning_content: "The whole budget went into thinking." }),
-            chunk({}, { finish_reason: "stop" }),
-            "data: [DONE]\n\n",
-          ]),
-        request
-      );
-      assert.equal(response.status, 200);
-      const events = responsesEvents(await response.text());
-      assert.deepEqual(
-        events.map((event) => event.type),
-        [
-          "response.created",
-          "response.in_progress",
-          "response.output_item.added",
-          "response.reasoning_summary_part.added",
-          "response.reasoning_summary_text.delta",
-          "response.failed",
-        ]
-      );
-      const failed = events.at(-1) as { response: Record<string, unknown> };
-      assert.equal(failed.response.status, "failed");
-      assert.deepEqual(failed.response.error, {
-        code: "empty_upstream_completion",
-        message: "Upstream response completed with no translated semantic output.",
-      });
-      assert.deepEqual(failed.response.output ?? [], []);
-      const telemetry = getResponseTelemetry(response);
-      assert.ok(telemetry);
-      assert.equal(telemetry.streamTerminalType, "response.failed");
-      assert.equal(telemetry.failureKind, "empty_upstream_completion");
-      assert.equal(telemetry.completed, false);
-      assert.equal(telemetry.semanticOutputObserved, false);
-    });
-
-    await t.step("a normal text completion is untouched", async () => {
-      const response = await withFetchMock(
-        () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
-        request
-      );
-      const events = responsesEvents(await response.text());
-      const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
-      assert.equal(completed.type, "response.completed");
-      assert.equal(completed.response.status, "completed");
-      assert.deepEqual(
-        (completed.response.output as Record<string, unknown>[]).map((item) => item.type),
-        ["message"]
-      );
-      assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.completed");
-      assert.equal(getResponseTelemetry(response)?.completed, true);
-      assert.equal(getResponseTelemetry(response)?.failureKind, null);
-    });
-
-    await t.step("a normal tool-call completion is untouched", async () => {
-      const response = await withFetchMock(
-        () =>
-          sseResponse([
-            chunk(
-              {
-                role: "assistant",
-                tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }],
-              },
-              { finish_reason: "tool_calls" }
-            ),
-            "data: [DONE]\n\n",
-          ]),
-        request
-      );
-      const events = responsesEvents(await response.text());
-      const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
-      assert.equal(completed.type, "response.completed");
-      assert.deepEqual(
-        (completed.response.output as Record<string, unknown>[]).map((item) => item.type),
-        ["function_call"]
-      );
-      assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.completed");
-      assert.equal(getResponseTelemetry(response)?.completed, true);
-    });
-  } finally {
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
-  }
-});
-
-Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomplete", async (t) => {
-  const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "deepseek-test-key");
-  const responsesBody = deepSeekResponsesRequest;
-  const chunk = deepSeekStreamChunk;
-  const responsesEvents = parseResponsesSseEvents;
-  const request = (): Promise<Response> => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, max_output_tokens: 16 }));
-  try {
-    await t.step("length becomes response.incomplete with max_output_tokens", async () => {
-      const response = await withFetchMock(
-        () =>
-          sseResponse([chunk({ role: "assistant", content: "the visible start of an answer" }), chunk({}, { finish_reason: "length" }), "data: [DONE]\n\n"]),
-        request
-      );
-      const events = responsesEvents(await response.text());
-      const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
-      assert.equal(terminal.type, "response.incomplete");
-      assert.equal(terminal.response.status, "incomplete");
-      assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
-      assert.equal(terminal.response.error, null);
-      assert.deepEqual(
-        (terminal.response.output as Record<string, unknown>[]).map((item) => item.type),
-        ["message"]
-      );
-      const telemetry = getResponseTelemetry(response);
-      assert.ok(telemetry);
-      assert.equal(telemetry.streamTerminalType, "response.incomplete");
-      assert.equal(telemetry.completed, false);
-      assert.equal(telemetry.outputTokenAllowance, 16);
-      // A truncation is classified, not left indistinguishable from a clean
-      // completion; the classification matches the buffered path.
-      assert.equal(telemetry.failureKind, "incomplete_response");
-    });
-
-    await t.step("an empty length completion is incomplete, not a fail-closed empty completion", async () => {
-      // G1 wins over G3: the upstream said why it stopped.
-      const response = await withFetchMock(
-        () =>
-          sseResponse([
-            chunk({ role: "assistant", reasoning_content: "thinking used the whole budget" }),
-            chunk({}, { finish_reason: "length" }),
-            "data: [DONE]\n\n",
-          ]),
-        request
-      );
-      const events = responsesEvents(await response.text());
-      const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
-      assert.equal(terminal.type, "response.incomplete");
-      assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
-      const telemetry = getResponseTelemetry(response);
-      assert.ok(telemetry);
-      assert.equal(telemetry.streamTerminalType, "response.incomplete");
-      assert.equal(telemetry.failureKind, "incomplete_response");
-      assert.equal(telemetry.completed, false);
-    });
-
-    await t.step("stop and tool_calls still complete", async () => {
-      const stopped = await withFetchMock(
-        () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
-        request
-      );
-      const stoppedEvents = responsesEvents(await stopped.text());
-      assert.equal((stoppedEvents.at(-1) as { type: string }).type, "response.completed");
-      assert.equal(getResponseTelemetry(stopped)?.completed, true);
-
-      const toolCalls = await withFetchMock(
-        () =>
-          sseResponse([
-            chunk(
-              {
-                role: "assistant",
-                tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }],
-              },
-              { finish_reason: "tool_calls" }
-            ),
-            "data: [DONE]\n\n",
-          ]),
-        request
-      );
-      const toolEvents = responsesEvents(await toolCalls.text());
-      assert.equal((toolEvents.at(-1) as { type: string }).type, "response.completed");
-      assert.equal(getResponseTelemetry(toolCalls)?.completed, true);
-    });
-
-    await t.step("an unrecognized reason fails visibly instead of completing", async () => {
-      const response = await withFetchMock(
-        () => sseResponse([chunk({ role: "assistant", content: "partial" }, { finish_reason: "insufficient_system_resource" }), "data: [DONE]\n\n"]),
-        request
-      );
-      const events = responsesEvents(await response.text());
-      assert.equal((events.at(-1) as { type: string }).type, "response.failed");
-      const telemetry = getResponseTelemetry(response);
-      assert.ok(telemetry);
-      assert.equal(telemetry.streamTerminalType, "response.failed");
-      assert.equal(telemetry.completed, false);
-      assert.equal(telemetry.failureKind, "deepseek_finish_reason:insufficient_system_resource");
-    });
-  } finally {
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
-  }
-});
-
-Deno.test("openai: the buffered DeepSeek Responses path fails a degenerate completion closed too", async (t) => {
-  // The streamed path (previous test) already fails closed. The buffered path
-  // is a different branch of the same route, and before this test it reported
-  // the same degenerate completion as `completed` with `error: null` - one
-  // request shape must not report success on one transport and failure on the
-  // other.
-  const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "deepseek-test-key");
-  const buffered = (choices: readonly Record<string, unknown>[]): Promise<Response> =>
-    withFetchMock(
-      () =>
-        Response.json({
-          id: "deepseek-buffered-terminal",
-          object: "chat.completion",
-          created: 1_780_000_600,
-          model: DEEPSEEK_FLASH_MODEL,
-          choices,
-          usage: { prompt_tokens: 5, completion_tokens: 30, total_tokens: 35 },
-        }),
-      () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }))
-    );
-  try {
-    await t.step("a buffered reasoning-only completion is empty_upstream_completion", async () => {
-      const response = await buffered([
-        { index: 0, message: { role: "assistant", reasoning_content: "The whole budget went into thinking." }, finish_reason: "stop" },
-      ]);
-      assert.equal(response.status, 502);
-      const payload = (await response.json()) as { error?: Record<string, unknown> };
-      const error = payload.error;
-      assert.ok(error);
-      // Same code and message the ordinary routes already return for this
-      // classification, so a caller cannot tell the transports apart.
-      assert.equal(error.code, "empty_upstream_completion");
-      assert.equal(error.message, "Upstream response completed with no translated semantic output.");
-      assert.equal(error.type, "server_error");
-      const telemetry = getResponseTelemetry(response);
-      assert.ok(telemetry);
-      assert.equal(telemetry.completed, false);
-      assert.equal(telemetry.failureKind, "empty_upstream_completion");
-      assert.equal(telemetry.semanticOutputObserved, false);
-    });
-
-    await t.step("a buffered empty completion is also empty_upstream_completion", async () => {
-      const response = await buffered([{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "stop" }]);
-      assert.equal(response.status, 502);
-      const payload = (await response.json()) as { error?: Record<string, unknown> };
-      const error = payload.error;
-      assert.ok(error);
-      assert.equal(error.code, "empty_upstream_completion");
-    });
-
-    await t.step("an explicit truncation still wins over the empty-completion guard", async () => {
-      const response = await buffered([{ index: 0, message: { role: "assistant", reasoning_content: "thinking" }, finish_reason: "length" }]);
-      assert.equal(response.status, 200);
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "incomplete");
-      assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
-      assert.equal(getResponseTelemetry(response)?.failureKind, "incomplete_response");
-    });
-
-    await t.step("a buffered text completion is untouched", async () => {
-      const response = await buffered([{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }]);
-      assert.equal(response.status, 200);
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "completed");
-      assert.equal(getResponseTelemetry(response)?.completed, true);
-      assert.equal(getResponseTelemetry(response)?.failureKind, null);
-    });
-
-    await t.step("a buffered tool-call completion is untouched", async () => {
-      const response = await buffered([
-        {
-          index: 0,
-          message: { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }] },
-          finish_reason: "tool_calls",
-        },
-      ]);
-      assert.equal(response.status, 200);
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "completed");
-      assert.deepEqual(
-        (payload.output as Record<string, unknown>[]).map((item) => item.type),
-        ["function_call"]
-      );
-    });
-  } finally {
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
-  }
-});
-
-Deno.test("openai: a DeepSeek Responses refusal output replays as assistant history", async (t) => {
-  // The refusal content part this adapter emits was rejected by its own request
-  // translator: a client that sent the response output back as `input` got
-  // HTTP 400 `input.content type 'refusal' is not supported`, so a single
-  // refusal ended the conversation. Both transports' output must replay as the
-  // assistant text the established Chat message shape carries.
-  const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "deepseek-test-key");
-  const refusal = "I cannot help with that request.";
-  const completion = (message: Record<string, unknown>): Response =>
-    Response.json({
-      id: "deepseek-refusal-replay",
-      object: "chat.completion",
-      created: 1_780_000_700,
-      model: DEEPSEEK_FLASH_MODEL,
-      choices: [{ index: 0, message, finish_reason: "stop" }],
-      usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14 },
-    });
-  const continuationInput = (output: Record<string, unknown>[]): Record<string, unknown>[] => [
-    ...output,
-    { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
-  ];
-
-  try {
-    await t.step("buffered refusal output replays without a 400", async () => {
-      const upstreamBodies: Record<string, unknown>[] = [];
-      const result = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          return upstreamBodies.length === 1
-            ? completion({ role: "assistant", content: null, refusal })
-            : completion({ role: "assistant", content: "Continuing." });
-        },
-        async () => {
-          const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }));
-          assert.equal(first.status, 200);
-          const payload = (await first.json()) as Record<string, unknown>;
-          const output = payload.output as Record<string, unknown>[];
-          assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
-          return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
-        }
-      );
-      assert.equal(result.status, 200);
-      const messages = upstreamBodies[1].messages as Record<string, unknown>[];
-      assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
-      assert.deepEqual(messages.at(-1), { role: "user", content: "continue" });
-    });
-
-    await t.step("streamed terminal refusal output replays without a 400", async () => {
-      const upstreamBodies: Record<string, unknown>[] = [];
-      const result = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          if (upstreamBodies.length === 1) {
-            return sseResponse([deepSeekStreamChunk({ role: "assistant", refusal }), deepSeekStreamChunk({}, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
-          }
-          return completion({ role: "assistant", content: "Continuing." });
-        },
-        async () => {
-          const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }));
-          assert.equal(first.status, 200);
-          const events = parseResponsesSseEvents(await first.text());
-          const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
-          assert.equal(terminal.type, "response.completed");
-          const output = terminal.response.output as Record<string, unknown>[];
-          assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
-          return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
-        }
-      );
-      assert.equal(result.status, 200);
-      const messages = upstreamBodies[1].messages as Record<string, unknown>[];
-      assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
-    });
-  } finally {
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
-  }
-});
-
-Deno.test("openai: the DeepSeek route accepts the provider's own `thinking` field", async (t) => {
-  const envKey = "DEEPSEEK_API_KEY";
-  const original = Deno.env.get(envKey);
-  Deno.env.set(envKey, "deepseek-test-key");
-  const { handleChatCompletions } = await import("../src/chat/envelope.ts");
-  const seen: Record<string, unknown>[] = [];
-  const withFetchMock = async <T>(handler: () => Response | Promise<Response>, fn: () => Promise<T>): Promise<T> => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((_u: unknown, init?: RequestInit) => {
-      seen.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
-      return Promise.resolve(handler());
-    }) as typeof fetch;
     try {
-      return await fn();
+      await step("a buffered reasoning-only completion is empty_upstream_completion", async () => {
+        const response = await buffered([
+          { index: 0, message: { role: "assistant", reasoning_content: "The whole budget went into thinking." }, finish_reason: "stop" },
+        ]);
+        assert.equal(response.status, 502);
+        const payload = (await response.json()) as { error?: Record<string, unknown> };
+        const error = payload.error;
+        assert.ok(error);
+        // Same code and message the ordinary routes already return for this
+        // classification, so a caller cannot tell the transports apart.
+        assert.equal(error.code, "empty_upstream_completion");
+        assert.equal(error.message, "Upstream response completed with no translated semantic output.");
+        assert.equal(error.type, "server_error");
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.completed, false);
+        assert.equal(telemetry.failureKind, "empty_upstream_completion");
+        assert.equal(telemetry.semanticOutputObserved, false);
+      });
+
+      await step("a buffered empty completion is also empty_upstream_completion", async () => {
+        const response = await buffered([{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "stop" }]);
+        assert.equal(response.status, 502);
+        const payload = (await response.json()) as { error?: Record<string, unknown> };
+        const error = payload.error;
+        assert.ok(error);
+        assert.equal(error.code, "empty_upstream_completion");
+      });
+
+      await step("an explicit truncation still wins over the empty-completion guard", async () => {
+        const response = await buffered([{ index: 0, message: { role: "assistant", reasoning_content: "thinking" }, finish_reason: "length" }]);
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as Record<string, unknown>;
+        assert.equal(payload.status, "incomplete");
+        assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
+        assert.equal(getResponseTelemetry(response)?.failureKind, "incomplete_response");
+      });
+
+      await step("a buffered text completion is untouched", async () => {
+        const response = await buffered([{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }]);
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as Record<string, unknown>;
+        assert.equal(payload.status, "completed");
+        assert.equal(getResponseTelemetry(response)?.completed, true);
+        assert.equal(getResponseTelemetry(response)?.failureKind, null);
+      });
+
+      await step("a buffered tool-call completion is untouched", async () => {
+        const response = await buffered([
+          {
+            index: 0,
+            message: { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }] },
+            finish_reason: "tool_calls",
+          },
+        ]);
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as Record<string, unknown>;
+        assert.equal(payload.status, "completed");
+        assert.deepEqual(
+          (payload.output as Record<string, unknown>[]).map((item) => item.type),
+          ["function_call"]
+        );
+      });
     } finally {
-      globalThis.fetch = originalFetch;
+      if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+      else process.env[envKey] = originalApiKey;
     }
-  };
-  const ok = (): Response =>
-    Response.json({
-      id: "c",
-      object: "chat.completion",
-      created: 1780000000,
-      model: "deepseek-flash",
-      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
-    });
-  const post = (extra: Record<string, unknown>): Promise<Response> =>
-    handleChatCompletions(
-      new Request("https://ai.ubq.fi/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "user", content: "hi" }], stream: false, ...extra }),
-      })
-    );
-  try {
-    await t.step("thinking {type:disabled} is accepted and does not reach the wire", async () => {
-      seen.length = 0;
-      const res = await withFetchMock(ok, () => post({ thinking: { type: "disabled" } }));
-      console.log("  thinking disabled -> HTTP", res.status);
-      await res.json();
-      console.log("  wire reasoning_effort:", seen[0]?.reasoning_effort, "| thinking present:", "thinking" in (seen[0] ?? {}));
-      assert.equal(res.status, 200);
-      assert.equal(seen[0]?.reasoning_effort, "none");
-      assert.equal("thinking" in (seen[0] ?? {}), false);
-    });
-    await t.step("thinking {type:enabled} keeps thinking on", async () => {
-      seen.length = 0;
-      const res = await withFetchMock(ok, () => post({ thinking: { type: "enabled" } }));
-      await res.json();
-      console.log("  thinking enabled -> HTTP", res.status, "| wire reasoning_effort:", seen[0]?.reasoning_effort);
-      assert.equal(res.status, 200);
-      assert.equal(seen[0]?.reasoning_effort, "high");
-    });
-    await t.step("tool_choice follows the canonical resolved thinking mode", async () => {
-      const tools = [{ type: "function", function: { name: "exec", parameters: { type: "object" } } }];
+  }));
 
-      seen.length = 0;
-      const disabled = await withFetchMock(ok, () =>
-        post({ thinking: { type: "enabled" }, reasoning_effort: "none", tools, tool_choice: "required" })
-      );
-      await disabled.json();
-      assert.equal(disabled.status, 200);
-      assert.equal(seen[0]?.reasoning_effort, "none");
-      assert.equal("thinking" in (seen[0] ?? {}), false);
+test("openai: a DeepSeek Responses refusal output replays as assistant history", async () =>
+  runSequence(async (step) => {
+    // The refusal content part this adapter emits was rejected by its own request
+    // translator: a client that sent the response output back as `input` got
+    // HTTP 400 `input.content type 'refusal' is not supported`, so a single
+    // refusal ended the conversation. Both transports' output must replay as the
+    // assistant text the established Chat message shape carries.
+    const envKey = "DEEPSEEK_API_KEY";
+    const originalApiKey = process.env[envKey];
+    process.env[envKey] = "deepseek-test-key";
+    const refusal = "I cannot help with that request.";
+    const completion = (message: Record<string, unknown>): Response =>
+      Response.json({
+        id: "deepseek-refusal-replay",
+        object: "chat.completion",
+        created: 1_780_000_700,
+        model: DEEPSEEK_FLASH_MODEL,
+        choices: [{ index: 0, message, finish_reason: "stop" }],
+        usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14 },
+      });
+    const continuationInput = (output: Record<string, unknown>[]): Record<string, unknown>[] => [
+      ...output,
+      { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+    ];
 
-      seen.length = 0;
-      const enabled = await withFetchMock(ok, () =>
-        post({ thinking: { type: "disabled" }, reasoning_effort: "max", tools, tool_choice: "required" })
-      );
-      assert.equal(enabled.status, 400);
-      const error = (await enabled.json()) as { error: { message: string; param: string } };
-      assert.equal(error.error.param, "tool_choice");
-      assert.match(error.error.message, /tool_choice 'required'/);
-      assert.match(error.error.message, /reasoning_effort/);
-      assert.equal(seen.length, 0);
-    });
-    await t.step("a non-DeepSeek route still rejects `thinking`", async () => {
-      const res = await withFetchMock(ok, () =>
-        handleChatCompletions(
-          new Request("https://ai.ubq.fi/v1/chat/completions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "gpt-5.6-luna", messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled" } }),
-          })
-        )
-      );
-      console.log("  non-deepseek model with thinking -> HTTP", res.status);
-      assert.equal(res.status, 400);
-    });
-  } finally {
-    if (original === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, original);
-  }
-});
+    try {
+      await step("buffered refusal output replays without a 400", async () => {
+        const upstreamBodies: Record<string, unknown>[] = [];
+        const result = await withFetchMock(
+          (_url, bodyText) => {
+            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+            return upstreamBodies.length === 1
+              ? completion({ role: "assistant", content: null, refusal })
+              : completion({ role: "assistant", content: "Continuing." });
+          },
+          async () => {
+            const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }));
+            assert.equal(first.status, 200);
+            const payload = (await first.json()) as Record<string, unknown>;
+            const output = payload.output as Record<string, unknown>[];
+            assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
+            return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
+          }
+        );
+        assert.equal(result.status, 200);
+        const messages = upstreamBodies[1].messages as Record<string, unknown>[];
+        assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
+        assert.deepEqual(messages.at(-1), { role: "user", content: "continue" });
+      });
 
-Deno.test("openai: one shared completion-validity rule governs the DeepSeek and Cerebras routes", async (t) => {
-  // The rule itself. A reasoning-only completion reaches the predicate with
-  // empty text and no tool calls: the provider's reasoning field (`reasoning`
-  // on Cerebras, `reasoning_content` on DeepSeek) is not part of the view.
-  assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 0 }), false);
-  assert.equal(isAnswerBearingCompletion({ text: "", refusal: "", toolCallCount: 0 }), false);
-  assert.equal(isAnswerBearingCompletion({ text: "pong", toolCallCount: 0 }), true);
-  assert.equal(isAnswerBearingCompletion({ text: "", refusal: "I cannot comply.", toolCallCount: 0 }), true);
-  assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 1 }), true);
+      await step("streamed terminal refusal output replays without a 400", async () => {
+        const upstreamBodies: Record<string, unknown>[] = [];
+        const result = await withFetchMock(
+          (_url, bodyText) => {
+            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+            if (upstreamBodies.length === 1) {
+              return sseResponse([deepSeekStreamChunk({ role: "assistant", refusal }), deepSeekStreamChunk({}, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+            }
+            return completion({ role: "assistant", content: "Continuing." });
+          },
+          async () => {
+            const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }));
+            assert.equal(first.status, 200);
+            const events = parseResponsesSseEvents(await first.text());
+            const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+            assert.equal(terminal.type, "response.completed");
+            const output = terminal.response.output as Record<string, unknown>[];
+            assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
+            return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
+          }
+        );
+        assert.equal(result.status, 200);
+        const messages = upstreamBodies[1].messages as Record<string, unknown>[];
+        assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
+      });
+    } finally {
+      if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+      else process.env[envKey] = originalApiKey;
+    }
+  }));
 
-  const originalDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
-  const originalCerebrasKey = Deno.env.get("CEREBRAS_API_KEY");
-  Deno.env.set("DEEPSEEK_API_KEY", "deepseek-test-key");
-  Deno.env.set("CEREBRAS_API_KEY", "cerebras-test-key");
-  const chatCompletion = (model: string, message: Record<string, unknown>): Record<string, unknown> => ({
-    id: "shared-validity-rule",
-    object: "chat.completion",
-    created: 1_780_000_500,
-    model,
-    choices: [{ index: 0, message, finish_reason: "stop" }],
-    usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
-  });
-  const messages = [{ role: "user", content: "hi" }];
-  try {
-    await t.step("Cerebras: reasoning-only is not answer-bearing and fails closed", async () => {
-      const response = await withFetchMock(
-        // `content` is absent, so the completion carries reasoning only.
-        () => Response.json(chatCompletion("gpt-oss-120b", { role: "assistant", reasoning: "thinking only" })),
-        () => handleChatCompletions(specialProviderChatRequest({ model: "gpt-oss-120b", messages, reasoning_effort: "medium" }))
-      );
-      assert.equal(response.status, 502);
-      assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "cerebras_upstream_invalid_response");
-      assert.equal(getResponseTelemetry(response)?.failureKind, "invalid_completion_schema");
-    });
-
-    await t.step("DeepSeek Chat: reasoning-only is not answer-bearing, an answer is", async () => {
-      const reasoningOnly = await withFetchMock(
-        () => Response.json(chatCompletion(DEEPSEEK_FLASH_MODEL, { role: "assistant", reasoning_content: "thinking only" })),
-        () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages }))
-      );
-      await reasoningOnly.json();
-      assert.equal(reasoningOnly.status, 200);
-      assert.notEqual(getResponseTelemetry(reasoningOnly)?.semanticOutputObserved, true);
-
-      const answered = await withFetchMock(
-        () => Response.json(chatCompletion(DEEPSEEK_FLASH_MODEL, { role: "assistant", content: "pong" })),
-        () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages }))
-      );
-      await answered.json();
-      assert.equal(getResponseTelemetry(answered)?.semanticOutputObserved, true);
-    });
-
-    await t.step("DeepSeek Responses: reasoning-only fails closed, an answer completes", async () => {
-      const chunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
-        `data: ${JSON.stringify({
-          id: "shared-validity-stream",
-          object: "chat.completion.chunk",
-          created: 1_780_000_501,
-          model: DEEPSEEK_FLASH_MODEL,
-          choices: [{ index: 0, delta, finish_reason: null, ...extra }],
-        })}\n\n`;
-      const responsesRequest = (): Request =>
-        new Request("https://ai.ubq.fi/v1/responses", {
+test("openai: the DeepSeek route accepts the provider's own `thinking` field", async () =>
+  runSequence(async (step) => {
+    const envKey = "DEEPSEEK_API_KEY";
+    const original = process.env[envKey];
+    process.env[envKey] = "deepseek-test-key";
+    const { handleChatCompletions } = await import("../src/chat/envelope.ts");
+    const seen: Record<string, unknown>[] = [];
+    const withFetchMock = async <T>(handler: () => Response | Promise<Response>, fn: () => Promise<T>): Promise<T> => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = createFetchMock((_u: unknown, init?: RequestInit) => {
+        seen.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
+        return Promise.resolve(handler());
+      });
+      try {
+        return await fn();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    };
+    const ok = (): Response =>
+      Response.json({
+        id: "c",
+        object: "chat.completion",
+        created: 1780000000,
+        model: "deepseek-flash",
+        choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+      });
+    const post = (extra: Record<string, unknown>): Promise<Response> =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }),
-        });
-      const reasoningOnly = await withFetchMock(
-        () => sseResponse([chunk({ role: "assistant", reasoning_content: "thinking only" }), chunk({}, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
-        () => handleResponses(responsesRequest())
+          body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "user", content: "hi" }], stream: false, ...extra }),
+        })
       );
-      const reasoningText = await reasoningOnly.text();
-      assert.match(reasoningText, /"type":"response\.failed"/);
-      assert.match(reasoningText, /"code":"empty_upstream_completion"/);
-      assert.equal(getResponseTelemetry(reasoningOnly)?.completed, false);
+    try {
+      await step("thinking {type:disabled} is accepted and does not reach the wire", async () => {
+        seen.length = 0;
+        const res = await withFetchMock(ok, () => post({ thinking: { type: "disabled" } }));
+        console.log("  thinking disabled -> HTTP", res.status);
+        await res.json();
+        console.log("  wire reasoning_effort:", seen[0]?.reasoning_effort, "| thinking present:", "thinking" in (seen[0] ?? {}));
+        assert.equal(res.status, 200);
+        assert.equal(seen[0]?.reasoning_effort, "none");
+        assert.equal("thinking" in (seen[0] ?? {}), false);
+      });
+      await step("thinking {type:enabled} keeps thinking on", async () => {
+        seen.length = 0;
+        const res = await withFetchMock(ok, () => post({ thinking: { type: "enabled" } }));
+        await res.json();
+        console.log("  thinking enabled -> HTTP", res.status, "| wire reasoning_effort:", seen[0]?.reasoning_effort);
+        assert.equal(res.status, 200);
+        assert.equal(seen[0]?.reasoning_effort, "high");
+      });
+      await step("tool_choice follows the canonical resolved thinking mode", async () => {
+        const tools = [{ type: "function", function: { name: "exec", parameters: { type: "object" } } }];
 
-      const answered = await withFetchMock(
-        () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
-        () => handleResponses(responsesRequest())
-      );
-      const answeredText = await answered.text();
-      assert.match(answeredText, /"type":"response\.completed"/);
-      assert.equal(getResponseTelemetry(answered)?.completed, true);
+        seen.length = 0;
+        const disabled = await withFetchMock(ok, () => post({ thinking: { type: "enabled" }, reasoning_effort: "none", tools, tool_choice: "required" }));
+        await disabled.json();
+        assert.equal(disabled.status, 200);
+        assert.equal(seen[0]?.reasoning_effort, "none");
+        assert.equal("thinking" in (seen[0] ?? {}), false);
+
+        seen.length = 0;
+        const enabled = await withFetchMock(ok, () => post({ thinking: { type: "disabled" }, reasoning_effort: "max", tools, tool_choice: "required" }));
+        assert.equal(enabled.status, 400);
+        const error = (await enabled.json()) as { error: { message: string; param: string } };
+        assert.equal(error.error.param, "tool_choice");
+        assert.match(error.error.message, /tool_choice 'required'/);
+        assert.match(error.error.message, /reasoning_effort/);
+        assert.equal(seen.length, 0);
+      });
+      await step("a non-DeepSeek route still rejects `thinking`", async () => {
+        const res = await withFetchMock(ok, () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "gpt-5.6-luna", messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled" } }),
+            })
+          )
+        );
+        console.log("  non-deepseek model with thinking -> HTTP", res.status);
+        assert.equal(res.status, 400);
+      });
+    } finally {
+      if (original === undefined) Reflect.deleteProperty(process.env, envKey);
+      else process.env[envKey] = original;
+    }
+  }));
+
+test("openai: one shared completion-validity rule governs the DeepSeek and Cerebras routes", async () =>
+  runSequence(async (step) => {
+    // The rule itself. A reasoning-only completion reaches the predicate with
+    // empty text and no tool calls: the provider's reasoning field (`reasoning`
+    // on Cerebras, `reasoning_content` on DeepSeek) is not part of the view.
+    assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 0 }), false);
+    assert.equal(isAnswerBearingCompletion({ text: "", refusal: "", toolCallCount: 0 }), false);
+    assert.equal(isAnswerBearingCompletion({ text: "pong", toolCallCount: 0 }), true);
+    assert.equal(isAnswerBearingCompletion({ text: "", refusal: "I cannot comply.", toolCallCount: 0 }), true);
+    assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 1 }), true);
+
+    const originalDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+    const originalCerebrasKey = process.env.CEREBRAS_API_KEY;
+    process.env.DEEPSEEK_API_KEY = "deepseek-test-key";
+    process.env.CEREBRAS_API_KEY = "cerebras-test-key";
+    const chatCompletion = (model: string, message: Record<string, unknown>): Record<string, unknown> => ({
+      id: "shared-validity-rule",
+      object: "chat.completion",
+      created: 1_780_000_500,
+      model,
+      choices: [{ index: 0, message, finish_reason: "stop" }],
+      usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
     });
-  } finally {
-    if (originalDeepSeekKey === undefined) Deno.env.delete("DEEPSEEK_API_KEY");
-    else Deno.env.set("DEEPSEEK_API_KEY", originalDeepSeekKey);
-    if (originalCerebrasKey === undefined) Deno.env.delete("CEREBRAS_API_KEY");
-    else Deno.env.set("CEREBRAS_API_KEY", originalCerebrasKey);
-  }
-});
+    const messages = [{ role: "user", content: "hi" }];
+    try {
+      await step("Cerebras: reasoning-only is not answer-bearing and fails closed", async () => {
+        const response = await withFetchMock(
+          // `content` is absent, so the completion carries reasoning only.
+          () => Response.json(chatCompletion("gpt-oss-120b", { role: "assistant", reasoning: "thinking only" })),
+          () => handleChatCompletions(specialProviderChatRequest({ model: "gpt-oss-120b", messages, reasoning_effort: "medium" }))
+        );
+        assert.equal(response.status, 502);
+        assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "cerebras_upstream_invalid_response");
+        assert.equal(getResponseTelemetry(response)?.failureKind, "invalid_completion_schema");
+      });
 
-Deno.test("openai: oversized Responses events retain their redacted failure classification", async () => {
+      await step("DeepSeek Chat: reasoning-only is not answer-bearing, an answer is", async () => {
+        const reasoningOnly = await withFetchMock(
+          () => Response.json(chatCompletion(DEEPSEEK_FLASH_MODEL, { role: "assistant", reasoning_content: "thinking only" })),
+          () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages }))
+        );
+        await reasoningOnly.json();
+        assert.equal(reasoningOnly.status, 200);
+        assert.notEqual(getResponseTelemetry(reasoningOnly)?.semanticOutputObserved, true);
+
+        const answered = await withFetchMock(
+          () => Response.json(chatCompletion(DEEPSEEK_FLASH_MODEL, { role: "assistant", content: "pong" })),
+          () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages }))
+        );
+        await answered.json();
+        assert.equal(getResponseTelemetry(answered)?.semanticOutputObserved, true);
+      });
+
+      await step("DeepSeek Responses: reasoning-only fails closed, an answer completes", async () => {
+        const chunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
+          `data: ${JSON.stringify({
+            id: "shared-validity-stream",
+            object: "chat.completion.chunk",
+            created: 1_780_000_501,
+            model: DEEPSEEK_FLASH_MODEL,
+            choices: [{ index: 0, delta, finish_reason: null, ...extra }],
+          })}\n\n`;
+        const responsesRequest = (): Request =>
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }),
+          });
+        const reasoningOnly = await withFetchMock(
+          () => sseResponse([chunk({ role: "assistant", reasoning_content: "thinking only" }), chunk({}, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+          () => handleResponses(responsesRequest())
+        );
+        const reasoningText = await reasoningOnly.text();
+        assert.match(reasoningText, /"type":"response\.failed"/);
+        assert.match(reasoningText, /"code":"empty_upstream_completion"/);
+        assert.equal(getResponseTelemetry(reasoningOnly)?.completed, false);
+
+        const answered = await withFetchMock(
+          () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+          () => handleResponses(responsesRequest())
+        );
+        const answeredText = await answered.text();
+        assert.match(answeredText, /"type":"response\.completed"/);
+        assert.equal(getResponseTelemetry(answered)?.completed, true);
+      });
+    } finally {
+      if (originalDeepSeekKey === undefined) Reflect.deleteProperty(process.env, "DEEPSEEK_API_KEY");
+      else process.env.DEEPSEEK_API_KEY = originalDeepSeekKey;
+      if (originalCerebrasKey === undefined) Reflect.deleteProperty(process.env, "CEREBRAS_API_KEY");
+      else process.env.CEREBRAS_API_KEY = originalCerebrasKey;
+    }
+  }));
+
+test("openai: oversized Responses events retain their redacted failure classification", async () => {
   const response = await withFetchMock(
     () => sseResponse([`data: ${"x".repeat(MAX_RESPONSES_SSE_EVENT_BYTES + 1)}\n\n`]),
     () =>
@@ -773,7 +783,7 @@ Deno.test("openai: oversized Responses events retain their redacted failure clas
   assert.equal(getResponseTelemetry(response)?.syntheticTerminalType, null);
 });
 
-Deno.test("openai: precommit telemetry records response.created before a malformed event", async () => {
+test("openai: precommit telemetry records response.created before a malformed event", async () => {
   const response = await withFetchMock(
     () => sseResponse([`data: ${JSON.stringify({ type: "response.created", response: { id: "resp_precommit_malformed" } })}\n\n`, 'data: {"type":\n\n']),
     () =>
@@ -805,7 +815,7 @@ Deno.test("openai: precommit telemetry records response.created before a malform
   assert.ok(telemetry.firstUpstreamSseEventMs <= telemetry.streamTerminalMs);
 });
 
-Deno.test("openai: Chat precommit telemetry separates upstream arrival from semantic commitment", async () => {
+test("openai: Chat precommit telemetry separates upstream arrival from semantic commitment", async () => {
   const response = await withFetchMock(
     () => sseResponse([`data: ${JSON.stringify({ type: "response.created", response: { id: "chat_precommit_malformed" } })}\n\n`, 'data: {"type":\n\n']),
     () =>
@@ -839,7 +849,7 @@ Deno.test("openai: Chat precommit telemetry separates upstream arrival from sema
   assert.ok(telemetry.firstUpstreamSseEventMs <= telemetry.streamTerminalMs);
 });
 
-Deno.test("openai: streamed Responses force the SSE content type", async () => {
+test("openai: streamed Responses force the SSE content type", async () => {
   const response = await withFetchMock(
     () =>
       new Response(sseResponse(baseSseChunks()).body, {
@@ -872,55 +882,57 @@ Deno.test("openai: streamed Responses force the SSE content type", async () => {
   assert.match(await response.text(), /response.completed/);
 });
 
-Deno.test("openai: invalid route-dependent Responses fields fail before dispatch", async (t) => {
-  const cases = [
-    { param: "max_output_tokens", value: 0 },
-    { param: "max_output_tokens", value: 1.5 },
-    { param: "max_output_tokens", value: "12" },
-    { param: "parallel_tool_calls", value: null },
-    { param: "parallel_tool_calls", value: "true" },
-    { param: "parallel_tool_calls", value: 1 },
-  ] as const;
-  for (const scenario of cases) {
-    await t.step(`${scenario.param}=${String(scenario.value)}`, async () => {
-      let fetches = 0;
+test("openai: invalid route-dependent Responses fields fail before dispatch", async () =>
+  runSequence(async (step) => {
+    const cases = [
+      { param: "max_output_tokens", value: 0 },
+      { param: "max_output_tokens", value: 1.5 },
+      { param: "max_output_tokens", value: "12" },
+      { param: "parallel_tool_calls", value: null },
+      { param: "parallel_tool_calls", value: "true" },
+      { param: "parallel_tool_calls", value: 1 },
+    ] as const;
+    for (const scenario of cases) {
+      await step(`${scenario.param}=${String(scenario.value)}`, async () => {
+        let fetches = 0;
+        const response = await withFetchMock(
+          () => {
+            fetches += 1;
+            return sseResponse(baseSseChunks());
+          },
+          () => handleResponses(responsesRequest({ [scenario.param]: scenario.value }))
+        );
+        assert.equal(response.status, 400);
+        assert.equal(((await response.json()) as { error?: { param?: unknown } }).error?.param, scenario.param);
+        assert.equal(fetches, 0);
+      });
+    }
+  }));
+
+test("openai: buffered Responses observe each real or synthetic terminal once", async () =>
+  runSequence(async (step) => {
+    await step("real response.completed usage", async () => {
+      const observations: { completed: boolean; totalTokens: number | null }[] = [];
       const response = await withFetchMock(
-        () => {
-          fetches += 1;
-          return sseResponse(baseSseChunks());
-        },
-        () => handleResponses(responsesRequest({ [scenario.param]: scenario.value }))
+        () => sseResponse(baseSseChunks()),
+        () =>
+          handleResponses(responsesRequest({ stream: false }), {
+            keyId: null,
+            kernelRepo: null,
+            kernelOrg: null,
+            onTerminalUsage: (usage, completed) =>
+              observations.push({
+                completed,
+                totalTokens: usage?.totalTokens ?? null,
+              }),
+          })
       );
-      assert.equal(response.status, 400);
-      assert.equal(((await response.json()) as { error?: { param?: unknown } }).error?.param, scenario.param);
-      assert.equal(fetches, 0);
+      await response.text();
+      assert.deepEqual(observations, [{ completed: true, totalTokens: 2 }]);
     });
-  }
-});
+  }));
 
-Deno.test("openai: buffered Responses observe each real or synthetic terminal once", async (t) => {
-  await t.step("real response.completed usage", async () => {
-    const observations: { completed: boolean; totalTokens: number | null }[] = [];
-    const response = await withFetchMock(
-      () => sseResponse(baseSseChunks()),
-      () =>
-        handleResponses(responsesRequest({ stream: false }), {
-          keyId: null,
-          kernelRepo: null,
-          kernelOrg: null,
-          onTerminalUsage: (usage, completed) =>
-            observations.push({
-              completed,
-              totalTokens: usage?.totalTokens ?? null,
-            }),
-        })
-    );
-    await response.text();
-    assert.deepEqual(observations, [{ completed: true, totalTokens: 2 }]);
-  });
-});
-
-Deno.test("openai: buffered committed Responses failures use the official server_error code", async () => {
+test("openai: buffered committed Responses failures use the official server_error code", async () => {
   const response = await withFetchMock(
     () => sseResponse([...baseSseChunks().slice(0, -1), 'data: {"type":\n\n']),
     () => handleResponses(responsesRequest({ stream: false }))
@@ -930,7 +942,7 @@ Deno.test("openai: buffered committed Responses failures use the official server
   assert.equal(payload.error?.code, "server_error");
 });
 
-Deno.test("auth: kernel attestation tokens are reusable within TTL", async () => {
+test("auth: kernel attestation tokens are reusable within TTL", async () => {
   const keyPair = await crypto.subtle.generateKey(
     {
       name: "RSASSA-PKCS1-v1_5",
@@ -985,7 +997,7 @@ Deno.test("auth: kernel attestation tokens are reusable within TTL", async () =>
 
 // ── Admin provider selection ─────────────────────────────────────────────────
 
-Deno.test("openai: a switched-off Codex provider with no paid tier fails closed instead of dispatching", async () => {
+test("openai: a switched-off Codex provider with no paid tier fails closed instead of dispatching", async () => {
   await withDiscoveryKeys(null, async () => {
     await withProviderSelection(["deepseek"], async () => {
       const dispatched: string[] = [];
@@ -1006,7 +1018,7 @@ Deno.test("openai: a switched-off Codex provider with no paid tier fails closed 
   });
 });
 
-Deno.test("openai: a switched-off Codex provider hands the request to the enabled paid tier", async () => {
+test("openai: a switched-off Codex provider hands the request to the enabled paid tier", async () => {
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   await withDiscoveryKeys("metered-provider-selection-key", async () => {
@@ -1050,7 +1062,7 @@ Deno.test("openai: a switched-off Codex provider hands the request to the enable
   });
 });
 
-Deno.test("openai: an empty provider selection keeps Codex as the primary provider", async () => {
+test("openai: an empty provider selection keeps Codex as the primary provider", async () => {
   for (const providerIds of [null, []] as const) {
     let dispatched = 0;
     const response = await withProviderSelection(providerIds, () =>
@@ -1069,13 +1081,13 @@ Deno.test("openai: an empty provider selection keeps Codex as the primary provid
   }
 });
 
-Deno.test("openai: a switched-off DeepSeek provider is not dispatched on the Responses route", async () => {
-  const originalApiKey = Deno.env.get("DEEPSEEK_API_KEY");
-  const originalOpenRouterApiKey = Deno.env.get("OPENROUTER_API_KEY");
-  Deno.env.set("DEEPSEEK_API_KEY", "deepseek-test-key");
+test("openai: a switched-off DeepSeek provider is not dispatched on the Responses route", async () => {
+  const originalApiKey = process.env.DEEPSEEK_API_KEY;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "deepseek-test-key";
   // The following sibling branch resolves OpenRouter's catalogue before it
   // consults the selection; without a key it answers not-served without a fetch.
-  Deno.env.delete("OPENROUTER_API_KEY");
+  Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   try {
@@ -1105,269 +1117,301 @@ Deno.test("openai: a switched-off DeepSeek provider is not dispatched on the Res
   } finally {
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
-    if (originalApiKey === undefined) Deno.env.delete("DEEPSEEK_API_KEY");
-    else Deno.env.set("DEEPSEEK_API_KEY", originalApiKey);
-    if (originalOpenRouterApiKey === undefined) Deno.env.delete("OPENROUTER_API_KEY");
-    else Deno.env.set("OPENROUTER_API_KEY", originalOpenRouterApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, "DEEPSEEK_API_KEY");
+    else process.env.DEEPSEEK_API_KEY = originalApiKey;
+    if (originalOpenRouterApiKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
+    else process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+  }
+});
+
+test("openai: a switched-off OpenRouter provider does not refresh a cold catalogue", async () => {
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "openrouter-test-key";
+  resetOpenRouterModelsCacheForTest();
+  let catalogueFetches = 0;
+  setOpenRouterModelsFetchForTest(() => {
+    catalogueFetches += 1;
+    return Promise.reject(new Error("a switched-off OpenRouter provider must not refresh its catalogue"));
+  });
+  try {
+    await withDiscoveryKeys(null, async () => {
+      await withProviderSelection(["cerebras"], async () => {
+        const response = await withFetchMock(
+          () => {
+            throw new Error("the ordinary availability path must not dispatch an upstream request");
+          },
+          () => handleResponses(responsesRequest({ model: "vendor/alpha", input: "hi" }))
+        );
+        assert.equal(catalogueFetches, 0);
+        assert.equal(response.status, 404);
+        await response.text();
+      });
+    });
+  } finally {
+    setOpenRouterModelsFetchForTest(null);
+    resetOpenRouterModelsCacheForTest();
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
+    else process.env.OPENROUTER_API_KEY = originalApiKey;
   }
 });
 
 /** Seeds both paid catalogs for the model the paid-attempt fixtures route. */
 
-Deno.test("openai: non-capacity first-tier paid failures fail closed on Surplus", async (t) => {
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
-  const previousAtomicObserver = atomicCommitObservation.observer;
-  const atomicCommits: OpenAiAtomicOp[][] = [];
-  const keyIds: string[] = [];
-  atomicCommitObservation.observer = (operations) => atomicCommits.push([...operations]);
-  const paidRequestKeyFor = (keyId: string, requestId: string) => ["uos_ai", "paid_fallback", "v3", "request", keyId, requestId] as const;
+test("openai: non-capacity first-tier paid failures fail closed on Surplus", async () =>
+  runSequence(async (step) => {
+    const originalMeteredApiKey = process.env.METERED_API_KEY;
+    const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
+    const previousAtomicObserver = atomicCommitObservation.observer;
+    const atomicCommits: OpenAiAtomicOp[][] = [];
+    const keyIds: string[] = [];
+    atomicCommitObservation.observer = (operations) => atomicCommits.push([...operations]);
+    const paidRequestKeyFor = (keyId: string, requestId: string) => ["uos_ai", "paid_fallback", "v3", "request", keyId, requestId] as const;
 
-  try {
-    Deno.env.set("METERED_API_KEY", "metered-fallthrough-test-key");
-    Deno.env.set("SURPLUS_API_KEY", "surplus-fallthrough-test-key");
-    resetProviderHealthThrottleForTest();
-    clearMeteredAndSurplusProviderHealth();
-    await seedPaidFallthroughProviders();
+    try {
+      process.env.METERED_API_KEY = "metered-fallthrough-test-key";
+      process.env.SURPLUS_API_KEY = "surplus-fallthrough-test-key";
+      resetProviderHealthThrottleForTest();
+      clearMeteredAndSurplusProviderHealth();
+      await seedPaidFallthroughProviders();
 
-    const runPaidAttempt = async (
-      name: string,
-      surplusResponse: (signal: AbortSignal | undefined) => Response | Promise<Response>
-    ): Promise<
-      Readonly<{
-        keyId: string;
-        requestId: string;
-        status: number;
-        upstream: string | null;
-        body: string;
-        surplusCalls: number;
-        meteredCalls: number;
-      }>
-    > => {
-      const keyId = `fallthrough-${name}`;
-      const requestId = `request-${keyId}`;
-      keyIds.push(keyId);
-      seedPaidFallbackKey(keyId);
-      let surplusCalls = 0;
-      let meteredCalls = 0;
-      const response = await withFetchMock(
-        (url, _bodyText, init) => {
-          if (url === "https://api.surplusintelligence.ai/v1/responses") {
-            surplusCalls += 1;
-            return surplusResponse(init?.signal ?? undefined);
-          }
-          if (url === "https://api.openlux.ai/v1/responses") {
-            meteredCalls += 1;
-            return sseResponse(baseSseChunks());
-          }
-          return authoritativeCodexQuotaResponse();
-        },
-        () =>
-          handleResponses(responsesRequest({ stream: false }), {
-            keyId,
-            kernelRepo: null,
-            kernelOrg: null,
-            requestId,
-            startedAtMs: Date.now(),
-          })
-      );
-      const body = await response.text();
-      return {
-        keyId,
-        requestId,
-        status: response.status,
-        upstream: response.headers.get("x-uos-upstream"),
-        body,
-        surplusCalls,
-        meteredCalls,
+      const runPaidAttempt = async (
+        name: string,
+        surplusResponse: (signal: AbortSignal | undefined) => Response | Promise<Response>
+      ): Promise<
+        Readonly<{
+          keyId: string;
+          requestId: string;
+          status: number;
+          upstream: string | null;
+          body: string;
+          surplusCalls: number;
+          meteredCalls: number;
+        }>
+      > => {
+        const keyId = `fallthrough-${name}`;
+        const requestId = `request-${keyId}`;
+        keyIds.push(keyId);
+        seedPaidFallbackKey(keyId);
+        let surplusCalls = 0;
+        let meteredCalls = 0;
+        const response = await withFetchMock(
+          (url, _bodyText, init) => {
+            if (url === "https://api.surplusintelligence.ai/v1/responses") {
+              surplusCalls += 1;
+              return surplusResponse(init?.signal ?? undefined);
+            }
+            if (url === "https://api.openlux.ai/v1/responses") {
+              meteredCalls += 1;
+              return sseResponse(baseSseChunks());
+            }
+            return authoritativeCodexQuotaResponse();
+          },
+          () =>
+            handleResponses(responsesRequest({ stream: false }), {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+            })
+        );
+        const body = await response.text();
+        return {
+          keyId,
+          requestId,
+          status: response.status,
+          upstream: response.headers.get("x-uos-upstream"),
+          body,
+          surplusCalls,
+          meteredCalls,
+        };
       };
-    };
 
-    await t.step("a Surplus transport failure fails closed without trying OpenLux", async () => {
-      const result = await runPaidAttempt("transport-failure", () => {
-        throw new TypeError("network connection reset before response headers");
-      });
-      assert.equal(result.status, 502);
-      assert.equal(result.upstream, "surplus");
-      assert.equal(result.surplusCalls, 1);
-      assert.equal(result.meteredCalls, 0);
-      // The original Surplus transport detail is preserved, and the attempt
-      // that reached transport stays a pending ambiguous exposure.
-      const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
-      assert.equal(payload.error?.type, "server_error");
-      assert.equal(payload.error.code, "surplus_upstream_unreachable");
-      const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "ambiguous");
-      assert.equal(stored.provider, "surplus");
-      assert.equal(stored.dispatch_state, "dispatched");
-      assert.equal(stored.provider_request_id, null);
-      assert.equal(stored.billing_state, "pending");
-    });
-
-    await t.step("a Surplus 5xx stays delivered and never tries OpenLux", async () => {
-      const result = await runPaidAttempt(
-        "upstream-5xx",
-        () =>
-          new Response(JSON.stringify({ error: { message: "surplus exploded", code: "surplus_server_error" } }), {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          })
-      );
-      assert.equal(result.status, 503);
-      assert.equal(result.upstream, "surplus");
-      assert.equal(result.surplusCalls, 1);
-      assert.equal(result.meteredCalls, 0);
-      const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
-      const error = payload.error ?? {};
-      assert.equal(error.type, "server_error");
-      assert.equal(error.code, "surplus_server_error");
-      const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "failed");
-      assert.equal(stored.provider, "surplus");
-    });
-
-    await t.step("a stalled Surplus attempt fails closed at the bounded first-headers deadline", async () => {
-      setPaidProviderFirstHeadersDeadlineMsForTest(30);
-      try {
-        const result = await runPaidAttempt("stalled-headers", (signal) => rejectOnAbort(signal ?? new AbortController().signal));
-        assert.equal(result.status, 504);
+      await step("a Surplus transport failure fails closed without trying OpenLux", async () => {
+        const result = await runPaidAttempt("transport-failure", () => {
+          throw new TypeError("network connection reset before response headers");
+        });
+        assert.equal(result.status, 502);
         assert.equal(result.upstream, "surplus");
         assert.equal(result.surplusCalls, 1);
         assert.equal(result.meteredCalls, 0);
+        // The original Surplus transport detail is preserved, and the attempt
+        // that reached transport stays a pending ambiguous exposure.
         const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
         assert.equal(payload.error?.type, "server_error");
-        assert.equal(payload.error.code, "gateway_timeout");
+        assert.equal(payload.error.code, "surplus_upstream_unreachable");
         const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "ambiguous");
         assert.equal(stored.provider, "surplus");
         assert.equal(stored.dispatch_state, "dispatched");
         assert.equal(stored.provider_request_id, null);
         assert.equal(stored.billing_state, "pending");
-      } finally {
-        setPaidProviderFirstHeadersDeadlineMsForTest(null);
-      }
-    });
+      });
 
-    await t.step("a definitive Surplus 400 stays delivered and never tries OpenLux", async () => {
-      const result = await runPaidAttempt(
-        "definitive-400",
-        () =>
-          new Response(JSON.stringify({ error: { message: "surplus rejected the request body", code: "surplus_bad_request" } }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          })
-      );
-      assert.equal(result.status, 400);
-      assert.equal(result.upstream, "surplus");
-      assert.equal(result.surplusCalls, 1);
-      assert.equal(result.meteredCalls, 0);
-      const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
-      const error = payload.error ?? {};
-      assert.equal(error.type, "invalid_request_error");
-      assert.equal(error.code, "surplus_bad_request");
-      const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "failed");
-      assert.equal(stored.provider, "surplus");
-    });
-
-    await t.step("every failed paid reservation records exactly one terminal provider pair", () => {
-      for (const keyId of keyIds) {
-        const terminalWrites = atomicWritesForKey(atomicCommits, paidRequestKeyFor(keyId, `request-${keyId}`)).filter((operation) => {
-          const value = operation.value;
-          if (typeof value !== "object" || value === null) return false;
-          const state = (value as { terminal_state?: unknown }).terminal_state;
-          return typeof state === "string" && state !== "pending";
-        });
-        assert.equal(terminalWrites.length, 1, `${keyId} terminal provider/request-id pair`);
-      }
-    });
-
-    await t.step("delivered Surplus headers release the attempt deadline before slow health bookkeeping", async () => {
-      const originalAtomic = kvStub.atomic.bind(kvStub);
-      let attemptSignal: AbortSignal | undefined;
-      let healthDelayMs = 0;
-      let abortedDuringHealth: boolean | undefined;
-      let bodyAborted = false;
-      let deliverBody = () => {};
-      const delayHealth = () => new Promise<void>((resolve) => setTimeout(resolve, 60));
-      resetProviderHealthThrottleForTest();
-      setPaidProviderFirstHeadersDeadlineMsForTest(30);
-      kvStub.atomic = () => {
-        const operation = originalAtomic();
-        const originalSet = operation.set.bind(operation);
-        const originalCommit = operation.commit.bind(operation);
-        let slowHealthCommit = false;
-        operation.set = (key, value, options) => {
-          if (key[1] === "provider_health" && key[3] === "surplus" && key[5] === "reachable") slowHealthCommit = true;
-          return originalSet(key, value, options);
-        };
-        operation.commit = async () => {
-          if (slowHealthCommit) {
-            const startedAtMs = performance.now();
-            await delayHealth();
-            healthDelayMs = performance.now() - startedAtMs;
-            abortedDuringHealth = attemptSignal?.aborted;
-            deliverBody();
-          }
-          return await originalCommit();
-        };
-        return operation;
-      };
-      try {
-        const result = await runPaidAttempt("headers-before-slow-health", (signal) => {
-          assert.ok(signal);
-          assert.equal(signal.aborted, false, "headers arrived before the attempt deadline");
-          attemptSignal = signal;
-          let bodyController: ReadableStreamDefaultController<Uint8Array> | null = null;
-          const onAbort = () => {
-            bodyAborted = true;
-            bodyController?.error(signal.reason);
-          };
-          deliverBody = () => {
-            signal.removeEventListener("abort", onAbort);
-            if (bodyAborted) return;
-            assert.ok(bodyController);
-            for (const chunk of baseSseChunks()) bodyController.enqueue(TEXT_ENCODER.encode(chunk));
-            bodyController.close();
-          };
-          const body = new ReadableStream<Uint8Array>({
-            start(controller) {
-              bodyController = controller;
-            },
-          });
-          signal.addEventListener("abort", onAbort, { once: true });
-          return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
-        });
-        assert.ok(healthDelayMs > 30, "health bookkeeping remained pending beyond the 30 ms headers deadline");
-        assert.equal(abortedDuringHealth, false, "the headers deadline cannot abort a delivered body during bookkeeping");
-        assert.equal(bodyAborted, false);
-        assert.equal(result.status, 200);
+      await step("a Surplus 5xx stays delivered and never tries OpenLux", async () => {
+        const result = await runPaidAttempt(
+          "upstream-5xx",
+          () =>
+            new Response(JSON.stringify({ error: { message: "surplus exploded", code: "surplus_server_error" } }), {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            })
+        );
+        assert.equal(result.status, 503);
         assert.equal(result.upstream, "surplus");
         assert.equal(result.surplusCalls, 1);
         assert.equal(result.meteredCalls, 0);
-        const payload = JSON.parse(result.body) as { output?: { status?: unknown; content?: { text?: unknown }[] }[] };
-        const output = payload.output?.at(-1);
-        assert.ok(output);
-        assert.equal(output.status, "completed");
-        const content = output.content?.at(0);
-        assert.ok(content);
-        assert.equal(content.text, "pong");
-        await waitForPaidFallbackTerminal(result.keyId, result.requestId, "completed");
-      } finally {
-        kvStub.atomic = originalAtomic;
-        setPaidProviderFirstHeadersDeadlineMsForTest(null);
+        const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
+        const error = payload.error ?? {};
+        assert.equal(error.type, "server_error");
+        assert.equal(error.code, "surplus_server_error");
+        const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "failed");
+        assert.equal(stored.provider, "surplus");
+      });
+
+      await step("a stalled Surplus attempt fails closed at the bounded first-headers deadline", async () => {
+        setPaidProviderFirstHeadersDeadlineMsForTest(30);
+        try {
+          const result = await runPaidAttempt("stalled-headers", (signal) => rejectOnAbort(signal ?? new AbortController().signal));
+          assert.equal(result.status, 504);
+          assert.equal(result.upstream, "surplus");
+          assert.equal(result.surplusCalls, 1);
+          assert.equal(result.meteredCalls, 0);
+          const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
+          assert.equal(payload.error?.type, "server_error");
+          assert.equal(payload.error.code, "gateway_timeout");
+          const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "ambiguous");
+          assert.equal(stored.provider, "surplus");
+          assert.equal(stored.dispatch_state, "dispatched");
+          assert.equal(stored.provider_request_id, null);
+          assert.equal(stored.billing_state, "pending");
+        } finally {
+          setPaidProviderFirstHeadersDeadlineMsForTest(null);
+        }
+      });
+
+      await step("a definitive Surplus 400 stays delivered and never tries OpenLux", async () => {
+        const result = await runPaidAttempt(
+          "definitive-400",
+          () =>
+            new Response(JSON.stringify({ error: { message: "surplus rejected the request body", code: "surplus_bad_request" } }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            })
+        );
+        assert.equal(result.status, 400);
+        assert.equal(result.upstream, "surplus");
+        assert.equal(result.surplusCalls, 1);
+        assert.equal(result.meteredCalls, 0);
+        const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
+        const error = payload.error ?? {};
+        assert.equal(error.type, "invalid_request_error");
+        assert.equal(error.code, "surplus_bad_request");
+        const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "failed");
+        assert.equal(stored.provider, "surplus");
+      });
+
+      await step("every failed paid reservation records exactly one terminal provider pair", () => {
+        for (const keyId of keyIds) {
+          const terminalWrites = atomicWritesForKey(atomicCommits, paidRequestKeyFor(keyId, `request-${keyId}`)).filter((operation) => {
+            const value = operation.value;
+            if (typeof value !== "object" || value === null) return false;
+            const state = (value as { terminal_state?: unknown }).terminal_state;
+            return typeof state === "string" && state !== "pending";
+          });
+          assert.equal(terminalWrites.length, 1, `${keyId} terminal provider/request-id pair`);
+        }
+      });
+
+      await step("delivered Surplus headers release the attempt deadline before slow health bookkeeping", async () => {
+        const originalAtomic = kvStub.atomic.bind(kvStub);
+        let attemptSignal: AbortSignal | undefined;
+        let healthDelayMs = 0;
+        let abortedDuringHealth: boolean | undefined;
+        let bodyAborted = false;
+        let deliverBody = () => {};
+        const delayHealth = () => new Promise<void>((resolve) => setTimeout(resolve, 60));
+        resetProviderHealthThrottleForTest();
+        setPaidProviderFirstHeadersDeadlineMsForTest(30);
+        kvStub.atomic = () => {
+          const operation = originalAtomic();
+          const originalSet = operation.set.bind(operation);
+          const originalCommit = operation.commit.bind(operation);
+          let slowHealthCommit = false;
+          operation.set = (key, value, options) => {
+            if (key[1] === "provider_health" && key[3] === "surplus" && key[5] === "reachable") slowHealthCommit = true;
+            return originalSet(key, value, options);
+          };
+          operation.commit = async () => {
+            if (slowHealthCommit) {
+              const startedAtMs = performance.now();
+              await delayHealth();
+              healthDelayMs = performance.now() - startedAtMs;
+              abortedDuringHealth = attemptSignal?.aborted;
+              deliverBody();
+            }
+            return await originalCommit();
+          };
+          return operation;
+        };
+        try {
+          const result = await runPaidAttempt("headers-before-slow-health", (signal) => {
+            assert.ok(signal);
+            assert.equal(signal.aborted, false, "headers arrived before the attempt deadline");
+            attemptSignal = signal;
+            let bodyController: ReadableStreamDefaultController<Uint8Array> | null = null;
+            const onAbort = () => {
+              bodyAborted = true;
+              bodyController?.error(signal.reason);
+            };
+            deliverBody = () => {
+              signal.removeEventListener("abort", onAbort);
+              if (bodyAborted) return;
+              assert.ok(bodyController);
+              for (const chunk of baseSseChunks()) bodyController.enqueue(TEXT_ENCODER.encode(chunk));
+              bodyController.close();
+            };
+            const body = new ReadableStream<Uint8Array>({
+              start(controller) {
+                bodyController = controller;
+              },
+            });
+            signal.addEventListener("abort", onAbort, { once: true });
+            return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+          });
+          assert.ok(healthDelayMs > 30, "health bookkeeping remained pending beyond the 30 ms headers deadline");
+          assert.equal(abortedDuringHealth, false, "the headers deadline cannot abort a delivered body during bookkeeping");
+          assert.equal(bodyAborted, false);
+          assert.equal(result.status, 200);
+          assert.equal(result.upstream, "surplus");
+          assert.equal(result.surplusCalls, 1);
+          assert.equal(result.meteredCalls, 0);
+          const payload = JSON.parse(result.body) as { output?: { status?: unknown; content?: { text?: unknown }[] }[] };
+          const output = payload.output?.at(-1);
+          assert.ok(output);
+          assert.equal(output.status, "completed");
+          const content = output.content?.at(0);
+          assert.ok(content);
+          assert.equal(content.text, "pong");
+          await waitForPaidFallbackTerminal(result.keyId, result.requestId, "completed");
+        } finally {
+          kvStub.atomic = originalAtomic;
+          setPaidProviderFirstHeadersDeadlineMsForTest(null);
+        }
+      });
+    } finally {
+      atomicCommitObservation.observer = previousAtomicObserver;
+      setPaidProviderFirstHeadersDeadlineMsForTest(null);
+      resetMeteredModelsCacheForTest();
+      resetSurplusModelsCacheForTest();
+      resetProviderHealthThrottleForTest();
+      clearMeteredAndSurplusProviderHealth();
+      for (const keyId of keyIds) {
+        kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+        kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
       }
-    });
-  } finally {
-    atomicCommitObservation.observer = previousAtomicObserver;
-    setPaidProviderFirstHeadersDeadlineMsForTest(null);
-    resetMeteredModelsCacheForTest();
-    resetSurplusModelsCacheForTest();
-    resetProviderHealthThrottleForTest();
-    clearMeteredAndSurplusProviderHealth();
-    for (const keyId of keyIds) {
-      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
-      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+      if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+      else process.env.METERED_API_KEY = originalMeteredApiKey;
+      if (originalSurplusApiKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+      else process.env.SURPLUS_API_KEY = originalSurplusApiKey;
     }
-    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
-    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
-  }
-});
+  }));

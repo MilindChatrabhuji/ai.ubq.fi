@@ -1,7 +1,13 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import { type Kv } from "#kv";
+import { runSequence } from "./helpers/sequence.ts";
 // codex-auth-cache suite, part 3 of 4: tests moved out of tests/codex-auth-cache.test.ts.
 
 import assert from "node:assert/strict";
 import {
+  installHarness,
+  cleanupHarness,
   AUTH_KEY,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
@@ -29,7 +35,7 @@ import {
   stableBankedResetRetryAfter,
 } from "./helpers/codex-auth-cache-harness.ts";
 
-Deno.test("a global active-account transition inside the final dispatch hook fences off a post-reset retry", async () => {
+test("a global active-account transition inside the final dispatch hook fences off a post-reset retry", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -44,7 +50,7 @@ Deno.test("a global active-account transition inside the final dispatch hook fen
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   const reset = scriptedResetProvider();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -52,7 +58,7 @@ Deno.test("a global active-account transition inside the final dispatch hook fen
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -81,7 +87,7 @@ Deno.test("a global active-account transition inside the final dispatch hook fen
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-active-fence",
         },
@@ -102,7 +108,7 @@ Deno.test("a global active-account transition inside the final dispatch hook fen
   }
 });
 
-Deno.test("an auth-pool slot reorder during a claimed reset fences submission before redemption", async () => {
+test("an auth-pool slot reorder during a claimed reset fences submission before redemption", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -122,7 +128,7 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
       kv.authVersion += 1;
     },
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     upstreamAccounts.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(
@@ -131,7 +137,7 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
         headers: { "Content-Type": "application/json", "Retry-After": stableRetryAfter },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -140,7 +146,7 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-slot-reorder",
         },
@@ -160,7 +166,7 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
   }
 });
 
-Deno.test("the request that first discovers a healthy fallback does not spend before a fresh cohort read", async () => {
+test("the request that first discovers a healthy fallback does not spend before a fresh cohort read", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -172,7 +178,7 @@ Deno.test("the request that first discovers a healthy fallback does not spend be
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(
@@ -183,7 +189,7 @@ Deno.test("the request that first discovers a healthy fallback does not spend be
           })
         : new Response(JSON.stringify({ id: "fallback-success" }), { status: 200 })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -192,7 +198,7 @@ Deno.test("the request that first discovers a healthy fallback does not spend be
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-fallback",
         },
@@ -210,7 +216,7 @@ Deno.test("the request that first discovers a healthy fallback does not spend be
   }
 });
 
-Deno.test("a sibling re-blocked during reset inventory cannot be dispatched from the stale snapshot", async () => {
+test("a sibling re-blocked during reset inventory cannot be dispatched from the stale snapshot", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -253,11 +259,11 @@ Deno.test("a sibling re-blocked during reset inventory cannot be dispatched from
       });
     },
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response(JSON.stringify({ id: "stale-sibling-fallback" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -267,7 +273,7 @@ Deno.test("a sibling re-blocked during reset inventory cannot be dispatched from
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-partial-preflight-sibling-blocked",
         },
@@ -292,7 +298,7 @@ Deno.test("a sibling re-blocked during reset inventory cannot be dispatched from
   }
 });
 
-Deno.test("a legacy timeout mutation during reset inventory cannot open a stale fallback", async () => {
+test("a legacy timeout mutation during reset inventory cannot open a stale fallback", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -328,11 +334,11 @@ Deno.test("a legacy timeout mutation during reset inventory cannot open a stale 
       });
     },
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response(JSON.stringify({ id: "stale-timeout-fallback" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -342,7 +348,7 @@ Deno.test("a legacy timeout mutation during reset inventory cannot open a stale 
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-partial-preflight-sibling-timeout",
         },
@@ -362,7 +368,7 @@ Deno.test("a legacy timeout mutation during reset inventory cannot open a stale 
   }
 });
 
-Deno.test("a routing KV outage during reset inventory never dispatches a stale fallback", async () => {
+test("a routing KV outage during reset inventory never dispatches a stale fallback", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -382,11 +388,11 @@ Deno.test("a routing KV outage during reset inventory never dispatches a stale f
       };
     },
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response(JSON.stringify({ id: "cached-sibling-fallback" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -396,7 +402,7 @@ Deno.test("a routing KV outage during reset inventory never dispatches a stale f
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-reset-inventory-routing-unavailable",
         },
@@ -417,7 +423,7 @@ Deno.test("a routing KV outage during reset inventory never dispatches a stale f
   }
 });
 
-Deno.test("a sibling credential rotation during reset inventory fences the consume and serves on the next admission", async () => {
+test("a sibling credential rotation during reset inventory fences the consume and serves on the next admission", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -441,12 +447,12 @@ Deno.test("a sibling credential rotation during reset inventory fences the consu
       await kv.set(AUTH_KEY, pool(auth("one"), rotated));
     },
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     authorizations.push(request.headers.get("authorization") ?? "");
     return Promise.resolve(new Response(JSON.stringify({ id: "rotated-sibling" }), { status: 200 }));
-  };
+  });
 
   try {
     const fenced = await fetchCodexResponses(
@@ -456,7 +462,7 @@ Deno.test("a sibling credential rotation during reset inventory fences the consu
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-reset-inventory-sibling-rotated",
         },
@@ -485,7 +491,7 @@ Deno.test("a sibling credential rotation during reset inventory fences the consu
   }
 });
 
-Deno.test("a positive capacity observation during reset inventory fences the consume", async () => {
+test("a positive capacity observation during reset inventory fences the consume", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -524,11 +530,11 @@ Deno.test("a positive capacity observation during reset inventory fences the con
       );
     },
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response(JSON.stringify({ id: "capacity-recovered" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -538,7 +544,7 @@ Deno.test("a positive capacity observation during reset inventory fences the con
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-reset-inventory-positive-capacity",
         },
@@ -567,7 +573,7 @@ Deno.test("a positive capacity observation during reset inventory fences the con
   }
 });
 
-Deno.test("a whole-pool reorder during reset inventory fences the consume", async () => {
+test("a whole-pool reorder during reset inventory fences the consume", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -585,11 +591,11 @@ Deno.test("a whole-pool reorder during reset inventory fences the consume", asyn
       await kv.set(AUTH_KEY, pool(auth("two"), auth("one")));
     },
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response(JSON.stringify({ id: "reordered-sibling-fallback" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -599,7 +605,7 @@ Deno.test("a whole-pool reorder during reset inventory fences the consume", asyn
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-reset-inventory-pool-reordered",
         },
@@ -619,75 +625,76 @@ Deno.test("a whole-pool reorder during reset inventory fences the consume", asyn
   }
 });
 
-Deno.test("definitive post-reset probe failures are returned directly without sibling replay", async (t) => {
-  const originalFetch = globalThis.fetch;
-  const originalNow = Date.now;
-  const originalDeployFlag = config.isDeploy;
-  Date.now = () => fixedStartMs;
-  (config as { isDeploy: boolean }).isDeploy = true;
+test("definitive post-reset probe failures are returned directly without sibling replay", () =>
+  runSequence(async (step) => {
+    const originalFetch = globalThis.fetch;
+    const originalNow = Date.now;
+    const originalDeployFlag = config.isDeploy;
+    Date.now = () => fixedStartMs;
+    (config as { isDeploy: boolean }).isDeploy = true;
 
-  try {
-    for (const status of [401, 403, 429]) {
-      await t.step(String(status), async () => {
-        const accountIds: string[] = [];
-        const reset = scriptedResetProvider();
-        kv.auth = pool(auth("one"), auth("two"));
-        kv.extra.clear();
-        resetCodexAuthCacheForTest();
-        resetCodexAccountRoutingForTest();
-        await seedStableBankedResetBlock();
-        await seedStableBankedResetBlock("account-two");
-        globalThis.fetch = (input, init) => {
-          const request = new Request(input, init);
-          const accountId = request.headers.get("chatgpt-account-id") ?? "";
-          accountIds.push(accountId);
-          const headers = new Headers({ "Content-Type": "application/json" });
-          if (status === 429) headers.set("Retry-After", stableBankedResetRetryAfter);
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                error: {
-                  type: probeErrorType(status),
-                },
-              }),
-              { status, headers }
-            )
+    try {
+      for (const status of [401, 403, 429]) {
+        await step(String(status), async () => {
+          const accountIds: string[] = [];
+          const reset = scriptedResetProvider();
+          kv.auth = pool(auth("one"), auth("two"));
+          kv.extra.clear();
+          resetCodexAuthCacheForTest();
+          resetCodexAccountRoutingForTest();
+          await seedStableBankedResetBlock();
+          await seedStableBankedResetBlock("account-two");
+          globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            const request = new Request(input, init);
+            const accountId = request.headers.get("chatgpt-account-id") ?? "";
+            accountIds.push(accountId);
+            const headers = new Headers({ "Content-Type": "application/json" });
+            if (status === 429) headers.set("Retry-After", stableBankedResetRetryAfter);
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  error: {
+                    type: probeErrorType(status),
+                  },
+                }),
+                { status, headers }
+              )
+            );
+          });
+
+          const response = await fetchCodexResponses(
+            { input: `complete-probe-${status}` },
+            {
+              requestId: `complete-probe-${status}`,
+              bankedReset: {
+                config: liveBankedResetConfig(),
+                provider: reset.provider,
+                kv: kv as unknown as Kv,
+                now: () => fixedStartMs,
+                newOwnerToken: () => `owner-complete-probe-${status}`,
+              },
+            }
           );
-        };
 
-        const response = await fetchCodexResponses(
-          { input: `complete-probe-${status}` },
-          {
-            requestId: `complete-probe-${status}`,
-            bankedReset: {
-              config: liveBankedResetConfig(),
-              provider: reset.provider,
-              kv: kv as unknown as Deno.Kv,
-              now: () => fixedStartMs,
-              newOwnerToken: () => `owner-complete-probe-${status}`,
-            },
-          }
-        );
-
-        // Every account is exhausted, so the definitive probe answer is the
-        // final response: exactly one recovery inference, no sibling replay.
-        assert.equal(response.status, status);
-        assert.equal(accountIds.length, 1);
-        assert.deepEqual(reset.redeemAccountIds, accountIds);
-        assert.equal(reset.calls.filter((call) => call === "redeem").length, 1);
-        await response.arrayBuffer();
-      });
+          // Every account is exhausted, so the definitive probe answer is the
+          // final response: exactly one recovery inference, no sibling replay.
+          assert.equal(response.status, status);
+          assert.equal(accountIds.length, 1);
+          assert.deepEqual(reset.redeemAccountIds, accountIds);
+          assert.equal(reset.calls.filter((call) => call === "redeem").length, 1);
+          await response.arrayBuffer();
+        });
+      }
+    } finally {
+      resetCodexAuthCacheForTest();
+      resetCodexAccountRoutingForTest();
+      globalThis.fetch = originalFetch;
+      Date.now = originalNow;
+      (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
     }
-  } finally {
-    resetCodexAuthCacheForTest();
-    resetCodexAccountRoutingForTest();
-    globalThis.fetch = originalFetch;
-    Date.now = originalNow;
-    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
-  }
-});
+  }));
 
-Deno.test("an ambiguous post-reset transport outcome never replays on a sibling", async () => {
+test("an ambiguous post-reset transport outcome never replays on a sibling", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -701,11 +708,11 @@ Deno.test("an ambiguous post-reset transport outcome never replays on a sibling"
   resetCodexAccountRoutingForTest();
   await seedStableBankedResetBlock();
   await seedStableBankedResetBlock("account-two");
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.reject(new DOMException("post-reset deadline elapsed", "TimeoutError"));
-  };
+  });
 
   try {
     await assert.rejects(() =>
@@ -716,7 +723,7 @@ Deno.test("an ambiguous post-reset transport outcome never replays on a sibling"
           bankedReset: {
             config: liveBankedResetConfig(),
             provider: reset.provider,
-            kv: kv as unknown as Deno.Kv,
+            kv: kv as unknown as Kv,
             now: () => fixedStartMs,
             newOwnerToken: () => "owner-complete-probe-transport-ambiguous",
           },
@@ -735,7 +742,7 @@ Deno.test("an ambiguous post-reset transport outcome never replays on a sibling"
   }
 });
 
-Deno.test("simultaneous all-exhausted requests share one consume and never replay it", async () => {
+test("simultaneous all-exhausted requests share one consume and never replay it", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -757,16 +764,16 @@ Deno.test("simultaneous all-exhausted requests share one consume and never repla
   resetCodexAccountRoutingForTest();
   await seedStableBankedResetBlock();
   await seedStableBankedResetBlock("account-two");
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     accountIds.push(accountId);
     return Promise.resolve(new Response(JSON.stringify({ id: `response-${accountId}` }), { status: 200 }));
-  };
+  });
   const bankedReset = {
     config: liveBankedResetConfig(),
     provider: reset.provider,
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => fixedStartMs,
     newOwnerToken: () => "owner-all-exhausted-concurrent",
   };
@@ -797,7 +804,7 @@ Deno.test("simultaneous all-exhausted requests share one consume and never repla
   }
 });
 
-Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption", async () => {
+test("a skipped half-open probe prevents a sibling banked-reset redemption", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -852,11 +859,11 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
       now
     );
     resetCodexAccountRoutingForTest();
-    globalThis.fetch = (input, init) => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = new Request(input, init);
       accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
       return Promise.resolve(new Response(JSON.stringify({ id: "unexpected-dispatch" }), { status: 200 }));
-    };
+    });
 
     const response = await fetchCodexResponses(
       { input: "banked-reset-probe-unavailable" },
@@ -864,7 +871,7 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => now,
           newOwnerToken: () => "owner-probe-unavailable",
         },
@@ -886,7 +893,7 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
   }
 });
 
-Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
+test("a 403 sibling blocks a full-pool banked reset", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -898,7 +905,7 @@ Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     accountIds.push(accountId);
@@ -919,7 +926,7 @@ Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -928,7 +935,7 @@ Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-after-403",
         },
@@ -947,7 +954,7 @@ Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
   }
 });
 
-Deno.test("an earlier allowlisted exhausted account is redeemed after a later sibling also exhausts quota", async () => {
+test("an earlier allowlisted exhausted account is redeemed after a later sibling also exhausts quota", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -959,7 +966,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length <= 2) {
@@ -971,7 +978,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-earlier-reset" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -980,7 +987,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-earlier-allowlisted",
         },
@@ -1000,7 +1007,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
   }
 });
 
-Deno.test("a non-expired raw 403 during the bounded retry never quarantines credentials", async () => {
+test("a non-expired raw 403 during the bounded retry never quarantines credentials", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1013,7 +1020,7 @@ Deno.test("a non-expired raw 403 during the bounded retry never quarantines cred
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     accountIds.push(accountId);
@@ -1034,7 +1041,7 @@ Deno.test("a non-expired raw 403 during the bounded retry never quarantines cred
       );
     }
     throw new Error("a raw 403 is terminal and must not dispatch a fourth attempt");
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -1044,7 +1051,7 @@ Deno.test("a non-expired raw 403 during the bounded retry never quarantines cred
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-bounded-retry-403",
         },
@@ -1072,7 +1079,7 @@ Deno.test("a non-expired raw 403 during the bounded retry never quarantines cred
   }
 });
 
-Deno.test("a successful ordinary bounded retry never spends a banked reset", async () => {
+test("a successful ordinary bounded retry never spends a banked reset", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1085,7 +1092,7 @@ Deno.test("a successful ordinary bounded retry never spends a banked reset", asy
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     if (inferenceCalls === 1) {
       return Promise.resolve(
@@ -1096,7 +1103,7 @@ Deno.test("a successful ordinary bounded retry never spends a banked reset", asy
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "ordinary-retry-success" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -1106,7 +1113,7 @@ Deno.test("a successful ordinary bounded retry never spends a banked reset", asy
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-ordinary-retry-success",
         },
@@ -1125,7 +1132,7 @@ Deno.test("a successful ordinary bounded retry never spends a banked reset", asy
   }
 });
 
-Deno.test("only a complete stable usage-limit response can reach the banked-reset provider", async () => {
+test("only a complete stable usage-limit response can reach the banked-reset provider", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1237,7 +1244,7 @@ Deno.test("only a complete stable usage-limit response can reach the banked-rese
       resetCodexAuthCacheForTest();
       resetCodexAccountRoutingForTest();
       const reset = scriptedResetProvider();
-      globalThis.fetch = (input) => {
+      globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
         const url = requestUrl(input);
         if (url.includes("oauth/token")) {
           return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 }));
@@ -1245,7 +1252,7 @@ Deno.test("only a complete stable usage-limit response can reach the banked-rese
         const headers = new Headers({ "Content-Type": "application/json" });
         if (testCase.retryAfter) headers.set("Retry-After", testCase.retryAfter);
         return Promise.resolve(new Response(testCase.body, { status: testCase.status, headers }));
-      };
+      });
 
       const response = await fetchCodexResponses(
         { input: `nonqualifying-${testCase.name}` },
@@ -1254,7 +1261,7 @@ Deno.test("only a complete stable usage-limit response can reach the banked-rese
           bankedReset: {
             config: liveBankedResetConfig(),
             provider: reset.provider,
-            kv: kv as unknown as Deno.Kv,
+            kv: kv as unknown as Kv,
             now: () => fixedStartMs,
             newOwnerToken: () => `owner-nonqualifying-${testCase.name}`,
           },
@@ -1272,7 +1279,7 @@ Deno.test("only a complete stable usage-limit response can reach the banked-rese
   }
 });
 
-Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate", async () => {
+test("a later non-qualifying 429 clears an earlier banked-reset candidate", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1285,7 +1292,7 @@ Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate",
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     accountIds.push(accountId);
@@ -1296,7 +1303,7 @@ Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate",
         headers: { "Content-Type": "application/json", "Retry-After": stableRetryAfter },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -1305,7 +1312,7 @@ Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate",
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-later-nonqualifying-429",
         },
@@ -1323,7 +1330,7 @@ Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate",
   }
 });
 
-Deno.test("post-reset inference may return one normal 429 but never triggers a second redemption", async () => {
+test("post-reset inference may return one normal 429 but never triggers a second redemption", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1335,7 +1342,7 @@ Deno.test("post-reset inference may return one normal 429 but never triggers a s
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -1343,7 +1350,7 @@ Deno.test("post-reset inference may return one normal 429 but never triggers a s
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -1352,7 +1359,7 @@ Deno.test("post-reset inference may return one normal 429 but never triggers a s
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-second-429",
         },
@@ -1369,3 +1376,6 @@ Deno.test("post-reset inference may return one normal 429 but never triggers a s
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
   }
 });
+
+beforeEach(installHarness);
+afterEach(cleanupHarness);

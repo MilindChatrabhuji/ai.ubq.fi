@@ -1,7 +1,8 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { runHealthCheck } from "../scripts/health-check.ts";
 
-Deno.test("health check rejects --auth before making a network request", async () => {
+test("health check rejects --auth before making a network request", async () => {
   let fetchCalls = 0;
   const errors: string[] = [];
   const exitCode = await runHealthCheck(["--url", "https://ai.ubq.fi", "--auth"], {

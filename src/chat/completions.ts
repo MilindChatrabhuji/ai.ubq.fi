@@ -4,10 +4,10 @@ import { json } from "../http.ts";
 import { type PreflightedResponsesStream, ResponsesStreamError, type ResponsesStreamEvent, withSseKeepalive } from "../responses-stream.ts";
 import { getString, isRecord } from "../utils.ts";
 import {
-  ResponseStreamTerminalType,
-  UpstreamProvider,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type UpstreamProvider,
+  type UsageContext,
+  type UsageTokens,
   classifyStreamFailure,
   extractUsageTokens,
   recordErrorUsage,
@@ -17,10 +17,10 @@ import {
   recordTerminalUsage,
   streamErrorResponse,
   toChatUsage,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "../openai-telemetry.ts";
 import {
-  ChatFunctionCall,
+  type ChatFunctionCall,
   ChatFunctionCallAccumulator,
   EMPTY_UPSTREAM_COMPLETION_MESSAGE,
   chatOutputTextPartKey,

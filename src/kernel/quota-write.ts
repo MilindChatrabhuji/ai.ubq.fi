@@ -1,15 +1,16 @@
+import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 // Kernel quota v2 policy write path, split out of src/kernel_quota_v2.ts.
 
 import { getKv } from "../kv.ts";
-import { KernelAuthLimitRecord, KernelOrgLimitRecord } from "../types.ts";
+import { type KernelAuthLimitRecord, type KernelOrgLimitRecord } from "../types.ts";
 import {
   KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY,
-  KernelDefaultWindowCutoverV2,
-  KernelDefaults,
-  KernelQuotaEffectivePolicy,
-  KernelQuotaPolicyV2,
-  KernelQuotaScope,
-  KernelQuotaWindowV2,
+  type KernelDefaultWindowCutoverV2,
+  type KernelDefaults,
+  type KernelQuotaEffectivePolicy,
+  type KernelQuotaPolicyV2,
+  type KernelQuotaScope,
+  type KernelQuotaWindowV2,
   MAX_KV_RETRIES,
   hasLiveKernelReservations,
   kernelOrgPolicyKey,
@@ -41,11 +42,11 @@ type KernelQuotaPolicyRequest = Readonly<{
 /** Every KV entry one policy write compares against. */
 type KernelQuotaPolicyWriteEntries = Readonly<{
   defaults: KernelDefaults;
-  policyEntry: Deno.KvEntryMaybe<KernelQuotaPolicyV2>;
-  windowEntry: Deno.KvEntryMaybe<KernelQuotaWindowV2>;
-  orgPolicyEntry: Deno.KvEntryMaybe<KernelQuotaPolicyV2> | null;
-  orgWindowEntry: Deno.KvEntryMaybe<KernelQuotaWindowV2> | null;
-  defaultCutoverEntry: Deno.KvEntryMaybe<KernelDefaultWindowCutoverV2>;
+  policyEntry: KvEntryMaybe<KernelQuotaPolicyV2>;
+  windowEntry: KvEntryMaybe<KernelQuotaWindowV2>;
+  orgPolicyEntry: KvEntryMaybe<KernelQuotaPolicyV2> | null;
+  orgWindowEntry: KvEntryMaybe<KernelQuotaWindowV2> | null;
+  defaultCutoverEntry: KvEntryMaybe<KernelDefaultWindowCutoverV2>;
 }>;
 
 type KernelQuotaPolicyWriteAttempt =
@@ -65,7 +66,7 @@ const resolveKernelPolicyTiming = (
  * reservations: reconcile the org aggregate and reclaim an expired lease first.
  */
 const reconcileKernelPolicyOrgInheritance = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   entries: KernelQuotaPolicyWriteEntries,
@@ -85,7 +86,7 @@ const reconcileKernelPolicyOrgInheritance = async (
 
 /** A reset that would discard live reservations must first reclaim an expired lease. */
 const guardKernelPolicyWindowReset = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -101,11 +102,11 @@ const guardKernelPolicyWindowReset = async (
 
 /** The compare-and-set guards that make the policy write atomic for every reader. */
 const kernelPolicyWriteAtomic = (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   entries: KernelQuotaPolicyWriteEntries,
   current: KernelQuotaEffectivePolicy
-): Deno.AtomicOperation => {
+): AtomicOperation => {
   let atomic = kv.atomic().check(entries.policyEntry).check(entries.windowEntry);
   if (current.source === "default") {
     atomic = atomic.check(entries.defaults.limitEntry).check(entries.defaults.windowEntry).check(entries.defaultCutoverEntry);
@@ -117,9 +118,9 @@ const kernelPolicyWriteAtomic = (
 };
 
 const attemptSetKernelQuotaPolicy = async (
-  kv: Deno.Kv,
+  kv: Kv,
   request: KernelQuotaPolicyRequest,
-  keys: Readonly<{ policyKey: Deno.KvKey; windowKey: Deno.KvKey }>
+  keys: Readonly<{ policyKey: KvKey; windowKey: KvKey }>
 ): Promise<KernelQuotaPolicyWriteAttempt> => {
   const { scope, owner, repo, usageLimitRequests, options } = request;
   const nowMs = Date.now();
@@ -214,11 +215,11 @@ type KernelQuotaDeleteResult = boolean | "conflict" | null;
 type KernelQuotaPolicyDeleteOutcome = boolean | "conflict" | "retry" | "abort";
 
 const attemptDeleteKernelQuotaPolicy = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
-  keys: Readonly<{ policyKey: Deno.KvKey; windowKey: Deno.KvKey }>
+  keys: Readonly<{ policyKey: KvKey; windowKey: KvKey }>
 ): Promise<KernelQuotaPolicyDeleteOutcome> => {
   const nowMs = Date.now();
   const [defaults, policyEntry, windowEntry, defaultCutoverEntry] = await Promise.all([

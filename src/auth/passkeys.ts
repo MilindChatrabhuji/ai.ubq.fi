@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 import {
   type AuthenticationResponseJSON,
   generateAuthenticationOptions,
@@ -70,12 +71,12 @@ const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
 const RP_NAME = "UbiquityOS AI Gateway";
 
-export const passkeyUserKey = (userId: string): Deno.KvKey => [...AUTH_PREFIX, "users", userId];
-export const passkeyHandleKey = (handle: string): Deno.KvKey => [...AUTH_PREFIX, "handles", handle];
-export const passkeyCredentialKey = (credentialId: string): Deno.KvKey => [...AUTH_PREFIX, "credentials", credentialId];
-export const passkeyChallengeKey = (challenge: string): Deno.KvKey => [...AUTH_PREFIX, "challenges", challenge];
-export const passkeySessionKey = (token: string): Deno.KvKey => [...AUTH_PREFIX, "sessions", token];
-export const passkeyLoginStartThrottleKey = (windowStartMs: number): Deno.KvKey => [...AUTH_PREFIX, "login-start-throttle", windowStartMs];
+export const passkeyUserKey = (userId: string): KvKey => [...AUTH_PREFIX, "users", userId];
+export const passkeyHandleKey = (handle: string): KvKey => [...AUTH_PREFIX, "handles", handle];
+export const passkeyCredentialKey = (credentialId: string): KvKey => [...AUTH_PREFIX, "credentials", credentialId];
+export const passkeyChallengeKey = (challenge: string): KvKey => [...AUTH_PREFIX, "challenges", challenge];
+export const passkeySessionKey = (token: string): KvKey => [...AUTH_PREFIX, "sessions", token];
+export const passkeyLoginStartThrottleKey = (windowStartMs: number): KvKey => [...AUTH_PREFIX, "login-start-throttle", windowStartMs];
 
 const nowMs = () => Date.now();
 
@@ -138,7 +139,7 @@ const isWebauthnResponseObject = (value: unknown): boolean => typeof value === "
 // Deno types a listed value as present, but a stored record can still be absent.
 // Widening the read keeps the storage-boundary guard meaningful, so a missing
 // record is dropped instead of serialized.
-const readStoredPasskeyUser = (entry: Deno.KvEntry<PasskeyUserRecord>): PasskeyUserRecord | null => entry.value;
+const readStoredPasskeyUser = (entry: KvEntry<PasskeyUserRecord>): PasskeyUserRecord | null => entry.value;
 
 const firstHeaderValue = (value: string | null): string | null => {
   const first = value?.split(",")[0]?.trim() ?? "";
@@ -202,7 +203,7 @@ export const getPasskeyRequestMeta = (req: Request, clientOrigin?: unknown): { o
   return { origin: originUrl.origin, rpId: originUrl.hostname };
 };
 
-const getKvOrError = async (): Promise<Deno.Kv | Response> => {
+const getKvOrError = async (): Promise<Kv | Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(503, "Passkey auth requires Deno KV", "server_error");
   return kv;
@@ -219,7 +220,7 @@ const readPasskeyJson = async (req: Request, options: Readonly<{ allowEmpty?: bo
   return isRecord(result.value) ? result.value : openaiError(400, "Invalid JSON body", "invalid_request_error");
 };
 
-const getUserByHandle = async (kv: Deno.Kv, handle: string): Promise<PasskeyUserRecord | null> => {
+const getUserByHandle = async (kv: Kv, handle: string): Promise<PasskeyUserRecord | null> => {
   const userIdEntry = await kv.get<string>(passkeyHandleKey(handle));
   if (!userIdEntry.value) return null;
   const userEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(userIdEntry.value));
@@ -236,8 +237,8 @@ export const hasPasskeyUsers = async (): Promise<boolean> => {
 };
 
 export const updatePasskeyCredentialSignCount = async (
-  kv: Deno.Kv,
-  entry: Readonly<{ key: Deno.KvKey; value: PasskeyCredentialRecord; versionstamp: string }>,
+  kv: Kv,
+  entry: Readonly<{ key: KvKey; value: PasskeyCredentialRecord; versionstamp: string }>,
   signCount: number
 ): Promise<boolean> => {
   const commit = await kv
@@ -248,7 +249,7 @@ export const updatePasskeyCredentialSignCount = async (
   return commit.ok;
 };
 
-const saveChallenge = async (kv: Deno.Kv, input: Omit<PasskeyChallengeRecord, "created_at_ms" | "expires_at_ms">): Promise<PasskeyChallengeRecord> => {
+const saveChallenge = async (kv: Kv, input: Omit<PasskeyChallengeRecord, "created_at_ms" | "expires_at_ms">): Promise<PasskeyChallengeRecord> => {
   const createdAtMs = nowMs();
   const record: PasskeyChallengeRecord = {
     ...input,
@@ -259,7 +260,7 @@ const saveChallenge = async (kv: Deno.Kv, input: Omit<PasskeyChallengeRecord, "c
   return record;
 };
 
-const consumeChallenge = async (kv: Deno.Kv, challenge: string): Promise<PasskeyChallengeRecord | null> => {
+const consumeChallenge = async (kv: Kv, challenge: string): Promise<PasskeyChallengeRecord | null> => {
   const key = passkeyChallengeKey(challenge);
   const entry = await kv.get<PasskeyChallengeRecord>(key);
   if (!entry.value) return null;
@@ -272,7 +273,7 @@ const consumeChallenge = async (kv: Deno.Kv, challenge: string): Promise<Passkey
   return entry.value;
 };
 
-const createSession = async (kv: Deno.Kv, userId: string, audienceOrigin?: string): Promise<PasskeySessionRecord> => {
+const createSession = async (kv: Kv, userId: string, audienceOrigin?: string): Promise<PasskeySessionRecord> => {
   const createdAtMs = nowMs();
   const token = `uos_ai_session_${crypto.randomUUID()}`;
   const record: PasskeySessionRecord = {
@@ -297,7 +298,7 @@ type SaveVerifiedPasskeyRegistrationInput = {
 };
 
 export const saveVerifiedPasskeyRegistration = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: SaveVerifiedPasskeyRegistrationInput
 ): Promise<{ ok: true; user: PasskeyUserRecord } | { ok: false; response: Response }> => {
   const handleEntry = await kv.get<string>(passkeyHandleKey(input.handle));
@@ -563,7 +564,7 @@ const passkeyLoginStartWindowStartMs = (atMs: number): number => Math.floor(atMs
  * aligned to the epoch so the reset instant depends only on the clock, and a
  * rejected request writes nothing: callers must not issue a challenge.
  */
-const consumePasskeyLoginStartBudget = async (kv: Deno.Kv, atMs: number): Promise<{ allowed: true } | { allowed: false; retry_after_seconds: number }> => {
+const consumePasskeyLoginStartBudget = async (kv: Kv, atMs: number): Promise<{ allowed: true } | { allowed: false; retry_after_seconds: number }> => {
   const windowStartMs = passkeyLoginStartWindowStartMs(atMs);
   const resetAtMs = windowStartMs + PASSKEY_LOGIN_START_WINDOW_MS;
   const retryAfterSeconds = Math.max(1, Math.ceil((resetAtMs - atMs) / 1000));
@@ -644,9 +645,9 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
 // A usable assertion credential needs both its stored record and the versionstamp
 // that makes the later sign-count update conditional on an unchanged record.
 const readPasskeyAssertionCredential = async (
-  kv: Deno.Kv,
+  kv: Kv,
   credentialId: string
-): Promise<Readonly<{ key: Deno.KvKey; credential: PasskeyCredentialRecord; versionstamp: string }> | null> => {
+): Promise<Readonly<{ key: KvKey; credential: PasskeyCredentialRecord; versionstamp: string }> | null> => {
   const entry = await kv.get<PasskeyCredentialRecord>(passkeyCredentialKey(credentialId));
   const credential = entry.value;
   if (!credential || !entry.versionstamp) return null;

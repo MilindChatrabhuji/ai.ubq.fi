@@ -209,33 +209,36 @@ export const createRecordedUpstreamReplay = (
     });
   };
 
-  const fetchImpl: typeof fetch = (input, _init) => {
-    if (failed) return Promise.reject(new TypeError(DISPATCH_FAILED));
-    let requestedUrl: string;
-    try {
-      requestedUrl = input instanceof Request ? input.url : new URL(String(input)).href;
-    } catch {
-      failed = true;
-      return Promise.reject(new TypeError(DISPATCH_MISMATCH));
-    }
-    // `at` keeps the out-of-range read visible to the type checker, so the
-    // DISPATCH_EXTRA guard below validates a genuinely optional element.
-    const state = replayAttempts.at(dispatchedCount);
-    if (state === undefined) {
-      failed = true;
-      return Promise.reject(new TypeError(DISPATCH_EXTRA));
-    }
-    if (requestedUrl !== routeUrls.get(state.attempt.provider)) {
-      failed = true;
-      return Promise.reject(new TypeError(DISPATCH_MISMATCH));
-    }
-    dispatchedCount += 1;
-    if (state.attempt.terminal === "fetch_error") {
-      markCompleted(state);
-      return Promise.reject(new TypeError(STREAM_READ_ERROR));
-    }
-    return Promise.resolve(makeReplayResponse(state));
-  };
+  const fetchImpl: typeof fetch = Object.assign(
+    (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (failed) return Promise.reject(new TypeError(DISPATCH_FAILED));
+      let requestedUrl: string;
+      try {
+        requestedUrl = input instanceof Request ? input.url : new URL(String(input)).href;
+      } catch {
+        failed = true;
+        return Promise.reject(new TypeError(DISPATCH_MISMATCH));
+      }
+      // `at` keeps the out-of-range read visible to the type checker, so the
+      // DISPATCH_EXTRA guard below validates a genuinely optional element.
+      const state = replayAttempts.at(dispatchedCount);
+      if (state === undefined) {
+        failed = true;
+        return Promise.reject(new TypeError(DISPATCH_EXTRA));
+      }
+      if (requestedUrl !== routeUrls.get(state.attempt.provider)) {
+        failed = true;
+        return Promise.reject(new TypeError(DISPATCH_MISMATCH));
+      }
+      dispatchedCount += 1;
+      if (state.attempt.terminal === "fetch_error") {
+        markCompleted(state);
+        return Promise.reject(new TypeError(STREAM_READ_ERROR));
+      }
+      return Promise.resolve(makeReplayResponse(state));
+    },
+    { preconnect: () => {} }
+  );
 
   return Object.freeze({
     fetch: fetchImpl,

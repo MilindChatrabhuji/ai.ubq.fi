@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT } from "../api-keys.ts";
 import {
   DEFAULT_KERNEL_POLICY_LIMIT_KEY,
@@ -51,13 +52,13 @@ const kernelRepoPart = (repo: string | undefined): string => {
   return repo;
 };
 
-const kernelScopedPolicyKey = (scope: KernelQuotaScope, owner: string, repo: string | undefined): Deno.KvKey =>
+const kernelScopedPolicyKey = (scope: KernelQuotaScope, owner: string, repo: string | undefined): KvKey =>
   scope === "repo" ? kernelRepoPolicyKey(owner, kernelRepoPart(repo)) : kernelOrgPolicyKey(owner);
 
-const kernelScopedWindowKey = (scope: KernelQuotaScope, owner: string, repo: string | undefined): Deno.KvKey =>
+const kernelScopedWindowKey = (scope: KernelQuotaScope, owner: string, repo: string | undefined): KvKey =>
   scope === "repo" ? kernelRepoWindowKey(owner, kernelRepoPart(repo)) : kernelOrgWindowKey(owner);
 
-const kernelPolicyKeys = (scope: KernelQuotaScope, owner: string, repo: string | undefined): Readonly<{ policyKey: Deno.KvKey; windowKey: Deno.KvKey }> => ({
+const kernelPolicyKeys = (scope: KernelQuotaScope, owner: string, repo: string | undefined): Readonly<{ policyKey: KvKey; windowKey: KvKey }> => ({
   policyKey: kernelScopedPolicyKey(scope, owner, repo),
   windowKey: kernelScopedWindowKey(scope, owner, repo),
 });
@@ -114,7 +115,7 @@ type KernelDefaultWindowCutoverV2 = Readonly<{
 
 export type KernelDefaultWindowCutoverGuard = Readonly<{
   key: typeof KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY;
-  entry: Deno.KvEntry<KernelDefaultWindowCutoverV2>;
+  entry: KvEntry<KernelDefaultWindowCutoverV2>;
 }>;
 
 export type KernelDefaultWindowCutoverDecision =
@@ -134,8 +135,8 @@ export type KernelQuotaPolicyStateDecision =
 type KernelDefaults = Readonly<{
   limit: number;
   windowMs: number;
-  limitEntry: Deno.KvEntryMaybe<number>;
-  windowEntry: Deno.KvEntryMaybe<number>;
+  limitEntry: KvEntryMaybe<number>;
+  windowEntry: KvEntryMaybe<number>;
 }>;
 
 type KernelQuotaEffectivePolicy = Readonly<{
@@ -176,7 +177,7 @@ const normalizeExpiration = (value: unknown): number => {
   return parsed === API_KEY_NO_EXPIRATION_MS || parsed >= 0 ? parsed : API_KEY_NO_EXPIRATION_MS;
 };
 
-const loadDefaults = async (kv: Deno.Kv): Promise<KernelDefaults> => {
+const loadDefaults = async (kv: Kv): Promise<KernelDefaults> => {
   const [limitEntry, windowEntry] = await Promise.all([
     kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY, { consistency: "strong" }),
     kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY, { consistency: "strong" }),
@@ -268,7 +269,7 @@ const windowForEffectivePolicy = (
 };
 
 const policyFor = (
-  entry: Deno.KvEntryMaybe<KernelQuotaPolicyV2>,
+  entry: KvEntryMaybe<KernelQuotaPolicyV2>,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -389,10 +390,10 @@ const compareKernelPolicyRows = (a: KernelAuthLimitRecord | KernelOrgLimitRecord
  * does not describe a policy for the requested scope.
  */
 const kernelPolicyRow = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   prefix: readonly string[],
-  entry: Deno.KvEntry<KernelQuotaPolicyV2>
+  entry: KvEntry<KernelQuotaPolicyV2>
 ): Promise<KernelAuthLimitRecord | KernelOrgLimitRecord | null> => {
   const owner = entry.key[prefix.length];
   if (typeof owner !== "string" || !owner) return null;

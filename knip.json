@@ -5,52 +5,31 @@
     "scripts/**/*.ts",
     "ops/**/*.ts",
     "benchmarks/**/*.ts",
+    "src/kv-conversion/proof.ts",
     "tests/**/*.test.ts",
     "tests/**/*.e2e.ts",
     "tests/helpers/codex-native-auth-acceptance.ts"
   ],
-  "project": [
-    "src/**/*.ts",
-    "tests/**/*.ts",
-    "scripts/**/*.ts",
-    "ops/**/*.ts",
-    "benchmarks/**/*.ts"
-  ],
+  "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "ops/**/*.ts", "benchmarks/**/*.ts"],
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": [
-    "@std/yaml",
-    "@deno/kv-utils",
-    "@simplewebauthn/server",
-    "ws"
-  ],
+  "ignoreDependencies": ["bun-types", "node-api-headers"],
+  "ignoreBinaries": ["awk", "sha256sum"],
   "ignoreIssues": {
-    "serve.ts": [
-      "exports"
-    ],
-    "src/config.ts": [
-      "exports"
-    ],
-    "src/kv.ts": [
-      "exports"
-    ],
-    "src/auth/local-admin.ts": [
-      "exports"
-    ],
-    "src/provider/capacity.ts": [
-      "duplicates"
-    ],
-    "src/inference-deadline.ts": [
-      "duplicates"
-    ],
-    "src/kernel/quota-v2.ts": [
-      "duplicates"
-    ],
-    "src/provider/metered.ts": [
-      "duplicates"
-    ],
-    "src/models/codex-models-whitelist.ts": [
-      "files"
-    ]
+    "serve.ts": ["exports"],
+    "src/config.ts": ["exports"],
+    "src/kv.ts": ["exports"],
+    "src/auth/local-admin.ts": ["exports"],
+    "src/provider/capacity.ts": ["duplicates"],
+    "src/inference-deadline.ts": ["duplicates"],
+    "src/kernel/quota-v2.ts": ["duplicates"],
+    "src/provider/metered.ts": ["duplicates"],
+    "src/models/codex-models-whitelist.ts": ["files"],
+    "scripts/test-native-kv.ts": ["exports"],
+    "src/storage/kv.ts": ["exports", "types"],
+    "tests/helpers/codex-auth-cache-harness.ts": ["exports"],
+    "tests/helpers/embeddings-harness.ts": ["exports"],
+    "tests/helpers/kv-budget-harness.ts": ["exports"],
+    "tests/helpers/sentinel-kv-stub.ts": ["exports"]
   }
 }

@@ -8,6 +8,8 @@
 import { buildJevRequest, parseJevResponse } from "./request.ts";
 import type { JevAsker, JevQuestions, JevResponse, JevState } from "./types.ts";
 
+export type JevFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export type JevClientOptions = {
   /** Resolved by the caller; an absent key fails the call explicitly. */
   apiKey: string;
@@ -16,7 +18,7 @@ export type JevClientOptions = {
   /** Defaults to the System One endpoint. */
   baseUrl?: string;
   /** Defaults to the global `fetch`. */
-  fetch?: typeof fetch;
+  fetch?: JevFetch;
   /** Caller-owned abort signal, forwarded to the underlying request. */
   signal?: AbortSignal;
 };
@@ -26,7 +28,7 @@ export class JevClient implements JevAsker {
   private readonly apiKey: string;
   private readonly model: string | undefined;
   private readonly baseUrl: string | undefined;
-  private readonly fetcher: typeof fetch;
+  private readonly fetcher: JevFetch;
   private readonly signal: AbortSignal | undefined;
 
   constructor(options: JevClientOptions) {

@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type Kv } from "#kv";
 // codex-account-routing suite, part 1 of 3: tests moved out of tests/codex-account-routing.test.ts.
 
 import assert from "node:assert/strict";
@@ -6,7 +9,7 @@ import {
   CODEX_AUTH_POOL_KV_KEY,
   CODEX_HALF_OPEN_LEASE_MS,
   CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
-  CodexAuthPoolState,
+  type CodexAuthPoolState,
   CodexError,
   RoutingKv,
   claimCodexRoutingProbe,
@@ -35,9 +38,9 @@ import {
   syntheticLegacyBlock,
 } from "./helpers/codex-account-routing-harness.ts";
 
-Deno.test("v2 routing ignores the v1 key and rejects v1 payloads", async () => {
+test("v2 routing ignores the v1 key and rejects v1 payloads", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -71,9 +74,9 @@ Deno.test("v2 routing ignores the v1 key and rejects v1 payloads", async () => {
   }
 });
 
-Deno.test("quota circuits isolate Spark, GPT-OSS, and standard model pools", async () => {
+test("quota circuits isolate Spark, GPT-OSS, and standard model pools", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -133,9 +136,9 @@ Deno.test("quota circuits isolate Spark, GPT-OSS, and standard model pools", asy
   }
 });
 
-Deno.test("reserve-class quota circuits do not fence the standard class on the same account", async () => {
+test("reserve-class quota circuits do not fence the standard class on the same account", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -171,9 +174,9 @@ Deno.test("reserve-class quota circuits do not fence the standard class on the s
   }
 });
 
-Deno.test("an unrelated class 429 is recorded while another class owns a probe lease", async () => {
+test("an unrelated class 429 is recorded while another class owns a probe lease", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -209,9 +212,9 @@ Deno.test("an unrelated class 429 is recorded while another class owns a probe l
   }
 });
 
-Deno.test("legacy named class blocks remain enforced until migrated", async () => {
+test("legacy named class blocks remain enforced until migrated", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -254,9 +257,9 @@ Deno.test("legacy named class blocks remain enforced until migrated", async () =
   }
 });
 
-Deno.test("a legacy class block survives migration when another class is exhausted", async () => {
+test("a legacy class block survives migration when another class is exhausted", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -314,9 +317,9 @@ Deno.test("a legacy class block survives migration when another class is exhaust
   }
 });
 
-Deno.test("an unclassified legacy block stays on other classes after capacity clears one", async () => {
+test("an unclassified legacy block stays on other classes after capacity clears one", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -391,9 +394,9 @@ Deno.test("an unclassified legacy block stays on other classes after capacity cl
   }
 });
 
-Deno.test("migrates an unmarked synthetic unknown block from the prior class release", async () => {
+test("migrates an unmarked synthetic unknown block from the prior class release", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -462,7 +465,7 @@ Deno.test("migrates an unmarked synthetic unknown block from the prior class rel
   }
 });
 
-Deno.test("does not mark a coincidentally matching unknown block as synthetic", () => {
+test("does not mark a coincidentally matching unknown block as synthetic", () => {
   const now = 1_700_000_000_000;
   const matchingDeadline = now + 60_000;
   const parsed = parseCodexAccountRoutingState({
@@ -485,9 +488,9 @@ Deno.test("does not mark a coincidentally matching unknown block as synthetic", 
   assert.equal(parsed?.slots[0]?.quota_blocks_by_class?.unknown?.legacy_fallback, false);
 });
 
-Deno.test("an administrative recheck marks every class reset fence ambiguous", async () => {
+test("an administrative recheck marks every class reset fence ambiguous", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -517,9 +520,9 @@ Deno.test("an administrative recheck marks every class reset fence ambiguous", a
   }
 });
 
-Deno.test("a successful class probe does not leave recovery pending on another class", async () => {
+test("a successful class probe does not leave recovery pending on another class", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -563,9 +566,9 @@ Deno.test("a successful class probe does not leave recovery pending on another c
   }
 });
 
-Deno.test("legacy response-header timeout fences are ignored by live routing", async () => {
+test("legacy response-header timeout fences are ignored by live routing", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -601,9 +604,9 @@ Deno.test("legacy response-header timeout fences are ignored by live routing", a
   }
 });
 
-Deno.test("a held legacy timeout probe is discarded before live routing", async () => {
+test("a held legacy timeout probe is discarded before live routing", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -649,9 +652,9 @@ Deno.test("a held legacy timeout probe is discarded before live routing", async 
   }
 });
 
-Deno.test("a held quota probe does not misclassify a stale timeout as upstream blocked", async () => {
+test("a held quota probe does not misclassify a stale timeout as upstream blocked", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -696,9 +699,9 @@ Deno.test("a held quota probe does not misclassify a stale timeout as upstream b
   }
 });
 
-Deno.test("a legacy timeout fence cannot hide a quota-blocked sibling", async () => {
+test("a legacy timeout fence cannot hide a quota-blocked sibling", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -739,7 +742,7 @@ Deno.test("a legacy timeout fence cannot hide a quota-blocked sibling", async ()
   }
 });
 
-Deno.test("fetchCodexResponses does not gate the next request after a timeout", async () => {
+test("fetchCodexResponses does not gate the next request after a timeout", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
@@ -750,11 +753,11 @@ Deno.test("fetchCodexResponses does not gate the next request after a timeout", 
   const calls: string[] = [];
   let dispatches = 0;
   const timeoutController = new AbortController();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = (input, init): Promise<Response> => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
       const url = requestUrl(input);
       if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
       const accountId = new Headers(init?.headers).get("ChatGPT-Account-ID");
@@ -765,7 +768,7 @@ Deno.test("fetchCodexResponses does not gate the next request after a timeout", 
         return Promise.reject(reason instanceof Error ? reason : new Error("Codex fixture timeout", { cause: reason }));
       }
       return Promise.resolve(new Response(null, { status: 200 }));
-    };
+    });
 
     await assert.rejects(
       fetchCodexResponses(
@@ -794,7 +797,7 @@ Deno.test("fetchCodexResponses does not gate the next request after a timeout", 
   }
 });
 
-Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no retry time is known", async () => {
+test("fetchCodexResponses preserves a JSON 429 without Retry-After when no retry time is known", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
@@ -803,11 +806,11 @@ Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no 
     updated_at_ms: now,
   };
   let calls = 0;
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = (input): Promise<Response> => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]): Promise<Response> => {
       const url = requestUrl(input);
       if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
       calls += 1;
@@ -824,7 +827,7 @@ Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no 
           { status: 429, headers: { "Content-Type": "application/json" } }
         )
       );
-    };
+    });
 
     const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "rate-limit" }, { retrySleep: async () => {} });
 
@@ -847,7 +850,7 @@ Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no 
   }
 });
 
-Deno.test("ordinary and incomplete 429 variants never persist a quota block", async () => {
+test("ordinary and incomplete 429 variants never persist a quota block", async () => {
   const now = 1_700_000_000_000;
   const futureResetSeconds = Math.floor(now / 1_000) + 120;
   const cases = [
@@ -941,7 +944,7 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
 
   for (const testCase of cases) {
     const kv = new RoutingKv();
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     resetCodexAccountRoutingForTest();
     try {
       const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
@@ -963,9 +966,9 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
   }
 });
 
-Deno.test("exact future body resets_at durably identifies the Codex quota window", async () => {
+test("exact future body resets_at durably identifies the Codex quota window", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1024,9 +1027,9 @@ Deno.test("exact future body resets_at durably identifies the Codex quota window
   }
 });
 
-Deno.test("an ordinary ambiguous deadline does not use the bounded recovery-probe lease", async () => {
+test("an ordinary ambiguous deadline does not use the bounded recovery-probe lease", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1079,9 +1082,9 @@ Deno.test("an ordinary ambiguous deadline does not use the bounded recovery-prob
   }
 });
 
-Deno.test("a failed verified-reset probe uses a bounded retry instead of the old quota deadline", async () => {
+test("a failed verified-reset probe uses a bounded retry instead of the old quota deadline", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1128,9 +1131,9 @@ Deno.test("a failed verified-reset probe uses a bounded retry instead of the old
   }
 });
 
-Deno.test("a non-quota verified-reset probe clears recovery-pending evidence", async () => {
+test("a non-quota verified-reset probe clears recovery-pending evidence", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1175,9 +1178,9 @@ Deno.test("a non-quota verified-reset probe clears recovery-pending evidence", a
   }
 });
 
-Deno.test("a stale verified reset opens a fenced probe without spending another reset", async () => {
+test("a stale verified reset opens a fenced probe without spending another reset", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1224,9 +1227,9 @@ Deno.test("a stale verified reset opens a fenced probe without spending another 
   }
 });
 
-Deno.test("legacy neutral v2 state permits its first canonical body resets_at fence", async () => {
+test("legacy neutral v2 state permits its first canonical body resets_at fence", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1288,9 +1291,9 @@ Deno.test("legacy neutral v2 state permits its first canonical body resets_at fe
   }
 });
 
-Deno.test("only the exact contaminated first body fence repairs legacy ambiguity", async () => {
+test("only the exact contaminated first body fence repairs legacy ambiguity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;

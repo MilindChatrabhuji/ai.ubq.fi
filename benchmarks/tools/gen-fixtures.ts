@@ -1,10 +1,12 @@
+import { mkdir, writeFile, rm } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 /**
  * Regenerates the checked-in disposable fixture snapshots under
  * benchmarks/fixtures/<task-id>/ and prints the content-addressed revision
  * for every task manifest.
  *
  * Usage:
- *   deno run --allow-read --allow-write=benchmarks/fixtures benchmarks/tools/gen-fixtures.ts
+ *   bun --no-env-file benchmarks/tools/gen-fixtures.ts
  *
  * This tool writes ONLY under benchmarks/fixtures (disposable snapshots).
  * Fixture trees are deliberately small, toolchain-free text files so that
@@ -208,13 +210,13 @@ const SPECS: Record<string, FixtureSpec> = {
   },
 };
 
-const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
 async function writeTree(base: string, files: Record<string, string>): Promise<void> {
   for (const [rel, content] of Object.entries(files)) {
     const abs = `${base}/${rel}`;
-    await Deno.mkdir(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
-    await Deno.writeTextFile(abs, content);
+    await mkdir(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
+    await writeFile(abs, content);
   }
 }
 
@@ -229,15 +231,15 @@ function compareCodeUnits(a: string, b: string): number {
 }
 
 async function main(): Promise<void> {
-  await Deno.mkdir(FIXTURES_DIR, { recursive: true });
+  await mkdir(FIXTURES_DIR, { recursive: true });
   const { computeFixtureRevision } = await import("../fixture.ts");
   const revisions: Record<string, string> = {};
   for (const [taskId, spec] of Object.entries(SPECS).sort(([a], [b]) => compareCodeUnits(a, b))) {
     const dir = `${FIXTURES_DIR}/${taskId}`;
-    await Deno.mkdir(dir, { recursive: true });
+    await mkdir(dir, { recursive: true });
     // Remove any stale snapshot first (generator owns this directory only).
-    for (const entry of Deno.readDirSync(dir)) {
-      await Deno.remove(`${dir}/${entry.name}`, { recursive: true });
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      await rm(`${dir}/${entry.name}`, { recursive: true });
     }
     if (spec.history) {
       for (const [snap, files] of Object.entries(spec.history)) {

@@ -3,7 +3,7 @@
  * checked-in fixture snapshots. Authoring aid and CI-style invariant check.
  *
  * Usage (from the repository root):
- *   deno task benchmark:fixture-revision
+ *   bun run benchmark:fixture-revision
  */
 
 import { computeFixtureRevision } from "./fixture.ts";
@@ -22,7 +22,7 @@ if (import.meta.main) {
   }
   if (failures > 0) {
     console.error(`\n${failures} fixture revision(s) mismatch; regenerate or update manifests`);
-    Deno.exit(1);
+    process.exit(1);
   }
   console.log(`\n${tasks.length} fixture revisions verified`);
 }

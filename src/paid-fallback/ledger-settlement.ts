@@ -1,14 +1,15 @@
+import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 // Paid-fallback ledger v3: settlement layer, split out of src/paid_fallback_ledger.ts.
 
 import { MICROCREDITS_PER_CREDIT } from "../api-keys.ts";
 import { getKv } from "../kv.ts";
-import { MeteredTokenLogEntry } from "../provider/metered.ts";
+import { type MeteredTokenLogEntry } from "../provider/metered.ts";
 import {
   MAX_CAS_ATTEMPTS,
-  PaidFallbackAdmissionV3,
-  PaidFallbackPendingV3,
-  PaidFallbackReconciliationGateV3,
-  PaidFallbackReconciliationLeaseV3,
+  type PaidFallbackAdmissionV3,
+  type PaidFallbackPendingV3,
+  type PaidFallbackReconciliationGateV3,
+  type PaidFallbackReconciliationLeaseV3,
   RECONCILIATION_LEASE_MS,
   RETRY_DELAYS_MS,
   UNRESOLVED_AFTER_MS,
@@ -24,16 +25,16 @@ import {
 } from "./ledger-state.ts";
 import {
   PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
-  PaidFallbackUsageRollup,
+  type PaidFallbackUsageRollup,
   isPaidFallbackUsageRollup,
   mergePaidFallbackUsageRollup,
   paidFallbackUsageRollupKey,
   paidFallbackUsageRollupShard,
 } from "./rollups.ts";
 import { estimatePaidFallbackRecordBytes, recordPaidFallbackLedgerSettlementStats } from "./ledger-stats.ts";
-import { PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../types.ts";
+import { type PaidFallbackRequestV3, type PaidFallbackWindowV3 } from "../types.ts";
 
-const acquireReconciliationLease = async (kv: Deno.Kv, keyId: string, now: number): Promise<PaidFallbackReconciliationLeaseV3 | null> => {
+const acquireReconciliationLease = async (kv: Kv, keyId: string, now: number): Promise<PaidFallbackReconciliationLeaseV3 | null> => {
   const key = paidFallbackReconciliationLeaseV3Key(keyId);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const entry = await kv.get<PaidFallbackReconciliationLeaseV3>(key, { consistency: "strong" });
@@ -54,7 +55,7 @@ const acquireReconciliationLease = async (kv: Deno.Kv, keyId: string, now: numbe
   return null;
 };
 
-const releaseReconciliationLease = async (kv: Deno.Kv, keyId: string, lease: PaidFallbackReconciliationLeaseV3): Promise<void> => {
+const releaseReconciliationLease = async (kv: Kv, keyId: string, lease: PaidFallbackReconciliationLeaseV3): Promise<void> => {
   const key = paidFallbackReconciliationLeaseV3Key(keyId);
   const entry = await kv.get<PaidFallbackReconciliationLeaseV3>(key, { consistency: "strong" });
   if (entry.value?.token !== lease.token) return;
@@ -98,7 +99,7 @@ const _expeditePaidFallbackReconciliationV3 = async (reservation: PaidFallbackAd
  * This writes durable state only: the event-driven policy does not arm a timer
  * or otherwise deliver a future reconciliation to an idle Mac.
  */
-const deferPaidFallbackReconciliationV3 = async (kv: Deno.Kv, keyId: string, requestId: string, now: number): Promise<number | null> => {
+const deferPaidFallbackReconciliationV3 = async (kv: Kv, keyId: string, requestId: string, now: number): Promise<number | null> => {
   const requestKey = paidFallbackRequestV3Key(keyId, requestId);
   const pendingKey = paidFallbackPendingV3Key(keyId, requestId);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -162,11 +163,11 @@ const isBillableRequestV3 = (request: PaidFallbackRequestV3 | null): request is 
 
 /** Clears a stale pending marker for a row that can no longer be billed. */
 const clearStalePendingMarkerV3 = async (
-  kv: Deno.Kv,
-  pendingKey: Deno.KvKey,
-  pendingEntry: Deno.KvEntryMaybe<PaidFallbackPendingV3>,
-  gateKey: Deno.KvKey,
-  gateEntry: Deno.KvEntryMaybe<PaidFallbackReconciliationGateV3>,
+  kv: Kv,
+  pendingKey: KvKey,
+  pendingEntry: KvEntryMaybe<PaidFallbackPendingV3>,
+  gateKey: KvKey,
+  gateEntry: KvEntryMaybe<PaidFallbackReconciliationGateV3>,
   now: number
 ): Promise<boolean> => {
   if (!pendingEntry.value) return true;
@@ -208,8 +209,8 @@ const buildSettledRequestRowV3 = (
 
 /** The usage rollup one settlement folds into. */
 type SettlementRollupV3 = Readonly<{
-  rollupKey: Deno.KvKey;
-  rollupEntry: Deno.KvEntryMaybe<PaidFallbackUsageRollup>;
+  rollupKey: KvKey;
+  rollupEntry: KvEntryMaybe<PaidFallbackUsageRollup>;
   nextRollup: PaidFallbackUsageRollup;
   /** False when the model or provider label is empty, so no rollup is written. */
   foldIntoRollup: boolean;
@@ -217,7 +218,7 @@ type SettlementRollupV3 = Readonly<{
 
 /** Reads and merges the usage rollup this settlement belongs to. */
 const prepareSettlementRollupV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   request: PaidFallbackRequestV3,
   providerLog: MeteredTokenLogEntry,
   spend: number,
@@ -251,13 +252,13 @@ const prepareSettlementRollupV3 = async (
 
 /** Applies a settlement to the window row when the window row exists. */
 const applySettlementWindowUpdateV3 = (
-  atomic: Deno.AtomicOperation,
-  windowEntry: Deno.KvEntryMaybe<PaidFallbackWindowV3>,
-  windowKey: Deno.KvKey,
+  atomic: AtomicOperation,
+  windowEntry: KvEntryMaybe<PaidFallbackWindowV3>,
+  windowKey: KvKey,
   request: PaidFallbackRequestV3,
   spend: number,
   now: number
-): Deno.AtomicOperation => {
+): AtomicOperation => {
   const window = windowEntry.value;
   if (!window) return atomic;
   return atomic.check(windowEntry).set(
@@ -278,7 +279,7 @@ const applySettlementWindowUpdateV3 = (
  * swallows its own failures, so this only measures the two records: a lost
  * sample must never fail a settlement that already committed.
  */
-const recordSettlementGrowthV3 = async (kv: Deno.Kv, settledRow: PaidFallbackRequestV3, rollup: SettlementRollupV3, now: number): Promise<void> => {
+const recordSettlementGrowthV3 = async (kv: Kv, settledRow: PaidFallbackRequestV3, rollup: SettlementRollupV3, now: number): Promise<void> => {
   await recordPaidFallbackLedgerSettlementStats(kv, {
     settledRowBytes: estimatePaidFallbackRecordBytes(settledRow),
     rollupBytes: rollup.foldIntoRollup ? estimatePaidFallbackRecordBytes(rollup.nextRollup) : null,
@@ -297,7 +298,7 @@ const settlementSpendMicrocredits = (
 };
 
 const settlePaidFallbackRequestV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   keyId: string,
   requestId: string,
   providerLog: MeteredTokenLogEntry,

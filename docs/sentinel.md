@@ -315,6 +315,17 @@ retention. Status rows are admitted through a CAS on the ledger's `status_record
 rows are pruned first and the counters decremented in the same commits. Once pruning has removed any status row, a
 missing lookup reports the distinct `status_not_retained` code instead of inventing `evicted`, `expired` or `ready`.
 
+**Metadata recounts are throttled on admin polls.** Native KV TTL deletion removes expired status and tombstone rows
+without touching the ledger, so `status_records`/`metadata_bytes` can only run high, never low. The maintenance pass
+behind `/admin/errors` (an open analytics view requests it every 30 seconds) recounts those rows at most once per 15
+minutes. The recount time is written to `["uos_ai","sentinel_replay","v1","metadata_reconciled"]` in the same commit as
+the ledger version check. Inside the interval a poll reads that one row instead of every status/tombstone row, and
+writes nothing. A recount that matches the ledger does not rewrite it. The admin status therefore converges on the live
+rows at the first poll at least 15 minutes after the last committed recount, once the KV has actually removed the
+expired rows. A lost CAS, a failed scan, a missing or corrupt marker, or a marker ahead of the clock leaves the next poll
+due. Admission and publish never wait for the interval: when the counters would exceed a bound they recount before
+pruning, so a stale charge is reclaimed at once and never causes a live row to be pruned.
+
 The Admin error-history panel shows the current capture usage and cap, the eviction notice ("Oldest recordings were
 removed to keep new ones within the 1 GiB limit"), a near-capacity warning and any skipped capture reason from the
 existing plain-text capture-retention line rendered with `role="status"` and `aria-live="polite"`; storage that cannot
@@ -377,8 +388,7 @@ artifact. Normal push and manual deployment runs retain the workflow-owned verif
 Deployment success alone is not production identity. The orchestrator resolves the new routed revision whose revision
 URL `/health` reports the exact candidate Git SHA, promotes that revision with Deno's revision API, requires HTTP 204,
 and verifies the public Deno host and `ai.ubq.fi` report both the candidate SHA and promoted revision. It records the
-previous healthy SHA and revision before deployment so rollback has an exact target. Health attestation requires HTTP
-200. An identity-bearing error response is not treated as healthy.
+previous healthy SHA and revision before deployment so rollback has an exact target. Health attestation requires HTTP 200. An identity-bearing error response is not treated as healthy.
 
 Every preview, production, rollback, and revert promotion is dispatched to
 `.github/workflows/sentinel-revision-control.yml`. That short workflow shares the `ai-ubq-fi-deploy` concurrency queue

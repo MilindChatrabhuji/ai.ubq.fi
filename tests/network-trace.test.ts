@@ -1,10 +1,12 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { installNetworkTrace } from "../static/network.js";
 
 const INSTALL_FLAG = "__uosNetworkTraceInstalled";
 
-Deno.test("a caller-handled rejecting fetch does not create an unhandled network-trace continuation", async () => {
+test("a caller-handled rejecting fetch does not create an unhandled network-trace continuation", async () => {
   const originalFetch = globalThis.fetch;
   const traceGlobal = globalThis as typeof globalThis & Record<string, unknown>;
   const hadInstallFlag = Object.hasOwn(traceGlobal, INSTALL_FLAG);
@@ -17,7 +19,7 @@ Deno.test("a caller-handled rejecting fetch does not create an unhandled network
 
   globalThis.addEventListener("unhandledrejection", onUnhandled);
   Reflect.deleteProperty(traceGlobal, INSTALL_FLAG);
-  globalThis.fetch = () => Promise.reject(new TypeError("caller catches this fetch rejection"));
+  globalThis.fetch = createFetchMock(() => Promise.reject(new TypeError("caller catches this fetch rejection")));
 
   try {
     installNetworkTrace();

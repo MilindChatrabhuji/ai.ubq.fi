@@ -241,8 +241,7 @@ pre[data-code] code {
   width: 100%;
   max-width: var(--page-width);
   margin: 0 auto;
-  padding: calc(20px + env(safe-area-inset-top)) clamp(16px, 3vw, 40px)
-    calc(56px + env(safe-area-inset-bottom));
+  padding: calc(20px + env(safe-area-inset-top)) clamp(16px, 3vw, 40px) calc(56px + env(safe-area-inset-bottom));
   display: grid;
   gap: 18px;
 }
@@ -702,7 +701,9 @@ select {
   background-image:
     linear-gradient(45deg, transparent 50%, var(--muted-2) 50%),
     linear-gradient(135deg, var(--muted-2) 50%, transparent 50%);
-  background-position: right 18px center, right 12px center;
+  background-position:
+    right 18px center,
+    right 12px center;
   background-size: 6px 6px;
   background-repeat: no-repeat;
 }

@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 /**
  * Resumable bootstrap accounting for capture-owned storage.
  *
@@ -7,6 +8,15 @@
  * rather than only valid records: an invalid or unreadable in-scope row marks
  * accounting incomplete so new admissions stay refused instead of trusting a
  * zero. Legacy reservation rows are read only to release their charge once.
+ *
+ * A chunk key names only its capture, while owner keys lead with a timestamp,
+ * so a chunk's owner has no point lookup. Chunks are judged against a
+ * process-local index of owner capture ids, filled in fixed slices of
+ * BOOTSTRAP_OWNER_SCAN_ENTRIES rows per batch, so owner reads stay bounded per
+ * batch and linear over the sweep instead of one full scan per chunk. An
+ * ownerless chunk is deleted only in a commit that also checks the ledger
+ * versionstamp its batch read, so an owner published after that read keeps
+ * its payload.
  */
 import {
   SENTINEL_REPLAY_CHUNK_PREFIX,
@@ -20,6 +30,7 @@ import { isSentinelReplayManifest } from "./replay-read.ts";
 import {
   accountingKeyMatches,
   BOOTSTRAP_BATCH_ENTRIES,
+  BOOTSTRAP_OWNER_SCAN_ENTRIES,
   commitAccountingMutation,
   counter,
   deleteChunkBatch,
@@ -44,12 +55,7 @@ import {
 } from "./replay-retention-schema.ts";
 
 /** Legacy reservation release: read once, delete chunks, then delete the row. */
-export const releaseLegacyReservation = async (
-  kv: Deno.Kv,
-  key: Deno.KvKey,
-  reservation: SentinelReplayLegacyReservation,
-  budgetBytes: number
-): Promise<void> => {
+export const releaseLegacyReservation = async (kv: Kv, key: KvKey, reservation: SentinelReplayLegacyReservation, budgetBytes: number): Promise<void> => {
   if (reservation.state === "published") {
     await kv.delete(key);
     return;
@@ -75,7 +81,7 @@ export const releaseLegacyReservation = async (
  * significant — "accounting" sorts before "manifest", so the accounting sweep is
  * always complete before a manifest is checked for an existing accounting row.
  */
-const bootstrapPrefixes = (): readonly Deno.KvKey[] => [
+const bootstrapPrefixes = (): readonly KvKey[] => [
   SENTINEL_REPLAY_ACCOUNTING_PREFIX,
   SENTINEL_REPLAY_CHUNK_PREFIX,
   SENTINEL_REPLAY_DEDUPE_PREFIX,
@@ -86,8 +92,8 @@ const bootstrapPrefixes = (): readonly Deno.KvKey[] => [
 ];
 
 type BootstrapMaterialization = Readonly<{
-  accounting_key: Deno.KvKey;
-  manifest_key: Deno.KvKey;
+  accounting_key: KvKey;
+  manifest_key: KvKey;
   manifest_versionstamp: string;
   row: SentinelReplayAccountingRow;
 }>;
@@ -134,14 +140,14 @@ const parseCursor = (cursor: string | null): Readonly<{ index: number; inner: st
 };
 
 /** Accounting rows own the durable charge, so the sweep counts them directly. */
-const bootstrapAccountingDelta = (key: Deno.KvKey, value: unknown, delta: BootstrapDelta): BootstrapDelta => {
+const bootstrapAccountingDelta = (key: KvKey, value: unknown, delta: BootstrapDelta): BootstrapDelta => {
   if (!isAccountingRow(value) || !accountingKeyMatches(key, value)) return addDelta(delta, { invalid: true });
   if (value.state === "stored" || value.state === "evicting") return addDelta(delta, { stored_bytes: value.bytes, records: 1 });
   return addDelta(delta, { reserved_bytes: value.bytes });
 };
 
 /** A legacy manifest gains its durable charge owner in the same commit as the bootstrap ledger delta. */
-const bootstrapManifestDelta = async (kv: Deno.Kv, entry: Deno.KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
+const bootstrapManifestDelta = async (kv: Kv, entry: KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
   const { key, value } = entry;
   if (!isSentinelReplayManifest(value) || !manifestKeyMatches(key, value)) return addDelta(delta, { invalid: true });
   const accountingKey = sentinelReplayAccountingKey(value.captured_at_ms, value.capture_id);
@@ -190,30 +196,140 @@ const bootstrapTombstoneDelta = (value: unknown, delta: BootstrapDelta): Bootstr
 };
 
 /** Legacy reservation rows are read only to release their own charge once. */
-const bootstrapLegacyDelta = async (kv: Deno.Kv, key: Deno.KvKey, value: unknown, delta: BootstrapDelta, budgetBytes: number): Promise<BootstrapDelta> => {
+const bootstrapLegacyDelta = async (kv: Kv, key: KvKey, value: unknown, delta: BootstrapDelta, budgetBytes: number): Promise<BootstrapDelta> => {
   if (!isLegacyReservation(value)) return addDelta(delta, { invalid: true });
   await releaseLegacyReservation(kv, key, value, budgetBytes);
   return addDelta(delta, { legacy_reaped: 1 });
 };
 
-const chunkHasOwner = async (kv: Deno.Kv, captureId: string): Promise<boolean> => {
-  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX })) {
-    if (isAccountingRow(entry.value) && accountingKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) return true;
-  }
-  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_MANIFEST_PREFIX })) {
-    if (isSentinelReplayManifest(entry.value) && manifestKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) return true;
-  }
-  return false;
+/**
+ * Capture ids of every valid accounting row and manifest. While the ledger is
+ * incomplete no capture gains its first owner: admission requires completed
+ * accounting, and publication and this sweep's manifest phase add rows only for
+ * a capture that already has one. So an index filled while the ledger stayed
+ * incomplete holds every owner that existed when a batch read that ledger.
+ *
+ * A batch can still outlive that read: another caller may finish the sweep, and
+ * an admission may then reserve and stage a capture this index never saw. Every
+ * commit that creates an owner (admission, publication, materialization) also
+ * writes the ledger, and an ownerless chunk is deleted only in a commit that
+ * checks the ledger versionstamp the batch read, so such a delete fails instead.
+ * The same check makes the batch's own ledger commit fail, so the failed delete
+ * never persists as an invalid row.
+ *
+ * A partial index is filled by one batch at a time. A complete one is only
+ * read from then on, so concurrent batches share it: were it taken by one slow
+ * batch, the fill commits of batches starting fresh indexes meanwhile would
+ * keep failing that batch's deletes and commit. Either is reused only for the
+ * exact chunk cursor it was retained at: the one a batch committed, or the one
+ * a batch began from when its commit lost to another ledger write that left
+ * that cursor in place. Cursor equality is the only identity check, so a
+ * second handle that re-sweeps to the same cursor after an external ledger
+ * reset could reuse an index that predates owners admitted in between. No
+ * runtime path deletes the ledger, and production shares one handle per
+ * process.
+ */
+type ChunkOwnerIndex = { cursor: string | null; prefix: number; scan: string | undefined; read: number; owners: Set<string> };
+const chunkOwnerIndexes = new WeakMap<Kv, ChunkOwnerIndex>();
+const ownerIndexPrefixes = (): readonly KvKey[] => [SENTINEL_REPLAY_ACCOUNTING_PREFIX, SENTINEL_REPLAY_MANIFEST_PREFIX];
+const isOwnerIndexComplete = (index: ChunkOwnerIndex): boolean => index.prefix >= ownerIndexPrefixes().length;
+
+/** Take a partial index, share a complete one; one held for another cursor stays, so a stale ledger read cannot discard it. */
+const takeChunkOwnerIndex = (kv: Kv, cursor: string | null): ChunkOwnerIndex | null => {
+  const index = chunkOwnerIndexes.get(kv);
+  if (index === undefined || cursor === null || index.cursor !== cursor) return null;
+  if (!isOwnerIndexComplete(index)) chunkOwnerIndexes.delete(kv);
+  return index;
 };
 
-/** Reclaim staged chunks that have no durable manifest or accounting owner. */
-const bootstrapChunkDelta = async (kv: Deno.Kv, entry: Deno.KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
+const ownerCaptureId = (prefix: KvKey, { key, value }: KvEntry<unknown>): string | null => {
+  if (prefix === SENTINEL_REPLAY_ACCOUNTING_PREFIX) return isAccountingRow(value) && accountingKeyMatches(key, value) ? value.capture_id : null;
+  return isSentinelReplayManifest(value) && manifestKeyMatches(key, value) ? value.capture_id : null;
+};
+
+/** Read at most BOOTSTRAP_OWNER_SCAN_ENTRIES owner rows; true once both owner prefixes are indexed. */
+const advanceChunkOwnerIndex = async (kv: Kv, index: ChunkOwnerIndex): Promise<boolean> => {
+  const ownerPrefixes = ownerIndexPrefixes();
+  let budget = BOOTSTRAP_OWNER_SCAN_ENTRIES;
+  while (index.prefix < ownerPrefixes.length && budget > 0) {
+    const prefix = ownerPrefixes[index.prefix];
+    const iterator = kv.list({ prefix }, { cursor: index.scan, limit: budget });
+    let read = 0;
+    for await (const entry of iterator) {
+      read += 1;
+      const owner = ownerCaptureId(prefix, entry);
+      if (owner !== null) index.owners.add(owner);
+    }
+    if (read < budget) {
+      index.prefix += 1;
+      index.scan = undefined;
+    } else {
+      index.scan = iterator.cursor;
+    }
+    index.read += read;
+    budget -= read;
+  }
+  return index.prefix >= ownerPrefixes.length;
+};
+
+const chunkRemains = async (kv: Kv, cursor: string | null): Promise<boolean> =>
+  (await kv.list({ prefix: SENTINEL_REPLAY_CHUNK_PREFIX }, { cursor: cursor ?? undefined, limit: 1 }).next()).done !== true;
+
+/** Fill the owner index by one bounded slice before any chunk is judged; an exhausted chunk prefix needs none. */
+const prepareChunkOwners = async (
+  kv: Kv,
+  index: ChunkOwnerIndex | null,
+  cursor: string | null
+): Promise<Readonly<{ ready: boolean; index: ChunkOwnerIndex | null }>> => {
+  const owners = index ?? ((await chunkRemains(kv, cursor)) ? { cursor: null, prefix: 0, scan: undefined, read: 0, owners: new Set<string>() } : null);
+  return { ready: owners === null || (await advanceChunkOwnerIndex(kv, owners)), index: owners };
+};
+
+/** Both indexes scan the same owner rows in key order, so the prefix and row count reached order their progress. */
+const hasReadAsFar = (left: ChunkOwnerIndex, right: ChunkOwnerIndex): boolean =>
+  left.prefix > right.prefix || (left.prefix === right.prefix && left.read >= right.read);
+
+/**
+ * Keep the index for one durable chunk-phase cursor. Concurrent batches on one
+ * handle each fill their own index, so one already held for the same cursor
+ * that has read as far is kept rather than replaced by a shorter one.
+ */
+const retainChunkOwnerIndex = (kv: Kv, owners: ChunkOwnerIndex | null, cursor: string | null): void => {
+  if (owners === null || cursor === null || bootstrapPrefixes()[parseCursor(cursor).index] !== SENTINEL_REPLAY_CHUNK_PREFIX) return;
+  const held = chunkOwnerIndexes.get(kv);
+  if (held !== undefined && held !== owners && held.cursor === cursor && hasReadAsFar(held, owners)) return;
+  owners.cursor = cursor;
+  chunkOwnerIndexes.set(kv, owners);
+};
+
+/**
+ * Reclaim staged chunks that have no durable manifest or accounting owner. A
+ * null index means no chunk remained when this pass began, so a chunk seen now
+ * was staged since by a capture whose reservation already owns it. The delete
+ * also checks the ledger versionstamp this batch read: any owner created since
+ * wrote the ledger, so the delete fails rather than reclaim a live payload. A
+ * chunk that another batch sharing the index already reclaimed is gone, not
+ * invalid.
+ */
+const bootstrapChunkDelta = async (
+  kv: Kv,
+  entry: KvEntry<unknown>,
+  delta: BootstrapDelta,
+  owners: ChunkOwnerIndex | null,
+  ledgerVersionstamp: string | null
+): Promise<BootstrapDelta> => {
   const { key } = entry;
   if (key.length !== SENTINEL_REPLAY_CHUNK_PREFIX.length + 2 || typeof key[4] !== "string" || !counter(key[5])) return addDelta(delta, { invalid: true });
-  if (await chunkHasOwner(kv, key[4])) return delta;
+  if (owners === null || owners.owners.has(key[4])) return delta;
   fault("delete");
-  const deleted = await kv.atomic().check({ key, versionstamp: entry.versionstamp }).delete(key).commit();
-  return deleted.ok ? delta : addDelta(delta, { invalid: true });
+  const deleted = await kv
+    .atomic()
+    .check({ key, versionstamp: entry.versionstamp })
+    .check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp: ledgerVersionstamp })
+    .delete(key)
+    .commit();
+  if (deleted.ok) return delta;
+  return (await kv.get(key)).versionstamp === null ? delta : addDelta(delta, { invalid: true });
 };
 
 /** A dedupe row must reference a well-formed manifest key. */
@@ -231,45 +347,82 @@ const bootstrapDedupeDelta = (value: unknown, delta: BootstrapDelta): BootstrapD
  * trusted or deleted on a guess, which keeps discovery fail-closed.
  */
 const bootstrapEntryDelta = async (
-  kv: Deno.Kv,
-  prefix: Deno.KvKey,
-  entry: Deno.KvEntry<unknown>,
+  kv: Kv,
+  prefix: KvKey,
+  entry: KvEntry<unknown>,
   delta: BootstrapDelta,
-  budgetBytes: number
+  budgetBytes: number,
+  owners: ChunkOwnerIndex | null,
+  ledgerVersionstamp: string | null
 ): Promise<BootstrapDelta> => {
   if (prefix === SENTINEL_REPLAY_ACCOUNTING_PREFIX) return bootstrapAccountingDelta(entry.key, entry.value, delta);
   if (prefix === SENTINEL_REPLAY_MANIFEST_PREFIX) return await bootstrapManifestDelta(kv, entry, delta);
   if (prefix === SENTINEL_REPLAY_REQUEST_PREFIX) return bootstrapStatusDelta(entry.value, delta);
   if (prefix === SENTINEL_REPLAY_EVICTION_PREFIX) return bootstrapTombstoneDelta(entry.value, delta);
   if (prefix === SENTINEL_REPLAY_RESERVATION_PREFIX) return await bootstrapLegacyDelta(kv, entry.key, entry.value, delta, budgetBytes);
-  if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) return await bootstrapChunkDelta(kv, entry, delta);
+  if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) return await bootstrapChunkDelta(kv, entry, delta, owners, ledgerVersionstamp);
   return bootstrapDedupeDelta(entry.value, delta);
 };
 
 /** Outcome of sweeping one bootstrap prefix within the remaining entry budget. */
-type BootstrapSweep = Readonly<{ delta: BootstrapDelta; scanned: number; cursor: string | null; exhausted: boolean }>;
+type BootstrapSweep = Readonly<{ delta: BootstrapDelta; scanned: number; cursor: string | null; exhausted: boolean; owners: ChunkOwnerIndex | null }>;
 
 /**
  * Sweep one prefix up to `budget` entries. `exhausted` means the sweep consumed
- * its whole budget mid-prefix, so the caller must resume from `cursor` at the
- * same prefix instead of advancing.
+ * its whole budget mid-prefix, or is still filling the chunk owner index, so
+ * the caller must resume from `cursor` at the same prefix instead of advancing.
  */
 const sweepBootstrapPrefix = async (
-  kv: Deno.Kv,
-  prefix: Deno.KvKey,
+  kv: Kv,
+  prefix: KvKey,
   cursor: string | null,
   budget: number,
   delta: BootstrapDelta,
-  budgetBytes: number
+  budgetBytes: number,
+  index: ChunkOwnerIndex | null,
+  ledgerVersionstamp: string | null
 ): Promise<BootstrapSweep> => {
+  let owners = index;
+  if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) {
+    // Judge no chunk until every owner is indexed; the cursor stays here meanwhile.
+    const prepared = await prepareChunkOwners(kv, owners, cursor);
+    if (!prepared.ready) return { delta, scanned: 0, cursor, exhausted: true, owners: prepared.index };
+    owners = prepared.index;
+  }
   const iterator = kv.list({ prefix }, { cursor: cursor ?? undefined, limit: budget });
   let scanned = 0;
   for await (const entry of iterator) {
     scanned += 1;
-    delta = await bootstrapEntryDelta(kv, prefix, entry, delta, budgetBytes);
-    if (scanned >= budget) return { delta, scanned, cursor: iterator.cursor, exhausted: true };
+    delta = await bootstrapEntryDelta(kv, prefix, entry, delta, budgetBytes, owners, ledgerVersionstamp);
+    if (scanned >= budget) return { delta, scanned, cursor: iterator.cursor, exhausted: true, owners };
   }
-  return { delta, scanned, cursor: null, exhausted: false };
+  return { delta, scanned, cursor: null, exhausted: false, owners };
+};
+
+/** After a committed batch: keep its index for a chunk-phase cursor; a sweep past that phase judges no chunk again, so none stays held. */
+const settleChunkOwnerIndex = (kv: Kv, owners: ChunkOwnerIndex | null, cursor: string | null, phase: number): void => {
+  if (phase > bootstrapPrefixes().indexOf(SENTINEL_REPLAY_CHUNK_PREFIX)) chunkOwnerIndexes.delete(kv);
+  else retainChunkOwnerIndex(kv, owners, cursor);
+};
+
+/**
+ * Return the ledger that won after this batch's commit lost. A loss (a skip
+ * reason, a concurrent batch, a fill-only rewrite) that left the sweep where
+ * this batch began keeps the owners it indexed, so contention cannot keep
+ * restarting the index from empty.
+ */
+const afterLostCommit = async (
+  kv: Kv,
+  ledger: SentinelReplayBudgetLedger,
+  owners: ChunkOwnerIndex | null,
+  budgetBytes: number
+): Promise<SentinelReplayBudgetLedger> => {
+  const reread = await readLedger(kv, budgetBytes);
+  if (reread.kind === "corrupt") return ledger;
+  if (!reread.ledger.bootstrap_complete && reread.ledger.bootstrap_cursor === ledger.bootstrap_cursor) {
+    retainChunkOwnerIndex(kv, owners, ledger.bootstrap_cursor);
+  }
+  return withBudget(reread.ledger, budgetBytes);
 };
 
 /**
@@ -279,7 +432,7 @@ const sweepBootstrapPrefix = async (
  * new admissions stay refused instead of trusting a zero.
  */
 export const runBootstrapBatch = async (
-  kv: Deno.Kv,
+  kv: Kv,
   ledger: SentinelReplayBudgetLedger,
   versionstamp: string | null,
   budgetBytes: number,
@@ -294,8 +447,10 @@ export const runBootstrapBatch = async (
   const live = ledger.bootstrap_cursor === null && ledger.accounting_error !== null ? emptyDelta() : ledger;
   let delta = emptyDelta();
   let scanned = 0;
+  let owners = takeChunkOwnerIndex(kv, ledger.bootstrap_cursor);
   while (index < prefixes.length && scanned < BOOTSTRAP_BATCH_ENTRIES) {
-    const sweep = await sweepBootstrapPrefix(kv, prefixes[index], inner, BOOTSTRAP_BATCH_ENTRIES - scanned, delta, budgetBytes);
+    const sweep = await sweepBootstrapPrefix(kv, prefixes[index], inner, BOOTSTRAP_BATCH_ENTRIES - scanned, delta, budgetBytes, owners, versionstamp);
+    owners = sweep.owners;
     delta = sweep.delta;
     scanned += sweep.scanned;
     if (sweep.exhausted) {
@@ -331,10 +486,11 @@ export const runBootstrapBatch = async (
       .set(materialization.accounting_key, materialization.row);
   }
   const committed = await operation.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, next).commit();
-  if (committed.ok) return next;
-  const reread = await readLedger(kv, budgetBytes);
-  if (reread.kind === "corrupt") return ledger;
-  return withBudget(reread.ledger, budgetBytes);
+  if (committed.ok) {
+    settleChunkOwnerIndex(kv, owners, next.bootstrap_cursor, index);
+    return next;
+  }
+  return await afterLostCommit(kv, ledger, owners, budgetBytes);
 };
 
 /**
@@ -344,11 +500,15 @@ export const runBootstrapBatch = async (
  * when accounting is authoritative, and null when the ledger is corrupt or the
  * sweep is still incomplete, in which case no counter may move.
  */
-export const bootstrapBeforeMutation = async (kv: Deno.Kv, budgetBytes: number, nowMs: number): Promise<SentinelReplayBudgetLedger | null> => {
+export const bootstrapBeforeMutation = async (kv: Kv, budgetBytes: number, nowMs: number): Promise<SentinelReplayBudgetLedger | null> => {
   const state = await readLedger(kv, budgetBytes);
   if (state.kind === "corrupt") return null;
   const ledger = withBudget(state.ledger, budgetBytes);
-  if (ledger.bootstrap_complete) return ledger;
+  if (ledger.bootstrap_complete) {
+    // Admissions may create owners from here on, so no earlier index can be trusted again.
+    chunkOwnerIndexes.delete(kv);
+    return ledger;
+  }
   const bootstrapped = await runBootstrapBatch(kv, ledger, state.versionstamp, budgetBytes, nowMs);
   return bootstrapped.bootstrap_complete ? bootstrapped : null;
 };
