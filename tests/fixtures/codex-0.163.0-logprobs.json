@@ -1,0 +1,449 @@
+{
+  "model": "gpt-6.1-sol",
+  "stream": true,
+  "input": [
+    {
+      "type": "additional_tools",
+      "id": "fixture_1",
+      "role": "developer",
+      "tools": [
+        {
+          "type": "namespace",
+          "name": "functions",
+          "description": "Synthetic fixture text.",
+          "tools": [
+            {
+              "type": "custom",
+              "name": "exec",
+              "description": "Synthetic fixture text.",
+              "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: \"fixture\""
+              }
+            },
+            {
+              "type": "function",
+              "name": "wait",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cell_id": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  },
+                  "max_tokens": {
+                    "type": "number",
+                    "description": "Synthetic fixture text."
+                  },
+                  "terminate": {
+                    "type": "boolean",
+                    "description": "Synthetic fixture text."
+                  },
+                  "yield_time_ms": {
+                    "type": "number",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "required": ["cell_id"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "request_user_input",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "questions": {
+                    "type": "array",
+                    "description": "Synthetic fixture text.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "header": {
+                          "type": "string",
+                          "description": "Synthetic fixture text."
+                        },
+                        "id": {
+                          "type": "string",
+                          "description": "Synthetic fixture text."
+                        },
+                        "options": {
+                          "type": "array",
+                          "description": "Synthetic fixture text.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "description": {
+                                "type": "string",
+                                "description": "Synthetic fixture text."
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "Synthetic fixture text."
+                              }
+                            },
+                            "required": ["label", "description"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "question": {
+                          "type": "string",
+                          "description": "Synthetic fixture text."
+                        }
+                      },
+                      "required": ["id", "header", "question", "options"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["questions"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "request_user_input_async",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "questions": {
+                    "type": "array",
+                    "description": "Synthetic fixture text.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "options": {
+                          "type": "array",
+                          "description": "Synthetic fixture text.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "minItems": 1
+                        },
+                        "title": {
+                          "type": "string",
+                          "description": "Synthetic fixture text."
+                        }
+                      },
+                      "required": ["title"],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": ["questions"],
+                "additionalProperties": false
+              }
+            }
+          ]
+        },
+        {
+          "type": "namespace",
+          "name": "clock",
+          "description": "Synthetic fixture text.",
+          "tools": [
+            {
+              "type": "function",
+              "name": "sleep",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "duration_ms": {
+                    "type": "number",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "required": ["duration_ms"],
+                "additionalProperties": false
+              }
+            }
+          ]
+        },
+        {
+          "type": "namespace",
+          "name": "collaboration",
+          "description": "Synthetic fixture text.",
+          "tools": [
+            {
+              "type": "function",
+              "name": "followup_task",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "description": "Synthetic fixture text.",
+                    "encrypted": true
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "required": ["target", "message"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "interrupt_agent",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "required": ["target"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "list_agents",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path_prefix": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "send_message",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "description": "Synthetic fixture text.",
+                    "encrypted": true
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "required": ["target", "message"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "spawn_agent",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "fork_turns": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  },
+                  "message": {
+                    "type": "string",
+                    "description": "Synthetic fixture text.",
+                    "encrypted": true
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  },
+                  "reasoning_effort": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  },
+                  "task_name": {
+                    "type": "string",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "required": ["task_name", "message"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "function",
+              "name": "wait_agent",
+              "description": "Synthetic fixture text.",
+              "strict": false,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "timeout_ms": {
+                    "type": "number",
+                    "description": "Synthetic fixture text."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_2",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_3",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        },
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        },
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_4",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_5",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_6",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_7",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "status": "completed",
+      "id": "msg_9",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Synthetic fixture text.",
+          "annotations": [],
+          "logprobs": []
+        },
+        {
+          "type": "output_text",
+          "text": "Synthetic fixture text.",
+          "annotations": [],
+          "logprobs": [
+            {
+              "token": "S",
+              "logprob": -0.1,
+              "bytes": [83],
+              "top_logprobs": [
+                {
+                  "token": "S",
+                  "logprob": -0.1,
+                  "bytes": [83]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "phase": "final_answer"
+    },
+    {
+      "type": "message",
+      "id": "msg_10",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Synthetic fixture text."
+        }
+      ]
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "low",
+    "context": "Synthetic fixture text."
+  },
+  "store": false,
+  "include": ["reasoning.encrypted_content"],
+  "prompt_cache_key": "fixture_8",
+  "text": {
+    "verbosity": "low"
+  },
+  "client_metadata": {
+    "session_id": "Synthetic fixture text.",
+    "turn_id": "Synthetic fixture text.",
+    "x-codex-installation-id": "Synthetic fixture text.",
+    "thread_id": "Synthetic fixture text.",
+    "root_turn_id": "Synthetic fixture text.",
+    "x-codex-turn-metadata": "Synthetic fixture text.",
+    "x-codex-window-id": "Synthetic fixture text."
+  }
+}
