@@ -9316,6 +9316,7 @@ const refreshModelsMetadata = async () => {
       toast.error("Metadata refresh failed", { description: payload?.error?.message ?? `HTTP ${response.status}` });
       return;
     }
+    if (modelsHasUnsavedChanges() && !globalThis.confirm("Discard the unsaved model selection and reload?")) return;
     await loadModelsWhitelist({ force: true });
     const upstream = payload?.data?.openrouter?.upstream_models;
     if (payload?.data?.openrouter?.refreshed === false) {

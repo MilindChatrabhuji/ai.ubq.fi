@@ -872,3 +872,12 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
 test("admin metadata refresh is registered as an operator POST route", () => {
   assert.match(handlerSource, /\{ methods: \["POST"\], path: "\/admin\/models\/refresh", run: \(\) => handleAdminModelsRefresh\(\) \}/);
 });
+
+test("admin metadata refresh confirms before replacing a staged model selection", () => {
+  const refreshSource = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(refreshSource, "", "refreshModelsMetadata must stay declared");
+  assert.match(
+    refreshSource,
+    /if \(modelsHasUnsavedChanges\(\) && !globalThis\.confirm\("Discard the unsaved model selection and reload\?"\)\) return;\s+await loadModelsWhitelist\(\{ force: true \}\);/
+  );
+});
