@@ -179,7 +179,9 @@ const meteredCodexModelRecord = (
     supported_reasoning_levels: levels?.length
       ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
       : [{ effort: "none", description: "No reasoning" }],
-    default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+    ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+      ? {}
+      : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
     ...(resolved.context_window_tokens === null
       ? {}
       : {
@@ -448,7 +450,9 @@ const cerebrasCodexModels = (): Record<string, unknown>[] => {
         effort: String(effort),
         description: codexReasoningEffortDescription(String(effort)),
       })),
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {
@@ -518,7 +522,9 @@ const openRouterCodexModels = (): Record<string, unknown>[] => {
       supported_reasoning_levels: levels?.length
         ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
         : [{ effort: "none", description: "No reasoning" }],
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {
