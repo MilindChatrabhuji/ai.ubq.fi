@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { readCerebrasApiKey } from "./provider/cerebras.ts";
 import { CODEX_AUTH_POOL_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson, parseCodexAuthPool } from "./codex/index.ts";
@@ -5,16 +6,21 @@ import { readDeepSeekApiKey } from "./deepseek/index.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { readLithosApiKey } from "./provider/lithos.ts";
-import { claudeCodeRequestHeaders, CLAUDE_CODE_MODELS_URL, readClaudeCodeAllowedKeyIds } from "./provider/claude-code.ts";
+import { claudeCodeRequestHeaders, CLAUDE_CODE_MODELS_URL } from "./provider/claude-code.ts";
 import {
   CLAUDE_CODE_WORKSPACE_ID_ENV,
-  resolveClaudeCodeCredential,
-  resolveClaudeCodeWorkspace,
   loadClaudeCodeWorkspaceState,
   type ClaudeCodeResolvedCredential,
   type ClaudeCodeResolvedWorkspace,
 } from "./provider/claude-code-credentials.ts";
 import { loadClaudeCodeQuotaState, type ClaudeCodeQuotaState } from "./provider/claude-code-quota.ts";
+import {
+  resolveClaudeCodeAccount,
+  isClaudeCodeAccountCurrent,
+  loadClaudeCodeAccountStore,
+  type ClaudeCodeAccountBinding,
+} from "./provider/claude-code-accounts.ts";
+import { loadClaudeCodeAccessPolicy } from "./provider/claude-code-access.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import {
   getCerebrasProviderHealth,
@@ -108,6 +114,8 @@ type HealthUpstreamProbe = {
      */
     claude_subscription: ActiveProviderProbe | null;
     claude_workspace: {
+      account_id?: string;
+      account_cohort_id?: string;
       id: string | null;
       name: string | null;
       source: string | null;
@@ -373,33 +381,52 @@ const readClaudeCodeWorkspacePinnedByEnv = (): boolean => {
  * material. Shared by the passive provider snapshot and the admin status
  * route so both always agree.
  */
+const claudeAccountStatus = async (kv: Kv, account: ClaudeCodeAccountBinding, activeId: string | null): Promise<Record<string, unknown>> => {
+  const [quota, health] = await Promise.all([loadClaudeCodeQuotaState(kv, account), getClaudeCodeProviderHealth(Date.now, account)]);
+  const current = await isClaudeCodeAccountCurrent(kv, account);
+  return {
+    account_id: account.account_id,
+    account_cohort_id: account.account_cohort_id,
+    label: account.credential.label,
+    credential: {
+      kind: account.credential.kind,
+      source: account.credential.source,
+      hint: account.credential.hint,
+      label: account.credential.label,
+      updated_at_ms: account.credential.updated_at_ms,
+      expires_at_ms: null,
+      refresh_material_present: false,
+    },
+    workspace: claudeWorkspaceView(account.workspace, account.workspace, account.workspace?.source === "env"),
+    active: account.account_id === activeId,
+    stale: !current,
+    quota: current ? claudeCodeQuotaView(quota) : null,
+    health: current ? health : unknownProviderHealth(),
+    capabilities: { identity_verified: false, can_refresh: false, can_reset_upstream_quota: false },
+  };
+};
 export const getClaudeSubscriptionStatusSnapshot = async (): Promise<Record<string, unknown>> => {
   const kv = await getKv();
-  const [credential, workspace, workspaceState, quota, selection] = await Promise.all([
-    resolveClaudeCodeCredential(kv).catch(() => null),
-    resolveClaudeCodeWorkspace(kv).catch(() => null),
-    loadClaudeCodeWorkspaceState(kv).catch(() => null),
-    loadClaudeCodeQuotaState(kv).catch(() => null),
-    loadProviderSelectionCached().catch(() => null),
-  ]);
+  const selection = await loadProviderSelectionCached().catch(() => null);
+  const store = kv ? await loadClaudeCodeAccountStore(kv).catch(() => null) : null;
+  const access = kv ? await loadClaudeCodeAccessPolicy(kv).catch(() => null) : null;
+  const accounts = kv && store ? await Promise.all(store.accounts.map((account) => claudeAccountStatus(kv, account, store.active_account_id))) : [];
+  const active = accounts.find((account) => account.account_id === store?.active_account_id && account.stale !== true);
   return {
-    // Configured means a credential exists; the principal allowlist and the
-    // operator switch are reported separately because either one keeps the
-    // route inert even with a credential.
-    configured: credential !== null,
-    credential: credential
-      ? {
-          kind: credential.kind,
-          source: credential.source,
-          hint: credential.hint,
-          label: credential.label,
-          updated_at_ms: credential.updated_at_ms,
-        }
-      : null,
-    workspace: claudeWorkspaceView(workspace, workspaceState, readClaudeCodeWorkspacePinnedByEnv()),
-    principal_allowlist_configured: readClaudeCodeAllowedKeyIds().size > 0,
+    configured: active !== undefined,
+    credential: active?.credential ?? null,
+    workspace: active?.workspace ?? null,
+    account_id: active?.account_id ?? null,
+    account_cohort_id: active?.account_cohort_id ?? null,
+    accounts,
+    active_account_id: store?.active_account_id ?? null,
+    active_reason: store?.active_reason ?? null,
+    account_scan: store ? "ok" : "unavailable",
+    access: access ? { source: access.source, allowed_key_ids: access.allowed_key_ids, updated_at_ms: access.updated_at_ms } : null,
+    principal_allowlist_configured: (access?.allowed_key_ids.length ?? 0) > 0,
     enabled: isProviderEnabled("claude_code", selection),
-    quota: claudeCodeQuotaView(quota),
+    quota: active?.quota ?? null,
+    health: active?.health ?? unknownProviderHealth(),
   };
 };
 
@@ -410,7 +437,12 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
   const [cerebrasHealth, claudeCodeHealth, codexHealth, deepseekHealth, lithosHealth, meteredHealth, openRouterHealth, surplusHealth, meteredQuota] =
     await Promise.all([
       providerHealthOrUnknown(getCerebrasProviderHealth()),
-      providerHealthOrUnknown(getClaudeCodeProviderHealth()),
+      providerHealthOrUnknown(
+        (async () => {
+          const account = await resolveClaudeCodeAccount(await getKv());
+          return account ? await getClaudeCodeProviderHealth(Date.now, account) : unknownProviderHealth();
+        })()
+      ),
       Promise.all(context.account_ids.map((accountId) => providerHealthOrUnknown(getCodexProviderHealth(accountId)))),
       providerHealthOrUnknown(getDeepSeekProviderHealth()),
       providerHealthOrUnknown(getLithosProviderHealth()),
@@ -441,7 +473,7 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
     },
     claude_code: {
       ...claudeStatus,
-      health: claudeCodeHealth,
+      health: claudeStatus.health ?? claudeCodeHealth,
     },
     deepseek: {
       configured: readDeepSeekApiKey() !== null,
@@ -626,13 +658,35 @@ const probeUpstream = async (
   }
   progress.auth = auth;
   const kv = await getKv();
-  const [credential, workspace] = await Promise.all([resolveClaudeCodeCredential(kv).catch(() => null), resolveClaudeCodeWorkspace(kv).catch(() => null)]);
+  const account = await resolveClaudeCodeAccount(kv).catch(() => null);
+  const credential = account?.credential ?? null;
+  const workspace = account?.workspace ?? null;
   progress.claude_workspace = credential
-    ? { id: workspace?.id ?? null, name: workspace?.name ?? null, source: workspace?.source ?? null, pinned_by_env: readClaudeCodeWorkspacePinnedByEnv() }
+    ? {
+        id: workspace?.id ?? null,
+        name: workspace?.name ?? null,
+        source: workspace?.source ?? null,
+        pinned_by_env: readClaudeCodeWorkspacePinnedByEnv(),
+        account_id: account?.account_id,
+        account_cohort_id: account?.account_cohort_id,
+      }
     : null;
   const codexPromise = codexProbe(auth, signal).then((probe) => (progress.codex = probe));
   const meteredPromise = meteredQuotaProbe(meteredCredentials, signal).then((probe) => (progress.metered_quota = probe));
-  const claudePromise = claudeSubscriptionProbe(credential, workspace, signal).then((probe) => (progress.claude_subscription = probe));
+  const claudePromise = claudeSubscriptionProbe(credential, workspace, signal).then(async (probe) => {
+    if (account && !(await isClaudeCodeAccountCurrent(kv, account))) {
+      progress.claude_workspace = null;
+      progress.claude_subscription = {
+        status: 503,
+        provider: "claude_subscription",
+        content_type: null,
+        error: "Claude account changed during the models probe.",
+      };
+      return progress.claude_subscription;
+    }
+    progress.claude_subscription = probe;
+    return probe;
+  });
   const [codex, meteredQuota, claudeSubscription] = await Promise.all([codexPromise, meteredPromise, claudePromise]);
   return aggregateUpstreamProbe(auth, codex, meteredQuota, claudeSubscription, progress.claude_workspace);
 };
