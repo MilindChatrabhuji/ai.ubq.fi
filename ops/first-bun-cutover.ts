@@ -26,7 +26,7 @@ import { executeCutoverTransition, type CutoverPhase } from "./cutover-transitio
 import { digest, exists, fileDigest } from "./io.ts";
 import { readVpsPins, withVpsDeployLock, writeVpsAtomic } from "./vps-release-journal.ts";
 import { ImmutableVpsReleaseStore, VPS_LAUNCHER_PROFILE_SHA256, VPS_UNIT_SHA256 } from "./vps-release-store.ts";
-import { verifyCutoverReaderAcceptance, type CutoverReaderReceipt } from "./cutover-reader-gate.ts";
+import { cutoverReaderGateBinding, verifyCutoverReaderGate, type CutoverReaderGate } from "./cutover-reader-gate.ts";
 import { canonicalVps } from "./vps-release-contract.ts";
 
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
@@ -39,7 +39,7 @@ export type FirstBunCutoverInput = Readonly<{
   budgets: CutoverBudgets;
   authorization: { path: string; sha256: string };
   offlineArtifact: { path: string; sha256: string };
-  reader: CutoverReaderReceipt;
+  reader: CutoverReaderGate;
   signal?: AbortSignal;
 }>;
 type CutoverJournal = {
@@ -57,6 +57,7 @@ type CutoverJournal = {
   supervisorMemoryBytes: number;
   authorizationSha256: string;
   readerReceiptSha256: string;
+  readerGateKind: CutoverReaderGate["kind"];
   priorSourceSha256: string | null;
   bunStartupAttempted: boolean;
   legacyStartupAttempted: boolean;
@@ -66,6 +67,7 @@ type CutoverJournal = {
 };
 
 async function authorization(input: FirstBunCutoverInput, recovery = false): Promise<void> {
+  const reader = cutoverReaderGateBinding(input.reader);
   const info = await lstat(input.authorization.path);
   if (
     !info.isFile() ||
@@ -83,7 +85,8 @@ async function authorization(input: FirstBunCutoverInput, recovery = false): Pro
     value.artifact_sha256 !== input.artifact.archiveSha256 ||
     value.prior_revision !== input.priorRevision ||
     value.deno_sha256 !== input.denoSha256 ||
-    value.reader_receipt_sha256 !== input.reader.sha256 ||
+    value.reader_receipt_sha256 !== reader.sha256 ||
+    value.reader_gate_kind !== reader.kind ||
     value.offline_artifact_sha256 !== input.offlineArtifact.sha256 ||
     value.supervisor_memory_bytes !== input.supervisorMemoryBytes ||
     value.budgets_sha256 !== digest(JSON.stringify(input.budgets)) ||
@@ -103,7 +106,7 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
   const offline = await restoreCutoverArtifact(input.offlineArtifact.path, input.offlineArtifact.sha256);
   if (offline.archiveSha256 !== input.artifact.archiveSha256 || offline.manifestSha256 !== input.artifact.manifestSha256)
     throw new Error("Offline recovery inputs belong to another artifact");
-  await verifyCutoverReaderAcceptance(input.reader, input.artifact);
+  await verifyCutoverReaderGate(input.reader, input.artifact);
   if (!/^[a-f0-9]{40}$/.test(input.priorRevision) || !/^[a-f0-9]{64}$/.test(input.denoSha256))
     throw new Error("Exact prior and legacy codec pins are required");
   const host = new CutoverHost(canonicalRoot);
@@ -173,7 +176,8 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
       budgets: input.budgets,
       supervisorMemoryBytes: input.supervisorMemoryBytes,
       authorizationSha256: input.authorization.sha256,
-      readerReceiptSha256: input.reader.sha256,
+      readerReceiptSha256: cutoverReaderGateBinding(input.reader).sha256,
+      readerGateKind: input.reader.kind,
       priorSourceSha256: null,
       bunStartupAttempted: false,
       legacyStartupAttempted: false,
@@ -214,7 +218,7 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
           if ((await host.verifyBootstrap(input.artifact)) !== bootstrapSha256) throw new Error("Bootstrap changed while waiting for cutover custody");
           await recheckCutoverArtifact(input.artifact);
           await authorization(input);
-          await verifyCutoverReaderAcceptance(input.reader, input.artifact);
+          await verifyCutoverReaderGate(input.reader, input.artifact);
           await assertPrior();
           if (canonicalVps(await host.loadedUnit()) !== canonicalVps(loadedPriorUnit)) throw new Error("The loaded prior service definition changed");
           await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, workspace, input.priorRevision);
@@ -302,7 +306,8 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
   });
 }
 
-function cutoverRequestDigest(input: FirstBunCutoverInput): string {
+export function cutoverRequestDigest(input: FirstBunCutoverInput): string {
+  const reader = cutoverReaderGateBinding(input.reader);
   return digest(
     JSON.stringify({
       artifact: input.artifact.archiveSha256,
@@ -310,7 +315,7 @@ function cutoverRequestDigest(input: FirstBunCutoverInput): string {
       prior: input.priorRevision,
       deno: input.denoSha256,
       authorization: input.authorization.sha256,
-      reader: input.reader.sha256,
+      reader: { kind: reader.kind, sha256: reader.sha256 },
       offline: input.offlineArtifact.sha256,
       memory: input.supervisorMemoryBytes,
       budgets: input.budgets,
@@ -372,6 +377,8 @@ export async function recoverFirstBunCutover(input: Omit<FirstBunCutoverInput, "
       journal.prior !== input.priorRevision ||
       journal.artifactSha256 !== artifact.archiveSha256 ||
       journal.manifestSha256 !== artifact.manifestSha256 ||
+      journal.readerGateKind !== input.reader.kind ||
+      journal.readerReceiptSha256 !== cutoverReaderGateBinding(input.reader).sha256 ||
       journal.bootstrapSha256 !== bootstrapSha256 ||
       JSON.stringify(journal.budgets) !== JSON.stringify(bound.budgets) ||
       typeof journal.bunStartupAttempted !== "boolean" ||
