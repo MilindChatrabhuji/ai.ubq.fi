@@ -9338,6 +9338,10 @@ const refreshModelsMetadata = async () => {
     if (modelsHasUnsavedChanges() && !globalThis.confirm("Discard the unsaved model selection and reload?")) return;
     await loadModelsWhitelist({ force: true });
     const upstream = payload?.data?.openrouter?.upstream_models;
+    if (payload?.data?.openrouter?.refreshed === false) {
+      toast.error("Metadata refresh failed", { description: "OpenRouter metadata was not refreshed" });
+      return;
+    }
     toast.success("Model metadata refreshed", {
       description: typeof upstream === "number" ? `${formatNumber(upstream)} upstream models` : undefined,
     });
@@ -10024,7 +10028,9 @@ const providersRoutingWarnings = () => {
       )} subscriptions; the other accounts stay unused.`
     );
   }
-  if (!isProviderChecked("codex")) {
+  // A missing subscription can still enable Codex in routing, so do not
+  // promise paid fallback while the saved selection contains one.
+  if (!isProviderChecked("codex") && missing.length === 0) {
     warnings.push("Codex is off; Codex subscription capacity stays unused.");
   }
   if (!providerSelection.has("surplus") && !providerSelection.has("openlux")) {
