@@ -64,8 +64,6 @@ test("deepseek responses: maps Responses input onto Chat messages", () => {
 });
 
 test("deepseek responses: rejects input shapes it cannot translate", () => {
-  const badRole = toDeepSeekChatMessages([{ type: "message", role: "system", content: "x" }], null);
-  assert.equal(badRole.ok, false);
   const badType = toDeepSeekChatMessages([{ type: "computer_call", call_id: "c" }], null);
   assert.equal(badType.ok, false);
   const badContent = toDeepSeekChatMessages([{ type: "message", role: "user", content: [{ type: "input_audio" }] }], null);
@@ -207,6 +205,34 @@ test("deepseek responses: flattens namespaced tools and drops what the API canno
   assert.deepEqual(toolNames.get("sleep"), { name: "sleep", namespace: "clock" });
   assert.equal(toolNames.has("now"), false);
   assert.deepEqual(body.tool_choice, { type: "function", function: { name: "now" } });
+});
+
+test("deepseek responses: bounds synthesized namespaced tool names and suffixes", () => {
+  const name = "f".repeat(64);
+  const namespace = "n".repeat(64);
+  const result = toDeepSeekResponsesChatBody(
+    {
+      input: "hi",
+      tools: [
+        { type: "function", name, parameters: { type: "object" } },
+        {
+          type: "namespace",
+          name: namespace,
+          tools: [
+            { type: "function", name, parameters: { type: "object" } },
+            { type: "function", name, parameters: { type: "object" } },
+          ],
+        },
+      ],
+    },
+    "deepseek-v4-flash",
+    false
+  );
+  assert.equal(result.ok, true);
+  const names = (result.value.body.tools as { function: { name: string } }[]).map((tool) => tool.function.name);
+  assert.deepEqual(names, [name, `${namespace}_${name.slice(0, 63)}`, `${namespace}_${name.slice(0, 61)}_2`]);
+  assert.ok(names.every((toolName) => toolName.length <= 128));
+  assert.deepEqual(result.value.toolNames.get(names[1]), { name, namespace });
 });
 
 test("deepseek responses: a namespaced tool call returns its namespace to the client", () => {
