@@ -30,6 +30,7 @@ import {
   type ProviderCapacityRollupSlotInput,
 } from "./capacity-rollups.ts";
 import { readPromptCacheAnalytics } from "../cache/prompt-analytics.ts";
+import { mergeCapacityHistory, readRemoteCapacityObservations } from "./capacity-analytics.ts";
 import { getConfiguredMeteredQuotaSnapshot, METERED_QUOTA_FRESH_MS, type MeteredQuotaSnapshot } from "../metered-quota.ts";
 import { PAID_FALLBACK_REQUEST_LOG_RETENTION_MS } from "../paid-fallback/ledger-state.ts";
 import { readPaidFallbackLedgerGrowth } from "../paid-fallback/ledger-stats.ts";
@@ -826,6 +827,9 @@ export const handleProviderCapacity = async (
   const kv = options.kv === undefined ? await getKv() : options.kv;
   const claudeHistory = readClaudeCapacityHistory(kv, nowMs);
   const ledgerGrowth = await readPaidFallbackLedgerGrowth(kv, { nowMs, retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS });
+  const remoteHistory = kv ? await readRemoteCapacityObservations(kv, nowMs).catch(() => []) : [];
+  const withAnalyticsHistory = (view: ProviderCapacityView): ProviderCapacityView =>
+    remoteHistory.length ? { ...view, history: mergeCapacityHistory(view.history, remoteHistory) } : view;
   try {
     const live = new URL(request.url).searchParams.get("refresh") === "live";
     // `?refresh=live` keeps forcing an operator probe. A normal read serves the
@@ -841,7 +845,7 @@ export const handleProviderCapacity = async (
     if (!live && cached && capacityViewIsFresh(cached, safeNow(options.now ?? Date.now))) {
       return json(
         200,
-        { ...cached, ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+        { ...withAnalyticsHistory(cached), ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
         { "Cache-Control": "no-store" }
       );
     }
@@ -849,13 +853,18 @@ export const handleProviderCapacity = async (
     const view = refreshed ?? cached ?? unavailableView(Date.now(), [], [], [], []);
     return json(
       200,
-      { ...view, ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+      { ...withAnalyticsHistory(view), ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
       { "Cache-Control": "no-store" }
     );
   } catch {
     return json(
       200,
-      { ...unavailableView(Date.now(), [], [], [], []), claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+      {
+        ...withAnalyticsHistory(unavailableView(Date.now(), [], [], [], [])),
+        claude_history: await claudeHistory,
+        prompt_cache: await promptCache,
+        ledger_growth: ledgerGrowth,
+      },
       { "Cache-Control": "no-store" }
     );
   }
