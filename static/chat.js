@@ -49,13 +49,18 @@ const PANEL_STATE_PREFIX = "uos_ai.playground.panel.";
 
 const debounce = (fn, wait = 450) => {
   let timer = null;
-  return (...args) => {
-    if (timer) clearTimeout(timer);
+  const schedule = (...args) => {
+    if (timer !== null) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
       fn(...args);
     }, wait);
   };
+  schedule.cancel = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+  return schedule;
 };
 
 const mustGet = (id) => {
@@ -590,6 +595,7 @@ tokenInput.addEventListener("input", () => {
   scheduleTokenPersist();
   const token = tokenInput.value.trim();
   if (!token) {
+    scheduleAuthCheck.cancel();
     clearLocalDevelopmentAuth();
     setAuthBadge("unknown", "Checking...");
     setSignedInState(false);

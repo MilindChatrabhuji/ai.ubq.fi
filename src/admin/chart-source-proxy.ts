@@ -12,6 +12,7 @@
 import { isAdminAuthDisabledForRequest, isMacCompanionServiceListener } from "../auth/local-admin.ts";
 import { json } from "../http.ts";
 import { isRemoteCapacityHostId, MAX_REMOTE_CAPACITY_OBSERVATIONS } from "../provider/capacity-analytics.ts";
+import { PROVIDER_CAPACITY_HISTORY_BUCKET_MS } from "../provider/capacity-contract.ts";
 
 const REMOTE_CHART_ORIGIN = "https://ai.ubq.fi";
 const REMOTE_CHART_TIMEOUT_MS = 10_000;
@@ -34,6 +35,8 @@ const REMOTE_CAPACITY_CHART_FIELDS = ["history", "reset_events", "rate_limit_res
 export type CapacityPushState = {
   acknowledgedSampledAtMs: number | null;
   inFlight: Promise<void> | null;
+  /** Learned upper bound: a timed-out batch is halved for subsequent polls. */
+  batchSize?: number;
 };
 
 const processPushState: CapacityPushState = { acknowledgedSampledAtMs: null, inFlight: null };
@@ -117,30 +120,40 @@ const readRemoteChart = async (pathname: string, remoteOrigin: string, token: st
   }
 };
 
-type PendingSample = Record<string, unknown> & { sampled_at_ms: number };
+type PendingSample = Record<string, unknown> & { bucket_start_at_ms: number; sampled_at_ms: number };
 
-/** Local samples newer than the acknowledged one, oldest first, at most one ingest batch. */
-const pendingCapacitySamples = (payload: unknown, acknowledgedSampledAtMs: number | null): PendingSample[] => {
+/** Closed bucket points and immutable transitions, newer than the watermark, oldest first. */
+const pendingCapacitySamples = (payload: unknown, acknowledgedSampledAtMs: number | null, batchSize: number): PendingSample[] => {
   if (!isRecord(payload) || !Array.isArray(payload.history)) return [];
-  return payload.history
+  const snapshotAtMs = payload.snapshot_at_ms;
+  if (typeof snapshotAtMs !== "number" || !Number.isFinite(snapshotAtMs)) return [];
+  const samples = payload.history.filter(
+    (point): point is PendingSample =>
+      isRecord(point) &&
+      typeof point.bucket_start_at_ms === "number" &&
+      Number.isFinite(point.bucket_start_at_ms) &&
+      typeof point.sampled_at_ms === "number" &&
+      Number.isFinite(point.sampled_at_ms)
+  );
+  const newestByBucket = new Map<number, number>();
+  for (const point of samples) {
+    newestByBucket.set(point.bucket_start_at_ms, Math.max(newestByBucket.get(point.bucket_start_at_ms) ?? point.sampled_at_ms, point.sampled_at_ms));
+  }
+  return samples
     .filter(
-      (point): point is PendingSample =>
-        isRecord(point) &&
-        typeof point.sampled_at_ms === "number" &&
-        Number.isFinite(point.sampled_at_ms) &&
-        (acknowledgedSampledAtMs === null || point.sampled_at_ms > acknowledgedSampledAtMs)
+      (point) =>
+        (acknowledgedSampledAtMs === null || point.sampled_at_ms > acknowledgedSampledAtMs) &&
+        // Local history overwrites the newest point in an open bucket; only
+        // earlier points (preserved under transition keys) are immutable yet.
+        (point.bucket_start_at_ms + PROVIDER_CAPACITY_HISTORY_BUCKET_MS <= snapshotAtMs ||
+          point.sampled_at_ms < (newestByBucket.get(point.bucket_start_at_ms) ?? point.sampled_at_ms))
     )
     .sort((left, right) => left.sampled_at_ms - right.sampled_at_ms)
-    .slice(0, MAX_REMOTE_CAPACITY_OBSERVATIONS);
+    .slice(0, batchSize);
 };
 
-/**
- * `stored`: the VPS acknowledged the batch for this host. `refused`: the VPS
- * rejected the batch itself (400 or 413), so resending it can never succeed.
- * `retry`: anything else, including auth, timeouts, 5xx, and a body that is
- * not the acknowledgement.
- */
-type PushOutcome = "stored" | "refused" | "retry";
+/** Refusals are isolated by splitting; timeouts reduce future batches without acknowledging them. */
+type PushOutcome = "stored" | "refused" | "timeout" | "retry";
 
 const pushCapacitySamples = async (
   samples: readonly PendingSample[],
@@ -149,13 +162,14 @@ const pushCapacitySamples = async (
   token: string,
   fetcher: typeof fetch
 ): Promise<PushOutcome> => {
+  const signal = AbortSignal.timeout(REMOTE_PUSH_TIMEOUT_MS);
   try {
     const response = await fetcher(new URL(REMOTE_CAPACITY_OBSERVATION_PATH, remoteOrigin), {
       method: "POST",
       headers: { ...remoteHeaders(token), "Content-Type": "application/json" },
       body: JSON.stringify({ host: hostId, history: samples }),
       cache: "no-store",
-      signal: AbortSignal.timeout(REMOTE_PUSH_TIMEOUT_MS),
+      signal,
     });
     if (!response.ok) {
       await releaseBody(response);
@@ -163,31 +177,39 @@ const pushCapacitySamples = async (
     }
     const acknowledgement: unknown = await response.json();
     return isRecord(acknowledgement) && acknowledgement.host === hostId && typeof acknowledgement.accepted === "number" ? "stored" : "retry";
-  } catch {
-    return "retry";
+  } catch (error) {
+    return signal.aborted || (isRecord(error) && error.name === "TimeoutError") ? "timeout" : "retry";
   }
 };
 
 /**
- * Starts at most one background push at a time. It sends only samples newer
- * than the last acknowledged one, so an open Analytics tab sends each sample
- * once instead of the whole week on every thirty-second poll. A failed or
- * unacknowledged push leaves the same samples pending for the next poll; a
- * batch the VPS refuses as invalid is skipped so it cannot block later samples.
- * The chart read never waits for it.
+ * Starts at most one background push at a time. Only an acknowledged prefix
+ * advances the watermark. A refused batch is halved until a valid prefix is
+ * stored or a single bad row can be skipped; its remaining rows stay pending.
+ * Timeouts halve the next poll's batch (down to one), while other failures
+ * leave it pending unchanged. The chart read never waits for the push.
  */
 const startCapacityPush = (payload: unknown, hostId: string, remoteOrigin: string, token: string, fetcher: typeof fetch, state: CapacityPushState): void => {
   if (state.inFlight) return;
-  const samples = pendingCapacitySamples(payload, state.acknowledgedSampledAtMs);
-  const newest = samples.at(-1)?.sampled_at_ms;
-  if (newest === undefined) return;
-  state.inFlight = pushCapacitySamples(samples, hostId, remoteOrigin, token, fetcher)
-    .then((outcome) => {
-      if (outcome !== "retry") state.acknowledgedSampledAtMs = Math.max(state.acknowledgedSampledAtMs ?? newest, newest);
-    })
-    .finally(() => {
-      state.inFlight = null;
-    });
+  let samples = pendingCapacitySamples(payload, state.acknowledgedSampledAtMs, state.batchSize ?? MAX_REMOTE_CAPACITY_OBSERVATIONS);
+  if (!samples.length) return;
+  state.inFlight = (async () => {
+    for (;;) {
+      const outcome = await pushCapacitySamples(samples, hostId, remoteOrigin, token, fetcher);
+      if (outcome === "refused" && samples.length > 1) {
+        samples = samples.slice(0, Math.max(1, Math.floor(samples.length / 2)));
+        continue;
+      }
+      if (outcome === "timeout") state.batchSize = Math.max(1, Math.floor(samples.length / 2));
+      const newest = samples.at(-1)?.sampled_at_ms;
+      if ((outcome === "stored" || outcome === "refused") && newest !== undefined) {
+        state.acknowledgedSampledAtMs = Math.max(state.acknowledgedSampledAtMs ?? newest, newest);
+      }
+      return;
+    }
+  })().finally(() => {
+    state.inFlight = null;
+  });
 };
 
 const mergeRemoteCapacityChart = (localPayload: unknown, remotePayload: unknown): unknown => {

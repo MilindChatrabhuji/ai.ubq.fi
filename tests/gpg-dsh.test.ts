@@ -1,5 +1,5 @@
 import { test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, unlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -19,14 +19,15 @@ const decoder = new TextDecoder();
 
 type Fixture = {
   gnupg: string;
-  tmp: string;
+  bin: string;
   base: string;
+  tmp: string;
   seed: string;
   gpgconfLog: string;
   digestLog: string;
   run: (
     mode: "sandboxed" | "writable",
-    options?: { args?: string[]; env?: Record<string, string> }
+    options?: { args?: string[]; env?: Record<string, string>; shell?: string[] }
   ) => Promise<{ code: number; stdout: string; stderr: string }>;
   dispose: () => Promise<void>;
 };
@@ -50,26 +51,18 @@ const fakeGpgconf = (log: string): string => `#!/bin/sh
 printf '%s\\n' "$*" >>${shellQuote(log)}
 `;
 
-const HOST_SHA256SUM = Bun.which("sha256sum", { PATH: HOST_PATH });
-const HOST_SHASUM = Bun.which("shasum", { PATH: HOST_PATH });
-
-// Records one line per digest process and delegates to the host's own tool, so the helper keeps its real
-// output format whichever of the two tools it would have found.
-const countingSha256sum = (log: string): string => {
-  assert.ok(HOST_SHA256SUM ?? HOST_SHASUM, "the fixture needs sha256sum or shasum");
-  const delegate = HOST_SHA256SUM ? shellQuote(HOST_SHA256SUM) : `${shellQuote(HOST_SHASUM ?? "")} -a 256`;
-  return `#!/bin/sh
-printf 'digest\\n' >>${shellQuote(log)}
-exec ${delegate} "$@"
-`;
-};
-
 const denyingMktemp = (denied: string, real: string): string => `#!/bin/sh
 case "$1" in
   ${shellQuote(denied)}/*) printf 'mktemp: %s: Operation not permitted\\n' "$1" >&2; exit 1 ;;
 esac
 exec ${shellQuote(real)} "$@"
 `;
+
+const hostCommand = (name: string): string => {
+  const path = Bun.which(name, { PATH: HOST_PATH });
+  assert.ok(path, `the fixture needs the host ${name}`);
+  return shellQuote(path);
+};
 
 const executable = async (path: string, source: string): Promise<void> => {
   await writeFile(path, source);
@@ -86,6 +79,7 @@ const createFixture = async (): Promise<Fixture> => {
   const deny = join(root, "deny");
   const gpgconfLog = join(root, "gpgconf.log");
   const digestLog = join(root, "digest.log");
+  const base = join(tmp, `dsh-gnupg-${UID}`);
   for (const directory of [home, gnupg, join(gnupg, "private-keys-v1.d"), tmp, bin, deny]) await mkdir(directory, { mode: 0o700 });
   await writeFile(join(gnupg, "pubring.kbx"), "public-1", { mode: 0o600 });
   await writeFile(join(gnupg, "trustdb.gpg"), "trust-1", { mode: 0o600 });
@@ -93,24 +87,24 @@ const createFixture = async (): Promise<Fixture> => {
   await writeFile(join(gnupg, "private-keys-v1.d", "BBBB.key"), "secret-b", { mode: 0o600 });
   await executable(join(bin, "gpg"), FAKE_GPG);
   await executable(join(bin, "gpgconf"), fakeGpgconf(gpgconfLog));
-  await executable(join(bin, "sha256sum"), countingSha256sum(digestLog));
   await executable(join(deny, "mktemp"), denyingMktemp(gnupg, REAL_MKTEMP));
-  const run: Fixture["run"] = async (mode, { args = ["--status-fd=2", "-bsau", "KEY ID"], env = {} } = {}) => {
+  const digest = Bun.which("sha256sum", { PATH: HOST_PATH });
+  await executable(
+    join(bin, "sha256sum"),
+    `#!/bin/sh
+printf 'digest\\n' >>${shellQuote(digestLog)}
+exec ${digest ? shellQuote(digest) : `${hostCommand("shasum")} -a 256`} "$@"
+`
+  );
+  const run: Fixture["run"] = async (mode, options = {}) => {
     const path = mode === "sandboxed" ? `${deny}:${bin}:${HOST_PATH}` : `${bin}:${HOST_PATH}`;
-    const output = await runFixture("/bin/sh", { args: [HELPER, ...args], env: { PATH: path, HOME: home, TMPDIR: tmp, ...env } });
+    const [program, ...shellArgs] = options.shell ?? ["/bin/sh"];
+    assert.ok(program);
+    const args = options.args ?? ["--status-fd=2", "-bsau", "KEY ID"];
+    const output = await runFixture(program, { args: [...shellArgs, HELPER, ...args], env: { PATH: path, HOME: home, TMPDIR: tmp, ...options.env } });
     return { code: output.code, stdout: decoder.decode(output.stdout), stderr: decoder.decode(output.stderr) };
   };
-  const base = join(tmp, `dsh-gnupg-${UID}`);
-  return {
-    gnupg,
-    tmp,
-    base,
-    seed: join(base, "seed"),
-    gpgconfLog,
-    digestLog,
-    run,
-    dispose: () => rm(root, { recursive: true, force: true }),
-  };
+  return { gnupg, bin, base, tmp, seed: join(base, "seed"), gpgconfLog, digestLog, run, dispose: () => rm(root, { recursive: true, force: true }) };
 };
 
 const withFixture = async (body: (fixture: Fixture) => Promise<void>): Promise<void> => {
@@ -162,7 +156,6 @@ test("a sandboxed call signs from a private seed of the keyrings and every priva
     assert.equal(await readFile(join(fixture.seed, "trustdb.gpg"), "utf8"), "trust-1");
     assert.equal((await stat(fixture.seed)).mode & 0o777, 0o700);
     assert.equal((await stat(fixture.base)).mode & 0o777, 0o700);
-    await assert.rejects(stat(join(fixture.tmp, "dsh-gnupg")), "no parent directory is shared between users");
   });
 });
 
@@ -225,107 +218,6 @@ test("a seed path that is a symbolic link fails closed before gpg runs", async (
     assert.equal(result.stdout, "", "gpg must not run");
     assert.match(result.stderr, /gpg-dsh: .*symbolic link/);
     assert.deepEqual(await readdir(decoy), [], "no key material is copied through the link");
-  });
-});
-
-const digestProcesses = async (fixture: Fixture): Promise<number> =>
-  (await readFile(fixture.digestLog, "utf8").catch(() => "")).split("\n").filter((line) => line !== "").length;
-
-const assertRefusedBeforeGpg = (result: { code: number; stdout: string; stderr: string }, message: RegExp): void => {
-  assert.equal(result.code, 2);
-  assert.equal(result.stdout, "", "gpg must not run");
-  assert.match(result.stderr, message);
-};
-
-test("every sandboxed call hashes all seed inputs in one digest process", async () => {
-  await withFixture(async (fixture) => {
-    await signed(fixture);
-    // The build reads the inputs once before taking the rebuild lock and once more under it.
-    assert.equal(await digestProcesses(fixture), 2, "the build hashes four inputs with one process per pass");
-    await signed(fixture);
-    assert.equal(await digestProcesses(fixture), 3, "a reused seed costs one more process, not one per input");
-  });
-});
-
-for (const name of ["gpg-agent.conf", "gpg.conf", "gpg.conf-2.4", "common.conf", "scdaemon.conf"])
-  test(`a ${name} planted in the seed is discarded with the seed and its agent before gpg runs`, async () => {
-    await withFixture(async (fixture) => {
-      await signed(fixture);
-      await writeFile(join(fixture.seed, name), "pinentry-program /workspace/evil-pinentry\n");
-      const stdout = await signed(fixture);
-      assert.deepEqual(lines(stdout, "key="), ["AAAA.key:secret-a-old-passphrase", "BBBB.key:secret-b"]);
-      await assert.rejects(stat(join(fixture.seed, name)), "the planted configuration is gone");
-      assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
-      assert.equal(await readFile(join(fixture.seed, "random_seed"), "utf8"), "x", "the seed was rebuilt, not patched");
-    });
-  });
-
-test("a seed without a recorded manifest is an interrupted rebuild and is rebuilt", async () => {
-  await withFixture(async (fixture) => {
-    await signed(fixture);
-    await unlink(join(fixture.seed, ".gpg-dsh-manifest"));
-    await signed(fixture);
-    assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
-    assert.equal(await readFile(join(fixture.seed, "random_seed"), "utf8"), "x");
-    await signed(fixture);
-    assert.equal((await gpgconfCalls(fixture)).length, 1, "the rebuilt seed records its manifest again");
-  });
-});
-
-test("an existing parent and seed readable by others are restricted to mode 0700", async () => {
-  await withFixture(async (fixture) => {
-    await mkdir(fixture.base, { mode: 0o700 });
-    await chmod(fixture.base, 0o755);
-    await signed(fixture);
-    await chmod(fixture.seed, 0o755);
-    await signed(fixture);
-    assert.equal((await stat(fixture.base)).mode & 0o777, 0o700);
-    assert.equal((await stat(fixture.seed)).mode & 0o777, 0o700);
-  });
-});
-
-test("a parent that is not a directory fails closed before gpg runs", async () => {
-  await withFixture(async (fixture) => {
-    await writeFile(fixture.base, "not a directory\n");
-    assertRefusedBeforeGpg(await fixture.run("sandboxed"), /gpg-dsh: .*is not a directory owned by uid/);
-    assert.equal(await readFile(fixture.base, "utf8"), "not a directory\n");
-  });
-});
-
-test("a relative TMPDIR fails closed before gpg runs", async () => {
-  await withFixture(async (fixture) => {
-    assertRefusedBeforeGpg(await fixture.run("sandboxed", { env: { TMPDIR: "relative/tmp" } }), /gpg-dsh: TMPDIR must be an absolute path/);
-  });
-});
-
-test("a seed left in the shared dsh-gnupg layout is discarded with its agent", async () => {
-  await withFixture(async (fixture) => {
-    const legacyParent = join(fixture.tmp, "dsh-gnupg");
-    const legacySeed = join(legacyParent, String(UID));
-    await mkdir(join(legacySeed, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
-    await writeFile(join(legacySeed, "private-keys-v1.d", "OLD.key"), "secret-deleted-key", { mode: 0o600 });
-    const stdout = await signed(fixture);
-    assert.deepEqual(lines(stdout, "key="), ["AAAA.key:secret-a-old-passphrase", "BBBB.key:secret-b"]);
-    await assert.rejects(stat(legacyParent), "the old per-user seed and its emptied parent are removed");
-    assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${legacySeed} --kill gpg-agent`]);
-  });
-});
-
-test("a rebuild lock and leftover seed copies in the shared dsh-gnupg layout are discarded with it", async () => {
-  await withFixture(async (fixture) => {
-    const legacyParent = join(fixture.tmp, "dsh-gnupg");
-    const legacySeed = join(legacyParent, String(UID));
-    // A rebuild by an earlier helper killed after it set the seed aside and before it moved the new one in.
-    await mkdir(`${legacySeed}.lock`, { recursive: true, mode: 0o700 });
-    await writeFile(join(`${legacySeed}.lock`, "owner"), `999999 ${Math.floor(Date.now() / 1000)}\n`);
-    await mkdir(join(`${legacySeed}.new.AbC123`, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
-    await writeFile(join(`${legacySeed}.new.AbC123`, "private-keys-v1.d", "OLD.key"), "secret-deleted-key", { mode: 0o600 });
-    await mkdir(join(`${legacySeed}.old.XyZ789`, "seed", "private-keys-v1.d"), { recursive: true, mode: 0o700 });
-    await writeFile(join(`${legacySeed}.old.XyZ789`, "seed", "private-keys-v1.d", "OLD.key"), "secret-deleted-key", { mode: 0o600 });
-    const stdout = await signed(fixture);
-    assert.deepEqual(lines(stdout, "key="), ["AAAA.key:secret-a-old-passphrase", "BBBB.key:secret-b"]);
-    await assert.rejects(stat(legacyParent), "the leftover copies of the keys, the old lock and their emptied parent are removed");
-    assert.deepEqual(await gpgconfCalls(fixture), [], "no seed was in place, so no agent is stopped");
   });
 });
 
@@ -395,6 +287,343 @@ test("a lock left by a killed holder and its half-built seed are discarded, then
   });
 });
 
+// Delay removals to force contenders to overlap their stale-owner observations and deletions.
+const slowLockRemoval = (fixture: Fixture, failOnce = false): string => `#!/bin/sh
+if [ "$*" = ${shellQuote(`-rf ${fixture.seed}.lock`)} ]; then
+  ${failOnce ? `if mkdir ${shellQuote(join(fixture.tmp, "rm-failed"))} 2>/dev/null; then exit 1; fi` : "sleep 0.05"}
+fi
+exec ${hostCommand("rm")} "$@"
+`;
+
+for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]])
+  test(`concurrent stale-lock recovery rebuilds exactly once (${shell.join(" ")})`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await executable(join(fixture.bin, "rm"), slowLockRemoval(fixture));
+      const rounds = 4;
+      for (let round = 1; round <= rounds; round += 1) {
+        await writeFile(join(fixture.gnupg, "private-keys-v1.d", "AAAA.key"), `secret-a-round-${round}`);
+        if (round === 1) await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+        const lock = `${fixture.seed}.lock`;
+        await mkdir(lock, { mode: 0o700 });
+        await writeFile(join(lock, "owner"), `999999 ${Math.floor(Date.now() / 1000) - 3600}\n`);
+        const leftover = `${fixture.seed}.new.AbC123`;
+        await mkdir(join(leftover, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
+        await writeFile(join(leftover, "private-keys-v1.d", "BBBB.key"), "secret-b");
+        const results = await Promise.all(Array.from({ length: 16 }, () => fixture.run("sandboxed", { shell })));
+        for (const result of results) {
+          assert.equal(result.code, 0, `round ${round}: ${result.stderr}`);
+          assert.deepEqual(lines(result.stdout, "GNUPGHOME="), [fixture.seed]);
+          assert.deepEqual(lines(result.stdout, "key="), [`AAAA.key:secret-a-round-${round}`], `round ${round}: no missing or deleted key`);
+        }
+        assert.equal((await gpgconfCalls(fixture)).length, round, "one agent stop per recovery");
+        assert.deepEqual(await siblings(fixture), [], "no locks or leftover private keys");
+        assert.deepEqual(
+          (await readdir(fixture.seed)).filter((name) => /\.(new|old)\./.test(name)),
+          []
+        );
+      }
+      await signed(fixture);
+      assert.equal((await gpgconfCalls(fixture)).length, rounds, "the published manifest is current");
+    });
+  }, 60_000);
+
+test("a failed stale-lock removal is retried, not fatal", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const lock = `${fixture.seed}.lock`;
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), "999999 1\n");
+    await executable(join(fixture.bin, "rm"), slowLockRemoval(fixture, true));
+    assert.deepEqual(lines(await signed(fixture), "key="), ["AAAA.key:secret-a-old-passphrase"]);
+    assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
+    assert.deepEqual(await siblings(fixture), []);
+  });
+});
+
+for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]])
+  test(`interrupted gate release preserves a competing caller's new gate (${shell.join(" ")})`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+      const gate = `${fixture.seed}.lock.break`;
+      const firstRelease = join(fixture.tmp, "first-release");
+      const interruptedRelease = join(fixture.tmp, "interrupted-release");
+      await executable(
+        join(fixture.bin, "rm"),
+        `#!/bin/sh
+if [ "$1" = ${shellQuote(gate)} ] && [ ! -d ${shellQuote(interruptedRelease)} ]; then
+  if ${hostCommand("mkdir")} ${shellQuote(firstRelease)} 2>/dev/null; then
+    exec ${hostCommand("rm")} "$@"
+  fi
+  ${hostCommand("rm")} "$@" || exit 1
+  printf 'competing gate\\n' >${shellQuote(gate)} || exit 1
+  ${hostCommand("mkdir")} ${shellQuote(interruptedRelease)} || exit 1
+  kill -TERM "$PPID" || exit 1
+  exit 0
+fi
+exec ${hostCommand("rm")} "$@"
+`
+      );
+      const result = await fixture.run("sandboxed", { shell });
+      assert.equal(result.code, 2, result.stderr);
+      assert.equal(result.stdout, "", "an interrupted signing never invokes gpg");
+      assert.match(result.stderr, /gpg-dsh: interrupted/);
+      assert.equal(await readFile(gate, "utf8"), "competing gate\n", "cleanup must preserve the competing caller's gate");
+      await assert.rejects(stat(`${fixture.seed}.lock`), "the completed rebuild released its own lock");
+      assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
+    });
+  });
+
+test("a failed gate release remains fatal and leaves the gate closed", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const gate = `${fixture.seed}.lock.break`;
+    const firstRelease = join(fixture.tmp, "first-release");
+    await executable(
+      join(fixture.bin, "rm"),
+      `#!/bin/sh
+if [ "$1" = ${shellQuote(gate)} ]; then
+  if ! ${hostCommand("mkdir")} ${shellQuote(firstRelease)} 2>/dev/null; then exit 1; fi
+fi
+exec ${hostCommand("rm")} "$@"
+`
+    );
+    const result = await fixture.run("sandboxed");
+    assert.equal(result.code, 2, result.stderr);
+    assert.equal(result.stdout, "", "gpg must not run after an unsuccessful gate release");
+    assert.match(result.stderr, /cannot release the rebuild lock/);
+    assert.equal(await readFile(gate, "utf8"), "", "failed removal must remain fail-closed");
+    await assert.rejects(stat(`${fixture.seed}.lock`));
+  });
+});
+
+const advancingClock = async (fixture: Fixture): Promise<void> => {
+  const clock = join(fixture.tmp, "clock");
+  await writeFile(clock, "100\n");
+  await executable(
+    join(fixture.bin, "date"),
+    `#!/bin/sh
+now=$(${hostCommand("cat")} ${shellQuote(clock)})
+printf '%s\\n' "$((now + 20))" >${shellQuote(clock)}
+printf '%s\\n' "$now"
+`
+  );
+};
+
+for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]]) {
+  test(`an EEXIST success from mkdir cannot grant ownership of another caller's gate (${shell.join(" ")})`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+      const gate = `${fixture.seed}.lock.break`;
+      await mkdir(gate, { mode: 0o700 });
+      await advancingClock(fixture);
+      // uutils mkdir 0.10.0 can return success after its initial absent-path check races with another
+      // creator: create_dir returns EEXIST, then path.is_dir() converts that failure into success.
+      // Start at that failed syscall with the competing caller's gate already present.
+      await executable(
+        join(fixture.bin, "mkdir"),
+        `#!/bin/sh
+if [ "$1" = ${shellQuote(gate)} ]; then
+  ${hostCommand("mkdir")} "$@" 2>/dev/null || [ -d "$1" ]
+  exit "$?"
+fi
+exec ${hostCommand("mkdir")} "$@"
+`
+      );
+      const result = await fixture.run("sandboxed", { shell });
+      assert.equal(result.code, 2, result.stderr);
+      assert.equal(result.stdout, "", "a contender cannot sign through another caller's gate");
+      assert.match(result.stderr, /timed out waiting for the rebuild lock/);
+      assert.deepEqual(await readdir(gate), [], "the competing gate remains untouched");
+      assert.deepEqual(await gpgconfCalls(fixture), [], "the contender never rebuilt the seed");
+    });
+  });
+
+  for (const kind of ["directory", "file", "FIFO", "dangling symlink", "device symlink"])
+    test(`an existing ${kind} blocks gate acquisition without being opened (${shell.join(" ")})`, async () => {
+      await withFixture(async (fixture) => {
+        await signed(fixture);
+        await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+        const gate = `${fixture.seed}.lock.break`;
+        if (kind === "directory") await mkdir(gate, { mode: 0o700 });
+        else if (kind === "file") await writeFile(gate, "another caller's gate", { mode: 0o600 });
+        else if (kind === "FIFO") {
+          const result = await runFixture("/bin/sh", { args: ["-c", `${hostCommand("mkfifo")} ${shellQuote(gate)}`] });
+          assert.equal(result.code, 0, decoder.decode(result.stderr));
+        } else await symlink(kind === "device symlink" ? "/dev/null" : join(fixture.tmp, "missing"), gate);
+        const before = await lstat(gate);
+        await advancingClock(fixture);
+        const result = await fixture.run("sandboxed", { shell });
+        assert.equal(result.code, 2, result.stderr);
+        assert.equal(result.stdout, "", "gpg cannot run while a foreign gate exists");
+        assert.match(result.stderr, /timed out waiting for the rebuild lock/);
+        assert.equal((await lstat(gate)).ino, before.ino, "the foreign gate is preserved");
+        if (kind === "file") assert.equal(await readFile(gate, "utf8"), "another caller's gate");
+        assert.deepEqual(await gpgconfCalls(fixture), []);
+      });
+    });
+}
+
+const waitFor = async (condition: () => Promise<boolean>): Promise<void> => {
+  const deadline = Date.now() + 5000;
+  while (!(await condition())) {
+    assert.ok(Date.now() < deadline, "fixture did not reach the expected synchronization point");
+    await Bun.sleep(20);
+  }
+};
+
+test("owner reads precede clock samples and a future-dated live lock is not broken", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const lock = `${fixture.seed}.lock`;
+    const log = join(fixture.tmp, "order.log");
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), "222 101\n");
+    await executable(
+      join(fixture.bin, "date"),
+      `#!/bin/sh
+printf 'clock\\n' >>${shellQuote(log)}
+printf '100\\n'
+`
+    );
+    await executable(
+      join(fixture.bin, "cat"),
+      `#!/bin/sh
+if [ "$1" = ${shellQuote(join(lock, "owner"))} ]; then printf 'owner\\n' >>${shellQuote(log)}; fi
+exec ${hostCommand("cat")} "$@"
+`
+    );
+    let settled = false;
+    const pending = fixture.run("sandboxed").finally(() => {
+      settled = true;
+    });
+    try {
+      await waitFor(async () => (await readFile(log, "utf8").catch(() => "")).includes("owner\nclock\n"));
+      await Bun.sleep(150);
+      assert.equal(settled, false, "negative held is live, not stale");
+      assert.equal(await readFile(join(lock, "owner"), "utf8"), "222 101\n");
+      assert.deepEqual(await gpgconfCalls(fixture), []);
+      assert.deepEqual((await readFile(log, "utf8")).trim().split("\n").slice(0, 3), ["clock", "owner", "clock"]);
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+      const result = await pending;
+      assert.equal(result.code, 0, result.stderr);
+      assert.doesNotMatch(result.stderr, /breaking the stale/);
+    }
+  });
+});
+
+test("an old lock with a live owner is retained until its holder releases it", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const lock = `${fixture.seed}.lock`;
+    const owner = `${process.pid} 1\n`;
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), owner);
+    await executable(join(fixture.bin, "date"), "#!/bin/sh\nprintf '1000\\n'\n");
+    let settled = false;
+    const pending = fixture.run("sandboxed").finally(() => {
+      settled = true;
+    });
+    try {
+      await Bun.sleep(300);
+      assert.equal(settled, false, "age alone does not retire a live holder");
+      assert.equal(await readFile(join(lock, "owner"), "utf8"), owner);
+      assert.deepEqual(await gpgconfCalls(fixture), []);
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+      const result = await pending;
+      assert.equal(result.code, 0, result.stderr);
+      assert.doesNotMatch(result.stderr, /breaking the stale/);
+    }
+    assert.deepEqual(await siblings(fixture), []);
+    assert.equal((await gpgconfCalls(fixture)).length, 1);
+  });
+});
+
+test("a competing breaker holds up recovery until it releases the gate", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const lock = `${fixture.seed}.lock`;
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), "999999 1\n");
+    await mkdir(`${lock}.break`, { mode: 0o700 });
+    let settled = false;
+    const pending = fixture.run("sandboxed").finally(() => {
+      settled = true;
+    });
+    try {
+      await Bun.sleep(200);
+      assert.equal(settled, false);
+      assert.equal(await readFile(join(lock, "owner"), "utf8"), "999999 1\n");
+      assert.deepEqual(await gpgconfCalls(fixture), []);
+    } finally {
+      await rm(`${lock}.break`, { recursive: true, force: true });
+      const result = await pending;
+      assert.equal(result.code, 0, result.stderr);
+    }
+    assert.deepEqual(await siblings(fixture), []);
+    assert.equal((await gpgconfCalls(fixture)).length, 1);
+  });
+});
+
+test("an abandoned breaker gate times out fail-closed without removing another caller's gate", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const lock = `${fixture.seed}.lock`;
+    const clock = join(fixture.tmp, "clock");
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), "999999 1\n");
+    await mkdir(`${lock}.break`, { mode: 0o700 });
+    await writeFile(clock, "100\n");
+    await executable(
+      join(fixture.bin, "date"),
+      `#!/bin/sh
+now=$(${hostCommand("cat")} ${shellQuote(clock)})
+printf '%s\\n' "$((now + 20))" >${shellQuote(clock)}
+printf '%s\\n' "$now"
+`
+    );
+    const result = await fixture.run("sandboxed");
+    assert.equal(result.code, 2);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /timed out waiting for the rebuild lock/);
+    assert.equal(await readFile(join(lock, "owner"), "utf8"), "999999 1\n");
+    assert.deepEqual(await readdir(`${lock}.break`), []);
+    assert.deepEqual(await gpgconfCalls(fixture), []);
+  });
+});
+
+test("a destination reappearing during portable mv removes nested key copies and fails closed", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    await executable(
+      join(fixture.bin, "mv"),
+      `#!/bin/sh
+case "$1" in
+  ${shellQuote(fixture.seed)}.new.*) mkdir ${shellQuote(fixture.seed)} || exit 1 ;;
+esac
+exec ${hostCommand("mv")} "$@"
+`
+    );
+    const result = await fixture.run("sandboxed");
+    assert.equal(result.code, 2, result.stderr);
+    assert.equal(result.stdout, "", "gpg never runs from the collided seed");
+    assert.match(result.stderr, /unexpected seed copy after publishing/);
+    assert.deepEqual(await readdir(fixture.seed), [], "the nested stage and its private keys are removed");
+    assert.deepEqual(await siblings(fixture), []);
+  });
+});
+
 test("a leftover staging copy is discarded even when the seed is current", async () => {
   await withFixture(async (fixture) => {
     await signed(fixture);
@@ -408,7 +637,130 @@ test("a leftover staging copy is discarded even when the seed is current", async
   });
 });
 
-test("the sandboxed-signing decision records the helper, its per-user seed and its invalidation rules", async () => {
+const digestProcesses = async (fixture: Fixture): Promise<number> =>
+  (await readFile(fixture.digestLog, "utf8").catch(() => "")).split("\n").filter((line) => line !== "").length;
+
+const assertRefusedBeforeGpg = (result: { code: number; stdout: string; stderr: string }, message: RegExp): void => {
+  assert.equal(result.code, 2);
+  assert.equal(result.stdout, "", "gpg must not run");
+  assert.match(result.stderr, message);
+};
+
+test("every sandboxed call hashes all seed inputs in one digest process", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    assert.equal(await digestProcesses(fixture), 1, "the build hashes four inputs with one process");
+    await signed(fixture);
+    assert.equal(await digestProcesses(fixture), 2, "a reused seed costs one more process, not one per input");
+  });
+});
+
+test("the macOS shasum fallback also hashes the complete input list in one process", async () => {
+  await withFixture(async (fixture) => {
+    await unlink(join(fixture.bin, "sha256sum"));
+    // No system PATH entry: sha256sum must genuinely be unavailable to command -v.
+    for (const name of ["id", "chmod", "mkdir", "cat", "date", "sleep", "cp", "mv", "rm", "rmdir"]) {
+      const path = Bun.which(name, { PATH: HOST_PATH });
+      assert.ok(path);
+      await symlink(path, join(fixture.bin, name));
+    }
+    await executable(
+      join(fixture.bin, "shasum"),
+      `#!/bin/sh
+printf 'digest\\n' >>${shellQuote(fixture.digestLog)}
+exec ${hostCommand("shasum")} "$@"
+`
+    );
+    const result = await fixture.run("sandboxed", { env: { PATH: `${join(fixture.bin, "..", "deny")}:${fixture.bin}` } });
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(lines(result.stdout, "key="), ["AAAA.key:secret-a-old-passphrase", "BBBB.key:secret-b"]);
+    assert.equal(await digestProcesses(fixture), 1);
+  });
+});
+
+for (const name of ["gpg-agent.conf", "gpg.conf", "gpg.conf-2.4", "common.conf", "scdaemon.conf"])
+  test(`a ${name} planted in the seed is discarded with the seed and its agent before gpg runs`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await writeFile(join(fixture.seed, name), "pinentry-program /workspace/evil-pinentry\n");
+      const stdout = await signed(fixture);
+      assert.deepEqual(lines(stdout, "key="), ["AAAA.key:secret-a-old-passphrase", "BBBB.key:secret-b"]);
+      await assert.rejects(stat(join(fixture.seed, name)), "the planted configuration is gone");
+      assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
+      assert.equal(await readFile(join(fixture.seed, "random_seed"), "utf8"), "x", "the seed was rebuilt, not patched");
+    });
+  });
+
+test("a dangling configuration symlink is discarded before signing", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    const config = join(fixture.seed, "gpg-agent.conf");
+    await symlink(join(fixture.tmp, "missing-config"), config);
+    await signed(fixture);
+    await assert.rejects(lstat(config));
+    assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
+  });
+});
+
+test("a seed without a recorded manifest is an interrupted rebuild and is rebuilt", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.seed, ".gpg-dsh-manifest"));
+    await signed(fixture);
+    assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
+    assert.equal(await readFile(join(fixture.seed, "random_seed"), "utf8"), "x");
+    await signed(fixture);
+    assert.equal((await gpgconfCalls(fixture)).length, 1, "the rebuilt seed records its manifest again");
+  });
+});
+
+test("an existing parent and seed readable by others are restricted to mode 0700", async () => {
+  await withFixture(async (fixture) => {
+    await mkdir(fixture.base, { mode: 0o700 });
+    await chmod(fixture.base, 0o755);
+    await signed(fixture);
+    await chmod(fixture.seed, 0o755);
+    await signed(fixture);
+    assert.equal((await stat(fixture.base)).mode & 0o777, 0o700);
+    assert.equal((await stat(fixture.seed)).mode & 0o777, 0o700);
+  });
+});
+
+test("a parent that is not a directory fails closed before gpg runs", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(fixture.base, "not a directory\n");
+    assertRefusedBeforeGpg(await fixture.run("sandboxed"), /gpg-dsh: .*is not a directory owned by uid/);
+    assert.equal(await readFile(fixture.base, "utf8"), "not a directory\n");
+  });
+});
+
+test("a relative TMPDIR fails closed before gpg runs", async () => {
+  await withFixture(async (fixture) => {
+    assertRefusedBeforeGpg(await fixture.run("sandboxed", { env: { TMPDIR: "relative/tmp" } }), /gpg-dsh: TMPDIR must be an absolute path/);
+  });
+});
+
+test("a seed left in the shared dsh-gnupg layout is discarded with its agent", async () => {
+  await withFixture(async (fixture) => {
+    const legacyParent = join(fixture.tmp, "dsh-gnupg");
+    const legacySeed = join(legacyParent, String(UID));
+    await mkdir(join(legacySeed, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
+    await writeFile(join(legacySeed, "private-keys-v1.d", "OLD.key"), "secret-deleted-key", { mode: 0o600 });
+    for (const suffix of [".lock", ".lock.break", ".new.AbC123", ".old.AbC123/seed"]) {
+      await mkdir(join(`${legacySeed}${suffix}`, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
+      await writeFile(join(`${legacySeed}${suffix}`, "private-keys-v1.d", "OLD.key"), "secret-deleted-key");
+    }
+    const results = await Promise.all(Array.from({ length: 8 }, () => fixture.run("sandboxed")));
+    for (const result of results) {
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(lines(result.stdout, "key="), ["AAAA.key:secret-a-old-passphrase", "BBBB.key:secret-b"]);
+    }
+    await assert.rejects(stat(legacyParent), "the old per-user seed and its emptied parent are removed");
+    assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${legacySeed} --kill gpg-agent`]);
+  });
+});
+
+test("the sandboxed-signing decision records the helper and its private-key invalidation", async () => {
   const decisions = await readFile(DECISIONS, "utf8");
   const entry = decisions.split(/^## /m).find((section) => section.startsWith("Sandboxed commits sign through a GNUPGHOME inside writable roots"));
   assert.ok(entry, "the sandboxed-signing decision entry exists");

@@ -102,7 +102,7 @@ export const prepareReleasePayload = async (
   nativeArtifact?: NativeKvArtifactBinding,
   preparedDependencies?: string
 ): Promise<BunReleaseManifest> => {
-  if (Bun.version !== "1.4.0" || !/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{64}$/.test(archiveDigest))
+  if (process.versions.bun !== "1.4.0" || !/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{64}$/.test(archiveDigest))
     throw new Error("Release preparation requires pinned Bun and exact source identity");
   const runtime = selectedRuntime();
   for (const name of ["node_modules", ".uos-permissions", ".native", ".bun-cache"]) {
