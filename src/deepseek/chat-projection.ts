@@ -549,11 +549,15 @@ const chatFunctionRecord = (fn: Record<string, unknown>, chatName: string): Reco
   },
 });
 
-/** Names must stay distinct and rule-compliant, so collisions suffix deterministically. */
+const CHAT_FUNCTION_NAME_LIMIT = 128;
+
+/** Names must stay distinct and rule-compliant within the provider limit, so collisions suffix deterministically. */
 const uniqueChatName = (used: ReadonlySet<string>, name: string): string => {
-  if (!used.has(name)) return name;
+  const boundedName = name.slice(0, CHAT_FUNCTION_NAME_LIMIT);
+  if (!used.has(boundedName)) return boundedName;
   for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${name}_${suffix}`;
+    const suffixText = `_${suffix}`;
+    const candidate = `${name.slice(0, CHAT_FUNCTION_NAME_LIMIT - suffixText.length)}${suffixText}`;
     if (!used.has(candidate)) return candidate;
   }
 };
