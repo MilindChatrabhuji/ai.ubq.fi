@@ -30,7 +30,8 @@ import { discoverClaudeCodeModels, fetchClaudeCodeModels, resetClaudeCodeModelsC
 import { fetchClaudeCodeResponses } from "../src/provider/claude-code.ts";
 import { claudeCodeCodexModels } from "../src/catalog/models.ts";
 import { handleModelCapabilities } from "../src/models/catalog.ts";
-import { CLAUDE_CODE_QUOTA_KV_KEY } from "../src/provider/claude-code-quota.ts";
+import { observeClaudeCodeQuota, recordClaudeCodeQuotaOutcome } from "../src/provider/claude-code-quota.ts";
+import { resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
 import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/models/codex-models-whitelist.ts";
 
@@ -269,15 +270,17 @@ test("discovered support does not bypass the principal allowlist", async () => {
 });
 
 test("discovered support does not bypass a durable quota block", async () => {
-  await kv.set(CLAUDE_CODE_QUOTA_KV_KEY, {
-    windows: {},
-    standard: {},
-    representative_claim: null,
-    blocked_until_ms: Date.now() + 60_000,
-    block_window: "5h",
-    cooldown_until_ms: null,
-    last_error: null,
-    updated_at_ms: Date.now(),
+  const account = await resolveClaudeCodeAccount(kv);
+  assert(account);
+  const reset = Date.now() + 60_000;
+  await recordClaudeCodeQuotaOutcome(kv, {
+    binding: account,
+    model_id: model,
+    response_status: 429,
+    observation: observeClaudeCodeQuota(
+      new Headers({ "anthropic-ratelimit-unified-5h-status": "limited", "anthropic-ratelimit-unified-5h-reset": String(Math.floor(reset / 1000)) })
+    ),
+    exhaustion: { window: "5h", reset_at_ms: reset },
   });
   await withCatalog(async (calls) => {
     assert.equal(await resolveAvailability(), null);
