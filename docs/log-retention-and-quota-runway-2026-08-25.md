@@ -21,8 +21,10 @@ research-grade history lives in these compact stores:
 | Admin error log               | `uos_ai/admin_error_log/v1/...`                                  | 7 days (unchanged)            | Failed inference terminals                                                                                                                                                                                                                                                   |
 | Prompt-cache analytics        | `uos_ai/prompt-cache-analytics/...`                              | 8 days (unchanged)            | Cache-token buckets                                                                                                                                                                                                                                                          |
 
-Why rollups are the right "kept forever" shape: a settled raw row is roughly 800 B, so ~0.8 GiB per 1M rows (Pro plan
-includes 5 GiB, then $0.75/GiB). The hourly rollups are ~25 KB per model-provider per day, so a year of history is about
+Why rollups are the right "kept forever" shape: a settled raw row is roughly 800 B, so ~0.8 GiB per 1M rows. This was
+first sized against the Deno Deploy KV plan (5 GiB included, then $0.75/GiB). That billing no longer applies: Deno
+Deploy hosting is retired, and production keeps its KV in a local SQLite file under `.data/` on the VPS, which is not
+billed per GiB. The hourly rollups are ~25 KB per model-provider per day, so a year of history is about
 10 MB per model. The rollup captures every number the research question needs (which model, which provider, how much
 quota, how many tokens, how much spend) while discarding the per-request noise.
 
@@ -173,9 +175,11 @@ accumulates.
 - Byte/count baseline: instrumented as of 2026-09-22 (`ledger_stats` counters exposed as `ledger_growth`); read the
   production rows-per-day, bytes-per-row, rollup and projection-read numbers from the Provider analytics card and record
   them here before re-tuning the raw-row horizon.
-- Oldest-first hard cap: not implemented. TTL gives a bounded horizon; a true byte budget would need timestamp-ordered
-  keys or a global age index — note the legacy analytics key shape `[keyId, createdAtMs, requestId]` as a precedent if
-  that becomes necessary.
+- Oldest-first hard cap: not implemented, and declined by the owner on 2026-10-16 (issue #139): the KV lives on the VPS
+  with ample disk, so the per-GiB billing that motivated a hard cap no longer applies. The 365-day TTL bounds the raw
+  rows, and the 5 GiB `budget_bytes` figure only sets the growth alert; nothing is evicted when it is reached. If a
+  byte budget ever becomes necessary, it would need timestamp-ordered keys or a global age index — note the legacy
+  analytics key shape `[keyId, createdAtMs, requestId]` as a precedent.
 - The provider-capacity chart view stays at seven days on purpose. Long-run capacity research reads the separate
   forever-kept hourly rollups through `GET /admin/providers/capacity/rollups?window_days=N` (default 90, capped at 365):
   every persisted capacity sample folds its per-slot window summaries into the same atomic as the 15-minute history
