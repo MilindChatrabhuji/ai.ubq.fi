@@ -204,6 +204,9 @@ const mergeModelCapabilities = (models, capabilities) => {
     if (typeof capability.display_name === "string" && capability.display_name.trim()) {
       merged.display_name = capability.display_name;
     }
+    if (Array.isArray(capability.supported_endpoints)) {
+      merged.supported_endpoints = capability.supported_endpoints;
+    }
     if (Array.isArray(capability.supported_reasoning_levels)) {
       merged.supported_reasoning_levels = capability.supported_reasoning_levels;
     }
@@ -359,7 +362,10 @@ const loadModels = async (token, options = {}) => {
     } else if ("error" in capabilitiesResponse) {
       console.warn("[ai.ubq.fi] model capabilities unavailable:", capabilitiesResponse.error);
     }
-    const models = mergeModelCapabilities(rawModels, capabilities);
+    const models = mergeModelCapabilities(rawModels, capabilities).filter((model) => {
+      const endpoints = model?.supported_endpoints;
+      return !Array.isArray(endpoints) || endpoints.includes("/v1/chat/completions");
+    });
     if (!models.length) {
       setModelPlaceholder("No models available");
       return;
