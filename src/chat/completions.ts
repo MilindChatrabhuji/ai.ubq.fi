@@ -23,7 +23,7 @@ import {
   type ChatFunctionCall,
   ChatFunctionCallAccumulator,
   EMPTY_UPSTREAM_COMPLETION_MESSAGE,
-  chatOutputTextPartKey,
+  chatOutputTextPartStorageKey,
   chatToolCallDelta,
   emptyUpstreamCompletionError,
   malformedFunctionCallStream,
@@ -206,7 +206,7 @@ export const streamChatCompletions = (
         if (delta === null) {
           return malformedFunctionCallStream("Upstream output-text delta is not a string.");
         }
-        const key = chatOutputTextPartKey(ev);
+        const key = chatOutputTextPartStorageKey(ev);
         outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
         outputText += delta;
         emitContent(delta);
@@ -216,7 +216,7 @@ export const streamChatCompletions = (
         if (completedText === null) {
           return malformedFunctionCallStream("Upstream completed output text is not a string.");
         }
-        const key = chatOutputTextPartKey(ev);
+        const key = chatOutputTextPartStorageKey(ev);
         const partText = outputTextParts.get(key) ?? "";
         const suffix = reconcileCompletedOutputText(partText, completedText);
         outputTextParts.set(key, `${partText}${suffix}`);
@@ -230,7 +230,7 @@ export const streamChatCompletions = (
       const applyRefusalDelta = (ev: Record<string, unknown>): void => {
         const delta = getString(ev.delta);
         if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
-        const key = chatOutputTextPartKey(ev);
+        const key = chatOutputTextPartStorageKey(ev);
         refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
         refusal += delta;
         emitRefusal(delta);
@@ -240,7 +240,7 @@ export const streamChatCompletions = (
         if (completedRefusal === null) {
           return malformedFunctionCallStream("Upstream completed refusal is not a string.");
         }
-        const key = chatOutputTextPartKey(ev);
+        const key = chatOutputTextPartStorageKey(ev);
         const partRefusal = refusalParts.get(key) ?? "";
         const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
         refusalParts.set(key, `${partRefusal}${suffix}`);
@@ -571,7 +571,7 @@ export const completeChatCompletions = async (
     if (delta === null) {
       return malformedFunctionCallStream("Upstream output-text delta is not a string.");
     }
-    const key = chatOutputTextPartKey(ev);
+    const key = chatOutputTextPartStorageKey(ev);
     outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
     content += delta;
     if (delta.length > 0) markChatSemanticOutput(usageContext);
@@ -582,7 +582,7 @@ export const completeChatCompletions = async (
     if (completedText === null) {
       return malformedFunctionCallStream("Upstream completed output text is not a string.");
     }
-    const key = chatOutputTextPartKey(ev);
+    const key = chatOutputTextPartStorageKey(ev);
     const partText = outputTextParts.get(key) ?? "";
     const suffix = reconcileCompletedOutputText(partText, completedText);
     outputTextParts.set(key, `${partText}${suffix}`);
@@ -593,7 +593,7 @@ export const completeChatCompletions = async (
   const applyRefusalDelta = (ev: Record<string, unknown>): void => {
     const delta = getString(ev.delta);
     if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
-    const key = chatOutputTextPartKey(ev);
+    const key = chatOutputTextPartStorageKey(ev);
     refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
     refusal += delta;
     if (delta.length > 0) markChatSemanticOutput(usageContext);
@@ -604,7 +604,7 @@ export const completeChatCompletions = async (
     if (completedRefusal === null) {
       return malformedFunctionCallStream("Upstream completed refusal is not a string.");
     }
-    const key = chatOutputTextPartKey(ev);
+    const key = chatOutputTextPartStorageKey(ev);
     const partRefusal = refusalParts.get(key) ?? "";
     const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
     refusalParts.set(key, `${partRefusal}${suffix}`);
