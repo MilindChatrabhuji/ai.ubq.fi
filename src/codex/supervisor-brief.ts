@@ -1,5 +1,5 @@
 import { CEREBRAS_GPT_OSS_120B_MODEL, CerebrasError, fetchCerebrasChatCompletions } from "../provider/cerebras.ts";
-import { redactSupervisorSecrets } from "./supervisor-secret.ts";
+import { redactSupervisorSecretParts, redactSupervisorSecrets } from "./supervisor-secret.ts";
 import { json, openaiError } from "../http.ts";
 import { readSupervisorRolloutTail, type SupervisorLogEvent } from "./supervisor-log.ts";
 import { openSupervisorConnection, type SupervisorConnection } from "./supervisor-transport.ts";
@@ -341,13 +341,28 @@ type BriefAssembly = {
 
 type BriefBudget = { remaining: number; redactions: number; truncated: boolean };
 
-const budgetedTurn = (turn: BriefTranscriptTurn, budget: BriefBudget): BriefTranscriptTurn | null => {
+type RedactedBriefTurn = Omit<BriefTranscriptTurn, "items"> & { items: (BriefTranscriptItem & { redactions: number })[] };
+
+/** Keep cross-record spans on the original texts, before any per-item redaction or clipping. */
+const redactedTurns = (turns: readonly BriefTranscriptTurn[]): RedactedBriefTurn[] => {
+  const redacted = redactSupervisorSecretParts(turns.flatMap((turn) => turn.items.map((item) => item.text)));
+  let index = 0;
+  return turns.map((turn) => ({
+    ...turn,
+    items: turn.items.map((item) => {
+      const result = { ...item, ...redacted[index] };
+      index += 1;
+      return result;
+    }),
+  }));
+};
+
+const budgetedTurn = (turn: RedactedBriefTurn, budget: BriefBudget): BriefTranscriptTurn | null => {
   const items: BriefTranscriptItem[] = [];
   for (const item of turn.items) {
     // Redact before truncating so a partial secret can never survive the bound.
-    const redacted = redactBriefText(item.text);
-    budget.redactions += redacted.redactions;
-    const text = boundedText(redacted.text, BRIEF_MAX_ITEM_CHARS);
+    budget.redactions += item.redactions;
+    const text = boundedText(item.text, BRIEF_MAX_ITEM_CHARS);
     const cost = byteLength(text);
     if (cost > budget.remaining) {
       budget.truncated = true;
@@ -372,7 +387,8 @@ const newestTurnMs = (turns: readonly BriefTranscriptTurn[]): number => turns.re
  * last, so an opening turn's older records can never displace recent progress.
  * Output order stays chronological; item-limit drops mark truncation.
  */
-export const assembleBriefContext = (turns: readonly BriefTranscriptTurn[]): BriefAssembly => {
+export const assembleBriefContext = (inputTurns: readonly BriefTranscriptTurn[]): BriefAssembly => {
+  const turns = redactedTurns(inputTurns);
   const budget: BriefBudget = {
     remaining: BRIEF_MAX_CONTEXT_BYTES,
     redactions: 0,
@@ -417,9 +433,10 @@ export const appendRolloutTailTurn = (
   const cutoff = newestTurnMs(turns);
   const kept: { item: BriefTranscriptItem; atMs: number }[] = [];
   let droppedItems = 0;
-  for (const event of input.events) {
-    if (event.atMs < cutoff) continue;
-    const redacted = redactBriefText(event.text).text;
+  const events = input.events.filter((event) => event.atMs >= cutoff);
+  const texts = redactSupervisorSecretParts(events.map((event) => event.text));
+  for (const [index, event] of events.entries()) {
+    const redacted = texts[index].text;
     const text = boundedText(redacted, event.kind === "tool" ? BRIEF_MAX_TAIL_TOOL_CHARS : BRIEF_MAX_ITEM_CHARS).trim();
     if (!text || known.has(text)) {
       droppedItems += 1;
@@ -512,7 +529,7 @@ const redactedField = (value: string | number | boolean): string => redactBriefT
 const describeTurn = (turn: BriefTranscriptTurn, index: number): string => {
   const status = turn.status ? ` status=${redactedField(turn.status)}` : "";
   const lines = [`[${turnLabel(turn, index)}${status}]`];
-  for (const item of turn.items) lines.push(`${redactedField(item.type)}: ${redactedField(item.text)}`);
+  for (const item of turn.items) lines.push(`${redactedField(item.type)}: ${item.text}`);
   return lines.join("\n");
 };
 
@@ -535,9 +552,10 @@ export const buildSupervisorBriefPrompt = (context: SupervisorBriefContext): str
     ["projected_history_behind_ms", context.projectedHistoryBehindMs ?? "unknown"],
   ];
   const metadata = fields.map(([name, value]) => `${name}=${redactedField(value)}`).join("\n");
-  const log = context.turns.length > 0 ? context.turns.map((turn, index) => describeTurn(turn, index)).join("\n\n") : "(no recorded turns were available)";
-  // Every recorded value is redacted on its own above, before any prompt
-  // truncation, so no value can redact the fixed framing around it.
+  const turns = redactedTurns(context.turns);
+  const log = turns.length > 0 ? turns.map((turn, index) => describeTurn(turn, index)).join("\n\n") : "(no recorded turns were available)";
+  // Closed credentials may cross log records, but never the fixed framing.
+  // Unclosed values are still redacted only through the end of their own item.
   return [
     "<session_metadata>",
     metadata,
