@@ -816,6 +816,28 @@ test("provider roster completion rerenders Models after normalizing its filter",
   assert.ok(modelsRender > filterReset, "the Models picker must rerender after the filter reset");
 });
 
+test("provider picker edits invalidate an in-flight roster refresh", () => {
+  assert.match(adminScript, /const markProviderSelectionEdited = \(\) => \{\s*providerSelectionLoadId \+= 1;\s*\};/);
+  assert.match(adminScript, /const loadId = \+\+providerSelectionLoadId;[\s\S]*?if \(loadId !== providerSelectionLoadId\) return false;/);
+  const loadStart = adminScript.indexOf("const loadProviderSelection = async (options = {}) => {");
+  const staleGuard = adminScript.indexOf("if (loadId !== providerSelectionLoadId) return false;", loadStart);
+  const serverSelection = adminScript.indexOf("providerSelection = new Set(providersSavedSelection);", loadStart);
+  assert.ok(loadStart >= 0 && staleGuard >= 0 && serverSelection > staleGuard, "stale loads must be fenced before applying server selection");
+  const applyStart = adminScript.indexOf("const applyProvidersSelection = (mutate) => {");
+  const discardStart = adminScript.indexOf("const discardProviderChanges = () => {", applyStart);
+  const changeStart = adminScript.indexOf('providersList.addEventListener("change", (event) => {', discardStart);
+  const dropMissingStart = adminScript.indexOf('providersDropMissingBtn.addEventListener("click", () => {', changeStart);
+  assert.ok(
+    applyStart >= 0 && discardStart > applyStart && changeStart > discardStart && dropMissingStart > changeStart,
+    "provider picker handlers must stay discoverable"
+  );
+  const marker = /markProviderSelectionEdited\(\);/;
+  assert.match(adminScript.slice(applyStart, discardStart), marker);
+  assert.match(adminScript.slice(discardStart, changeStart), marker);
+  assert.match(adminScript.slice(changeStart, dropMissingStart), marker);
+  assert.match(adminScript.slice(dropMissingStart), marker);
+});
+
 test("the Providers tab renders a provider picker next to the Analytics tab", () => {
   assert.match(adminHtml, /id="providers-selection-list" data-provider-picker/);
   assert.match(adminHtml, /id="view-analytics"[\s\S]*?id="provider-capacity-chart"/, "the analytics view keeps the capacity chart");
