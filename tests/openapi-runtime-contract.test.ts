@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
@@ -27,15 +27,23 @@ type ObjectSchema = Readonly<{
 }>;
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
-type Operation = Readonly<{ operationId?: string; description?: string; security?: readonly unknown[] }>;
+type ParameterRef = Readonly<{ $ref?: string; name?: string; in?: string; required?: boolean }>;
+type Operation = Readonly<{ operationId?: string; description?: string; security?: readonly unknown[]; parameters?: readonly ParameterRef[] }>;
 type OpenApiDocument = Readonly<{
   paths: Record<string, Partial<Record<HttpMethod, Operation>>>;
-  components: Readonly<{ schemas: Record<string, ObjectSchema> }>;
+  components: Readonly<{ schemas: Record<string, ObjectSchema>; parameters: Record<string, ParameterRef> }>;
 }>;
 
 const document = JSON.parse(readFileSync(new URL("../static/openapi.json", import.meta.url), "utf8")) as OpenApiDocument;
 const agentContract = readFileSync(new URL("../static/docs/llms-agents.md", import.meta.url), "utf8");
-const ROUTER_SOURCES = ["../src/handler/index.ts", "../src/handler/terminal-route.ts"] as const;
+// The modules that dispatch UOS routes today. Every other module under src/ is scanned as well, so a route dispatched
+// from a new module is still compared with the published contract.
+const ROUTER_SOURCES = ["handler/index.ts", "handler/terminal-route.ts"] as const;
+const SOURCE_ROOT = new URL("../src/", import.meta.url);
+const SOURCE_FILES: readonly string[] = (readdirSync(SOURCE_ROOT, { recursive: true }) as string[])
+  .filter((file) => file.endsWith(".ts"))
+  .sort((left, right) => left.localeCompare(right));
+const sourceText = (file: string): string => readFileSync(new URL(file, SOURCE_ROOT), "utf8");
 
 const sorted = (values: Iterable<string>): string[] => Array.from(values).sort((left, right) => left.localeCompare(right));
 const schemaNamed = (name: string): ObjectSchema => {
@@ -119,21 +127,21 @@ test("published UOS embeddings request properties are exactly the runtime allowl
   assert.deepEqual(sorted(schemaNamed("EmbeddingsRequest").required ?? []), ["input", "model"]);
 });
 
-/** "METHOD /path" for every UOS operation the router source dispatches, with a prefix route as `{id}`. */
+/** "METHOD /path" for every UOS operation one source file dispatches, with a prefix route as `{id}`. */
+const dispatchedUosOperations = (text: string): string[] => {
+  const operations = new Set<string>();
+  for (const match of text.matchAll(/req\.method === "([A-Z]+)" && path === "(\/uos\/[^"]+)"/g)) operations.add(`${match[1]} ${match[2]}`);
+  for (const match of text.matchAll(/path === "(\/uos\/[^"]+)" && req\.method === "([A-Z]+)"/g)) operations.add(`${match[2]} ${match[1]}`);
+  for (const match of text.matchAll(/req\.method === "([A-Z]+)" && path\.startsWith\("(\/uos\/[^"]+\/)"\)/g)) operations.add(`${match[1]} ${match[2]}{id}`);
+  return sorted(operations);
+};
+
+/** Every UOS operation dispatched anywhere under src/. */
 const runtimeUosOperations = (): string[] => {
   const operations = new Set<string>();
-  const patterns = [
-    /req\.method === "([A-Z]+)" && path === "(\/uos\/[^"]+)"/g,
-    /path === "(\/uos\/[^"]+)" && req\.method === "([A-Z]+)"/g,
-    /req\.method === "([A-Z]+)" && path\.startsWith\("(\/uos\/[^"]+\/)"\)/g,
-  ];
-  for (const source of ROUTER_SOURCES) {
-    const text = readFileSync(new URL(source, import.meta.url), "utf8");
-    const before = operations.size;
-    for (const match of text.matchAll(patterns[0])) operations.add(`${match[1]} ${match[2]}`);
-    for (const match of text.matchAll(patterns[1])) operations.add(`${match[2]} ${match[1]}`);
-    for (const match of text.matchAll(patterns[2])) operations.add(`${match[1]} ${match[2]}{id}`);
-    assert.ok(operations.size > before, `${source} must still dispatch UOS routes in a form this contract test can read`);
+  for (const file of SOURCE_FILES) for (const operation of dispatchedUosOperations(sourceText(file))) operations.add(operation);
+  for (const file of ROUTER_SOURCES) {
+    assert.ok(dispatchedUosOperations(sourceText(file)).length > 0, `src/${file} must still dispatch UOS routes in a form this contract test can read`);
   }
   return sorted(operations);
 };
@@ -162,6 +170,45 @@ test("OpenAPI publishes exactly the UOS routes the runtime dispatches and the ag
     if (!path.startsWith("/uos/")) continue;
     assert.equal(typeof operation.operationId, "string", `${method.toUpperCase()} ${path} needs an operation id`);
     assert.ok((operation.description ?? "").length > 80, `${method.toUpperCase()} ${path} needs a useful description`);
+  }
+});
+
+test("every /uos/ path literal anywhere under src/ is a published route", () => {
+  // This also covers a route dispatched in a form the patterns above cannot read, such as a path held in a constant.
+  const publishedPaths = new Set(PUBLISHED_OPERATIONS.map(({ path }) => path));
+  const unpublished: string[] = [];
+  for (const file of SOURCE_FILES) {
+    for (const match of sourceText(file).matchAll(/(["'`])(\/uos\/[^"'`\s]*)\1/g)) {
+      const literal = match[2];
+      const published = publishedPaths.has(literal) || (literal.endsWith("/") && publishedPaths.has(`${literal}{id}`));
+      if (!published) unpublished.push(`src/${file}: ${literal}`);
+    }
+  }
+  assert.deepEqual(unpublished, [], "a UOS path in the runtime source must be published in static/openapi.json");
+});
+
+test("agent-messages publishes the kernel attestation header as required and the repository headers as optional cross-checks", () => {
+  // At runtime the kernel token alone authenticates the request and names the repository; X-GitHub-Owner and
+  // X-GitHub-Repo are compared with the attestation only when both are sent (tests/kernel-coverage.test.ts).
+  const requiredHeaders = (operation: Operation): Record<string, boolean> => {
+    const headers: Record<string, boolean> = {};
+    for (const reference of operation.parameters ?? []) {
+      const name = reference.$ref?.split("/").at(-1);
+      if (name !== undefined && !Object.hasOwn(document.components.parameters, name)) throw new Error(`OpenAPI parameter ${name} is missing`);
+      const parameter = name === undefined ? reference : document.components.parameters[name];
+      if (parameter.in === "header" && parameter.name) headers[parameter.name] = parameter.required === true;
+    }
+    return headers;
+  };
+  for (const method of ["get", "post"] as const) {
+    const operation = document.paths["/uos/agent-messages"][method];
+    assert.ok(operation, `${method.toUpperCase()} /uos/agent-messages must be published`);
+    assert.deepEqual(requiredHeaders(operation), {
+      "X-GitHub-Owner": false,
+      "X-GitHub-Repo": false,
+      "X-Ubiquity-Kernel-Token": true,
+      "X-GitHub-Installation-Id": false,
+    });
   }
 });
 
