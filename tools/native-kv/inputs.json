@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "sdk": {
+    "name": "@deno/kv",
+    "version": "0.14.0"
+  },
+  "source": {
+    "url": "https://codeload.github.com/denoland/denokv/tar.gz/9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5",
+    "commit": "9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5",
+    "archiveSha256": "ab71a0516b6b2440f1f9a8bfde70199ac5e75c3c69816d68b3f80bc45285c899",
+    "upstreamLockSha256": "b7983602221c4e3a99a212106c6eff51457e0b900a5e3ec1daa406f9f4431bc1",
+    "licenseSha256": "66b30351011fffa6e21474ddf51ddc1bba4d1dce79ff3fbb7fed8f09db8b321c"
+  },
+  "patches": [
+    {
+      "file": "atomic-write-rollback.patch",
+      "sha256": "f79d5356ddae5f1d5d8658671f9e842452e566240cb637d77c0458f58c89bf98"
+    },
+    {
+      "file": "napi-workspace.patch",
+      "sha256": "1e4232e144be4e08630e17e537737b054935830d1cff36e2f876b53ddffbcec8"
+    }
+  ],
+  "lock": {
+    "file": "Cargo.lock",
+    "sha256": "2210697da22cf5a3db0c826b2e8ea96fcb3652e8d9ede3b280e36256e2f6ece5",
+    "auditFile": "lock-derivation.json",
+    "auditSha256": "b9452ea731a5a13d62c0cc0a9a11b04cdcae24bcbf57e5af8465a82d3eddf85f",
+    "preservedPackages": 304,
+    "registryPackages": 316,
+    "registryChecksumsSha256": "751c644c10034c0bbf00ccc0b0fe072f3f070ab15aa50b88e6854518b0719ae3"
+  },
+  "toolchain": {
+    "version": "1.98.1",
+    "rustcVersion": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargoVersion": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "rustcSha256": "d4217a981a778bfe445c0a29c408f5a25a92e9bb5222701579ad5a35bd913e8f",
+    "cargoSha256": "2101d7104b91a013912c94275dcd31c2b41061ef7f6e8530df11cdad55b8fbc5"
+  },
+  "artifact": {
+    "file": "native-kv.node",
+    "platform": "linux",
+    "architecture": "arm64",
+    "target": "aarch64-unknown-linux-gnu",
+    "napiVersion": 4
+  },
+  "recipe": {
+    "package": "deno-kv-napi",
+    "profile": "release",
+    "jobs": 1,
+    "locked": true,
+    "lto": true,
+    "maximumDurationMs": 1800000,
+    "argv": [
+      "cargo",
+      "build",
+      "--locked",
+      "--release",
+      "--jobs",
+      "1",
+      "--package",
+      "deno-kv-napi",
+      "--target",
+      "aarch64-unknown-linux-gnu",
+      "--manifest-path",
+      "source/Cargo.toml",
+      "--color",
+      "never"
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 // Sentinel replay manifest reading and export, split out of src/sentinel_replay_capture.ts.
 
 import { isSentinelIncidentCaptureReference, isSentinelIncidentId, SENTINEL_INCIDENT_CAPTURE_REF_PREFIX } from "./incident-outbox.ts";
@@ -115,12 +116,12 @@ export const isExportedSentinelReplayCapture = (value: unknown): value is Export
   }
 };
 
-const getChunks = async (kv: Deno.Kv, manifest: SentinelReplayManifest): Promise<Uint8Array<ArrayBuffer>[]> => {
+const getChunks = async (kv: Kv, manifest: SentinelReplayManifest): Promise<Uint8Array<ArrayBuffer>[]> => {
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   for (let offset = 0; offset < manifest.chunk_count; offset += 10) {
     const keys = Array.from(
       { length: Math.min(10, manifest.chunk_count - offset) },
-      (_, index) => [...SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, offset + index] as Deno.KvKey
+      (_, index) => [...SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, offset + index] as KvKey
     );
     const entries = await kv.getMany<readonly Uint8Array[]>(keys);
     for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
@@ -133,13 +134,13 @@ const getChunks = async (kv: Deno.Kv, manifest: SentinelReplayManifest): Promise
   return chunks;
 };
 
-const manifestEntryMatchesKey = (entry: Deno.KvEntry<SentinelReplayManifest>): boolean => {
+const manifestEntryMatchesKey = (entry: KvEntry<SentinelReplayManifest>): boolean => {
   if (!SENTINEL_REPLAY_MANIFEST_PREFIX.every((part, index) => entry.key[index] === part)) return false;
   const suffix = entry.key.slice(SENTINEL_REPLAY_MANIFEST_PREFIX.length);
   return suffix.length === 3 && suffix[0] === entry.value.captured_at_ms && suffix[1] === entry.value.fingerprint && suffix[2] === entry.value.capture_id;
 };
 
-const manifestMatchesKey = (key: Deno.KvKey, manifest: SentinelReplayManifest): boolean => {
+const manifestMatchesKey = (key: KvKey, manifest: SentinelReplayManifest): boolean => {
   const suffix = key.slice(SENTINEL_REPLAY_MANIFEST_PREFIX.length);
   return (
     SENTINEL_REPLAY_MANIFEST_PREFIX.every((part, index) => key[index] === part) &&
@@ -171,7 +172,7 @@ const exportedManifest = (manifest: SentinelReplayManifest): SentinelReplayManif
 });
 
 export const listEncryptedSentinelReplays = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ afterMs: number; beforeMs: number; cursor?: string; limit?: number }>
 ): Promise<Readonly<{ captures: ExportedSentinelReplayCapture[]; cursor: string }>> => {
   if (!Number.isSafeInteger(options.afterMs) || options.afterMs < 0) {
@@ -212,7 +213,7 @@ export const listEncryptedSentinelReplays = async (
 };
 
 /** Validate one capture reference row and return its fingerprint and manifest key. */
-const incidentCaptureReference = (reference: Deno.KvEntry<unknown>, prefixLength: number): Readonly<{ fingerprint: string; manifestKey: Deno.KvKey }> => {
+const incidentCaptureReference = (reference: KvEntry<unknown>, prefixLength: number): Readonly<{ fingerprint: string; manifestKey: KvKey }> => {
   const fingerprint = reference.key.at(-1);
   if (
     reference.key.length !== prefixLength + 1 ||
@@ -229,7 +230,7 @@ const incidentCaptureReference = (reference: Deno.KvEntry<unknown>, prefixLength
  * pinned to the listed versionstamp so a concurrent writer that re-created the
  * reference wins; the scan still advances past the entry either way.
  */
-const dropStaleCaptureReference = async (kv: Deno.Kv, reference: Deno.KvEntry<unknown>): Promise<void> => {
+const dropStaleCaptureReference = async (kv: Kv, reference: KvEntry<unknown>): Promise<void> => {
   await kv
     .atomic()
     .check({ key: reference.key, versionstamp: reference.versionstamp })
@@ -249,7 +250,7 @@ const dropStaleCaptureReference = async (kv: Deno.Kv, reference: Deno.KvEntry<un
  * not describe a capture is still rejected fail-closed.
  */
 export const listEncryptedSentinelIncidentReplays = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ incidentId: string; cursor?: string; limit?: number }>
 ): Promise<Readonly<{ captures: ExportedSentinelReplayCapture[]; cursor: string }>> => {
   if (!isSentinelIncidentId(options.incidentId)) throw new Error("Sentinel incident ID is invalid");
@@ -263,7 +264,7 @@ export const listEncryptedSentinelIncidentReplays = async (
   let scanCursor = options.cursor;
   for (;;) {
     const iterator = kv.list({ prefix }, { cursor: scanCursor, limit: SENTINEL_REPLAY_EXPORT_PAGE_LIMIT });
-    let reference: Deno.KvEntry<unknown> | null = null;
+    let reference: KvEntry<unknown> | null = null;
     for await (const entry of iterator) {
       reference = entry;
       break;
@@ -299,7 +300,7 @@ export const listEncryptedSentinelIncidentReplays = async (
  * `status_not_retained` instead of inventing `evicted`/`expired`/`ready`,
  * because the store can no longer prove the row never existed.
  */
-export const readSentinelReplayCaptureStatus = async (kv: Deno.Kv, requestId: string, nowMs: number = Date.now()): Promise<SentinelReplayCaptureStatusRow> => {
+export const readSentinelReplayCaptureStatus = async (kv: Kv, requestId: string, nowMs: number = Date.now()): Promise<SentinelReplayCaptureStatusRow> => {
   if (!isSentinelReplayRequestId(requestId)) throw new Error("Sentinel replay request ID is invalid");
   const entry = await kv.get<SentinelReplayCaptureStatusRow>(requestStatusKey(requestId));
   if (entry.value === null) {
@@ -325,7 +326,7 @@ export const readSentinelReplayCaptureStatus = async (kv: Deno.Kv, requestId: st
 
 /** Export the capture a request id points at, if its manifest is still present. */
 export const listEncryptedSentinelReplaysByRequestId = async (
-  kv: Deno.Kv,
+  kv: Kv,
   requestId: string,
   nowMs: number = Date.now()
 ): Promise<Readonly<{ captures: ExportedSentinelReplayCapture[]; status: SentinelReplayCaptureStatusRow }>> => {

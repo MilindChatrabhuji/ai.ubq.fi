@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 class ChatElement extends EventTarget {
@@ -109,7 +110,7 @@ const terminalText: Record<TerminalCase, string> = {
   stopped: "[stopped]",
 };
 
-Deno.test("shipped chat fences rAF and fallback timer flushes after every terminal path", async () => {
+test("shipped chat fences rAF and fallback timer flushes after every terminal path", async () => {
   const documentTarget = new ChatDocument();
   const windowTarget = new EventTarget();
   const restore = [

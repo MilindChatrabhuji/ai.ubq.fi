@@ -27,11 +27,11 @@ It does not attest provider or KV health; use authenticated admin health
 endpoints for those diagnostics.
 
 Usage:
-  deno run --allow-net --allow-env scripts/health-check.ts [--url https://ai.ubq.fi] [--json]
+  bun run scripts/health-check.ts [--url https://ai.ubq.fi] [--json]
 `;
 
 type HealthCheckOptions = Readonly<{
-  fetcher?: typeof fetch;
+  fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   log?: (message: string) => void;
   error?: (message: string) => void;
 }>;
@@ -86,6 +86,5 @@ export const runHealthCheck = async (args: string[], options: HealthCheckOptions
 };
 
 if (import.meta.main) {
-  const exitCode = await runHealthCheck(Deno.args);
-  if (exitCode !== 0) Deno.exit(exitCode);
+  process.exitCode = await runHealthCheck(process.argv.slice(2));
 }

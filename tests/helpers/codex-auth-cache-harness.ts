@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 // Shared harness for the codex-auth-cache suites, moved out of tests/codex-auth-cache.test.ts.
 
 import assert from "node:assert/strict";
@@ -8,12 +9,12 @@ import type { CodexAuthPoolState, CodexAuthState } from "../../src/types.ts";
 
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 
-type FakeKvWrite = { type: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+type FakeKvWrite = { type: "set" | "delete"; key: KvKey; value?: unknown };
 
 /** `void` may not appear as a call-site type argument, so name the deferred shape. */
 type VoidDeferred = PromiseWithResolvers<void>;
 
-const isAuthKey = (key: Deno.KvKey): boolean => JSON.stringify(key) === JSON.stringify(AUTH_KEY);
+const isAuthKey = (key: KvKey): boolean => JSON.stringify(key) === JSON.stringify(AUTH_KEY);
 
 /** Upstream error type a banked-reset probe status maps to. */
 const probeErrorType = (status: number): string => {
@@ -45,7 +46,7 @@ class AuthKv {
     this.auth = auth;
   }
 
-  get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     assert.equal(options?.consistency, "strong");
     if (JSON.stringify(key) !== JSON.stringify(AUTH_KEY)) {
       const routingRead = ++this.routingReads;
@@ -56,7 +57,7 @@ class AuthKv {
           key,
           value: (entry?.value ?? null) as T | null,
           versionstamp: entry ? String(entry.version).padStart(20, "0") : null,
-        } as Deno.KvEntryMaybe<T>;
+        } as KvEntryMaybe<T>;
       });
     }
     this.reads += 1;
@@ -68,9 +69,9 @@ class AuthKv {
   }
 
   getMany<T extends readonly unknown[]>(
-    keys: readonly Deno.KvKey[],
+    keys: readonly KvKey[],
     options?: { consistency?: "strong" | "eventual" }
-  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+  ): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     assert.equal(options?.consistency, "strong");
     // Capture every value and versionstamp synchronously, before any
     // routing-read hook or auth-read gate can mutate the fixture, so the
@@ -88,13 +89,13 @@ class AuthKv {
       .then(
         () =>
           snapshot.map((entry) => entry.entry) as {
-            [K in keyof T]: Deno.KvEntryMaybe<T[K]>;
+            [K in keyof T]: KvEntryMaybe<T[K]>;
           }
       );
   }
 
   /** One synchronous row snapshot plus the read accounting its `get` would record. */
-  #snapshotRead(key: Deno.KvKey): Readonly<{ entry: Deno.KvEntryMaybe<unknown>; authRead: boolean; routingRead: number | null }> {
+  #snapshotRead(key: KvKey): Readonly<{ entry: KvEntryMaybe<unknown>; authRead: boolean; routingRead: number | null }> {
     if (isAuthKey(key)) {
       this.reads += 1;
       return {
@@ -113,7 +114,7 @@ class AuthKv {
     };
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     if (JSON.stringify(key) === JSON.stringify(AUTH_KEY)) {
       this.auth = value as CodexAuthPoolState;
       this.authVersion += 1;
@@ -124,19 +125,19 @@ class AuthKv {
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const writes: FakeKvWrite[] = [];
     const chain = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
         writes.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         writes.push({ type: "delete", key });
         return chain;
       },
@@ -158,11 +159,11 @@ class AuthKv {
         return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as const);
       },
     };
-    return chain as unknown as Deno.AtomicOperation;
+    return chain as unknown as AtomicOperation;
   }
 
   /** Versionstamp the atomic check for `key` must match, or null when absent. */
-  #checkVersion(key: Deno.KvKey): string | null {
+  #checkVersion(key: KvKey): string | null {
     if (isAuthKey(key)) return String(this.authVersion).padStart(20, "0");
     const encoded = JSON.stringify(key);
     const entry = this.extra.get(encoded);
@@ -215,7 +216,6 @@ const pool = (...accounts: CodexAuthState[]): CodexAuthPoolState => ({
 });
 
 const kv = new AuthKv(pool(auth("old")));
-setKvForTest(kv as unknown as Deno.Kv);
 
 const { config } = await import("../../src/config.ts");
 
@@ -267,7 +267,7 @@ const bankedResetRequestOptions = (requestId: string) => ({
   requestId,
   bankedReset: {
     config: liveBankedResetConfig(),
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => fixedStartMs,
     newOwnerToken: () => `owner-${requestId}`,
   },
@@ -408,3 +408,25 @@ export { CODEX_BANKED_RESET_LEASE_MS } from "../../src/codex/banked-reset.ts";
 export type { CodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
 export { setKvForTest } from "../../src/kv.ts";
 export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../../src/provider/capacity-contract.ts";
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  setKvForTest(kv as unknown as Kv);
+};
+export const resetHarness = (): void => {
+  kv.extra.clear();
+  kv.reads = 0;
+  kv.routingReads = 0;
+  kv.routingCommitFailures = 0;
+  kv.nextReadGate = null;
+  kv.onRoutingRead = null;
+  kv.providerHealthSuccessCommitGate = null;
+  kv.onProviderHealthSuccessCommit = null;
+  kv.onProviderHealthSuccessCommitted = null;
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  setKvForTest(null);
+};

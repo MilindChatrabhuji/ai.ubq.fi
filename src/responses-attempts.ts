@@ -35,10 +35,10 @@ import {
 } from "./responses-failover-stream.ts";
 import { isRecord } from "./utils.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
   classifyPreHeaderFailure,
   isTimeoutFailure,
   recordAttemptedProvider,
@@ -49,7 +49,7 @@ import {
   selectRemovedProviderTelemetry,
   streamErrorResponse,
   supportsReasoningProgressRelease,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "./openai-telemetry.ts";
 import {} from "./chat/stream-translation.ts";
 import { logRedactedUpstreamError, toCodexErrorResponse, toOpenAiUpstreamErrorResponse } from "./upstream-wire.ts";
@@ -479,6 +479,7 @@ type PrimaryResponsesOptions = Readonly<{
    * caller.
    */
   allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+  deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
 }>;
 
 const isRetryablePrimaryFetchFailure = (error: unknown): error is CodexError =>
@@ -527,7 +528,10 @@ const failedPrimaryResponsesGatewayOutcome = (
     failed: {
       provider: routed.provider,
       response: routed.response,
-      trigger: primaryResponsesAttemptTrigger(routed.response.status),
+      // Admission and capability rejections are gateway decisions, not HTTP
+      // responses from the selected provider. Preserve their pre-existing
+      // gateway classification instead of labeling them upstream failures.
+      trigger: routed.allowRemovedProviderRecovery === false ? "read_error" : primaryResponsesAttemptTrigger(routed.response.status),
       signal: preparationDeadline.signal,
       clearDeadline: preparationDeadline.clear,
     },
@@ -580,6 +584,7 @@ export const fetchAndPreparePrimaryResponses = async (
       signal: deadline.signal,
       fallbackSignal: options.fallbackSignal,
       allowedPaidProviders: options.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options.deepSeekWaterfallPaidHop ?? null,
     });
   } catch (error) {
     deadline.clear();

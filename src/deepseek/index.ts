@@ -68,7 +68,8 @@ export const DEEPSEEK_DEFAULT_REASONING_EFFORT = "high";
  * thinking is active. `reasoning_effort` `none` disables thinking mode, and
  * `thinking: { type: "disabled" }` does too; every other documented tier
  * (`low`, `high`, `max`) enables it. An omitted effort leaves the documented
- * default (`high`) in force, so it counts as thinking.
+ * default (`high`) in force, so it counts as thinking. When both fields are
+ * present, the explicit reasoning effort is the canonical mode.
  *
  * Probed 2026-09-21 against `https://api.deepseek.com/chat/completions` with
  * tools advertised: `tool_choice` `required` and the named-function form both
@@ -77,13 +78,14 @@ export const DEEPSEEK_DEFAULT_REASONING_EFFORT = "high";
  * disabled. `none` and `auto` are accepted in every mode.
  */
 export const deepSeekThinkingModeActive = (reasoningEffort: unknown, thinking: unknown): boolean => {
+  const effort = typeof reasoningEffort === "string" ? reasoningEffort.trim().toLowerCase() : "";
+  if (effort) return effort !== "none";
   if (isRecord(thinking) && !Array.isArray(thinking)) {
     const type = getString(thinking.type)?.trim().toLowerCase();
     if (type === "disabled") return false;
     if (type === "enabled") return true;
   }
-  const effort = typeof reasoningEffort === "string" ? reasoningEffort.trim().toLowerCase() : "";
-  return effort !== "none";
+  return true;
 };
 
 /**
@@ -258,7 +260,7 @@ const nonNegativeInteger = (value: unknown): number | null => {
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }

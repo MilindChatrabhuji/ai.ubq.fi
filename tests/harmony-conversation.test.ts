@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -37,7 +38,7 @@ const assistantResponse = (overrides: Partial<NormalizedAssistantResponse>): Nor
   ...overrides,
 });
 
-Deno.test("analysis is preserved across an unfinished tool turn", () => {
+test("analysis is preserved across an unfinished tool turn", () => {
   const conversation = advanceConversation(
     createConversation([{ role: "user", content: "Weather?" }]),
     assistantResponse({
@@ -52,7 +53,7 @@ Deno.test("analysis is preserved across an unfinished tool turn", () => {
   assert.equal(analysisLineCount(dropAnalysisBeforeCompletedFinal(conversation)), 1);
 });
 
-Deno.test("analysis is dropped after a completed final answer", () => {
+test("analysis is dropped after a completed final answer", () => {
   const withTool = advanceConversation(
     createConversation([{ role: "user", content: "Weather?" }]),
     assistantResponse({
@@ -68,7 +69,7 @@ Deno.test("analysis is dropped after a completed final answer", () => {
   assert.equal(hasCompletedFinal(withAnswer), true);
 });
 
-Deno.test("wire view never carries analysis and replays tool calls in OpenAI shape", () => {
+test("wire view never carries analysis and replays tool calls in OpenAI shape", () => {
   const conversation = advanceConversation(
     createConversation([{ role: "user", content: "Weather?" }]),
     assistantResponse({
@@ -95,13 +96,13 @@ Deno.test("wire view never carries analysis and replays tool calls in OpenAI sha
   assert.ok(!JSON.stringify(messages).includes("Need to use function get_weather."));
 });
 
-Deno.test("wire view renders tool results with tool_call_id and no name field", () => {
+test("wire view renders tool results with tool_call_id and no name field", () => {
   const conversation = appendToolResult(createConversation([{ role: "user", content: "Weather?" }]), "call-1", "get_weather", '{"sunny": true}');
   const messages = wireMessagesFromConversation(conversation);
   assert.deepEqual(messages[1], { role: "tool", tool_call_id: "call-1", content: '{"sunny": true}' });
 });
 
-Deno.test("wire view drops empty assistant turns and keeps empty user turns out", () => {
+test("wire view drops empty assistant turns and keeps empty user turns out", () => {
   const conversation = createConversation([
     { role: "assistant", content: null, analysis: ["private"], toolCalls: [], finishReason: null },
     { role: "user", content: "" },
@@ -111,7 +112,7 @@ Deno.test("wire view drops empty assistant turns and keeps empty user turns out"
   assert.deepEqual(messages, [{ role: "system", content: "sys" }]);
 });
 
-Deno.test("appendTurn/appendUser/appendToolResult compose turss immutably", () => {
+test("appendTurn/appendUser/appendToolResult compose turss immutably", () => {
   const base = createConversation();
   const one = appendUser(base, "hello");
   const two = appendTurn(one, { role: "system", content: "sys" });
@@ -122,7 +123,7 @@ Deno.test("appendTurn/appendUser/appendToolResult compose turss immutably", () =
   assert.equal(two.turns[1].role, "system");
 });
 
-Deno.test("pendingToolCallCount counts only calls without a matching result", () => {
+test("pendingToolCallCount counts only calls without a matching result", () => {
   const conversation = appendToolResult(
     advanceConversation(
       appendToolResult(

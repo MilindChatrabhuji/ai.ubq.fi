@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { fetchCodexModels, loadFullCodexModelsSnapshot } from "../codex/index.ts";
 import { type CodexModelsWhitelist, filterWhitelistedCatalogModels, loadCodexModelsWhitelist } from "../models/codex-models-whitelist.ts";
 import { parseCodexClientVersion } from "../models/codex-models.ts";
@@ -10,6 +11,7 @@ import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "../provider/met
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "../sentinel/incident-outbox.ts";
 import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "../provider/surplus.ts";
+import { fetchClaudeCodeModels } from "../provider/claude-code-models.ts";
 
 import { warmOpenRouterModels } from "../models/openrouter-models.ts";
 import { isProviderEnabled, loadProviderSelectionCached, type ProviderSelection } from "../provider/selection.ts";
@@ -31,6 +33,7 @@ import {
 } from "./store.ts";
 import {
   catalogModelIds,
+  claudeCodeCodexModels,
   cerebrasCodexModels,
   codexSnapshotRecords,
   deepSeekOfficialCodexModels,
@@ -41,6 +44,7 @@ import {
   openRouterCodexModels,
   uniqueResponsesModels,
   withCerebrasModels,
+  withClaudeCodeModels,
   withDeepSeekOfficialModels,
   withDeepSeekWaterfallModel,
   withLithosModels,
@@ -48,6 +52,8 @@ import {
 } from "./models.ts";
 
 const catalogBodyEtag = async (body: string): Promise<string> => `"uos-catalog-${(await sha256Hex(body)).slice(0, 32)}"`;
+const enabledClaudeCatalog = (selection: ProviderSelection | null) =>
+  isProviderEnabled("claude_code", selection) ? fetchClaudeCodeModels() : Promise.resolve(null);
 
 /** Answer with the stored catalog alone, honoring the request's conditional headers. */
 const catalogOnlyResponse = async (catalog: LoadedCodexCatalog, req: Request, headers: Headers): Promise<Response> => {
@@ -126,7 +132,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   // read stays one statement and keeps this handler's measured complexity at
   // the level it had before the whitelist correction.
   const catalogWhitelist = await loadCodexModelsWhitelist(await getKv());
-  const [metered, surplus] = await enabledPaidCatalogSources(selection);
+  const [[metered, surplus], claude] = await Promise.all([enabledPaidCatalogSources(selection), enabledClaudeCatalog(selection)]);
   const nowMs = Date.now();
   if (metered) refreshExpiredModelList(nowMs, metered.updated_at_ms, METERED_MODELS_CACHE_TTL_MS, fetchMeteredModels);
   if (surplus) refreshExpiredModelList(nowMs, surplus.updated_at_ms, SURPLUS_MODELS_CACHE_TTL_MS, fetchSurplusModels);
@@ -140,6 +146,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   if (
     !catalogWhitelistIsActive(catalogWhitelist) &&
     !paidModels.length &&
+    !claude?.models.length &&
     !deepSeekEnabled &&
     !deepSeekWaterfallEnabled &&
     !lithosEnabled &&
@@ -159,6 +166,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     parsed.models.push(meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null));
     seen.add(model.id);
   }
+  parsed.models = withClaudeCodeModels(parsed.models, claude?.models ?? []);
   // The official ids are appended first so an operator whitelist still has the
   // final say over every advertised model, this route included.
   parsed.models = deepSeekEnabled ? withDeepSeekOfficialModels(parsed.models) : parsed.models;
@@ -176,10 +184,11 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
 };
 
 const meteredCatalogResponse = async (selection: ProviderSelection | null): Promise<Response | null> => {
-  const [metered, surplus] = await enabledPaidCatalogSources(selection, { force: true });
+  const [[metered, surplus], claude] = await Promise.all([enabledPaidCatalogSources(selection, { force: true }), enabledClaudeCatalog(selection)]);
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   const openRouterModels = isProviderEnabled("openrouter", selection) ? openRouterCodexModels() : [];
   const configured = [
+    ...claudeCodeCodexModels(claude?.models ?? []),
     ...(deepSeekWaterfallCatalogEnabled(selection) ? withDeepSeekWaterfallModel([]) : []),
     ...(isProviderEnabled("deepseek", selection) ? deepSeekOfficialCodexModels() : []),
     ...(isProviderEnabled("lithos", selection) ? lithosCodexModels() : []),
@@ -190,13 +199,16 @@ const meteredCatalogResponse = async (selection: ProviderSelection | null): Prom
   // This path answers without a stored catalog, so the Codex snapshot is the only
   // place a Codex-served id's real window can come from.
   const codexRecords = codexSnapshotRecords(await loadFullCodexModelsSnapshot());
-  const rows = withOpenRouterModels(
-    withCerebrasModels(
-      withLithosModels(
-        withDeepSeekWaterfallModel(withDeepSeekOfficialModels(paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null))))
+  const rows = [
+    ...claudeCodeCodexModels(claude?.models ?? []),
+    ...withOpenRouterModels(
+      withCerebrasModels(
+        withLithosModels(
+          withDeepSeekWaterfallModel(withDeepSeekOfficialModels(paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null))))
+        )
       )
-    )
-  );
+    ),
+  ].filter((model, index, models) => models.findIndex((candidate) => candidate.slug === model.slug) === index);
   // Without a stored body this route still answers the versioned catalog a
   // Codex client selects from, so the operator whitelist narrows it here too.
   const kv = await getKv();
@@ -231,7 +243,7 @@ const recordCatalogDegradation = async (version: string, dependencies: CodexCata
 
 /** State shared by the helpers of one lease-holding catalog refresh. */
 type CodexCatalogRefreshContext = Readonly<{
-  kv: Deno.Kv;
+  kv: Kv;
   req: Request;
   version: string;
   authGeneration: string;
@@ -258,7 +270,7 @@ const meteredCatalogOrError = async (message: string): Promise<Response> =>
   (await meteredCatalogResponse(await loadProviderSelectionCached())) ?? openaiError(502, message, "codex_catalog_unavailable");
 
 /** Serve the catalog of the current authentication generation after a rotation. */
-const rotatedCatalogResponse = async (kv: Deno.Kv, req: Request, version: string): Promise<Response> => {
+const rotatedCatalogResponse = async (kv: Kv, req: Request, version: string): Promise<Response> => {
   const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
   if (replacement) return catalogResponse(replacement, req, "rotated");
   return openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");

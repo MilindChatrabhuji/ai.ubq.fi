@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { NetAddr } from "#http";
 import assert from "node:assert/strict";
 
 import { authenticateAdmin, authenticateClient, handleV1Auth } from "../src/auth/index.ts";
@@ -12,7 +14,7 @@ import {
   shouldDisableAdminAuthForListener,
 } from "../src/auth/local-admin.ts";
 
-const tcpAddress = (hostname: string): Deno.NetAddr => ({
+const tcpAddress = (hostname: string): NetAddr => ({
   transport: "tcp",
   hostname,
   port: 8000,
@@ -21,12 +23,12 @@ const tcpAddress = (hostname: string): Deno.NetAddr => ({
 const enabledOptions: ServeRuntimeOptions = Object.freeze({ disableAdminAuth: true });
 const disabledOptions: ServeRuntimeOptions = Object.freeze({ disableAdminAuth: false });
 
-Deno.test("serve runtime options keep admin auth enabled by default", () => {
+test("serve runtime options keep admin auth enabled by default", () => {
   assert.deepEqual(parseServeRuntimeOptions([], { isDeploy: false }), { disableAdminAuth: false });
   assert.equal(Object.isFrozen(parseServeRuntimeOptions([], { isDeploy: false })), true);
 });
 
-Deno.test("serve runtime options accept only one exact disable-admin-auth flag", () => {
+test("serve runtime options accept only one exact disable-admin-auth flag", () => {
   assert.deepEqual(parseServeRuntimeOptions(["--disable-admin-auth"], { isDeploy: false }), {
     disableAdminAuth: true,
   });
@@ -35,11 +37,11 @@ Deno.test("serve runtime options accept only one exact disable-admin-auth flag",
   assert.throws(() => parseServeRuntimeOptions(["--disable-auth"], { isDeploy: false }), /Unknown server argument/);
 });
 
-Deno.test("disable-admin-auth is rejected in Deno Deploy", () => {
+test("disable-admin-auth is rejected in Deno Deploy", () => {
   assert.throws(() => parseServeRuntimeOptions(["--disable-admin-auth"], { isDeploy: true }), /unavailable in Deno Deploy/);
 });
 
-Deno.test("loopback detection accepts local TCP hostnames only", () => {
+test("loopback detection accepts local TCP hostnames only", () => {
   for (const hostname of ["localhost", "LOCALHOST", "127.0.0.1", "127.42.9.3", "::1", "[::1]"]) {
     assert.equal(isLoopbackHostname(hostname), true, hostname);
   }
@@ -49,7 +51,7 @@ Deno.test("loopback detection accepts local TCP hostnames only", () => {
   }
 });
 
-Deno.test("admin auth can only be disabled on a loopback TCP listener", () => {
+test("admin auth can only be disabled on a loopback TCP listener", () => {
   assert.equal(shouldDisableAdminAuthForListener(disabledOptions, tcpAddress("0.0.0.0")), false);
   assert.equal(shouldDisableAdminAuthForListener(enabledOptions, tcpAddress("127.0.0.1")), true);
   assert.equal(shouldDisableAdminAuthForListener(enabledOptions, tcpAddress("::1")), true);
@@ -66,7 +68,7 @@ Deno.test("admin auth can only be disabled on a loopback TCP listener", () => {
   );
 });
 
-Deno.test("guarded runtime bypass grants local super-admin access only to loopback peers", async () => {
+test("guarded runtime bypass grants local super-admin access only to loopback peers", async () => {
   const localRequest = new Request("http://127.0.0.1/admin/api-keys");
   const remoteRequest = new Request("https://ai.ubq.fi/admin/api-keys");
 
@@ -162,9 +164,9 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
   }
 });
 
-const macListenerAddress: Deno.NetAddr = { transport: "tcp", hostname: "0.0.0.0", port: 7999 };
+const macListenerAddress: NetAddr = { transport: "tcp", hostname: "0.0.0.0", port: 7999 };
 
-Deno.test("the Mac LAN listener configurator accepts the wildcard TCP listener only", () => {
+test("the Mac LAN listener configurator accepts the wildcard TCP listener only", () => {
   assert.equal(configureMacLocalAdminAuthBypassForListener(macListenerAddress), true);
   try {
     assert.throws(() => configureMacLocalAdminAuthBypassForListener(tcpAddress("127.0.0.1")), /requires the 0\.0\.0\.0 TCP listener/);
@@ -186,7 +188,7 @@ Deno.test("the Mac LAN listener configurator accepts the wildcard TCP listener o
   assert.equal(isAdminAuthDisabledForRequest(new Request("http://127.0.0.1/v1/models")), false);
 });
 
-Deno.test("the Mac LAN listener bypasses authentication for loopback peers only", async () => {
+test("the Mac LAN listener bypasses authentication for loopback peers only", async () => {
   const localRequest = new Request("http://127.0.0.1/v1/models");
   const forgedLoopbackHost = new Request("http://127.0.0.1/v1/models");
   const unboundRequest = new Request("http://127.0.0.1/v1/models");
@@ -227,7 +229,7 @@ Deno.test("the Mac LAN listener bypasses authentication for loopback peers only"
   }
 });
 
-Deno.test("a concurrent LAN request cannot inherit a loopback peer", async () => {
+test("a concurrent LAN request cannot inherit a loopback peer", async () => {
   // Routing awaits several times before it authenticates, so the two requests
   // below really do overlap in production. A process-wide peer slot would let
   // the LAN request read the local request's loopback peer; each request keeps

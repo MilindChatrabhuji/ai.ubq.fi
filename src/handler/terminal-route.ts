@@ -78,7 +78,16 @@ const reserveUsageAdmission = async (
   const admission = await reserveApiKeyUsageV3(policy, requestId, route, { deferWhenFull: true });
   if (admission.ok) return { reservation: admission.reservation };
   const response = withCorsHeaders(withRequestId(admission.response, requestId), req);
-  return { rejection: await withRejectionTerminalLog(response, route, { requestId, startedAtMonotonicMs, delivery, onSettled, admissionWaitMs }) };
+  return {
+    rejection: await withRejectionTerminalLog(response, route, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs,
+      delivery,
+      onSettled,
+      admissionWaitMs,
+    }),
+  };
 };
 
 /** Reserves kernel usage for a repository-scoped route; a refusal is returned as a response. */
@@ -105,6 +114,7 @@ const reserveKernelAdmission = async (
   const response = withCorsHeaders(withRequestId(admission.response, input.requestId), input.req);
   const rejection = await withRejectionTerminalLog(response, input.route, {
     requestId: input.requestId,
+    admissionStage: "pre_admission",
     startedAtMonotonicMs: input.startedAtMonotonicMs,
     delivery: input.delivery,
     onSettled: input.onSettled,
@@ -178,7 +188,12 @@ const handleTerminalRoute = async (
   const authResult = await authenticateClient(req);
   if (!authResult.ok) {
     const response = withCors(withRequestId(authResult.response, requestId));
-    return await withRejectionTerminalLog(response, terminalRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+    return await withRejectionTerminalLog(response, terminalRoute, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+    });
   }
   // Authenticated state, not a client header or session id: a caller cannot
   // rename itself to escape the waiting turn its principal was served in.
@@ -224,7 +239,12 @@ const handleTerminalRoute = async (
         ? openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null })
         : localOverloadResponse(admitted.cause);
     const response = withCors(withRequestId(refusal, requestId));
-    return await withRejectionTerminalLog(response, admissionRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+    return await withRejectionTerminalLog(response, admissionRoute, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+    });
   };
   const admissionRefusal = await acquireProcessPermit();
   if (admissionRefusal) return admissionRefusal;
@@ -398,6 +418,7 @@ const handleTerminalRoute = async (
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestStartedAtMs,
         requestId,
+        admissionStage: "accepted",
         onTerminal: trackKernelTerminal ? settleKernelQuota : undefined,
         onSettled: releaseProcessPermit,
         deliveryCompleted: delivery?.completed,
@@ -503,16 +524,19 @@ const handleTerminalRoute = async (
     // (for example a decision state that stays over its cap after every
     // reduction stage, or a decision failure), fall through to the ordinary
     // provider route so the client still receives a compaction instead of a
-    // 502. The normal terminal wrapper keeps cancellation, settlement and
-    // terminal logging ownership exactly as the ordinary route does.
-    if (isJevCompactionRequest(req)) {
-      const response = await executeInference(() => handleJevResponsesCompaction(req.clone(), { signal: callerSignal }));
-      if (response.ok || callerSignal?.aborted) {
-        return await finishTerminalResponse(response, "responses", true, true);
+    // 502. Both attempts share one inference lifetime: settling a failed local
+    // compaction first would release the reservation needed by every fallback
+    // provider before any of them can dispatch.
+    const response = await executeInference(async () => {
+      if (isJevCompactionRequest(req)) {
+        const compactionSignal = usageContext.downstreamSignal ?? callerSignal;
+        const compaction = await handleJevResponsesCompaction(req.clone(), { signal: compactionSignal });
+        if (compaction.ok || compactionSignal.aborted) return compaction;
+        await compaction.body?.cancel();
+        console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: compaction.status }));
       }
-      console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: response.status }));
-    }
-    const response = await executeInference(() => handleResponses(req, usageContext));
+      return await handleResponses(req, usageContext);
+    });
     return await finishTerminalResponse(response, "responses", true, true);
   };
   const runSystemOneRoute = async (): Promise<Response> => {
@@ -568,6 +592,7 @@ const handleTerminalRoute = async (
     const response = withCors(withRequestId(refusal, requestId));
     return await withRejectionTerminalLog(response, terminalRoute, {
       requestId,
+      admissionStage: "accepted",
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
       delivery,
       onSettled: releaseProcessPermit,

@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type AtomicOperation, type Kv, type KvCommitResult, type KvEntryMaybe, type KvKey } from "#kv";
 import assert from "node:assert/strict";
 import {
   CODEX_AUTH_POOL_KV_KEY,
@@ -21,27 +24,27 @@ const OLD_AFFINITY_PREFIX = ["uos_ai", "codex_account_affinity", "v1"] as const;
 
 type StoredValue = Readonly<{ value: unknown; version: number }>;
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 const versionstamp = (version: number): string => String(version).padStart(20, "0");
 
 class AffinityKv {
   readonly values = new Map<string, StoredValue>();
 
-  put(key: Deno.KvKey, value: unknown): void {
+  put(key: KvKey, value: unknown): void {
     const encoded = keyOf(key);
     this.values.set(encoded, { value, version: (this.values.get(encoded)?.version ?? 0) + 1 });
   }
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored?.value ?? null) as T | null,
       versionstamp: stored ? versionstamp(stored.version) : null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  getMany<T extends readonly unknown[]>(keys: readonly Deno.KvKey[]): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+  getMany<T extends readonly unknown[]>(keys: readonly KvKey[]): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     // Snapshot every value and versionstamp synchronously so one resolved tuple
     // cannot mix rows from different write generations.
     const snapshot = keys.map((key) => {
@@ -50,26 +53,26 @@ class AffinityKv {
         key,
         value: (stored?.value ?? null) as T[number] | null,
         versionstamp: stored ? versionstamp(stored.version) : null,
-      } as Deno.KvEntryMaybe<T[number]>;
+      } as KvEntryMaybe<T[number]>;
     });
-    return Promise.resolve(snapshot as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
+    return Promise.resolve(snapshot as { [K in keyof T]: KvEntryMaybe<T[K]> });
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.put(key, value);
     const stored = this.values.get(keyOf(key));
-    return Promise.resolve({ ok: true, versionstamp: versionstamp(stored?.version ?? 1) } satisfies Deno.KvCommitResult);
+    return Promise.resolve({ ok: true, versionstamp: versionstamp(stored?.version ?? 1) } satisfies KvCommitResult);
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const writes: { key: Deno.KvKey; value: unknown }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
+    const writes: { key: KvKey; value: unknown }[] = [];
     const chain = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         writes.push({ key, value });
         return chain;
       },
@@ -85,7 +88,7 @@ class AffinityKv {
         return Promise.resolve({ ok: true, versionstamp: versionstamp(stored?.version ?? 1) } as const);
       },
     };
-    return chain as unknown as Deno.AtomicOperation;
+    return chain as unknown as AtomicOperation;
   }
 }
 
@@ -108,7 +111,7 @@ const requestUrl = (input: string | URL | Request): string => {
 };
 const accountHeader = (init?: RequestInit): string => new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "";
 
-Deno.test("opposing old persisted affinity rows never split ordinary traffic", async () => {
+test("opposing old persisted affinity rows never split ordinary traffic", async () => {
   const kv = new AffinityKv();
   const originalFetch = globalThis.fetch;
   const pool: CodexAuthPoolState = { accounts: [account("one"), account("two")], updated_at_ms: Date.now() };
@@ -120,18 +123,18 @@ Deno.test("opposing old persisted affinity rows never split ordinary traffic", a
   const storedBefore = JSON.stringify(kv.values.get(keyOf(oldRowKey)));
   const calls: string[] = [];
   const sessions: (string | null)[] = [];
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
 
   try {
-    globalThis.fetch = (input, init): Promise<Response> => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
       const url = requestUrl(input);
       if (!url.endsWith("/responses")) return Promise.resolve(new Response("unexpected", { status: 404 }));
       calls.push(accountHeader(init));
       sessions.push(new Headers(init?.headers).get("session-id"));
       return Promise.resolve(new Response(JSON.stringify({ id: `response-${calls.length}` }), { status: 200 }));
-    };
+    });
 
     // Same explicit key twice, a different key, and no key at all: the durable
     // active account is the first configured account for every request.
@@ -162,7 +165,7 @@ Deno.test("opposing old persisted affinity rows never split ordinary traffic", a
   }
 });
 
-Deno.test("a retired affinity row cannot keep traffic on an authoritatively exhausted account", async () => {
+test("a retired affinity row cannot keep traffic on an authoritatively exhausted account", async () => {
   const kv = new AffinityKv();
   const originalFetch = globalThis.fetch;
   const pool: CodexAuthPoolState = { accounts: [account("one"), account("two")], updated_at_ms: Date.now() };
@@ -172,12 +175,12 @@ Deno.test("a retired affinity row cannot keep traffic on an authoritatively exha
   kv.put(oldRowKey, oldAffinityRow("account-one"));
   const storedBefore = JSON.stringify(kv.values.get(keyOf(oldRowKey)));
   const calls: string[] = [];
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
 
   try {
-    globalThis.fetch = (input, init): Promise<Response> => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
       const url = requestUrl(input);
       if (!url.endsWith("/responses")) return Promise.resolve(new Response("unexpected", { status: 404 }));
       const accountId = accountHeader(init);
@@ -191,7 +194,7 @@ Deno.test("a retired affinity row cannot keep traffic on an authoritatively exha
         );
       }
       return Promise.resolve(new Response(JSON.stringify({ id: "served-by-sibling" }), { status: 200 }));
-    };
+    });
 
     const first = await fetchCodexResponses(
       { model: "gpt-affinity-fixture", input: "exhaust", prompt_cache_key: "fixture-key" },
@@ -222,18 +225,18 @@ Deno.test("a retired affinity row cannot keep traffic on an authoritatively exha
   }
 });
 
-Deno.test("a late retired affinity row cannot restore the former active account", async () => {
+test("a late retired affinity row cannot restore the former active account", async () => {
   const kv = new AffinityKv();
   const originalFetch = globalThis.fetch;
   const pool: CodexAuthPoolState = { accounts: [account("one"), account("two")], updated_at_ms: Date.now() };
   const calls: string[] = [];
   kv.put(CODEX_AUTH_POOL_KV_KEY, pool);
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
 
   try {
-    globalThis.fetch = (input, init): Promise<Response> => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
       const url = requestUrl(input);
       if (!url.endsWith("/responses")) return Promise.resolve(new Response("unexpected", { status: 404 }));
       const accountId = accountHeader(init);
@@ -247,7 +250,7 @@ Deno.test("a late retired affinity row cannot restore the former active account"
         );
       }
       return Promise.resolve(new Response(JSON.stringify({ id: "sibling" }), { status: 200 }));
-    };
+    });
 
     const switched = await fetchCodexResponses({ model: "gpt-affinity-fixture", input: "switch" });
     assert.equal(switched.status, 200);

@@ -1,16 +1,21 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import { type Kv, type KvKey } from "#kv";
 // codex-auth-cache suite, part 1 of 4: tests moved out of tests/codex-auth-cache.test.ts.
 
 import assert from "node:assert/strict";
 import {
+  installHarness,
+  cleanupHarness,
   AUTH_KEY,
   AuthKv,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
   CODEX_AUTH_REAUTH_WARNING,
-  CodexAuthPoolState,
-  CodexAuthState,
+  type CodexAuthPoolState,
+  type CodexAuthState,
   CodexError,
   PROVIDER_CAPACITY_SNAPSHOT_KEY,
-  VoidDeferred,
+  type VoidDeferred,
   abortReasonError,
   accessToken,
   auth,
@@ -35,7 +40,7 @@ import {
   utf8ByteLength,
 } from "./helpers/codex-auth-cache-harness.ts";
 
-Deno.test("Codex auth account ordering rotates from the selected account", () => {
+test("Codex auth account ordering rotates from the selected account", () => {
   const accounts = [auth("one"), auth("two")];
   assert.deepEqual(
     orderCodexAuthAccounts(accounts, 0).map((candidate) => candidate.account_id),
@@ -47,7 +52,7 @@ Deno.test("Codex auth account ordering rotates from the selected account", () =>
   );
 });
 
-Deno.test("repeated requests preserve subscription account order", async () => {
+test("repeated requests preserve subscription account order", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -58,10 +63,10 @@ Deno.test("repeated requests preserve subscription account order", async () => {
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (_input, init) => {
+  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     accountIds.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing");
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     for (let iteration = 0; iteration < 2; iteration += 1) {
@@ -79,7 +84,7 @@ Deno.test("repeated requests preserve subscription account order", async () => {
   }
 });
 
-Deno.test("AuthKv strong getMany snapshots auth and routing rows before a routing-read hook mutates them", async () => {
+test("AuthKv strong getMany snapshots auth and routing rows before a routing-read hook mutates them", async () => {
   const fixture = new AuthKv(pool(auth("old")));
   const routingKey = CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY;
   const initialRoutingRow = { v: 1, generation: 1 } as const;
@@ -120,7 +125,7 @@ Deno.test("AuthKv strong getMany snapshots auth and routing rows before a routin
   }
 });
 
-Deno.test("retired affinity rows are never written by terminal completion", async () => {
+test("retired affinity rows are never written by terminal completion", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -135,10 +140,10 @@ Deno.test("retired affinity rows are never written by terminal completion", asyn
   await kv.set(retiredKey, retiredRow);
   const storedBefore = kv.extra.get(JSON.stringify(retiredKey));
   const accountIds: string[] = [];
-  globalThis.fetch = (_input, init) => {
+  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     accountIds.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing");
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -161,10 +166,9 @@ Deno.test("retired affinity rows are never written by terminal completion", asyn
   }
 });
 
-Deno.test("a durable routing-state outage fails retryably before dispatch", async () => {
+test("a durable routing-state outage fails retryably before dispatch", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
-  const originalOpenKv = Object.getOwnPropertyDescriptor(Deno, "openKv");
   let providerCalls = 0;
   let beforeDispatchCalls = 0;
   let transportStarts = 0;
@@ -174,12 +178,11 @@ Deno.test("a durable routing-state outage fails retryably before dispatch", asyn
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   cacheCodexAuthPool(kv.auth);
-  Object.defineProperty(Deno, "openKv", { value: undefined, configurable: true });
   setKvForTest(null);
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     providerCalls += 1;
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -204,8 +207,7 @@ Deno.test("a durable routing-state outage fails retryably before dispatch", asyn
     assert.equal(transportStarts, 0);
     await response.arrayBuffer();
   } finally {
-    if (originalOpenKv) Object.defineProperty(Deno, "openKv", originalOpenKv);
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
     globalThis.fetch = originalFetch;
@@ -213,7 +215,7 @@ Deno.test("a durable routing-state outage fails retryably before dispatch", asyn
   }
 });
 
-Deno.test("concurrent Codex requests dispatch without gateway admission rejection", async () => {
+test("concurrent Codex requests dispatch without gateway admission rejection", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -225,11 +227,11 @@ Deno.test("concurrent Codex requests dispatch without gateway admission rejectio
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
 
-  globalThis.fetch = async () => {
+  globalThis.fetch = createFetchMock(async () => {
     providerCalls += 1;
     await new Promise((resolve) => setTimeout(resolve, 5));
     return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
-  };
+  });
 
   try {
     const responses = await Promise.all(Array.from({ length: 8 }, (_, index) => fetchCodexResponses({ model: "gpt-5.6-luna", input: `agent-${index}` })));
@@ -248,7 +250,7 @@ Deno.test("concurrent Codex requests dispatch without gateway admission rejectio
   }
 });
 
-Deno.test("Codex responses use the native prompt-cache wire contract and stable keyed sessions", async () => {
+test("Codex responses use the native prompt-cache wire contract and stable keyed sessions", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -259,10 +261,10 @@ Deno.test("Codex responses use the native prompt-cache wire contract and stable 
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     requests.push(new Request(input, init));
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   const cacheableBody = {
     model: "gpt-5.6-luna",
@@ -358,7 +360,7 @@ Deno.test("Codex responses use the native prompt-cache wire contract and stable 
   }
 });
 
-Deno.test("Codex responses retry the same active account after an account-level 429", async () => {
+test("Codex responses retry the same active account after an account-level 429", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -368,12 +370,12 @@ Deno.test("Codex responses retry the same active account after an account-level 
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length > 2) throw new Error("a bounded 429 retry must not dispatch a third attempt");
     return Promise.resolve(new Response("{}", { status: accountIds.length === 1 ? 429 : 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "balance" });
@@ -391,7 +393,7 @@ Deno.test("Codex responses retry the same active account after an account-level 
   }
 });
 
-Deno.test("Codex responses keep the durable active account over sibling dashboard headroom", async () => {
+test("Codex responses keep the durable active account over sibling dashboard headroom", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -402,11 +404,11 @@ Deno.test("Codex responses keep the durable active account over sibling dashboar
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
@@ -466,7 +468,7 @@ Deno.test("Codex responses keep the durable active account over sibling dashboar
   }
 });
 
-Deno.test("Codex responses return a raw 403 without sibling failover", async () => {
+test("Codex responses return a raw 403 without sibling failover", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -476,12 +478,12 @@ Deno.test("Codex responses return a raw 403 without sibling failover", async () 
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length > 1) throw new Error("a raw 403 with a valid bearer must not dispatch a sibling");
     return Promise.resolve(new Response("{}", { status: 403 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "forbidden-failover" });
@@ -495,7 +497,7 @@ Deno.test("Codex responses return a raw 403 without sibling failover", async () 
   }
 });
 
-Deno.test("Codex responses do not replay a dispatched transport failure", async () => {
+test("Codex responses do not replay a dispatched transport failure", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -505,14 +507,14 @@ Deno.test("Codex responses do not replay a dispatched transport failure", async 
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length === 1) {
       return Promise.reject(new DOMException("upstream socket closed", "TimeoutError"));
     }
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     await assert.rejects(
@@ -528,7 +530,7 @@ Deno.test("Codex responses do not replay a dispatched transport failure", async 
   }
 });
 
-Deno.test("transport failures preserve retired affinity rows and provider health", async () => {
+test("transport failures preserve retired affinity rows and provider health", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -543,10 +545,10 @@ Deno.test("transport failures preserve retired affinity rows and provider health
   const retiredRow = { account_cohort_hash: "uos-prompt-cache-account-cohort-v1\u0000account-one", expires_at_ms: fixedStartMs + 60_000 };
   await kv.set(retiredKey, retiredRow);
   const affinityBefore = kv.extra.get(JSON.stringify(retiredKey));
-  globalThis.fetch = (_input, init) => {
+  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     accountIds.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing");
     return Promise.reject(new DOMException("upstream socket closed", "TimeoutError"));
-  };
+  });
 
   try {
     await assert.rejects(
@@ -565,7 +567,7 @@ Deno.test("transport failures preserve retired affinity rows and provider health
     assert.equal(active?.generation, 1);
     assert.equal(active.slot, 0);
     for (const encoded of kv.extra.keys()) {
-      const key = JSON.parse(encoded) as Deno.KvKey;
+      const key = JSON.parse(encoded) as KvKey;
       assert.notEqual(key[1], "provider_health", `transport failure mutated provider health at ${encoded}`);
     }
   } finally {
@@ -577,7 +579,7 @@ Deno.test("transport failures preserve retired affinity rows and provider health
   }
 });
 
-Deno.test("post-dispatch client cancellation stops Codex transport", async () => {
+test("post-dispatch client cancellation stops Codex transport", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -588,17 +590,19 @@ Deno.test("post-dispatch client cancellation stops Codex transport", async () =>
   kv.auth = pool(auth("one"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (_input, init) =>
-    new Promise<Response>((_resolve, reject) => {
-      const signal = init?.signal;
-      assert.ok(signal);
-      transportStarted.resolve();
-      const rejectFromSignal = (): void => {
-        reject(abortReasonError(signal.reason));
-      };
-      if (signal.aborted) rejectFromSignal();
-      else signal.addEventListener("abort", rejectFromSignal, { once: true });
-    });
+  globalThis.fetch = createFetchMock(
+    (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        assert.ok(signal);
+        transportStarted.resolve();
+        const rejectFromSignal = (): void => {
+          reject(abortReasonError(signal.reason));
+        };
+        if (signal.aborted) rejectFromSignal();
+        else signal.addEventListener("abort", rejectFromSignal, { once: true });
+      })
+  );
 
   try {
     const pending = fetchCodexResponses(
@@ -621,7 +625,7 @@ Deno.test("post-dispatch client cancellation stops Codex transport", async () =>
   }
 });
 
-Deno.test("Codex responses make one bounded same-active retry when a generic 429 repeats", async () => {
+test("Codex responses make one bounded same-active retry when a generic 429 repeats", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -633,7 +637,7 @@ Deno.test("Codex responses make one bounded same-active retry when a generic 429
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const serializedBody = init?.body;
     if (typeof serializedBody !== "string") throw new Error("Expected Codex request body to be a serialized string.");
@@ -646,7 +650,7 @@ Deno.test("Codex responses make one bounded same-active retry when a generic 429
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -681,7 +685,7 @@ Deno.test("Codex responses make one bounded same-active retry when a generic 429
   }
 });
 
-Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeout", async () => {
+test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeout", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -693,7 +697,7 @@ Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeou
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(
@@ -702,7 +706,7 @@ Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeou
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
       })
     );
-  };
+  });
 
   try {
     await assert.rejects(
@@ -737,7 +741,7 @@ Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeou
   }
 });
 
-Deno.test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
+test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -749,7 +753,7 @@ Deno.test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(
@@ -758,7 +762,7 @@ Deno.test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
       })
     );
-  };
+  });
 
   try {
     await assert.rejects(
@@ -790,7 +794,7 @@ Deno.test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
   }
 });
 
-Deno.test("an expired generic 429 retry preserves the subsequent raw 403 response", async () => {
+test("an expired generic 429 retry preserves the subsequent raw 403 response", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -801,7 +805,7 @@ Deno.test("an expired generic 429 retry preserves the subsequent raw 403 respons
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length === 1) {
@@ -834,7 +838,7 @@ Deno.test("an expired generic 429 retry preserves the subsequent raw 403 respons
       );
     }
     throw new Error("a raw 403 is terminal and must not dispatch a third attempt");
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -865,7 +869,7 @@ Deno.test("an expired generic 429 retry preserves the subsequent raw 403 respons
   }
 });
 
-Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensitive values", async () => {
+test("Codex routing logs attempts, refresh, and bounded retry without sensitive values", async () => {
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const originalNow = Date.now;
@@ -878,7 +882,7 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   console.info = (...args: unknown[]) => lines.push(args.map(String).join(" "));
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     if (request.url.includes("auth.openai.com/oauth/token")) {
       return Promise.resolve(
@@ -899,7 +903,7 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
         headers: status === 429 ? { "Retry-After": "1" } : undefined,
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -936,7 +940,7 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
   }
 });
 
-Deno.test("Codex responses retry the other account when a 401 cannot refresh", async () => {
+test("Codex responses retry the other account when a 401 cannot refresh", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -948,7 +952,7 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     if (request.url.includes("auth.openai.com/oauth/token")) {
       return Promise.resolve(
@@ -984,7 +988,7 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
       );
     }
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "auth-failover" });
@@ -1001,7 +1005,7 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
   }
 });
 
-Deno.test("a credential replacement landing after 401 is retried without an OAuth refresh", async () => {
+test("a credential replacement landing after 401 is retried without an OAuth refresh", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1021,7 +1025,7 @@ Deno.test("a credential replacement landing after 401 is retried without an OAut
   kv.authVersion += 1;
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     if (request.url.includes("auth.openai.com/oauth/token")) {
       oauthCalls += 1;
@@ -1037,7 +1041,7 @@ Deno.test("a credential replacement landing after 401 is retried without an OAut
       return Promise.resolve(new Response("{}", { status: 401 }));
     }
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "rotation-between-401-and-refresh" });
@@ -1060,7 +1064,7 @@ Deno.test("a credential replacement landing after 401 is retried without an OAut
   }
 });
 
-Deno.test("Codex responses synthesize 401 only after every account has an invalid refresh credential", async () => {
+test("Codex responses synthesize 401 only after every account has an invalid refresh credential", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1071,7 +1075,7 @@ Deno.test("Codex responses synthesize 401 only after every account has an invali
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     if (request.url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
@@ -1079,7 +1083,7 @@ Deno.test("Codex responses synthesize 401 only after every account has an invali
     }
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response("{}", { status: 401 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "auth-exhaustion" });
@@ -1096,7 +1100,7 @@ Deno.test("Codex responses synthesize 401 only after every account has an invali
   }
 });
 
-Deno.test("concurrent proactive refreshes share one OAuth exchange", async () => {
+test("concurrent proactive refreshes share one OAuth exchange", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1123,7 +1127,7 @@ Deno.test("concurrent proactive refreshes share one OAuth exchange", async () =>
     routingReads += 1;
     if (routingReads === 1) return firstRoutingReadGate;
   };
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = createFetchMock(async (input: Parameters<typeof fetch>[0]) => {
     const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
@@ -1135,7 +1139,7 @@ Deno.test("concurrent proactive refreshes share one OAuth exchange", async () =>
     }
     inferenceCalls += 1;
     return new Response("{}", { status: 200 });
-  };
+  });
 
   try {
     const requests = Array.from({ length: 8 }, (_, index) => fetchCodexResponses({ input: `refresh-${index}` }));
@@ -1175,7 +1179,7 @@ Deno.test("concurrent proactive refreshes share one OAuth exchange", async () =>
   }
 });
 
-Deno.test("a failed strong selector read releases the admission queue for the next request", async () => {
+test("a failed strong selector read releases the admission queue for the next request", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1186,10 +1190,10 @@ Deno.test("a failed strong selector read releases the admission queue for the ne
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (_input, init) => {
+  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     accountIds.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing");
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
   kv.onRoutingRead = () => {
     throw new Error("routing KV unavailable");
   };
@@ -1215,7 +1219,7 @@ Deno.test("a failed strong selector read releases the admission queue for the ne
   }
 });
 
-Deno.test("a deterministic proactive refresh rejection quarantines the credential before inference", async () => {
+test("a deterministic proactive refresh rejection quarantines the credential before inference", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1226,7 +1230,7 @@ Deno.test("a deterministic proactive refresh rejection quarantines the credentia
   kv.auth = pool(staleAuth("invalid"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
@@ -1234,7 +1238,7 @@ Deno.test("a deterministic proactive refresh rejection quarantines the credentia
     }
     inferenceCalls += 1;
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const first = await fetchCodexResponses({ input: "expired-auth" });
@@ -1254,7 +1258,7 @@ Deno.test("a deterministic proactive refresh rejection quarantines the credentia
   }
 });
 
-Deno.test("refresh-token reuse returns an actionable re-auth warning without exposing the OAuth body", async () => {
+test("refresh-token reuse returns an actionable re-auth warning without exposing the OAuth body", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1264,7 +1268,7 @@ Deno.test("refresh-token reuse returns an actionable re-auth warning without exp
   kv.auth = pool(staleAuth("reused"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       return Promise.resolve(
@@ -1281,7 +1285,7 @@ Deno.test("refresh-token reuse returns an actionable re-auth warning without exp
     }
     inferenceCalls += 1;
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "reused-refresh-token" });
@@ -1300,7 +1304,7 @@ Deno.test("refresh-token reuse returns an actionable re-auth warning without exp
   }
 });
 
-Deno.test("a refresh failure warning survives a later quota-shaped 403 from another account", async () => {
+test("a refresh failure warning survives a later quota-shaped 403 from another account", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1310,7 +1314,7 @@ Deno.test("a refresh failure warning survives a later quota-shaped 403 from anot
   kv.auth = pool(staleAuth("expired"), auth("quota"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     if (request.url.includes("auth.openai.com/oauth/token")) {
       return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 }));
@@ -1323,7 +1327,7 @@ Deno.test("a refresh failure warning survives a later quota-shaped 403 from anot
         headers: { "Content-Type": "application/json" },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "expired-auth-with-quota-shaped-403" });
@@ -1337,3 +1341,6 @@ Deno.test("a refresh failure warning survives a later quota-shaped 403 from anot
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
   }
 });
+
+beforeEach(installHarness);
+afterEach(cleanupHarness);

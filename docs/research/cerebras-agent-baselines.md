@@ -30,7 +30,7 @@ Anchored to gateway code in this repository (read-only references, no changes):
   `tools`/`tool_choice`/`parallel_tool_calls` preserved, `response_format` allowed only for plain `json_object`.
 - `src/openai.ts` ~line 8652: `reasoning_effort: "none"` is rejected for `gpt-oss-120b` with exactly
   `"reasoning_effort 'none' is not supported for
-  gpt-oss-120b. Use low, medium, or high."` — adapter A mirrors this
+gpt-oss-120b. Use low, medium, or high."` — adapter A mirrors this
   deterministically at construction time.
 - `src/cerebras.ts` → `fetchCerebrasChatCompletions` + `normalizeCerebrasChatCompletion`: the transport (URL, `Bearer`
   from the existing `CEREBRAS_API_KEY`, gateway deadline, Cerebras JSON-Schema projection) and the response normalizer.
@@ -47,7 +47,7 @@ LIVE-VERIFY (adapter A):
   exists; the exact error string and status code need one live confirmation).
 - Whether `usage.prompt_tokens`/`completion_tokens` are returned on every non-streaming `gpt-oss-120b` completion.
 - Whether the canonical tool set (9 functions with `additionalProperties:
-  false`) is accepted by the Cerebras
+false`) is accepted by the Cerebras
   strict-tools path, and whether the model reliably returns JSON-string tool arguments (invalid JSON must be treated as
   a `valid: false` call — covered by tests).
 - Whether `reasoning_content` appears and whether the gateway drops it (the baseline ignores reasoning fields, matching
@@ -76,7 +76,7 @@ Bridge design (checked in, `benchmarks/baselines/adapter-b.ts`):
 - Live path: requires `allowLiveProcess: true`; when `checkoutPath` is set, `git -C <path> rev-parse HEAD` must equal
   the pinned commit (no clone, no network); the process is
   `codex-infinity -m cerebras/gpt-oss-120b --cd
-  <workspace> <task description>`. `--auto-next-steps`,
+<workspace> <task description>`. `--auto-next-steps`,
   `--auto-next-idea` and `--auto-next-goal` are deliberately excluded (they never terminate).
 - Trajectory mapping: process lines are parsed by `parseCodexProcessLine` (assumed JSONL events
   `model_request`/`model_response`/`tool_call`/ `tool_result`); unparseable or unknown lines are skipped and counted,

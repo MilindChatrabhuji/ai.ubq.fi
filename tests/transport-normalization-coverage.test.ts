@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { CodexError } from "../src/codex/index.ts";
@@ -50,7 +51,7 @@ const messageInput = (result: ReturnType<typeof normalizeChatMessage>): unknown[
   return [...result.value.input];
 };
 
-Deno.test("prompt cache controls: accepts the documented fields and rejects every malformed one", () => {
+test("prompt cache controls: accepts the documented fields and rejects every malformed one", () => {
   assert.deepEqual(validatePromptCacheControls({}), { ok: true, value: undefined });
   assert.deepEqual(validatePromptCacheControls({ prompt_cache_key: "key", prompt_cache_retention: "24h" }), { ok: true, value: undefined });
   assert.deepEqual(validatePromptCacheControls({ prompt_cache_options: { mode: "implicit", ttl: "30m" } }), { ok: true, value: undefined });
@@ -87,7 +88,7 @@ Deno.test("prompt cache controls: accepts the documented fields and rejects ever
   });
 });
 
-Deno.test("chat messages: content parts are normalized with their cache breakpoints", () => {
+test("chat messages: content parts are normalized with their cache breakpoints", () => {
   const text = normalizeChatMessage({ role: "user", content: [{ type: "text", text: "hello", prompt_cache_breakpoint: { mode: "explicit" } }] }, 0);
   assert.deepEqual(messageInput(text), [
     {
@@ -115,7 +116,7 @@ Deno.test("chat messages: content parts are normalized with their cache breakpoi
   assert.deepEqual(messageInput(refusal), [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "no" }] }]);
 });
 
-Deno.test("chat messages: malformed content parts are rejected with their exact param", () => {
+test("chat messages: malformed content parts are rejected with their exact param", () => {
   const reject = (value: unknown, param: string, message: string) => {
     const result = normalizeChatMessage(value, 0);
     assert.deepEqual(result, { ok: false, param, message });
@@ -226,7 +227,7 @@ Deno.test("chat messages: malformed content parts are rejected with their exact 
   reject({ role: "user", content: 7 }, "messages[0].content", "messages[0].content must be a string or an array");
 });
 
-Deno.test("chat messages: assistant and tool turns are projected onto the Responses input items", () => {
+test("chat messages: assistant and tool turns are projected onto the Responses input items", () => {
   // An assistant turn with no content but a tool call is still a function call.
   const assistantToolCall = normalizeChatMessage(
     { role: "assistant", tool_calls: [{ id: "call-1", type: "function", function: { name: "lookup", arguments: "{}" } }] },
@@ -260,7 +261,7 @@ Deno.test("chat messages: assistant and tool turns are projected onto the Respon
   assert.equal(developer.ok ? developer.value.instruction : null, "rules");
 });
 
-Deno.test("chat messages: assistant, tool and role errors are rejected with their exact param", () => {
+test("chat messages: assistant, tool and role errors are rejected with their exact param", () => {
   const reject = (value: unknown, param: string, message: string) => {
     assert.deepEqual(normalizeChatMessage(value, 0), { ok: false, param, message });
   };
@@ -304,7 +305,7 @@ Deno.test("chat messages: assistant, tool and role errors are rejected with thei
   reject("not-a-message", "messages[0]", "messages[0] must be an object");
 });
 
-Deno.test("chat tool calls: malformed function call shapes are rejected", () => {
+test("chat tool calls: malformed function call shapes are rejected", () => {
   const reject = (call: unknown, param: string, message: string) => {
     assert.deepEqual(normalizeChatMessage({ role: "assistant", content: null, tool_calls: [call] }, 0), { ok: false, param, message });
   };
@@ -348,7 +349,7 @@ Deno.test("chat tool calls: malformed function call shapes are rejected", () => 
   });
 });
 
-Deno.test("responses content items: text, image and file blocks are normalized", () => {
+test("responses content items: text, image and file blocks are normalized", () => {
   const text = normalizeResponseContentItem({ type: "input_text", text: "hi", prompt_cache_breakpoint: { mode: "explicit" } }, "input[0]", "user");
   assert.deepEqual(text, { ok: true, value: { type: "input_text", text: "hi", prompt_cache_breakpoint: { mode: "explicit" } } });
   const output = normalizeResponseContentItem({ type: "output_text", text: "hi", annotations: [] }, "input[0]", "assistant");
@@ -361,7 +362,7 @@ Deno.test("responses content items: text, image and file blocks are normalized",
   assert.deepEqual(fileWithUrl, { ok: true, value: { type: "input_file", file_url: "https://example.test/a.pdf" } });
 });
 
-Deno.test("responses content items: every malformed block is rejected with its exact param", () => {
+test("responses content items: every malformed block is rejected with its exact param", () => {
   // The block under test is always the first content item; the reported param
   // names the offending field inside (or the block itself).
   const reject = (value: unknown, param: string, message: string, role: "user" | "assistant" = "user") => {
@@ -410,7 +411,7 @@ Deno.test("responses content items: every malformed block is rejected with its e
   reject({ type: "input_file", file_id: "f", extra: 1 }, "input[0].extra", "Unknown content field: extra");
 });
 
-Deno.test("responses message items: role, content and breakpoint fences are enforced", () => {
+test("responses message items: role, content and breakpoint fences are enforced", () => {
   const stringContent = normalizeResponseMessageItem({ role: "assistant", type: "message", content: "hi" }, "input[0]");
   assert.deepEqual(stringContent, { ok: true, value: { type: "message", role: "assistant", content: [{ type: "output_text", text: "hi" }] } });
   const arrayContent = normalizeResponseMessageItem({ role: "developer", content: [{ type: "input_text", text: "hi" }] }, "input[1]");
@@ -432,7 +433,7 @@ Deno.test("responses message items: role, content and breakpoint fences are enfo
   reject({ role: "user", content: [{ type: "input_audio" }] }, "input[0].content[0].type", "input[0].content[0].type is not supported");
 });
 
-Deno.test("function call outputs: standard content blocks are normalized and other items pass through", () => {
+test("function call outputs: standard content blocks are normalized and other items pass through", () => {
   const normalized = normalizeFunctionCallOutputItem(
     { type: "function_call_output", call_id: "call-1", output: [{ type: "input_text", text: "42" }] },
     "input[0]"
@@ -448,7 +449,7 @@ Deno.test("function call outputs: standard content blocks are normalized and oth
   assert.deepEqual(passthrough, { ok: true, value: { type: "function_call_output", call_id: "call-1", output: "42" } });
 });
 
-Deno.test("responses model list and capability entries normalize the documented shapes", () => {
+test("responses model list and capability entries normalize the documented shapes", () => {
   assert.equal(normalizeModelList("list"), null);
   assert.deepEqual(normalizeModelList({ data: [{ id: "gpt-5", created: -5 }, "skip", { slug: "alias", owned_by: "vendor" }] }), {
     object: "list",
@@ -464,7 +465,7 @@ Deno.test("responses model list and capability entries normalize the documented 
   assert.equal(normalizeModelList({ data: [] })?.data.length, 0);
 });
 
-Deno.test("upstream wire: error snippets are trimmed, bounded and never invented", () => {
+test("upstream wire: error snippets are trimmed, bounded and never invented", () => {
   assert.equal(formatErrorSnippet("  boom  "), "boom");
   assert.equal(formatErrorSnippet(new Error("  ")), "");
   assert.equal(formatErrorSnippet(""), "");
@@ -474,7 +475,7 @@ Deno.test("upstream wire: error snippets are trimmed, bounded and never invented
   assert.equal(formatErrorSnippet("short", 10), "short");
 });
 
-Deno.test("upstream wire: the redacted diagnostic keeps only gateway-owned codes", () => {
+test("upstream wire: the redacted diagnostic keeps only gateway-owned codes", () => {
   const logged: unknown[][] = [];
   const original = console.error;
   console.error = (...args: unknown[]) => logged.push(args);
@@ -503,7 +504,7 @@ Deno.test("upstream wire: the redacted diagnostic keeps only gateway-owned codes
   ]);
 });
 
-Deno.test("upstream wire: redacted Codex ownership diagnostics preserve codes without leaking private errors", () => {
+test("upstream wire: redacted Codex ownership diagnostics preserve codes without leaking private errors", () => {
   const logged: unknown[][] = [];
   const original = console.error;
   const messageMarker = "SECRET_MESSAGE_793";
@@ -528,7 +529,7 @@ Deno.test("upstream wire: redacted Codex ownership diagnostics preserve codes wi
   for (const marker of [messageMarker, causeMarker, unknownCodeMarker]) assert.equal(output.includes(marker), false);
 });
 
-Deno.test("upstream wire: provider request ids are bounded, printable and trimmed", () => {
+test("upstream wire: provider request ids are bounded, printable and trimmed", () => {
   assert.equal(normalizeProviderRequestId("  req-1  "), "req-1");
   assert.equal(normalizeProviderRequestId(undefined), null);
   assert.equal(normalizeProviderRequestId(""), null);
@@ -538,7 +539,7 @@ Deno.test("upstream wire: provider request ids are bounded, printable and trimme
   assert.equal(providerRequestIdFromResponse(new Response("", { headers: {} })), null);
 });
 
-Deno.test("upstream wire: codex errors translate to their documented status and warning headers", async () => {
+test("upstream wire: codex errors translate to their documented status and warning headers", async () => {
   const quota = toCodexErrorResponse(new ApiKeyQuotaDispatchError("quota", { status: 429, code: "rate_limit_exceeded" }), "chatgpt_codex");
   assert.equal(quota.status, 429);
   assert.equal(quota.headers.get("x-uos-upstream"), "chatgpt_codex");
@@ -575,7 +576,7 @@ Deno.test("upstream wire: codex errors translate to their documented status and 
   assert.equal(passthrough.headers.get("x-uos-upstream"), "deepseek");
 });
 
-Deno.test("upstream wire: every provider error translation maps its own error classes", async () => {
+test("upstream wire: every provider error translation maps its own error classes", async () => {
   const quota = new ApiKeyQuotaDispatchError("quota", { status: 503, code: "api_key_quota_reservation_unavailable", headers: { "x-uos-warning": "w" } });
   assert.equal(toCerebrasErrorResponse(quota).status, 503);
   assert.equal(toCerebrasErrorResponse(quota).headers.get("x-uos-warning"), "w");
@@ -613,7 +614,7 @@ Deno.test("upstream wire: every provider error translation maps its own error cl
   assert.equal((await dispatch.clone().json()).error.param, null);
 });
 
-Deno.test("upstream wire: answer-bearing output ignores reasoning and reads both chat shapes", () => {
+test("upstream wire: answer-bearing output ignores reasoning and reads both chat shapes", () => {
   assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 0 }), false);
   assert.equal(isAnswerBearingCompletion({ text: "", refusal: "no", toolCallCount: 0 }), true);
   assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 2 }), true);
@@ -629,7 +630,7 @@ Deno.test("upstream wire: answer-bearing output ignores reasoning and reads both
   assert.equal(chatChunkHasAnswerBearingOutput({ choices: [7] }), false);
 });
 
-Deno.test("upstream wire: a buffered Cerebras completion is re-framed as a chat SSE stream with its tool calls", async () => {
+test("upstream wire: a buffered Cerebras completion is re-framed as a chat SSE stream with its tool calls", async () => {
   const completion = {
     id: "chatcmpl-1",
     created: 1_800_000_000,
@@ -685,7 +686,7 @@ Deno.test("upstream wire: a buffered Cerebras completion is re-framed as a chat 
   assert.deepEqual((await minimal.text()).split("\n\n").filter(Boolean), ["data: [DONE]"]);
 });
 
-Deno.test("upstream wire: provider error bodies are bounded, whitelisted and never reflected wholesale", async () => {
+test("upstream wire: provider error bodies are bounded, whitelisted and never reflected wholesale", async () => {
   const cerebras = await toCerebrasUpstreamErrorResponse(
     new Response(JSON.stringify({ error: { message: "  upstream exploded  ", code: "invalid_request" } }), {
       status: 429,
@@ -761,7 +762,7 @@ Deno.test("upstream wire: provider error bodies are bounded, whitelisted and nev
   assert.equal(genericBody.error.message, "LithosAI upstream returned an error.");
 });
 
-Deno.test("upstream wire: the chat-body digest carries shapes and never prompt content", () => {
+test("upstream wire: the chat-body digest carries shapes and never prompt content", () => {
   const diagnostic = deepSeekChatBodyDiagnostic({
     model: "deepseek-flash",
     reasoning_effort: "high",
@@ -801,7 +802,7 @@ Deno.test("upstream wire: the chat-body digest carries shapes and never prompt c
   assert.equal((malformedSample.messages as unknown[]).length, 1);
 });
 
-Deno.test("upstream wire: large chat diagnostics log a bounded private tail with original indices", async () => {
+test("upstream wire: large chat diagnostics log a bounded private tail with original indices", async () => {
   const markers = ["PRIVATE_CONTENT_666", "PRIVATE_TOOL_NAME_666", "PRIVATE_ID_666", "PRIVATE_COOKIE_666", "PRIVATE_METADATA_666"];
   const parts = Array.from({ length: 50_000 }, () => ({ type: markers[4], text: markers[0] }));
   const calls = Array.from({ length: 50_000 }, () => ({ id: markers[2], function: { name: markers[1], arguments: markers[0] } }));
@@ -866,7 +867,7 @@ Deno.test("upstream wire: large chat diagnostics log a bounded private tail with
   }
 });
 
-Deno.test("upstream wire: cancelling an already-closed response body is swallowed", () => {
+test("upstream wire: cancelling an already-closed response body is swallowed", () => {
   let cancelled = 0;
   const response = {
     body: {

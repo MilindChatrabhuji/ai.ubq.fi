@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { type Kv } from "#kv";
 // codex-account-routing suite, part 2 of 3: tests moved out of tests/codex-account-routing.test.ts.
 
 import assert from "node:assert/strict";
@@ -5,7 +7,7 @@ import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
   CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
-  CodexAuthPoolState,
+  type CodexAuthPoolState,
   RoutingKv,
   claimCodexRoutingProbe,
   codexCredentialVersion,
@@ -30,9 +32,9 @@ import {
   singlePool,
 } from "./helpers/codex-account-routing-harness.ts";
 
-Deno.test("conflicting absolute body and header deadlines permanently fail closed", async () => {
+test("conflicting absolute body and header deadlines permanently fail closed", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -73,7 +75,7 @@ Deno.test("conflicting absolute body and header deadlines permanently fail close
   }
 });
 
-Deno.test("body resets_at preserves longer relative routing delays without authorizing redemption", async () => {
+test("body resets_at preserves longer relative routing delays without authorizing redemption", async () => {
   const now = 1_700_000_000_000;
   const bodyResetAtSeconds = Math.floor(now / 1_000) + 60;
   for (const testCase of [
@@ -95,9 +97,9 @@ Deno.test("body resets_at preserves longer relative routing delays without autho
   }
 });
 
-Deno.test("valid delta Retry-After durably blocks a fully parsed usage limit", async () => {
+test("valid delta Retry-After durably blocks a fully parsed usage limit", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -134,9 +136,9 @@ Deno.test("valid delta Retry-After durably blocks a fully parsed usage limit", a
   }
 });
 
-Deno.test("relative Retry-After blocks ordinary routing but cannot mint a banked-reset fence", async () => {
+test("relative Retry-After blocks ordinary routing but cannot mint a banked-reset fence", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -166,9 +168,9 @@ Deno.test("relative Retry-After blocks ordinary routing but cannot mint a banked
   }
 });
 
-Deno.test("valid HTTP-date Retry-After durably blocks a fully parsed usage limit", async () => {
+test("valid HTTP-date Retry-After durably blocks a fully parsed usage limit", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -196,9 +198,9 @@ Deno.test("valid HTTP-date Retry-After durably blocks a fully parsed usage limit
   }
 });
 
-Deno.test("eligible routing exposes only stable blocked siblings to the banked-reset cohort", async () => {
+test("eligible routing exposes only stable blocked siblings to the banked-reset cohort", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -237,9 +239,9 @@ Deno.test("eligible routing exposes only stable blocked siblings to the banked-r
   }
 });
 
-Deno.test("quota circuits skip blocked slots and synthesize direct-fallback eligibility", async () => {
+test("quota circuits skip blocked slots and synthesize direct-fallback eligibility", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -289,7 +291,7 @@ Deno.test("quota circuits skip blocked slots and synthesize direct-fallback elig
   }
 });
 
-Deno.test("429 classification reads fragmented JSON and preserves the response", async () => {
+test("429 classification reads fragmented JSON and preserves the response", async () => {
   const now = 1_700_000_000_000;
   const payload = JSON.stringify({ error: { type: "usage_limit_reached" } });
   const source = new ReadableStream<Uint8Array>({
@@ -312,7 +314,7 @@ Deno.test("429 classification reads fragmented JSON and preserves the response",
   assert.equal(await parsed.response.text(), payload);
 });
 
-Deno.test("429 classification rejects malformed UTF-8 before recognizing a usage-limit body", async () => {
+test("429 classification rejects malformed UTF-8 before recognizing a usage-limit body", async () => {
   const now = 1_700_000_000_000;
   const encoder = new TextEncoder();
   const prefix = encoder.encode('{"error":{"type":"usage_limit_reached","message":"');
@@ -334,7 +336,7 @@ Deno.test("429 classification rejects malformed UTF-8 before recognizing a usage
   assert.deepEqual(Array.from(new Uint8Array(await parsed.response.arrayBuffer())), Array.from(bytes));
 });
 
-Deno.test("429 classification rejects duplicate error keys before JSON last-key resolution", async () => {
+test("429 classification rejects duplicate error keys before JSON last-key resolution", async () => {
   const now = 1_700_000_000_000;
   const payload = '{"error":{"type":"rate_limit_error","type":"usage_limit_reached"}}';
   const parsed = await readCodex429(
@@ -349,7 +351,7 @@ Deno.test("429 classification rejects duplicate error keys before JSON last-key 
   assert.equal(await parsed.response.text(), payload);
 });
 
-Deno.test("429 classification returns a valid error when capture is truncated", async () => {
+test("429 classification returns a valid error when capture is truncated", async () => {
   const oversized = JSON.stringify({ error: { type: "usage_limit_reached", detail: "x".repeat(70 * 1_024) } });
   const parsed = await readCodex429(new Response(oversized, { status: 429, headers: { "Content-Type": "application/json" } }));
   assert.equal(parsed.usageLimitReached, false);
@@ -364,9 +366,9 @@ Deno.test("429 classification returns a valid error when capture is truncated", 
   });
 });
 
-Deno.test("ordinary 429 clears only the current fenced probe from an expired circuit", async () => {
+test("ordinary 429 clears only the current fenced probe from an expired circuit", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -429,9 +431,9 @@ Deno.test("ordinary 429 clears only the current fenced probe from an expired cir
   }
 });
 
-Deno.test("a stale ordinary usage-limit 429 cannot overwrite a foreign half-open lease", async () => {
+test("a stale ordinary usage-limit 429 cannot overwrite a foreign half-open lease", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -488,9 +490,9 @@ Deno.test("a stale ordinary usage-limit 429 cannot overwrite a foreign half-open
   }
 });
 
-Deno.test("expired circuits grant one fenced probe and reject stale completion", async () => {
+test("expired circuits grant one fenced probe and reject stale completion", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -543,9 +545,9 @@ Deno.test("expired circuits grant one fenced probe and reject stale completion",
   }
 });
 
-Deno.test("an expired circuit receives one half-open probe before a healthy sibling", async () => {
+test("an expired circuit receives one half-open probe before a healthy sibling", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -581,9 +583,9 @@ Deno.test("an expired circuit receives one half-open probe before a healthy sibl
   }
 });
 
-Deno.test("an expired second-account circuit never jumps the healthy first account", async () => {
+test("an expired second-account circuit never jumps the healthy first account", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -626,9 +628,9 @@ Deno.test("an expired second-account circuit never jumps the healthy first accou
   }
 });
 
-Deno.test("unchanged auth reconciliation preserves a single-account half-open success fence", async () => {
+test("unchanged auth reconciliation preserves a single-account half-open success fence", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -670,9 +672,9 @@ Deno.test("unchanged auth reconciliation preserves a single-account half-open su
   }
 });
 
-Deno.test("credential rotation clears only the matching invalid circuit state", async () => {
+test("credential rotation clears only the matching invalid circuit state", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts);
@@ -695,9 +697,9 @@ Deno.test("credential rotation clears only the matching invalid circuit state", 
   }
 });
 
-Deno.test("fresh capacity cannot reopen a credential marked invalid", async () => {
+test("fresh capacity cannot reopen a credential marked invalid", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const observedAtMs = Date.now();
@@ -731,9 +733,9 @@ Deno.test("fresh capacity cannot reopen a credential marked invalid", async () =
   }
 });
 
-Deno.test("same-account credential rotation discards a legacy timeout circuit", async () => {
+test("same-account credential rotation discards a legacy timeout circuit", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -757,9 +759,9 @@ Deno.test("same-account credential rotation discards a legacy timeout circuit", 
   }
 });
 
-Deno.test("credential refresh does not transfer a legacy timeout probe", async () => {
+test("credential refresh does not transfer a legacy timeout probe", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -796,9 +798,9 @@ Deno.test("credential refresh does not transfer a legacy timeout probe", async (
   }
 });
 
-Deno.test("a stale refresh reconciliation cannot overwrite a newer credential version", async () => {
+test("a stale refresh reconciliation cannot overwrite a newer credential version", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts);
@@ -839,9 +841,9 @@ Deno.test("a stale refresh reconciliation cannot overwrite a newer credential ve
   }
 });
 
-Deno.test("a revised active stable Retry-After fails closed rather than minting a second reset identity", async () => {
+test("a revised active stable Retry-After fails closed rather than minting a second reset identity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -910,9 +912,9 @@ Deno.test("a revised active stable Retry-After fails closed rather than minting 
   }
 });
 
-Deno.test("a post-reset recovery probe fences delayed 429s and clears ambiguity only after success", async () => {
+test("a post-reset recovery probe fences delayed 429s and clears ambiguity only after success", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -992,9 +994,9 @@ Deno.test("a post-reset recovery probe fences delayed 429s and clears ambiguity 
   }
 });
 
-Deno.test("a relative Retry-After after a stable deadline cannot mint a later reset identity", async () => {
+test("a relative Retry-After after a stable deadline cannot mint a later reset identity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1031,9 +1033,9 @@ Deno.test("a relative Retry-After after a stable deadline cannot mint a later re
   }
 });
 
-Deno.test("only a successful recovery probe clears reset-generation ambiguity", async () => {
+test("only a successful recovery probe clears reset-generation ambiguity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Math.floor(Date.now() / 1_000) * 1_000;
@@ -1091,9 +1093,9 @@ Deno.test("only a successful recovery probe clears reset-generation ambiguity", 
   }
 });
 
-Deno.test("same-account credential rotation and pool reordering retain reset ambiguity", async () => {
+test("same-account credential rotation and pool reordering retain reset ambiguity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1144,9 +1146,9 @@ Deno.test("same-account credential rotation and pool reordering retain reset amb
   }
 });
 
-Deno.test("an unmappable legacy stable identity cannot migrate to a replacement account", async () => {
+test("an unmappable legacy stable identity cannot migrate to a replacement account", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1209,9 +1211,9 @@ Deno.test("an unmappable legacy stable identity cannot migrate to a replacement 
   }
 });
 
-Deno.test("an administrative recheck fences a stable reset identity until a successful probe", async () => {
+test("an administrative recheck fences a stable reset identity until a successful probe", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1241,9 +1243,9 @@ Deno.test("an administrative recheck fences a stable reset identity until a succ
   }
 });
 
-Deno.test("fresh Spark capacity reconciles a blocked account without reordering configured accounts", async () => {
+test("fresh Spark capacity reconciles a blocked account without reordering configured accounts", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -1312,9 +1314,9 @@ Deno.test("fresh Spark capacity reconciles a blocked account without reordering 
   }
 });
 
-Deno.test("class capacity freshness ignores a newer independent quota signal", async () => {
+test("class capacity freshness ignores a newer independent quota signal", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;

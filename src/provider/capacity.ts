@@ -1,6 +1,13 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 import { type CodexCapacityAccount, getCodexCapacityAccounts } from "../codex/index.ts";
 import { json } from "../http.ts";
 import { getKv } from "../kv.ts";
+import { loadClaudeCodeAccountStore, resolveClaudeCodeAccount, type ClaudeCodeAccountBinding } from "./claude-code-accounts.ts";
+import type { ClaudeCodeEnvLookup } from "./claude-code.ts";
+import { loadClaudeCodeQuotaState, registerClaudeCodeObservationRecorder, type ClaudeCodeQuotaState } from "./claude-code-quota.ts";
+import { claudeCapacityUsedPercent, readClaudeCapacityHistory, recordClaudeCapacityObservation } from "./claude-capacity-history.ts";
+import { listClaudeCapacityRollups } from "./claude-capacity-rollups.ts";
+import { getClaudeCodeProviderHealth } from "./health.ts";
 import { type CodexCapacityRoutingObservationInput, recordCodexCapacityRoutingObservations } from "../codex/account-routing.ts";
 import {
   listProviderCapacityDowntimeEvents,
@@ -38,6 +45,10 @@ import {
 } from "./capacity-contract.ts";
 import type {
   CapacityLease,
+  ProviderCapacityFailureKind,
+  ProviderCapacityClaudeSource,
+  ProviderCapacityClaudeStandardLimit,
+  ProviderCapacityClaudeWindow,
   ProviderCapacityCodexSource,
   ProviderCapacityFetch,
   ProviderCapacityHistoryPoint,
@@ -75,6 +86,9 @@ import {
   recoverRateLimitObservations,
   recoverySlotsForSnapshot,
 } from "./capacity-history.ts";
+
+// Handler startup imports this module before inference; no admin visit is needed.
+registerClaudeCodeObservationRecorder(recordClaudeCapacityObservation);
 
 export const PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS = PROVIDER_CAPACITY_HISTORY_RETENTION_MS;
 
@@ -247,10 +261,142 @@ const meteredCapacitySource = (snapshot: MeteredQuotaSnapshot | null, snapshotAt
   };
 };
 
+/** Unified headers report a fraction; normalize and clamp without guessing percent units. */
+const claudeCapacityWindow = (
+  window: Readonly<{ status: string | null; utilization: number | null; reset_at_ms: number | null; observed_at_ms: number }> | undefined
+): ProviderCapacityClaudeWindow | null =>
+  window
+    ? {
+        status: window.status,
+        used_percent: claudeCapacityUsedPercent(window.utilization),
+        reset_at_ms: window.reset_at_ms,
+        observed_at_ms: window.observed_at_ms,
+      }
+    : null;
+
+const claudeStandardLimits = (quota: ClaudeCodeQuotaState | null): ProviderCapacityClaudeStandardLimit[] => {
+  if (!quota) return [];
+  return Object.entries(quota.standard).map(([family, window]) => ({
+    family,
+    limit: window.limit,
+    remaining: window.remaining,
+    reset_at_ms: window.reset_at_ms,
+  }));
+};
+
+const claudeLatestObservationMs = (quota: ClaudeCodeQuotaState | null): number | null => {
+  const candidates: number[] = [];
+  const push = (value: number | null | undefined): void => {
+    if (typeof value === "number" && Number.isFinite(value)) candidates.push(value);
+  };
+  for (const window of Object.values(quota?.windows ?? {})) push(window.observed_at_ms);
+  for (const window of Object.values(quota?.standard ?? {})) push(window.observed_at_ms);
+  return candidates.length ? Math.max(...candidates) : null;
+};
+
+/** The Claude subscription row for a caller that has no tier state to read. */
+export const unavailableClaudeCapacitySource = (snapshotAtMs: number): ProviderCapacityClaudeSource => ({
+  source: "claude_code",
+  label: "Claude subscription",
+  state: "unavailable",
+  source_observed_at_ms: null,
+  snapshot_at_ms: snapshotAtMs,
+  failure_kind: "not_configured",
+  failure_status: null,
+  credential_kind: null,
+  workspace_id: null,
+  windows: { five_hour: null, seven_day: null },
+  standard: [],
+  blocked_until_ms: null,
+  cooldown_until_ms: null,
+  last_error: null,
+});
+
+/**
+ * The live Claude subscription analytics row: the resolved credential
+ * direction and workspace, the last observed unified or standard quota
+ * windows, the recorded configuration guard, and the last upstream outcome. A
+ * missing credential is `not_configured`; an active quota block, cooldown, or
+ * recorded configuration error is `unavailable` with its status, because the
+ * tier genuinely cannot serve until that guard clears. A never-observed but
+ * eligible tier stays `available` (there is nothing to be stale yet).
+ */
+const capacitySourceForClaudeAccount = async (
+  kv: Kv | null,
+  snapshotAtMs: number,
+  binding: ClaudeCodeAccountBinding | null
+): Promise<ProviderCapacityClaudeSource> => {
+  const credential = binding?.credential ?? null;
+  const workspace = binding?.workspace ?? null;
+  const [quota, health] = binding
+    ? await Promise.all([loadClaudeCodeQuotaState(kv, binding).catch(() => null), getClaudeCodeProviderHealth(() => snapshotAtMs, binding).catch(() => null)])
+    : [null, null];
+  const blockedUntilMs = quota?.blocked_until_ms ?? null;
+  const cooldownUntilMs = quota?.cooldown_until_ms ?? null;
+  const blocked = blockedUntilMs !== null && blockedUntilMs > snapshotAtMs;
+  const cooling = cooldownUntilMs !== null && cooldownUntilMs > snapshotAtMs;
+  const lastError = quota?.last_error ?? null;
+  // A healthy response without quota headers cannot refresh old quota evidence.
+  const observedAtMs = claudeLatestObservationMs(quota);
+  const failing = blocked || cooling || lastError !== null;
+  let state: ProviderCapacityClaudeSource["state"] = "available";
+  if (!credential || failing) state = "unavailable";
+  else if (observedAtMs !== null && snapshotAtMs - observedAtMs > PROVIDER_CAPACITY_SOURCE_STALE_MS) state = "stale";
+  let failureKind: ProviderCapacityFailureKind | null = null;
+  if (!credential) failureKind = "not_configured";
+  else if (failing) failureKind = "upstream_error";
+  let failureStatus = lastError?.status ?? null;
+  if (failureStatus === null && blocked) failureStatus = 429;
+  if (failureStatus === null && cooling) failureStatus = health?.last_status ?? null;
+  return {
+    source: "claude_code",
+    label: "Claude subscription",
+    account_id: binding?.account_id ?? null,
+    account_cohort_id: binding?.account_cohort_id ?? null,
+    state,
+    source_observed_at_ms: observedAtMs,
+    snapshot_at_ms: snapshotAtMs,
+    failure_kind: failureKind,
+    failure_status: failureStatus,
+    credential_kind: credential?.kind ?? null,
+    workspace_id: workspace?.id ?? null,
+    windows: {
+      five_hour: claudeCapacityWindow(quota?.windows["5h"]),
+      seven_day: claudeCapacityWindow(quota?.windows["7d"]),
+    },
+    standard: claudeStandardLimits(quota),
+    blocked_until_ms: blockedUntilMs,
+    cooldown_until_ms: cooldownUntilMs,
+    last_error: lastError
+      ? {
+          kind: lastError.kind,
+          status: lastError.status,
+          message: lastError.message,
+          at_ms: lastError.at_ms,
+        }
+      : null,
+  };
+};
+
+export const claudeCapacitySource = async (kv: Kv | null, snapshotAtMs: number, env?: ClaudeCodeEnvLookup): Promise<ProviderCapacityClaudeSource> =>
+  await capacitySourceForClaudeAccount(kv, snapshotAtMs, await resolveClaudeCodeAccount(kv, env).catch(() => null));
+
+const claudeCapacityRoster = async (kv: Kv | null, snapshotAtMs: number) => {
+  if (!kv) return { claude: unavailableClaudeCapacitySource(snapshotAtMs), claude_accounts: [] };
+  // The foundation validates the bounded roster before any per-account read.
+  // Resolve once so old clients see exactly the active row from this same roster.
+  const store = await loadClaudeCodeAccountStore(kv);
+  const accounts = await Promise.all(store.accounts.map((binding) => capacitySourceForClaudeAccount(kv, snapshotAtMs, binding)));
+  return {
+    claude: accounts.find((source) => source.account_id === store.active_account_id) ?? unavailableClaudeCapacitySource(snapshotAtMs),
+    claude_accounts: accounts,
+  };
+};
+
 const captureProviderCapacitySnapshot = async (
   options: ProviderCapacitySnapshotOptions,
   snapshotAtMs: number,
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   forceMeteredRefresh = true
 ): Promise<ProviderCapacitySnapshot> => {
   let accounts: readonly CodexCapacityAccount[] = [];
@@ -266,15 +412,18 @@ const captureProviderCapacitySnapshot = async (
   const codexPromise = Promise.all(
     ([1, 2] as const).map(async (slot) => {
       const account = accounts.find((candidate) => candidate.slot === slot);
-      return account
-        ? await fetchCodexCapacitySource(
-            account,
-            await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${account.account_id}`),
-            snapshotAtMs,
-            fetcher,
-            signal
-          )
-        : unavailableCodexSource(slot, snapshotAtMs);
+      if (!account) return unavailableCodexSource(slot, snapshotAtMs);
+      try {
+        return await fetchCodexCapacitySource(
+          account,
+          await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${account.account_id}`),
+          snapshotAtMs,
+          fetcher,
+          signal
+        );
+      } catch {
+        return unavailableCodexSource(slot, snapshotAtMs, "unreachable", null, true, codexAccountLabel(account.slot, account.email));
+      }
     })
   );
   const meteredPromise = getConfiguredMeteredQuotaSnapshot({
@@ -373,7 +522,7 @@ const unavailableView = (
   downtime_events: downtimeEvents,
 });
 
-const acquireCapacityLease = async (kv: Deno.Kv, owner: string, nowMs: number): Promise<{ acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }> => {
+const acquireCapacityLease = async (kv: Kv, owner: string, nowMs: number): Promise<{ acquired: boolean; entry: KvEntryMaybe<CapacityLease> }> => {
   const entry = await kv.get<CapacityLease>(PROVIDER_CAPACITY_LEASE_KEY);
   if (entry.value && entry.value.lease_until_ms > nowMs) return { acquired: false, entry };
   const lease: CapacityLease = { owner, lease_until_ms: nowMs + PROVIDER_CAPACITY_LEASE_MS };
@@ -392,7 +541,7 @@ const acquireCapacityLease = async (kv: Deno.Kv, owner: string, nowMs: number): 
       };
 };
 
-const releaseCapacityLease = async (kv: Deno.Kv, owner: string): Promise<void> => {
+const releaseCapacityLease = async (kv: Kv, owner: string): Promise<void> => {
   try {
     const entry = await kv.get<CapacityLease>(PROVIDER_CAPACITY_LEASE_KEY);
     if (entry.value?.owner !== owner) return;
@@ -419,7 +568,7 @@ const capacityRollupInputForHistoryPoint = (history: ProviderCapacityHistoryPoin
   };
 };
 
-const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMaybe<CapacityLease>, snapshot: ProviderCapacitySnapshot): Promise<boolean> => {
+const persistCapacitySnapshot = async (kv: Kv, leaseEntry: KvEntryMaybe<CapacityLease>, snapshot: ProviderCapacitySnapshot): Promise<boolean> => {
   const history = historyPointForSnapshot(snapshot);
   const rollupInput = capacityRollupInputForHistoryPoint(history);
   const rollupKey = providerCapacityRollupKey(rollupInput.bucket_start_at_ms);
@@ -429,7 +578,7 @@ const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMayb
     ...([1, 2] as const).map((slot) => kv.get(providerCapacityLastAvailableKey(slot), { consistency: "strong" })),
     kv.get(rollupKey, { consistency: "strong" }),
   ]);
-  const storedEntries: Deno.KvEntryMaybe<unknown>[] = [];
+  const storedEntries: KvEntryMaybe<unknown>[] = [];
   for (const result of comparisonReads.slice(0, 4)) {
     if (result.status === "rejected") return false;
     storedEntries.push(result.value);
@@ -477,7 +626,7 @@ const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMayb
   return committed.ok;
 };
 
-const waitForCapacitySnapshot = async (kv: Deno.Kv, previousSnapshotAtMs: number | null): Promise<ProviderCapacitySnapshot | null> => {
+const waitForCapacitySnapshot = async (kv: Kv, previousSnapshotAtMs: number | null): Promise<ProviderCapacitySnapshot | null> => {
   const deadline = Date.now() + PROVIDER_CAPACITY_COLD_WAIT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -532,7 +681,7 @@ const refreshProviderCapacityInternal = async (options: ProviderCapacitySnapshot
       ({
         acquired: false,
         entry: { key: PROVIDER_CAPACITY_LEASE_KEY, value: null, versionstamp: null },
-      }) as { acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }
+      }) as { acquired: boolean; entry: KvEntryMaybe<CapacityLease> }
   );
   if (!lease.acquired) {
     const coalesced = await waitForCapacitySnapshot(kv, cached?.snapshot_at_ms ?? null).catch(() => null);
@@ -602,7 +751,7 @@ export const sampleProviderCapacityOnEvent = async (options: ProviderCapacitySna
       ({
         acquired: false,
         entry: { key: PROVIDER_CAPACITY_LEASE_KEY, value: null, versionstamp: null },
-      }) as { acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }
+      }) as { acquired: boolean; entry: KvEntryMaybe<CapacityLease> }
   );
   // The event caller has no view to return. A competing live refresh owns the
   // only probe, so avoid both a duplicate probe and the old coalesced-view
@@ -644,6 +793,7 @@ export const handleProviderCapacityRollups = async (
   const windowDays = providerCapacityResearchWindowDays(new URL(request.url).searchParams.get("window_days"));
   const windowMs = windowDays * 24 * 60 * 60_000;
   const rollups = kv ? await listProviderCapacityRollups(kv, { sinceMs: Math.max(0, nowMs - windowMs), nowMs }).catch(() => null) : null;
+  const claudeRollups = await listClaudeCapacityRollups(kv, Math.max(0, nowMs - windowMs), nowMs);
   return json(
     200,
     {
@@ -656,6 +806,9 @@ export const handleProviderCapacityRollups = async (
       // A failed scan must not masquerade as an empty curve.
       rollup_scan: rollups === null ? "unavailable" : "ok",
       rollups: rollups ?? [],
+      claude_rollup_scan: claudeRollups.scan,
+      claude_rollup_truncated: claudeRollups.truncated,
+      claude_rollups: claudeRollups.points,
     },
     { "Cache-Control": "no-store" }
   );
@@ -671,6 +824,7 @@ export const handleProviderCapacity = async (
   // (retention rows only) and never touches the capacity rollups.
   const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
+  const claudeHistory = readClaudeCapacityHistory(kv, nowMs);
   const ledgerGrowth = await readPaidFallbackLedgerGrowth(kv, { nowMs, retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS });
   try {
     const live = new URL(request.url).searchParams.get("refresh") === "live";
@@ -682,17 +836,26 @@ export const handleProviderCapacity = async (
     // its bounded cold wait. A refresh that throws keeps the last known
     // snapshot; a refresh that reaches upstream but fails leaves the affected
     // source unavailable rather than fabricating a percentage.
+    const claudeRoster = await claudeCapacityRoster(kv, nowMs).catch(() => ({ claude: unavailableClaudeCapacitySource(nowMs), claude_accounts: [] }));
     const cached = await getPersistedProviderCapacityView(options).catch(() => null);
     if (!live && cached && capacityViewIsFresh(cached, safeNow(options.now ?? Date.now))) {
-      return json(200, { ...cached, prompt_cache: await promptCache, ledger_growth: ledgerGrowth }, { "Cache-Control": "no-store" });
+      return json(
+        200,
+        { ...cached, ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+        { "Cache-Control": "no-store" }
+      );
     }
     const refreshed = await refreshProviderCapacityInternal(options, live).catch(() => null);
     const view = refreshed ?? cached ?? unavailableView(Date.now(), [], [], [], []);
-    return json(200, { ...view, prompt_cache: await promptCache, ledger_growth: ledgerGrowth }, { "Cache-Control": "no-store" });
+    return json(
+      200,
+      { ...view, ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+      { "Cache-Control": "no-store" }
+    );
   } catch {
     return json(
       200,
-      { ...unavailableView(Date.now(), [], [], [], []), prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+      { ...unavailableView(Date.now(), [], [], [], []), claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
       { "Cache-Control": "no-store" }
     );
   }

@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey, KvU64 } from "#kv";
 // Prompt cache analytics read model, split out of src/prompt_cache_analytics.ts.
 
 import {
@@ -54,7 +55,7 @@ const normalizedGroupBy = (value: unknown): readonly PromptCacheAnalyticsDimensi
 /** Used by the admin boundary before it reads KV. */
 export const isValidPromptCacheAnalyticsGroupBy = (value: unknown): value is readonly PromptCacheAnalyticsDimension[] => normalizedGroupBy(value) !== null;
 
-const parsedDimensionValues = (key: Deno.KvKey): PromptCacheAnalyticsCohort | null => {
+const parsedDimensionValues = (key: KvKey): PromptCacheAnalyticsCohort | null => {
   const offset = dimensionPrefix.length;
   if (key.length !== offset + 8) return null;
   const provider = asProvider(key[offset + 1]);
@@ -83,7 +84,7 @@ const parsedDimensionValues = (key: Deno.KvKey): PromptCacheAnalyticsCohort | nu
   };
 };
 
-const counterFromDimensionKey = (key: Deno.KvKey): Counter | null => {
+const counterFromDimensionKey = (key: KvKey): Counter | null => {
   const counter = key[dimensionPrefix.length + 7];
   return isKnownCounter(counter) ? counter : null;
 };
@@ -113,7 +114,7 @@ const groupIdentity = (bucketStartAtMs: number, group: PromptCacheAnalyticsGroup
     group.cardinality_limited,
   ]);
 
-const parsedAggregateCounter = (key: Deno.KvKey): Readonly<{ bucketStartAtMs: number; counter: Counter }> | null => {
+const parsedAggregateCounter = (key: KvKey): Readonly<{ bucketStartAtMs: number; counter: Counter }> | null => {
   if (key.length !== aggregatePrefix.length + 2) return null;
   const bucketStartAtMs = key[aggregatePrefix.length];
   const counter = key[aggregatePrefix.length + 1];
@@ -121,7 +122,7 @@ const parsedAggregateCounter = (key: Deno.KvKey): Readonly<{ bucketStartAtMs: nu
   return { bucketStartAtMs, counter };
 };
 
-const parsedOverflowCounter = (key: Deno.KvKey): Readonly<{ bucketStartAtMs: number; counter: Counter }> | null => {
+const parsedOverflowCounter = (key: KvKey): Readonly<{ bucketStartAtMs: number; counter: Counter }> | null => {
   if (key.length !== overflowPrefix.length + 2) return null;
   const bucketStartAtMs = key[overflowPrefix.length];
   const counter = key[overflowPrefix.length + 1];
@@ -286,11 +287,7 @@ const accumulateCounter = (
   storedBuckets.set(identity, existing);
 };
 
-const accumulateAggregateEntry = (
-  storedBuckets: PromptCacheAnalyticsStoredBuckets,
-  entry: Deno.KvEntry<Deno.KvU64>,
-  window: PromptCacheAnalyticsWindow
-): void => {
+const accumulateAggregateEntry = (storedBuckets: PromptCacheAnalyticsStoredBuckets, entry: KvEntry<KvU64>, window: PromptCacheAnalyticsWindow): void => {
   const parsed = parsedAggregateCounter(entry.key);
   if (!parsed || !inWindow(parsed.bucketStartAtMs, window)) return;
   const value = storedCounter(entry.value);
@@ -300,7 +297,7 @@ const accumulateAggregateEntry = (
 
 const accumulateDimensionEntry = (
   storedBuckets: PromptCacheAnalyticsStoredBuckets,
-  entry: Deno.KvEntry<Deno.KvU64>,
+  entry: KvEntry<KvU64>,
   window: PromptCacheAnalyticsWindow,
   groupBy: readonly PromptCacheAnalyticsDimension[]
 ): void => {
@@ -315,11 +312,7 @@ const accumulateDimensionEntry = (
 };
 
 /** Returns true when the entry counts as cardinality-limited traffic for the view. */
-const accumulateOverflowEntry = (
-  storedBuckets: PromptCacheAnalyticsStoredBuckets,
-  entry: Deno.KvEntry<Deno.KvU64>,
-  window: PromptCacheAnalyticsWindow
-): boolean => {
+const accumulateOverflowEntry = (storedBuckets: PromptCacheAnalyticsStoredBuckets, entry: KvEntry<KvU64>, window: PromptCacheAnalyticsWindow): boolean => {
   const parsed = parsedOverflowCounter(entry.key);
   if (!parsed || !inWindow(parsed.bucketStartAtMs, window)) return false;
   const value = storedCounter(entry.value);
@@ -341,22 +334,22 @@ type PromptCacheAnalyticsStoredRead = Readonly<{
  * plus the overflow prefix that carries capped cohorts.
  */
 const readStoredBuckets = async (
-  kv: Deno.Kv,
+  kv: Kv,
   groupBy: readonly PromptCacheAnalyticsDimension[],
   window: PromptCacheAnalyticsWindow
 ): Promise<PromptCacheAnalyticsStoredRead> => {
   const storedBuckets: PromptCacheAnalyticsStoredBuckets = new Map();
   if (groupBy.length === 0) {
-    for await (const entry of kv.list<Deno.KvU64>({ prefix: aggregatePrefix })) {
+    for await (const entry of kv.list<KvU64>({ prefix: aggregatePrefix })) {
       accumulateAggregateEntry(storedBuckets, entry, window);
     }
     return { storedBuckets, cardinalityLimited: false };
   }
   let cardinalityLimited = false;
-  for await (const entry of kv.list<Deno.KvU64>({ prefix: dimensionPrefix })) {
+  for await (const entry of kv.list<KvU64>({ prefix: dimensionPrefix })) {
     accumulateDimensionEntry(storedBuckets, entry, window, groupBy);
   }
-  for await (const entry of kv.list<Deno.KvU64>({ prefix: overflowPrefix })) {
+  for await (const entry of kv.list<KvU64>({ prefix: overflowPrefix })) {
     if (accumulateOverflowEntry(storedBuckets, entry, window)) cardinalityLimited = true;
   }
   return { storedBuckets, cardinalityLimited };

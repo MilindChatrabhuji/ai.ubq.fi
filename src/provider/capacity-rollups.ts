@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 import { isRecord } from "../utils.ts";
 
 /**
@@ -109,7 +110,7 @@ export const isProviderCapacityRollupPoint = (value: unknown): value is Provider
 export const providerCapacityRollupBucketStartAtMs = (observedAtMs: number): number =>
   Math.floor(Math.max(0, observedAtMs) / PROVIDER_CAPACITY_ROLLUP_BUCKET_MS) * PROVIDER_CAPACITY_ROLLUP_BUCKET_MS;
 
-export const providerCapacityRollupKey = (bucketStartAtMs: number): Deno.KvKey => [...PROVIDER_CAPACITY_ROLLUP_PREFIX, bucketStartAtMs];
+export const providerCapacityRollupKey = (bucketStartAtMs: number): KvKey => [...PROVIDER_CAPACITY_ROLLUP_PREFIX, bucketStartAtMs];
 
 const emptyWindowSummary = (): ProviderCapacityRollupWindow => ({
   samples: 0,
@@ -183,7 +184,7 @@ export const mergeProviderCapacityRollup = (existing: ProviderCapacityRollupPoin
  * so a research query can never enumerate the whole retained history.
  */
 export const listProviderCapacityRollups = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ sinceMs: number; nowMs: number; limit?: number }>
 ): Promise<ProviderCapacityRollupPoint[]> => {
   const limit = Math.max(1, Math.min(PROVIDER_CAPACITY_ROLLUP_READ_LIMIT, Math.trunc(options.limit ?? PROVIDER_CAPACITY_ROLLUP_READ_LIMIT)));
@@ -191,8 +192,8 @@ export const listProviderCapacityRollups = async (
   const nowMs = Math.max(sinceMs, Math.trunc(options.nowMs));
   const firstBucketStartAtMs = providerCapacityRollupBucketStartAtMs(sinceMs);
   const lastBucketStartAtMs = providerCapacityRollupBucketStartAtMs(nowMs);
-  const start: Deno.KvKey = [...PROVIDER_CAPACITY_ROLLUP_PREFIX, firstBucketStartAtMs];
-  const end: Deno.KvKey = [...PROVIDER_CAPACITY_ROLLUP_PREFIX, lastBucketStartAtMs + PROVIDER_CAPACITY_ROLLUP_BUCKET_MS];
+  const start: KvKey = [...PROVIDER_CAPACITY_ROLLUP_PREFIX, firstBucketStartAtMs];
+  const end: KvKey = [...PROVIDER_CAPACITY_ROLLUP_PREFIX, lastBucketStartAtMs + PROVIDER_CAPACITY_ROLLUP_BUCKET_MS];
   const points: ProviderCapacityRollupPoint[] = [];
   // Deno KV rejects selectors that combine a prefix with both range bounds.
   for await (const entry of kv.list({ start, end }, { limit })) {

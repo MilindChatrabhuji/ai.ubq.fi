@@ -110,7 +110,7 @@ export const resolveImageBaseModel = async (): Promise<string | null> => {
   if (imageBaseModelForTest !== null) return imageBaseModelForTest;
   let configured: string | null;
   try {
-    const raw = Deno.env.get(IMAGE_BASE_MODEL_ENV)?.trim();
+    const raw = process.env[IMAGE_BASE_MODEL_ENV]?.trim();
     configured = raw && raw.length > 0 ? raw : null;
   } catch {
     configured = null;
@@ -439,8 +439,8 @@ const collectImageEditFields = (form: FormData, body: Record<string, unknown>): 
 };
 
 const selectImageEditFiles = (form: FormData): Readonly<{ ok: true; imageFiles: File[]; maskFile: File | null }> | ImageRequestFailure => {
-  const imageEntries = [...form.entries()].flatMap(([name, entry]) => (name === "image" || name === "image[]" ? [entry] : []));
-  const masks = form.getAll("mask");
+  const imageEntries: unknown[] = [...form.entries()].flatMap(([name, entry]) => (name === "image" || name === "image[]" ? [entry] : []));
+  const masks: unknown[] = form.getAll("mask");
   if (imageEntries.length === 0 || imageEntries.length > IMAGE_MAX_EDIT_INPUTS) {
     return imageRequestError(`image must contain from 1 to ${IMAGE_MAX_EDIT_INPUTS} files.`, "image");
   }

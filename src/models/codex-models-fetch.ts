@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Codex models fetching and snapshots, split out of src/codex.ts.
 
 import { type CodexModelsSnapshot, mergeCodexModelPromptCacheCapabilities, parseCodexClientVersion } from "./codex-models.ts";
@@ -392,7 +393,7 @@ export const preserveCodexDefaultModel = (snapshot: CodexModelsSnapshot, candida
   return found ? target : undefined;
 };
 
-export const loadFullCodexModelsSnapshot = async (kvOverride?: Deno.Kv | null): Promise<CodexModelsSnapshot | null> => {
+export const loadFullCodexModelsSnapshot = async (kvOverride?: Kv | null): Promise<CodexModelsSnapshot | null> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return null;
   // This optional snapshot may be unavailable while the runtime catalog still serves.

@@ -1,16 +1,18 @@
+import { statSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 /**
  * Summarize existing benchmark results without any adapter execution or
  * external inference.
  *
  * Usage (from the repository root):
- *   deno task benchmark:summary                       # aggregate benchmark-runs
- *   deno task benchmark:summary -- --runs=other-root  # another runs root
- *   deno task benchmark:summary -- --json             # JSON to stdout only
- *   deno task benchmark:summary -- --out=out/summary.json
+ *   bun run benchmark:summary                       # aggregate benchmark-runs
+ *   bun run benchmark:summary -- --runs=other-root  # another runs root
+ *   bun run benchmark:summary -- --json             # JSON to stdout only
+ *   bun run benchmark:summary -- --out=out/summary.json
  */
 
 import { aggregateResults, formatSummary } from "./metrics.ts";
-import { BenchmarkResult, DEFAULT_RUNS_ROOT, validateBenchmarkResult } from "./schemas.ts";
+import { type BenchmarkResult, DEFAULT_RUNS_ROOT, validateBenchmarkResult } from "./schemas.ts";
 
 export type SummarizeOptions = {
   runsRoot: string;
@@ -19,7 +21,7 @@ export type SummarizeOptions = {
 };
 
 export function parseSummarizeArgs(argv: string[]): SummarizeOptions | { help: true } {
-  // `deno task benchmark:summary -- args` forwards a literal "--"; accept both forms.
+  // `bun run benchmark:summary -- args` forwards a literal "--"; accept both forms.
   if (argv[0] === "--") argv = argv.slice(1);
   const opts: SummarizeOptions = { runsRoot: DEFAULT_RUNS_ROOT, jsonOnly: false, outPath: null };
   for (const arg of argv) {
@@ -32,7 +34,7 @@ export function parseSummarizeArgs(argv: string[]): SummarizeOptions | { help: t
   return opts;
 }
 
-export const SUMMARIZE_HELP = `usage: deno task benchmark:summary -- [--runs=benchmark-runs] [--json] [--out=path]
+export const SUMMARIZE_HELP = `usage: bun run benchmark:summary -- [--runs=benchmark-runs] [--json] [--out=path]
 
   --runs   runs root to scan for result.jsonl files (default: benchmark-runs)
   --json   print the aggregated summary as JSON instead of a table
@@ -42,11 +44,11 @@ export const SUMMARIZE_HELP = `usage: deno task benchmark:summary -- [--runs=ben
 export function loadResults(runsRoot: string): BenchmarkResult[] {
   const results: BenchmarkResult[] = [];
   const walk = (dir: string) => {
-    for (const entry of Deno.readDirSync(dir)) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const p = `${dir}/${entry.name}`;
-      if (entry.isDirectory) walk(p);
-      else if (entry.isFile && entry.name === "result.jsonl") {
-        const line = Deno.readTextFileSync(p)
+      if (entry.isDirectory()) walk(p);
+      else if (entry.isFile() && entry.name === "result.jsonl") {
+        const line = readFileSync(p, "utf8")
           .split("\n")
           .find((l) => l.trim() !== "");
         if (line === undefined) throw new Error(`${p}: empty result.jsonl`);
@@ -61,7 +63,7 @@ export function loadResults(runsRoot: string): BenchmarkResult[] {
 
 function existsDir(path: string): boolean {
   try {
-    return Deno.statSync(path).isDirectory;
+    return statSync(path).isDirectory();
   } catch {
     return false;
   }
@@ -69,10 +71,10 @@ function existsDir(path: string): boolean {
 
 if (import.meta.main) {
   try {
-    const parsed = parseSummarizeArgs(Deno.args);
+    const parsed = parseSummarizeArgs(process.argv.slice(2));
     if ("help" in parsed) {
       console.log(SUMMARIZE_HELP);
-      Deno.exit(0);
+      process.exit(0);
     }
     const results = loadResults(parsed.runsRoot);
     if (results.length === 0) console.error(`no result.jsonl files found under ${parsed.runsRoot}`);
@@ -81,13 +83,13 @@ if (import.meta.main) {
       console.log(JSON.stringify(summary, null, 2));
     } else {
       const outPath = parsed.outPath ?? `${parsed.runsRoot}/summary.json`;
-      Deno.writeTextFileSync(outPath, JSON.stringify(summary, null, 2) + "\n");
+      writeFileSync(outPath, JSON.stringify(summary, null, 2) + "\n");
       console.log(formatSummary(summary, true));
       console.log(`\nsummary written to ${outPath}`);
     }
   } catch (err) {
     console.error(`error: ${(err as Error).message}`);
     console.error(SUMMARIZE_HELP);
-    Deno.exit(2);
+    process.exit(2);
   }
 }

@@ -206,11 +206,11 @@ The relevant commits are:
   to perform zero KV operations and warm bounded inference to perform one read plus one atomic sum.
 - `a01fc61`, `ef003be`, and `1ebcb31` — follow-up review fixes on Jul 22; `2628c23` — **2026-07-23 03:47 EDT**,
   `fix: eliminate inference-path KV
-  exhaustion`, completing the migration-window hardening.
+exhaustion`, completing the migration-window hardening.
 - `a6d25e2` and `a8d1054` — **2026-07-23 23:16–23:22 EDT**, decoupling boot from reconciliation and making KV
   initialization lazy. These mainly reduce cold-start/background work.
 - `b63990e` — **2026-07-27 05:06 EDT**, `feat: replace API-key quota
-  accounting with V3 ledger`. This is a
+accounting with V3 ledger`. This is a
   correctness/accounting rewrite, not a pure optimization: a normal successful API-key inference now performs a policy
   read, window/request reads, a reservation CAS, dispatch reads, a dispatch CAS, and completion reads. In the current
   code that is at least seven strong `get` calls and two atomic commits writing four ledger records, before optional
@@ -219,7 +219,7 @@ The relevant commits are:
   `19f5548`, `80a1f7b`, `9aa1746`) added diagnostic and capability counters. They are observability work and can add one
   or more writes per successful request.
 - `c1bd41e` — **2026-07-29 15:39 EDT**, `perf(gateway): fast-path unlimited
-  Cerebras requests`; this is limited to
+Cerebras requests`; this is limited to
   Cerebras and does not materially change the dominant Codex path.
 
 The live Metrics dashboard supplied two same-app comparison pairs (read at 07:29–07:33 UTC on Aug 9). These are useful
