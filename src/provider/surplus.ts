@@ -316,6 +316,8 @@ export const fetchSurplusModels = async (
   }
 };
 
+export const surplusModelsSnapshot = (): SurplusModelsSnapshot | null => surplusModelsCache;
+
 export const resetSurplusModelsCacheForTest = (): void => {
   surplusModelsFetchInFlight = null;
   surplusModelsFetchGeneration += 1;
