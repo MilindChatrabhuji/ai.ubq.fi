@@ -28,6 +28,102 @@ type FixtureRun = { code: number; stdout: string; stderr: string };
 type Fixture = { root: string; script: string; env: Record<string, string>; dispose: () => Promise<void>; previous?: string };
 type DeployOptions = { write?: string; env?: Record<string, string>; fakeCommands?: string[]; script?: string; allowLn?: boolean; network?: boolean };
 
+const disposeActivationResources = async (
+  closeReservations: () => Promise<void>,
+  helperServers: Pick<HttpServer, "shutdown">[],
+  releaseFixture: () => Promise<void>
+): Promise<void> => {
+  const cleanupFailures: unknown[] = [];
+  try {
+    await closeReservations();
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  try {
+    const settled = await Promise.allSettled(helperServers.splice(0).map((server) => Promise.resolve().then(() => server.shutdown())));
+    cleanupFailures.push(...settled.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])));
+  } catch (error) {
+    cleanupFailures.push(error);
+  } finally {
+    try {
+      await releaseFixture();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+  }
+  if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "VPS fixture cleanup failed");
+};
+
+const runAndDisposeFixture = async (run: () => Promise<void>, dispose: () => Promise<void>): Promise<void> => {
+  let primaryFailure: { value: unknown } | null = null;
+  try {
+    await run();
+  } catch (error) {
+    primaryFailure = { value: error };
+  }
+  try {
+    await dispose();
+  } catch (cleanupError) {
+    if (primaryFailure) throw new AggregateError([primaryFailure.value, cleanupError], "VPS fixture test and cleanup failed", { cause: cleanupError });
+    throw cleanupError;
+  }
+  if (primaryFailure) throw primaryFailure.value;
+};
+
+test("VPS fixture cleanup settles every helper and removes the root after a shutdown rejection", async () => {
+  await mkdir(FIXTURE_PARENT, { recursive: true });
+  const directory = await mkdtemp(`${FIXTURE_PARENT}/cleanup-rejection-`);
+  const calls: string[] = [];
+  const rejected = new Error("injected helper shutdown failure");
+  const helpers = [
+    {
+      shutdown: () => {
+        calls.push("first");
+        return Promise.reject(rejected);
+      },
+    },
+    {
+      shutdown: () => {
+        calls.push("second");
+        return Promise.resolve();
+      },
+    },
+  ];
+  try {
+    await assert.rejects(
+      disposeActivationResources(
+        () => {
+          calls.push("reservations");
+          return Promise.resolve();
+        },
+        helpers,
+        async () => {
+          calls.push("root");
+          await rm(directory, { recursive: true });
+        }
+      ),
+      (error: unknown) => error instanceof AggregateError && error.errors.length === 1 && error.errors[0] === rejected
+    );
+    assert.deepEqual(calls, ["reservations", "first", "second", "root"]);
+    assert.equal(helpers.length, 0);
+    await assert.rejects(lstat(directory), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("VPS fixture cleanup retains the primary test failure alongside cleanup failures", async () => {
+  const primary = new Error("injected test failure");
+  const cleanup = new Error("injected cleanup failure");
+  await assert.rejects(
+    runAndDisposeFixture(
+      () => Promise.reject(primary),
+      () => Promise.reject(cleanup)
+    ),
+    (error: unknown) => error instanceof AggregateError && error.errors[0] === primary && error.errors[1] === cleanup
+  );
+});
+
 const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
 
 /**
@@ -372,11 +468,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   };
   const helperServers: HttpServer[] = [];
   const releaseFixture = f.dispose;
-  f.dispose = async () => {
-    await closeReservations();
-    for (const server of helperServers.splice(0)) await server.shutdown();
-    await releaseFixture();
-  };
+  f.dispose = () => disposeActivationResources(closeReservations, helperServers, releaseFixture);
   assert.notEqual(ports[0], ports[1]);
   assert.ok(!ports.includes(7999) && !ports.includes(8001));
   const record = (event: string): Promise<void> =>
@@ -555,7 +647,11 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   try {
     if (profile !== "bootstrap") await start(profile === "legacy");
   } catch (error) {
-    await f.dispose();
+    try {
+      await f.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "VPS activation and fixture cleanup failed", { cause: cleanupError });
+    }
     throw error;
   }
   const prefix = "#!/bin/sh\nset -eu\nfixture_root=" + quote(root) + "\nfixture_log=" + quote(root + "/.data/trace") + "\n";
@@ -699,11 +795,12 @@ const snapshot = async (root: string): Promise<string> => {
 const withLauncher = (name: string, run: (f: Fixture, active: Active) => Promise<void>, profile: Profile = "current"): void => {
   test(name, async () => {
     const f = await createFixture({ branch: "development", tracking: "match", relocate: true });
-    try {
-      await run(f, await prepareActivationFixture(f, profile));
-    } finally {
-      await f.dispose();
-    }
+    await runAndDisposeFixture(
+      async () => {
+        await run(f, await prepareActivationFixture(f, profile));
+      },
+      () => f.dispose()
+    );
   });
 };
 withLauncher("VPS actual rollback and persistent/cleared same-SHA retry preserve immutable bytes", async (f, a) => {
