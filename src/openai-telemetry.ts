@@ -833,8 +833,8 @@ export const recordRequestUsage = (
   return Promise.resolve();
 };
 
-export const recordCompletionUsage = (context: UsageContext | undefined, usage: UsageTokens | null): Promise<void> => {
-  recordTerminalUsage(context, usage, true);
+export const recordCompletionUsage = (context: UsageContext | undefined, usage: UsageTokens | null, completed = true): Promise<void> => {
+  recordTerminalUsage(context, usage, completed);
   return Promise.resolve();
 };
 
