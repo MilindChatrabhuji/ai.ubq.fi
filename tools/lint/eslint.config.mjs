@@ -309,6 +309,17 @@ export default tsEslint.config(
     rules: { "sonarjs/code-eval": "off" },
   },
   {
+    // DIVERGENCE: the bridge regression evaluates only its tracked, transpiled
+    // driver graph in a fixture VM with Bun absent and fake command/runtime
+    // capabilities. The real OS fixture network boundary remains in force;
+    // no user source, credentials or provider calls enter the realm.
+    // Measured 2026-10-18: all 10 bridge cases pass, including verified-runtime
+    // preparation and corrupt-runtime/archive refusal. code-eval flags the
+    // intentional SourceTextModule construction; keep this one-file exception.
+    files: ["ops/tests/vps-bridge-host.test.ts"],
+    rules: { "sonarjs/code-eval": "off" },
+  },
+  {
     // ---------------------------------------------------------------------
     // DELIBERATE-BY-DESIGN exemptions. These tests assert that the gateway
     // rejects or relays fake credentials, so the credential-shaped values are

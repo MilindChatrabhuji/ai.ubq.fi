@@ -5,6 +5,13 @@
 // the namespace separate makes the chart additive and never changes a local
 // probe, lease, reset event, or routing decision.
 //
+// The companion sends closed fifteen-minute bucket points plus immutable
+// same-bucket transitions: at most 672 ordinary points per host in the seven-day
+// read window, not every live refresh. Rows expire seven days after ingestion;
+// reads also exclude buckets older than seven days. Pre-existing intermediate
+// samples age out under that same TTL. There is no additional hard per-host cap,
+// which would discard genuine transition evidence during a busy week.
+//
 // The receiving gateway's own history stays canonical. A pushed sample only
 // fills a fifteen-minute bucket the receiver did not observe, and only when the
 // sample shows every configured Codex account available under the same slot
