@@ -846,7 +846,7 @@ test("the Providers tab renders a provider picker next to the Analytics tab", ()
   // The routing contract the panel has to explain: nothing checked is a removed
   // filter, not a gateway with every provider switched off.
   assert.match(adminHtml, /Saving an empty selection removes the filter/);
-  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| providersSelectionIsEmpty\(\)/);
+  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| !providersHasActiveTier\(\)/);
   assert.match(adminScript, /providersEmptyWarning/);
   // The waterfall order is fixed, so the picker must never claim to reorder it.
   assert.match(adminHtml, /The waterfall order itself never changes/);
@@ -911,6 +911,10 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
         updated_at_ms: 1,
       });
     },
+    refreshLithos: (options) => {
+      calls.push(`lithos:${options?.force === true ? "force" : "plain"}`);
+      return Promise.resolve({ models: [{ id: "deepseek-ai/DeepSeek-V4.1-Flash", created: 4 }], updated_at_ms: 4 });
+    },
     refreshSurplus: (options) => {
       calls.push(`surplus:${options?.force === true ? "force" : "plain"}`);
       return Promise.resolve({
@@ -928,13 +932,14 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
   const body = await response.json();
   assert.deepEqual(
     [...calls].sort((left, right) => left.localeCompare(right)),
-    ["claude:force", "openlux:force", "openrouter", "surplus:force"],
+    ["claude:force", "lithos:force", "openlux:force", "openrouter", "surplus:force"],
     "every upstream is force-refreshed"
   );
   assert.deepEqual(body.data, {
     openrouter: { upstream_models: 3, updated_at_ms: 1_789_000_000_000, refreshed: true },
     openlux: { models: 2, updated_at_ms: 1 },
     surplus: { models: 3, updated_at_ms: 2 },
+    lithos: { models: 1, updated_at_ms: 4, refreshed: true },
     claude_code: { models: 1, updated_at_ms: 3, status: "available", stale: false },
   });
 });
