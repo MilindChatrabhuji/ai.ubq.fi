@@ -387,12 +387,8 @@ test("POST /v1/live answers 502 when the upstream call-creation route is unreach
 }, 300_000);
 
 test("POST /v1/live retries a credential failure once with the next eligible account", async () => {
-  let fixture: LiveCallsFixture | null = null;
-  fixture = await startLiveCallsFixture(async (accountId) => {
+  const fixture = await startLiveCallsFixture((accountId) => {
     if (accountId !== ACCOUNT_A) return acceptedAnswer();
-    // The failing account leaves the pool while its rejection is in flight,
-    // so the retry's strong reselection has exactly one eligible account.
-    await fixture?.setAuthPool([codexAccount(ACCOUNT_B, Date.now())]);
     return Response.json({ detail: "credential expired" }, { status: 401 });
   });
   try {
@@ -415,7 +411,9 @@ test("POST /v1/live retries a credential failure once with the next eligible acc
 }, 300_000);
 
 test("POST /v1/live relays an upstream credential failure verbatim when no other account is eligible", async () => {
-  const fixture = await startLiveCallsFixture(() => Response.json({ detail: "credential expired" }, { status: 401 }));
+  const fixture = await startLiveCallsFixture(() => Response.json({ detail: "credential expired" }, { status: 401 }), {
+    accounts: [codexAccount(ACCOUNT_A, Date.now())],
+  });
   try {
     const response = await postLiveCall(fixture);
     const body = await response.text();

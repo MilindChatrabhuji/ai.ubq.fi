@@ -1,8 +1,11 @@
 import { test } from "bun:test";
 import type { NetAddr } from "#http";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 import { authenticateAdmin, authenticateClient, handleV1Auth } from "../src/auth/index.ts";
+import { config } from "../src/config.ts";
 import {
   configureAdminAuthForListener,
   configureAdminAuthPeerForRequest,
@@ -252,5 +255,100 @@ test("a concurrent LAN request cannot inherit a loopback peer", async () => {
     assert.equal((await authenticateClient(localRequest)).ok, true);
   } finally {
     configureAdminAuthForListener(disabledOptions, tcpAddress("127.0.0.1"));
+  }
+});
+
+// The production VPS (scripts/serve-vps.ts, DENO_TIMELINE=production) serves
+// Caddy-proxied public traffic on its loopback listener, so a request addressed
+// to that listener is not a local developer and must never authenticate as
+// `disabled` through the hostname-only development fallback (#262).
+const LOOPBACK_LISTENER_ORIGINS = ["http://127.0.0.1:7999", "http://localhost:7999", "http://[::1]:7999"];
+
+const unauthenticatedResponsesRequest = (origin: string): Request =>
+  new Request(origin + "/v1/responses", { method: "POST", headers: { "content-type": "application/json" }, body: '{"input":"hi"}' });
+
+const withProductionTimeline = async (enabled: boolean, run: () => Promise<void>): Promise<void> => {
+  const mutable = config as { isProductionTimeline: boolean };
+  const previous = mutable.isProductionTimeline;
+  mutable.isProductionTimeline = enabled;
+  try {
+    await run();
+  } finally {
+    mutable.isProductionTimeline = previous;
+  }
+};
+
+test("a development checkout keeps the loopback hostname client-auth bypass", async () => {
+  assert.equal(config.isDeploy, false);
+  await withProductionTimeline(false, async () => {
+    for (const origin of LOOPBACK_LISTENER_ORIGINS) {
+      const result = await authenticateClient(unauthenticatedResponsesRequest(origin));
+      assert.equal(result.ok, true, origin);
+      assert.equal(result.method.kind, "disabled", origin);
+    }
+    const whoami = await handleV1Auth(new Request("http://127.0.0.1:7999/uos/auth"));
+    assert.equal(whoami.status, 200);
+    assert.equal((await whoami.json()).auth.mode, "disabled");
+  });
+});
+
+test("the production VPS timeline refuses unauthenticated loopback client requests", async () => {
+  assert.equal(config.isDeploy, false);
+  await withProductionTimeline(true, async () => {
+    for (const origin of LOOPBACK_LISTENER_ORIGINS) {
+      const result = await authenticateClient(unauthenticatedResponsesRequest(origin));
+      assert.equal(result.ok, false, origin);
+      assert.equal(result.response.status, 401, origin);
+    }
+    const whoami = await handleV1Auth(new Request("http://127.0.0.1:7999/uos/auth"));
+    assert.equal(whoami.status, 401);
+  });
+});
+
+type TimelineProbe = Readonly<{ isDeploy: boolean; isProductionTimeline: boolean; ok: boolean; method: string | null; status: number | null }>;
+
+/** Loads config and client auth in a fresh process whose only timeline input is `DENO_TIMELINE`. */
+const probeLoopbackClientAuth = async (timeline: string | null): Promise<TimelineProbe> => {
+  const module = (path: string): string => JSON.stringify(new URL(path, import.meta.url).href);
+  const source = [
+    `const { setKvForTest } = await import(${module("../src/kv.ts")});`,
+    `const { config } = await import(${module("../src/config.ts")});`,
+    `const { authenticateClient } = await import(${module("../src/auth/index.ts")});`,
+    "setKvForTest(null);",
+    'const result = await authenticateClient(new Request("http://127.0.0.1:7999/v1/responses", { method: "POST", body: "{}" }));',
+    "console.log(JSON.stringify({ isDeploy: config.isDeploy, isProductionTimeline: config.isProductionTimeline, ok: result.ok, method: result.ok ? result.method.kind : null, status: result.ok ? null : result.response.status }));",
+  ].join("\n");
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
+  if (timeline !== null) env.DENO_TIMELINE = timeline;
+  const child = Bun.spawn([process.execPath, "--no-env-file", "--no-install", "-e", source], {
+    cwd: fileURLToPath(new URL("../", import.meta.url)),
+    env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+  });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  assert.equal(code, 0, stderr);
+  return JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as TimelineProbe;
+};
+
+test("DENO_TIMELINE=production disables the loopback hostname client-auth bypass at startup", async () => {
+  assert.deepEqual(await probeLoopbackClientAuth("production"), { isDeploy: false, isProductionTimeline: true, ok: false, method: null, status: 401 });
+  assert.deepEqual(await probeLoopbackClientAuth(null), { isDeploy: false, isProductionTimeline: false, ok: true, method: "disabled", status: null });
+});
+
+test("the VPS entrypoint requires the production timeline and never enables a loopback auth bypass", async () => {
+  const source = await readFile(new URL("../scripts/serve-vps.ts", import.meta.url), "utf8");
+  assert.match(source, /if \(process\.env\.DENO_TIMELINE !== "production"\) throw /);
+  for (const enabler of [
+    "configureAdminAuthForListener",
+    "configureMacLocalAdminAuthBypassForListener",
+    "configureAdminAuthPeerForRequest",
+    "configureLoopbackServeRuntime",
+    "--disable-admin-auth",
+    "auth/local-admin",
+  ]) {
+    assert.equal(source.includes(enabler), false, enabler);
   }
 });

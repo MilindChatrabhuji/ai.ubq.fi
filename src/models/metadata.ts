@@ -216,19 +216,22 @@ export const resolveModelMetadata = (modelId: string, sources: ModelMetadataSour
   const subscription = sources.codexSubscription ?? null;
   const provider = sources.provider ?? null;
   const enrichment = openRouter ? openRouterHint(openRouter) : null;
+  // Once the uploaded endpoint declares a window, its subscription bound is
+  // only a fallback and must not participate as a wider peer candidate.
+  const subscriptionFallback = hintWindow(codex) === null ? subscription : null;
 
   const resolvedWindow = windowFrom([
     ["openrouter", hintWindow(enrichment)],
     ["codex_upload", hintWindow(codex)],
     ["provider_discovery", hintWindow(provider)],
-    ["codex_subscription", hintWindow(subscription)],
+    ["codex_subscription", hintWindow(subscriptionFallback)],
   ]);
   const contextWindow = resolvedWindow.tokens;
   const declaredMaxWindow = windowFrom([
     ["openrouter", positiveTokenCount(enrichment?.max_context_window_tokens)],
     ["codex_upload", positiveTokenCount(codex?.max_context_window_tokens)],
     ["provider_discovery", positiveTokenCount(provider?.max_context_window_tokens)],
-    ["codex_subscription", positiveTokenCount(subscription?.max_context_window_tokens)],
+    ["codex_subscription", positiveTokenCount(subscriptionFallback?.max_context_window_tokens)],
   ]).tokens;
   const declaredAutoCompact = firstTokenCount(codex?.auto_compact_token_limit_tokens, provider?.auto_compact_token_limit_tokens);
   const declaredPercent = codex?.effective_context_window_percent ?? provider?.effective_context_window_percent;

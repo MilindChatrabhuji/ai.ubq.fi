@@ -40,6 +40,13 @@ request.
 > stand is the claim that the narration symptom is frequent, and any model-versus-gateway contrast drawn from those
 > rates. Read the rest of this document for the terminal-truthfulness program, not for the narration diagnosis.
 
+> **Qualified on 2026-10-16 (#603): the artifact conclusion above is unverified, not established.** The reconciliation
+> it cites never states the 13:26–13:56 UTC window these counts are scoped to, and its counterexamples are followed by
+> a tool call, so the classifier defined below counts them as negatives; the 76% figure measures the bare phrase match,
+> not that classifier. No recount applying the classifier inside the window is recorded, so the counts are neither
+> reproduced nor shown to be an artifact, and still must not be quoted as a rate. See the qualified measurement-artifact
+> correction in `docs/DECISIONS.md`.
+
 ## Diagnosed condition
 
 A long-running agent on the responses path frequently believes its turn completed mid-task. The measured shape is that
