@@ -274,6 +274,12 @@ const claudeWorkspaceSave = mustGet("claude-workspace-save");
 const claudeCredentialClear = mustGet("claude-credential-clear");
 const claudeQuotaClear = mustGet("claude-quota-clear");
 const claudeSubscriptionStatus = mustGet("claude-subscription-status");
+const claudeAccountSelect = mustGet("claude-account-select");
+const claudeAccountActivate = mustGet("claude-account-activate");
+const claudeAccountLabel = mustGet("claude-account-label");
+const claudeAccessInput = mustGet("claude-access-input");
+const claudeAccessSource = mustGet("claude-access-source");
+const claudeAccessSave = mustGet("claude-access-save");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -1215,6 +1221,13 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
           : "Not observed"
     );
   } else if (source.source === "claude_code") {
+    appendProviderFact(facts, "Local account", source.account_id ?? "Legacy singleton");
+    appendProviderFact(facts, "Credential cohort", source.account_cohort_id ?? "Not recorded");
+    appendProviderFact(
+      facts,
+      "Active subscription",
+      typeof provider?.active === "boolean" ? (provider.active ? "Yes" : "No") : "Unknown"
+    );
     appendProviderFact(facts, "Credential", claudeCapacityCredentialLabel(source));
     appendProviderFact(facts, "Credential source", claudeCredentialSourceLabel(provider?.credential?.source));
     appendProviderFact(facts, "Credential hint", provider?.credential?.hint ?? "Not configured");
@@ -1365,7 +1378,11 @@ const renderCodexCapacitySource = (source, provider = null) => {
       codexResetSaving.delete(setting.account_id_hash);
       codexResetSettingsRevision++;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+        renderProviderCapacityList(
+          latestProviderCapacityChartState.sources,
+          latestProviderCapacityChartState.claude,
+          latestProviderCapacityChartState.claudeAccounts
+        );
       }
       input.disabled = false;
       if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
@@ -1427,7 +1444,11 @@ const renderCodexCapacitySource = (source, provider = null) => {
       codexOverageSaving.delete(overageSetting.account_id_hash);
       codexOverageSettingsRevision++;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+        renderProviderCapacityList(
+          latestProviderCapacityChartState.sources,
+          latestProviderCapacityChartState.claude,
+          latestProviderCapacityChartState.claudeAccounts
+        );
       }
       overageInput.disabled = false;
       if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
@@ -1476,12 +1497,28 @@ const renderClaudeCapacitySource = (source) => {
   const row = document.createElement("div");
   row.dataset.capacitySource = "claude_code";
   row.dataset.state = source.state;
+  if (typeof source.account_id === "string") row.dataset.capacityAccountId = source.account_id;
   row.setAttribute("role", "listitem");
+
+  const account = (latestClaudeSubscription?.accounts ?? []).find(
+    (entry) => entry.account_id === source.account_id && entry.account_cohort_id === source.account_cohort_id
+  );
+  const provider = account
+    ? {
+        ...account,
+        enabled: latestClaudeSubscription.enabled,
+        principal_allowlist_configured: latestClaudeSubscription.principal_allowlist_configured,
+      }
+    : source.account_id
+      ? null
+      : (latestClaudeSubscription ?? latestProviderHealth?.claude_code);
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
   title.textContent =
     typeof source.label === "string" && source.label.trim() ? source.label.trim() : "Claude subscription";
+  if (source.account_id)
+    title.textContent += ` · ${account?.label || source.account_id.slice(0, 8)}${account?.active ? " · Active" : ""}`;
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
@@ -1494,25 +1531,39 @@ const renderClaudeCapacitySource = (source) => {
   renderCapacityWindow(windows, "Weekly window", claudeCapacityWindowForDisplay(source.windows?.seven_day));
   row.append(windows);
 
-  appendCapacitySourceMeta(row, source, latestClaudeSubscription ?? latestProviderHealth?.claude_code);
+  appendCapacitySourceMeta(row, source, provider);
   return row;
 };
 
-const renderProviderCapacityList = (sources, claude = null) => {
-  const expanded = Array.from(providerCapacityList.children, (row) => row.querySelector("details")?.open === true);
+const claudeCapacitySourcesForDisplay = (claude, claudeAccounts) =>
+  (Array.isArray(claudeAccounts) ? claudeAccounts : [claude]).filter(
+    (source) => source && typeof source === "object" && source.source === "claude_code"
+  );
+
+const renderProviderCapacityList = (sources, claude = null, claudeAccounts = null) => {
+  const expanded = new Map(
+    Array.from(providerCapacityList.children, (row) => [
+      row.dataset.capacityKey,
+      row.querySelector("details")?.open === true,
+    ])
+  );
   providerCapacityList.replaceChildren();
   for (const source of sources) {
-    providerCapacityList.appendChild(renderCodexCapacitySource(source, providerForCodexSlot(source.slot)));
+    const row = renderCodexCapacitySource(source, providerForCodexSlot(source.slot));
+    row.dataset.capacityKey = `codex:${source.slot}:${source.account_cohort_id ?? "unknown"}`;
+    providerCapacityList.appendChild(row);
   }
-  // The Claude subscription mirrors the Codex rows inside the same list, so the
-  // Analytics view shows every subscription tier in one place.
-  if (claude && typeof claude === "object" && claude.source === "claude_code") {
-    providerCapacityList.appendChild(renderClaudeCapacitySource(claude));
+  // New servers supply every configured account. Old servers retain the single
+  // active row fallback; never append that projection a second time.
+  for (const source of claudeCapacitySourcesForDisplay(claude, claudeAccounts)) {
+    const row = renderClaudeCapacitySource(source);
+    row.dataset.capacityKey = `claude_code:${source.account_id ?? "legacy"}`;
+    providerCapacityList.appendChild(row);
   }
-  Array.from(providerCapacityList.children).forEach((row, index) => {
+  for (const row of providerCapacityList.children) {
     const details = row.querySelector("details");
-    if (details) details.open = expanded[index] === true;
-  });
+    if (details) details.open = expanded.get(row.dataset.capacityKey) === true;
+  }
 };
 
 const unavailableCodexCapacitySource = (slot) => ({
@@ -1558,6 +1609,150 @@ const CAPACITY_CHART_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 const CAPACITY_CHART_SERIES = [{ key: "available-capacity", label: "Codex capacity", source: "aggregate" }];
+const CLAUDE_CAPACITY_CHART_SERIES = [
+  { key: "claude-five-hour", label: "Claude 5-hour", window: "five_hour" },
+  { key: "claude-seven-day", label: "Claude weekly", window: "seven_day" },
+];
+let selectedClaudeHistoryAccountId = null;
+
+/** Raw observed points only: never reuse a live value at browser-now. */
+const claudeCapacityChartPoints = (view, accountId, windowId, interval) => {
+  const samples = (Array.isArray(view?.points) ? view.points : [])
+    .filter((point) => point?.account_id === accountId)
+    .sort(
+      (left, right) =>
+        (left.source_observed_at_ms ?? left.sampled_at_ms) - (right.source_observed_at_ms ?? right.sampled_at_ms)
+    );
+  const points = [];
+  let previous = null;
+  for (const sample of samples) {
+    const window = sample.windows?.[windowId];
+    const observedAt = window?.observed_at_ms;
+    if (
+      typeof observedAt !== "number" ||
+      !Number.isFinite(observedAt) ||
+      typeof window?.used_percent !== "number" ||
+      !Number.isFinite(window.used_percent) ||
+      observedAt < interval.startAtMs ||
+      observedAt > interval.resetAtMs
+    ) {
+      points.push(null);
+      previous = null;
+      continue;
+    }
+    const boundary =
+      !previous ||
+      sample.account_cohort_id !== previous.sample.account_cohort_id ||
+      sample.credential_kind !== previous.sample.credential_kind ||
+      sample.workspace_id !== previous.sample.workspace_id ||
+      window.reset_at_ms === null ||
+      window.reset_at_ms !== previous.window.reset_at_ms ||
+      observedAt <= previous.observedAt ||
+      observedAt - previous.observedAt > (view.stale_after_ms ?? 30 * 60_000) ||
+      sample.bucket_start_at_ms - previous.sample.bucket_start_at_ms > CAPACITY_CHART_BUCKET_MS ||
+      sample.state === "unavailable" ||
+      previous.sample.state === "unavailable";
+    if (boundary) points.push(null);
+    points.push({
+      elapsedPercent: clampCapacityChartPercent(((observedAt - interval.startAtMs) / interval.durationMs) * 100),
+      remainingPercent: clampCapacityChartPercent(100 - window.used_percent),
+      sample,
+      window,
+      observedAt,
+    });
+    previous = { sample, window, observedAt };
+  }
+  return points;
+};
+
+const renderClaudeHistorySelector = (header, snapshot) => {
+  const view = snapshot?.claude_history;
+  const accounts = new Map(
+    (latestClaudeSubscription?.accounts ?? []).map((account) => [
+      account.account_id,
+      account.label || account.account_id,
+    ])
+  );
+  for (const point of Array.isArray(view?.points) ? view.points : [])
+    if (typeof point?.account_id === "string" && !accounts.has(point.account_id))
+      accounts.set(point.account_id, `Retained account ${point.account_id}`);
+  if (selectedClaudeHistoryAccountId === null || (selectedClaudeHistoryAccountId === "" && accounts.size))
+    selectedClaudeHistoryAccountId = latestClaudeSubscription?.active_account_id ?? accounts.keys().next().value ?? "";
+  if (selectedClaudeHistoryAccountId && !accounts.has(selectedClaudeHistoryAccountId))
+    accounts.set(selectedClaudeHistoryAccountId, `Retained account ${selectedClaudeHistoryAccountId}`);
+  const label = document.createElement("label");
+  label.dataset.capacityClaudeFilter = "";
+  const text = document.createElement("span");
+  text.textContent = "Claude history account";
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", "Claude history account (view only)");
+  if (!accounts.size) {
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "Waiting for account observations";
+    select.appendChild(empty);
+  }
+  for (const [id, name] of accounts) {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+  select.value = selectedClaudeHistoryAccountId;
+  select.addEventListener("change", () => {
+    selectedClaudeHistoryAccountId = select.value;
+    const state = latestProviderCapacityChartState;
+    if (state) renderProviderCapacityChart(state.snapshot, state.sources, state.fiveXxBuckets);
+  });
+  label.append(text, select);
+  header.appendChild(label);
+};
+
+const renderClaudeHistoryPaths = (svg, snapshot, interval, plot) => {
+  for (const series of CLAUDE_CAPACITY_CHART_SERIES) {
+    const points = claudeCapacityChartPoints(
+      snapshot?.claude_history,
+      selectedClaudeHistoryAccountId,
+      series.window,
+      interval
+    );
+    const path = capacityChartSvgElement("path", {
+      d: capacityChartPath(points, plot, { anchorStart: false, anchorEnd: false }),
+      fill: "none",
+      role: "img",
+      "aria-label": `${series.label}, observed remaining capacity, gaps are unknown`,
+    });
+    path.dataset.capacitySeries = series.key;
+    svg.appendChild(path);
+    for (const point of points.filter(Boolean).slice(-200)) {
+      const circle = capacityChartSvgElement("circle", {
+        cx: plot.left + (point.elapsedPercent / 100) * plot.width,
+        cy: plot.top + ((100 - point.remainingPercent) / 100) * plot.height,
+        r: 2,
+      });
+      circle.dataset.capacityClaudePoint = series.key;
+      const title = capacityChartSvgElement("title");
+      title.textContent = `${series.label} · ${quotaPercentFormatter.format(point.remainingPercent)}% remaining · ${point.sample.account_id} · cohort ${point.sample.account_cohort_id} · headers observed ${formatCapacityTimestamp(point.observedAt)} · sampled ${formatCapacityTimestamp(point.sample.sampled_at_ms)} · ${point.sample.state} · reset ${formatCapacityTimestamp(point.window.reset_at_ms)}`;
+      circle.appendChild(title);
+      svg.appendChild(circle);
+    }
+  }
+};
+
+const claudeHistorySummary = (snapshot, nowMs) => {
+  const view = snapshot?.claude_history;
+  if (!view || view.scan !== "ok") return "Claude history unavailable; no capacity inferred.";
+  const points = (Array.isArray(view.points) ? view.points : []).filter(
+    (point) => point.account_id === selectedClaudeHistoryAccountId
+  );
+  if (!points.length)
+    return `Claude history: waiting for actual upstream quota observations; no backfill.${view.truncated ? " INCOMPLETE: scan truncated." : ""}`;
+  const times = points
+    .map((point) => point.source_observed_at_ms)
+    .filter((time) => typeof time === "number" && Number.isFinite(time));
+  const last = times.length ? Math.max(...times) : null;
+  return `Claude: ${points.length} retained observations · headers last observed ${formatCapacityTimestamp(last)}${last === null ? " · observation time unknown" : nowMs - last > view.stale_after_ms ? " · stale" : ""}${view.truncated ? " · INCOMPLETE: scan truncated" : ""} · downsampled to at most 6 events per 15-minute account/cohort bucket; latest 200 markers per window. Observed is gateway header receipt, not the provider clock. Gaps and reset/cohort changes are not interpolated.`;
+};
 
 const capacityChartFailureIsDowntime = (source) =>
   source?.source === "codex" &&
@@ -2488,6 +2683,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   range.dataset.capacityChartRange = "";
   range.textContent = "7 days";
   chartHeader.append(title, range);
+  renderClaudeHistorySelector(chartHeader, snapshot);
   figure.appendChild(chartHeader);
 
   const legend = document.createElement("div");
@@ -2496,6 +2692,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   for (const series of [
     { key: "cached-input", label: "Cached input share" },
     ...CAPACITY_CHART_SERIES,
+    ...CLAUDE_CAPACITY_CHART_SERIES,
     { key: "rate-limit-reset", label: "Reset" },
     { key: "openai-downtime", label: "Downtime" },
     { key: "inference-error", label: "Errors (5xx)" },
@@ -2521,7 +2718,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     preserveAspectRatio: "xMinYMin meet",
     role: "img",
     "aria-label":
-      "Codex provider capacity lines and cached input percentage bars over the trailing seven days, including rate-limit resets, provider downtime, and failed inference response markers",
+      "Observed Codex and Claude provider capacity and cached input percentage over seven days; missing Claude observations and identity/reset gaps are not interpolated",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
@@ -2873,6 +3070,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   chartScroll.tabIndex = 0;
   chartScroll.setAttribute("role", "region");
   chartScroll.setAttribute("aria-label", "Scrollable seven-day provider analytics history");
+  renderClaudeHistoryPaths(svg, snapshot, chartWindow, plot);
   chartScroll.appendChild(svg);
 
   const chartScrollControls = document.createElement("div");
@@ -3054,6 +3252,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`
     : `No retained capacity samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`;
   details.appendChild(caption);
+  const claudeCaption = document.createElement("p");
+  claudeCaption.dataset.capacityClaudeHistory = "";
+  claudeCaption.textContent = claudeHistorySummary(snapshot, nowMs);
+  details.appendChild(claudeCaption);
   figure.appendChild(details);
   providerCapacityChart.replaceChildren(figure);
   restoreCapacityChartScroll(chartScroll, chartWindow, plot);
@@ -3117,14 +3319,16 @@ const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
     unavailableCodexCapacitySource(slot);
   const sources = [sourceForSlot(1), sourceForSlot(2)];
   const claude = snapshot?.claude && typeof snapshot.claude === "object" ? snapshot.claude : null;
-  latestProviderCapacityChartState = { snapshot, sources, claude, fiveXxBuckets };
+  const claudeAccounts = Array.isArray(snapshot?.claude_accounts) ? snapshot.claude_accounts : null;
+  latestProviderCapacityChartState = { snapshot, sources, claude, claudeAccounts, fiveXxBuckets };
   renderProviderCapacityChart(snapshot, sources, fiveXxBuckets);
-  renderProviderCapacityList(sources, claude);
+  renderProviderCapacityList(sources, claude, claudeAccounts);
 
-  const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
-  const staleCount = sources.filter((source) => source.state === "stale").length;
+  const displayedSources = [...sources, ...claudeCapacitySourcesForDisplay(claude, claudeAccounts)];
+  const unavailableCount = displayedSources.filter((source) => source.state === "unavailable").length;
+  const staleCount = displayedSources.filter((source) => source.state === "stale").length;
   const cacheAnalyticsUnavailable = snapshot?.prompt_cache?.status !== "ready";
-  if (unavailableCount === sources.length) {
+  if (unavailableCount === displayedSources.length) {
     setBadge(providerCapacityBadge, "unknown", "Quota unavailable");
   } else if (unavailableCount > 0) {
     setBadge(providerCapacityBadge, "unknown", `Partial quota · ${unavailableCount} unavailable`);
@@ -3215,6 +3419,9 @@ globalThis.addEventListener("resize", scheduleProviderCapacityChartResize);
  */
 let latestClaudeSubscription = null;
 let claudeSubscriptionBusy = false;
+let selectedClaudeAccountId = null;
+let claudeAccessDirty = false;
+const claudeAccountDrafts = new Map();
 
 const claudeCredentialSourceLabel = (source) => {
   if (source === "kv") return "Stored in KV";
@@ -3223,156 +3430,251 @@ const claudeCredentialSourceLabel = (source) => {
   return source ? String(source) : "Not configured";
 };
 
+const selectedClaudeAccount = () =>
+  latestClaudeSubscription?.accounts?.find((account) => account.account_id === selectedClaudeAccountId) ?? null;
+const claudeAccountTarget = () =>
+  selectedClaudeAccountId
+    ? { account_id: selectedClaudeAccountId }
+    : selectedClaudeAccountId === ""
+      ? { create_new: true, activate: false }
+      : {};
+
+const setClaudeSubscriptionBusy = (busy) => {
+  claudeSubscriptionBusy = busy;
+  const blocked = busy || !latestClaudeSubscription;
+  for (const button of [
+    claudeCredentialSave,
+    claudeWorkspaceSave,
+    claudeCredentialClear,
+    claudeQuotaClear,
+    claudeAccountActivate,
+    claudeAccessSave,
+  ])
+    button.disabled = blocked;
+  claudeAccountSelect.disabled = blocked || !Array.isArray(latestClaudeSubscription?.accounts);
+  const account = selectedClaudeAccount();
+  const legacy = !Array.isArray(latestClaudeSubscription?.accounts);
+  claudeAccountActivate.disabled = blocked || !account || account.active;
+  claudeCredentialSave.disabled = blocked || (!legacy && Boolean(selectedClaudeAccountId) && !account);
+  claudeWorkspaceSave.disabled = blocked || (!account && !legacy);
+  claudeCredentialClear.disabled = blocked || (!account && !legacy);
+  claudeQuotaClear.disabled = blocked || (!account && !legacy);
+  claudeAccessSave.disabled = blocked || !latestClaudeSubscription?.access;
+  claudeAccessInput.disabled = blocked || !latestClaudeSubscription?.access;
+};
+
 const renderClaudeSubscriptionControls = () => {
   if (!latestClaudeSubscription) {
     claudeCredentialSummary.textContent = "Credential status unavailable.";
+    setClaudeSubscriptionBusy(claudeSubscriptionBusy);
     return;
   }
-  const credential = latestClaudeSubscription?.credential;
-  const workspace = latestClaudeSubscription?.workspace;
+  const accounts = Array.isArray(latestClaudeSubscription.accounts) ? latestClaudeSubscription.accounts : null;
+  if (accounts && selectedClaudeAccountId === null)
+    selectedClaudeAccountId = latestClaudeSubscription.active_account_id ?? accounts[0]?.account_id ?? "";
+  const options = [];
+  for (const account of accounts ?? []) {
+    const option = document.createElement("option");
+    option.value = account.account_id;
+    option.textContent = `${account.label || account.account_id}${account.active ? " · active" : ""}`;
+    options.push(option);
+  }
+  if (selectedClaudeAccountId && !accounts?.some((account) => account.account_id === selectedClaudeAccountId)) {
+    const removed = document.createElement("option");
+    removed.value = selectedClaudeAccountId;
+    removed.textContent = "Account no longer present — choose another account";
+    options.push(removed);
+  }
+  const newOption = document.createElement("option");
+  newOption.value = "";
+  newOption.textContent = accounts ? "Add account" : "Current credential (legacy server)";
+  options.push(newOption);
+  claudeAccountSelect.replaceChildren(...options);
+  claudeAccountSelect.value = selectedClaudeAccountId ?? "";
+  const selected = selectedClaudeAccount();
+  const credential = accounts ? selected?.credential : latestClaudeSubscription.credential;
+  const workspace = accounts ? selected?.workspace : latestClaudeSubscription.workspace;
   claudeCredentialSummary.textContent = credential
-    ? `${claudeCredentialSourceLabel(credential.source)} · ${credential.hint ?? "Configured"}${
-        credential.updated_at_ms ? ` · ${formatDate(credential.updated_at_ms)}` : ""
-      }${workspace?.id ? ` · Workspace ${workspace.id}` : ""}`
-    : "No credential configured.";
+    ? `${claudeCredentialSourceLabel(credential.source)} · ${credential.kind === "api_key" ? "Console API key" : "OAuth subscription"} · ${credential.hint ?? "Configured"}${workspace?.id ? ` · Workspace ${workspace.id}` : ""}${selected?.active ? ` · Active: ${latestClaudeSubscription.active_reason ?? "selected"}` : ""}`
+    : selectedClaudeAccountId === ""
+      ? "New local account; import does not activate it or grant access."
+      : "No credential configured.";
+  const access = latestClaudeSubscription.access;
+  if (!claudeAccessDirty)
+    claudeAccessInput.value = Array.isArray(access?.allowed_key_ids) ? access.allowed_key_ids.join("\n") : "";
+  claudeAccessSource.textContent = access
+    ? `Access source: ${access.source === "kv" ? "stored policy" : "environment"} · ${access.allowed_key_ids?.length ?? 0} allowed key IDs. Empty denies everyone.`
+    : "Access policy unavailable on this server.";
+  setClaudeSubscriptionBusy(claudeSubscriptionBusy);
 };
 
 const loadClaudeSubscription = async () => {
   if (!adminAccessState.isAdmin || !hasAdminCredential()) return;
   const token = getAdminToken();
+  const target = apiUrl("/admin/providers/claude-code/auth");
   try {
-    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
-      cache: "no-store",
-      headers: { Authorization: "Bearer " + token },
-    });
+    const response = await fetch(target, { cache: "no-store", headers: { Authorization: "Bearer " + token } });
     const payload = await response.json().catch(() => null);
-    if (token !== getAdminToken()) return;
-    if (!response.ok || !payload) return;
+    if (token !== getAdminToken() || target !== apiUrl("/admin/providers/claude-code/auth") || !response.ok || !payload)
+      return;
     latestClaudeSubscription = payload.data ?? null;
     renderClaudeSubscriptionControls();
   } catch {
-    // A transient read failure keeps the last good panel state.
+    // Retain drafts and the last actual status during a transient read failure.
   }
 };
 
-const setClaudeSubscriptionBusy = (busy) => {
-  claudeSubscriptionBusy = busy;
-  for (const button of [claudeCredentialSave, claudeWorkspaceSave, claudeCredentialClear, claudeQuotaClear]) {
-    button.disabled = busy;
+const mutateClaudeSubscription = async (method, path, body, pending, success, applied = null) => {
+  if (claudeSubscriptionBusy) return;
+  const token = getAdminToken();
+  const target = apiUrl(path);
+  setClaudeSubscriptionBusy(true);
+  claudeSubscriptionStatus.textContent = pending;
+  try {
+    const response = await fetch(target, {
+      method,
+      headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const payload = await response.json().catch(() => null);
+    if (token !== getAdminToken() || target !== apiUrl(path)) return;
+    if (!response.ok) throw new Error(payload?.error?.message || "Claude account action failed");
+    if (payload?.data?.accounts || payload?.data?.credential) latestClaudeSubscription = payload.data;
+    if (applied) applied(payload);
+    renderClaudeSubscriptionControls();
+    claudeSubscriptionStatus.textContent = success;
+  } catch (error) {
+    claudeSubscriptionStatus.textContent = "";
+    toast.error("Claude action failed", { description: error.message });
+  } finally {
+    setClaudeSubscriptionBusy(false);
+    void loadClaudeSubscription();
   }
 };
 
 const saveClaudeCredential = async () => {
-  if (claudeSubscriptionBusy) return;
+  if (!latestClaudeSubscription) return;
   const credential = claudeCredentialInput.value.trim();
-  const workspaceId = claudeWorkspaceInput.value.trim();
   if (!credential) {
     toast.error("Credential required", { description: "Paste an Anthropic API key or Claude Code OAuth token first." });
     return;
   }
-  const body = { credential };
-  if (workspaceId) body.workspace_id = workspaceId;
-  setClaudeSubscriptionBusy(true);
-  claudeSubscriptionStatus.textContent = "Validating the credential against the Anthropic models listing…";
-  try {
-    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
-      method: "POST",
-      headers: { Authorization: "Bearer " + getAdminToken(), "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.error?.message || "Could not store the Claude credential");
-    latestClaudeSubscription = payload.data ?? null;
-    claudeCredentialInput.value = "";
-    renderClaudeSubscriptionControls();
-    claudeSubscriptionStatus.textContent = payload.validation?.detail ?? "Credential stored.";
-  } catch (error) {
-    claudeSubscriptionStatus.textContent = "";
-    toast.error("Save failed", { description: error.message });
-  } finally {
-    setClaudeSubscriptionBusy(false);
-    void loadClaudeSubscription();
-  }
-};
-
-const saveClaudeWorkspace = async () => {
-  if (claudeSubscriptionBusy) return;
+  const target = claudeAccountTarget();
+  if (target.account_id && !selectedClaudeAccount()) return;
   const workspaceId = claudeWorkspaceInput.value.trim();
-  setClaudeSubscriptionBusy(true);
-  claudeSubscriptionStatus.textContent = "Validating the workspace selection…";
-  try {
-    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
-      method: "POST",
-      headers: { Authorization: "Bearer " + getAdminToken(), "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace_id: workspaceId || null }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.error?.message || "Could not store the Claude workspace");
-    latestClaudeSubscription = payload.data ?? null;
-    claudeWorkspaceInput.value = "";
-    renderClaudeSubscriptionControls();
-    claudeSubscriptionStatus.textContent = workspaceId ? "Workspace pinned." : "Workspace pin cleared.";
-  } catch (error) {
-    claudeSubscriptionStatus.textContent = "";
-    toast.error("Save failed", { description: error.message });
-  } finally {
-    setClaudeSubscriptionBusy(false);
-    void loadClaudeSubscription();
-  }
+  const label = claudeAccountLabel.value.trim();
+  const body = {
+    ...target,
+    credential,
+    ...(workspaceId ? { workspace_id: workspaceId } : {}),
+    ...(label ? { label } : {}),
+  };
+  await mutateClaudeSubscription(
+    "POST",
+    "/admin/providers/claude-code/auth",
+    body,
+    "Validating account credential…",
+    "Credential stored; access policy unchanged.",
+    () => {
+      claudeCredentialInput.value = "";
+      const draft = claudeAccountDrafts.get(selectedClaudeAccountId ?? "legacy");
+      if (draft) draft.credential = "";
+    }
+  );
 };
-
+const saveClaudeWorkspace = async () => {
+  if (Array.isArray(latestClaudeSubscription?.accounts) && !selectedClaudeAccount()) return;
+  await mutateClaudeSubscription(
+    "POST",
+    "/admin/providers/claude-code/auth",
+    { ...claudeAccountTarget(), workspace_id: claudeWorkspaceInput.value.trim() || null },
+    "Validating workspace…",
+    "Workspace selection saved.",
+    () => {
+      claudeWorkspaceInput.value = "";
+      const draft = claudeAccountDrafts.get(selectedClaudeAccountId ?? "legacy");
+      if (draft) draft.workspace = "";
+    }
+  );
+};
 const clearClaudeCredential = async () => {
-  if (claudeSubscriptionBusy) return;
-  setClaudeSubscriptionBusy(true);
-  claudeSubscriptionStatus.textContent = "Clearing the stored credential…";
-  try {
-    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
-      method: "DELETE",
-      headers: { Authorization: "Bearer " + getAdminToken() },
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.error?.message || "Could not clear the Claude credential");
-    latestClaudeSubscription = payload.data ?? null;
-    renderClaudeSubscriptionControls();
-    claudeSubscriptionStatus.textContent = "Stored credential cleared; the environment credential applies again.";
-  } catch (error) {
-    claudeSubscriptionStatus.textContent = "";
-    toast.error("Clear failed", { description: error.message });
-  } finally {
-    setClaudeSubscriptionBusy(false);
-    void loadClaudeSubscription();
-  }
+  if (Array.isArray(latestClaudeSubscription?.accounts) && !selectedClaudeAccount()) return;
+  const query = selectedClaudeAccountId ? `?account_id=${encodeURIComponent(selectedClaudeAccountId)}` : "";
+  await mutateClaudeSubscription(
+    "DELETE",
+    "/admin/providers/claude-code/auth" + query,
+    null,
+    "Removing stored account credential…",
+    "Stored account removed; retained history is unchanged."
+  );
 };
-
 const clearClaudeQuotaGuards = async () => {
-  if (claudeSubscriptionBusy) return;
-  setClaudeSubscriptionBusy(true);
-  claudeSubscriptionStatus.textContent = "Clearing exhaustion guards…";
-  try {
-    const response = await fetch(apiUrl("/admin/providers/claude-code/quota/clear"), {
-      method: "POST",
-      headers: { Authorization: "Bearer " + getAdminToken() },
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.error?.message || "Could not clear the Claude guards");
-    latestClaudeSubscription = payload.data ?? null;
-    renderClaudeSubscriptionControls();
-    claudeSubscriptionStatus.textContent = payload.guards_cleared
-      ? "Guards cleared; the next eligible request retries the tier."
-      : "No stored guards to clear.";
-  } catch (error) {
-    claudeSubscriptionStatus.textContent = "";
-    toast.error("Clear failed", { description: error.message });
-  } finally {
-    setClaudeSubscriptionBusy(false);
-    void loadClaudeSubscription();
-  }
+  const account = selectedClaudeAccount();
+  if (Array.isArray(latestClaudeSubscription?.accounts) && !account) return;
+  const body = account ? { account_id: account.account_id, account_cohort_id: account.account_cohort_id } : null;
+  await mutateClaudeSubscription(
+    "POST",
+    "/admin/providers/claude-code/quota/clear",
+    body,
+    "Clearing this account's guards…",
+    "Guards cleared; observed utilization is not reset."
+  );
 };
 
 claudeCredentialSave.addEventListener("click", () => void saveClaudeCredential());
 claudeWorkspaceSave.addEventListener("click", () => void saveClaudeWorkspace());
 claudeCredentialClear.addEventListener("click", () => void clearClaudeCredential());
 claudeQuotaClear.addEventListener("click", () => void clearClaudeQuotaGuards());
+claudeAccountSelect.addEventListener("change", () => {
+  claudeAccountDrafts.set(selectedClaudeAccountId ?? "legacy", {
+    credential: claudeCredentialInput.value,
+    workspace: claudeWorkspaceInput.value,
+    label: claudeAccountLabel.value,
+  });
+  selectedClaudeAccountId = claudeAccountSelect.value;
+  const draft = claudeAccountDrafts.get(selectedClaudeAccountId);
+  claudeCredentialInput.value = draft?.credential ?? "";
+  claudeWorkspaceInput.value = draft?.workspace ?? "";
+  claudeAccountLabel.value = draft?.label ?? selectedClaudeAccount()?.label ?? "";
+  claudeSubscriptionStatus.textContent = "";
+  renderClaudeSubscriptionControls();
+});
+claudeAccountActivate.addEventListener("click", () => {
+  const account = selectedClaudeAccount();
+  if (account)
+    void mutateClaudeSubscription(
+      "POST",
+      "/admin/providers/claude-code/accounts/active",
+      { account_id: account.account_id },
+      "Selecting active account…",
+      "Active account selected; access policy unchanged."
+    );
+});
+claudeAccessInput.addEventListener("input", () => {
+  claudeAccessDirty = true;
+});
+claudeAccessSave.addEventListener("click", () => {
+  const allowedKeyIds = [
+    ...new Set(
+      claudeAccessInput.value
+        .split(/[\n,]/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+    ),
+  ];
+  void mutateClaudeSubscription(
+    "POST",
+    "/admin/providers/claude-code/access",
+    { allowed_key_ids: allowedKeyIds },
+    "Saving explicit access policy…",
+    allowedKeyIds.length ? "Access policy saved." : "Access policy saved: everyone denied.",
+    (payload) => {
+      if (Array.isArray(payload?.data?.allowed_key_ids))
+        latestClaudeSubscription = { ...latestClaudeSubscription, access: payload.data };
+      claudeAccessDirty = false;
+    }
+  );
+});
 
 const loadProviders = async () => {
   if (providersLoading) return;
@@ -3396,13 +3698,21 @@ const loadProviders = async () => {
     if (!response.ok || !payload) {
       if (providersLoadedAt) {
         if (latestProviderCapacityChartState?.sources) {
-          renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+          renderProviderCapacityList(
+            latestProviderCapacityChartState.sources,
+            latestProviderCapacityChartState.claude,
+            latestProviderCapacityChartState.claudeAccounts
+          );
         }
         return;
       }
       latestProviderHealth = null;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+        renderProviderCapacityList(
+          latestProviderCapacityChartState.sources,
+          latestProviderCapacityChartState.claude,
+          latestProviderCapacityChartState.claudeAccounts
+        );
       }
       return;
     }
@@ -3437,20 +3747,32 @@ const loadProviders = async () => {
     codexProviderSettingsLoadedAt = Date.now();
     latestProviderHealth = payload;
     if (latestProviderCapacityChartState?.sources) {
-      renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+      renderProviderCapacityList(
+        latestProviderCapacityChartState.sources,
+        latestProviderCapacityChartState.claude,
+        latestProviderCapacityChartState.claudeAccounts
+      );
     }
     providersLoadedAt = Date.now();
   } catch {
     if (loadId !== providersLoadId) return;
     if (providersLoadedAt) {
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+        renderProviderCapacityList(
+          latestProviderCapacityChartState.sources,
+          latestProviderCapacityChartState.claude,
+          latestProviderCapacityChartState.claudeAccounts
+        );
       }
       return;
     }
     latestProviderHealth = null;
     if (latestProviderCapacityChartState?.sources) {
-      renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+      renderProviderCapacityList(
+        latestProviderCapacityChartState.sources,
+        latestProviderCapacityChartState.claude,
+        latestProviderCapacityChartState.claudeAccounts
+      );
     }
   } finally {
     if (loadId === providersLoadId) providersLoading = false;
@@ -9643,6 +9965,12 @@ const invalidateProviderSelection = (message) => {
   providerSelectionLoadedAt = 0;
   providerSelectionSaveError = "";
   latestClaudeSubscription = null;
+  selectedClaudeAccountId = null;
+  selectedClaudeHistoryAccountId = null;
+  claudeAccountDrafts.clear();
+  claudeAccessDirty = false;
+  claudeAccessInput.value = "";
+  claudeAccountLabel.value = "";
   claudeCredentialInput.value = "";
   claudeWorkspaceInput.value = "";
   claudeSubscriptionStatus.textContent = "";
@@ -9682,10 +10010,10 @@ const providersRoutingWarnings = () => {
     );
   }
   if (!isProviderChecked("codex")) {
-    warnings.push("Codex is off, so requests start at the paid tiers and the subscription capacity stays unused.");
+    warnings.push("Codex is off; Codex subscription capacity stays unused.");
   }
   if (!providerSelection.has("surplus") && !providerSelection.has("openlux")) {
-    warnings.push("Both paid tiers are off, so a model outside the Codex roster has no fallback left.");
+    warnings.push("Both paid tiers are off; no paid fallback is available after subscription routing.");
   }
   return warnings;
 };
@@ -10312,7 +10640,11 @@ const hydrateAdminSnapshots = async () => {
     providerCapacityUpdated.textContent = `Cached ${formatDate(capacitySnapshot.savedAt)} · refreshing`;
     setBadge(providerCapacityBadge, "unknown", "Cached · refreshing");
   } else if (latestProviderCapacityChartState?.sources) {
-    renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+    renderProviderCapacityList(
+      latestProviderCapacityChartState.sources,
+      latestProviderCapacityChartState.claude,
+      latestProviderCapacityChartState.claudeAccounts
+    );
   }
 
   const errors = cachedList(errorsSnapshot);
