@@ -84,6 +84,25 @@ restart: systemd keeps the previously loaded unit until it reloads. Releases cre
 change are not rollback targets, because they execute the checkout's launcher and Deno configuration instead of their
 own. Keep a release created after this change as the rollback baseline.
 
+### Standalone Sentinel release metrics: pending windows and evidence sizing
+
+These joins belong to standalone Sentinel's pinned VPS release bridge, not the gateway request path. This change does not activate release automation or re-pin the external bridge.
+
+An admission without a terminal remains collecting while its journal scan advances. A validated PID 1 completed exit/restart row for the unit after that admission makes a fully covered window unavailable with `terminal_lost`; it is never counted as a request. That result survives checkpoint reconstruction and no longer pins ledger slices, allowing the controller to restart monitoring instead of waiting for the operation deadline. Startup and starting/stopping notices alone do not cut off a live request: with `Type=simple`, `Started` may follow a live admission from the new process. Without an observed exit/restart marker, a missing terminal can still collect until the operation deadline or a configured evidence limit; there is no new maximum stream lifetime. Orphan terminals remain conservative even well beyond a window (see the 2026-10-18 decision in `docs/DECISIONS.md`).
+
+`pruneJoinLedgers` retains **every event in every slice** from the earliest pending cohort's `scanStart`, plus the most recent scan for sharing with the next window. Storage is not constant-size: it grows roughly as request rate × longest in-flight lifetime, with backward admission lookback and slice/coverage/cohort/encryption overhead on top. For rate `r`, retained span `L` and measured combined admission/terminal projection size `b`, budget roughly `r × L × b` **plus that overhead and headroom**. Use the whole traffic rate, not just the long-stream fraction. The configured `evidenceMaxBytes` bounds both plaintext and sealed checkpoints; exceeding it refuses evidence rather than truncating events or treating a window as complete. Evidence age, entry and query limits also still apply.
+
+Issue #1165 reports these simulations of the preceding implementation with a **4 MiB (4,194,304-byte)** cap and seven-day retention. They illustrate sizing risk, not a constant-size guarantee or newly measured production capacity:
+
+| Rate (req/s) | Request mix                                   | Last saved peak (bytes) | Outcome                     |
+| -----------: | --------------------------------------------- | ----------------------: | --------------------------- |
+|          2.0 | 1 in 20 requests streams for 30 minutes       |               4,179,775 | Candidate window 18 refused |
+|          1.5 | Same mix                                      |               4,128,015 | About 98% of the cap        |
+|          3.0 | Five-minute streams plus one 30-minute stream |               3,528,359 | Below the cap               |
+|         0.35 | 1 in 10 requests streams for 30 minutes       |              About 1 MB | Below the cap               |
+
+A higher rate or longer stream therefore needs a measured larger evidence policy or a separate compaction change; increasing retention alone does not fix the byte bound. A crash marker removes the lost window's pin, but does not compact other genuinely pending windows to just their own requests.
+
 ## Data migration and recovery
 
 The 2026-09-10 migration retained the complete Deno export privately in `.kv-migration/production-20260910.ndjson`. The
@@ -122,6 +141,8 @@ The phase receipt and retained source/latest-state copies live in `.data/cutover
 Application TypeScript executes directly in checksum-pinned Bun 1.4.0. Runtime archives, extracted binaries, frozen dependency trees and the Linux native containment payload are verified before immutable publication and service interruption. Launchers use `--no-env-file --no-install`; they load only the selected repository-root dotenv file. Missing or corrupt runtime, dependency or native payloads fail closed without downloading, installing or compiling at startup. The previous Deno runtime store and immutable releases remain untouched.
 
 Both deployment and manual release retention share the POSIX `.data/deploy.lock`, interoperating with the retained Deno deployment lock. CI runs complete Bun gates, verifies the materialized Linux ARM64 artifact, and requires a real macOS Seatbelt acceptance job. CI contains no automatic deployment. Linux uses the packaged Landlock/seccomp helper before application imports; systemd also mounts `.data/releases` and `.data/runtimes` read-only. Missing native homes/control directories receive no Landlock grant; restart after the native daemon creates them. macOS starts the Bun application under Seatbelt, restricting reads, writes and subprocess creation.
+
+Sentinel's external Deno bridge selects `bindBunVpsPayload(checkoutRoot)` by default (or can pass it explicitly as `preparePayload`). It verifies the already-prepared managed Bun binary and the driver tree's checksum-pinned, regular `ops/runtime-bunfig.toml` before running `release-artifact.ts prepare` with that explicit `--config`, `--no-env-file --no-install` and a sparse environment, then verifies the resulting payload and archive identity. Missing, linked or changed configuration is refused before execution, so a mutable checkout or home Bun configuration cannot preload code. Runtime download or repair is not part of bridge preparation. The Deno lock first opens `.data/deploy.lock` with `O_NOFOLLOW`, then uses its `/dev/fd/<descriptor>` alias for Deno's interoperable flock, retaining the inode/owner/mode checks. The bridge host must support and permit that descriptor handoff (Deno 2.9.7 applies its all-access check to descriptor aliases, so scoped read/write grants alone are insufficient). Unavailable or denied alias access fails closed, without a pathname-open fallback or automatic permission escalation.
 
 Deploy and service startup require an existing regular `.data/kv-bun.sqlite3` with the explicit Bun/JSC codec marker. They never open, rewrite or convert the legacy `.data/kv.sqlite3`. Plan an authorized downtime separately: drain and stop the old service, preserve consistent database backups, convert the stopped legacy source into a NEW Bun target with `bun --no-env-file src/kv-conversion/cli.ts --direction deno-to-bun --source <legacy> --destination <new-bun-db> --receipt <new-receipt> --deno <pinned-deno> --deno-sha256 <pin>`, verify its complete row/revision/expiry receipt, and only then deploy the accepted Bun release. The Deno helper is an offline codec tool, separate from application/build/test runtime.
 
