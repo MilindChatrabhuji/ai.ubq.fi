@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { extractFollowEntries, followEntryRevision, selectFollowUpdates } from "../src/codex/supervisor-follow.ts";
+import { extractFollowEntries, followEntryRevision, readFollowUpdate, selectFollowUpdates } from "../src/codex/supervisor-follow.ts";
 import type { SupervisorSource } from "../src/codex/supervisor-config.ts";
 import { buildSupervisorBriefPrompt, collectBriefTranscript } from "../src/codex/supervisor-brief.ts";
 import { openSupervisorConnection, setSupervisorWebSocketConstructorForTest, type SupervisorConnection } from "../src/codex/supervisor-transport.ts";
@@ -226,7 +226,108 @@ const briefConnection = (pages: BriefPages): { connection: SupervisorConnection;
   return { connection, calls, requests };
 };
 
+type FollowSocketReply = { result?: unknown; error?: string };
+
+class ScriptedFollowSocket {
+  private static scripts: FollowSocketReply[][] = [];
+  private readonly script: FollowSocketReply[];
+  private readonly listeners = new Map<string, Array<{ listener: FakeListener; once: boolean }>>();
+  readyState = 1;
+
+  constructor(_url: string) {
+    this.script = ScriptedFollowSocket.scripts.shift() ?? [];
+    queueMicrotask(() => this.emit("open"));
+  }
+
+  static setScripts(scripts: FollowSocketReply[][]): void {
+    ScriptedFollowSocket.scripts = scripts.map((script) => [...script]);
+  }
+
+  on(event: string, listener: FakeListener): this {
+    this.add(event, listener, false);
+    return this;
+  }
+
+  once(event: string, listener: FakeListener): this {
+    this.add(event, listener, true);
+    return this;
+  }
+
+  send(data: string): void {
+    const request = JSON.parse(data) as { id?: unknown };
+    if (typeof request.id !== "number") return;
+    const reply = this.script.shift();
+    if (!reply) throw new Error("missing scripted supervisor reply");
+    const frame = typeof reply.error === "string" ? { id: request.id, error: { message: reply.error } } : { id: request.id, result: reply.result };
+    queueMicrotask(() => this.emit("message", JSON.stringify(frame)));
+  }
+
+  close(): void {
+    this.readyState = 3;
+    this.emit("close");
+  }
+
+  terminate(): void {
+    this.readyState = 3;
+  }
+
+  private add(event: string, listener: FakeListener, once: boolean): void {
+    const list = this.listeners.get(event) ?? [];
+    list.push({ listener, once });
+    this.listeners.set(event, list);
+  }
+
+  private emit(event: string, ...args: unknown[]): void {
+    const list = this.listeners.get(event) ?? [];
+    this.listeners.set(event, list.filter((entry) => !entry.once));
+    for (const entry of list) entry.listener(...args);
+  }
+}
+
 const turnRead = { thread: { id: "thread-1", name: "Ordering", status: { type: "active" }, updatedAt: 1_790_000_900 } };
+
+Deno.test("a failed follow enrichment does not replace an already-rendered command output", async () => {
+  const summary = {
+    data: [{
+      id: "turn-follow",
+      status: "inProgress",
+      items: [{ type: "commandExecution", id: "command-1", command: "printf output", status: "in_progress", exitCode: null, aggregatedOutput: "" }],
+    }],
+  };
+  const full = {
+    data: [{
+      id: "turn-follow",
+      status: "inProgress",
+      items: [{ type: "commandExecution", id: "command-1", command: "printf output", status: "in_progress", exitCode: null, aggregatedOutput: "known output" }],
+    }],
+  };
+  ScriptedFollowSocket.setScripts([
+    [{ result: {} }, { result: summary }, { result: full }],
+    [{ result: {} }, { result: summary }, { error: "frame cap" }],
+  ]);
+  setSupervisorWebSocketConstructorForTest(ScriptedFollowSocket as unknown);
+  try {
+    const revisions = new Map<string, string>();
+    const signal = new AbortController().signal;
+    const first = await readFollowUpdate(SOURCE, "thread-follow", "", signal, revisions);
+    const firstEntry = first.entries[0];
+    if (!firstEntry) throw new Error("the successful enrichment must emit the command");
+    assert.equal(first.enriched, true);
+    assert.equal(firstEntry.text, "known output");
+
+    const second = await readFollowUpdate(SOURCE, "thread-follow", first.cursor, signal, revisions);
+    let renderedOutput = firstEntry.text;
+    for (const entry of second.entries) {
+      if (entry.key === firstEntry.key && entry.kind === "command") renderedOutput = entry.text;
+    }
+    assert.equal(second.enriched, false);
+    assert.equal(second.entries.length, 0, "the failed full read must not emit the empty summary entry");
+    assert.equal(renderedOutput, "known output", "the card keeps output from the successful enrichment");
+    assert.equal(revisions.get(firstEntry.key), followEntryRevision(firstEntry));
+  } finally {
+    setSupervisorWebSocketConstructorForTest(null);
+  }
+});
 
 Deno.test("brief turns are deduplicated and presented chronologically", async () => {
   const { connection } = briefConnection({

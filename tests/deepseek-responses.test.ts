@@ -1093,8 +1093,8 @@ Deno.test("deepseek responses: the thinking-mode tool_choice rule has one shared
   // its own seam as well as through the Responses translation.
   assert.equal(deepSeekThinkingToolChoiceConflict("high", undefined, "required"), "required");
   assert.equal(deepSeekThinkingToolChoiceConflict(undefined, undefined, { type: "function", name: "exec" }), "function:exec");
-  assert.equal(deepSeekThinkingToolChoiceConflict("none", undefined, "required"), null);
-  assert.equal(deepSeekThinkingToolChoiceConflict("max", { type: "disabled" }, "required"), null);
+  assert.equal(deepSeekThinkingToolChoiceConflict("none", { type: "enabled" }, "required"), null);
+  assert.equal(deepSeekThinkingToolChoiceConflict("max", { type: "disabled" }, "required"), "required");
   assert.equal(deepSeekThinkingToolChoiceConflict("max", undefined, "auto"), null);
   assert.equal(deepSeekThinkingToolChoiceConflict("max", undefined, undefined), null);
 });
