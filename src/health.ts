@@ -5,8 +5,10 @@ import { readDeepSeekApiKey } from "./deepseek/index.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { readLithosApiKey } from "./provider/lithos.ts";
+import { readClaudeCodeAllowedKeyIds, readClaudeCodeToken } from "./provider/claude-code.ts";
 import {
   getCerebrasProviderHealth,
+  getClaudeCodeProviderHealth,
   getCodexProviderHealth,
   getDeepSeekProviderHealth,
   getLithosProviderHealth,
@@ -280,16 +282,18 @@ const gatewayProviderHealthSubtree = (): Record<string, unknown> => {
 export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ includeQuota?: boolean }> = {}): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [cerebrasHealth, codexHealth, deepseekHealth, lithosHealth, meteredHealth, openRouterHealth, surplusHealth, meteredQuota] = await Promise.all([
-    providerHealthOrUnknown(getCerebrasProviderHealth()),
-    Promise.all(context.account_ids.map((accountId) => providerHealthOrUnknown(getCodexProviderHealth(accountId)))),
-    providerHealthOrUnknown(getDeepSeekProviderHealth()),
-    providerHealthOrUnknown(getLithosProviderHealth()),
-    providerHealthOrUnknown(getMeteredProviderHealth()),
-    providerHealthOrUnknown(getOpenRouterProviderHealth()),
-    providerHealthOrUnknown(getSurplusProviderHealth()),
-    getCachedConfiguredMeteredQuotaSnapshot().catch(() => null),
-  ]);
+  const [cerebrasHealth, claudeCodeHealth, codexHealth, deepseekHealth, lithosHealth, meteredHealth, openRouterHealth, surplusHealth, meteredQuota] =
+    await Promise.all([
+      providerHealthOrUnknown(getCerebrasProviderHealth()),
+      providerHealthOrUnknown(getClaudeCodeProviderHealth()),
+      Promise.all(context.account_ids.map((accountId) => providerHealthOrUnknown(getCodexProviderHealth(accountId)))),
+      providerHealthOrUnknown(getDeepSeekProviderHealth()),
+      providerHealthOrUnknown(getLithosProviderHealth()),
+      providerHealthOrUnknown(getMeteredProviderHealth()),
+      providerHealthOrUnknown(getOpenRouterProviderHealth()),
+      providerHealthOrUnknown(getSurplusProviderHealth()),
+      getCachedConfiguredMeteredQuotaSnapshot().catch(() => null),
+    ]);
   const codexAccounts = auth.accounts.map((account, index) => ({
     ...account,
     health: codexHealth[index],
@@ -309,6 +313,14 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
     cerebras: {
       configured: readCerebrasApiKey() !== null,
       health: cerebrasHealth,
+    },
+    claude_code: {
+      // Configured means the subscription credential exists; the principal
+      // allowlist is reported separately because an empty allowlist keeps the
+      // route inert even with a credential.
+      configured: readClaudeCodeToken() !== null,
+      principal_allowlist_configured: readClaudeCodeAllowedKeyIds().size > 0,
+      health: claudeCodeHealth,
     },
     deepseek: {
       configured: readDeepSeekApiKey() !== null,

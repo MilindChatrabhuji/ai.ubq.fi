@@ -42,7 +42,7 @@ export type UsageContext = Readonly<{
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-export type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus";
+export type UpstreamProvider = "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus";
 export const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
