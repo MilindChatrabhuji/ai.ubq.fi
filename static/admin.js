@@ -9687,6 +9687,11 @@ let providerSelectionLoadId = 0;
 let providerSelectionSaving = false;
 let providerSelectionSaveError = "";
 
+// A refresh must not commit its server selection after the picker is edited.
+const markProviderSelectionEdited = () => {
+  providerSelectionLoadId += 1;
+};
+
 const setProvidersSelectionBadge = (state, text) => setBadge(providersSelectionBadge, state, text);
 
 const providerRosterEntry = (id) => providerRoster.find((entry) => entry.id === id) ?? null;
@@ -10182,6 +10187,7 @@ const renderProvidersPicker = () => {
 };
 
 const applyProvidersSelection = (mutate) => {
+  markProviderSelectionEdited();
   providerSelectionSaveError = "";
   mutate(providersVisibleEntries());
   if (providersOnlyActiveInput.checked) {
@@ -10347,6 +10353,7 @@ const saveProviderSelection = async () => {
 
 const discardProviderChanges = () => {
   if (!providersHasUnsavedChanges()) return;
+  markProviderSelectionEdited();
   providerSelectionSaveError = "";
   providerSelection = new Set(providersSavedSelection);
   renderProvidersPicker();
@@ -10436,8 +10443,10 @@ providersList.addEventListener("change", (event) => {
   providerSelectionSaveError = "";
   if (subscriptionId) setSubscriptionChecked(subscriptionId, checkbox.checked);
   else setProviderChecked(id, checkbox.checked);
-  if (providersOnlyActiveInput.checked || subscriptionId) renderProvidersPicker();
-  else {
+  if (providersOnlyActiveInput.checked || subscriptionId) {
+    markProviderSelectionEdited();
+    renderProvidersPicker();
+  } else {
     applyProvidersSelection(() => {});
   }
 });
@@ -10465,6 +10474,7 @@ providersInvertBtn.addEventListener("click", () => {
 providersDropMissingBtn.addEventListener("click", () => {
   const missing = providersMissingSelectionIds();
   if (!missing.length) return;
+  markProviderSelectionEdited();
   for (const id of missing) providerSelection.delete(id);
   providerSelectionSaveError = "";
   renderProvidersPicker();
