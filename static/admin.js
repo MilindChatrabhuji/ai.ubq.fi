@@ -198,6 +198,7 @@ const passkeyUsersList = mustGet("passkey-users-list");
 
 const keysTabAll = mustGet("keys-tab-all");
 const keysTabActive = mustGet("keys-tab-active");
+const keysTabExpired = mustGet("keys-tab-expired");
 const keysTabRevoked = mustGet("keys-tab-revoked");
 
 const viewTabKeys = mustGet("view-tab-keys");
@@ -366,8 +367,10 @@ const meteredQuotaObserved = mustGet("metered-quota-observed");
 const meteredQuotaCycleStarted = mustGet("metered-quota-cycle-started");
 let defaultsLoaded = false;
 let defaultsSaving = false;
+let defaultsSaveQueued = false;
 let defaultsModelMap = new Map();
 let defaultsTouched = false;
+let defaultsEditRevision = 0;
 let defaultsLoadId = 0;
 let defaultsLoadedAt = 0;
 
@@ -913,6 +916,11 @@ const formatDate = (ms) => {
 const formatExpires = (ms) => (ms === -1 ? "Never" : formatDate(ms));
 
 const isExpiredAt = (ms) => typeof ms === "number" && Number.isFinite(ms) && ms !== -1 && ms <= Date.now();
+
+const getApiKeyStatus = (key) => {
+  if (key?.revoked_at_ms) return "revoked";
+  return isExpiredAt(key?.expires_at_ms) ? "expired" : "active";
+};
 
 const numberFormatter = new Intl.NumberFormat();
 const compactNumberFormatter = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
@@ -3961,7 +3969,7 @@ const updateAccessApiKeysSummary = () => {
     setAccessValue(accessApiKeys, "None");
     return;
   }
-  const active = allKeys.filter((key) => !(typeof key?.revoked_at_ms === "number" && key.revoked_at_ms > 0)).length;
+  const active = allKeys.filter((key) => getApiKeyStatus(key) === "active").length;
   setAccessValue(accessApiKeys, `${formatNumber(active)} active · ${formatPlural(total, "key")}`);
 };
 
@@ -6611,9 +6619,11 @@ const renderKeys = (keys, view = "all") => {
   keysList.textContent = "";
   let filteredKeys = keys;
   if (view === "active") {
-    filteredKeys = keys.filter((k) => !k.revoked_at_ms);
+    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "active");
+  } else if (view === "expired") {
+    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "expired");
   } else if (view === "revoked") {
-    filteredKeys = keys.filter((k) => k.revoked_at_ms);
+    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "revoked");
   }
   if (!filteredKeys.length) {
     setKeyListMessage(view === "all" ? "No API keys yet." : `No ${view} API keys.`);
@@ -6623,9 +6633,10 @@ const renderKeys = (keys, view = "all") => {
   }
 
   filteredKeys.forEach((key, index) => {
+    const statusKind = getApiKeyStatus(key);
     const row = document.createElement("div");
     row.dataset.key = "row";
-    row.dataset.state = key.revoked_at_ms ? "revoked" : "active";
+    row.dataset.state = statusKind;
     row.style.setProperty("--i", index);
     row.setAttribute("role", "listitem");
 
@@ -6645,7 +6656,9 @@ const renderKeys = (keys, view = "all") => {
     const infoRow = document.createElement("div");
     infoRow.dataset.keyInfo = "info";
     appendKeyInfo(infoRow, "Created", formatDate(key.created_at_ms));
-    const expiresInfo = appendKeyInfo(infoRow, "Expires", formatExpires(key.expires_at_ms));
+    const expiresInfo = appendKeyInfo(infoRow, "Expires", formatExpires(key.expires_at_ms), {
+      state: statusKind === "expired" ? "bad" : "",
+    });
     if (key.revoked_at_ms) {
       appendKeyInfo(infoRow, "Revoked", formatDate(key.revoked_at_ms), { state: "bad" });
     }
@@ -6777,8 +6790,8 @@ const renderKeys = (keys, view = "all") => {
 
     const status = document.createElement("span");
     status.dataset.badge = "status";
-    status.dataset.state = key.revoked_at_ms ? "bad" : "ok";
-    status.textContent = key.revoked_at_ms ? "Revoked" : "Active";
+    status.dataset.state = statusKind === "active" ? "ok" : statusKind === "expired" ? "warning" : "bad";
+    status.textContent = statusKind === "revoked" ? "Revoked" : statusKind === "expired" ? "Expired" : "Active";
     const actionRow = document.createElement("div");
     actionRow.dataset.keyActions = "actions";
     actionRow.dataset.actionRow = "actions";
@@ -6788,7 +6801,7 @@ const renderKeys = (keys, view = "all") => {
     applyIconButton(editBtn, "edit", "Edit API key");
     actionRow.appendChild(editBtn);
 
-    if (!key.revoked_at_ms) {
+    if (statusKind === "active") {
       const revokeBtn = document.createElement("button");
       revokeBtn.type = "button";
       revokeBtn.dataset.variant = "danger";
@@ -6797,7 +6810,7 @@ const renderKeys = (keys, view = "all") => {
         void revokeKey(key.id, key.name || "this API key", revokeBtn);
       });
       actionRow.appendChild(revokeBtn);
-    } else {
+    } else if (statusKind === "revoked") {
       const restoreBtn = document.createElement("button");
       restoreBtn.type = "button";
       applyIconButton(restoreBtn, "restore", "Unrevoke API key");
@@ -8191,6 +8204,7 @@ const switchKeysView = (view) => {
   currentKeyView = view;
   setTabState(keysTabAll, view === "all");
   setTabState(keysTabActive, view === "active");
+  setTabState(keysTabExpired, view === "expired");
   setTabState(keysTabRevoked, view === "revoked");
   if (allKeys.length) {
     renderKeys(allKeys, view);
@@ -8642,6 +8656,7 @@ const revokeKey = async (id, name, button) => {
     tokenInput.focus();
     return;
   }
+  if (!confirm(`Revoke API key "${name}"?`)) return;
 
   setKeysBadge("unknown", "Revoking...");
   if (button) button.disabled = true;
@@ -8696,7 +8711,11 @@ const unrevokeKey = async (id, name, button) => {
       return;
     }
     updateKeyRevocationState(id, null);
-    setKeysBadge("ok", `Unrevoked ${name}`);
+    const remainsExpired = isExpiredAt(allKeys.find((key) => key?.id === id)?.expires_at_ms);
+    setKeysBadge(
+      remainsExpired ? "warning" : "ok",
+      remainsExpired ? `Unrevoked ${name} · remains expired` : `Unrevoked ${name}`
+    );
     void refreshKeys();
   } catch {
     setKeysBadge("bad", "Offline");
@@ -10409,8 +10428,12 @@ const saveDefaults = async () => {
     return;
   }
 
-  if (defaultsSaving) return;
+  if (defaultsSaving) {
+    defaultsSaveQueued = true;
+    return;
+  }
   defaultsSaving = true;
+  const saveRevision = defaultsEditRevision;
   const model = defaultsModelSelect.value;
   const reasoning = defaultsReasoningSelect.value;
   const limitValue = parseKernelLimitValue(defaultsKernelLimitInput.value, setDefaultsBadge);
@@ -10447,18 +10470,27 @@ const saveDefaults = async () => {
     }
     const saved = data?.defaults;
     const summary = saved?.model && saved?.reasoning_effort ? `${saved.model} · ${saved.reasoning_effort}` : "Saved";
-    if (typeof saved?.kernel_policy_limit_requests === "number") {
-      defaultsKernelLimitInput.value = String(Math.trunc(saved.kernel_policy_limit_requests));
+    if (saveRevision === defaultsEditRevision) {
+      if (typeof saved?.kernel_policy_limit_requests === "number") {
+        defaultsKernelLimitInput.value = String(Math.trunc(saved.kernel_policy_limit_requests));
+      }
+      if (typeof saved?.kernel_policy_window_ms === "number") {
+        defaultsKernelWindowInput.value = String(Math.trunc(saved.kernel_policy_window_ms));
+      }
+      defaultsTouched = false;
+      setDefaultsBadge("ok", summary);
+    } else {
+      defaultsSaveQueued = true;
+      setDefaultsBadge("unknown", "Saving latest changes...");
     }
-    if (typeof saved?.kernel_policy_window_ms === "number") {
-      defaultsKernelWindowInput.value = String(Math.trunc(saved.kernel_policy_window_ms));
-    }
-    defaultsTouched = false;
-    setDefaultsBadge("ok", summary);
   } catch {
     setDefaultsBadge("bad", "Offline");
   } finally {
     defaultsSaving = false;
+    if (defaultsSaveQueued) {
+      defaultsSaveQueued = false;
+      void saveDefaults();
+    }
   }
 };
 
@@ -11139,26 +11171,30 @@ kernelPubKeyPemInput.addEventListener("input", () => setKernelPubKeyCreateBadge(
 
 keysTabAll.addEventListener("click", () => switchKeysView("all"));
 keysTabActive.addEventListener("click", () => switchKeysView("active"));
+keysTabExpired.addEventListener("click", () => switchKeysView("expired"));
 keysTabRevoked.addEventListener("click", () => switchKeysView("revoked"));
 
 defaultsModelSelect.addEventListener("change", () => {
   if (!defaultsLoaded) return;
-  defaultsTouched = true;
   const model = defaultsModelSelect.value;
   updateReasoningOptions(model, defaultsReasoningSelect.value);
-  scheduleDefaultsSave();
+  markDefaultsEditing();
 });
 
 defaultsReasoningSelect.addEventListener("change", () => {
   if (!defaultsLoaded) return;
-  defaultsTouched = true;
-  scheduleDefaultsSave();
+  markDefaultsEditing();
 });
 
 const markDefaultsEditing = () => {
   if (!defaultsLoaded) return;
   defaultsTouched = true;
+  defaultsEditRevision += 1;
   setDefaultsBadge("unknown", "Editing...");
+  if (defaultsSaving) {
+    defaultsSaveQueued = true;
+    return;
+  }
   scheduleDefaultsSave();
 };
 
