@@ -542,15 +542,15 @@
       "GitHubOwner": {
         "name": "X-GitHub-Owner",
         "in": "header",
-        "required": true,
-        "description": "The repository owner the kernel attestation names.",
+        "required": false,
+        "description": "Optional cross-check. The kernel attestation names the repository; when X-GitHub-Owner and X-GitHub-Repo are both sent, they must equal the owner and repository it names.",
         "schema": { "type": "string", "minLength": 1 }
       },
       "GitHubRepo": {
         "name": "X-GitHub-Repo",
         "in": "header",
-        "required": true,
-        "description": "The repository the kernel attestation names.",
+        "required": false,
+        "description": "Optional cross-check. The kernel attestation names the repository; when X-GitHub-Owner and X-GitHub-Repo are both sent, they must equal the owner and repository it names.",
         "schema": { "type": "string", "minLength": 1 }
       },
       "KernelToken": {
@@ -784,8 +784,9 @@
           "logit_bias": { "type": ["object", "null"], "additionalProperties": { "type": "integer" } },
           "logprobs": { "type": ["boolean", "null"] },
           "max_completion_tokens": {
-            "type": ["integer", "null"],
-            "description": "The OpenAI Chat Completions output-token cap. Its transport behavior depends on the selected route; see /llms-full.txt."
+            "type": "integer",
+            "minimum": 1,
+            "description": "The OpenAI Chat Completions output-token cap. Its transport behavior depends on the selected route; see /llms-full.txt. Omit the field for no cap: null and values below 1 are rejected with 400."
           },
           "max_tokens": {
             "deprecated": true,
@@ -814,7 +815,11 @@
           "service_tier": { "type": ["string", "null"] },
           "stop": { "type": ["string", "array", "null"], "items": { "type": "string" } },
           "store": { "type": ["boolean", "null"] },
-          "stream_options": { "type": ["object", "null"] },
+          "stream_options": {
+            "type": "object",
+            "description": "Omit the field rather than sending null; null is outside this contract and most Chat routes reject it with 400.",
+            "properties": { "include_usage": { "type": "boolean" } }
+          },
           "temperature": { "type": ["number", "null"], "minimum": 0, "maximum": 2 },
           "top_logprobs": { "type": ["integer", "null"], "minimum": 0, "maximum": 20 },
           "top_p": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
@@ -907,7 +912,7 @@
           "stream_options": { "type": ["object", "null"] },
           "temperature": { "type": ["number", "null"], "minimum": 0, "maximum": 2 },
           "text": { "type": "object" },
-          "top_logprobs": { "type": "integer", "minimum": 0, "maximum": 20 },
+          "top_logprobs": { "type": ["integer", "null"], "minimum": 0, "maximum": 20 },
           "top_p": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
           "truncation": { "type": ["string", "null"], "enum": ["auto", "disabled", null] },
           "user": {
