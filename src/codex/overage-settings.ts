@@ -2,8 +2,8 @@ import type { Kv, KvKey } from "#kv";
 // Per-account overage-usage setting: when an operator explicitly allows
 // overage spending for a Codex subscription, an exhausted account may probe
 // (and thereby serve through the paid backup balance) instead of waiting for a
-// banked-reset redemption. The default is false: resets first, overage only
-// when no redemption is available.
+// banked-reset redemption. The default is false: resets first and no overage
+// spend, even when no redemption is currently available.
 
 import { getKv } from "../kv.ts";
 import type { CodexAuthPoolState } from "../types.ts";

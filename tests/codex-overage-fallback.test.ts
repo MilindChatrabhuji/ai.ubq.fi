@@ -1,10 +1,9 @@
 import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { test, beforeEach, afterEach } from "bun:test";
-// Integration coverage for the no-reset overage fallback: when a fully
-// exhausted cohort cannot redeem a banked reset, the default (resets-first)
-// behavior allows exactly one bounded overage probe for the active blocked
-// account, logs codex_overage_served with the redemption-unavailable reason,
-// and never probes while a real spend is still arming.
+// Integration coverage for the no-reset overage fallback: an explicitly
+// allowed account may make exactly one bounded overage probe after a fully
+// exhausted cohort cannot redeem a banked reset, while the default-off account
+// is refused. A real spend that is still arming never probes.
 
 import assert from "node:assert/strict";
 import {
@@ -22,7 +21,9 @@ import {
   resetCodexAuthCacheForTest,
   seedStableBankedResetBlock,
 } from "./helpers/codex-auth-cache-harness.ts";
-import { resetOverageUsageCacheForTest } from "../src/codex/overage-settings.ts";
+import { loadOverageUsageSettings, resetOverageUsageCacheForTest, writeOverageUsage } from "../src/codex/overage-settings.ts";
+import { sha256Hex } from "../src/utils.ts";
+import type { Kv } from "#kv";
 
 type UpstreamCall = Readonly<{ kind: "inference" | "inventory" | "consume"; accountId: string }>;
 
@@ -32,7 +33,8 @@ type UpstreamCall = Readonly<{ kind: "inference" | "inventory" | "consume"; acco
  */
 const runBlockedRequest = async (
   requestId: string,
-  inventoryResponse: () => Response
+  inventoryResponse: () => Response,
+  allowOverage = false
 ): Promise<{ response: Response; calls: readonly UpstreamCall[]; logs: readonly string[] }> => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
@@ -49,6 +51,10 @@ const runBlockedRequest = async (
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   resetOverageUsageCacheForTest();
+  if (allowOverage) {
+    await writeOverageUsage(kv as unknown as Kv, await sha256Hex("account-one"), true);
+    await loadOverageUsageSettings(kv.auth, true);
+  }
   await seedStableBankedResetBlock("account-one");
   globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
@@ -83,8 +89,32 @@ const runBlockedRequest = async (
   }
 };
 
-test("a blocked cohort with no redeemable credit falls back to exactly one bounded overage probe", async () => {
+test("the default off setting refuses overage even when no reset is redeemable", async () => {
   const { response, calls, logs } = await runBlockedRequest("overage-fallback-empty-inventory", () => Response.json({ available_count: 0, credits: [] }));
+
+  assert.equal(response.status, 429);
+  assert.equal(getCodexRoutingError(response), "codex_quota_blocked");
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "inference"),
+    []
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.kind === "consume"),
+    []
+  );
+  assert.equal(
+    logs.some((line) => line.includes("codex_overage_served")),
+    false,
+    "an operator-disabled account must not spend overage"
+  );
+});
+
+test("an explicitly allowed blocked cohort still falls back to exactly one bounded overage probe", async () => {
+  const { response, calls, logs } = await runBlockedRequest(
+    "overage-fallback-allowed-empty-inventory",
+    () => Response.json({ available_count: 0, credits: [] }),
+    true
+  );
 
   assert.equal(response.status, 200);
   assert.deepEqual(

@@ -80,13 +80,13 @@ Each Codex subscription has an "Allow overage spending" switch (default off) sto
 `GET`/`PATCH /admin/providers/codex/overage-usage`. An absent row means off; changing the switch never calls OpenAI,
 never redeems, and never mutates banked-reset state.
 
-- Off (default): resets first. An exhausted account still evaluates the blocked cohort; only when that request cannot
-  redeem a reset (`no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or
-  `account_day_limit_reached`) does the gateway allow exactly one bounded overage probe for the active blocked account,
-  logging `codex_overage_served` with the redemption-unavailable reason. Arming (`live_armed`), a completed spend, and
-  fence/config failures never fall back, so the next request can still redeem.
-- On: a fully used capacity class with a future reset routes directly as the bounded half-open probe, and banked resets
-  still redeem when their gates pass.
+- Off (default): resets first and no overage spend. An exhausted account still evaluates the blocked cohort; if that
+  request cannot redeem a reset (`no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or
+  `account_day_limit_reached`), the gateway returns the ordinary quota-blocked response. Arming (`live_armed`), a
+  completed spend, and fence/config failures also never fall back, so the next request can still redeem.
+- On: a fully used capacity class with a future reset routes directly as the bounded half-open probe; when the blocked
+  cohort proves no reset is redeemable, the gateway allows exactly one bounded overage probe and logs
+  `codex_overage_served` with the reason. Banked resets still redeem when their gates pass.
 
 The fallback claim reuses the probe-lease machinery (one live attempt at a time) under a scoped pre-transport lease
 fence, so it never weakens the durable routing fences. The choice is per account; one subscription's switch never
