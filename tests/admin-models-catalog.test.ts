@@ -726,6 +726,14 @@ test("the Models tab renders checkbox tools instead of a free-text whitelist", (
   assert.match(modelsScript, /cerebras: "Cerebras"/);
 });
 
+test("the Remove-missing control stays visible when an empty catalog leaves saved ids missing", () => {
+  const status = /const updateModelsStatus = \(\) => \{([\s\S]*?)\n\};\n\nconst renderModelsPicker/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(status, "", "the Models status updater must stay discoverable");
+  assert.match(status, /const missing = modelsMissingIds\(\);/);
+  assert.match(status, /modelsDropMissingBtn\.disabled = saving \|\| missing\.length === 0;/);
+  assert.match(status, /modelsDropMissingBtn\.hidden = missing\.length === 0;/);
+});
+
 test("provider roster completion rerenders Models after normalizing its filter", () => {
   const completion = /const loadProviderSelection = async \(options = \{\}\) => \{([\s\S]*?)\n\};\n\nconst saveProviderSelection/.exec(adminScript)?.[1] ?? "";
   assert.notEqual(completion, "", "the provider-selection loader must stay discoverable");
@@ -880,4 +888,13 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
 
 test("admin metadata refresh is registered as an operator POST route", () => {
   assert.match(handlerSource, /\{ methods: \["POST"\], path: "\/admin\/models\/refresh", run: \(\) => handleAdminModelsRefresh\(\) \}/);
+});
+
+test("admin metadata refresh confirms before replacing a staged model selection", () => {
+  const refreshSource = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(refreshSource, "", "refreshModelsMetadata must stay declared");
+  assert.match(
+    refreshSource,
+    /if \(modelsHasUnsavedChanges\(\) && !globalThis\.confirm\("Discard the unsaved model selection and reload\?"\)\) return;\s+await loadModelsWhitelist\(\{ force: true \}\);/
+  );
 });
