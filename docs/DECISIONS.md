@@ -564,11 +564,19 @@ DSH's `workspace-write` file sandbox permits writes only under the workspace roo
 `gpg: can't connect to the gpg-agent: Operation not permitted` while `GNUPGHOME` stayed at `~/.gnupg`. Committing
 therefore required a per-commit `danger-full-access` escalation.
 
-`~/bin/gpg-dsh` is installed from `ops/gpg-dsh.sh` and set as `gpg.program`. It uses the real homedir when that is
+`~/bin/gpg-dsh` is to be installed from `ops/gpg-dsh.sh` and set as `gpg.program`. Merging a change to the helper
+changes no machine: the installed copy keeps its old behaviour until the owner installs the new one, so this entry
+describes the repository helper, not what `~/bin/gpg-dsh` runs today. The helper uses the real homedir when that is
 genuinely writable (a probe file can be created there). Otherwise it signs from a homedir seeded under
 `$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
 Interactive shells take the passthrough branch and are unaffected.
-`install -m 0755 ops/gpg-dsh.sh ~/bin/gpg-dsh && git config --global gpg.program ~/bin/gpg-dsh`.
+
+To install it, compare it with the installed helper first, `diff ops/gpg-dsh.sh ~/bin/gpg-dsh`, then run
+`install -m 0755 ops/gpg-dsh.sh ~/bin/gpg-dsh && git config --global gpg.program ~/bin/gpg-dsh`. The repository helper
+does not seed `gpg.conf`, `gpg-agent.conf` (for example a `pinentry-program pinentry-mac` line), or keyboxd's
+`public-keys.d`. If the installed helper seeds any of these, installing over it can make sandboxed signing fail closed,
+with no usable pinentry or with a public key missing under keyboxd. The first sandboxed call after an install discards
+the old seed and stops its agent (added 2026-10-17, #1139).
 
 Every seeded file invalidates the seed, not `pubring.kbx` alone. This entry first said the seed was refreshed only
 "when `pubring.kbx` changes", and the installed helper compared only that file's mtime and size. Deleting a secret key
@@ -580,6 +588,21 @@ manifest is written only after a complete copy, so an interrupted rebuild is reb
 its `dsh-gnupg` parent must be real directories owned by the caller and are forced to mode 0700; anything else fails
 closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
 
+Rebuilds are serialized and published whole (added 2026-10-17, #1139). Before this, every call that found a stale
+manifest stopped the agent, removed the shared seed, and rebuilt it in place, with no lock. Calls started together after
+one input change deleted the seed under each other: with real GnuPG 2.4.4, 2 to 8 of every 8 concurrent signings after
+an added `*.gpg` file exited 2. A `cp` that had opened a just-deleted key could also write it into a seed that another
+call had already stamped with the new manifest. Now a call whose manifest matches the seed's takes no lock. Any other
+call (a mismatch, a missing seed, or a leftover copy beside it) waits for `<seed>.lock`, a directory created with
+`mkdir` whose owner file records the holder's pid and start time. Under the lock it checks again and re-reads the
+inputs, so a burst of calls after one change rebuilds once and the others reuse that seed. The holder copies the inputs
+into a private sibling (`<seed>.new.XXXXXX`) and records the manifest there. It then stops the seed's `gpg-agent`,
+renames the old seed aside (`<seed>.old.XXXXXX`), renames the new one into place, and only then removes the old one. No
+call writes into a seed that another call has published, and no call sees a partly copied seed. Leftover siblings from
+a killed rebuild are removed under the lock. A lock held for 15 seconds is treated as left by a killed holder and
+broken, and a waiter gives up (exit 2) after 60 seconds. A signing that is already running from the seed when an input
+changes can still fail, because the rebuild removes the old seed once the new one is in place.
+
 Reason: the sandbox exposes no configuration hook for adding writable roots — `writableRoots` takes only the policy and
 hard-codes the three roots — so the only durable fix inside the existing policy is to put the signing homedir where the
 sandbox already allows writes. Escalating every commit instead is not a fix, and `danger-full-access` grants far more
@@ -590,7 +613,9 @@ private key to a stable non-writable-root location such as `~/.local/share` look
 restricted policy and silently reintroduces the escalation. The seed is not trusted to disappear by itself: `$TMPDIR`
 is not cleared at boot for every caller, and an unset `TMPDIR` falls back to `/tmp`. The manifest check on every call
 is what keeps the seed from becoming a second long-lived key store. Going back to a `pubring.kbx`-only trigger lets a
-deleted or re-protected secret key keep signing from the seed.
+deleted or re-protected secret key keep signing from the seed. Rebuilding in place, or without the lock, brings back
+the failed concurrent signings after an input change and the window in which a deleted key survives in a seed stamped
+as current.
 
 ## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
 
@@ -1990,3 +2015,30 @@ Switching the active subscription and advancing to paid providers are separate d
 Claude historical windows and hourly rollups are additive to the existing Codex and metered history contracts. Persist actual upstream observations through the quota writer's accepted-observation seam, registered before the first inference; admin reads never create samples. The source observation clock is the gateway receipt time of raw upstream headers, not a provider-issued timestamp; sampling/persistence time is separate. Preserve missing observation times as null, absent windows and gaps across staleness, cohorts and reset anchors. Bounded sampling, retention and truncation remain explicit. Claude window series share the existing Analytics chart without altering the Codex capacity denominator. Retained legacy unbound evidence is not silently relabeled as an account's history, and host-local persistence is not a claim of cross-host synchronization.
 
 Feature parity does not justify invented upstream operations: expose only capabilities supported by the supplied credentials and actual provider contracts. A setup token without refresh material does not establish automatic refresh, a second live account has not been supplied for live failover acceptance, and local fixtures do not establish live banked-reset or redemption support.
+
+## Versionless DeepSeek Flash synthetic model and provider aliases - 2026-10-17
+
+DeepSeek's 2026-10-17 release is `DeepSeek-V4.1-Flash-1017`, a dated refresh of the same Flash family. The official API
+keeps `deepseek-flash` on the latest snapshot; OpenRouter, LithosAI, Surplus, and OpenLux expose provider-owned base
+aliases for the same Flash route. A synthetic name that encoded `V4.1`, or a gateway-side release pin that encoded a
+snapshot date, would force a rename or code edit on every DeepSeek refresh.
+
+The gateway-owned model is now `ubiquity/deepseek-flash` with display name `Ubiquity DeepSeek Flash`. The previous
+`ubiquity/deepseek-v4.1-flash` remains accepted as a hidden compatibility alias, and saved whitelist entries migrate to
+the new id. The waterfall always includes every configured provider and resolves its latest alias from the cached
+provider catalogue: `deepseek-flash` always for the official API, an explicit `~deepseek/deepseek-flash-latest` for
+OpenRouter when present, and the undated base id of the newest Flash entry for LithosAI, Surplus, and OpenLux. The
+static aliases are cold-start fallbacks only. No release number or snapshot date is pinned by the gateway, so a new
+provider base id such as `deepseek-v4.2-flash` is selected automatically.
+
+LithosAI has already republished `deepseek-ai/DeepSeek-V4.1-Flash` under the same base id with a new catalogue creation
+instant while retaining its old `-0910` snapshots, confirming that the base alias tracks the current weights. The admin
+metadata-refresh button force-fetches provider catalogues, but the synthetic route never waits for or depends on a dated
+catalogue row.
+
+Reason: the operator asked for a versionless synthetic model that follows DeepSeek's frequent releases, assumes every
+upstream provider will host the latest Flash route, and does not want the gateway to specify a release version or date.
+Reversal risk: the provider-owned base ids must actually track the latest weights; if a provider freezes an alias, the
+gateway cannot detect that from a dated row. OpenRouter's `~deepseek/deepseek-flash-latest` alias must remain routable.
+The paid hops use `deepseek-v4.1-flash`, so paid key policies keep their existing base model id rather than requiring a
+new dated snapshot.
