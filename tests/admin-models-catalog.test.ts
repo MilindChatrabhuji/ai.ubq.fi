@@ -660,6 +660,15 @@ Deno.test("the Models tab renders checkbox tools instead of a free-text whitelis
   assert.match(modelsScript, /cerebras: "Cerebras"/);
 });
 
+Deno.test("provider roster completion rerenders Models after normalizing its filter", () => {
+  const completion = /const loadProviderSelection = async \(options = \{\}\) => \{([\s\S]*?)\n\};\n\nconst saveProviderSelection/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(completion, "", "the provider-selection loader must stay discoverable");
+  const filterReset = completion.indexOf('modelsProviderFilter = "all";');
+  const modelsRender = completion.indexOf("renderModelsPicker();");
+  assert.ok(filterReset >= 0, "roster completion must normalize a stale model provider filter");
+  assert.ok(modelsRender > filterReset, "the Models picker must rerender after the filter reset");
+});
+
 Deno.test("the Providers tab renders a provider picker next to the Analytics tab", () => {
   assert.match(adminHtml, /id="providers-selection-list" data-provider-picker/);
   assert.match(adminHtml, /id="view-analytics"[\s\S]*?id="provider-capacity-chart"/, "the analytics view keeps the capacity chart");

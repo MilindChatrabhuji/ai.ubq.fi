@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { apiKeyHashKey, apiKeyIdKey } from "../src/api-keys.ts";
 import { ApiKeyQuotaDispatchError } from "../src/api-key-policy.ts";
 import { CEREBRAS_CHAT_COMPLETIONS_URL, fetchCerebrasChatCompletions } from "../src/provider/cerebras.ts";
+import { CLAUDE_CODE_BASE_URL } from "../src/provider/claude-code.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL, fetchDeepSeekChatCompletions } from "../src/deepseek/index.ts";
 import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/provider/lithos.ts";
 import { OPENROUTER_CHAT_COMPLETIONS_URL } from "../src/provider/openrouter.ts";
@@ -56,6 +57,7 @@ const CODEX_REFRESH_URL = "https://auth.openai.com/oauth/token";
  */
 const REPLAY_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Object.freeze({
   chatgpt_codex: CODEX_RESPONSES_URL,
+  claude_code: `${CLAUDE_CODE_BASE_URL}/v1/messages`,
   surplus: `${SURPLUS_BASE_URL}/v1/responses`,
   metered: `${METERED_BASE_URL}/v1/responses`,
   cerebras: CEREBRAS_CHAT_COMPLETIONS_URL,
