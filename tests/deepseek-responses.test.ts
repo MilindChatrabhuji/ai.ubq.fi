@@ -209,6 +209,34 @@ test("deepseek responses: flattens namespaced tools and drops what the API canno
   assert.deepEqual(body.tool_choice, { type: "function", function: { name: "now" } });
 });
 
+test("deepseek responses: bounds synthesized namespaced tool names and suffixes", () => {
+  const name = "f".repeat(64);
+  const namespace = "n".repeat(64);
+  const result = toDeepSeekResponsesChatBody(
+    {
+      input: "hi",
+      tools: [
+        { type: "function", name, parameters: { type: "object" } },
+        {
+          type: "namespace",
+          name: namespace,
+          tools: [
+            { type: "function", name, parameters: { type: "object" } },
+            { type: "function", name, parameters: { type: "object" } },
+          ],
+        },
+      ],
+    },
+    "deepseek-v4-flash",
+    false
+  );
+  assert.equal(result.ok, true);
+  const names = (result.value.body.tools as { function: { name: string } }[]).map((tool) => tool.function.name);
+  assert.deepEqual(names, [name, `${namespace}_${name.slice(0, 63)}`, `${namespace}_${name.slice(0, 61)}_2`]);
+  assert.ok(names.every((toolName) => toolName.length <= 128));
+  assert.deepEqual(result.value.toolNames.get(names[1]), { name, namespace });
+});
+
 test("deepseek responses: a namespaced tool call returns its namespace to the client", () => {
   const body = toDeepSeekResponsesChatBody(
     {
