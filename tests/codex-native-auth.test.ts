@@ -132,10 +132,31 @@ for (const [name, environment, expectedHome] of [
   });
 }
 
+for (const [name, environment, expectedHome] of [
+  ["CODEX_HOME override", { CODEX_HOME: HOME, HOME: DEFAULT_HOME }, HOME],
+  ["HOME default", { HOME: DEFAULT_HOME }, `${DEFAULT_HOME}/.codex`],
+] as const) {
+  Deno.test(`native resolver on Linux ${name} binds and refreshes the same credential owner`, async () => {
+    await fixture(async ({ kv, first, sibling, refreshHomes, directOauthCalls, setOs }) => {
+      setOs("linux");
+      const entry = await getAuthPoolEntry(true);
+      const owner = entry.pool.accounts[0].native_owner;
+      assert.equal(owner?.codex_home, expectedHome);
+      assert.equal(owner.generation_hash, await nativeCodexCredentialGeneration(first));
+      const next = await refreshAuthCoordinated({ ...entry, auth: entry.pool.accounts[0] });
+      assert.equal(next.native_owner?.codex_home, expectedHome);
+      assert.notEqual(next.refresh_token, first.refresh_token);
+      assert.deepEqual(refreshHomes(), [expectedHome]);
+      assert.deepEqual(kv.auth.accounts[1], sibling);
+      assert.equal(directOauthCalls(), 0);
+    }, environment);
+  });
+}
+
 for (const guard of ["platform", "deployment"] as const) {
   Deno.test(`native resolver preserves its ${guard} guard despite CODEX_HOME`, async () => {
     await fixture(async ({ first, kv, refreshes, directOauthCalls, setOs }) => {
-      if (guard === "platform") setOs("linux");
+      if (guard === "platform") setOs("windows");
       else (config as { isDeploy: boolean }).isDeploy = true;
       const entry = await getAuthPoolEntry(true);
       assert.equal(entry.pool.accounts[0].native_owner, undefined);

@@ -15,7 +15,8 @@ export const API_KEY_USAGE_V3_RESERVATION_LEASE_MS = 5 * 60_000;
 export const API_KEY_USAGE_V3_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_KV_RETRIES = 5;
 
-export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus" | "voyage";
+export type ApiKeyUsageProvider =
+  "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus" | "voyage";
 
 export type ApiKeyProviderDispatch = Readonly<{
   markTransportStarted: () => void;
