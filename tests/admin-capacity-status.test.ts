@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
+import { isProviderSelectionId, normalizeSelectedProviderIds } from "../src/provider/selection.ts";
 const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
 
 class TestElement {
@@ -10,6 +11,7 @@ class TestElement {
   value = "";
   hidden = false;
   open = false;
+  disabled = false;
   parentElement: TestElement | null = null;
   children: TestElement[] = [];
   listeners = new Map<string, (() => void)[]>();
@@ -100,6 +102,10 @@ test("Claude credential actions stay within the existing provider entry and surv
     claudeWorkspaceSave: buttons[1],
     claudeCredentialClear: buttons[2],
     claudeQuotaClear: buttons[3],
+    claudeAccountSelect: new TestElement(),
+    claudeAccountActivate: new TestElement(),
+    claudeAccessInput: new TestElement(),
+    claudeAccessSave: new TestElement(),
     saveClaudeCredential: () => calls[0]++,
     saveClaudeWorkspace: () => calls[1]++,
     clearClaudeCredential: () => calls[2]++,
@@ -187,6 +193,243 @@ test("shared Claude analytics diagnostics retain credential, workspace and routi
   assert.equal(facts["Principal allowlist"], "Configured");
   assert.equal(facts.Inference, "healthy");
   assert.equal(facts["Last event"], "success");
+});
+
+test("shipped Claude rows never reuse another account or replacement cohort's masked diagnostics", () => {
+  class Row extends TestElement {
+    setAttribute() {}
+  }
+  const providerA = { account_id: "local-a", account_cohort_id: "cohort-a", label: "A", credential: { hint: "masked-a" } };
+  const providerB = { account_id: "local-b", account_cohort_id: "cohort-b", label: "B", credential: { hint: "masked-b" } };
+  const rendered: unknown[] = [];
+  const fixture = {
+    document: { createElement: () => new Row() },
+    latestClaudeSubscription: { accounts: [providerA, providerB], enabled: true, principal_allowlist_configured: true },
+    latestProviderHealth: null,
+    setBadge: () => {},
+    capacityBadgeState: () => "unknown",
+    capacityStateLabel: () => "Unknown",
+    renderCapacityWindow: () => {},
+    appendCapacitySourceMeta: (_row: unknown, _source: unknown, provider: unknown) => rendered.push(provider),
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const claudeCapacityWindowForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
+      "\nglobalThis.render = renderClaudeCapacitySource;",
+    fixture
+  );
+  const render = (fixture as typeof fixture & { render: (source: unknown) => void }).render;
+  render({ source: "claude_code", account_id: "local-b", account_cohort_id: "cohort-b", windows: {} });
+  assert.equal((rendered[0] as { credential: { hint: string } }).credential.hint, "masked-b");
+  render({ source: "claude_code", account_id: "local-b", account_cohort_id: "old-cohort-b", windows: {} });
+  assert.equal(rendered[1], null, "a poll racing credential replacement displays unknown metadata, never the replacement's provenance");
+});
+
+test("shipped shared capacity list supports legacy singleton and distinct roster rows with stable disclosure state", () => {
+  class CapacityRow extends TestElement {
+    details = new TestElement();
+    querySelector() {
+      return this.details;
+    }
+  }
+  const list = new TestElement();
+  const fixture = {
+    providerCapacityList: list,
+    providerForCodexSlot: () => null,
+    renderCodexCapacitySource: () => new CapacityRow(),
+    renderClaudeCapacitySource: (entry: { account_id?: string }) => {
+      const row = new CapacityRow();
+      row.dataset.accountId = entry.account_id ?? "legacy";
+      return row;
+    },
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
+      "\nglobalThis.render = renderProviderCapacityList;",
+    fixture
+  );
+  const render = (fixture as typeof fixture & { render: (sources: unknown[], active: unknown, accounts?: unknown[]) => void }).render;
+  const sources = [
+    { source: "codex", slot: 1, account_cohort_id: "codex-a" },
+    { source: "codex", slot: 2, account_cohort_id: "codex-b" },
+  ];
+  const a = { source: "claude_code", account_id: "local-a" };
+  const b = { source: "claude_code", account_id: "local-b" };
+  render(sources, a);
+  assert.equal(list.children.length, 3, "an old server's singleton still renders once");
+  render(sources, a, [a, b]);
+  assert.equal(list.children.length, 4, "the active projection is not appended again beside the roster");
+  (list.children[2] as CapacityRow).details.open = true;
+  render(sources, b, [b, a]);
+  assert.equal((list.children[2] as CapacityRow).details.open, false, "reordering cannot move another account's disclosure state");
+  assert.equal((list.children[3] as CapacityRow).details.open, true);
+  render(sources, a, []);
+  assert.equal(list.children.length, 2, "an explicit empty roster does not resurrect a stale active projection");
+});
+
+test("shipped routing warnings describe only disabled capacity and paid fallback, not a false Claude paid-first route", () => {
+  const selection = new Set(["claude_code"]);
+  const fixture = {
+    providerSelection: selection,
+    providersSelectionIsEmpty: () => selection.size === 0,
+    providersMissingSelectionIds: () => [],
+    providerCodexSelection: () => ({ total: 2, selected: selection.has("codex") ? 2 : 0 }),
+    isProviderChecked: (id: string) => selection.has(id),
+    formatNumber: (value: number) => String(value),
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const providersRoutingWarnings ="), sourceText.indexOf("const providersHealthWarning =")) +
+      "\nglobalThis.warnings = providersRoutingWarnings;",
+    fixture
+  );
+  const warnings = (fixture as typeof fixture & { warnings: () => string[] }).warnings;
+  assert.deepEqual(Array.from(warnings()), [
+    "Codex is off; Codex subscription capacity stays unused.",
+    "Both paid tiers are off; no paid fallback is available after subscription routing.",
+  ]);
+  assert.doesNotMatch(warnings().join(" "), /requests start at the paid|outside the Codex roster/);
+  selection.add("codex");
+  assert.deepEqual(Array.from(warnings()), ["Both paid tiers are off; no paid fallback is available after subscription routing."]);
+  selection.add("surplus");
+  assert.deepEqual(Array.from(warnings()), []);
+  selection.clear();
+  assert.deepEqual(Array.from(warnings()), [], "an empty selection keeps its existing unfiltered semantics");
+});
+
+test("a saved selection naming a removed Codex subscription keeps its restriction when Surplus is unchecked", () => {
+  const removed = `codex:${"a".repeat(64)}`;
+  const configuredA = `codex:${"b".repeat(64)}`;
+  const configuredB = `codex:${"c".repeat(64)}`;
+  const badges: string[] = [];
+  // The API roster: the removed subscription is no longer configured, so only
+  // the two remaining accounts are listed under the Codex tier.
+  const fixture = {
+    providerRoster: [
+      { id: "codex", label: "Codex", subscriptions: [{ id: configuredA }, { id: configuredB }] },
+      { id: "surplus", label: "Surplus" },
+      { id: "openlux", label: "OpenLux" },
+    ],
+    providerSelection: new Set<string>(),
+    providersSavedSelection: new Set<string>(),
+    providersVisibleIds: new Set(["codex", "surplus", "openlux"]),
+    providerSelectionLoadedAt: 1,
+    providerSelectionSaving: false,
+    providerSelectionSaveError: "",
+    providersSummary: new TestElement(),
+    providersWarning: new TestElement(),
+    providersCheckAllBtn: new TestElement(),
+    providersUncheckAllBtn: new TestElement(),
+    providersInvertBtn: new TestElement(),
+    providersDropMissingBtn: new TestElement(),
+    providersDiscardBtn: new TestElement(),
+    providersSelectionSave: new TestElement(),
+    formatNumber: (value: number) => String(value),
+    providerHealthFor: () => null,
+    providersFilterIsActive: () => false,
+    updateProviderTierFilterChips: () => {},
+    setProvidersSelectionBadge: (_state: string, text: string) => badges.push(text),
+  };
+  // Execute the shipped roster helpers, staged-selection edits, serializer and
+  // panel status; nothing else from the console runs here.
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const providerRosterEntry ="), sourceText.indexOf("/** Roster order for rendering")) +
+      sourceText.slice(sourceText.indexOf("const providersSubscriptionsFor ="), sourceText.indexOf("const providersTierCounts =")) +
+      sourceText.slice(sourceText.indexOf("const providersEmptyWarning ="), sourceText.indexOf("const renderProvidersPicker =")) +
+      sourceText.slice(sourceText.indexOf("const setProviderChecked ="), sourceText.indexOf('providersList.addEventListener("change"')) +
+      "\nglobalThis.picker = { fromIds: providersSelectionFromIds, setProviderChecked, setSubscriptionChecked, serialize: providersSelectedIds, status: updateProvidersStatus };",
+    fixture
+  );
+  const picker = (
+    fixture as typeof fixture & {
+      picker: {
+        fromIds: (ids: string[]) => Set<string>;
+        setProviderChecked: (id: string, checked: boolean) => void;
+        setSubscriptionChecked: (id: string, checked: boolean) => void;
+        serialize: () => string[];
+        status: () => void;
+      };
+    }
+  ).picker;
+  const load = (ids: string[]) => {
+    fixture.providersSavedSelection = picker.fromIds(ids);
+    fixture.providerSelection = picker.fromIds(ids);
+  };
+  const serialize = () => {
+    const ids = Array.from(picker.serialize());
+    // Every serialized id passes the POST validation and survives storage
+    // normalization, so the console saves exactly what it shows as staged.
+    assert.ok(ids.every((id) => isProviderSelectionId(id)));
+    const sorted = (values: readonly string[]) => [...values].sort((left, right) => left.localeCompare(right));
+    assert.deepEqual(sorted(normalizeSelectedProviderIds(ids)), sorted(ids));
+    return ids;
+  };
+
+  load([removed, "surplus"]);
+  assert.deepEqual(serialize(), ["surplus", removed], "saving an untouched restriction keeps the removed subscription");
+  picker.setProviderChecked("surplus", false);
+  assert.deepEqual(serialize(), [removed], "a nonempty staged restriction never serializes to the empty no-filter list");
+  picker.status();
+  assert.equal(fixture.providersSummary.textContent, "0 of 3 providers active.", "the panel never reports this restriction as no filter");
+  assert.match(fixture.providersWarning.textContent, /1 saved subscription is no longer configured/);
+  assert.equal(badges.at(-1), "Unsaved changes");
+  assert.equal(fixture.providersSelectionSave.disabled, false);
+  assert.equal(fixture.providersDropMissingBtn.disabled, false);
+
+  load([removed, "surplus"]);
+  picker.setSubscriptionChecked(configuredA, true);
+  assert.deepEqual(serialize(), ["surplus", configuredA, removed], "narrowing to a configured account keeps the removed one");
+  picker.status();
+  assert.equal(fixture.providersSummary.textContent, "2 of 3 providers active: Codex (1 of 2 subscriptions), Surplus.");
+
+  load([removed, "surplus"]);
+  picker.setProviderChecked("codex", true);
+  assert.deepEqual(serialize(), ["codex", "surplus"], "the Codex umbrella already covers every configured account");
+  picker.setProviderChecked("openlux", true);
+  assert.deepEqual(serialize(), [], "checking every provider is still the no-filter state");
+  picker.status();
+  assert.equal(fixture.providersSummary.textContent, "All 3 providers checked: no filter is saved, so every provider is active.");
+});
+
+test("shipped capacity summary counts exactly displayed Claude roster or legacy rows without changing Codex chart inputs", () => {
+  const badges: string[] = [];
+  const chartSources: { source: string }[][] = [];
+  const fixture = {
+    latestProviderCapacityChartState: null,
+    providerCapacityBadge: new TestElement(),
+    providerCapacityUpdated: new TestElement(),
+    renderProviderCapacityChart: (_snapshot: unknown, sources: { source: string }[]) => chartSources.push(sources),
+    renderProviderCapacityList: () => {},
+    renderProviderCapacityLedger: () => {},
+    setBadge: (_element: unknown, _state: string, label: string) => badges.push(label),
+    formatCapacityTimestamp: () => "observed",
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
+      sourceText.slice(sourceText.indexOf("const unavailableCodexCapacitySource ="), sourceText.indexOf("const CAPACITY_CHART_SVG_NS =")) +
+      sourceText.slice(sourceText.indexOf("const renderProviderCapacity ="), sourceText.indexOf("const loadProviderCapacity =")) +
+      "\nglobalThis.render = renderProviderCapacity;",
+    fixture
+  );
+  const render = (fixture as typeof fixture & { render: (snapshot: unknown) => void }).render;
+  const codex = (state: string) => [1, 2].map((slot) => ({ source: "codex", slot, state }));
+  const account = (id: string, state: string) => ({ source: "claude_code", account_id: id, state });
+  const a = account("a", "available");
+  const b = account("b", "stale");
+  const snapshot = { sources: codex("unavailable"), claude: a, claude_accounts: [a, b], prompt_cache: { status: "ready" } };
+  const before = structuredClone(snapshot);
+  render(snapshot);
+  assert.equal(badges.at(-1), "Partial quota · 2 unavailable", "live Claude capacity cannot be summarized as wholly unavailable");
+  assert.deepEqual(snapshot, before, "summary presentation cannot fabricate a quota or mutate the snapshot");
+  render({ ...snapshot, sources: codex("available"), claude: account("old-active", "unavailable"), claude_accounts: [b] });
+  assert.equal(badges.at(-1), "Quota stale · 1 source", "do not append the active compatibility projection beside an explicit roster");
+  render({ ...snapshot, sources: codex("available"), claude: account("removed", "unavailable"), claude_accounts: [] });
+  assert.equal(badges.at(-1), "Up to date", "a present empty roster does not resurrect removed current evidence");
+  render({ sources: codex("unavailable"), claude: a, prompt_cache: { status: "ready" } });
+  assert.equal(badges.at(-1), "Partial quota · 2 unavailable", "old singleton servers retain truthful summary presentation");
+  render({ sources: codex("unavailable"), claude_accounts: [account("a", "unavailable")] });
+  assert.equal(badges.at(-1), "Quota unavailable");
+  render({});
+  assert.equal(badges.at(-1), "Quota unavailable", "missing evidence is not made available");
+  assert(chartSources.every((sources) => sources.length === 2 && sources.every((entry) => entry.source === "codex")));
 });
 
 test("current accepted quota access is reachable while its failed refresh attempt stays visible", () => {
@@ -408,4 +651,464 @@ test("shipped retention renderer refuses incomplete, errored, unavailable or cor
       "Capture storage usage unavailable · Gateway text logs 2 GiB · Text logs reached 1 GiB; rotation is separate."
     );
   }
+});
+
+const claudeChartContext = {
+  CAPACITY_CHART_BUCKET_MS: 900_000,
+  clampCapacityChartPercent: (value: number) => Math.max(0, Math.min(100, value)),
+  formatCapacityTimestamp: (value: unknown) => {
+    if (typeof value === "number" || typeof value === "string") return String(value);
+    return "Not reported";
+  },
+};
+runInNewContext(
+  sourceText.slice(sourceText.indexOf("const CLAUDE_CAPACITY_CHART_SERIES ="), sourceText.indexOf("const capacityChartFailureIsDowntime =")) +
+    "\nglobalThis.points = claudeCapacityChartPoints; globalThis.summary = claudeHistorySummary;",
+  claudeChartContext
+);
+const claudeChart = claudeChartContext as typeof claudeChartContext & {
+  points: (view: unknown, account: string, window: string, interval: unknown) => ({ remainingPercent: number } | null)[];
+  summary: (snapshot: unknown, now: number) => string;
+};
+const historyStart = 1_800_000_000_000;
+const historyInterval = { startAtMs: historyStart, resetAtMs: historyStart + 3_600_000, durationMs: 3_600_000 };
+const historySample = (offset: number, patch: Record<string, unknown> = {}) => ({
+  account_id: "local-a",
+  account_cohort_id: "cohort-a",
+  credential_kind: "oauth",
+  workspace_id: null,
+  state: "available",
+  sampled_at_ms: historyStart + offset,
+  source_observed_at_ms: historyStart + offset,
+  bucket_start_at_ms: Math.floor((historyStart + offset) / 900_000) * 900_000,
+  windows: { five_hour: { used_percent: 7, reset_at_ms: historyStart + 18_000_000, observed_at_ms: historyStart + offset } },
+  ...patch,
+});
+
+test("shipped Claude chart uses actual window timestamps and never anchors a current value", () => {
+  const view = { stale_after_ms: 1_800_000, points: [historySample(0), historySample(1_000)] };
+  const points = claudeChart.points(view, "local-a", "five_hour", historyInterval);
+  assert.equal(points.filter(Boolean).length, 2);
+  assert.equal(points.filter((point) => point === null).length, 1);
+  assert.equal(points.at(-1)?.remainingPercent, 93);
+  assert.deepEqual(Array.from(claudeChart.points(view, "local-a", "seven_day", historyInterval).filter(Boolean)), []);
+  const noTime = historySample(2_000, { windows: { five_hour: { used_percent: 0, reset_at_ms: null, observed_at_ms: null } } });
+  assert.equal(claudeChart.points({ points: [noTime] }, "local-a", "five_hour", historyInterval).filter(Boolean).length, 0);
+});
+
+test("shipped Claude chart breaks cohort, reset, unavailable and missing-bucket runs without inventing downtime", () => {
+  const cases = [
+    historySample(1_000, { account_cohort_id: "replacement" }),
+    historySample(1_000, { credential_kind: "api_key" }),
+    historySample(1_000, { workspace_id: "other-workspace" }),
+    historySample(1_000, { state: "unavailable" }),
+    historySample(1_000, { windows: { five_hour: { used_percent: 0, reset_at_ms: historyStart + 36_000_000, observed_at_ms: historyStart + 1_000 } } }),
+    historySample(2_700_000),
+  ];
+  for (const sample of cases) {
+    const points = claudeChart.points({ points: [historySample(0), sample] }, "local-a", "five_hour", historyInterval);
+    assert.equal(points.filter((point) => point === null).length, 2);
+    assert.equal(points.filter(Boolean).length, 2, "a measured zero stays an observed point, not a fabricated missing value");
+  }
+  assert.match(claudeChart.summary({ claude_history: { scan: "unavailable", points: [] } }, historyStart), /unavailable/);
+  assert.match(claudeChart.summary({ claude_history: { scan: "ok", truncated: true, points: [] } }, historyStart), /truncated/);
+  const aggregate = /const CAPACITY_CHART_SERIES = ([^;]+);/.exec(sourceText)?.[1] ?? "";
+  assert.doesNotMatch(aggregate, /claude/, "Claude never changes Codex aggregate membership");
+  assert.doesNotMatch(
+    sourceText.slice(sourceText.indexOf("const renderClaudeHistorySelector ="), sourceText.indexOf("const renderClaudeHistoryPaths =")),
+    /fetch\(|mutateClaude|activate/,
+    "history selection is view-only"
+  );
+});
+
+test("shipped shared account controls preserve scoped drafts and send only explicit account/access actions", async () => {
+  const names = [
+    "claudeCredentialSummary",
+    "claudeCredentialInput",
+    "claudeWorkspaceInput",
+    "claudeCredentialSave",
+    "claudeWorkspaceSave",
+    "claudeCredentialClear",
+    "claudeQuotaClear",
+    "claudeSubscriptionStatus",
+    "claudeAccountSelect",
+    "claudeAccountActivate",
+    "claudeAccountLabel",
+    "claudeAccessInput",
+    "claudeAccessSource",
+    "claudeAccessSave",
+  ] as const;
+  const elements = Object.fromEntries(names.map((name) => [name, new TestElement()])) as Record<(typeof names)[number], TestElement>;
+  const account = (id: string, active: boolean) => ({
+    account_id: id,
+    account_cohort_id: `cohort-${id}`,
+    label: `Local ${id}`,
+    active,
+    credential: { kind: "oauth", source: "kv", hint: "masked" },
+    workspace: null,
+  });
+  let status = {
+    accounts: [account("a", true), account("b", false)],
+    active_account_id: "a",
+    active_reason: "bootstrap",
+    access: { source: "env", allowed_key_ids: ["existing-key"], updated_at_ms: null as number | null },
+  };
+  const calls: { url: string; method: string; body: Record<string, unknown> | null }[] = [];
+  const fixture = {
+    ...elements,
+    document: { createElement: () => new TestElement() },
+    adminAccessState: { isAdmin: true },
+    hasAdminCredential: () => true,
+    getAdminToken: () => "fixture-admin",
+    apiUrl: (path: string) => `http://fixture.invalid${path}`,
+    formatDate: (value: unknown) => JSON.stringify(value),
+    toast: {
+      error: () => {
+        throw new Error("unexpected UI action failure");
+      },
+    },
+    fetch: (url: string, init: { method?: string; body?: string } = {}) => {
+      const method = init.method ?? "GET";
+      const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      calls.push({ url, method, body });
+      if (url.endsWith("/access") && method === "POST") {
+        status = { ...status, access: { source: "kv", allowed_key_ids: body?.allowed_key_ids as string[], updated_at_ms: 1 } };
+        return Promise.resolve(Response.json({ data: status.access }));
+      }
+      return Promise.resolve(Response.json({ data: status, guards_cleared: true }));
+    },
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("let latestClaudeSubscription = null;"), sourceText.indexOf("const loadProviders =")) +
+      "\nglobalThis.api = {apply:(value)=>{latestClaudeSubscription=value;renderClaudeSubscriptionControls();},save:saveClaudeCredential,clear:clearClaudeQuotaGuards};",
+    fixture
+  );
+  const ui = (fixture as typeof fixture & { api: { apply: (value: unknown) => void; save: () => Promise<void>; clear: () => Promise<void> } }).api;
+  ui.apply(status);
+  assert.equal(calls.length, 0, "loading controls never grants access or switches active account");
+  elements.claudeCredentialInput.value = "draft-a";
+  elements.claudeWorkspaceInput.value = "wrkspc_draft_a";
+  elements.claudeAccountLabel.value = "Label A";
+  const select = (value: string) => {
+    elements.claudeAccountSelect.value = value;
+    for (const listener of elements.claudeAccountSelect.listeners.get("change") ?? []) listener();
+  };
+  select("b");
+  elements.claudeCredentialInput.value = "draft-b";
+  select("a");
+  assert.equal(elements.claudeCredentialInput.value, "draft-a");
+  assert.equal(elements.claudeWorkspaceInput.value, "wrkspc_draft_a");
+  ui.apply({ ...status, active_account_id: "b", accounts: [account("a", false), account("b", true)] });
+  assert.equal(elements.claudeCredentialInput.value, "draft-a", "polling preserves the selected account's unsaved draft");
+  await ui.clear();
+  const clear = calls.find((call) => call.url.endsWith("/quota/clear"));
+  assert.deepEqual(clear?.body, { account_id: "a", account_cohort_id: "cohort-a" });
+  await ui.save();
+  const save = calls.find((call) => call.method === "POST" && call.url.endsWith("/auth"));
+  assert.deepEqual(save?.body, { account_id: "a", credential: "draft-a", workspace_id: "wrkspc_draft_a", label: "Label A" });
+  select("");
+  elements.claudeCredentialInput.value = "new-account-draft";
+  await ui.save();
+  const added = calls.filter((call) => call.method === "POST" && call.url.endsWith("/auth")).at(-1);
+  assert.equal(added?.body?.create_new, true);
+  assert.equal(added.body.activate, false);
+  elements.claudeAccessInput.value = "";
+  for (const listener of elements.claudeAccessInput.listeners.get("input") ?? []) listener();
+  elements.claudeAccessSave.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const access = calls.find((call) => call.url.endsWith("/access"));
+  assert.deepEqual(access?.body, { allowed_key_ids: [] });
+  assert.match(elements.claudeAccessSource.textContent, /stored policy.*0 allowed/);
+  assert.equal(
+    calls.some((call) => call.url.endsWith("/accounts/active")),
+    false,
+    "account viewing/import never silently changes active selection"
+  );
+});
+
+const PROVIDER_ROSTER = [
+  { id: "codex", tier: "subscription", label: "Codex", subscriptions: [{ id: "sub-a" }, { id: "sub-b" }] },
+  { id: "surplus", tier: "paid", label: "Surplus" },
+  { id: "openlux", tier: "paid", label: "OpenLux" },
+];
+
+/**
+ * The shipped picker state helpers, status writer, and bulk click handlers,
+ * with only the DOM, warnings, and badge stubbed.
+ */
+const providerPicker = (selection: string[], visibleIds: string[]) => {
+  const between = (start: string, end: string) => {
+    const from = sourceText.indexOf(start);
+    const to = sourceText.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `admin.js must contain ${start} before ${end}`);
+    return sourceText.slice(from, to);
+  };
+  const buttons = {
+    providersCheckAllBtn: new TestElement(),
+    providersUncheckAllBtn: new TestElement(),
+    providersInvertBtn: new TestElement(),
+    providersDropMissingBtn: new TestElement(),
+    providersDiscardBtn: new TestElement(),
+    providersSelectionSave: new TestElement(),
+  };
+  const fixture = {
+    ...buttons,
+    providerRoster: PROVIDER_ROSTER,
+    providerSelection: new Set(selection),
+    providersSavedSelection: new Set(selection),
+    providersVisibleIds: new Set(visibleIds),
+    providerSelectionSaving: false,
+    providerSelectionLoadedAt: 1,
+    providerSelectionSaveError: "",
+    providersSummary: new TestElement(),
+    providersWarning: new TestElement(),
+    providersOnlyActiveInput: { checked: false },
+    providersList: { querySelectorAll: () => [] },
+    providersVisibleEntries: () => PROVIDER_ROSTER.filter((entry) => visibleIds.includes(entry.id)),
+    providersFilterIsActive: () => visibleIds.length < PROVIDER_ROSTER.length,
+    providersEmptyWarning: () => "",
+    providersRoutingWarnings: () => [],
+    providersHealthWarning: () => "",
+    setProvidersSelectionBadge: () => {},
+    updateProviderTierFilterChips: () => {},
+    formatNumber: (value: number) => String(value),
+  };
+  runInNewContext(
+    [
+      between("const providerRosterEntry =", "/** One tier chip per tier"),
+      between("const providersSubscriptionsFor =", "const providersTierCounts ="),
+      between("const updateProvidersStatus = () =>", "const renderProvidersPicker ="),
+      between("const applyProvidersSelection =", "const loadProviderSelection ="),
+      between("const setProviderChecked =", 'providersList.addEventListener("change"'),
+      between('providersCheckAllBtn.addEventListener("click"', 'providersInvertBtn.addEventListener("click"'),
+      "updateProvidersStatus();",
+    ].join("\n"),
+    fixture
+  );
+  return { ...buttons, selection: fixture.providerSelection };
+};
+
+test("a narrowed Codex tier filtered alone keeps Uncheck shown enabled, and unchecking clears its subscription", () => {
+  const picker = providerPicker(["sub-a"], ["codex"]);
+  assert.equal(picker.providersUncheckAllBtn.disabled, false, "the narrowed Codex row is checked, so Uncheck shown has work to do");
+  assert.equal(picker.providersUncheckAllBtn.textContent, "Uncheck 1 shown");
+
+  picker.providersUncheckAllBtn.click();
+  assert.deepEqual([...picker.selection], [], "Uncheck shown drops the narrowed subscription, not just the umbrella id");
+  assert.equal(picker.providersUncheckAllBtn.disabled, true);
+  assert.equal(picker.providersCheckAllBtn.disabled, false);
+});
+
+test("a narrowed Codex tier filtered alone keeps Check shown enabled, and checking expands it to every subscription", () => {
+  const picker = providerPicker(["sub-a"], ["codex"]);
+  assert.equal(picker.providersCheckAllBtn.disabled, false, "a partial Codex row is not fully checked, so Check shown still applies");
+
+  picker.providersCheckAllBtn.click();
+  assert.deepEqual([...picker.selection], ["codex"], "Check shown widens the narrowed tier to the umbrella id");
+  assert.equal(picker.providersCheckAllBtn.disabled, true);
+  assert.equal(picker.providersUncheckAllBtn.disabled, false);
+});
+
+test("provider bulk buttons keep their umbrella and unchecked-row states", () => {
+  const all = providerPicker(["codex"], ["codex"]);
+  assert.equal(all.providersCheckAllBtn.disabled, true, "the whole Codex tier is already checked");
+  assert.equal(all.providersUncheckAllBtn.disabled, false);
+
+  const none = providerPicker(["surplus"], ["codex"]);
+  assert.equal(none.providersCheckAllBtn.disabled, false);
+  assert.equal(none.providersUncheckAllBtn.disabled, true, "no shown row is checked");
+
+  const mixed = providerPicker(["sub-b", "surplus"], ["codex", "surplus", "openlux"]);
+  assert.equal(mixed.providersCheckAllBtn.disabled, false);
+  assert.equal(mixed.providersUncheckAllBtn.disabled, false);
+  mixed.providersUncheckAllBtn.click();
+  assert.deepEqual([...mixed.selection], [], "Uncheck all clears the narrowed subscription with the other shown rows");
+});
+
+const shippedSlice = (start: string, end: string): string => {
+  const from = adminScript.indexOf(start);
+  const to = adminScript.indexOf(end, from);
+  assert.ok(from >= 0 && to > from, `${start} must stay discoverable in static/admin.js`);
+  return adminScript.slice(from, to);
+};
+
+const sorted = (ids: Iterable<string>): string[] => [...ids].sort((left, right) => left.localeCompare(right));
+type SaveResponse = { ok: boolean; status: number; json: () => Promise<unknown> };
+type Provider = { id: string; subscriptions?: { id: string }[] };
+
+class FakeCheckbox {
+  type = "checkbox";
+  checked: boolean;
+  dataset: Record<string, string>;
+  constructor(id: string, checked: boolean, subscription: boolean) {
+    this.dataset = subscription ? { providerSubscriptionToggle: id } : { providerToggle: id };
+    this.checked = checked;
+  }
+}
+
+type Harness = {
+  save: () => Promise<void>;
+  unsaved: () => boolean;
+  seed: (saved: readonly string[], staged: readonly string[]) => void;
+  state: () => { saved: Iterable<string>; staged: Iterable<string>; saving: boolean };
+};
+
+/** Runs the shipped selection state, helpers, save handler and checkbox listener; only I/O and rendering are faked. */
+const loadHarness = (roster: Provider[] = [{ id: "a" }, { id: "b" }, { id: "c" }]) => {
+  const requests: unknown[] = [];
+  const successes: string[] = [];
+  let respond: ((response: SaveResponse) => void) | null = null;
+  let changeListener: ((event: { target: FakeCheckbox }) => void) | null = null;
+  const context = {
+    HTMLInputElement: FakeCheckbox,
+    apiUrl: (path: string) => path,
+    applyProvidersSelection: () => {},
+    console,
+    fetch: (_url: string, init: { body: string }) => {
+      requests.push(JSON.parse(init.body));
+      return new Promise<SaveResponse>((resolve) => {
+        respond = resolve;
+      });
+    },
+    formatNumber: (value: number) => String(value),
+    getAdminToken: () => "admin-token",
+    hasAdminCredential: () => true,
+    providerRoster: roster,
+    providersList: {
+      addEventListener: (type: string, listener: (event: { target: FakeCheckbox }) => void) => {
+        if (type === "change") changeListener = listener;
+      },
+    },
+    providersOnlyActiveInput: { checked: false },
+    renderProvidersPicker: () => {},
+    setProvidersSelectionBadge: () => {},
+    toast: { error: () => {}, success: (message: string) => successes.push(message) },
+    updateProvidersStatus: () => {},
+  };
+  runInNewContext(
+    [
+      shippedSlice("let providerSelection = new Set();", "const setProvidersSelectionBadge"),
+      shippedSlice("const providerRosterEntry", "const buildProviderTierFilterChip"),
+      shippedSlice("const providersSubscriptionsFor", "const providersTierCounts"),
+      shippedSlice("const saveProviderSelection = async () => {", "const discardProviderChanges"),
+      shippedSlice("const setProviderChecked", 'providersCheckAllBtn.addEventListener("click"'),
+      "globalThis.harness = {",
+      "  save: saveProviderSelection,",
+      "  unsaved: providersHasUnsavedChanges,",
+      "  seed: (saved, staged) => {",
+      "    providersSavedSelection = providersSelectionFromIds(saved);",
+      "    providerSelection = new Set(staged);",
+      "    providerSelectionLoadedAt = 1;",
+      "  },",
+      "  state: () => ({ saved: providersSavedSelection, staged: providerSelection, saving: providerSelectionSaving }),",
+      "};",
+    ].join("\n"),
+    context
+  );
+  const harness = (context as typeof context & { harness: Harness }).harness;
+  const toggle = (id: string, checked: boolean, subscription = false) => {
+    assert.ok(changeListener, "the Providers list change listener must be registered");
+    changeListener({ target: new FakeCheckbox(id, checked, subscription) });
+  };
+  const succeed = (body: unknown) => {
+    assert.ok(respond, "a provider selection save request must be pending");
+    respond({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  };
+  return { harness, requests, successes, toggle, succeed };
+};
+
+test("a provider checked while a save is pending stays staged and unsaved", async () => {
+  const { harness, requests, successes, toggle, succeed } = loadHarness();
+  harness.seed([], ["a"]);
+  const saving = harness.save();
+  assert.equal(harness.state().saving, true);
+  toggle("b", true);
+  succeed({ provider_ids: ["a"] });
+  await saving;
+
+  assert.deepEqual(requests, [{ provider_ids: ["a"] }], "the later edit is not part of the pending save");
+  const state = harness.state();
+  assert.equal(state.saving, false);
+  assert.deepEqual(sorted(state.saved), ["a"]);
+  assert.deepEqual(sorted(state.staged), ["a", "b"]);
+  assert.equal(harness.unsaved(), true);
+  assert.deepEqual(successes, ["1 provider active"], "the toast counts saved, not staged providers");
+});
+
+test("a provider unchecked during a no-filter save stays unchecked and unsaved", async () => {
+  const { harness, requests, successes, toggle, succeed } = loadHarness();
+  harness.seed(["a"], ["a", "b", "c"]);
+  const saving = harness.save();
+  toggle("b", false);
+  succeed({ provider_ids: [] });
+  await saving;
+
+  assert.deepEqual(requests, [{ provider_ids: [] }], "all checked providers serialize to the no-filter state");
+  const state = harness.state();
+  assert.deepEqual(sorted(state.saved), ["a", "b", "c"]);
+  assert.deepEqual(sorted(state.staged), ["a", "c"]);
+  assert.equal(harness.unsaved(), true);
+  assert.deepEqual(successes, ["Filter cleared"]);
+});
+
+test("a provider save response without provider_ids records only the submitted ids as saved", async () => {
+  const { harness, requests, toggle, succeed } = loadHarness();
+  harness.seed([], ["a"]);
+  const saving = harness.save();
+  toggle("b", true);
+  succeed({ ok: true });
+  await saving;
+
+  assert.deepEqual(requests, [{ provider_ids: ["a"] }]);
+  const state = harness.state();
+  assert.deepEqual(sorted(state.saved), ["a"], "an id that was never sent cannot be recorded as saved");
+  assert.deepEqual(sorted(state.staged), ["a", "b"]);
+  assert.equal(harness.unsaved(), true);
+});
+
+for (const checking of [false, true]) {
+  test(`a Codex subscription ${checking ? "checked" : "unchecked"} during a save preserves the umbrella transition`, async () => {
+    const { harness, requests, toggle, succeed } = loadHarness([{ id: "codex", subscriptions: [{ id: "codex:one" }, { id: "codex:two" }] }, { id: "paid" }]);
+    const submitted = checking ? ["codex:one"] : ["codex"];
+    harness.seed([], submitted);
+    const saving = harness.save();
+    toggle("codex:two", checking, true);
+    succeed({ provider_ids: submitted });
+    await saving;
+
+    assert.deepEqual(requests, [{ provider_ids: submitted }]);
+    const state = harness.state();
+    assert.deepEqual(sorted(state.saved), submitted);
+    assert.deepEqual(sorted(state.staged), checking ? ["codex"] : ["codex:one"]);
+    assert.equal(harness.unsaved(), true);
+  });
+}
+
+test("a provider save without later edits adopts the server's canonical selection and is clean", async () => {
+  const { harness, requests, succeed } = loadHarness();
+  harness.seed([], ["a", " b "]);
+  const saving = harness.save();
+  succeed({ provider_ids: ["a", "b"] });
+  await saving;
+
+  assert.deepEqual(requests, [{ provider_ids: ["a", " b "] }]);
+  const state = harness.state();
+  assert.deepEqual(sorted(state.saved), ["a", "b"]);
+  assert.deepEqual(sorted(state.staged), ["a", "b"]);
+  assert.equal(harness.unsaved(), false);
+});
+
+test("provider pending-save toasts count saved tiers once while later edits stay staged", async () => {
+  const { harness, successes, toggle, succeed } = loadHarness([
+    { id: "codex", subscriptions: [{ id: "codex:one" }, { id: "codex:two" }, { id: "codex:three" }] },
+    { id: "paid" },
+  ]);
+  harness.seed([], ["codex:one", "codex:two"]);
+  const saving = harness.save();
+  toggle("paid", true);
+  succeed({ provider_ids: ["codex:one", "codex:two"] });
+  await saving;
+  assert.deepEqual(successes, ["1 provider active"], "two saved subscriptions form one tier, and the later paid edit is unsaved");
+  assert.deepEqual(sorted(harness.state().staged), ["codex:one", "codex:two", "paid"]);
+  assert.equal(harness.unsaved(), true);
 });

@@ -6,3 +6,6 @@ exact = true
 
 [install.cache]
 dir = ".bun-cache"
+
+[test]
+preload = ["./scripts/test-scope-preload.ts"]

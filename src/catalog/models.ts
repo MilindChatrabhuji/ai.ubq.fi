@@ -33,7 +33,7 @@ import { codexSnapshotMetadataHint, codexSubscriptionMetadataHint, resolveModelM
 import { openRouterModelsSnapshot } from "../models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "./types.ts";
-import type { ClaudeCodeModel } from "../provider/claude-code-models.ts";
+import { claudeCodeReasoningLevels, type ClaudeCodeModel } from "../provider/claude-code-models.ts";
 
 /** Codex shell defaults are generic; reasoning and windows require observed Claude capabilities. */
 export const claudeCodeCodexModels = (models: readonly ClaudeCodeModel[]): Record<string, unknown>[] =>
@@ -42,9 +42,10 @@ export const claudeCodeCodexModels = (models: readonly ClaudeCodeModel[]): Recor
     display_name: model.display_name ?? model.id,
     owned_by: "anthropic",
     supported_endpoint_types: ["openai-response", "openai"],
-    supported_reasoning_levels: model.supports_disabled_thinking === true ? [{ effort: "none", description: "No reasoning" }] : [],
+    supported_reasoning_levels: claudeCodeReasoningLevels(model).map((effort) => ({ effort, description: effort === "none" ? "No reasoning" : effort })),
     ...(model.supports_disabled_thinking === true ? { default_reasoning_level: "none" } : {}),
     ...(model.context_window_tokens ? { context_window: model.context_window_tokens, max_context_window: model.context_window_tokens } : {}),
+    ...(model.max_output_tokens ? { max_output_tokens: model.max_output_tokens } : {}),
     shell_type: "shell_command",
     visibility: "list",
     supported_in_api: true,
@@ -178,7 +179,9 @@ const meteredCodexModelRecord = (
     supported_reasoning_levels: levels?.length
       ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
       : [{ effort: "none", description: "No reasoning" }],
-    default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+    ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+      ? {}
+      : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
     ...(resolved.context_window_tokens === null
       ? {}
       : {
@@ -298,7 +301,7 @@ const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]):
 };
 
 /**
- * Codex catalog record for the gateway-owned `ubiquity/deepseek-v4.1-flash`
+ * Codex catalog record for the gateway-owned `ubiquity/deepseek-flash`
  * waterfall model. The advertised reasoning tiers are the intersection every
  * candidate hop accepts verbatim (low/high/max); the waterfall boundary
  * rejects anything else rather than letting a hop refuse it later.
@@ -447,7 +450,9 @@ const cerebrasCodexModels = (): Record<string, unknown>[] => {
         effort: String(effort),
         description: codexReasoningEffortDescription(String(effort)),
       })),
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {
@@ -517,7 +522,9 @@ const openRouterCodexModels = (): Record<string, unknown>[] => {
       supported_reasoning_levels: levels?.length
         ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
         : [{ effort: "none", description: "No reasoning" }],
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {
