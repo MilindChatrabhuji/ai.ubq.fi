@@ -118,6 +118,8 @@ export type ProviderCapacityClaudeError = Readonly<{
 export type ProviderCapacityClaudeSource = Readonly<{
   source: "claude_code";
   label: "Claude subscription";
+  account_id?: string | null;
+  account_cohort_id?: string | null;
   state: CapacityState;
   source_observed_at_ms: number | null;
   snapshot_at_ms: number;
@@ -159,6 +161,9 @@ export type ProviderCapacityView = Readonly<
      * internal callers that only need the Codex/metered snapshot.
      */
     claude?: ProviderCapacityClaudeSource | null;
+    /** Validated configured roster; `claude` remains the exact active projection. */
+    claude_accounts?: readonly ProviderCapacityClaudeSource[];
+    claude_history?: ClaudeCapacityHistoryView;
     cache_state: ProviderCapacityViewState;
     history: readonly ProviderCapacityHistoryPoint[];
     reset_events: readonly ProviderCapacityResetEvent[];
@@ -166,6 +171,33 @@ export type ProviderCapacityView = Readonly<
     downtime_events: readonly ProviderCapacityDowntimeEvent[];
   }
 >;
+
+/** Additive Claude evidence; never widen the persisted Codex/metered tuple. */
+export type ClaudeCapacityHistoryPoint = Readonly<{
+  v: 1;
+  point_id: string;
+  bucket_start_at_ms: number;
+  sampled_at_ms: number;
+  source_observed_at_ms: number | null;
+  account_id: string;
+  account_cohort_id: string;
+  credential_kind: "oauth" | "api_key";
+  workspace_id: string | null;
+  state: "available" | "unavailable";
+  response_status: number | null;
+  windows: Readonly<{ five_hour: ProviderCapacityClaudeWindow | null; seven_day: ProviderCapacityClaudeWindow | null }>;
+  standard: readonly Readonly<ProviderCapacityClaudeStandardLimit & { observed_at_ms: number | null }>[];
+}>;
+
+export type ClaudeCapacityHistoryView = Readonly<{
+  v: 1;
+  scan: "ok" | "unavailable";
+  truncated: boolean;
+  bucket_ms: number;
+  retention_ms: number;
+  stale_after_ms: number;
+  points: readonly ClaudeCapacityHistoryPoint[];
+}>;
 
 export type ProviderCapacityFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
