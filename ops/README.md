@@ -45,11 +45,34 @@ atomically selects the new release, validates the composed Caddy configuration a
 on the public `https://ai.ubq.fi/health` route. It fails closed when the branch, `HEAD`, or tracking ref does not match,
 and it never fetches, pulls, or switches branches itself: if `origin/development` is missing or stale, refresh it with
 the existing `git fetch origin development` step above. It refuses to overwrite an existing release. If a run fails
-after it created the release, fix the fault and rerun the same command for the same SHA: the private
-`.data/deploy-recovery.json` receipt lets it verify the existing release and continue. A failure before Caddy applies the
-new configuration restores the previous release. A first deployment has no previous release, so once the gateway
-restart was attempted its candidate stays selected, unaccepted, until a retry accepts it. Use `systemctl restart` to
-restart the current release.
+after it created the release, fix the fault and rerun `bun run deploy:vps` for the same SHA: the private
+`.data/deploy-recovery.json` receipt lets it verify the existing release and continue. The receipt binds every retry to
+its candidate, so do not run the fetch and fast-forward steps above before a retry: any other SHA is refused with
+"Stale deployment recovery receipt belongs to another candidate".
+
+A failure before Caddy applies the new configuration restores a supported Bun previous release: the selector moves back,
+and when the gateway may already run the candidate, the previous release is restarted and its loopback and public
+identity are proven. Two cases stop short of that. When the gateway may already run the candidate, a Deno-era
+predecessor is refused ("Cross-codec rollback requires stopped latest-state Bun-to-Deno conversion") and the candidate
+stays selected; returning to Deno needs the codec procedure below. If the restarted previous release does not prove its
+identity, the selector stays on it and the receipt stays unsettled, so every retry is refused until the receipt is
+reconciled by hand. A first deployment has no previous release, so once the gateway restart was attempted its candidate
+stays selected, unaccepted, until a retry accepts it. Use `systemctl restart` to restart the current release.
+
+When the candidate itself is faulty and a newer SHA has to replace it, reconcile the receipt by hand while no deployment
+runs, then deploy the newer SHA:
+
+- With a previous release (`previous` in the receipt is not `null`): if the receipt's `phase` is `rolled_back` and the
+  previous release still serves its identity on its loopback port and on `https://ai.ubq.fi/health`, remove the
+  receipt. Otherwise select the receipt's `previous.selector` (create the symlink beside `.data/current` and rename it
+  over `.data/current`, as the deploy does), restart the gateway, prove the previous release's identity on its loopback
+  port and on the public route, and only then remove the receipt. A Deno-era predecessor needs the codec procedure below
+  instead of a restart.
+- A first deployment (`previous` is `null`) has nothing to restore: stop the gateway, remove `.data/current` and the
+  receipt, and deploy the newer SHA as a first deployment.
+
+Leave the faulty release directory in place: the deploy refuses to reuse it without a receipt, and release retention
+prunes it later.
 
 Verify authenticated inference and the public health route after deployment. A health response alone does not prove
 provider inference. The startup message, health body, and response headers identify the same immutable Git revision.

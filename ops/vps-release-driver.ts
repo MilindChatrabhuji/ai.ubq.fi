@@ -1,6 +1,6 @@
 import { command } from "./io.ts";
 import { mkdir } from "node:fs/promises";
-import { ensureCaddyIngressReady, healthServesRelease, reloadCaddyIngress } from "./deploy.ts";
+import { ensureCaddyIngressReady, healthServesRelease, reloadCaddyIngress } from "./vps-ingress.ts";
 import {
   canonicalVps,
   isHealthyVps,
