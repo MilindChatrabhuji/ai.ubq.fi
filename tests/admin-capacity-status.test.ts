@@ -86,6 +86,115 @@ Deno.test("unavailable, stale and expired access retain warnings, while inferenc
   }
 });
 
+type CapacityScrollNode = {
+  clientWidth: number;
+  offsetWidth: number;
+  scrollWidth: number;
+  scrollLeft: number;
+  querySelector: (_selector: string) => { dataset: Record<string, string> } | null;
+};
+
+let visibleCapacityScroll: CapacityScrollNode | null = null;
+const capacityScrollContext = {
+  providerCapacityChart: {
+    querySelector: () => visibleCapacityScroll,
+  },
+};
+const markerStart = sourceText.indexOf("const capacityChartMarkerX");
+const markerEnd = sourceText.indexOf("const capacityChartPromptCacheBuckets", markerStart);
+const scrollStart = sourceText.indexOf("const capacityChartScrollMaximum");
+const scrollEnd = sourceText.indexOf("const capacityChartOptimalSpendCoordinates", scrollStart);
+assert.ok(markerStart >= 0 && markerEnd > markerStart, "shipped capacity marker fixture boundary");
+assert.ok(scrollStart >= 0 && scrollEnd > scrollStart, "shipped capacity scroll fixture boundary");
+runInNewContext(
+  [
+    "let capacityChartScrollState = null;",
+    "let capacityChartFollowsLatest = true;",
+    "let capacityChartScrollNeedsVisiblePosition = false;",
+    sourceText.slice(markerStart, markerEnd),
+    sourceText.slice(scrollStart, scrollEnd),
+    "globalThis.remember = rememberCapacityChartScroll; globalThis.restore = restoreCapacityChartScroll;",
+    "globalThis.reset = () => {",
+    "  capacityChartScrollState = null;",
+    "  capacityChartFollowsLatest = true;",
+    "  capacityChartScrollNeedsVisiblePosition = false;",
+    "};",
+  ].join("\n"),
+  capacityScrollContext,
+  { timeout: 1000 },
+);
+const capacityScrollPresenter = capacityScrollContext as typeof capacityScrollContext & {
+  remember: () => void;
+  restore: (scroll: CapacityScrollNode, displayWindow: { startAtMs: number; durationMs: number }, plot: { left: number; width: number }) => void;
+  reset: () => void;
+};
+
+Deno.test("capacity refresh preserves a scrolled anchor before the queued scroll event", () => {
+  capacityScrollPresenter.reset();
+  const svg = {
+    dataset: {
+      capacityChartStartAtMs: "0",
+      capacityChartDurationMs: "1000",
+      capacityChartPlotLeft: "10",
+      capacityChartPlotWidth: "1000",
+    },
+  };
+  const oldScroll: CapacityScrollNode = {
+    clientWidth: 100,
+    offsetWidth: 100,
+    scrollWidth: 500,
+    scrollLeft: 150,
+    querySelector: () => svg,
+  };
+  visibleCapacityScroll = oldScroll;
+  capacityScrollPresenter.remember();
+
+  const refreshedScroll: CapacityScrollNode = {
+    clientWidth: 100,
+    offsetWidth: 100,
+    scrollWidth: 600,
+    scrollLeft: 0,
+    querySelector: () => svg,
+  };
+  visibleCapacityScroll = refreshedScroll;
+  capacityScrollPresenter.restore(refreshedScroll, { startAtMs: 0, durationMs: 1000 }, { left: 10, width: 1000 });
+
+  assert.equal(refreshedScroll.scrollLeft, 150);
+});
+
+Deno.test("capacity refresh retains follow-latest intent after a hidden render", () => {
+  capacityScrollPresenter.reset();
+  const hiddenScroll: CapacityScrollNode = {
+    clientWidth: 0,
+    offsetWidth: 0,
+    scrollWidth: 0,
+    scrollLeft: 0,
+    querySelector: () => ({ dataset: {} }),
+  };
+  visibleCapacityScroll = hiddenScroll;
+  capacityScrollPresenter.restore(hiddenScroll, { startAtMs: 0, durationMs: 1000 }, { left: 10, width: 1000 });
+
+  const visibleScroll: CapacityScrollNode = {
+    clientWidth: 100,
+    offsetWidth: 100,
+    scrollWidth: 600,
+    scrollLeft: 0,
+    querySelector: () => ({
+      dataset: {
+        capacityChartStartAtMs: "0",
+        capacityChartDurationMs: "1000",
+        capacityChartPlotLeft: "10",
+        capacityChartPlotWidth: "1000",
+      },
+    }),
+  };
+  visibleCapacityScroll = visibleScroll;
+  capacityScrollPresenter.remember();
+  capacityScrollPresenter.restore(visibleScroll, { startAtMs: 0, durationMs: 1000 }, { left: 10, width: 1000 });
+
+  assert.equal(visibleScroll.scrollLeft, 500);
+});
+
 const retentionContext = { errorsRetention: new TestElement() };
 runInNewContext(
   [

@@ -268,6 +268,7 @@ Deno.test("admin provider picker reports the roster, catalog counts, and the sav
     const body = await response.json();
     const rows = [
       { id: "codex", model_count: 1, status: "available", configured: true, subscriptions: [] },
+      { id: "claude_code", model_count: 0, status: "unavailable", configured: false },
       { id: "surplus", model_count: 2, status: "available", configured: true },
       { id: "openlux", model_count: 0, status: "unavailable", configured: false },
       { id: "deepseek", model_count: 1, status: "available", configured: true },
