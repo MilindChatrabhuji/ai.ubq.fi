@@ -84,6 +84,25 @@ restart: systemd keeps the previously loaded unit until it reloads. Releases cre
 change are not rollback targets, because they execute the checkout's launcher and Deno configuration instead of their
 own. Keep a release created after this change as the rollback baseline.
 
+### Standalone Sentinel release metrics: pending windows and evidence sizing
+
+These joins belong to standalone Sentinel's pinned VPS release bridge, not the gateway request path. This change does not activate release automation or re-pin the external bridge.
+
+An admission without a terminal remains collecting while its journal scan advances. A validated PID 1 completed exit/restart row for the unit after that admission makes a fully covered window unavailable with `terminal_lost`; it is never counted as a request. That result survives checkpoint reconstruction and no longer pins ledger slices, allowing the controller to restart monitoring instead of waiting for the operation deadline. Startup and starting/stopping notices alone do not cut off a live request: with `Type=simple`, `Started` may follow a live admission from the new process. Without an observed exit/restart marker, a missing terminal can still collect until the operation deadline or a configured evidence limit; there is no new maximum stream lifetime. Orphan terminals remain conservative even well beyond a window (see the 2026-10-18 decision in `docs/DECISIONS.md`).
+
+`pruneJoinLedgers` retains **every event in every slice** from the earliest pending cohort's `scanStart`, plus the most recent scan for sharing with the next window. Storage is not constant-size: it grows roughly as request rate × longest in-flight lifetime, with backward admission lookback and slice/coverage/cohort/encryption overhead on top. For rate `r`, retained span `L` and measured combined admission/terminal projection size `b`, budget roughly `r × L × b` **plus that overhead and headroom**. Use the whole traffic rate, not just the long-stream fraction. The configured `evidenceMaxBytes` bounds both plaintext and sealed checkpoints; exceeding it refuses evidence rather than truncating events or treating a window as complete. Evidence age, entry and query limits also still apply.
+
+Issue #1165 reports these simulations of the preceding implementation with a **4 MiB (4,194,304-byte)** cap and seven-day retention. They illustrate sizing risk, not a constant-size guarantee or newly measured production capacity:
+
+| Rate (req/s) | Request mix                                   | Last saved peak (bytes) | Outcome                     |
+| -----------: | --------------------------------------------- | ----------------------: | --------------------------- |
+|          2.0 | 1 in 20 requests streams for 30 minutes       |               4,179,775 | Candidate window 18 refused |
+|          1.5 | Same mix                                      |               4,128,015 | About 98% of the cap        |
+|          3.0 | Five-minute streams plus one 30-minute stream |               3,528,359 | Below the cap               |
+|         0.35 | 1 in 10 requests streams for 30 minutes       |              About 1 MB | Below the cap               |
+
+A higher rate or longer stream therefore needs a measured larger evidence policy or a separate compaction change; increasing retention alone does not fix the byte bound. A crash marker removes the lost window's pin, but does not compact other genuinely pending windows to just their own requests.
+
 ## Data migration and recovery
 
 The 2026-09-10 migration retained the complete Deno export privately in `.kv-migration/production-20260910.ndjson`. The
