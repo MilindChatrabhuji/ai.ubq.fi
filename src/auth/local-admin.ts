@@ -1,4 +1,5 @@
 import type { Addr } from "#http";
+import { config } from "../config.ts";
 export type ServeRuntimeOptions = Readonly<{
   disableAdminAuth: boolean;
 }>;
@@ -8,7 +9,10 @@ const DISABLE_ADMIN_AUTH_FLAG = "--disable-admin-auth";
 const formatArgumentError = (argument: string): Error =>
   new Error(`[ai.ubq.fi] Unknown server argument '${argument}'. Supported arguments: ${DISABLE_ADMIN_AUTH_FLAG}`);
 
-export const parseServeRuntimeOptions = (args: readonly string[], options: Readonly<{ isDeploy: boolean }>): ServeRuntimeOptions => {
+export const parseServeRuntimeOptions = (
+  args: readonly string[],
+  options: Readonly<{ isDeploy: boolean; isProductionTimeline: boolean }>
+): ServeRuntimeOptions => {
   let disableAdminAuth = false;
 
   for (const argument of args) {
@@ -21,6 +25,10 @@ export const parseServeRuntimeOptions = (args: readonly string[], options: Reado
 
   if (disableAdminAuth && options.isDeploy) {
     throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} is unavailable in Deno Deploy.`);
+  }
+  // The production VPS serves Caddy-proxied public traffic on its loopback listener (#262).
+  if (disableAdminAuth && options.isProductionTimeline) {
+    throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} is unavailable on the production timeline (DENO_TIMELINE=production).`);
   }
 
   return Object.freeze({ disableAdminAuth });
@@ -66,6 +74,8 @@ export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, 
 
 let adminAuthDisabled = false;
 let adminAuthPeer: Addr | null = null;
+/** Set only by the Mac companion's listener; see `isMacCompanionServiceListener`. */
+let macCompanionListener = false;
 /**
  * Request-scoped peers for a LAN-facing listener. Routing awaits before it
  * authenticates, so a single process-wide slot can be overwritten by a
@@ -79,6 +89,7 @@ export const configureAdminAuthForListener = (options: ServeRuntimeOptions, addr
   const disabled = shouldDisableAdminAuthForListener(options, address);
   adminAuthDisabled = disabled;
   adminAuthPeer = null;
+  macCompanionListener = false;
   return disabled;
 };
 
@@ -113,13 +124,26 @@ export const configureMacLocalAdminAuthBypassForListener = (address: Addr): bool
   }
   adminAuthDisabled = true;
   adminAuthPeer = null;
+  macCompanionListener = true;
   return true;
 };
+
+/**
+ * True only in the Mac companion service process: `scripts/serve-mac.ts` is the
+ * one caller of `configureMacLocalAdminAuthBypassForListener`. A development
+ * server (`bun run dev`, `dev:local`) configures its loopback bypass through
+ * `configureAdminAuthForListener`, which clears this signal. Work that must run
+ * only on the real Mac service, such as pushing its capacity samples to the VPS
+ * chart, gates on this rather than on the request-level loopback bypass.
+ */
+export const isMacCompanionServiceListener = (): boolean => macCompanionListener;
 
 const isLoopbackPeer = (peer: Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
 
 export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
-  if (!adminAuthDisabled) return false;
+  // The production timeline never grants a development bypass, however a
+  // launcher enabled one: its loopback peers are the public proxy (#262).
+  if (!adminAuthDisabled || config.isProductionTimeline) return false;
   // The bypass must be granted only to an actual loopback peer, never to a
   // forwarded, tunneled, or port-forwarded request whose URL hostname is
   // client-controlled. Fail closed when the peer is unknown (for example a

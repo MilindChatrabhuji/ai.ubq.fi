@@ -279,17 +279,27 @@ const handleAdminRoute = async (req: Request, path: string, requestId: string): 
   return await handleApiKeyPaidFallbacksRoute(req, path);
 };
 
+/** The actual UOS catalog/message dispatch table, also consumed by the published-contract parity test. */
+export const UOS_ROUTES: readonly ExactRouteEntry[] = [
+  { methods: ["GET"], path: "/uos/auth", run: handleV1Auth },
+  { methods: ["GET"], path: "/uos/models/catalog", run: () => handlePublicModelCatalog() },
+  {
+    methods: ["GET"],
+    path: "/uos/models/capabilities",
+    run: async (req) => {
+      const authResult = await authenticateClient(req);
+      if (!authResult.ok) return authResult.response;
+      return await handleModelCapabilities();
+    },
+  },
+  { methods: ["GET"], path: "/uos/agent-messages", run: handleAgentMessagesList },
+  { methods: ["POST"], path: "/uos/agent-messages", run: handleAgentMessagesPost },
+];
+
 /** Serves the UOS catalog and agent-message routes; null when none matches. */
 const handleUosRoute = async (req: Request, path: string): Promise<Response | null> => {
-  if (req.method === "GET" && path === "/uos/auth") return await handleV1Auth(req);
-  if (req.method === "GET" && path === "/uos/models/catalog") return await handlePublicModelCatalog();
-  if (req.method === "GET" && path === "/uos/models/capabilities") {
-    const authResult = await authenticateClient(req);
-    if (!authResult.ok) return authResult.response;
-    return await handleModelCapabilities();
-  }
-  if (path === "/uos/agent-messages" && req.method === "GET") return await handleAgentMessagesList(req);
-  if (path === "/uos/agent-messages" && req.method === "POST") return await handleAgentMessagesPost(req);
+  const route = matchExactRoute(UOS_ROUTES, req, path);
+  if (route) return await route.run(req);
   if (path === "/uos/agent-messages") return openaiError(405, "Method not allowed", "method_not_allowed");
   return null;
 };
