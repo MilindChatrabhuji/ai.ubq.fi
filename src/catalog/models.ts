@@ -179,7 +179,9 @@ const meteredCodexModelRecord = (
     supported_reasoning_levels: levels?.length
       ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
       : [{ effort: "none", description: "No reasoning" }],
-    default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+    ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+      ? {}
+      : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
     ...(resolved.context_window_tokens === null
       ? {}
       : {
@@ -299,7 +301,7 @@ const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]):
 };
 
 /**
- * Codex catalog record for the gateway-owned `ubiquity/deepseek-v4.1-flash`
+ * Codex catalog record for the gateway-owned `ubiquity/deepseek-flash`
  * waterfall model. The advertised reasoning tiers are the intersection every
  * candidate hop accepts verbatim (low/high/max); the waterfall boundary
  * rejects anything else rather than letting a hop refuse it later.
@@ -448,7 +450,9 @@ const cerebrasCodexModels = (): Record<string, unknown>[] => {
         effort: String(effort),
         description: codexReasoningEffortDescription(String(effort)),
       })),
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {
@@ -518,7 +522,9 @@ const openRouterCodexModels = (): Record<string, unknown>[] => {
       supported_reasoning_levels: levels?.length
         ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
         : [{ effort: "none", description: "No reasoning" }],
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {
