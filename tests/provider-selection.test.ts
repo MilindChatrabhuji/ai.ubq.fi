@@ -678,7 +678,7 @@ test("an active selection without the gateway identity switches the waterfall ro
 
 test("the public catalog drops the gateway route while its identity is off", () => {
   const entries = [
-    { id: "ubiquity/deepseek-v4.1-flash", providers: [{ id: "ubiquity" }, { id: "openrouter" }] },
+    { id: "ubiquity/deepseek-flash", providers: [{ id: "ubiquity" }, { id: "openrouter" }] },
     { id: "some-other", providers: [{ id: "openrouter" }] },
   ];
   assert.deepEqual(
