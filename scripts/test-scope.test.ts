@@ -28,6 +28,8 @@ writeFileSync(join(fixture, "tests/a.test.ts"), "import '../src/consumer.ts';\n"
 writeFileSync(join(fixture, "tests/b.test.ts"), "import '../src/b.ts';\n");
 writeFileSync(join(fixture, "src/storage/kv.ts"), "export const kv = 1;\n");
 writeFileSync(join(fixture, "src/storage-consumer.ts"), "import './storage/kv.ts';\n");
+writeFileSync(join(fixture, "docs.md"), "# Documentation\n");
+writeFileSync(join(fixture, "tests/docs.test.ts"), "import docs from '../docs.md' with { type: 'text' };\nexport default docs;\n");
 writeFileSync(join(fixture, "tests/storage.test.ts"), "import '../src/storage-consumer.ts';\n");
 
 afterAll(() => {
@@ -368,6 +370,10 @@ describe("Sentinel complete CI check set", () => {
 describe("test scope", () => {
   test("selects only tests whose imports reach the changed source file", () => {
     expect(selectAffectedTestFiles(["src/a.ts"], ["tests/a.test.ts", "tests/b.test.ts"], fixture)).toEqual(["tests/a.test.ts"]);
+  });
+
+  test("does not parse non-code assets reached by text imports", () => {
+    expect(selectAffectedTestFiles(["docs.md"], ["tests/docs.test.ts"], fixture)).toEqual(["tests/docs.test.ts"]);
   });
 
   test("skips testing when no candidate test reaches the change", () => {
