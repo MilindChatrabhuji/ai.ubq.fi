@@ -7,12 +7,12 @@
  * offline and deterministic.
  *
  *   bun run spec:drift                       compare the runtime allowlists with the pinned surfaces, offline
- *   bun run spec:drift --verify-source       also fetch the pinned source URL and verify its digest and surfaces (CI gate)
- *   bun run spec:drift --spec <file|url>     the same, verifying a local or mirrored copy instead of the pinned URL
+ *   bun run spec:drift --verify-source       also verify official default-branch ancestry, source digest and surfaces (CI gate)
+ *   bun run spec:drift --spec <file|url>     verify digest and surfaces of a local or mirrored copy (no ancestry lookup)
  *   bun run spec:drift --repin <commit>      fetch that revision's official source, rewrite the pin, then gate
  *
  * The offline mode proves only that the runtime allowlists and the hand-editable pin agree; --verify-source proves the
- * pin is the official revision it names. The source URL is commit-addressed, so only its availability can change, and
+ * pin is in the official default branch and matches the revision it names. The source URL is commit-addressed, and
  * a transient fetch failure is retried. Each mode takes its own flags; any other argument is a usage error (exit 2).
  *
  * Gateway compatibility extensions (Codex CLI, DeepSeek, OpenRouter) are separate sets and never enter this check.
@@ -141,6 +141,7 @@ export const verifySpecAgainstPin = (pin: OpenAiSpecPin, specText: string): stri
 
 type SpecDriftDependencies = Readonly<{
   readSpec?: (location: string) => Promise<string>;
+  readGitHub?: (location: string) => Promise<unknown>;
   writePin?: (pin: OpenAiSpecPin) => Promise<void>;
   sleep?: (milliseconds: number) => Promise<void>;
   log?: (line: string) => void;
@@ -173,6 +174,20 @@ const fetchSpecText = async (location: string, sleep: (milliseconds: number) => 
 
 const readSpecLocation = async (location: string, sleep: (milliseconds: number) => Promise<void>): Promise<string> =>
   location.startsWith("https://") ? await fetchSpecText(location, sleep) : await readFile(location, "utf8");
+
+/** A raw parent-repository URL can serve fork-network commits; require ancestry of the official default branch too. */
+const verifyOfficialCommit = async (commit: string, readGitHub: (location: string) => Promise<unknown>): Promise<void> => {
+  const repositoryApi = `https://api.github.com/repos/${OFFICIAL_REPOSITORY}`;
+  const repository = await readGitHub(repositoryApi);
+  if (!isRecord(repository) || typeof repository.default_branch !== "string" || !repository.default_branch.trim()) {
+    throw new Error(`Cannot determine ${OFFICIAL_REPOSITORY}'s official default branch`);
+  }
+  const branch = repository.default_branch;
+  const comparison = await readGitHub(`${repositoryApi}/compare/${commit}...${encodeURIComponent(branch)}`);
+  if (!isRecord(comparison) || (comparison.status !== "ahead" && comparison.status !== "identical")) {
+    throw new Error(`OpenAI spec commit ${commit} is not contained in ${OFFICIAL_REPOSITORY}'s default branch (${branch})`);
+  }
+};
 
 const writePinFile = async (pin: OpenAiSpecPin): Promise<void> => {
   await writeFile(PIN_URL, `${JSON.stringify(pin, null, 2)}\n`);
@@ -224,6 +239,13 @@ const parseArguments = (args: readonly string[]): SpecDriftArguments => {
   };
 };
 
+const reportFailures = (heading: string, failures: readonly string[], error: (line: string) => void): boolean => {
+  if (failures.length === 0) return false;
+  error(heading);
+  for (const failure of failures) error(failure);
+  return true;
+};
+
 /** Runs the gate and returns its exit code: 0 aligned, 1 drift or verification failure, 2 usage error. */
 export const runSpecDriftCheck = async (args: readonly string[], dependencies: SpecDriftDependencies = {}): Promise<number> => {
   const log =
@@ -238,6 +260,7 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
     });
   const sleep = dependencies.sleep ?? sleepFor;
   const readSpec = dependencies.readSpec ?? ((location: string) => readSpecLocation(location, sleep));
+  const readGitHub = dependencies.readGitHub ?? (async (location: string): Promise<unknown> => JSON.parse(await fetchSpecText(location, sleep)));
   const parsed = parseArguments(args);
   if (parsed.error !== null) {
     error(parsed.error);
@@ -252,6 +275,7 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
       error("--repin requires a full 40-character openai/openai-openapi commit SHA");
       return 2;
     }
+    await verifyOfficialCommit(repin, readGitHub);
     const source = pinnedSpecSource(repin);
     const specText = await readSpec(source);
     pin = {
@@ -266,24 +290,17 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
     log(`Pinned ${OFFICIAL_REPOSITORY}@${repin} (${pin.sha256})`);
   } else if (specLocation !== null || parsed.verifySource) {
     pin = await readOpenAiSpecPin();
+    if (parsed.verifySource) await verifyOfficialCommit(pin.commit, readGitHub);
     const location = specLocation ?? pin.source;
     const failures = verifySpecAgainstPin(pin, await readSpec(location));
-    if (failures.length) {
-      error(`OpenAI spec verification failed for ${location}`);
-      for (const failure of failures) error(failure);
-      return 1;
-    }
+    if (reportFailures(`OpenAI spec verification failed for ${location}`, failures, error)) return 1;
     log(`Verified ${location} against ${pin.repository}@${pin.commit}`);
   } else {
     pin = await readOpenAiSpecPin();
   }
 
   const failures = checkRuntimeAgainstPin(pin);
-  if (failures.length) {
-    error(`OpenAI request-schema drift against ${pin.repository}@${pin.commit}`);
-    for (const failure of failures) error(failure);
-    return 1;
-  }
+  if (reportFailures(`OpenAI request-schema drift against ${pin.repository}@${pin.commit}`, failures, error)) return 1;
   for (const surface of RUNTIME_REQUEST_SURFACES) log(`${surface.label}: aligned (${surface.keys.length} request keys) with ${pin.repository}@${pin.commit}`);
   return 0;
 };
