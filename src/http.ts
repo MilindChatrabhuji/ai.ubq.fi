@@ -9,6 +9,7 @@ const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-request-id",
   "x-uos-provider-request-id",
   "x-uos-upstream",
+  "x-uos-attempted-providers",
   "x-uos-router-revision",
   "x-uos-git-sha",
   "x-uos-deployment-id",
