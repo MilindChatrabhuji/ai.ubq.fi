@@ -486,7 +486,7 @@ export const handleAdminProvidersQuotaProjection = async (
     // capacity first): request and token history that never moves the balance.
     usage_source: PAID_FALLBACK_SETTLED_PROVIDERS.has(entry.provider) ? "paid_fallback" : "observability",
     usage: entry.windows.filter((window) => window.window_days === windowDays),
-    estimates: projectPaidFallbackRunway(entry, quota, nowMs).filter((estimate) => estimate.window_days === windowDays),
+    estimates: projectPaidFallbackRunway(entry, quota, nowMs, sourceBalanceHistory).filter((estimate) => estimate.window_days === windowDays),
   }));
   return json(
     200,
@@ -501,7 +501,7 @@ export const handleAdminProvidersQuotaProjection = async (
         balance_history_bucket_ms: balanceHistoryBucketMs,
         balance_history_window_ms: balanceWindowMs,
       },
-      quota,
+      quota: { ...quota, last_inferred_credit_quota: undefined },
       models,
       // A failed scan must not masquerade as zero history: operators need to
       // distinguish "nothing settled" from "history could not be read".
