@@ -2,70 +2,19 @@ import { acquireDeployLock } from "./deploy-lock.ts";
 import { assertBunConvertedStore } from "./assert-bun-store.ts";
 import { prepareBunRuntime } from "./bun-runtime.ts";
 import { command as runCommand } from "./io.ts";
-import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { missing } from "./io.ts";
 const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 // Run from the VPS repository root after the candidate's required CI has passed.
 import { pruneReleases } from "./release-retention.ts";
 import { ImmutableVpsReleaseStore, type VpsPayloadPreparation } from "./vps-release-store.ts";
 import { readVpsPins } from "./vps-release-journal.ts";
+import { assertPublicRelease, ensureCaddyIngressReady, healthServesRelease, PUBLIC_HEALTH_URL, reloadCaddyIngress } from "./vps-ingress.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
-
-/**
- * The public route `AGENTS.md` makes part of the deployment acceptance. The
- * loopback listener can report the new release while Caddy still proxies the
- * previous upstream, so the deploy proves this route too before it reports
- * success.
- */
-export const PUBLIC_HEALTH_URL = "https://ai.ubq.fi/health";
 
 const command = runCommand;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
-
-/**
- * The release-identity contract shared by the loopback listener and the public
- * route: HTTP 200, the full Git revision and its `vps-<revision>` deployment id
- * in the body, and the same two values in the identity headers.
- */
-export function healthServesRelease(response: Response, health: unknown, sha: string): boolean {
-  const release = isRecord(health) && isRecord(health.release) ? health.release : undefined;
-  const deploymentId = `vps-${sha}`;
-  return (
-    response.status === 200 &&
-    release?.git_sha === sha &&
-    release.deployment_id === deploymentId &&
-    response.headers.get("x-uos-git-sha") === sha &&
-    response.headers.get("x-uos-deployment-id") === deploymentId
-  );
-}
-
-/**
- * Apply the configuration `ensureCaddyIngressReady` validated. Caddy keeps
- * serving its previously loaded configuration when a reload fails, which is
- * exactly the state a port cutover must not leave behind: the loopback health
- * check passes while the public route keeps answering 502 from the old upstream.
- * The runner is a parameter so the exact command contract stays testable.
- */
-export async function reloadCaddyIngress(run: (program: string, args: string[]) => Promise<string> = command): Promise<void> {
-  await run("sudo", ["-n", "systemctl", "reload", "caddy"]);
-  console.log(JSON.stringify({ caddy_ingress: "reloaded", service: "caddy" }));
-}
-
-/**
- * Prove the public route serves the candidate release before the deploy reports
- * success or prunes anything. It is the same identity contract as the loopback
- * listener, read through the reloaded proxy and Cloudflare, so a Caddy that kept
- * the previous upstream fails here.
- */
-export async function assertPublicRelease(sha: string, url: string = PUBLIC_HEALTH_URL): Promise<void> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  const health = await response.json().catch(() => undefined);
-  if (!healthServesRelease(response, health, sha)) {
-    throw new Error(`The public route ${url} did not serve release ${sha} (HTTP ${response.status})`);
-  }
-  console.log(JSON.stringify({ public_health_verified: true, public_health_url: url, git_sha: sha, deployment_id: `vps-${sha}` }));
-}
 
 /**
  * Read-only preflight for the checkout that would be released: tracked-clean,
@@ -91,47 +40,6 @@ async function assertDeployableCheckout(): Promise<string> {
   });
   if (remoteDevelopmentSha !== sha) throw new Error("Checkout must exactly match origin/development before deployment");
   return sha;
-}
-
-/**
- * The repository `ops/` directory is bind-mounted read-only into Caddy, which
- * runs as the unprivileged `caddy` user. If the proxy configuration is
- * unreadable to that user, Caddy's own `ExecStartPre` validation fails and a
- * reload silently keeps the previous configuration serving while the gateway
- * has already moved. Prove the composed proxy config is valid as Caddy before
- * publishing the candidate, without changing the live ingress. Apply it only
- * after the restarted candidate passes loopback readiness. Fail closed otherwise; never
- * repair the checkout mode, which would hide the real permission fault.
- */
-export async function ensureCaddyIngressReady(run: (program: string, args: string[]) => Promise<string> = command, root = canonicalRoot): Promise<void> {
-  const mode = (await stat(`${root}/ops/Caddyfile`)).mode;
-  // Caddy shares no group with this checkout, so only other-read exposes the
-  // bind-mounted file to it.
-  if ((mode & 0o004) === 0) {
-    throw new Error("ops/Caddyfile is not readable by the caddy user; run `chmod 644 ops/Caddyfile` and redeploy");
-  }
-  // Validate inside Caddy's own unit namespace so the bind mount and the
-  // unprivileged user are both exercised, exactly as the service start is.
-  const mainPid = await run("sudo", ["-n", "systemctl", "show", "caddy", "-p", "MainPID", "--value"]);
-  if (!/^\d+$/.test(mainPid) || mainPid === "0") throw new Error("Caddy is not running; start it before deploying");
-  await run("sudo", [
-    "-n",
-    "nsenter",
-    "-t",
-    mainPid,
-    "-m",
-    "--",
-    "sudo",
-    "-u",
-    "caddy",
-    "caddy",
-    "validate",
-    "--config",
-    "/etc/caddy/Caddyfile",
-    "--adapter",
-    "caddyfile",
-  ]);
-  console.log(JSON.stringify({ ingress_preflight: "caddy_config_valid", caddy_pid: mainPid }));
 }
 
 const recoveryPath = ".data/deploy-recovery.json";
@@ -240,10 +148,22 @@ async function assertUnselectedRecovery(selected: string | null, receipt: Recove
   }
 }
 
-async function assertSelectedRecovery(candidate: Release, receipt: Recovery): Promise<void> {
-  if (receipt.phase === "rolled_back" || !(await ready(candidate.sha, 7999, 1)))
-    throw new Error("Selected recovery candidate identity is ambiguous; refusing destructive recovery");
-  if (receipt.previous !== null) await verifyPreviousRecovery(receipt.previous);
+/**
+ * Returns whether the selected candidate already serves its exact identity, so a
+ * retry resumes at ingress without another restart. A first deployment has no
+ * earlier listener or public identity to protect, and its unit can only start
+ * this verified selected candidate, so an unready one is restarted rather than
+ * refused. With a previous release, an unready candidate stays ambiguous.
+ */
+async function selectedRecoveryServes(candidate: Release, receipt: Recovery): Promise<boolean> {
+  if (receipt.phase !== "rolled_back") {
+    if (await ready(candidate.sha, 7999, 1)) {
+      if (receipt.previous !== null) await verifyPreviousRecovery(receipt.previous);
+      return true;
+    }
+    if (receipt.previous === null) return false;
+  }
+  throw new Error("Selected recovery candidate identity is ambiguous; refusing destructive recovery");
 }
 
 async function startCandidate(candidate: Release, receipt: Recovery, state: ActivationState): Promise<void> {
@@ -261,22 +181,39 @@ async function startCandidate(candidate: Release, receipt: Recovery, state: Acti
   await saveRecovery(receipt);
 }
 
+/**
+ * A first deployment has no earlier release to restore. Before the gateway
+ * restart nothing ran from the candidate, so clearing its selector restores the
+ * original state exactly. After a restart attempt the unit can only run this
+ * candidate: clearing the selector would not stop it and would only break the
+ * unit's next start, so the candidate stays selected, unaccepted and resumable
+ * by the same SHA.
+ */
+async function restoreFirstDeployment(receipt: Recovery, restartAttempted: boolean): Promise<void> {
+  if (restartAttempted) {
+    console.error("[deploy] First deployment has no previous release; the unaccepted candidate stays selected for a same-SHA retry");
+    return;
+  }
+  if ((await selector()) !== null) await selectRelease(null);
+  receipt.phase = "rolled_back";
+  await saveRecovery(receipt);
+}
+
 async function restorePrevious(receipt: Recovery, restartAttempted: boolean): Promise<void> {
   const previous = receipt.previous;
-  if (restartAttempted && previous?.profile === launcherFingerprint)
+  if (previous === null) return restoreFirstDeployment(receipt, restartAttempted);
+  if (restartAttempted && previous.profile === launcherFingerprint)
     throw new Error("Cross-codec rollback requires stopped latest-state Bun-to-Deno conversion; refusing stale legacy state");
-  await selectRelease(previous?.selector ?? null);
+  await selectRelease(previous.selector);
   // A refused daemon-reload leaves the prior listener running. Do not restart
   // either release through a definition systemd refused to load.
-  if (restartAttempted && previous !== null) {
+  if (restartAttempted) {
     await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
     if (!(await ready(previous.sha, previous.port))) throw new Error("Previous listener restoration failed");
     await previousPublicIdentity(previous);
   }
-  if (previous !== null) {
-    receipt.phase = "rolled_back";
-    await saveRecovery(receipt);
-  }
+  receipt.phase = "rolled_back";
+  await saveRecovery(receipt);
 }
 
 async function verifySelectedOnly(candidate: Release, selected: boolean): Promise<void> {
@@ -301,11 +238,14 @@ async function activate(candidate: Release, selected: string | null, receipt: Re
     return;
   }
   if (JSON.stringify(receipt.candidate) !== JSON.stringify(candidate)) throw new Error("Stale or changed deployment recovery receipt");
-  if (candidateSelected) await assertSelectedRecovery(candidate, receipt);
-  else await assertUnselectedRecovery(selected, receipt, fresh);
-  const state = { restartAttempted: false, ingressApplied: receipt.phase === "ingress_applied" };
+  const candidateServes = candidateSelected && (await selectedRecoveryServes(candidate, receipt));
+  if (!candidateSelected) await assertUnselectedRecovery(selected, receipt, fresh);
+  // A candidate that is already selected may have been restarted by an earlier
+  // run, so recovery must treat it as possibly running even when this run issues
+  // no restart: clearing or swapping its selector alone cannot stop it.
+  const state = { restartAttempted: candidateSelected, ingressApplied: receipt.phase === "ingress_applied" };
   try {
-    if (!candidateSelected) await startCandidate(candidate, receipt, state);
+    if (!candidateServes) await startCandidate(candidate, receipt, state);
     await reloadCaddyIngress();
     state.ingressApplied = true;
     receipt.phase = "ingress_applied";
@@ -376,7 +316,7 @@ export async function deploy(preparePayload?: VpsPayloadPreparation): Promise<vo
       throw new Error("A bound VPS release operation owns promotion; reconcile its receipt before another deploy");
     // Refuse ingress faults before publishing or selecting an immutable release,
     // so correcting the fault can retry this same revision.
-    await ensureCaddyIngressReady();
+    await ensureCaddyIngressReady(command, canonicalRoot);
     const release = `.data/releases/${sha}`;
     await prepareBunRuntime(root);
     await prepareCandidate(sha, preparePayload);

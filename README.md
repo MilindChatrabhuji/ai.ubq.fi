@@ -19,7 +19,9 @@ bun --no-env-file run verify
 
 The public scripts are `bun run build`, `bun run test`, and `bun run verify`. For isolated execution, use `bun --no-env-file run <script>`. `build` delegates to strict no-emit TypeScript checking; executing TypeScript with Bun does not type-check it. `test` retains the deterministic repository segments, and `verify` aggregates type, format, lint, dead-code, size, and configured test gates. Run build and test after a lint autofix. [Quality tooling](tools/lint/README.md) owns the exact segment and formatter contract.
 
-Isolated test children disable dotenv and auto-install, use sparse named environment profiles and disposable state, and require the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected. Do not invoke live or paid-provider checks as part of migration verification.
+`bun run spec:drift` compares the Chat and Responses request allowlists with the official OpenAI request schemas recorded in `scripts/openai-spec-pin.json` (one `openai/openai-openapi` commit and the SHA-256 of its `openapi.yaml`). On its own it is offline and proves only that the runtime and the pin agree. CI runs it with `--verify-source`, which also downloads that commit-addressed file (retrying a transient failure) and requires its digest and request surfaces to equal the pin; `--repin <commit>` moves the pin to a newer official revision, after which the gate fails until the runtime allowlists in `src/openai-schema.ts` follow; `tests/openapi-runtime-contract.test.ts` then requires `static/openapi.json` to publish exactly those allowlists. Gateway compatibility extensions stay out of the official comparison.
+
+Isolated test children disable dotenv and auto-install, use sparse named environment profiles and disposable state, and require the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected. The explicitly selected `test:e2e` segment keeps that boundary but adds its `BASE_URL` origin (default `https://ai.ubq.fi`). On Linux it admits exactly that one destination, through a destination-scoped relay that serves only the run's own namespace. On Darwin only a host-loopback `BASE_URL` can be scoped, and the run reuses the deterministic Seatbelt profile, which admits every host-loopback port rather than only the `BASE_URL` port; any other origin, the default included, fails closed. Do not invoke live or paid-provider checks as part of migration verification.
 
 TypeScript starts directly from verified immutable releases. Runtime/dependency/native artifacts must be prepared and manifest-bound before publication; launchers use `--no-env-file --no-install`, explicitly load the repository-root `.env`, and fail closed without downloading, installing, or compiling at startup. `build:native` prepares auxiliary native guard artifacts separately; it is not an application TypeScript compile step. Merging this source does not activate production or convert its database.
 
@@ -687,6 +689,7 @@ bun run ubq-ai admin keys revoke --id "<id>"
 - `GET /admin/kernel-policy-queue` (admin only)
 - `GET /admin/kernel-pubkeys`, `POST /admin/kernel-pubkeys`, `DELETE /admin/kernel-pubkeys` (admin only)
 - `GET /uos/auth`
+- `GET /uos/models/catalog` (public)
 - `GET /uos/models/capabilities`
 - `POST /uos/embeddings`
 - `POST /uos/embedding-jobs`, `GET /uos/embedding-jobs/:id`
@@ -709,10 +712,12 @@ set as `DENO_DEPLOY_TOKEN` from the fallback chain `DENO_DEPLOY_TOKEN_UBIQUITY_D
 sign-in on `http://127.0.0.1:8000`. The injected token lives in the server process only — `.env` values are not
 re-exported to your shell, and the admin credential never flows into separate commands. `bun run dev:local` behaves
 the same way; `bun run admin:models` (and its `:spark` variant) use `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` or
-`DENO_DEPLOY_TOKEN` from your shell when set. A token is optional for a loopback `BASE_URL` (the default), but an
-exported token is still sent as `Authorization: Bearer ...`; unset both variables if the listener must receive no
-deployment credential. A non-loopback `BASE_URL` requires one, exactly like the loopback server itself, which has admin
-authentication disabled.
+`DENO_DEPLOY_TOKEN` from your shell when set. A token is optional when the parsed `BASE_URL` hostname is loopback
+(`localhost` in any case, `127.0.0.0/8`, or `::1` in any spelling, classified as the server classifies it; the default
+is `http://localhost:8000`), but an exported token is still sent as `Authorization: Bearer ...`; unset both variables
+if the listener must receive no deployment credential. A non-loopback `BASE_URL`, including a lookalike such as
+`http://localhost.example.com`, requires one, exactly like the loopback server itself, which has admin authentication
+disabled. Both tasks exit non-zero on an HTTP error rather than printing an empty result.
 
 The dev wrappers explicitly source `.env` before invoking Bun with `--no-env-file`; `dev:local` retains its existing optional native-auth seed. Direct commands below do not discover dotenv files, so export their intended credentials first. The named `application` export and explicit entry point use the receipt-preserving `node:http` server, not Bun's automatic default-export server startup.
 

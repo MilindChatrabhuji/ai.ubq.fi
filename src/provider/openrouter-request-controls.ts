@@ -3,7 +3,7 @@ import { getString, isRecord } from "../utils.ts";
 import { resolveOpenRouterUpstreamModel } from "./openrouter.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./selection.ts";
 
-const OPENROUTER_CLAUDE_REQUEST_EXTENSION_KEYS = new Set(["cache_control"]);
+export const OPENROUTER_CLAUDE_REQUEST_EXTENSION_KEYS = new Set(["cache_control"]);
 
 /** Provider extensions stay separate from the official OpenAI request allowlists. */
 export const openRouterPromptCacheRequestExtensions = async (body: Record<string, unknown>): Promise<ReadonlySet<string> | undefined> => {

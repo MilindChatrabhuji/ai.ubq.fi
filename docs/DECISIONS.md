@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Assistant output replay accepts and drops log probabilities - 2026-10-17
+
+Responses `output_text` accepts the official `logprobs` field when it is an array, including an empty array. Validation intentionally checks only the array shape, matching the existing `annotations` rule; neither field's entries affect generation. Both fields are dropped when constructing `MessageContentItem`, so the Codex subscription and paid provider request bodies carry only the replayed text. Non-array values retain a precise nested field error, non-assistant `output_text` remains invalid, and genuinely unknown fields remain rejected.
+
+Reason: Codex 0.163.0 replays `output_text.logprobs`, so the missing documented field made the gateway reject the next model call. The [content allowlist audit](research/responses-content-allowlist-2026-10-17.md) records the remaining field, type and nullability decisions. Other existing content allowlists already include their documented field names; unrelated unsupported modalities and nullable values do not justify accepting arbitrary metadata.
+
+Reversal risk: rejecting this output metadata again breaks replay, while forwarding it unnecessarily extends every provider's input contract. This source change makes no claim of deployment or live client acceptance.
+
 ## First Bun cutover uses a stopped-state operator capability - 2026-10-15
 
 The first cross-codec deployment uses `ops/first-bun-cutover.ts` through a private pinned operator invocation. Ordinary CLI and bound-driver tracked-clean guards remain unchanged. The new operator executes from the complete accepted CI artifact and proves current shipping push CI, every required job, hosted ZIP digest, exact Git source archive/materialized source, dependency/native/permissions trees and matching service bootstrap bytes. The mutable checkout is a data/runtime anchor and immutable Git-object store; unrelated working-tree or submodule state never supplies executable source or a fabricated clean predicate.
@@ -564,10 +572,44 @@ DSH's `workspace-write` file sandbox permits writes only under the workspace roo
 `gpg: can't connect to the gpg-agent: Operation not permitted` while `GNUPGHOME` stayed at `~/.gnupg`. Committing
 therefore required a per-commit `danger-full-access` escalation.
 
-`~/bin/gpg-dsh` is installed and set as `gpg.program`. It uses the real homedir when that is genuinely writable and
-otherwise seeds a homedir under `$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg` (public keyring plus `private-keys-v1.d`),
-re-seeding when `pubring.kbx` changes. Interactive shells take the passthrough branch and are unaffected.
-`git config --global gpg.program ~/bin/gpg-dsh`.
+`~/bin/gpg-dsh` is to be installed from `ops/gpg-dsh.sh` and set as `gpg.program`. Merging a change to the helper
+changes no machine: the installed copy keeps its old behaviour until the owner installs the new one, so this entry
+describes the repository helper, not what `~/bin/gpg-dsh` runs today. The helper uses the real homedir when that is
+genuinely writable (a probe file can be created there). Otherwise it signs from a homedir seeded under
+`$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
+Interactive shells take the passthrough branch and are unaffected.
+
+To install it, compare it with the installed helper first, `diff ops/gpg-dsh.sh ~/bin/gpg-dsh`, then run
+`install -m 0755 ops/gpg-dsh.sh ~/bin/gpg-dsh && git config --global gpg.program ~/bin/gpg-dsh`. The repository helper
+does not seed `gpg.conf`, `gpg-agent.conf` (for example a `pinentry-program pinentry-mac` line), or keyboxd's
+`public-keys.d`. If the installed helper seeds any of these, installing over it can make sandboxed signing fail closed,
+with no usable pinentry or with a public key missing under keyboxd. The first sandboxed call after an install discards
+the old seed and stops its agent (added 2026-10-17, #1139).
+
+Every seeded file invalidates the seed, not `pubring.kbx` alone. This entry first said the seed was refreshed only
+"when `pubring.kbx` changes", and the installed helper compared only that file's mtime and size. Deleting a secret key
+or changing its passphrase leaves `pubring.kbx` untouched, so the old private key stayed usable from the seed
+(corrected 2026-10-16, #587). Every sandboxed call now records the name and SHA-256 digest of each seeded file and
+compares that manifest with the one recorded when the seed was built. Any difference, including a deleted, added, or
+re-protected private key, stops the seed's `gpg-agent`, discards the seed, and rebuilds it before gpg runs. The
+manifest is written only after a complete copy, so an interrupted rebuild is rebuilt on the next call. The seed and
+its `dsh-gnupg` parent must be real directories owned by the caller and are forced to mode 0700; anything else fails
+closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
+
+Rebuilds are serialized and published whole (added 2026-10-17, #1139). Before this, every call that found a stale
+manifest stopped the agent, removed the shared seed, and rebuilt it in place, with no lock. Calls started together after
+one input change deleted the seed under each other: with real GnuPG 2.4.4, 2 to 8 of every 8 concurrent signings after
+an added `*.gpg` file exited 2. A `cp` that had opened a just-deleted key could also write it into a seed that another
+call had already stamped with the new manifest. Now a call whose manifest matches the seed's takes no lock. Any other
+call (a mismatch, a missing seed, or a leftover copy beside it) waits for `<seed>.lock`, a directory created with
+`mkdir` whose owner file records the holder's pid and start time. Under the lock it checks again and re-reads the
+inputs, so a burst of calls after one change rebuilds once and the others reuse that seed. The holder copies the inputs
+into a private sibling (`<seed>.new.XXXXXX`) and records the manifest there. It then stops the seed's `gpg-agent`,
+renames the old seed aside (`<seed>.old.XXXXXX`), renames the new one into place, and only then removes the old one. No
+call writes into a seed that another call has published, and no call sees a partly copied seed. Leftover siblings from
+a killed rebuild are removed under the lock. A lock held for 15 seconds is treated as left by a killed holder and
+broken, and a waiter gives up (exit 2) after 60 seconds. A signing that is already running from the seed when an input
+changes can still fail, because the rebuild removes the old seed once the new one is in place.
 
 Reason: the sandbox exposes no configuration hook for adding writable roots — `writableRoots` takes only the policy and
 hard-codes the three roots — so the only durable fix inside the existing policy is to put the signing homedir where the
@@ -576,8 +618,12 @@ than signing needs.
 
 Reversal risk: pointing `gpg.program` back at the real `gpg` restores the denial under `workspace-write`; copying the
 private key to a stable non-writable-root location such as `~/.local/share` looks persistent but is unwritable under the
-restricted policy and silently reintroduces the escalation. The fallback homedir is per-boot (`/var/folders`), which is
-intended: it is re-seeded from `~/.gnupg` on demand rather than becoming a second long-lived key store.
+restricted policy and silently reintroduces the escalation. The seed is not trusted to disappear by itself: `$TMPDIR`
+is not cleared at boot for every caller, and an unset `TMPDIR` falls back to `/tmp`. The manifest check on every call
+is what keeps the seed from becoming a second long-lived key store. Going back to a `pubring.kbx`-only trigger lets a
+deleted or re-protected secret key keep signing from the seed. Rebuilding in place, or without the lock, brings back
+the failed concurrent signings after an input change and the window in which a deleted key survives in a seed stamped
+as current.
 
 ## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
 
@@ -842,7 +888,7 @@ this is deployed.
 ## Codex premature turn endings: real reproduction, and the continuation-guidance contract - 2026-09-22
 
 The case that Codex can end a turn with an outstanding requested action is recorded here as reproduced, not inferred
-from the invalid frequencies corrected below. The contract this repository now carries is: on the DeepSeek Responses
+from the unverified frequencies corrected below. The contract this repository now carries is: on the DeepSeek Responses
 translation seam, a tool-bearing request whose mapped executable tools exist and whose `tool_choice` is not `none` gets
 one short neutral continuation instruction appended to the caller's own instructions, or carried as the system message
 when the caller sent none. It never forces a tool call, forbids a legitimate final answer, or claims a tool action
@@ -1018,10 +1064,11 @@ Two consequences are recorded here so they are not re-derived:
 - **The mapping is safe to keep.** Codex parses the incomplete terminal natively, surfaces the reason string verbatim,
   and fails the turn. A truncated generation therefore moves from "accepted as success with exit 0" to "reported with
   the reason and exit 1", which is the intended trade rather than a regression.
-- **The mapping is already opt-in per provider, so no filter is needed.** `deepSeekFinishDisposition` is the only
-  constructor of `response.incomplete` in the repository, and it is consumed only by the DeepSeek Responses translator.
-  Surplus, OpenLux, and the Codex upstream route through their own paths and cannot inherit it. Adding a provider
-  inherits nothing; a provider that should use it needs its own deliberate mapping.
+- **The mapping is already opt-in per provider, so no filter is needed.** `deepSeekFinishDisposition` reaches a route
+  only through a `ChatOnlyResponsesProfile` that names it; the per-upstream truncation entry below lists the sites that
+  construct `response.incomplete` and the routes that relay it, so this mapping is not the only constructor (corrected
+  2026-10-16, #606). Surplus, OpenLux, OpenRouter, and the Codex upstream route through their own paths and cannot
+  inherit it. Adding a provider inherits nothing; a provider that should use it needs its own deliberate mapping.
 
 Reversal risk: removing the mapping restores the silent truncation, and reading a non-completed terminal as a transport
 failure would discard a partial answer the client can still use. Do not add a per-provider allow/deny list for this
@@ -1032,8 +1079,10 @@ handling of the terminal is proven; which upstreams ever emit it is not.
 
 ## Deployment status of the terminal-truthfulness work - 2026-09-21
 
-The measurement-artifact correction above retracts the premise that motivated this work. It therefore matters which
-parts are actually running, and whether any deployed behaviour change was justified by the retracted claim.
+The correction "CORRECTION: the narration symptom counts are unverified" below withdraws the premise that motivated this
+work: the narration counts behind it were not reproduced and are unverified, so they cannot justify a change. In this
+entry, "retracted" means withdrawn as unverified, not shown to be false. It therefore matters which parts are actually
+running, and whether any deployed behaviour change was justified by the retracted claim.
 
 **Status update, same day: both deployments now run the program.** At the time this entry was first written none of it
 was deployed, and the two running releases predated every commit in it. The program was then deployed to both surfaces
@@ -1052,6 +1101,21 @@ Acceptance ran against the deployed releases, not the branch:
 - three normal completions still return `status: completed` with `incomplete_details: null`, so it does not over-fire;
 - authenticated inference through the public route succeeds, and `gpt-reserve` serves on both hosts.
 
+> **Qualified on 2026-10-16 (#608): acceptance of this release is unverified against `AGENTS.md`.** `AGENTS.md` accepts
+> a deployment only when a direct Mac-to-VPS authenticated inference request succeeds and `/health` returns the full Git
+> SHA and `vps-<full-git-sha>` in both its body and identity headers. That rule was already in `AGENTS.md` at
+> `2207a757fb6f8c362e18cbf890d59ee191d53e26`. Neither observation is recorded for this release:
+>
+> - The authenticated inference above went through the public `https://ai.ubq.fi` route. That does not show a direct
+>   Mac-to-VPS authenticated inference request succeeding.
+> - The identity table names each host's release and identity, but not where they were read. It does not record that the
+>   VPS `/health` returned `2207a757fb6f8c362e18cbf890d59ee191d53e26` and
+>   `vps-2207a757fb6f8c362e18cbf890d59ee191d53e26` in both its body and identity headers.
+>
+> The bullets above are kept as first written. They show the fix behaving as intended on both hosts; they do not show that
+> the release met the repository's acceptance rule. This note adds no new observation, and nothing in this repository
+> supplies the missing ones. Read the status line above as "deployed to both surfaces, acceptance unverified".
+
 The retracted premise is now moot in one direction: the deployed G3 is narration-independent by construction - it fires
 only when a would-be completion carries no assistant text, no refusal and no tool call, so it cannot act on the
 retracted symptom. Worth revisiting before any future change: the changelog wording that described it as a "no tool
@@ -1060,41 +1124,87 @@ call" guard, which reads as narration-targeted although the code does not test f
 Prior state, retained: the two then-running releases (`922c33392d` on the VPS, `4176e992f5` on the Mac) preceded every
 commit in the program, so at that time no production inference behaviour had changed.
 
-**Only one of the three changes depends on the retracted premise, and partially.**
+**No change depends on the retracted premise; only part of G3's original motivation did.**
 
 - **G5 (report the effective output allowance)** - independent. It is telemetry only, changes no generation behaviour,
   and was justified by the provider's tier-dependent default (8,192 at `none`), measured directly.
 - **G1 (`length` to `response.incomplete`)** - independent. It was reproduced end to end: an upstream
   `finish_reason: "length"` reached the client as a clean `response.completed` with `incomplete_details: null` while the
   gateway's own telemetry recorded `output_tokens: 8192`. That demonstration does not involve narration at all.
-- **G3 (fail closed on a degenerate completion)** - **partially dependent.** Its stated trigger is a stream about to
-  complete "with no tool call, no non-empty assistant text and no refusal". The no-tool-call clause was written for the
-  narration symptom that has now been retracted. The reasoning-only clause stands on its own: a completion whose only
-  output is reasoning hands the client nothing, which the Cerebras route already failed closed for independently of any
-  narration claim.
+- **G3 (fail closed on a degenerate completion)** - **partially dependent in motivation only; every clause now stands
+  independently.** Its stated trigger is a stream about to complete "with no tool call, no non-empty assistant text and
+  no refusal". The no-tool-call clause was written for the narration symptom that has now been retracted. The
+  reasoning-only clause stands on its own: a completion whose only output is reasoning hands the client nothing, which
+  the Cerebras route already failed closed for independently of any narration claim. The no-tool-call clause is
+  nonetheless required on its own merits, whatever motivated it. G3's trigger is the negation of the shared
+  completion-validity predicate, `isAnswerBearingCompletion` in `src/upstream-wire.ts`, and the no-tool-call clause is
+  that predicate's `toolCallCount > 0` term: a tool call counts as answer-bearing output. Today the stream relay
+  (`src/provider/stream-relay.ts`) fails a completed terminal closed only when the predicate is false, so it accepts a
+  turn that only calls tools. Removing the `toolCallCount > 0` term would fail every tool-call-only turn - an ordinary
+  agent step - closed on every route that uses this predicate to fail closed: the stream relay (as
+  `empty_upstream_completion`), the buffered DeepSeek and LithosAI Responses paths (`src/deepseek/handlers.ts`,
+  `src/provider/lithos-handlers.ts`) and the Cerebras Responses check (`src/provider/cerebras-responses.ts`), the last
+  three through `chatCompletionHasAnswerBearingOutput`. The retracted narration cases carried non-empty assistant text,
+  so they never depended on this clause.
 
-Reason for recording this: the correction above removes the motivation for one clause of one change, and a future reader
-deciding whether to deploy needs to know that the other two changes and most of the third rest on reproductions that
-survived the retraction.
+Reason for recording this: the correction below removes the motivation for one clause of one change, and a future reader
+deciding whether to deploy needs to know that the other two changes and every clause of the third stand without it: G1,
+G5 and G3's reasoning-only clause on evidence that survived the retraction, and G3's no-tool-call clause on the
+completion-validity predicate.
 
 Reversal risk: deploying on the belief that the narration symptom is real, or reverting the whole program because its
 original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
 
-Next action if the program is to be deployed: re-derive G3's trigger from the surviving evidence alone - keep the
-reasoning-only and empty-output clauses, and justify or drop the no-tool-call clause on its own merits rather than on
-the invalidated frequency claim.
+**Post-deployment follow-up (updated 2026-10-16, #608).** This entry first ended with a pre-deployment next action: "if
+the program is to be deployed", re-derive G3's trigger from the surviving evidence alone. The program was deployed on
+2026-09-21, so that next action is historical. The G3 bullet above now carries the re-derivation, and it keeps every
+clause of the deployed trigger: the reasoning-only and empty-output clauses stand on the surviving evidence, and the
+no-tool-call clause rests on the completion-validity predicate, not on the unverified frequency claim. What remains
+after deployment:
 
-## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
+- Before any future change to G3, revise the changelog wording that calls it a "no tool call" guard (see above). Keep the
+  no-tool-call clause: G3 is the negation of the shared completion-validity predicate (`isAnswerBearingCompletion`), and
+  a tool call is valid output.
+- Do not cite this entry as an accepted deployment under `AGENTS.md`. The missing acceptance observations were not
+  recorded while `2207a757fb` ran, and both surfaces moved to `3661bcfd13` on 2026-09-22 (see "Buffered-terminal fix
+  deployed to both surfaces" below).
 
-> **Superseded in part on 2026-09-22.** The reported counts remain unreproducible and cannot be quoted as a rate. A
-> paired real-client reproduction did observe one premature stop with outstanding work, so these invalid counts are not
-> evidence that the behaviour is absent either. See the entry at the top of this file.
+## CORRECTION: the narration symptom counts are unverified - 2026-09-21
+
+> **Superseded in part on 2026-09-22.** The reported counts were not reproduced and cannot be quoted as a rate. A paired
+> real-client reproduction did observe one premature stop with outstanding work, so these unverified counts are not
+> evidence that the behaviour is absent either. See "Codex premature turn endings: real reproduction, and the
+> continuation-guidance contract - 2026-09-22" above. (Reworded on 2026-10-17, #1132: this note first said the counts
+> "remain unreproducible", called them "invalid counts", and pointed to "the entry at the top of this file", which was
+> that entry when the note was written.)
+
+> **Qualified on 2026-10-16 (#603): the artifact conclusion is unverified, not established.** Two comparisons below do
+> not test the handoff's measurement as it was recorded, so they cannot show that it was an artifact. As first written,
+> this entry was headed "CORRECTION: the narration symptom was itself a measurement artifact", and its body said the
+> counts "are not reproducible from the recorded sessions", that "It appears to be an artifact of how the original count
+> was taken", that "the original measurement cannot be reconstructed from the sessions it cites", that the chain of
+> reasoning "inherits an artifact", that each reversal "propagates the artifact", and that "the defect is most likely in
+> the counting procedure". On 2026-10-17 (#1132) the heading and those sentences were reworded to "not reproduced" and
+> "unverified" below; the counts, tables and examples are unchanged.
+>
+> - **Window.** The handoff scopes its counts to the 2026-09-21 13:26–13:56 UTC window. The reconciliation table below
+>   counts "the two sessions" and never states that window, so it is not a like-for-like comparison: counts over a
+>   different span are not expected to equal the windowed ones, and "no column matches" does not show that the original
+>   measurement cannot be reconstructed.
+> - **Classifier.** The handoff defines promise-narration as a trailing assistant text that matches a forward-looking
+>   phrase _and_ ends the turn with no tool call after it. The two counterexamples below are followed by a tool call, so
+>   that classifier counts them as negatives, and the 805-of-1,053 figure measures the bare phrase match over all
+>   messages, not that classifier over turn endings. They show only that the phrase alone is not a discriminator.
+>
+> No recount applying the documented classifier inside the stated window is recorded, so the 154-of-292 and 24-of-67
+> counts are neither reproduced nor shown to be an artifact. They remain unverified and still must not be quoted as a
+> rate; the sampled turn endings below are examples, not a recount.
 
 The entry below and the terminal-truthfulness handoff both rest on an observed condition: a long-running agent
 "frequently believes its turn completed mid-task", quantified as 154 of 292 turns in one session and 24 of 67 in
-another. **Those reported counts are not reproducible from the recorded sessions.** It appears to be an artifact of how
-the original count was taken, and the entries that depend on it should not be cited as evidence that the behaviour is
-common.
+another. **Those reported counts were not reproduced from the recorded sessions, and are unverified.** How the original
+count was taken may explain them, but that is not shown, and the entries that depend on them should not be cited as
+evidence that the behaviour is common.
 
 **The numbers do not reconcile.** For the two sessions the handoff names, counting every plausible unit:
 
@@ -1104,7 +1214,8 @@ common.
 | `oracle-free-arch-vps` |            145 |             143 |                     497 |                               269 |
 
 The handoff reports 292 turns / 154 narrated for `sentinel` and 67 / 24 for `oracle`. **No column matches either
-figure**, so the original measurement cannot be reconstructed from the sessions it cites.
+figure**, so these whole-session counts do not reconstruct the original measurement; they apply neither its window nor
+its classifier (see the qualification above), so they do not show that it cannot be reconstructed either.
 
 **The forward-looking-phrase test does not identify premature endings.** Inspecting the messages it matches shows they
 are ordinary mid-task narration that is _followed by a tool call_ — "Let me load the required harness policy and verify
@@ -1119,24 +1230,35 @@ only 3 of 13 in one sampled window exceeding 10 items.
 
 Reason for recording this: two merged documents and six merged corrections treat this symptom as established and build
 on it. A future reader must know that the premise is unsupported, or the chain of reasoning above this entry inherits an
-artifact. The gateway trustworthiness findings in the handoff stand on their own evidence and are unaffected; only the
-claim that the symptom is frequent, and the model-versus-gateway contrast drawn from it, depend on this.
+unverified premise. The gateway trustworthiness findings in the handoff stand on their own evidence and are unaffected;
+only the claim that the symptom is frequent, and the model-versus-gateway contrast drawn from it, depend on this.
 
 Reversal risk: quoting 154-of-292, treating forward-looking phrasing as a malfunction signal, or building any detector
-on that regex. Each propagates the artifact.
+on that regex. Each propagates an unverified count or a phrase test that does not discriminate.
 
-Method note: the original count was never reproduced, so the defect is most likely in the counting procedure rather than
-in the sessions. Any replacement measurement must state its unit (turn, message, or item), its window, and how it
-decides a turn was premature, and must show that the classifier does not fire on ordinary mid-task narration.
+Method note: the original count was never reproduced, and whether the counting procedure or this reconciliation's
+choice of unit, window and classifier explains the gap is not established. Any replacement measurement must state its
+unit (turn, message, or item), its window, and how it decides a turn was premature, and must show that the classifier
+does not fire on ordinary mid-task narration.
 
-## CORRECTION: the narration trigger is not context size - 2026-09-21
+## CORRECTION: context size is unconfirmed as the narration trigger - 2026-09-21
 
-The entry below reports that context size gates narration-without-action. **That is falsified.** It is retained for
+> **Qualified on 2026-10-16 (#603): unconfirmed, not falsified.** As first written, this entry was headed "the narration
+> trigger is not context size", headlined "That is falsified", labelled its first measurement "The disconfirming
+> measurement", concluded "Length alone therefore cannot be the trigger, which falsifies both" the trigger and the
+> onset, filed both under "Does not survive" (in "What survives, and what does not"), and called the trigger "a
+> falsified trigger". Its own time-controlled contrasts are non-significant (`p = 0.47` each), the only significant
+> contrast (`p = 0.016`) pools runs from different time windows (the first table's 8/28 against 0/18 gives that value),
+> and the original effect did not replicate on its own payload (`p = 0.14`). That supports "unconfirmed", not
+> "falsified": context size is not established as the trigger, and context length is not excluded as one either. Those
+> phrases are replaced with "unconfirmed" wording below; the measurements, tables and `p` values are unchanged.
+
+The entry below reports that context size gates narration-without-action. **That is unconfirmed.** It is retained for
 history, but the trigger section and the onset threshold must not be relied on. The reason is an external-validity
 failure in the experiment: every payload used to derive the curve repeated one identical filler block in every tool
 output, so "long context" and "degenerate repetitive context" were confounded and could not be separated.
 
-**The disconfirming measurement.** A second payload family was built with genuinely distinct tool outputs (20 rotating
+**The contrasting measurement.** A second payload family was built with genuinely distinct tool outputs (20 rotating
 result shapes plus per-index text, every output unique) and matched to the original on byte size and item count. Both
 were run against `deepseek-flash` at matched effort:
 
@@ -1145,8 +1267,9 @@ were run against `deepseek-flash` at matched effort:
 | repetitive (original) |              66,533 |     28 |        8 |    29% |
 | **varied (matched)**  |          **71,295** | **18** |    **0** | **0%** |
 
-The varied payload is _larger_ than the repetitive one and narrates _never_. Length alone therefore cannot be the
-trigger, which falsifies both "context size is the trigger" and the recorded onset of "between roughly 1k and 4k".
+The varied payload is _larger_ than the repetitive one and narrates _never_. This contrast pools runs from different
+time windows and does not survive the interleaved control below, so it shows neither that length is the trigger nor
+that it is not; "context size is the trigger" and the recorded onset of "between roughly 1k and 4k" remain unconfirmed.
 
 **A controlled interleaved run, and its non-result.** To separate condition from time drift, the three conditions
 (repetitive ~66k, varied ~71k, small ~1k) were cycled round-robin inside a single time window, eight rounds:
@@ -1161,20 +1284,21 @@ Neither contrast is significant in this design (`p = 0.47` each). Pooling all ba
 contrast to `p = 0.016`, but that pool mixes runs from different time windows and the original effect did not replicate
 across batches on its own payload (5/10, then 1/10, `p = 0.14`).
 
-**What survives, and what does not.**
+**What survives, and what is unconfirmed.**
 
-- **Does not survive:** context size as the trigger; the onset threshold; the implication that long real sessions
+- **Unconfirmed:** context size as the trigger; the onset threshold; the implication that long real sessions
   narrate _because_ they are long. Real sessions are also full of varied content, so the synthetic confound may explain
   the original 154-of-292 observation as easily as the model does.
 - **Weakly survives:** that _some_ conditions produce narration at a low rate. The pooled repetitive cells total 8/28,
   which is not zero. Its true trigger is unidentified; repetitive content is a candidate, not an established cause.
 - **Survives:** that `gpt-reserve` never narrated on any payload at any size tested - 0 of 30 pooled across every cell
   run in this investigation, spanning 61k to 176k input tokens and both payload families. The model contrast is weaker
-  than first reported, because the DeepSeek rate it is measured against fell, but it has not been contradicted.
+  than first reported, because the DeepSeek rate it is measured against fell, but it has not been contradicted (a
+  model-and-route contrast; see the route caveat in the narration entry below).
 
 Reason for recording at this length: the previous entry states a specific causal trigger with statistics behind it, and
-this repository treats that as load-bearing. Leaving a falsified trigger in place would be worse than the correction
-itself — a future reader would tune context budgets or payload shapes against a confound.
+this repository treats that as load-bearing. Leaving an unconfirmed trigger recorded as established would be worse than
+the correction itself — a future reader would tune context budgets or payload shapes against a confound.
 
 Reversal risk: acting on the size trigger, quoting the onset threshold, or treating repetitive context as a confirmed
 cause. Any of those propagates an experiment artifact.
@@ -1184,10 +1308,32 @@ time window. Both were missing here, and both are what caught it.
 
 ## Narration-without-action is model-specific and context-gated - 2026-09-21
 
-> **Superseded.** The condition this entry measures - a model frequently believing its turn completed mid-task - is not
-> reproducible from the sessions it cites; see the measurement-artifact correction above. The context-size trigger and
-> onset threshold are separately falsified. Treat every rate here as an artifact. The gateway trustworthiness findings
-> in the handoff are unaffected, since they rest on their own evidence.
+> **Superseded.** The condition this entry measures - a model frequently believing its turn completed mid-task - was not
+> reproduced from the sessions it cites, and its reported counts are unverified; see "CORRECTION: the narration symptom
+> counts are unverified" above. The context-size trigger and onset threshold are separately unconfirmed. The rates here
+> were measured on a repetitive-filler payload and must not be generalised to real sessions. The gateway trustworthiness
+> findings in the handoff are unaffected, since they rest on their own evidence. (Reworded on 2026-10-17, #1132: this
+> note first said the condition "is not reproducible from the sessions it cites" and "Treat every rate here as an
+> artifact".)
+
+> **Qualified on 2026-10-16 (#603).** The note above first said the trigger and onset were "separately falsified"; the
+> correction above supports only "unconfirmed". Three conclusions below are also narrowed to what this entry's data
+> support; the measurements and tables are kept as first recorded.
+>
+> - **Model versus gateway.** The control does not traverse the same gateway path. Explicit DeepSeek ids take the
+>   Responses-to-Chat-Completions translation (`handleDeepSeekResponses`), while `gpt-reserve` is a trusted Codex id
+>   (`src/request-policy.ts`) served on the Codex Responses path. A defect specific to the DeepSeek translation route
+>   could drop tool calls on DeepSeek and spare `gpt-reserve` exactly as measured, so the data show a model-and-route
+>   difference and do not clear the gateway for the DeepSeek route. "A translation or transport defect in this gateway
+>   would not spare one provider and hit the other on an identical body" is unsupported; clearing the route needs a
+>   same-path control, such as the raw DeepSeek upstream on the same high-context bodies.
+> - **Pooled rate.** The six DeepSeek bands above 1k narrate 3 + 4 + 1 + 5 + 4 + 5 = 22 of 60 runs: 36.7% (37%), not
+>   the 38% recorded below. The Fisher exact `p = 0.025` of the 951-token band against those 60 runs is correct.
+> - **Effort.** `gpt-reserve` was measured only at `medium` and `max`, and the DeepSeek sweep ranged from 20% to 60%
+>   across four tiers. The supported conclusion is limited to the matched `max`-versus-`max` comparison (DeepSeek 5/10
+>   against `gpt-reserve` 0/10, `p = 0.033`): the difference persisted with effort held at `max`, subject to the route
+>   caveat above. At n = 10 per cell that comparison and the sweep are underpowered, so "reasoning effort is ruled out
+>   as the cause" is unsupported; effort is neither established nor excluded as a contributor.
 
 The investigation that produced the terminal-truthfulness work began with a model believing its turn completed mid-task:
 it narrates the next action in text and terminates without emitting the tool call it described. Earlier measurement
@@ -1271,13 +1417,43 @@ underpowered to exclude a small effort effect.
 
 ## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
 
+> **Corrected on 2026-10-16 (#606): construction and relaying are separate, and the untested surface is not empty.** As
+> first written, this entry said `response.incomplete` "is built at exactly one place, `src/deepseek/responses.ts`",
+> that "No other provider route can emit it", and of Surplus and OpenLux that "neither can currently emit the
+> incompletion at all, so the untested surface is empty". The gateway constructs the terminal in three translations and
+> relays it on further routes, Surplus, OpenLux and OpenRouter included, so those two paragraphs are rewritten below.
+> The provider table, the Cerebras reproduction and the 2026-09-22 recheck are unchanged.
+
 The terminal-truthfulness work changes what a truncated generation reports. Whether that is safe per provider was
 checked provider by provider rather than assumed from one implementation, because the mapping lives inside a route.
 
-**Only one construction site exists.** `response.incomplete` is built at exactly one place, `src/deepseek/responses.ts`
-(the DeepSeek translator), and is reachable only from `handleDeepSeekChatCompletions` and `handleDeepSeekResponses`. No
-other provider route can emit it. A per-provider allow/deny filter would therefore be solving a leak that does not
-exist; a provider that should use the mapping needs its own deliberate implementation.
+**Where the incompletion is constructed.** The gateway builds a `response.incomplete` terminal itself in three
+translations, each mapping one upstream stop-reason vocabulary on purpose:
+
+- the shared Chat-only Responses translation: `deepSeekTerminalEnvelope` in `src/deepseek/responses-payload.ts`, used by
+  the buffered payload and by the stream translator in `src/deepseek/responses-stream.ts`. `deepSeekFinishDisposition`
+  maps `length` to `incomplete_details.reason: "max_output_tokens"` and `content_filter` to `"content_filter"`, and the
+  DeepSeek, LithosAI and Cerebras profiles in `src/deepseek/responses.ts` all reuse it, so a Cerebras truncation that
+  carries content becomes `response.incomplete` while the reasoning-only case below still fails closed;
+- the Claude Chat writer, `createClaudeResponsesWriter` in `src/provider/anthropic-response-wire.ts`, which maps the
+  same two Chat reasons for Surplus's native Claude path;
+- the Anthropic Messages translation in `src/provider/anthropic-responses.ts`, which maps `max_tokens` to
+  `"max_output_tokens"` for OpenLux's native Claude path and for the Claude Code route.
+
+**Where it is relayed or mapped.** `relayResponsesStream` in `src/provider/stream-relay.ts` emits the translator's
+terminal and settles the request as `response.incomplete` when the translator's terminal kind is incomplete; the
+streamed DeepSeek and LithosAI routes (`src/deepseek/handlers.ts`, `src/provider/lithos-streams.ts`) both use it. The
+buffered DeepSeek, LithosAI and Cerebras Responses paths map the payload status the same way through
+`deepSeekTerminalTypeForPayload`. The native Responses paths - Surplus, OpenLux and OpenRouter `/v1/responses` and the
+Codex subscription - pass an upstream-authored `response.incomplete` through as the terminal. OpenRouter's route,
+`handleOpenRouterResponses` in `src/provider/openrouter-handlers.ts`, is reached directly and as the third hop of the
+DeepSeek waterfall. It streams through `streamOpenRouterResponses` (`src/provider/openrouter-streams.ts`), which wraps
+`proxyResponsesStream` (`src/responses-stream.ts`) and forwards every upstream event, the terminal included, and its
+buffered path returns the upstream payload unchanged, including a `status: "incomplete"`.
+
+A per-provider allow/deny filter would still be solving a leak that does not exist: every construction is a deliberate
+per-route mapping, and every relay forwards a terminal that a translator or the upstream already chose. A provider that
+should use the mapping still needs its own deliberate wiring.
 
 | Provider | Reachable | Truncation behaviour                                                                         |
 | -------- | --------- | -------------------------------------------------------------------------------------------- |
@@ -1288,8 +1464,8 @@ exist; a provider that should use the mapping needs its own deliberate implement
 
 **The Cerebras path was reproduced, not inferred.** A direct probe with `max_completion_tokens: 16` returned
 `finish_reason: "length"` with the `content` key absent entirely and only `reasoning` populated (53 characters), on two
-consecutive runs. That trips `choiceHasNoPayload` (`src/provider/cerebras.ts:376`, applied at `:403`), which rejects a
-choice carrying neither content, nor a tool call, nor a refusal. Through the gateway the same request returns HTTP 502
+consecutive runs. That trips `choiceHasNoPayload` in `src/provider/cerebras.ts`, which rejects a choice carrying neither
+content, nor a tool call, nor a refusal. Through the gateway the same request returns HTTP 502
 `cerebras_upstream_invalid_response`, recorded in the error ledger as
 `chat.completions 502 cerebras_upstream_invalid_response model=gpt-oss-120b`. Note that reasoning alone is deliberately
 not sufficient payload: it is preserved for clients as `message.reasoning`, but it is not content.
@@ -1302,9 +1478,28 @@ Reversal risk: treating reasoning as payload, or reporting a reasoning-only trun
 restore the silent truncation on both routes.
 
 **Residual gap, stated rather than closed.** Surplus and OpenLux are blocked on external account state, so their
-truncation behaviour is unverified. The gap is narrower than "unknown": neither can currently emit the incompletion at
-all, so the untested surface is empty until either is deliberately wired in. Probe both before trusting either, and
-recheck the blockers before treating them as permanent.
+truncation behaviour is unverified, and the untested surface is not empty. Each provider has two paths, and both can
+deliver the incompletion:
+
+- **Native Claude paths construct it.** Surplus maps Claude Chat `length` and `content_filter` through
+  `createClaudeResponsesWriter`, and OpenLux maps Anthropic `max_tokens` through `src/provider/anthropic-responses.ts`.
+  Whether either upstream reports those stop reasons when it truncates is unmeasured, so neither mapping has been
+  exercised against a real truncation.
+- **Native Responses paths relay it.** Both pass the upstream's own `/v1/responses` terminal type through, so whether a
+  client sees `response.incomplete` on truncation depends on what that upstream sends, which is also unmeasured.
+
+OpenRouter is reachable, but its truncation behaviour is unmeasured too: its `/v1/responses` route relays the upstream's
+own terminal, and no probe has recorded what OpenRouter sends when a generation is cut off.
+
+LithosAI and the Claude Code route are not in the provider table either, and no truncation probe is recorded for them;
+only the routes in that table were measured. LithosAI uses the shared Chat-only construction and relays its stream
+through `relayResponsesStream`, so whether a truncated LithosAI generation reaches the client as `response.incomplete`
+depends on its upstream reporting `length`, which is unmeasured. The Claude Code route builds the terminal through the
+Anthropic Messages translation in `src/provider/anthropic-responses.ts`, so it depends on its upstream reporting
+`max_tokens` when it truncates, which is also unmeasured.
+
+Probe both paths on both blocked providers, OpenRouter's `/v1/responses`, LithosAI and the Claude Code route before
+trusting any of them, and recheck the blockers before treating them as permanent.
 
 **Recheck 2026-09-22, both blockers still hold.** Surplus answers a probe on a Surplus-routed id with HTTP 402
 `Insufficient USDC balance: need ~$1.0000, have $0.9895` (request id `01M33CFBC7AHTBXM365KNCM28D`), and the terminal
@@ -1388,7 +1583,8 @@ for any non-`off` effort. **Correction 2026-09-22: that field is no longer rejec
 `a4d0b470`) accepts the vendor's own `thinking` field on the DeepSeek route and projects it to `reasoning_effort`; it
 remains outside the official OpenAI schema everywhere else, so the earlier HTTP 400
 `Unrecognized request argument supplied: thinking` no longer describes this route's behaviour. That compatibility change
-did not fix the Codex premature turn endings recorded at the top of this file, which remain a separate mechanism.
+did not fix the Codex premature turn endings recorded in "Codex premature turn endings: real reproduction, and the
+continuation-guidance contract - 2026-09-22", which remain a separate mechanism.
 
 **The program added no new 5xx responses.** Counting every `openaiError(<n>, ...)` and `streamErrorResponse(<n>, ...)`
 call in `src/openai.ts` between the pre-program revision `922c33392d` and the merged terminal-truthfulness revision: 31
@@ -1582,9 +1778,18 @@ restores the supported previous selector and actual listener/public identity; da
 selector and issues no gateway restart. After successful ingress reload, a public verification failure retains the ready
 candidate and ingress-applied intent for nondestructive same-SHA verification retry. Candidate bytes remain immutable,
 and pruning occurs only after exact loopback and public identity acceptance. Unsupported or historical root-relative
-launchers are refused before destructive activation; successful historical restoration and first-deployment rollback
-remain separate unresolved scopes. The normal deployment command must permit the verified prior loopback port, and
-verify/CI must provide the scoped shell and loopback capabilities required by every actual launcher fixture.
+launchers are refused before destructive activation. The normal deployment command must permit the verified prior
+loopback port, and verify/CI must provide the scoped shell and loopback capabilities required by every actual launcher
+fixture.
+
+2026-10-16: A first deployment has no previous release, selector or listener to restore. If it fails before the gateway
+restart, recovery removes the selector it created and records `rolled_back`, and the same SHA starts again. After a
+restart attempt the unit can run only the candidate, so recovery leaves that candidate selected and unaccepted rather than
+removing a selector that cannot stop it. The next same-SHA run resumes at ingress when the candidate serves its exact
+loopback identity, and otherwise restarts only that verified selected candidate. Any other selector or phase state stays
+refused. Historical restoration is no longer an open scope: historical root-relative launchers stay refused before
+activation, and a Bun startup still refuses automatic rollback to a Deno release under the Bun runtime rules in
+`AGENTS.md`.
 
 ## Jev compaction upstream - 2026-10-05
 
@@ -1849,3 +2054,30 @@ Switching the active subscription and advancing to paid providers are separate d
 Claude historical windows and hourly rollups are additive to the existing Codex and metered history contracts. Persist actual upstream observations through the quota writer's accepted-observation seam, registered before the first inference; admin reads never create samples. The source observation clock is the gateway receipt time of raw upstream headers, not a provider-issued timestamp; sampling/persistence time is separate. Preserve missing observation times as null, absent windows and gaps across staleness, cohorts and reset anchors. Bounded sampling, retention and truncation remain explicit. Claude window series share the existing Analytics chart without altering the Codex capacity denominator. Retained legacy unbound evidence is not silently relabeled as an account's history, and host-local persistence is not a claim of cross-host synchronization.
 
 Feature parity does not justify invented upstream operations: expose only capabilities supported by the supplied credentials and actual provider contracts. A setup token without refresh material does not establish automatic refresh, a second live account has not been supplied for live failover acceptance, and local fixtures do not establish live banked-reset or redemption support.
+
+## Versionless DeepSeek Flash synthetic model and provider aliases - 2026-10-17
+
+DeepSeek's 2026-10-17 release is `DeepSeek-V4.1-Flash-1017`, a dated refresh of the same Flash family. The official API
+keeps `deepseek-flash` on the latest snapshot; OpenRouter, LithosAI, Surplus, and OpenLux expose provider-owned base
+aliases for the same Flash route. A synthetic name that encoded `V4.1`, or a gateway-side release pin that encoded a
+snapshot date, would force a rename or code edit on every DeepSeek refresh.
+
+The gateway-owned model is now `ubiquity/deepseek-flash` with display name `Ubiquity DeepSeek Flash`. The previous
+`ubiquity/deepseek-v4.1-flash` remains accepted as a hidden compatibility alias, and saved whitelist entries migrate to
+the new id. The waterfall always includes every configured provider and resolves its latest alias from the cached
+provider catalogue: `deepseek-flash` always for the official API, an explicit `~deepseek/deepseek-flash-latest` for
+OpenRouter when present, and the undated base id of the newest Flash entry for LithosAI, Surplus, and OpenLux. The
+static aliases are cold-start fallbacks only. No release number or snapshot date is pinned by the gateway, so a new
+provider base id such as `deepseek-v4.2-flash` is selected automatically.
+
+LithosAI has already republished `deepseek-ai/DeepSeek-V4.1-Flash` under the same base id with a new catalogue creation
+instant while retaining its old `-0910` snapshots, confirming that the base alias tracks the current weights. The admin
+metadata-refresh button force-fetches provider catalogues, but the synthetic route never waits for or depends on a dated
+catalogue row.
+
+Reason: the operator asked for a versionless synthetic model that follows DeepSeek's frequent releases, assumes every
+upstream provider will host the latest Flash route, and does not want the gateway to specify a release version or date.
+Reversal risk: the provider-owned base ids must actually track the latest weights; if a provider freezes an alias, the
+gateway cannot detect that from a dated row. OpenRouter's `~deepseek/deepseek-flash-latest` alias must remain routable.
+The paid hops use `deepseek-v4.1-flash`, so paid key policies keep their existing base model id rather than requiring a
+new dated snapshot.

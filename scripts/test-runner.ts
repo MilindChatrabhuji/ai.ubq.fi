@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { testNetworkArgv } from "./test-network.ts";
+import { LIVE_E2E_DEFAULT_BASE_URL, liveDestination, testNetworkArgv, type TestNetworkPolicy } from "./test-network.ts";
 import { createTestNativeKvPreload, prepareTestNativeKv, verifiedTestNativeKvBinding, type TestNativeKvBinding } from "./test-native-kv.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,7 +45,7 @@ const SENTINEL_FILES = [
   "sentinel-replay-staging",
   "sentinel-replay-deletion-budget",
 ];
-type Group = Readonly<{ profile: string; files: readonly string[]; environment: readonly string[] }>;
+type Group = Readonly<{ profile: string; files: readonly string[]; environment: readonly string[]; network?: "live" }>;
 const filesBelow = (directory: string): string[] => {
   const found: string[] = [];
   for (const entry of readdirSync(join(ROOT, directory), { withFileTypes: true })) {
@@ -85,6 +86,9 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
           "ops/tests/vps-release-driver.test.ts",
           "ops/tests/vps-release-recovery.test.ts",
           "ops/tests/vps-release-metrics.test.ts",
+          "ops/tests/vps-metrics-join.test.ts",
+          "ops/tests/vps-journal-reader.test.ts",
+          "ops/tests/vps-bridge-host.test.ts",
           "ops/tests/first-bun-cutover.test.ts",
         ]),
       ];
@@ -95,7 +99,8 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
     case "stress":
       return [group("stress", ["tests/failover-stress-http.test.ts"], ["METERED_API_KEY", "SURPLUS_API_KEY"])];
     case "e2e":
-      return [group("e2e", ["tests/live-default-model.e2e.ts"], ["BASE_URL", "UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"])];
+      // The only separately selected live segment: it reaches its selected gateway origin and nothing else.
+      return [{ ...group("e2e", ["tests/live-default-model.e2e.ts"], ["BASE_URL", "UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"]), network: "live" }];
     case "sentinel":
       return [
         group(
@@ -125,7 +130,7 @@ const segmentHints = new Map([
   ["tests/live-default-model.e2e.ts", "e2e"],
   ["tests/vps-deploy-guards.test.ts", "deploy-guards"],
 ]);
-const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
+export const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
   const groups = allGroupsFor(segment, explicitFiles);
   if (explicitFiles.length === 0 || segment === "files") return groups;
   const requested = new Set(explicitFiles.map((path) => relative(ROOT, resolve(ROOT, path)).split(sep).join("/")));
@@ -145,11 +150,36 @@ const checkedPath = (path: string): string => {
   if (local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local)) throw new Error("Test paths must stay inside this checkout");
   return absolute;
 };
-const validatedGroups = (groups: readonly Group[]) =>
+/** Deterministic profiles keep the local-only boundary; only a live group admits its one selected origin. */
+export const testNetworkPolicy = (selected: Pick<Group, "network">, environment: NodeJS.ProcessEnv = process.env): TestNetworkPolicy => {
+  if (selected.network !== "live") return {};
+  const baseUrl = environment.BASE_URL?.trim() ?? "";
+  return { live: liveDestination(baseUrl === "" ? LIVE_E2E_DEFAULT_BASE_URL : baseUrl) };
+};
+export const validatedGroups = (groups: readonly Group[], environment: NodeJS.ProcessEnv = process.env, networkArgv = testNetworkArgv) =>
   groups.map((item) => {
     if (item.files.length === 0) throw new Error(`Test segment ${item.profile} contains no files`);
-    return { ...item, files: item.files.map((label) => ({ label, path: checkedPath(label) })) };
+    const policy = testNetworkPolicy(item, environment);
+    // Build the group's boundary once without spawning it: an unscopable live destination or a
+    // missing system tool (unshare, ip, mount, sandbox-exec) fails closed here, before the parent
+    // native build starts, instead of in runFile minutes later.
+    networkArgv([process.execPath], policy);
+    return { ...item, policy, files: item.files.map((label) => ({ label, path: checkedPath(label) })) };
   });
+/**
+ * A live file's relay keeps its socket and hosts files in a directory it removes on exit. A
+ * SIGKILLed relay (timeout escalation, CI cancellation, the OOM killer) cannot, so that directory
+ * is created under a runner-owned parent that is removed once the file's process group settles.
+ */
+export const withLiveRelayParent = async <T>(policy: TestNetworkPolicy, run: (policy: TestNetworkPolicy) => Promise<T>, base = tmpdir()): Promise<T> => {
+  if (policy.live === undefined) return await run(policy);
+  const relayParent = mkdtempSync(join(base, "uos-live-run-"));
+  try {
+    return await run({ ...policy, relayParent });
+  } finally {
+    rmSync(relayParent, { recursive: true, force: true });
+  }
+};
 const childEnvironment = (selected: Pick<Group, "profile" | "environment">): Record<string, string> => {
   const environment: Record<string, string> = { UOS_TEST_PROFILE: selected.profile, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
   // Keep only transport necessities and this segment's existing named inputs.
@@ -178,26 +208,29 @@ const settleGroup = async (pid: number): Promise<void> => {
 };
 const runFile = async (
   path: string,
-  selected: Pick<Group, "profile" | "environment">,
+  selected: Pick<Group, "profile" | "environment"> & Readonly<{ policy: TestNetworkPolicy }>,
   wallTimeMs: number,
   binding: TestNativeKvBinding,
   preload: string
 ): Promise<number> => {
   if (interrupted) throw new Error("Test runner interrupted; no further files were started");
-  const argv = testNetworkArgv([
-    process.execPath,
-    "--no-env-file",
-    "--no-install",
-    "test",
-    "--define",
-    "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(binding),
-    "--preload",
-    preload,
-    "--no-orphans",
-    "--max-concurrency=1",
-    "--timeout=300000",
-    path,
-  ]);
+  const argv = testNetworkArgv(
+    [
+      process.execPath,
+      "--no-env-file",
+      "--no-install",
+      "test",
+      "--define",
+      "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(binding),
+      "--preload",
+      preload,
+      "--no-orphans",
+      "--max-concurrency=1",
+      "--timeout=300000",
+      path,
+    ],
+    selected.policy
+  );
   const child = Bun.spawn(argv, {
     cwd: ROOT,
     detached: true,
@@ -272,7 +305,7 @@ const main = async (): Promise<void> => {
   for (const item of resolved) {
     for (const file of item.files) {
       console.log(`\n==> ${item.profile}: ${file.label}`);
-      const code = await runFile(file.path, item, options.wallTimeMs, binding, preload);
+      const code = await withLiveRelayParent(item.policy, (policy) => runFile(file.path, { ...item, policy }, options.wallTimeMs, binding, preload));
       files++;
       if (code !== 0) {
         failures++;

@@ -802,7 +802,7 @@ test("public delivery returns structured JSON errors and exposes rate-limit fiel
   assert.match(body.error.message, /Not found/);
 
   const exposed = new Headers(corsHeaders()).get("Access-Control-Expose-Headers") ?? "";
-  for (const header of ["RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"]) {
+  for (const header of ["RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "x-uos-attempted-providers"]) {
     assert.match(exposed, new RegExp(header));
   }
 });

@@ -88,7 +88,7 @@ const relocateDeployScript = async (root: string): Promise<string> => {
  */
 const relocateRetentionModule = async (root: string): Promise<void> => {
   await copyOps(root);
-  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts"])
+  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts", "vps-ingress.ts"])
     await writeFile(`${root}/${name}`, await readFile(new URL("../ops/" + name, import.meta.url)));
 };
 
@@ -232,7 +232,8 @@ const hash = async (b: Uint8Array): Promise<string> =>
     .map((x) => x.toString(16).padStart(2, "0"))
     .join("");
 const calls = async (f: Fixture): Promise<string[]> => (await readFile(f.root + "/.data/trace", "utf8")).trim().split("\n");
-type Profile = "current" | "unknown" | "env-port" | "legacy";
+// `bootstrap` is a first deployment: no earlier release, selector or listener exists.
+type Profile = "current" | "unknown" | "env-port" | "legacy" | "bootstrap";
 type Active = { options: DeployOptions; sha: string; oldSha: string; publicHealth: () => Promise<Response> };
 const write = (root: string, path: string, source: string): Promise<void> => writeFile(root + "/" + path, source);
 const archivePrevious = async (f: Fixture, sha: string, preparePayload: VpsPayloadPreparation): Promise<void> => {
@@ -336,15 +337,17 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   await runFixtureGit(root, f.env, ["add", "--", "ops", "scripts", "src", "tools", "serve.ts", "package.json", "bun.lock", "fixture-http.ts"]);
   await runFixtureGit(root, f.env, ["commit", "-q", "-m", "previous launcher"]);
   const oldSha = await runFixtureGit(root, f.env, ["rev-parse", "HEAD"]);
-  await archivePrevious(f, oldSha, preparePayload);
-  const link = await runFixture("/bin/ln", {
-    args: ["-s", "releases/" + oldSha, root + "/.data/current"],
-    env: f.env,
-    clearEnv: true,
-    stdout: "piped",
-    stderr: "piped",
-  });
-  assert.equal(link.code, 0, decode(link.stderr));
+  if (profile !== "bootstrap") {
+    await archivePrevious(f, oldSha, preparePayload);
+    const link = await runFixture("/bin/ln", {
+      args: ["-s", "releases/" + oldSha, root + "/.data/current"],
+      env: f.env,
+      clearEnv: true,
+      stdout: "piped",
+      stderr: "piped",
+    });
+    assert.equal(link.code, 0, decode(link.stderr));
+  }
   const fixtureKv = await openKv(root + "/.data/kv-bun.sqlite3");
   await fixtureKv.set(["fixture"], "positive");
   fixtureKv.close();
@@ -550,7 +553,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   // ports, so the release ports can now be handed to the real children.
   await closeReservations();
   try {
-    await start(profile === "legacy");
+    if (profile !== "bootstrap") await start(profile === "legacy");
   } catch (error) {
     await f.dispose();
     throw error;
@@ -901,6 +904,109 @@ withLauncher("VPS selected immutable release retries without restart and refuses
   assert.match(refused.stderr, /not ready/);
   assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, 1);
 });
+const recoveryPhase = async (f: Fixture): Promise<unknown> => JSON.parse(await readFile(f.root + "/.data/deploy-recovery.json", "utf8")).phase;
+const assertUnaccepted = (run: FixtureRun, error: RegExp): void => {
+  assert.notEqual(run.code, 0);
+  assert.match(run.stderr, error);
+  assert.doesNotMatch(run.stderr, /Recovery failed|no proven rollback disposition|identity is ambiguous/);
+  assert.doesNotMatch(run.stdout, /public_health_verified|"health_verified":true/);
+};
+withLauncher(
+  "VPS first deployment keeps its restarted candidate selected and resumes reload and public verification for the same SHA (#764)",
+  async (f, a) => {
+    await write(f.root, "reload-refused", "fault\n");
+    let saved: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      assertUnaccepted(await runDeployFixture(f, a.options), /fixture reload refused/);
+      // Clearing the selector cannot stop the restarted unit; it would only break its next start.
+      assert.equal(await pathExists(f.root + "/.data/current"), true, "a restarted first candidate must stay selected");
+      assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+      assert.equal(await recoveryPhase(f), "candidate_ready");
+      const current = await snapshot(f.root + "/.data/releases/" + a.sha);
+      if (saved) assert.equal(current, saved);
+      saved = current;
+    }
+    await rm(f.root + "/reload-refused");
+    await write(f.root, "public-refused", "fault\n");
+    assertUnaccepted(await runDeployFixture(f, a.options), /public route/);
+    assert.equal(await recoveryPhase(f), "ingress_applied");
+    await rm(f.root + "/public-refused");
+    const accepted = await runDeployFixture(f, a.options);
+    assert.equal(accepted.code, 0, accepted.stderr);
+    assert.match(accepted.stdout, /"health_verified":true/);
+    assert.equal(await identity(await a.publicHealth()), a.sha);
+    assert.equal(await snapshot(f.root + "/.data/releases/" + a.sha), saved);
+    assert.equal(await pathExists(f.root + "/.data/deploy-recovery.json"), false);
+    const trace = await calls(f);
+    assert.equal(trace.filter((line) => line === RESTART_COMMAND).length, 1, "a ready first candidate resumes without another restart");
+    assert.equal(trace.filter((line) => line === RELOAD_COMMAND).length, 4);
+  },
+  "bootstrap"
+);
+withLauncher(
+  "VPS first deployment restarts only its selected verified candidate on a same-SHA retry after a readiness fault (#764)",
+  async (f, a) => {
+    await write(f.root, "readiness-refused", "fault\n");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      assertUnaccepted(await runDeployFixture(f, a.options), /did not serve the expected release/);
+      assert.equal(await pathExists(f.root + "/.data/current"), true, "a restarted first candidate must stay selected");
+      assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+      assert.equal(await recoveryPhase(f), "selected");
+      assert.ok(!(await calls(f)).includes(RELOAD_COMMAND), "an unready candidate must never reach ingress");
+    }
+    const saved = await snapshot(f.root + "/.data/releases/" + a.sha);
+    await rm(f.root + "/readiness-refused");
+    const accepted = await runDeployFixture(f, a.options);
+    assert.equal(accepted.code, 0, accepted.stderr);
+    assert.equal(await identity(await a.publicHealth()), a.sha);
+    assert.equal(await snapshot(f.root + "/.data/releases/" + a.sha), saved);
+    assert.equal(await pathExists(f.root + "/.data/deploy-recovery.json"), false);
+    // One restart per faulted attempt; the accepted retry finds the last start ready and does not restart it again.
+    assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, 2);
+  },
+  "bootstrap"
+);
+withLauncher(
+  "VPS first deployment clears its unstarted selector on daemon-reload refusal and retries the same SHA (#764)",
+  async (f, a) => {
+    await write(f.root, "daemon-refused", "fault\n");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      assertUnaccepted(await runDeployFixture(f, a.options), /fixture daemon-reload refused/);
+      assert.equal(await pathExists(f.root + "/.data/current"), false, "nothing started, so the original absent selector is restored");
+      assert.equal(await recoveryPhase(f), "rolled_back");
+      const trace = await calls(f);
+      assert.equal(trace.filter((line) => line === RESTART_COMMAND).length, 0);
+      assert.equal(trace.filter((line) => line === RELOAD_COMMAND).length, 0);
+    }
+    await rm(f.root + "/daemon-refused");
+    const accepted = await runDeployFixture(f, a.options);
+    assert.equal(accepted.code, 0, accepted.stderr);
+    assert.equal(await identity(await a.publicHealth()), a.sha);
+    assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+    assert.equal(await pathExists(f.root + "/.data/deploy-recovery.json"), false);
+    assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, 1);
+  },
+  "bootstrap"
+);
+withLauncher(
+  "VPS first deployment refuses a same-SHA retry once its restarted candidate is no longer selected (#764)",
+  async (f, a) => {
+    await write(f.root, "reload-refused", "fault\n");
+    assertUnaccepted(await runDeployFixture(f, a.options), /fixture reload refused/);
+    assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+    await rm(f.root + "/reload-refused");
+    // An out-of-band selector change leaves no deployment-owned disposition for the restarted candidate.
+    await rm(f.root + "/.data/current");
+    const before = (await calls(f)).length;
+    const run = await runDeployFixture(f, a.options);
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /no proven rollback disposition/);
+    const trace = (await calls(f)).slice(before);
+    assert.ok(!trace.includes(RESTART_COMMAND) && !trace.includes(RELOAD_COMMAND));
+    assert.equal(await pathExists(f.root + "/.data/current"), false);
+  },
+  "bootstrap"
+);
 for (const failure of [
   { marker: "unreadable", error: /not readable by the caddy user/ },
   { marker: "no-caddy", error: /Caddy is not running/ },
