@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -14,13 +15,13 @@ const ok = (output = "content") => ({ ok: true, output });
 // The wire field stays `error_code`; the parameter itself follows the repo's naming convention.
 const fail = (errorCode: string, error = "boom") => ({ ok: false, error_code: errorCode, error });
 
-Deno.test("loops: canonical arguments are order-independent and nested", () => {
+test("loops: canonical arguments are order-independent and nested", () => {
   assert.equal(canonicalArgs({ b: 1, a: 2 }), canonicalArgs({ a: 2, b: 1 }));
   assert.equal(canonicalArgs({ a: { y: 1, x: 2 } }), canonicalArgs({ a: { x: 2, y: 1 } }));
   assert.equal(JSON.stringify(canonicalize(["b", "a"])), JSON.stringify(["b", "a"])); // arrays keep order
 });
 
-Deno.test("loops: call identity and effect digests are deterministic", () => {
+test("loops: call identity and effect digests are deterministic", () => {
   const a = callIdentity("filesystem.read", { path: "x" });
   const b = callIdentity("filesystem.read", { path: "x" });
   assert.equal(a, b);
@@ -30,7 +31,7 @@ Deno.test("loops: call identity and effect digests are deterministic", () => {
   assert.equal(effectSignature("filesystem.read", { path: "x" }, ok("c")), effectSignature("filesystem.read", { path: "x" }, ok("c")));
 });
 
-Deno.test("loops: adjacent identical call after success is flagged as repeat_after_success", () => {
+test("loops: adjacent identical call after success is flagged as repeat_after_success", () => {
   const detector = new LoopDetector();
   detector.observe("filesystem.read", { path: "x" }, ok("v"));
   const dup = detector.checkDuplicate("filesystem.read", { path: "x" });
@@ -40,7 +41,7 @@ Deno.test("loops: adjacent identical call after success is flagged as repeat_aft
   assert.equal(flags.semanticLoop, false);
 });
 
-Deno.test("loops: adjacent call after a failure is exact_adjacent (retry, not duplication)", () => {
+test("loops: adjacent call after a failure is exact_adjacent (retry, not duplication)", () => {
   const detector = new LoopDetector();
   detector.observe("shell.exec", { command: "false" }, fail("exec_failed"));
   const dup = detector.checkDuplicate("shell.exec", { command: "false" });
@@ -49,7 +50,7 @@ Deno.test("loops: adjacent call after a failure is exact_adjacent (retry, not du
   assert.equal(flags.duplicate, "exact_adjacent");
 });
 
-Deno.test("loops: a different call is never flagged", () => {
+test("loops: a different call is never flagged", () => {
   const detector = new LoopDetector();
   detector.observe("filesystem.read", { path: "x" }, ok("v"));
   assert.equal(detector.checkDuplicate("filesystem.read", { path: "y" }), null);
@@ -58,7 +59,7 @@ Deno.test("loops: a different call is never flagged", () => {
   assert.equal(flags.semanticLoop, false);
 });
 
-Deno.test("loops: effect repetition inside the window closes a semantic loop", () => {
+test("loops: effect repetition inside the window closes a semantic loop", () => {
   const detector = new LoopDetector();
   // Same action + same effect three times => effect_repeat at the third read.
   detector.observe("filesystem.read", { path: "x" }, ok("v"));
@@ -71,7 +72,7 @@ Deno.test("loops: effect repetition inside the window closes a semantic loop", (
   assert.equal(fifth.streak, 1);
 });
 
-Deno.test("loops: alternating pattern recurrence closes a loop and tracks streak", () => {
+test("loops: alternating pattern recurrence closes a loop and tracks streak", () => {
   const detector = new LoopDetector({ patternLength: 2, window: 8 });
   const reads = () => detector.observe("filesystem.read", { path: "x" }, ok("v"));
   const patches = () => detector.observe("editor.apply_patch", { path: "y", old: "nope", new: "z" }, fail("patch_failed"));
@@ -87,7 +88,7 @@ Deno.test("loops: alternating pattern recurrence closes a loop and tracks streak
   assert.equal(fifth.streak, 2);
 });
 
-Deno.test("loops: breaking the pattern resets the streak", () => {
+test("loops: breaking the pattern resets the streak", () => {
   const detector = new LoopDetector({ patternLength: 2, window: 8 });
   const reads = () => detector.observe("filesystem.read", { path: "x" }, ok("v"));
   const patches = () => detector.observe("editor.apply_patch", { path: "y", old: "nope", new: "z" }, fail("patch_failed"));
@@ -100,7 +101,7 @@ Deno.test("loops: breaking the pattern resets the streak", () => {
   assert.equal(fix.streak, 0);
 });
 
-Deno.test("loops: repeated guard rejections are detected as a loop themselves", () => {
+test("loops: repeated guard rejections are detected as a loop themselves", () => {
   const detector = new LoopDetector();
   detector.observe("filesystem.read", { path: "x" }, ok("v"));
   detector.observe("filesystem.read", { path: "x" }, { ok: false, error_code: "duplicate_call", error: "dup" });
@@ -117,7 +118,7 @@ Deno.test("loops: repeated guard rejections are detected as a loop themselves", 
   assert.equal(third.semanticLoop, true);
 });
 
-Deno.test("loops: renderLoopFeedback is deterministic and only for loops", () => {
+test("loops: renderLoopFeedback is deterministic and only for loops", () => {
   const detector = new LoopDetector({ patternLength: 2, window: 8 });
   detector.observe("filesystem.read", { path: "x" }, ok("v"));
   detector.observe("shell.exec", { command: "pwd" }, ok("."));

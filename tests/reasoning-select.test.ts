@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { getReasoningEffortForChatRequest, modelSupportsReasoningNone, updateReasoningSelectForModel } from "../static/reasoning-select.js";
@@ -48,7 +49,7 @@ const createSelect = (): FakeSelect => ({
   },
 });
 
-Deno.test("reasoning select preserves every tier advertised by the model catalog", () => {
+test("reasoning select preserves every tier advertised by the model catalog", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const selected = updateReasoningSelectForModel(
@@ -78,7 +79,7 @@ Deno.test("reasoning select preserves every tier advertised by the model catalog
   });
 });
 
-Deno.test("reasoning select preserves none when model levels omit it", () => {
+test("reasoning select preserves none when model levels omit it", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const selected = updateReasoningSelectForModel(
@@ -106,7 +107,7 @@ Deno.test("reasoning select preserves none when model levels omit it", () => {
   });
 });
 
-Deno.test("reasoning select resets none for Cerebras GPT-OSS", () => {
+test("reasoning select resets none for Cerebras GPT-OSS", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const model = {
@@ -134,7 +135,7 @@ Deno.test("reasoning select resets none for Cerebras GPT-OSS", () => {
   });
 });
 
-Deno.test("reasoning select shows none when model default is none", () => {
+test("reasoning select shows none when model default is none", () => {
   withFakeDocument(() => {
     const select = createSelect();
     const selected = updateReasoningSelectForModel(
@@ -161,7 +162,7 @@ Deno.test("reasoning select shows none when model default is none", () => {
   });
 });
 
-Deno.test("chat reasoning none selection uses OpenAI wire value", () => {
+test("chat reasoning none selection uses OpenAI wire value", () => {
   assert.equal(getReasoningEffortForChatRequest("none"), "none");
   assert.equal(getReasoningEffortForChatRequest("max"), "max");
   assert.equal(getReasoningEffortForChatRequest("ultra"), "ultra");

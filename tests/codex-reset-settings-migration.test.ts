@@ -1,3 +1,14 @@
+import { test } from "bun:test";
+import {
+  type AtomicCheck,
+  type AtomicOperation,
+  type Kv,
+  type KvCommitError,
+  type KvCommitResult,
+  type KvConsistencyLevel,
+  type KvEntry,
+  type KvKey,
+} from "#kv";
 import assert from "node:assert/strict";
 import { CODEX_AUTH_POOL_KV_KEY, parseCodexAuthPool } from "../src/codex/auth.ts";
 import { classifyKvMigrationKey, validateKvMigrationTarget } from "../src/cache/kv-migration.ts";
@@ -29,25 +40,25 @@ const authAccount = (suffix: string): CodexAuthState => ({
 });
 
 /** Persists the exact strong auth-pool snapshot the completion enumerates. */
-const setAuthPool = async (kv: Deno.Kv, ...suffixes: readonly string[]): Promise<void> => {
+const setAuthPool = async (kv: Kv, ...suffixes: readonly string[]): Promise<void> => {
   const pool: CodexAuthPoolState = { accounts: suffixes.map((suffix) => authAccount(suffix)), updated_at_ms: ACCOUNT_UPDATED_AT_MS + 1 };
   await kv.set(CODEX_AUTH_POOL_KV_KEY, pool);
 };
 
-const valueAt = async (kv: Deno.Kv, key: Deno.KvKey): Promise<unknown> => (await kv.get(key)).value;
+const valueAt = async (kv: Kv, key: KvKey): Promise<unknown> => (await kv.get(key)).value;
 
-const migrationMarker = async (kv: Deno.Kv): Promise<MigrationMarker | null> => (await valueAt(kv, CODEX_RESET_USAGE_MIGRATION_KEY)) as MigrationMarker | null;
+const migrationMarker = async (kv: Kv): Promise<MigrationMarker | null> => (await valueAt(kv, CODEX_RESET_USAGE_MIGRATION_KEY)) as MigrationMarker | null;
 
-const migrationMarkers = async (kv: Deno.Kv): Promise<Deno.KvEntry<unknown>[]> => {
-  const markers: Deno.KvEntry<unknown>[] = [];
+const migrationMarkers = async (kv: Kv): Promise<KvEntry<unknown>[]> => {
+  const markers: KvEntry<unknown>[] = [];
   for await (const entry of kv.list({ prefix: ["uos_ai", "migrations"] })) markers.push(entry);
   return markers;
 };
 
 type AtomicChain = {
-  check: (...checks: Deno.AtomicCheck[]) => AtomicChain;
-  set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => AtomicChain;
-  commit: () => Promise<Deno.KvCommitResult | Deno.KvCommitError>;
+  check: (...checks: AtomicCheck[]) => AtomicChain;
+  set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => AtomicChain;
+  commit: () => Promise<KvCommitResult | KvCommitError>;
 };
 
 /**
@@ -55,10 +66,10 @@ type AtomicChain = {
  * auth pool before committing, so the account lands exactly between the
  * completion's enumeration read and its conditional commit attempt.
  */
-const addAccountBeforeFirstCommit = (kv: Deno.Kv, suffix: string): Deno.Kv => {
+const addAccountBeforeFirstCommit = (kv: Kv, suffix: string): Kv => {
   let injected = false;
   const wrapper = {
-    get: (key: Deno.KvKey, options?: { consistency?: Deno.KvConsistencyLevel }) => kv.get(key, options),
+    get: (key: KvKey, options?: { consistency?: KvConsistencyLevel }) => kv.get(key, options),
     atomic: () => {
       const operation = kv.atomic();
       const chain: AtomicChain = {
@@ -80,13 +91,13 @@ const addAccountBeforeFirstCommit = (kv: Deno.Kv, suffix: string): Deno.Kv => {
           return await operation.commit();
         },
       };
-      return chain as unknown as Deno.AtomicOperation;
+      return chain as unknown as AtomicOperation;
     },
   };
-  return wrapper as unknown as Deno.Kv;
+  return wrapper as unknown as Kv;
 };
 
-Deno.test("a persisted false opt-out is preserved while explicit current settings win", async () => {
+test("a persisted false opt-out is preserved while explicit current settings win", async () => {
   const kv = await openSentinelTestKv();
   try {
     const [hashA, hashB, hashC] = await Promise.all([accountHash("a"), accountHash("b"), accountHash("c")]);
@@ -111,7 +122,7 @@ Deno.test("a persisted false opt-out is preserved while explicit current setting
   }
 });
 
-Deno.test("a repeated migration never overwrites an operator decision", async () => {
+test("a repeated migration never overwrites an operator decision", async () => {
   const kv = await openSentinelTestKv();
   try {
     const hashA = await accountHash("a");
@@ -129,7 +140,7 @@ Deno.test("a repeated migration never overwrites an operator decision", async ()
   }
 });
 
-Deno.test("a normal no-legacy startup materializes no settings and stays enabled", async () => {
+test("a normal no-legacy startup materializes no settings and stays enabled", async () => {
   const absentKv = await openSentinelTestKv();
   try {
     const hashA = await accountHash("a");
@@ -155,7 +166,7 @@ Deno.test("a normal no-legacy startup materializes no settings and stays enabled
   }
 });
 
-Deno.test("an empty account pool stays pending and guarded reads seed configured accounts", async () => {
+test("an empty account pool stays pending and guarded reads seed configured accounts", async () => {
   const kv = await openSentinelTestKv();
   try {
     const [hashA, hashB, hashC] = await Promise.all([accountHash("a"), accountHash("b"), accountHash("c")]);
@@ -181,7 +192,7 @@ Deno.test("an empty account pool stays pending and guarded reads seed configured
   }
 });
 
-Deno.test("concurrent migrations and an interleaved explicit write converge on one marker", async () => {
+test("concurrent migrations and an interleaved explicit write converge on one marker", async () => {
   const kv = await openSentinelTestKv();
   try {
     const [hashA, hashB] = await Promise.all([accountHash("a"), accountHash("b")]);
@@ -207,7 +218,7 @@ Deno.test("concurrent migrations and an interleaved explicit write converge on o
   }
 });
 
-Deno.test("a malformed legacy value stays fail-closed through the migration", async () => {
+test("a malformed legacy value stays fail-closed through the migration", async () => {
   const kv = await openSentinelTestKv();
   try {
     const [hashA, hashB] = await Promise.all([accountHash("a"), accountHash("b")]);
@@ -229,7 +240,7 @@ Deno.test("a malformed legacy value stays fail-closed through the migration", as
   }
 });
 
-Deno.test("a pre-existing row survives the completion commit and only absent rows are seeded", async () => {
+test("a pre-existing row survives the completion commit and only absent rows are seeded", async () => {
   const kv = await openSentinelTestKv();
   try {
     const [hashA, hashB] = await Promise.all([accountHash("a"), accountHash("b")]);
@@ -248,7 +259,7 @@ Deno.test("a pre-existing row survives the completion commit and only absent row
   }
 });
 
-Deno.test("an account configured between enumeration and the completion commit cannot escape the opt-out", async () => {
+test("an account configured between enumeration and the completion commit cannot escape the opt-out", async () => {
   const kv = await openSentinelTestKv();
   try {
     const [hashA, hashB, hashC] = await Promise.all([accountHash("a"), accountHash("b"), accountHash("c")]);
@@ -276,7 +287,7 @@ Deno.test("an account configured between enumeration and the completion commit c
   }
 });
 
-Deno.test("the completion marker stays inside the migration validator's accepted namespace", async () => {
+test("the completion marker stays inside the migration validator's accepted namespace", async () => {
   const kv = await openSentinelTestKv();
   try {
     await kv.set(CODEX_BANKED_RESET_USAGE_LEGACY_KEY, false);

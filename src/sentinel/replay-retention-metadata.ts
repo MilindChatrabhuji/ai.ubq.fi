@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 /** Reconstruct TTL-bound metadata counters only from a complete, unchanged-ledger scan. */
 import { HEX_DIGEST, SENTINEL_REPLAY_REQUEST_PREFIX } from "./replay-model.ts";
 import { SENTINEL_REPLAY_MAX_STATUS_RECORDS } from "./replay-limits.ts";
@@ -29,7 +30,7 @@ const isTombstone = (value: unknown): value is Readonly<Record<string, unknown>>
   );
 };
 
-export const metadataEntryMatches = (entry: Deno.KvEntry<unknown>, prefix: Deno.KvKey): boolean => {
+export const metadataEntryMatches = (entry: KvEntry<unknown>, prefix: KvKey): boolean => {
   if (entry.key.length !== prefix.length + 1 || !prefix.every((part, index) => entry.key[index] === part)) return false;
   if (prefix === SENTINEL_REPLAY_REQUEST_PREFIX) {
     return isSentinelReplayCaptureStatusRow(entry.value) && entry.key[prefix.length] === entry.value.request_id;
@@ -37,7 +38,7 @@ export const metadataEntryMatches = (entry: Deno.KvEntry<unknown>, prefix: Deno.
   return isTombstone(entry.value) && entry.key[prefix.length] === entry.value.fingerprint;
 };
 
-const scanMetadata = async (kv: Deno.Kv): Promise<MetadataScan> => {
+const scanMetadata = async (kv: Kv): Promise<MetadataScan> => {
   let records = 0;
   let bytes = 0;
   for (const prefix of [SENTINEL_REPLAY_REQUEST_PREFIX, SENTINEL_REPLAY_EVICTION_PREFIX]) {
@@ -62,7 +63,7 @@ const scanMetadata = async (kv: Deno.Kv): Promise<MetadataScan> => {
  * after the same ledger CAS; its partial totals are never committed.
  * A partial/corrupt scan or CAS loss changes nothing.
  */
-export const reconcileSentinelReplayStatusMetadata = async (kv: Deno.Kv, budgetBytes: number): Promise<"reconciled" | "over_limit" | "failed"> => {
+export const reconcileSentinelReplayStatusMetadata = async (kv: Kv, budgetBytes: number): Promise<"reconciled" | "over_limit" | "failed"> => {
   try {
     const state = await readLedger(kv, budgetBytes);
     if (state.kind !== "ok" || !state.ledger.bootstrap_complete || state.ledger.accounting_error !== null) return "failed";

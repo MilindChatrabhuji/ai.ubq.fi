@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { toDeepSeekChatMessages } from "../src/deepseek/chat-projection.ts";
@@ -33,7 +34,7 @@ const chatCompletion = (message: Record<string, unknown>): Record<string, unknow
   usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
 });
 
-Deno.test("model-switch replay: buffered output item ids carry the official type prefixes", () => {
+test("model-switch replay: buffered output item ids carry the official type prefixes", () => {
   const payload = toDeepSeekResponsesPayload(
     chatCompletion({
       role: "assistant",
@@ -56,7 +57,7 @@ Deno.test("model-switch replay: buffered output item ids carry the official type
   );
 });
 
-Deno.test("model-switch replay: streamed output item ids carry the official type prefixes", () => {
+test("model-switch replay: streamed output item ids carry the official type prefixes", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", INCIDENT_RESPONSE_ID, echo, 1_780_000_000, new Map(), new Set(["exec"]));
   const events: Record<string, unknown>[] = [];
   events.push(...translator.push({ choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "think" } }] }));
@@ -100,7 +101,7 @@ Deno.test("model-switch replay: streamed output item ids carry the official type
   );
 });
 
-Deno.test("model-switch replay: a legacy synthetic function-call id is omitted and its pair and order survive", () => {
+test("model-switch replay: a legacy synthetic function-call id is omitted and its pair and order survive", () => {
   const items: ResponseInputItem[] = [
     { type: "message", role: "user", content: [{ type: "input_text", text: "Use the previous result to answer only pong." }] },
     {
@@ -124,7 +125,7 @@ Deno.test("model-switch replay: a legacy synthetic function-call id is omitted a
   assert.deepEqual(items, snapshot);
 });
 
-Deno.test("model-switch replay: a legacy synthetic reasoning item without encrypted replay is dropped", () => {
+test("model-switch replay: a legacy synthetic reasoning item without encrypted replay is dropped", () => {
   const items: ResponseInputItem[] = [
     { type: "message", role: "user", content: [{ type: "input_text", text: "Reply only pong." }] },
     {
@@ -143,7 +144,7 @@ Deno.test("model-switch replay: a legacy synthetic reasoning item without encryp
   ]);
 });
 
-Deno.test("model-switch replay: a replayed gateway completion is repaired on the Codex seam", () => {
+test("model-switch replay: a replayed gateway completion is repaired on the Codex seam", () => {
   const payload = toDeepSeekResponsesPayload(
     chatCompletion({
       role: "assistant",
@@ -163,7 +164,7 @@ Deno.test("model-switch replay: a replayed gateway completion is repaired on the
   ]);
 });
 
-Deno.test("model-switch replay: future gateway-prefixed item ids are recognized as gateway-local", () => {
+test("model-switch replay: future gateway-prefixed item ids are recognized as gateway-local", () => {
   const items: ResponseInputItem[] = [
     { id: `rs_${INCIDENT_RESPONSE_ID}_0`, type: "reasoning", summary: [{ type: "summary_text", text: "thought" }] },
     { id: `msg_${INCIDENT_RESPONSE_ID}_0`, type: "message", role: "assistant", content: [{ type: "output_text", text: "pong", annotations: [] }] },
@@ -182,7 +183,7 @@ Deno.test("model-switch replay: future gateway-prefixed item ids are recognized 
   ]);
 });
 
-Deno.test("model-switch replay: both producer responseId shapes are recognized", () => {
+test("model-switch replay: both producer responseId shapes are recognized", () => {
   // `src/deepseek/handlers.ts` mints `resp_` plus up to 40 alphanumerics of the
   // provider request id (or a UUID), so a non-hex id and the 40-character slice
   // are both legitimate gateway provenance.
@@ -203,7 +204,7 @@ Deno.test("model-switch replay: both producer responseId shapes are recognized",
   ]);
 });
 
-Deno.test("model-switch replay: genuine OpenAI and unrelated item ids pass through untouched", () => {
+test("model-switch replay: genuine OpenAI and unrelated item ids pass through untouched", () => {
   const items: ResponseInputItem[] = [
     {
       id: "rs_03375d708dca4424016abf51952afc87d1824eacab5be80344",
@@ -233,7 +234,7 @@ Deno.test("model-switch replay: genuine OpenAI and unrelated item ids pass throu
   assert.deepEqual(codexBodyInput(items), items);
 });
 
-Deno.test("model-switch replay: the seam leaves the source input intact for the DeepSeek replay", () => {
+test("model-switch replay: the seam leaves the source input intact for the DeepSeek replay", () => {
   const items: ResponseInputItem[] = [
     { type: "reasoning", id: "resp_e5e0060cd7e14be8ac967e1edb8509d7_rs_0", summary: [{ type: "summary_text", text: "keep me" }] },
     { type: "function_call", id: `${INCIDENT_RESPONSE_ID}_fc_0`, call_id: "call_1", name: "lookup", arguments: "{}" },
@@ -258,7 +259,7 @@ Deno.test("model-switch replay: the seam leaves the source input intact for the 
   ]);
 });
 
-Deno.test("model-switch replay: the Responses assembler repairs the Codex body and returns the original input to the removed provider", () => {
+test("model-switch replay: the Responses assembler repairs the Codex body and returns the original input to the removed provider", () => {
   const items: ResponseInputItem[] = [
     { type: "message", role: "user", content: [{ type: "input_text", text: "Use the previous result to answer only pong." }] },
     { id: `${INCIDENT_RESPONSE_ID}_rs_0`, type: "reasoning", summary: [{ type: "summary_text", text: "legacy thought" }], encrypted_content: "", content: [] },

@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/passkeys-harness.ts";
 // Bounds on anonymous passkey login challenge issuance.
 //
 // These tests pin the acceptance contract for issue #115: a burst of
@@ -22,7 +24,10 @@ const challengeKeyCount = (): number => [...kvStore.keys()].filter((key) => key.
 
 const windowStartMs = (atMs: number): number => Math.floor(atMs / PASSKEY_LOGIN_START_WINDOW_MS) * PASSKEY_LOGIN_START_WINDOW_MS;
 
-Deno.test("passkey login start bounds anonymous challenge creation and writes nothing after the limit", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("passkey login start bounds anonymous challenge creation and writes nothing after the limit", async () => {
   kvStore.clear();
 
   for (let index = 0; index < PASSKEY_LOGIN_START_LIMIT; index += 1) {
@@ -54,7 +59,7 @@ Deno.test("passkey login start bounds anonymous challenge creation and writes no
   assert.deepEqual(after, before);
 });
 
-Deno.test("passkey login start resets deterministically at the next clock-aligned window", async () => {
+test("passkey login start resets deterministically at the next clock-aligned window", async () => {
   kvStore.clear();
   const realNow = Date.now;
   let clock = realNow();
@@ -78,7 +83,7 @@ Deno.test("passkey login start resets deterministically at the next clock-aligne
   }
 });
 
-Deno.test("named passkey login failures are indistinguishable from discoverable login", async () => {
+test("named passkey login failures are indistinguishable from discoverable login", async () => {
   kvStore.clear();
   const now = Date.now();
   const credentialless = {
@@ -111,7 +116,7 @@ Deno.test("named passkey login failures are indistinguishable from discoverable 
   assert.deepEqual(shapes[1], shapes[2]);
 });
 
-Deno.test("named failures share the anonymous login-start budget", async () => {
+test("named failures share the anonymous login-start budget", async () => {
   kvStore.clear();
   const now = Date.now();
   const credentialless = {
@@ -134,7 +139,7 @@ Deno.test("named failures share the anonymous login-start budget", async () => {
   assert.equal(challengeKeyCount(), PASSKEY_LOGIN_START_LIMIT);
 });
 
-Deno.test("concurrent passkey login start bursts never exceed the anonymous window budget", async () => {
+test("concurrent passkey login start bursts never exceed the anonymous window budget", async () => {
   kvStore.clear();
   const responses = await Promise.all(Array.from({ length: PASSKEY_LOGIN_START_LIMIT + 5 }, () => handlePasskeyLoginStart(loginStartRequest())));
   const statuses = responses.map((response) => response.status);

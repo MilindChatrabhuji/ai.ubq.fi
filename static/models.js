@@ -31,7 +31,7 @@ const tokenNumber = new Intl.NumberFormat("en-US");
 const normalizeReasoningLevels = (value) => {
   if (!Array.isArray(value)) return [];
   const levels = value
-    .map((entry) => typeof entry === "string" ? entry : entry?.effort)
+    .map((entry) => (typeof entry === "string" ? entry : entry?.effort))
     .filter((entry) => typeof entry === "string" && entry.length > 0);
   return [...new Set(levels)].sort((a, b) => {
     const aIndex = reasoningOrder.indexOf(a);
@@ -88,12 +88,18 @@ const render = () => {
       maxContextWindow && tokenNumber.format(maxContextWindow),
       autoCompact && tokenNumber.format(autoCompact),
       contextWindow ? "context compact compression" : "",
-    ].filter(Boolean).join(" ").toLowerCase();
-    return !query || model.id.toLowerCase().includes(query) ||
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return (
+      !query ||
+      model.id.toLowerCase().includes(query) ||
       model.providers.some((provider) => (providerNames[provider.id] ?? provider.id).toLowerCase().includes(query)) ||
       metadataSourceLabel(model).toLowerCase().includes(query) ||
       reasoning?.levels.some((level) => level.includes(query)) ||
-      contextSearch.includes(query);
+      contextSearch.includes(query)
+    );
   });
   count.textContent = `${visible.length} cataloged model${visible.length === 1 ? "" : "s"}`;
   if (!visible.length) {
@@ -102,68 +108,70 @@ const render = () => {
     return;
   }
   list.removeAttribute("data-state");
-  list.replaceChildren(...visible.map((model) => {
-    const article = document.createElement("article");
-    const heading = document.createElement("h2");
-    const providers = document.createElement("div");
-    heading.textContent = model.id;
-    providers.dataset.providers = "";
-    for (const provider of model.providers) {
-      const badge = document.createElement("span");
-      badge.dataset.provider = provider.id;
-      badge.textContent = providerNames[provider.id] ?? provider.id;
-      badge.title = provider.supported_endpoints.join(", ");
-      providers.append(badge);
-    }
-    article.append(heading, providers);
-
-    // Coverage is part of the page: a row states which source described it, and
-    // a row no source described says so instead of quietly showing nothing.
-    const source = document.createElement("div");
-    source.dataset.metadataSource = model.context_source ?? "unknown";
-    source.textContent = `Metadata · ${metadataSourceLabel(model)}`;
-    article.append(source);
-
-    const details = document.createElement("details");
-    details.dataset.disclosure = "";
-    const detailsTitle = document.createElement("summary");
-    detailsTitle.textContent = "Model details";
-    details.append(detailsTitle);
-
-    const reasoning = reasoningFor(model);
-    if (reasoning?.levels.length) {
-      const levels = document.createElement("div");
-      levels.dataset.reasoningLevels = "";
-      levels.textContent = `Reasoning · ${reasoning.levels.join(", ")}`;
-      if (reasoning.defaultLevel) levels.title = `Default: ${reasoning.defaultLevel}`;
-      details.append(levels);
-    }
-
-    const contextWindow = positiveTokenCount(model.context_window_tokens);
-    const maxContextWindow = positiveTokenCount(model.max_context_window_tokens);
-    const autoCompact = positiveTokenCount(model.auto_compact_token_limit_tokens);
-    if (contextWindow) {
-      const context = document.createElement("div");
-      context.dataset.contextWindow = "";
-      context.textContent = `Context · ${tokenNumber.format(contextWindow)} tokens`;
-      // The catalog's maximum is the ceiling a client config may override the
-      // window to, not a window the provider serves, so it belongs in the
-      // tooltip rather than next to the served number.
-      if (maxContextWindow && maxContextWindow !== contextWindow) {
-        context.title = `Client override ceiling: ${tokenNumber.format(maxContextWindow)} tokens`;
+  list.replaceChildren(
+    ...visible.map((model) => {
+      const article = document.createElement("article");
+      const heading = document.createElement("h2");
+      const providers = document.createElement("div");
+      heading.textContent = model.id;
+      providers.dataset.providers = "";
+      for (const provider of model.providers) {
+        const badge = document.createElement("span");
+        badge.dataset.provider = provider.id;
+        badge.textContent = providerNames[provider.id] ?? provider.id;
+        badge.title = provider.supported_endpoints.join(", ");
+        providers.append(badge);
       }
-      article.append(context);
-    }
-    if (autoCompact) {
-      const compact = document.createElement("div");
-      compact.dataset.autoCompact = "";
-      compact.textContent = `Auto-compact · ${tokenNumber.format(autoCompact)} tokens`;
-      compact.title = "Summarize older conversation state before the physical context window fills";
-      details.append(compact);
-    }
-    if (details.children.length > 1) article.append(details);
-    return article;
-  }));
+      article.append(heading, providers);
+
+      // Coverage is part of the page: a row states which source described it, and
+      // a row no source described says so instead of quietly showing nothing.
+      const source = document.createElement("div");
+      source.dataset.metadataSource = model.context_source ?? "unknown";
+      source.textContent = `Metadata · ${metadataSourceLabel(model)}`;
+      article.append(source);
+
+      const details = document.createElement("details");
+      details.dataset.disclosure = "";
+      const detailsTitle = document.createElement("summary");
+      detailsTitle.textContent = "Model details";
+      details.append(detailsTitle);
+
+      const reasoning = reasoningFor(model);
+      if (reasoning?.levels.length) {
+        const levels = document.createElement("div");
+        levels.dataset.reasoningLevels = "";
+        levels.textContent = `Reasoning · ${reasoning.levels.join(", ")}`;
+        if (reasoning.defaultLevel) levels.title = `Default: ${reasoning.defaultLevel}`;
+        details.append(levels);
+      }
+
+      const contextWindow = positiveTokenCount(model.context_window_tokens);
+      const maxContextWindow = positiveTokenCount(model.max_context_window_tokens);
+      const autoCompact = positiveTokenCount(model.auto_compact_token_limit_tokens);
+      if (contextWindow) {
+        const context = document.createElement("div");
+        context.dataset.contextWindow = "";
+        context.textContent = `Context · ${tokenNumber.format(contextWindow)} tokens`;
+        // The catalog's maximum is the ceiling a client config may override the
+        // window to, not a window the provider serves, so it belongs in the
+        // tooltip rather than next to the served number.
+        if (maxContextWindow && maxContextWindow !== contextWindow) {
+          context.title = `Client override ceiling: ${tokenNumber.format(maxContextWindow)} tokens`;
+        }
+        article.append(context);
+      }
+      if (autoCompact) {
+        const compact = document.createElement("div");
+        compact.dataset.autoCompact = "";
+        compact.textContent = `Auto-compact · ${tokenNumber.format(autoCompact)} tokens`;
+        compact.title = "Summarize older conversation state before the physical context window fills";
+        details.append(compact);
+      }
+      if (details.children.length > 1) article.append(details);
+      return article;
+    })
+  );
 };
 
 search.addEventListener("input", render);
@@ -190,7 +198,7 @@ try {
         article.dataset.state = source.status ?? "unavailable";
         article.append(name, total, state);
         return article;
-      }),
+      })
   );
   render();
 } catch (error) {

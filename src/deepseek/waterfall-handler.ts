@@ -50,7 +50,10 @@ export type DeepSeekWaterfallPaidTail = (
   rawRecord: Record<string, unknown>,
   rawBody: ResponsesRequest,
   usageContext?: UsageContext,
-  options?: Readonly<{ allowedPaidProviders?: readonly ("metered" | "surplus")[] | null }>
+  options?: Readonly<{
+    allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+    deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
+  }>
 ) => Promise<Response>;
 
 export type DeepSeekWaterfallOptions = Readonly<{
@@ -99,7 +102,13 @@ const dispatchPaidHop = async (paidTail: DeepSeekWaterfallPaidTail, input: Param
   // apply its fixed Surplus -> Metered cost order to either hop, letting the
   // Surplus hop silently advance to metered and starving the OpenLux hop.
   const allowedPaidProviders = DEEPSEEK_WATERFALL_PAID_PIN[input.provider] ?? null;
-  return await paidTail(paidRequest, paidBody, paidBody, input.usageContext, { allowedPaidProviders });
+  const deepSeekWaterfallPaidHop = input.provider === "openlux" ? "openlux" : "surplus";
+  // Each paid hop settles independently. Preserve the parent correlation and
+  // its bound quota hook while giving billing a provider-specific request key.
+  const paidUsageContext = input.usageContext?.requestId
+    ? { ...input.usageContext, paidFallbackRequestId: `${input.usageContext.requestId}:deepseek_waterfall:${deepSeekWaterfallPaidHop}` }
+    : input.usageContext;
+  return await paidTail(paidRequest, paidBody, paidBody, paidUsageContext, { allowedPaidProviders, deepSeekWaterfallPaidHop });
 };
 
 const defaultDispatchFor = (paidTail: DeepSeekWaterfallPaidTail): DeepSeekWaterfallDispatch => {

@@ -51,7 +51,7 @@ export const SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES = [
 ] as const;
 const SAFE_RESPONSE_HEADER_NAME_SET = new Set<string>(SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES);
 
-export type SentinelUpstreamProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras" | "deepseek" | "lithos" | "openrouter";
+export type SentinelUpstreamProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras" | "deepseek" | "lithos" | "openrouter" | "claude_code";
 
 export type SentinelUpstreamTerminal = "pending" | "fetch_error" | "eof" | "read_error" | "cancelled";
 
@@ -621,7 +621,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
     const stream = new ReadableStream<Uint8Array>(
       {
         async pull(controller) {
-          let result: ReadableStreamReadResult<Uint8Array>;
+          let result: Awaited<ReturnType<typeof reader.read>>;
           try {
             result = await reader.read();
           } catch (error) {

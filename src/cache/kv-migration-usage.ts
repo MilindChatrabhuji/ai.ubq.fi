@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey, KvU64 } from "#kv";
 // Bounded counter handoff and kernel quota v2 migration, split out of src/kv_migration.ts.
 
 import { API_KEY_HASH_PREFIX, API_KEY_ID_PREFIX } from "../api-keys.ts";
@@ -102,17 +103,17 @@ const migrationPolicyNow = (record: ApiKeyRecord, nowMs: number): number => (rec
 // long enough for the post-migration validation pass.
 const migrationV3RetentionMs = (windowResetAtMs: number, nowMs: number): number => apiKeyUsageV3RetentionMs(windowResetAtMs, Math.min(nowMs, windowResetAtMs));
 
-type BoundedCounterKeys = Readonly<{ baselineKey: Deno.KvKey; counterKey: Deno.KvKey; windowKey: Deno.KvKey }>;
+type BoundedCounterKeys = Readonly<{ baselineKey: KvKey; counterKey: KvKey; windowKey: KvKey }>;
 
 type BoundedCounterEntries = Readonly<{
-  baselineEntry: Deno.KvEntryMaybe<ApiKeyUsageV2MigrationBaseline>;
-  counterEntry: Deno.KvEntryMaybe<Deno.KvU64>;
-  windowEntry: Deno.KvEntryMaybe<ApiKeyUsageWindowV3>;
+  baselineEntry: KvEntryMaybe<ApiKeyUsageV2MigrationBaseline>;
+  counterEntry: KvEntryMaybe<KvU64>;
+  windowEntry: KvEntryMaybe<ApiKeyUsageWindowV3>;
 }>;
 
 /** Seeds the first V2 migration baseline and V3 window for a bounded counter. */
 const seedBoundedCounterBaseline = async (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   keys: BoundedCounterKeys,
   entries: BoundedCounterEntries,
@@ -154,7 +155,7 @@ const seedBoundedCounterBaseline = async (
 
 /** Applies one legacy-usage delta to an existing baseline and V3 window. */
 const updateBoundedCounterBaseline = async (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   keys: BoundedCounterKeys,
   entries: BoundedCounterEntries,
@@ -198,7 +199,7 @@ const updateBoundedCounterBaseline = async (
 };
 
 const migrateBoundedCounterHandoff = async (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   legacyUsageRequests: number,
   nowMs: number,
@@ -213,7 +214,7 @@ const migrateBoundedCounterHandoff = async (
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const [baselineEntry, counterEntry, windowEntry] = await Promise.all([
       kv.get<ApiKeyUsageV2MigrationBaseline>(keys.baselineKey, { consistency: "strong" }),
-      kv.get<Deno.KvU64>(keys.counterKey, { consistency: "strong" }),
+      kv.get<KvU64>(keys.counterKey, { consistency: "strong" }),
       kv.get<ApiKeyUsageWindowV3>(keys.windowKey, { consistency: "strong" }),
     ]);
     const entries: BoundedCounterEntries = { baselineEntry, counterEntry, windowEntry };
@@ -243,7 +244,7 @@ const migrateBoundedCounterHandoff = async (
   throw new Error(`Bounded counter handoff changed concurrently: ${policy.key_id}`);
 };
 
-const countReconciledBoundedCounterBaselines = async (kv: Deno.Kv): Promise<number> => {
+const countReconciledBoundedCounterBaselines = async (kv: Kv): Promise<number> => {
   let count = 0;
   for await (const entry of kv.list({ prefix: API_KEY_USAGE_V2_MIGRATION_BASELINE_PREFIX })) {
     const baseline = normalizeApiKeyUsageV2MigrationBaseline(entry.value);
@@ -287,7 +288,7 @@ const normalizeLegacyKernelLimit = (value: unknown, defaults: { limit: number; w
   };
 };
 
-const migrationKernelDefaults = async (kv: Deno.Kv): Promise<{ limit: number; windowMs: number }> => {
+const migrationKernelDefaults = async (kv: Kv): Promise<{ limit: number; windowMs: number }> => {
   const [limitEntry, windowEntry] = await Promise.all([
     kv.get(DEFAULT_KERNEL_POLICY_LIMIT_KEY, { consistency: "strong" }),
     kv.get(DEFAULT_KERNEL_POLICY_WINDOW_KEY, { consistency: "strong" }),
@@ -302,10 +303,10 @@ const migrationKernelDefaults = async (kv: Deno.Kv): Promise<{ limit: number; wi
 
 /** Legacy entry already mirrored by a V2 policy row: drop the legacy row. */
 const deleteMigratedLegacyKernelEntry = async (
-  kv: Deno.Kv,
-  legacyEntry: Deno.KvEntry<unknown>,
-  policyEntry: Deno.KvEntryMaybe<KernelQuotaPolicyV2>,
-  windowEntry: Deno.KvEntryMaybe<KernelQuotaWindowV2>,
+  kv: Kv,
+  legacyEntry: KvEntry<unknown>,
+  policyEntry: KvEntryMaybe<KernelQuotaPolicyV2>,
+  windowEntry: KvEntryMaybe<KernelQuotaWindowV2>,
   owner: string,
   repo: string | undefined
 ): Promise<void> => {
@@ -343,7 +344,7 @@ const migratedKernelWindow = (
 };
 
 /** Owner/repo identity carried by one legacy kernel quota key. */
-const legacyKernelIdentity = (key: Deno.KvKey, prefix: Deno.KvKey, scope: "repo" | "org"): Readonly<{ owner: string; repo: string | undefined }> => {
+const legacyKernelIdentity = (key: KvKey, prefix: KvKey, scope: "repo" | "org"): Readonly<{ owner: string; repo: string | undefined }> => {
   const ownerPart = key[prefix.length];
   const repoPart = key[prefix.length + 1];
   if (typeof ownerPart !== "string" || !ownerPart || (scope === "repo" && (typeof repoPart !== "string" || !repoPart))) {
@@ -353,20 +354,20 @@ const legacyKernelIdentity = (key: Deno.KvKey, prefix: Deno.KvKey, scope: "repo"
 };
 
 /** V2 policy and window keys for one kernel quota scope. */
-const kernelV2Keys = (scope: "repo" | "org", owner: string, repo: string | undefined): Readonly<{ policyKey: Deno.KvKey; windowKey: Deno.KvKey }> =>
+const kernelV2Keys = (scope: "repo" | "org", owner: string, repo: string | undefined): Readonly<{ policyKey: KvKey; windowKey: KvKey }> =>
   scope === "repo" && repo !== undefined
     ? { policyKey: kernelRepoPolicyKey(owner, repo), windowKey: kernelRepoWindowKey(owner, repo) }
     : { policyKey: kernelOrgPolicyKey(owner), windowKey: kernelOrgWindowKey(owner) };
 
 /** Writes the V2 policy and window rows for one legacy kernel limit entry. */
 const writeMigratedKernelPolicy = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: Readonly<{
-    legacyEntry: Deno.KvEntry<unknown>;
+    legacyEntry: KvEntry<unknown>;
     legacy: LegacyKernelLimitRecord;
-    keys: Readonly<{ policyKey: Deno.KvKey; windowKey: Deno.KvKey }>;
-    policyEntry: Deno.KvEntryMaybe<KernelQuotaPolicyV2>;
-    windowEntry: Deno.KvEntryMaybe<KernelQuotaWindowV2>;
+    keys: Readonly<{ policyKey: KvKey; windowKey: KvKey }>;
+    policyEntry: KvEntryMaybe<KernelQuotaPolicyV2>;
+    windowEntry: KvEntryMaybe<KernelQuotaWindowV2>;
     identity: Readonly<{ owner: string; repo: string | undefined }>;
     scope: "repo" | "org";
     defaultBacked: boolean;
@@ -397,9 +398,9 @@ const writeMigratedKernelPolicy = async (
 
 /** Migrates one legacy kernel limit entry into the V2 policy and window rows. */
 const migrateLegacyKernelEntry = async (
-  kv: Deno.Kv,
-  legacyEntry: Deno.KvEntry<unknown>,
-  legacyPrefix: Deno.KvKey,
+  kv: Kv,
+  legacyEntry: KvEntry<unknown>,
+  legacyPrefix: KvKey,
   scope: "repo" | "org",
   defaults: { limit: number; windowMs: number },
   nowMs: number
@@ -431,7 +432,7 @@ const migrateLegacyKernelEntry = async (
   });
 };
 
-const migrateLegacyKernelScope = async (kv: Deno.Kv, scope: "repo" | "org", defaults: { limit: number; windowMs: number }, nowMs: number): Promise<number> => {
+const migrateLegacyKernelScope = async (kv: Kv, scope: "repo" | "org", defaults: { limit: number; windowMs: number }, nowMs: number): Promise<number> => {
   const legacyPrefix = scope === "repo" ? (["ubq_ai", "kernel_auth", "limits"] as const) : (["ubq_ai", "kernel_auth", "org_limits"] as const);
   let migrated = 0;
   for await (const legacyEntry of kv.list({ prefix: legacyPrefix })) {
@@ -441,7 +442,7 @@ const migrateLegacyKernelScope = async (kv: Deno.Kv, scope: "repo" | "org", defa
   return migrated;
 };
 
-const migrateKernelQuotaV2 = async (kv: Deno.Kv, nowMs: number): Promise<{ repo: number; org: number }> => {
+const migrateKernelQuotaV2 = async (kv: Kv, nowMs: number): Promise<{ repo: number; org: number }> => {
   const defaults = await migrationKernelDefaults(kv);
   return {
     repo: await migrateLegacyKernelScope(kv, "repo", defaults, nowMs),
@@ -462,7 +463,7 @@ type ApiKeyUsageV3WindowMap = Map<string, ApiKeyUsageWindowV3>;
 
 /** Validates every V3 usage window row and indexes it by its reference. */
 const collectApiKeyUsageV3Windows = async (
-  kv: Deno.Kv,
+  kv: Kv,
   knownKeyIds: ReadonlySet<string>,
   errors: string[]
 ): Promise<Readonly<{ count: number; windows: ApiKeyUsageV3WindowMap }>> => {
@@ -508,7 +509,7 @@ const pushApiKeyUsageRequestStateErrors = (request: ApiKeyUsageRequestV3, errors
 
 /** Validates every V3 usage request row and tallies reservations per window. */
 const collectApiKeyUsageV3Requests = async (
-  kv: Deno.Kv,
+  kv: Kv,
   knownKeyIds: ReadonlySet<string>,
   errors: string[]
 ): Promise<Readonly<{ count: number; reservedByWindow: Map<string, number>; requestWindows: Set<string> }>> => {
@@ -549,7 +550,7 @@ const collectApiKeyUsageV3Requests = async (
   return { count, reservedByWindow, requestWindows };
 };
 
-const inspectApiKeyUsageV3 = async (kv: Deno.Kv, knownKeyIds: ReadonlySet<string>): Promise<ApiKeyUsageV3Inventory> => {
+const inspectApiKeyUsageV3 = async (kv: Kv, knownKeyIds: ReadonlySet<string>): Promise<ApiKeyUsageV3Inventory> => {
   const errors: string[] = [];
   const windowInventory = await collectApiKeyUsageV3Windows(kv, knownKeyIds, errors);
   const requestInventory = await collectApiKeyUsageV3Requests(kv, knownKeyIds, errors);
@@ -582,7 +583,7 @@ const kernelWindowReference = (scope: "repo" | "org", owner: string, repo: strin
   JSON.stringify(scope === "repo" ? [scope, owner, repo, createdAtMs] : [scope, owner, createdAtMs]);
 
 /** Validates every V2 kernel policy row under one prefix and counts them. */
-const inspectKernelQuotaPolicies = async (kv: Deno.Kv, prefix: Deno.KvKey, scope: "repo" | "org", errors: string[]): Promise<number> => {
+const inspectKernelQuotaPolicies = async (kv: Kv, prefix: KvKey, scope: "repo" | "org", errors: string[]): Promise<number> => {
   let count = 0;
   for await (const entry of kv.list({ prefix })) {
     count += 1;
@@ -600,8 +601,8 @@ const inspectKernelQuotaPolicies = async (kv: Deno.Kv, prefix: Deno.KvKey, scope
 
 /** Validates every V2 kernel window row under one prefix and indexes it. */
 const inspectKernelQuotaWindows = async (
-  kv: Deno.Kv,
-  prefix: Deno.KvKey,
+  kv: Kv,
+  prefix: KvKey,
   scope: "repo" | "org",
   errors: string[],
   windows: Map<string, KernelQuotaWindowEntry>
@@ -632,8 +633,8 @@ const inspectKernelQuotaWindows = async (
 /** Validates every V2 kernel reservation row under one prefix and tallies it. */
 /** Owner, timestamps and request id carried by one V2 reservation key. */
 const kernelReservationKeyIdentity = (
-  key: Deno.KvKey,
-  prefix: Deno.KvKey,
+  key: KvKey,
+  prefix: KvKey,
   scope: "repo" | "org"
 ): Readonly<{ owner: string; repo: string | undefined; windowCreatedAtMs: number; requestId: string }> | null => {
   const owner = key[prefix.length];
@@ -656,8 +657,8 @@ const kernelReservationKeyIdentity = (
 
 /** Validates every V2 kernel reservation row under one prefix and tallies it. */
 const inspectKernelQuotaReservations = async (
-  kv: Deno.Kv,
-  prefix: Deno.KvKey,
+  kv: Kv,
+  prefix: KvKey,
   scope: "repo" | "org",
   errors: string[],
   reservedByWindow: Map<string, number>
@@ -687,7 +688,7 @@ const inspectKernelQuotaReservations = async (
   return count;
 };
 
-const inspectKernelQuotaV2 = async (kv: Deno.Kv): Promise<KernelQuotaV2Inventory> => {
+const inspectKernelQuotaV2 = async (kv: Kv): Promise<KernelQuotaV2Inventory> => {
   const errors: string[] = [];
   const windows = new Map<string, KernelQuotaWindowEntry>();
   const reservedByWindow = new Map<string, number>();
@@ -713,7 +714,7 @@ const inspectKernelQuotaV2 = async (kv: Deno.Kv): Promise<KernelQuotaV2Inventory
 };
 
 /** Validates every api-key hash policy row and indexes it by its hash. */
-const collectStrictApiKeyHashEntries = async (kv: Deno.Kv, errors: string[]): Promise<Map<string, ApiKeyHashRecord>> => {
+const collectStrictApiKeyHashEntries = async (kv: Kv, errors: string[]): Promise<Map<string, ApiKeyHashRecord>> => {
   const hashEntries = new Map<string, ApiKeyHashRecord>();
   for await (const entry of kv.list({ prefix: API_KEY_HASH_PREFIX })) {
     const hash = entry.key.length === API_KEY_HASH_PREFIX.length + 1 ? entry.key.at(-1) : null;
@@ -732,7 +733,7 @@ const collectStrictApiKeyHashEntries = async (kv: Deno.Kv, errors: string[]): Pr
 
 /** Pairs every api-key id row with its consistent hash policy row. */
 const collectStrictApiKeyPairs = async (
-  kv: Deno.Kv,
+  kv: Kv,
   hashEntries: ReadonlyMap<string, ApiKeyHashRecord>,
   errors: string[]
 ): Promise<Readonly<{ pairs: StrictApiKeyPair[]; referencedHashes: Map<string, number> }>> => {
@@ -777,7 +778,7 @@ const auditReferencedApiKeyHashes = (
   }
 };
 
-const inspectStrictApiKeyPairs = async (kv: Deno.Kv): Promise<{ pairs: StrictApiKeyPair[]; errors: string[] }> => {
+const inspectStrictApiKeyPairs = async (kv: Kv): Promise<{ pairs: StrictApiKeyPair[]; errors: string[] }> => {
   const errors: string[] = [];
   const hashEntries = await collectStrictApiKeyHashEntries(kv, errors);
   const { pairs, referencedHashes } = await collectStrictApiKeyPairs(kv, hashEntries, errors);

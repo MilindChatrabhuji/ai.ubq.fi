@@ -1,14 +1,18 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { AtomicOperation, Kv, KvCommitError, KvCommitResult, KvEntry, KvEntryMaybe, KvKey, KvListIterator, KvListSelector } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { setKvForTest } from "../src/kv.ts";
 import assert from "node:assert/strict";
 
 type StoredEntry = {
-  key: Deno.KvKey;
+  key: KvKey;
   value: unknown;
   versionstamp: string;
 };
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 const clone = <T>(value: T): T => structuredClone(value);
-const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
+const startsWithKey = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
 class MemoryKv {
   readonly entries = new Map<string, StoredEntry>();
@@ -19,16 +23,16 @@ class MemoryKv {
     return String(this.#version).padStart(20, "0");
   }
 
-  get<T = unknown>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvKey): Promise<KvEntryMaybe<T>> {
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
       value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.entries.set(encodeKey(key), {
       key: clone(key),
@@ -38,10 +42,10 @@ class MemoryKv {
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  list<T = unknown>(selector: Deno.KvListSelector): Deno.KvListIterator<T> {
+  list<T = unknown>(selector: KvListSelector): KvListIterator<T> {
     const prefix = "prefix" in selector ? selector.prefix : [];
     const entries = [...this.entries.values()].filter((entry) => startsWithKey(entry.key, prefix));
-    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<KvEntry<T>> {
       for (const entry of entries) {
         yield {
           key: clone(entry.key),
@@ -49,28 +53,28 @@ class MemoryKv {
           versionstamp: entry.versionstamp,
         };
       }
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvListIterator<T>;
     Object.defineProperty(iterator, "cursor", { get: () => "" });
     return iterator;
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const mutations: ({ type: "set"; key: Deno.KvKey; value: unknown } | { type: "delete"; key: Deno.KvKey })[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
+    const mutations: ({ type: "set"; key: KvKey; value: unknown } | { type: "delete"; key: KvKey })[] = [];
     const operation = {
-      check: (entry: { key: Deno.KvKey; versionstamp: string | null }) => {
+      check: (entry: { key: KvKey; versionstamp: string | null }) => {
         checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         mutations.push({ type: "set", key: clone(key), value: clone(value) });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ type: "delete", key: clone(key) });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         const changed = checks.some((check) => (this.entries.get(encodeKey(check.key))?.versionstamp ?? null) !== check.versionstamp);
         if (changed) return Promise.resolve({ ok: false });
         const versionstamp = this.#nextVersionstamp();
@@ -88,17 +92,21 @@ class MemoryKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   close(): void {}
 }
 
 const memoryKv = new MemoryKv();
-const kv = memoryKv as unknown as Deno.Kv;
-const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
-const originalOpenKv = denoWithKv.openKv;
-denoWithKv.openKv = () => Promise.resolve(kv);
+const kv = memoryKv as unknown as Kv;
+setKvForTest(kv);
+beforeEach(() => {
+  setKvForTest(kv);
+});
+afterEach(() => {
+  setKvForTest(null);
+});
 
 const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api-keys.ts");
 const {
@@ -117,14 +125,12 @@ type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
 type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
 type PaidFallbackWindowV3 = import("../src/types.ts").PaidFallbackWindowV3;
 
-denoWithKv.openKv = originalOpenKv;
-
 const keyId = "v3-cutover-key";
 const keyHash = "v3-cutover-hash";
-const legacyRequestLogPrefix: Deno.KvKey = ["ubq_ai", "api_keys", "request_log", keyId];
+const legacyRequestLogPrefix: KvKey = ["ubq_ai", "api_keys", "request_log", keyId];
 
-const countPrefix = async (prefix: Deno.KvKey): Promise<number> => {
-  const keys: Deno.KvKey[] = [];
+const countPrefix = async (prefix: KvKey): Promise<number> => {
+  const keys: KvKey[] = [];
   for await (const entry of memoryKv.list({ prefix })) keys.push(entry.key);
   return keys.length;
 };
@@ -165,7 +171,7 @@ const assertLegacyStateUnchanged = async (expected: ApiKeyRecord): Promise<void>
   assert.equal(await countPrefix(legacyRequestLogPrefix), 0);
 };
 
-Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs in favor of V3", async () => {
+test("Metered runtime lifecycle hard-cuts legacy counters and request logs in favor of V3", async () => {
   const now = Date.now();
   const record: ApiKeyRecord = {
     id: keyId,
@@ -208,8 +214,8 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
   await memoryKv.set(apiKeyIdKey(keyId), record);
   await memoryKv.set(apiKeyHashKey(keyHash), hashRecord);
 
-  const originalEnvGet = Deno.env.get.bind(Deno.env);
-  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet(name));
+  const originalEnvGet = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "test-metered-key";
   try {
     const terminalReservation = await reserve("terminal-missing-id", now);
     assert.equal(terminalReservation.reserved_microcredits, 250_000);
@@ -259,11 +265,12 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
     assert.equal(window.value.pending_count, 3);
     await assertLegacyStateUnchanged(record);
   } finally {
-    Deno.env.get = originalEnvGet;
+    if (originalEnvGet === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalEnvGet;
   }
 });
 
-Deno.test("Surplus usage settles cache read and write pricing, while incomplete usage stays pending", async () => {
+test("Surplus usage settles cache read and write pricing, while incomplete usage stays pending", async () => {
   memoryKv.entries.clear();
   const now = Date.now();
   const record: ApiKeyRecord = {
@@ -306,8 +313,8 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
     paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
   });
 
-  const originalEnvGet = Deno.env.get.bind(Deno.env);
-  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet(name));
+  const originalEnvGet = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "test-metered-key";
   try {
     const settledReservation = await reserve("surplus-settled", now);
     await recordMeteredUpstreamResponse(settledReservation, new Response(null, { status: 200 }), null, "surplus");
@@ -359,6 +366,73 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
     assert.equal(settledWindowAfterReplay.value?.settled_microcredits, settledWindowBeforeReplay.value?.settled_microcredits);
     assert.equal(settledWindowAfterReplay.value?.reserved_microcredits, settledWindowBeforeReplay.value?.reserved_microcredits);
 
+    // Real native Surplus measurements must override the catalog estimate.
+    // An odd 69-microcredit charge cannot round through 500,000 quota/credit
+    // into 70 microcredits, and an explicitly free completion stays free.
+    for (const fixture of [
+      { id: "surplus-native-fill", cost: 1056, cached: null, written: 1028 },
+      { id: "surplus-native-read", cost: 69, cached: 1028, written: null },
+      { id: "surplus-native-free", cost: 0, cached: null, written: null },
+    ]) {
+      const reservation = await reserve(fixture.id, now);
+      await recordMeteredUpstreamResponse(reservation, new Response(null, { status: 200 }), null, "surplus");
+      await recordMeteredTerminal(reservation, "completed", "surplus");
+      const usage = {
+        input_tokens: 1043,
+        cached_input_tokens: fixture.cached,
+        cache_write_input_tokens: fixture.written,
+        output_tokens: 4,
+        buyer_cost_micro: fixture.cost,
+      };
+      const pricing = {
+        input_price_per_token: 0.000001,
+        output_price_per_token: 0.000003,
+        cache_read_price_per_token: 0.0000001,
+        cache_write_price_per_token: 0.000002,
+      };
+      await recordSurplusUsage(reservation, `surplus:${fixture.id}`, "gpt-5-codex", usage, pricing);
+      const actual = await readRequest(fixture.id);
+      assert.equal(actual.billing_state, "settled");
+      assert.equal(actual.spend_microcredits, fixture.cost);
+      assert.equal(actual.cached_input_tokens, fixture.cached, "unknown cache reads must stay unknown in the authoritative settlement");
+      const windowBeforeReplay = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, reservation.window_reset_at_ms));
+      await recordSurplusUsage(reservation, `surplus:${fixture.id}`, "gpt-5-codex", usage, pricing);
+      const windowAfterReplay = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, reservation.window_reset_at_ms));
+      assert.equal((await readRequest(fixture.id)).spend_microcredits, fixture.cost);
+      assert.equal(windowAfterReplay.value?.settled_microcredits, windowBeforeReplay.value?.settled_microcredits);
+      assert.equal(windowAfterReplay.value?.reserved_microcredits, windowBeforeReplay.value?.reserved_microcredits);
+    }
+
+    for (const buyerCostMicro of [-1, 0.1, Number.MAX_SAFE_INTEGER + 1, null]) {
+      const id = `surplus-native-invalid-${String(buyerCostMicro)}`;
+      const reservation = await reserve(id, now);
+      await recordMeteredUpstreamResponse(reservation, new Response(null, { status: 200 }), null, "surplus");
+      await recordMeteredTerminal(reservation, "completed", "surplus");
+      await recordSurplusUsage(
+        reservation,
+        `surplus:${id}`,
+        "gpt-5-codex",
+        { input_tokens: 1043, cached_input_tokens: 1028, cache_write_input_tokens: null, output_tokens: 4, buyer_cost_micro: buyerCostMicro },
+        { input_price_per_token: 0.000001, output_price_per_token: 0.000003 }
+      );
+      const actual = await readRequest(id);
+      assert.equal(actual.billing_state, "pending", "a malformed authoritative charge must not fall back to guessed pricing");
+      assert.equal(actual.spend_microcredits, null);
+    }
+
+    const nativeUnmeasured = await reserve("surplus-native-unmeasured-cost", now);
+    await recordMeteredUpstreamResponse(nativeUnmeasured, new Response(null, { status: 200 }), null, "surplus");
+    await recordMeteredTerminal(nativeUnmeasured, "completed", "surplus");
+    await recordSurplusUsage(
+      nativeUnmeasured,
+      "surplus:native-unmeasured",
+      "gpt-5-codex",
+      { input_tokens: 1043, cached_input_tokens: null, cache_write_input_tokens: 1028, output_tokens: 4 },
+      { input_price_per_token: 0.000001, output_price_per_token: 0.000003, cache_write_price_per_token: 0.000002, require_provider_cost: true }
+    );
+    assert.equal((await readRequest(nativeUnmeasured.request_id)).billing_state, "pending", "native gross cache writes must not use legacy additive pricing");
+    assert.equal((await readRequest(nativeUnmeasured.request_id)).spend_microcredits, null);
+
     const incompleteReservation = await reserve("surplus-incomplete", now + 1);
     await recordMeteredUpstreamResponse(incompleteReservation, new Response(null, { status: 200 }), "surplus-incomplete-request", "surplus");
     await recordMeteredTerminal(incompleteReservation, "completed", "surplus");
@@ -372,10 +446,10 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
 
     let meteredLogCalls = 0;
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => {
+    globalThis.fetch = createFetchMock(() => {
       meteredLogCalls += 1;
       return Promise.reject(new Error("Surplus reconciliation must not call Metered logs"));
-    };
+    });
     try {
       await reconcilePaidFallbackV3(keyId, Date.now(), kv);
     } finally {
@@ -386,7 +460,21 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
     assert.equal(incomplete.billing_state, "pending");
     assert.equal(incomplete.spend_microcredits, null);
     assert.ok((await memoryKv.get(paidFallbackPendingV3Key(keyId, incomplete.request_id))).value);
+
+    const meteredReservation = await reserve("metered-must-ignore-surplus-cost", now);
+    await recordMeteredUpstreamResponse(meteredReservation, new Response(null, { status: 200 }), "metered-request", "metered");
+    await recordMeteredTerminal(meteredReservation, "completed", "metered");
+    await recordSurplusUsage(
+      meteredReservation,
+      "surplus:must-not-match-metered",
+      "gpt-5-codex",
+      { input_tokens: 1043, cached_input_tokens: 1028, cache_write_input_tokens: null, output_tokens: 4, buyer_cost_micro: 69 },
+      { input_price_per_token: 0.000001, output_price_per_token: 0.000003 }
+    );
+    assert.equal((await readRequest(meteredReservation.request_id)).billing_state, "pending");
+    assert.equal((await readRequest(meteredReservation.request_id)).spend_microcredits, null);
   } finally {
-    Deno.env.get = originalEnvGet;
+    if (originalEnvGet === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalEnvGet;
   }
 });

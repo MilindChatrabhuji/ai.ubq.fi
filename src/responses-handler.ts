@@ -11,6 +11,7 @@ import { cerebrasUpstreamModelFor } from "./provider/cerebras.ts";
 import { lithosUpstreamModelFor } from "./provider/lithos.ts";
 import { resolveOpenRouterUpstreamModel } from "./provider/openrouter.ts";
 import { handleOpenRouterResponses } from "./provider/openrouter-handlers.ts";
+import { openRouterPromptCacheRequestExtensions } from "./provider/openrouter-request-controls.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import { createStreamFirstEventDeadline, createStreamSemanticDeadline, STREAM_FAILOVER_RESERVE_MS } from "./inference-deadline.ts";
 import { ResponsesStreamError, type ResponsesStreamEvent, withSseKeepalive } from "./responses-stream.ts";
@@ -34,10 +35,10 @@ import { getString, isRecord } from "./utils.ts";
 import type { ResponsesRequest } from "./types.ts";
 import { loadDebugRoutingConfig } from "./debug-routing.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
   classifyPreHeaderFailure,
   classifyStreamFailure,
   countExplicitPromptCacheBreakpoints,
@@ -63,10 +64,10 @@ import { recordResponsesTerminal } from "./chat/stream-translation.ts";
 import { logRedactedUpstreamError, toPreHeaderErrorResponse } from "./upstream-wire.ts";
 import { isTemporaryFreeSurplusModel, WARNING_KEY_MAP, responseWarnings, validateKnownUnsupportedPromptCacheUse, withUosWarning } from "./request-policy.ts";
 import {
-  FailedResponsesAttempt,
-  PreparedResponsesAttempt,
-  ResponsesRouteAttempt,
-  ResponsesRouteFailure,
+  type FailedResponsesAttempt,
+  type PreparedResponsesAttempt,
+  type ResponsesRouteAttempt,
+  type ResponsesRouteFailure,
   failureKindForResponsesAttemptTrigger,
   fetchAndPreparePrimaryResponses,
   fetchAndPrepareRemovedProviderResponses,
@@ -78,12 +79,12 @@ import {
 import { collectBufferedResponses } from "./responses-buffered.ts";
 import { canAttemptPaidFallback, createMeteredTransportLifecycle } from "./paid-fallback/health.ts";
 import {
-  ResponsesCircuitRoute,
-  ResponsesDeliveryState,
-  ResponsesHandlerState,
-  ResponsesRequestState,
-  ResponsesRoutingState,
-  ResponsesStep,
+  type ResponsesCircuitRoute,
+  type ResponsesDeliveryState,
+  type ResponsesHandlerState,
+  type ResponsesRequestState,
+  type ResponsesRoutingState,
+  type ResponsesStep,
   buildResponsesUpstreamBodies,
   normalizeResponsesInput,
   readResponsesRequest,
@@ -133,11 +134,12 @@ const prepareResponsesRequest = async (
   req: Request,
   rawRecord: Record<string, unknown>,
   rawBody: ResponsesRequest,
-  usageContext: UsageContext | undefined
+  usageContext: UsageContext | undefined,
+  options?: ResponsesTailOptions
 ): Promise<ResponsesStep<ResponsesHandlerState>> => {
   const settings = resolveResponsesStreamSettings(rawRecord, rawBody);
   if (!settings.ok) return settings;
-  const modelResolution = await resolveResponsesModel(rawRecord, usageContext);
+  const modelResolution = await resolveResponsesModel(rawRecord, usageContext, options);
   if (!modelResolution.ok) return modelResolution;
   const input = normalizeResponsesInput(rawBody.input);
   if (!input.ok) return input;
@@ -299,6 +301,7 @@ const runCodexPrimaryAttempt = async (state: ResponsesHandlerState, options?: Re
       rejectPresemanticFailureTerminal: state.apiKey !== null,
       releaseOnProgress: state.clientWantsStream,
       allowedPaidProviders: options?.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options?.deepSeekWaterfallPaidHop ?? null,
     });
     if (result.kind === "ready") {
       completeCodexPrimaryAttempt(state, result.value);
@@ -397,6 +400,7 @@ const runResponsesRecoveryAttempt = async (
       rejectPresemanticFailureTerminal: true,
       releaseOnProgress: state.clientWantsStream,
       allowedPaidProviders: options?.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options?.deepSeekWaterfallPaidHop ?? null,
     });
   } catch (error) {
     await releaseResponsesRecoveryProbe(state, recoveryProbe);
@@ -476,7 +480,10 @@ const runRemovedProviderAttempt = async (state: ResponsesHandlerState, apiKey: s
  * absent keeps the routing layer's fixed Surplus -> Metered cost order for
  * every other caller.
  */
-type ResponsesTailOptions = Readonly<{ allowedPaidProviders?: readonly ("metered" | "surplus")[] | null }>;
+type ResponsesTailOptions = Readonly<{
+  allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+  deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
+}>;
 
 const runResponsesFailover = async (state: ResponsesHandlerState, options?: ResponsesTailOptions): Promise<Response | null> => {
   try {
@@ -793,7 +800,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const request = await readResponsesRequest(req, parsedBody);
   if (!request.ok) return request.response;
   const { rawRecord, rawBody } = request.value;
-  const invalidField = validateResponsesRequestFields(rawRecord, rawBody);
+  const invalidField = validateResponsesRequestFields(rawRecord, rawBody, await openRouterPromptCacheRequestExtensions(rawRecord));
   if (invalidField) return invalidField;
   // DeepSeek official models are dispatched from the Responses adapter before
   // the Codex catalog lookup, exactly as the Chat Completions route is
@@ -846,7 +853,7 @@ export const runOrdinaryResponsesTail = async (
   usageContext?: UsageContext,
   options?: ResponsesTailOptions
 ): Promise<Response> => {
-  const prepared = await prepareResponsesRequest(req, rawRecord, rawBody, usageContext);
+  const prepared = await prepareResponsesRequest(req, rawRecord, rawBody, usageContext, options);
   if (!prepared.ok) return prepared.response;
   const failoverResponse = await runResponsesFailover(prepared.value, options);
   if (failoverResponse) return failoverResponse;

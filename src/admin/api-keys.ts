@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Admin API key creation and listing, split out of src/admin.ts.
 
 import { normalizeReasoningEffort, type ReasoningEffort } from "../defaults.ts";
@@ -113,7 +114,7 @@ const paidFallbackInitializationError = (error: unknown): Response => {
   });
 };
 
-const paidFallbackPublicFields = async (record: ApiKeyRecord, kv: Deno.Kv, windowResetAtMs = record.usage_reset_at_ms) => {
+const paidFallbackPublicFields = async (record: ApiKeyRecord, kv: Kv, windowResetAtMs = record.usage_reset_at_ms) => {
   const [projection, providerUsage] = await Promise.all([
     getPaidFallbackWindowProjectionV3(record.id, windowResetAtMs, record.paid_fallback_limit_microcredits, kv),
     getPaidFallbackProviderUsageV3(record.id, windowResetAtMs, kv),
@@ -527,7 +528,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
   );
 };
 
-export const handleAdminApiKeysPaidFallbacks = async (req: Request, keyId: string, kvOverride?: Deno.Kv | null): Promise<Response> => {
+export const handleAdminApiKeysPaidFallbacks = async (req: Request, keyId: string, kvOverride?: Kv | null): Promise<Response> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot load paid fallbacks", "server_error");

@@ -12,7 +12,7 @@ import {} from "./provider/removed-provider-telemetry.ts";
 import {} from "./paid-fallback/index.ts";
 import type {} from "./sentinel/upstream-capture.ts";
 
-import { UsageContext } from "./openai-telemetry.ts";
+import { type UsageContext } from "./openai-telemetry.ts";
 import {} from "./input-normalization.ts";
 import { isTemporaryFreeSurplusModel } from "./request-policy.ts";
 export const temporaryFreeSurplusCapabilityError = (model: string, body: Record<string, unknown>): Response | null =>

@@ -2,11 +2,16 @@ import { STREAM_FIRST_EVENT_DEADLINE_MS } from "../inference-deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
 import { readResponsesStream, type ResponsesStreamEvent } from "../responses-stream.ts";
 import type { SentinelUpstreamRecorder } from "../sentinel/upstream-capture.ts";
+import { isSurplusClaudeModel } from "./surplus-claude-request.ts";
+import { buildSurplusClaudeChatRequest, type SurplusClaudeChatRequest } from "./surplus-claude-chat-request.ts";
+import { normalizeAnthropicChatResponsesResponse } from "./anthropic-chat-responses.ts";
+import type { PromptCacheMode } from "../openai-telemetry.ts";
 
 export const SURPLUS_BASE_URL = "https://api.surplusintelligence.ai";
 export const SURPLUS_API_KEY_ENV = "SURPLUS_API_KEY";
 const SURPLUS_MODELS_URL = `${SURPLUS_BASE_URL}/v1/models`;
 const SURPLUS_RESPONSES_URL = `${SURPLUS_BASE_URL}/v1/responses`;
+const SURPLUS_CHAT_URL = `${SURPLUS_BASE_URL}/v1/chat/completions`;
 export const SURPLUS_FETCH_TIMEOUT_MS = 10_000;
 export const SURPLUS_MODELS_CACHE_TTL_MS = 5 * 60_000;
 const SURPLUS_MODELS_FAILURE_BACKOFF_MS = 30_000;
@@ -24,6 +29,7 @@ export type SurplusModel = Readonly<{
   output_price_per_token?: number;
   cache_read_price_per_token?: number;
   cache_write_price_per_token?: number;
+  max_output_tokens?: number;
 }>;
 
 export type SurplusModelsSnapshot = Readonly<{
@@ -54,6 +60,8 @@ export type SurplusAuthenticatedFetchOptions = Readonly<{
   fetcher?: SurplusFetch;
   signal?: AbortSignal;
   supportsParallelToolCalls?: boolean;
+  /** Authenticated caller scope; never forwarded to an upstream provider. */
+  reasoningReplayScope?: string;
   /**
    * Optional pre-transport hook. It either resolves to a dispatch handle that can
    * still cancel the admitted reservation, or resolves with no value at all, so
@@ -68,6 +76,8 @@ export type SurplusAuthenticatedFetchOptions = Readonly<{
 export type SurplusResponsesResult = Readonly<{
   response: Response;
   request_id: string | null;
+  prompt_cache_mode?: PromptCacheMode;
+  explicit_breakpoint_count?: number;
 }>;
 
 type JsonRecord = Record<string, unknown>;
@@ -195,6 +205,8 @@ const readSurplusModel = (value: unknown): SurplusModel | null => {
   const created = isNonNegativeSafeInteger(value.created) ? value.created : 0;
   const ownedBy = nonEmptyString(value.provider) ?? nonEmptyString(value.owned_by) ?? "surplus";
   const description = nonEmptyString(value.description);
+  const topProvider = isRecord(value.top_provider) ? value.top_provider : null;
+  const maxOutputTokens = topProvider?.max_completion_tokens;
   return {
     id,
     object: "model",
@@ -203,6 +215,7 @@ const readSurplusModel = (value: unknown): SurplusModel | null => {
     supported_endpoint_types: ["openai", "openai-response"],
     ...readModelCapabilities(value),
     ...(description ? { description } : {}),
+    ...(isNonNegativeSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? { max_output_tokens: maxOutputTokens } : {}),
     ...readPricing(value),
   };
 };
@@ -215,7 +228,7 @@ let surplusModelsRetryAfterMs = 0;
 
 export const readSurplusApiKey = (): string | null => {
   try {
-    return nonEmptyString(Deno.env.get(SURPLUS_API_KEY_ENV));
+    return nonEmptyString(process.env[SURPLUS_API_KEY_ENV]);
   } catch {
     return null;
   }
@@ -503,14 +516,51 @@ const surplusTransportFailure = (error: unknown, signal: AbortSignal | undefined
   return new SurplusError("Surplus Responses request could not reach the upstream service.", "surplus_upstream_unreachable", 502);
 };
 
+const surplusRequestUrl = (native: SurplusClaudeChatRequest | null): string => (native ? SURPLUS_CHAT_URL : SURPLUS_RESPONSES_URL);
+
+const nativeCacheMetadata = (native: SurplusClaudeChatRequest | null): Pick<SurplusResponsesResult, "prompt_cache_mode" | "explicit_breakpoint_count"> =>
+  native ? { prompt_cache_mode: native.promptCacheMode, explicit_breakpoint_count: native.explicitBreakpointCount } : {};
+
+const deliverSurplusResponse = async (
+  response: Response,
+  body: JsonRecord,
+  options: SurplusAuthenticatedFetchOptions,
+  native: SurplusClaudeChatRequest | null,
+  requestId: string | null
+): Promise<Response> => {
+  if (native) {
+    return await normalizeAnthropicChatResponsesResponse(response, {
+      model: String(body.model),
+      requestId: requestId ?? undefined,
+      signal: options.signal,
+      reasoningSummary: isRecord(body.reasoning) && typeof body.reasoning.summary === "string" ? body.reasoning.summary : undefined,
+      reasoningReplayScope: options.reasoningReplayScope,
+      provider: "surplus",
+      toolNames: native.toolNames,
+      customToolNames: native.customToolNames,
+    });
+  }
+  const delivered = normalizeSurplusResponsesStream(response);
+  if (!isSurplusClaudeModel(body.model)) return delivered;
+  const warnings = new Headers(delivered.headers);
+  const previous = warnings.get("x-uos-warning");
+  const warning = "surplus_claude_native_prompt_cache_unavailable";
+  warnings.set("x-uos-warning", previous ? `${previous}, ${warning}` : warning);
+  return new Response(delivered.body, { status: delivered.status, statusText: delivered.statusText, headers: warnings });
+};
+
 export const fetchSurplusResponses = async (body: unknown, options: SurplusAuthenticatedFetchOptions = {}): Promise<SurplusResponsesResult> => {
   if (!isRecord(body)) {
     throw new SurplusError("Surplus Responses requests must use a canonical JSON object body.", "surplus_request_invalid", 400);
   }
 
+  const native = buildSurplusClaudeChatRequest(body, surplusModelsCache?.models.find((model) => model.id === body.model)?.max_output_tokens, {
+    provider: "surplus",
+    reasoningReplayScope: options.reasoningReplayScope,
+  });
   let encodedBody: string;
   try {
-    encodedBody = JSON.stringify(toSurplusResponsesBody(body, options.supportsParallelToolCalls));
+    encodedBody = JSON.stringify(native?.body ?? toSurplusResponsesBody(body, options.supportsParallelToolCalls));
   } catch {
     throw new SurplusError("Surplus Responses requests must use a JSON-serializable body.", "surplus_request_invalid", 400);
   }
@@ -537,7 +587,7 @@ export const fetchSurplusResponses = async (body: unknown, options: SurplusAuthe
     options.onDispatch?.();
     upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("surplus") ?? null;
     response = await awaitWithAbort(
-      (options.fetcher ?? fetch)(SURPLUS_RESPONSES_URL, {
+      (options.fetcher ?? fetch)(surplusRequestUrl(native), {
         method: "POST",
         headers,
         body: encodedBody,
@@ -553,8 +603,12 @@ export const fetchSurplusResponses = async (body: unknown, options: SurplusAuthe
     clearTimeout(headersTimer);
   }
 
+  const requestId = responseRequestId(response);
+  const recorded = upstreamAttempt ? upstreamAttempt.wrap(response) : response;
+  const delivered = await deliverSurplusResponse(recorded, body, options, native, requestId);
   return {
-    response: normalizeSurplusResponsesStream(upstreamAttempt ? upstreamAttempt.wrap(response) : response),
-    request_id: responseRequestId(response),
+    response: delivered,
+    request_id: requestId,
+    ...nativeCacheMetadata(native),
   };
 };

@@ -1,10 +1,12 @@
+import type { Kv, KvCommitResult, KvKey, KvListOptions, KvListSelector } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { ADMIN_ERROR_BUCKET_MS, ADMIN_ERROR_LOG_PREFIX, listAdminErrorHistory, recordAdminError } from "../src/admin/error-log.ts";
 
 class SetOnlyKv {
-  readonly writes: { key: Deno.KvKey; value: unknown; options?: { expireIn?: number } }[] = [];
+  readonly writes: { key: KvKey; value: unknown; options?: { expireIn?: number } }[] = [];
 
-  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, options?: { expireIn?: number }): Promise<KvCommitResult> {
     this.writes.push({ key, value, options });
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
@@ -28,9 +30,9 @@ const terminal = (overrides: Partial<Parameters<typeof recordAdminError>[0]> = {
   ...overrides,
 });
 
-Deno.test("admin error ledger stores every HTTP failure with bounded diagnostics", async () => {
+test("admin error ledger stores every HTTP failure with bounded diagnostics", async () => {
   const kv = new SetOnlyKv();
-  await recordAdminError(terminal(), kv as unknown as Deno.Kv);
+  await recordAdminError(terminal(), kv as unknown as Kv);
 
   assert.equal(kv.writes.length, 1);
   assert.deepEqual(kv.writes[0].key, [...ADMIN_ERROR_LOG_PREFIX, 1_777_000_000_000, "request-1"]);
@@ -38,13 +40,13 @@ Deno.test("admin error ledger stores every HTTP failure with bounded diagnostics
   assert.ok((kv.writes[0].options?.expireIn ?? 0) > 0);
 });
 
-Deno.test("admin error ledger excludes successful completed requests", async () => {
+test("admin error ledger excludes successful completed requests", async () => {
   const kv = new SetOnlyKv();
-  await recordAdminError(terminal({ status: 200, terminal_type: "response.completed", failure_kind: null }), kv as unknown as Deno.Kv);
+  await recordAdminError(terminal({ status: 200, terminal_type: "response.completed", failure_kind: null }), kv as unknown as Kv);
   assert.equal(kv.writes.length, 0);
 });
 
-Deno.test("admin error history hides only affected cancellations and collects analytics in one scan", async () => {
+test("admin error history hides only affected cancellations and collects analytics in one scan", async () => {
   const records = [
     terminal({
       request_id: "legacy-cancellation",
@@ -73,9 +75,9 @@ Deno.test("admin error history hides only affected cancellations and collects an
     terminal({ request_id: "older-http-error", status: 500, created_at_ms: ADMIN_ERROR_BUCKET_MS * 2 + 1 }),
   ].map((value) => ({ value: { ...value, version: 1 } }));
   let listCalls = 0;
-  let listOptions: Deno.KvListOptions | undefined;
+  let listOptions: KvListOptions | undefined;
   const kv = {
-    list: (_selector: Deno.KvListSelector, options?: Deno.KvListOptions) => ({
+    list: (_selector: KvListSelector, options?: KvListOptions) => ({
       *[Symbol.asyncIterator]() {
         listCalls += 1;
         listOptions = options;
@@ -84,7 +86,7 @@ Deno.test("admin error history hides only affected cancellations and collects an
     }),
   };
 
-  const history = await listAdminErrorHistory(3, kv as unknown as Deno.Kv);
+  const history = await listAdminErrorHistory(3, kv as unknown as Kv);
   assert.deepEqual(
     history.data.map((record) => record.request_id),
     ["post-fix-premature-eof", "stream-read-error", "http-error"]
@@ -97,7 +99,7 @@ Deno.test("admin error history hides only affected cancellations and collects an
   assert.deepEqual(listOptions, { reverse: true, batchSize: 500 });
 });
 
-Deno.test("admin error history preserves records outside the exact legacy cancellation signature", async () => {
+test("admin error history preserves records outside the exact legacy cancellation signature", async () => {
   const records = [
     terminal({
       request_id: "server-missing-terminal",
@@ -123,12 +125,12 @@ Deno.test("admin error history preserves records outside the exact legacy cancel
   };
 
   assert.deepEqual(
-    (await listAdminErrorHistory(2, kv as unknown as Deno.Kv)).data.map((record) => record.request_id),
+    (await listAdminErrorHistory(2, kv as unknown as Kv)).data.map((record) => record.request_id),
     ["server-missing-terminal", "delivered-missing-terminal"]
   );
 });
 
-Deno.test("admin error analytics counts every inference 5xx in fifteen-minute buckets", async () => {
+test("admin error analytics counts every inference 5xx in fifteen-minute buckets", async () => {
   const records = [
     terminal({ request_id: "one", status: 500, created_at_ms: ADMIN_ERROR_BUCKET_MS + 1 }),
     terminal({ request_id: "two", status: 503, created_at_ms: ADMIN_ERROR_BUCKET_MS + 2 }),
@@ -143,7 +145,7 @@ Deno.test("admin error analytics counts every inference 5xx in fifteen-minute bu
     }),
   };
 
-  assert.deepEqual((await listAdminErrorHistory(1, kv as unknown as Deno.Kv)).five_xx_buckets, [
+  assert.deepEqual((await listAdminErrorHistory(1, kv as unknown as Kv)).five_xx_buckets, [
     { bucket_start_at_ms: ADMIN_ERROR_BUCKET_MS, count: 2 },
     { bucket_start_at_ms: ADMIN_ERROR_BUCKET_MS * 2, count: 1 },
   ]);

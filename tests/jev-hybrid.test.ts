@@ -1,3 +1,5 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { buildCompactionResponse, handleJevResponsesCompaction } from "../src/jev_compaction/compaction.ts";
 import { composeHybridSummary, harvestLedger, hybridResidueEnabled, runHybridResiduePass } from "../src/jev_compaction/hybrid.ts";
@@ -65,7 +67,7 @@ const pureSummary = (): Promise<string> =>
 
 const completion = (content: string, status = 200): Response => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status });
 
-Deno.test("hybrid mechanical guards keep identifiers verbatim and append the latest tail", async () => {
+test("hybrid mechanical guards keep identifiers verbatim and append the latest tail", async () => {
   const pure = await pureSummary();
   assert.ok(pure.includes("9cea11d66b4e3afe7e7d23f9452e93d8404013e68dd50725db0c3dce3d0b381b"));
   const entries = harvestLedger(pure);
@@ -81,11 +83,11 @@ Deno.test("hybrid mechanical guards keep identifiers verbatim and append the lat
   assert.ok(composed.length < pure.length, "the composed summary must be smaller than the pure summary");
 });
 
-Deno.test("hybrid residue pass composes model text with the guards when the call succeeds", async () => {
+test("hybrid residue pass composes model text with the guards when the call succeeds", async () => {
   const pure = await pureSummary();
   const composed = await runHybridResiduePass(pure, {
     apiKey: "test",
-    fetcher: () => Promise.resolve(completion(SLIM_MARKER + " compact text.")),
+    fetcher: createFetchMock(() => Promise.resolve(completion(SLIM_MARKER + " compact text."))),
     timeoutMs: 1_000,
   });
   assert.ok(composed, "a successful pass must return the composed summary");
@@ -95,38 +97,40 @@ Deno.test("hybrid residue pass composes model text with the guards when the call
   assert.ok(composed.length < pure.length);
 });
 
-Deno.test("hybrid residue pass returns null on every failure path", async () => {
+test("hybrid residue pass returns null on every failure path", async () => {
   const pure = await pureSummary();
-  assert.equal(await runHybridResiduePass(pure, { apiKey: null, fetcher: () => Promise.resolve(completion(SLIM_MARKER)) }), null);
-  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: () => Promise.resolve(completion(SLIM_MARKER, 500)) }), null);
-  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: () => Promise.resolve(completion("   ")) }), null);
-  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: () => Promise.reject(new Error("boom")) }), null);
+  assert.equal(await runHybridResiduePass(pure, { apiKey: null, fetcher: createFetchMock(() => Promise.resolve(completion(SLIM_MARKER))) }), null);
+  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: createFetchMock(() => Promise.resolve(completion(SLIM_MARKER, 500))) }), null);
+  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: createFetchMock(() => Promise.resolve(completion("   "))) }), null);
+  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: createFetchMock(() => Promise.reject(new Error("boom"))) }), null);
   const huge = "x".repeat(pure.length + 10_000);
-  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: () => Promise.resolve(completion(huge)) }), null);
-  const hanging: typeof fetch = (_input, init) =>
-    new Promise((_resolve, reject) => {
-      const signal = init?.signal;
-      const fail = (): void => {
-        const error = new Error("aborted");
-        error.name = "TimeoutError";
-        reject(error);
-      };
-      if (signal?.aborted) fail();
-      else signal?.addEventListener("abort", fail, { once: true });
-    });
+  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: createFetchMock(() => Promise.resolve(completion(huge))) }), null);
+  const hanging: typeof fetch = createFetchMock(
+    (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const fail = (): void => {
+          const error = new Error("aborted");
+          error.name = "TimeoutError";
+          reject(error);
+        };
+        if (signal?.aborted) fail();
+        else signal?.addEventListener("abort", fail, { once: true });
+      })
+  );
   assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: hanging, timeoutMs: 30 }), null);
 });
 
-Deno.test("hybrid residue pass chunks memories larger than the input bound and merges the rewrites", async () => {
+test("hybrid residue pass chunks memories larger than the input bound and merges the rewrites", async () => {
   const block = (index: number): string =>
     `[tool result call_${index}] ` + `obsolete build log line with detail ${index}. `.repeat(20) + `revision ${String(index).repeat(8)} end`;
   const pure = Array.from({ length: 8 }, (_, index) => block(index)).join("\n");
   const bodies: string[] = [];
-  const fetcher: typeof fetch = (_input, init) => {
+  const fetcher: typeof fetch = createFetchMock((_input: RequestInfo | URL, init?: RequestInit) => {
     const raw = init?.body;
     bodies.push(typeof raw === "string" ? raw : JSON.stringify(raw));
     return Promise.resolve(completion(`${SLIM_MARKER} rewrite ${bodies.length}.`));
-  };
+  });
   const composed = await runHybridResiduePass(pure, { apiKey: "test", fetcher, chunkChars: 400 });
   assert.ok(composed, "a chunked pass must return the composed summary");
   assert.ok(bodies.length >= 2, "the memory must be split into multiple residue calls");
@@ -139,14 +143,14 @@ Deno.test("hybrid residue pass chunks memories larger than the input bound and m
   assert.ok(composed.length < pure.length, "the merged rewrite plus guards must shrink the memory");
 });
 
-Deno.test("hybrid residue keeps a failing chunk verbatim and rewrites the rest", async () => {
+test("hybrid residue keeps a failing chunk verbatim and rewrites the rest", async () => {
   const block = (index: number): string => `[tool result call_${index}] ` + `older log line ${index}. `.repeat(20);
   const pure = Array.from({ length: 8 }, (_, index) => block(index)).join("\n");
   let calls = 0;
-  const fetcher: typeof fetch = () => {
+  const fetcher: typeof fetch = createFetchMock(() => {
     calls += 1;
     return Promise.resolve(calls === 2 ? completion(SLIM_MARKER, 500) : completion(SLIM_MARKER + " rewrite."));
-  };
+  });
   const composed = await runHybridResiduePass(pure, { apiKey: "test", fetcher, chunkChars: 400 });
   assert.ok(composed, "one failed chunk must not sink the rewrite");
   assert.ok(composed.includes(SLIM_MARKER), "the successful chunks must be rewritten");
@@ -154,14 +158,14 @@ Deno.test("hybrid residue keeps a failing chunk verbatim and rewrites the rest",
   assert.ok(composed.length < pure.length, "the composed summary must still shrink the memory");
 });
 
-Deno.test("hybrid residue falls back to pure Jev when every chunk fails", async () => {
+test("hybrid residue falls back to pure Jev when every chunk fails", async () => {
   const block = (index: number): string => `[tool result call_${index}] ` + `older log line ${index}. `.repeat(20);
   const pure = Array.from({ length: 8 }, (_, index) => block(index)).join("\n");
-  const fetcher: typeof fetch = () => Promise.resolve(completion(SLIM_MARKER, 500));
+  const fetcher: typeof fetch = createFetchMock(() => Promise.resolve(completion(SLIM_MARKER, 500)));
   assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher, chunkChars: 400 }), null);
 });
 
-Deno.test("route keeps the pure Jev summary when the residue seam is absent, null or throwing", async () => {
+test("route keeps the pure Jev summary when the residue seam is absent, null or throwing", async () => {
   const pureOutcome = await buildCompactionResponse(body(transcript()), decisionAsker(dropEverything), { stream: false });
   assert.ok(!(pureOutcome.headers["x-jev-compaction"] ?? "").includes("hybrid=1"));
   const nullOutcome = await buildCompactionResponse(body(transcript()), decisionAsker(dropEverything), { stream: false, residue: () => Promise.resolve(null) });
@@ -179,7 +183,7 @@ Deno.test("route keeps the pure Jev summary when the residue seam is absent, nul
   assert.ok(!(same.headers["x-jev-compaction"] ?? "").includes("hybrid=1"), "a non-shrinking residue result must not be applied");
 });
 
-Deno.test("route applies a shrinking residue seam and marks it on the header", async () => {
+test("route applies a shrinking residue seam and marks it on the header", async () => {
   const outcome = await buildCompactionResponse(body(transcript()), decisionAsker(dropEverything), {
     stream: false,
     residue: (summary) => Promise.resolve(composeHybridSummary(SLIM_MARKER + " compact text.", summary)),
@@ -190,7 +194,7 @@ Deno.test("route applies a shrinking residue seam and marks it on the header", a
   assert.ok(outcome.body.includes("## Verbatim identifiers"));
 });
 
-Deno.test("handler routes the residue seam through the real compaction handler", async () => {
+test("handler routes the residue seam through the real compaction handler", async () => {
   const request = new Request("http://127.0.0.1:7999/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json", "x-codex-turn-metadata": COMPACTION_METADATA },
@@ -206,7 +210,7 @@ Deno.test("handler routes the residue seam through the real compaction handler",
   assert.equal(typeof hybridResidueEnabled(), "boolean");
 });
 
-Deno.test("injected asker seams bypass the default residue pass without any network attempt", async () => {
+test("injected asker seams bypass the default residue pass without any network attempt", async () => {
   const request = new Request("http://127.0.0.1:7999/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json", "x-codex-turn-metadata": COMPACTION_METADATA },
@@ -214,14 +218,14 @@ Deno.test("injected asker seams bypass the default residue pass without any netw
   });
   const originalFetch = globalThis.fetch;
   let residueAttempts = 0;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     let url: string;
     if (typeof input === "string") url = input;
     else if (input instanceof URL) url = input.toString();
     else url = input.url;
     if (url.includes("cerebras.ai")) residueAttempts += 1;
     return originalFetch(input as RequestInfo, init);
-  }) as typeof fetch;
+  });
   try {
     const response = await handleJevResponsesCompaction(request, { asker: decisionAsker(dropEverything) });
     assert.equal(response.status, 200);

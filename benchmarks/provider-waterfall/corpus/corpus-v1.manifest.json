@@ -13,44 +13,23 @@
     "xlarge": 6
   },
   "class_windows": {
-    "small": [
-      2000,
-      10000
-    ],
-    "medium": [
-      10000,
-      40000
-    ],
-    "large": [
-      40000,
-      160000
-    ],
-    "xlarge": [
-      160000,
-      600000
-    ]
+    "small": [2000, 10000],
+    "medium": [10000, 40000],
+    "large": [40000, 160000],
+    "xlarge": [160000, 600000]
   },
   "class_target": "6 small, 9 medium, 9 large, 6 xlarge",
   "sources": {
     "root": "/Users/nv/.codex/sessions",
-    "primary_months": [
-      "2026/10"
-    ],
-    "months_used": [
-      "2026/10"
-    ],
+    "primary_months": ["2026/10"],
+    "months_used": ["2026/10"],
     "fallback_months_harvested": false,
     "candidate_sessions": 41,
     "multi_meta_candidate_files": 6,
     "candidate_filter": "session_meta.thread_source=subagent or source.subagent present; turn_context model deepseek-ai/DeepSeek-V4.1-Flash*, deepseek-flash, or deepseek-v4-flash*"
   },
   "selection": {
-    "order": [
-      "xlarge",
-      "small",
-      "large",
-      "medium"
-    ],
+    "order": ["xlarge", "small", "large", "medium"],
     "xlarge": "largest in-window boundary per session; sessions ranked by largest in-window recorded input tokens desc",
     "small": "closest-recorded-request",
     "small_note": "no DeepSeek V4.1 Flash session under 2026/10 has a boundary inside 2000-10000 recorded input tokens; the six recorded requests closest to the window were used",
@@ -142,10 +121,7 @@
     "design_doc_expected_sha256": "e48b8f1e1533e676ba43f1f15660a8f5e35d2a775c607b94cb4d46a2116e29ab",
     "matches_design_doc": true
   },
-  "dropped_item_types": [
-    "reasoning",
-    "web_search_call"
-  ],
+  "dropped_item_types": ["reasoning", "web_search_call"],
   "dropped_item_type_counts": {
     "reasoning": 288,
     "web_search_call": 0
@@ -477,9 +453,7 @@
       "recorded_at": "2026-10-03T10:46:31.659Z",
       "recorded_input_tokens": 48329,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/user @ord 24",
         "ordinal": 24,
@@ -500,9 +474,7 @@
       "recorded_at": "2026-10-03T11:05:40.212Z",
       "recorded_input_tokens": 48850,
       "item_count": 12,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 23",
         "ordinal": 23,
@@ -523,9 +495,7 @@
       "recorded_at": "2026-10-03T11:31:06.642Z",
       "recorded_input_tokens": 46455,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 20",
         "ordinal": 20,
@@ -546,9 +516,7 @@
       "recorded_at": "2026-10-05T01:37:35.377Z",
       "recorded_input_tokens": 43604,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 20",
         "ordinal": 20,
@@ -569,9 +537,7 @@
       "recorded_at": "2026-10-05T01:41:15.822Z",
       "recorded_input_tokens": 44483,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 20",
         "ordinal": 20,
@@ -592,9 +558,7 @@
       "recorded_at": "2026-10-05T01:41:13.966Z",
       "recorded_input_tokens": 43363,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 20",
         "ordinal": 20,
@@ -615,9 +579,7 @@
       "recorded_at": "2026-10-05T01:47:36.806Z",
       "recorded_input_tokens": 43379,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 20",
         "ordinal": 20,
@@ -638,9 +600,7 @@
       "recorded_at": "2026-10-05T01:47:36.770Z",
       "recorded_input_tokens": 44243,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 20",
         "ordinal": 20,
@@ -661,9 +621,7 @@
       "recorded_at": "2026-10-05T01:50:34.360Z",
       "recorded_input_tokens": 42428,
       "item_count": 10,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 20",
         "ordinal": 20,
@@ -684,9 +642,7 @@
       "recorded_at": "2026-10-03T11:07:38.759Z",
       "recorded_input_tokens": 591585,
       "item_count": 65,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 151",
         "ordinal": 151,
@@ -707,9 +663,7 @@
       "recorded_at": "2026-10-03T11:44:17.920Z",
       "recorded_input_tokens": 565649,
       "item_count": 63,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 154",
         "ordinal": 154,
@@ -730,9 +684,7 @@
       "recorded_at": "2026-10-05T01:39:53.886Z",
       "recorded_input_tokens": 211377,
       "item_count": 18,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 40",
         "ordinal": 40,
@@ -753,9 +705,7 @@
       "recorded_at": "2026-10-05T06:16:30.446Z",
       "recorded_input_tokens": 598401,
       "item_count": 943,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 2310",
         "ordinal": 2310,
@@ -776,9 +726,7 @@
       "recorded_at": "2026-10-06T00:59:18.346Z",
       "recorded_input_tokens": 573544,
       "item_count": 49,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 108",
         "ordinal": 108,
@@ -799,9 +747,7 @@
       "recorded_at": "2026-10-06T00:58:39.302Z",
       "recorded_input_tokens": 507010,
       "item_count": 52,
-      "dropped_item_types": [
-        "reasoning"
-      ],
+      "dropped_item_types": ["reasoning"],
       "boundary": {
         "description": "message/developer @ord 105",
         "ordinal": 105,

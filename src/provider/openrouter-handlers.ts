@@ -1,8 +1,8 @@
 // Direct OpenRouter serving: Chat Completions and Responses.
 //
 // OpenRouter exposes both OpenAI-compatible wires, so this route forwards the
-// client's own body with the model swapped and relays the upstream payload —
-// no translation layer is involved. The catalogue, capabilities, and dispatch
+// client's own body with the model swapped and default web tools for OpenAI
+// models, then relays the upstream payload. The catalogue, capabilities, and dispatch
 // all read `openRouterServableModelIds()`, so the offered set and the served
 // set can never disagree, and a new upstream model becomes callable as soon as
 // the cached public list refreshes.
@@ -16,16 +16,21 @@ import { downstreamSignalFor, inferenceSignal } from "../openai.ts";
 import {
   extractChatUsageTokens,
   extractUsageTokens,
+  promptCacheKeyPresent,
+  promptCacheModeFor,
   recordAttemptedProvider,
   recordCompletionUsage,
   recordFirstProviderDispatch,
   recordFirstProviderHeaders,
   recordRequestUsage,
   recordStreamTerminalType,
+  type PromptCacheMode,
   type UsageContext,
 } from "../openai-telemetry.ts";
 import { chatCompletionHasAnswerBearingOutput, providerRequestIdFromResponse, toOpenAiUpstreamErrorResponse } from "../upstream-wire.ts";
+import { getString, isRecord } from "../utils.ts";
 import { recordOpenRouterProviderHealth } from "./health.ts";
+import { withOpenRouterOpenAiWebTools } from "./openrouter-web-tools.ts";
 import { recordOpenRouterResponseHealth, streamOpenRouterChatCompletion, streamOpenRouterResponses } from "./openrouter-streams.ts";
 import {
   fetchOpenRouterChatCompletions,
@@ -47,6 +52,58 @@ export type OpenRouterHandlerDeps = Readonly<{
 }>;
 
 const OPENROUTER_UPSTREAM_LABEL = "openrouter";
+
+const enqueueOpenRouterCacheBlocks = (item: unknown, pending: unknown[]): void => {
+  if (Array.isArray(item)) {
+    for (const part of item) pending.push(part);
+    return;
+  }
+  if (!isRecord(item)) return;
+  // Walk request content and tool blocks, excluding tool JSON schemas.
+  for (const key of ["instructions", "input", "messages", "tools", "content", "output", "function"]) {
+    if (item[key] !== undefined) pending.push(item[key]);
+  }
+};
+
+const openRouterExplicitCacheControls = (body: Record<string, unknown>): Readonly<{ nestedControlPresent: boolean; explicitBreakpointCount: number }> => {
+  const pending: unknown[] = [body];
+  let explicitBreakpointCount = 0;
+  let nestedControlPresent = false;
+  while (pending.length > 0) {
+    const item = pending.pop();
+    enqueueOpenRouterCacheBlocks(item, pending);
+    if (!isRecord(item) || item === body) continue;
+    if (Object.prototype.hasOwnProperty.call(item, "cache_control") || Object.prototype.hasOwnProperty.call(item, "prompt_cache_breakpoint")) {
+      nestedControlPresent = true;
+      if (
+        (isRecord(item.cache_control) && item.cache_control.type === "ephemeral") ||
+        (isRecord(item.prompt_cache_breakpoint) && item.prompt_cache_breakpoint.mode === "explicit")
+      )
+        explicitBreakpointCount += 1;
+    }
+  }
+  return { nestedControlPresent, explicitBreakpointCount };
+};
+
+/** Apply Claude's default five-minute cache policy only on the upstream wire. */
+const withOpenRouterClaudePromptCache = (
+  body: Record<string, unknown>,
+  model: string
+): Readonly<{ body: Record<string, unknown>; promptCacheMode: PromptCacheMode; explicitBreakpointCount: number }> => {
+  const { nestedControlPresent, explicitBreakpointCount } = openRouterExplicitCacheControls(body);
+  const declaredMode = promptCacheModeFor(body);
+  const explicit = nestedControlPresent || declaredMode === "explicit";
+  const automaticControlPresent = Object.prototype.hasOwnProperty.call(body, "cache_control");
+  const enableAutomatic = /^~?anthropic\/claude-/.test(model) && !automaticControlPresent && !explicit;
+  let promptCacheMode = declaredMode;
+  if (explicit) promptCacheMode = "explicit";
+  else if (automaticControlPresent || enableAutomatic) promptCacheMode = "implicit";
+  return {
+    body: enableAutomatic ? { ...body, cache_control: { type: "ephemeral" } } : body,
+    promptCacheMode,
+    explicitBreakpointCount,
+  };
+};
 
 const dispatchFailure = (error: unknown): Response => {
   if (error instanceof OpenRouterError && error.code === "openrouter_api_key_missing") {
@@ -110,7 +167,11 @@ export const handleOpenRouterChatCompletions = async (
     return openaiError(400, "The requested model is not served by OpenRouter.", "openrouter_request_invalid", { param: "model" });
   }
   const clientWantsStream = rawRecord.stream === true;
-  const body: Record<string, unknown> = { ...rawRecord, model: upstreamModel, stream: clientWantsStream };
+  const cacheRequest = withOpenRouterClaudePromptCache(
+    withOpenRouterOpenAiWebTools({ ...rawRecord, model: upstreamModel, stream: clientWantsStream }, upstreamModel),
+    upstreamModel
+  );
+  const body = cacheRequest.body;
   if (clientWantsStream) {
     // The gateway needs the upstream usage frame to meter the call.
     if (body.stream_options === undefined) body.stream_options = { include_usage: true };
@@ -121,7 +182,15 @@ export const handleOpenRouterChatCompletions = async (
     usageContext.responseTelemetry.provider = OPENROUTER_UPSTREAM_LABEL;
     usageContext.responseTelemetry.outputTokenAllowance = typeof rawRecord.max_completion_tokens === "number" ? rawRecord.max_completion_tokens : null;
   }
-  await recordRequestUsage(usageContext, { model: modelRaw, route: "chat.completions", stream: clientWantsStream, reasoning: null });
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "chat.completions",
+    stream: clientWantsStream,
+    reasoning: getString(rawRecord.reasoning_effort),
+    promptCacheKeyPresent: promptCacheKeyPresent(rawRecord),
+    promptCacheMode: cacheRequest.promptCacheMode,
+    explicitBreakpointCount: cacheRequest.explicitBreakpointCount,
+  });
 
   const requestSignal = inferenceSignal(req, usageContext);
   const downstreamSignal = downstreamSignalFor(req, usageContext);
@@ -168,11 +237,20 @@ export const handleOpenRouterResponses = async (
     return openaiError(400, "The requested model is not served by OpenRouter.", "openrouter_request_invalid", { param: "model" });
   }
   const clientWantsStream = rawRecord.stream === true;
-  const body: Record<string, unknown> = { ...rawRecord, model: upstreamModel };
+  const cacheRequest = withOpenRouterClaudePromptCache(withOpenRouterOpenAiWebTools({ ...rawRecord, model: upstreamModel }, upstreamModel), upstreamModel);
+  const body = cacheRequest.body;
   if (usageContext?.responseTelemetry) {
     usageContext.responseTelemetry.provider = OPENROUTER_UPSTREAM_LABEL;
   }
-  await recordRequestUsage(usageContext, { model: modelRaw, route: "responses", stream: clientWantsStream, reasoning: null });
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "responses",
+    stream: clientWantsStream,
+    reasoning: isRecord(rawRecord.reasoning) ? getString(rawRecord.reasoning.effort) : null,
+    promptCacheKeyPresent: promptCacheKeyPresent(rawRecord),
+    promptCacheMode: cacheRequest.promptCacheMode,
+    explicitBreakpointCount: cacheRequest.explicitBreakpointCount,
+  });
 
   const requestSignal = inferenceSignal(req, usageContext);
   const downstreamSignal = downstreamSignalFor(req, usageContext);

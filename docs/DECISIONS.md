@@ -6,6 +6,122 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## First Bun cutover uses a stopped-state operator capability - 2026-10-15
+
+The first cross-codec deployment uses `ops/first-bun-cutover.ts` through a private pinned operator invocation. Ordinary CLI and bound-driver tracked-clean guards remain unchanged. The new operator executes from the complete accepted CI artifact and proves current shipping push CI, every required job, hosted ZIP digest, exact Git source archive/materialized source, dependency/native/permissions trees and matching service bootstrap bytes. The mutable checkout is a data/runtime anchor and immutable Git-object store; unrelated working-tree or submodule state never supplies executable source or a fabricated clean predicate.
+
+The operator captures actual prior health and loaded-unit identity before stop, holds the existing deployment lock and release pins, verifies and reasserts only its own kernel-enforced supervisor limit across reload/start/recovery boundaries, and journals intent before each service transition. A prepared-only recovery receipt has no stopping intent: recovery verifies the original live selector/process/unit/health and never stops or restarts it. Conversion requires a stopped, checkpointed source, private consistent backup, exclusive NEW Bun target, complete metadata/typed-value proof and full reverse proof. Starting is authorized by this verified stopped boundary instead of requiring the old writable service to restart. The separately owned Sentinel acceptance receipt is pinned and strictly compared against the final gateway artifact/runtime and all required denial evidence; its exact receipt and evidence files are bound read-only at their recorded paths inside the private namespace.
+
+After any possible Bun startup, recovery converts the latest stopped Bun state into a NEW Deno destination. Once legacy adoption is published, later Deno writes are authoritative and recovery never overwrites them from an older Bun snapshot. A pinned offline capture and recovery entry support the supervisor's `ExecStopPost` without model, GitHub, download, install or compiler dependency during outage. Failed recovery retains every copy and reports unproved service state. Effective typed unit commands and resource-only drop-ins are pinned; an existing candidate must match the independently accepted CI manifest. Partial forward publication is retained separately while the unchanged stopped legacy source stays authoritative. Capacity includes WAL bytes and is rechecked after checkpoint. Runtime hashing streams database files, the codec cache stays task-local, and finite private phase budgets are bound in the operator authorization. Health success keeps client acceptance pending and retains release pins until the coordinator proves direct authenticated Mac-to-VPS inference and settles ownership.
+
+This change does not authorize live activation itself; the user's explicit deployment instruction and the coordinator's exact reviewed operation remain necessary. Source CI, external-reader acceptance, stopped-store rehearsal, runtime custody and live client acceptance are separate evidence surfaces.
+
+Both private Bun entries use a cleared environment, an independently checksum-pinned explicit Bun configuration and a frozen working directory outside the mutable checkout. Disabling dotenv discovery and auto-install alone does not block configuration preloads or inherited runtime options. Private workspaces and receipts retain mode700/600; only the source archive extraction child uses umask022 to reproduce the exact hosted CI entry modes.
+
+The gateway launcher and its Bun legacy-rollback verifier independently select `ops/runtime-bunfig.toml`, check its fixed byte hash before invoking Bun, and remove inherited preload/module-selection options while preserving the service credential environment. That config is part of the artifact-bound bootstrap comparison; a modified root `bunfig.toml` cannot supply executable source before verification. Persisted unit identities use the existing canonical encoding so journal key sorting cannot reject unchanged live state.
+
+## Prepared VPS artifacts use trusted constructor capabilities - 2026-10-15
+
+Deployment fixtures bind their frozen JavaScript graph, matching native headers and independently attested native KV artifact through an internal store preparation capability. Both the graph's lock and the candidate's lock must match the bound digest before packaging. The fixture imports the exact relocated deployment entry and supplies this capability to its actual candidate preparation; service environment variables do not select packaging inputs.
+
+The production CLI keeps real frozen dependency and native artifact preparation before immutable publication. Runtime startup only verifies and loads the published payload. Source, archive, manifest, graph, native provenance, OS confinement, fresh candidate publication and rollback checks remain unchanged. Focused hosted preflights run before the complete aggregate and never replace its acceptance.
+
+## Authoritative unavailable subscriptions permit paid failover - 2026-10-14
+
+The owner authorized same-model paid failover after the Mac gateway stalled on 2026-10-14.
+
+Each selected subscription must prove exhausted applicable quota or invalid current credentials.
+
+Only matching credential fingerprints count. Generic 429s, timeouts, probe leases and unknown state never count.
+
+Exhaustion proof and banked-reset eligibility remain separate. Existing paid caps and provider selection still apply.
+
+A mixed pool returns `codex_subscriptions_unavailable` with no multi-day retry delay when paid routing cannot serve.
+
+Current-invalid credentials retain the original actionable authentication body and re-auth warning. Fresh proof is
+internal.
+
+Reason: an exhausted account and failed sibling refresh returned a five-day 429 without attempting any paid provider.
+
+Reversal risk: treating credential failure as quota exhaustion could redeem a reset or spend against unproved capacity.
+
+## Native external consumers share access authorization without refresh credentials - 2026-10-14
+
+The owner authorized recovery of the Mac primary and Ubiquity profiles from working same-user/workspace peers. The
+gateway accepts the official native `chatgptAuthTokens` access-only leaf only from its fixed primary or
+`.codex-ubiquity` home, with an empty refresh field and identical access/id JWT. Durable external ownership records the
+native home, user, workspace, and credential generation; ordinary uploads, env seeds and managed donor candidates remain
+strict. The existing repair CLI validates the current regular local leaf, preserves valid managed accounts and siblings,
+checks passive authorization, rechecks file bytes and commits the matching slot with pool CAS. External consumers never
+invoke local native refresh or OAuth; their owner must publish renewed access authorization before expiry. Managed
+native refresh retains its existing expiry and precise generation-order guards.
+
+The named home receives read permission for its auth file only. The gateway never writes either credential file. Native
+daemon adoption and relay ownership remain separate watchdog operations: a file proves the pool's local source, not the
+running daemon's auth mode. Initial managed-to-external native migration changes relay ownership; subsequent
+same-user/workspace renewal must preserve it. A missing, stale or mismatched publication defers with an owner error
+rather than switching accounts or rotating a donor. Native persistent external file loading is source-confirmed for
+0.162.1 but undocumented and requires separate synthetic and passive runtime acceptance. Age-order protection remains in
+this release, so recovery from an older peer generation is not a universal failover guarantee.
+
+## External reasoning tiers use ascending Codex picker order - 2026-10-10
+
+The native Codex catalog orders standard tiers from `none` through `ultra` only when projecting external provider
+metadata. This is a permutation of advertised values: omitted tiers stay omitted, custom strings retain their positions,
+and uploaded Codex records retain their own order and defaults. Raw external snapshots and official unversioned model
+responses remain unchanged.
+
+Reason: external provider metadata can advertise standard tiers in descending order, for example
+`max,xhigh,high,medium,low`, reversing the native Codex scalar picker. The native client's Plan-mode preset is a
+separate concern; catalog ordering does not override an effort selected for an inference request.
+
+Validation: regression cases cover a descending standard ladder, custom tiers, and uploaded-record precedence. Live
+client refresh and native Plan-mode effort preservation must be verified separately.
+
+## Synthetic paid hops have separate billing identities - 2026-10-10
+
+Each DeepSeek paid hop owns a separate internal billing request id derived from the client request id and provider.
+
+The original client correlation and request-quota reservation remain shared across the complete waterfall.
+
+Reason: reusing one paid row let a failed Surplus attempt retain ownership of a later successful OpenLux response.
+
+Provider request ids, terminals, spend and reconciliation must belong to the provider that produced them.
+
+Ordinary paid routes keep their current billing identity. Existing limits and pending-billing guards still apply.
+
+Reversal risk: a shared paid id mixes providers and can leave successful fallback billed or reconciled as a failure.
+
+## Compaction fallback retains request admission until provider dispatch - 2026-10-10
+
+Jev compaction and its ordinary Responses fallback share one `executeInference` lifetime and quota reservation.
+
+A failed local compaction cannot release admission before the fallback provider dispatches. Settlement runs once.
+
+Successful local compaction still releases unused request quota. Cancellation still stops before fallback.
+
+Reason: a failed Jev attempt released the reservation, so every DeepSeek waterfall hop failed before transport.
+
+The live compaction-marked reproduction returned 503; the same unmarked request completed through LithosAI.
+
+Reversal risk: settling either attempt separately restores false quota failures across the entire provider chain.
+
+## DeepSeek paid hops use the synthetic route's verified capabilities - 2026-10-10
+
+The synthetic route owns its paid-hop context internally; clients cannot enable it with a request-body field.
+
+An enabled `ubiquity` selection permits its configured paid hops, even when their standalone providers are unchecked.
+
+For its exact `deepseek-v4.1-flash` OpenLux hop, an existing catalog row also permits native Responses dispatch.
+
+Reason: OpenLux advertises only `openai` and `anthropic` for this model, but its native Responses endpoint completes.
+
+A direct authenticated probe on 2026-10-10 returned HTTP 200, `status: completed`, and `pong` from that endpoint.
+
+Ordinary routes retain their catalog and selection gates. Paid admission, accounting, and per-hop pins still apply.
+
+Reversal risk: removing the scoped capability restores a local refusal before the working final hop can dispatch.
+
 ## Every admin gets the full console; super-admin route gating is removed - 2026-10-05
 
 Admin authentication is unchanged: admin tokens, allowlist tokens, Deno Deploy tokens, and admin passkey sessions still
@@ -286,6 +402,10 @@ configuration.
 
 Status: focused synthetic ownership, existing auth regressions and concurrent native CLI/gateway loopback acceptance
 passed. The native proof used strict HTTPS and a task-owned test CA; no real credentials were refreshed by this work.
+
+2026-10-14: A newer expired generation may request one native-owner refresh. Adoption still requires usable tokens.
+
+Rollback and missing order proof still refuse refresh. A revoked native chain still requires native sign-in.
 
 ## `/v1/live` calls are bound to the authenticated gateway principal that created them - 2026-10-02
 
@@ -1078,18 +1198,18 @@ was taken at a context size far below the real sessions, which is why it came ba
 only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
 effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
 
-| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
-| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
-| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
-| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
-| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
-| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
-| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
-| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
+| Model                           | Actual input tokens |   n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | --: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 |  10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 |  10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 |  10 |                 9 |                    1 |     10% |
+| `deepseek-flash` (effort `max`) |              18,787 |  10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              66,533 |  10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 |  10 |                10 |                    0 |      0% |
 
 Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
 
@@ -1245,9 +1365,16 @@ gives:
 | `finish_reason: "length"`                            | `{ kind: "max-tokens" }`, a first-class turn-end reason with its own UI notice    |
 
 So the harness is **not** a backstop for the gateway's completion-validity rule: it maps the wire faithfully and accepts
-a degenerate `stop` as a success. Codex is the stricter client of the two. That is the reason the gateway owns G3 rather
-than delegating it to the client, and it is why the Chat Completions route keeps its current shape: a client-side
-backstop does not exist to lean on.
+a degenerate `stop` as a success. Codex is the stricter client of the two. G3 is gateway-owned where a route implements
+it, but this does **not** mean that G3 protects DeepSeek Chat Completions.
+
+The DeepSeek Chat Completions route deliberately carries no gateway completion-validity guard. On the streamed route,
+`relayChatCompletionStream`'s `finishStream` records completion usage, settles `response.completed`, records success
+health, and emits `[DONE]` without testing `chatCompletionHasAnswerBearingOutput`; on the buffered route,
+`handleDeepSeekChatCompletions` uses that predicate only to mark telemetry before returning HTTP 200. A reasoning-only
+or empty-content `stop` is therefore reported as success to the harness. If a guard is added later, the route-local
+terminal seams are `finishStream` for streaming and the buffered handler immediately before its successful 200 response,
+not the harness.
 
 **The truncated-generation path itself is unchanged for the harness.** `length` maps to `max-tokens` on both the pi-ai
 adapter and the vendored `dsh-llm-deepseek` adapter, so a truncation the gateway reports stays reported. The gap is
@@ -1279,8 +1406,9 @@ all three were on routes that already had them:
 | `src/openai.ts:10683` | `rejectEmptyChatCompletion` | the shared Chat preflight, not the DeepSeek branch |
 
 The DeepSeek routes bypass `rejectEmptyChatCompletion` by dispatch order: both DeepSeek handlers return before the
-shared preflight runs. That is why the original G3 landed as a route-local guard rather than as a reuse of that
-function, and it is why the buffered branch below needed its own guard rather than inheriting one.
+shared preflight runs. The Responses route therefore implements G3 in its own streamed and buffered terminal seams;
+DeepSeek Chat Completions deliberately does not implement a completion-validity guard and cannot inherit one from that
+shared preflight.
 
 ### The buffered DeepSeek Responses branch was missing G3
 
@@ -1566,3 +1694,158 @@ the last resort rather than be skipped by a chat-only wire record, and the pin c
 found. Reversal risk: the paid hops depend on their own tier credentials and catalog records, so a model missing from
 one paid catalog now fails that hop closed instead of advancing to the sibling tier within the same hop; the next hop in
 the waterfall still runs, and the pin only narrows one request's paid selection.
+
+## Owner-only Claude Code subscription tier - 2026-10-11
+
+`claude_code` is a new selectable provider, second in roster order after `codex` and first for Claude models on the
+request path. It speaks the native Anthropic Messages wire (`https://api.anthropic.com/v1/messages`) with the
+subscriber's own credential through `Authorization: Bearer` plus `anthropic-version: 2023-06-01` and
+`anthropic-beta: oauth-2025-04-20`, and no synthesized client fingerprint. Every gate is conjunctive and deliberate: the
+operator selection must keep the provider on, `CLAUDE_CODE_OAUTH_TOKEN` must hold a credential (v1: the documented
+one-year `claude setup-token` token), the request principal's key id must be in `CLAUDE_CODE_ALLOWED_KEY_IDS` (no
+wildcard, empty allowlist means nobody), and no authoritative quota window may still block. Any missing gate leaves the
+request on the unchanged paid path, and a dormant tier costs no storage read. Durable exhaustion is recorded only from
+the documented `anthropic-ratelimit-unified-*` evidence on a rejection, blocked until the upstream reset plus a margin;
+a generic 429 becomes only a short local cooldown, and 401/403 never permanently label the account. The tier is off by
+default: no credential and no allowlist exist in the deployment until the owner adds them.
+
+Reason: the operator asked to add Claude Code subscription support to the gateway; the 2026-10-11 research (docs/
+research/claude-code-subscription-2026-10-11.md) rates a hosted gateway serving other users on the owner's Pro/Max
+credentials RED and an owner-gated proxy AMBER, so the implemented scope is strictly owner-only, fails over to the paid
+waterfall on every failure, and never reuses the Codex plumbing to serve team traffic. Reversal risk: the AMBER verdict
+means Anthropic has not clearly authorized this exact bridge; the owner must accept that residual account risk in
+writing before live activation, and a stored provider selection written after this change must include `claude_code` to
+keep the tier servable, exactly like every other provider.
+
+## Linux gateways delegate a shared CLI credential lineage to the local native daemon - 2026-10-13
+
+The gateway's native-owner binding now runs on Linux with the same single canonical home as macOS (`CODEX_HOME` or
+`~/.codex`). A managed-auth daemon whose active provider does not require OpenAI auth (a gateway-routed custom provider
+reports `requiresOpenaiAuth: false`) returns no account from `account/read` even though it refreshes the home's ChatGPT
+credentials; that exact blank reply is accepted only when it is the daemon's own shape and the home's credential file
+holds the account id the pool entry was bound to. Every other reply keeps requiring a matching ChatGPT identity, and the
+caller still refuses any rotation that fails to advance the persisted generation. The admin upstream health block also
+reports each slot's refresh-token SHA-256 and bound native-owner home so a local watchdog can detect an unbound pool
+slot that shares a refresh lineage with a credential file without seeing token material, while treating equality on a
+slot bound to that same home as the expected delegation state.
+
+Reason: the 2026-10-13 VPS auth recovery proved a gateway KV slot and the native CLI store rotated one personal lineage
+until the first consumer invalidated the second (`refresh_token_reused`); the VPS daemon cannot name its ChatGPT account
+while it routes inference through the gateway, which blocked the previous Darwin-only binding handshake. Reversal risk:
+a blank-account reply from a daemon holding the wrong file account stays refused, but a same-account file swap between
+bind and refresh is caught only by the generation checks; the fallback trusts the local home configured on that host,
+never a remote path.
+
+## Claude subscription parity: API-key credential, workspace selection, and admin surfaces - 2026-10-15
+
+The `claude_code` tier now accepts the Console-billed `CLAUDE_API_KEY` direction alongside the owner-gated OAuth setup
+token, and it carries the operational surface the Codex subscription always had. Credential resolution is KV first and
+environment second (`CLAUDE_API_KEY`, then `CLAUDE_CODE_OAUTH_TOKEN`), so the admin console can rotate a credential
+without a restart; `api_key` credentials travel as `x-api-key` and OAuth tokens keep `Authorization: Bearer` plus
+`anthropic-beta: oauth-2025-04-20`. An organization-scoped key that rejects the first request with the documented "not
+scoped to a workspace" error triggers one workspace discovery through `/v1/organizations/workspaces` (preferring a
+workspace named `Default`), cached in KV and overridable by `CLAUDE_CODE_WORKSPACE_ID` or an admin pin; the retry reuses
+the request's single pre-transport dispatch reservation instead of claiming a second one, because the API-key usage
+ledger records exactly one pre-transport dispatch per request. Billing and workspace rejections are classified from the
+upstream error body into `billing_blocked` / `workspace_not_found` / `workspace_required`, stored with a bounded
+ten-minute configuration cooldown and their sanitized message, and they never become durable quota exhaustion; a served
+request clears the recorded configuration error. `GET`/`POST`/`DELETE /admin/providers/claude-code/auth` reads, stores
+(validated against the Anthropic models listing), and clears the credential plus an optional workspace pin;
+`POST /admin/providers/claude-code/quota/clear` drops the guards; `/admin/providers`, `/health/upstream`, and the admin
+panel's Claude subscription card report credential provenance, the workspace selection, the routing gates, unified and
+standard rate-limit windows, the last upstream outcome, and health. `normalizeApiKeyUsageRequestV3` now derives its
+provider allowlist from `API_KEY_USAGE_PROVIDERS`, because a `claude_code` dispatch row previously failed normalization
+and surfaced as `api_key_quota_reservation_unavailable` for the paid hop that followed it.
+
+Reason: the operator asked for Claude subscription feature parity with the Codex subscription, including admin switches,
+panels, and analytics, and named `CLAUDE_API_KEY` as the credential to use. The Console API-key direction is the
+research's documented authentication path (GREEN) where the raw OAuth bridge is only AMBER, so the owner-gated allowlist
+stays in force while the credential itself becomes operator-managed and independently rotatable. Reversal risk: a
+workspace pin or discovery result is advisory state that names the workspace sent as `anthropic-workspace-id`; a wrong
+pin fails closed with the recorded `workspace_not_found` state until it is corrected, and the tier still falls through
+to the paid routes on every rejection. The environment's own account state (no API credits in the Console organization,
+an admin-only `Claude Code` workspace) is an account condition, not a gateway defect: the tier records the exact
+upstream rejection instead of retrying it per request.
+
+## Claude subscription joins the provider capacity analytics - 2026-10-15
+
+`GET /admin/providers/capacity` now carries a live `claude` block next to the Codex/metered `sources`, and the admin
+Analytics capacity list renders it as a third row beside the two Codex subscription rows: state badge, the observed
+5-hour and weekly subscription windows as remaining capacity (the upstream fraction is normalized to a percentage), and
+diagnostics for credential direction, workspace, guards, standard API-key limits, and the last upstream error. The block
+is computed on the admin read from the tier's own credential, workspace, guard, and quota state; it is deliberately not
+written into the stored capacity snapshot, because that record is sampled on inference events and its command budget is
+pinned by test. Older three-source stored records therefore stay valid and the sampler cost is unchanged.
+
+Reason: the operator asked for Codex-grade analytics parity for the Claude subscription, and the Codex subscriptions are
+read from the capacity pipeline. Reversal risk: the analytics row reflects the tier's recorded guard state, so a billing
+or workspace rejection shows as `unavailable` with its exact upstream status and message until the operator fixes the
+account and clears the guard; the row never blocks inference itself.
+
+## Native KV build scratch remains outside immutable releases - 2026-10-15
+
+Native KV preparation retains its disk-backed source, Cargo home, compiler target, and logs below the operating-system temporary root rather than below the builder module checkout. The independently supplied artifact and provenance binding remains mandatory for immutable release preparation and isolated release fixtures.
+
+Reason: a builder imported from a staged release must not add retained scratch to the published source tree or change its recorded digest. The scratch remains disk-backed; application startup still never compiles, downloads, or installs.
+
+## Claude Code subscription requests carry the native attribution on the OAuth lane - 2026-10-15
+
+When the `claude_code` credential is an OAuth setup token (`sk-ant-oat...`), `buildClaudeCodeRequest` prepends the native
+client attribution (`You are Claude Code, Anthropic's official CLI for Claude.`) as the first system block; Console API
+keys (`sk-ant-usr...` / `sk-ant-api...`) never send it. A 12-variant probe matrix against `https://api.anthropic.com` on
+2026-10-15 established the requirement: without the attribution every `/v1/messages` request answers an opaque
+`429 rate_limit_error` (`message: "Error"`), while the same request with it answers 200 and carries the
+`anthropic-ratelimit-unified-*` subscription windows; `metadata.user_id` and `anthropic-workspace-id` are not required.
+
+Reason: the operator activated the Claude Max subscription through the documented `claude setup-token` flow and asked
+that it serve the gateway through the existing owner-gated `claude_code` tier. The endpoint strips the attribution block
+before generation, so it changes no request semantics; it is sent only on the credential kind the official client owns,
+and no other fingerprint (device id, session id, user agent, or additional headers) is synthesized. Reversal risk: none
+beyond the tier's existing fall-through - an attribution-less OAuth request fails closed into the paid waterfall, and the
+attribution can be removed at its single call site if the upstream requirement changes.
+
+## Claude uses the shared catalog and existing provider controls - 2026-10-15
+
+Claude model discovery belongs in the same model catalog, provider counts, and whitelist surfaces as the other providers. Read the actual authenticated upstream model listing, preserve returned model identifiers, and bind cached discovery to the credential and workspace that produced it. Credential validation must not discard the discovery result, and changing credentials must not publish stale models from the prior credential. No guessed model list substitutes for discovery.
+
+The Claude credential and workspace controls belong under its existing provider entry. Remove the separate `card-claude-subscription` dashboard card and its duplicated diagnostics; keep quota diagnostics in the shared Analytics capacity list and the existing Kernel summary. Preserve provider selection and credential/guard actions through the existing endpoints.
+
+Reason: the owner reported that the Claude whitelist showed zero models and rejected the invented standalone card because it did not follow the Codex subscription UI. A live quota row and single stored credential do not establish historical-chart or multi-account-pool parity; those capabilities remain separate acceptance requirements.
+
+## Bun persistent-store startup and restart confinement - 2026-10-15
+
+A real immutable Mac startup, not an in-memory SQLite fixture, is the acceptance surface for database permissions. Grant directory data and metadata only for the literal repository root needed by cwd resolution, plus metadata only for the literal ancestors needed by native SQLite path resolution. Do not grant ancestor contents or recursive reads. The required Darwin native gate must exercise persistent KV open and a separate-process restart using its prepared binding, while retaining unrelated file, write, network, and process denials.
+
+Codec inspection must try ordinary read-only SQLite first so it observes a live WAL. A stopped WAL-mode database without sidecars can fail that query with SQLITE_CANTOPEN; only that failure may use a closed, synchronous immutable inspection, fenced by absent WAL/SHM/journal files and unchanged precise source identity/stat metadata before and after inspection. Any sidecar, race, unsupported stat precision, legacy codec, or missing marker fails closed. Never use unrestricted immutable reads against live WAL, open an unvalidated store writable, or rewrite its journal mode to get startup past validation.
+
+The offline converter may use an explicitly URI-enabled read-only immutable connection only for its exclusive newly copied private snapshot after source/copy hash validation and precise identity and sidecar absence checks. Its reader contract admits only parameterless statements, rejects missing-bind queries before execution, and requires exact safe-integer reads; output databases retain strict and safe-integer configuration. Ordinary read-only opens can create private WAL sidecars on Linux, so do not substitute them or delete sidecars to pass final snapshot validation. This is not permission to open the canonical source immutably or writable. Preserve stopped-source validation and canonical-path rollback receipt binding. Actual private Bun-to-Deno-to-Bun acceptance must preserve raw keys, typed values, revisions and absolute expiry; do not make Deno an ordinary test or CI runtime dependency.
+
+## Claude request metadata and proven disabled thinking - 2026-10-15
+
+Resolve enabled Claude subscription models from the same credential/workspace-bound discovery used by the shared catalog before a chat-only paid row can reject their Responses route. Preserve Codex precedence, principal eligibility, quota guards, provider selection and the operator whitelist.
+
+Only an observed boolean `capabilities.thinking.types.disabled.supported: true` authorizes the native `thinking: { type: "disabled" }` translation of an explicit or effective `none`; it emits no native effort. This permission is independent of adaptive thinking and effort support, binds the exact dispatch credential/workspace/generation, and is rechecked before transport. False, missing, malformed or stale proof retains lossless refusal and never creates a `none` preset/default. Stale discovery keeps its recorded model IDs and error state but withdraws this permission. The [Models API](https://platform.claude.com/docs/en/api/http/models) describes independent thinking-type flags; [Haiku effort constraints](https://platform.claude.com/docs/en/build-with-claude/effort) make omission or a fabricated higher effort an invalid substitute for disabled thinking.
+
+A disabled-thinking request cannot reuse that proof for an automatically discovered different workspace: retain its original workspace-required response and identity without a second attempt. Existing non-none workspace discovery and retry are unchanged; an operator can establish the intended workspace through the existing controls. This bounded correction does not add other reasoning tiers or change the user's global default.
+
+## Mac native SQLite temporary storage is private per launch - 2026-10-15
+
+The immutable Mac service launcher prepares a new physical mode700 temporary directory under its existing writable `.data` anchor after explicitly loading only the root `.env`, then overrides only the child `SQLITE_TMPDIR`. It grants no additional sandbox access, does not use a global temporary directory, and leaves the VPS environment unchanged. Cleanup follows child settlement, requires the original directory and anchor identities, preserves any changed identity with a diagnostic, and never adopts or removes retained directories from another launch.
+
+A real same-native, same-profile synthetic spill failed with `no such savepoint: denokv_atomic_write` when all SQLite temporary roots were denied; binding the private directory made the identical atomic write succeed. The failed batch retained its original rows and revisions without partial quota writes. Keep that negative control, rollback checks and the successful private-path write in the required Darwin-native verifier. Do not classify this masked SQLite I/O failure as provider quota exhaustion, retry missing-savepoint blindly, replace the verified native artifact, or weaken confinement.
+
+## Explicit owner waiver of the external Sentinel reader gate - 2026-10-15
+
+The owner explicitly waived the standalone Sentinel reader acceptance prerequisite for this gateway cutover. The supported first-Bun operator accepts either the unchanged strict external-reader acceptance or a separate private, expiring owner-waived record bound to the exact source, runtime, dependencies and immutable artifacts plus the recorded owner instruction. Its discriminated input, authorization digest, journal and recovery preserve which gate was used; owner-waived is never reported as external-reader acceptance. Missing, ambiguous, expired or identity-mismatched input fails before stopping the service. No environment flag silently bypasses the gate.
+
+This exception applies only to the external Sentinel reader prerequisite. It grants no Sentinel repository or caller-write authority and does not weaken shipping CI, deployment locking, stopped-source backups, codec conversion and reverse-conversion proof, credential preservation, operating-system isolation, immutable release checks or actual client acceptance. Legacy captures remain bound to their original source.
+
+## Claude subscription account, evidence and shared-admin parity - 2026-10-15
+
+Claude subscription state uses a durable account roster with opaque local identifiers, a stable active account and credential/workspace-bound cohorts. Backward-compatible singleton bootstrap preserves existing credentials and access restrictions; an explicit bootstrap tombstone prevents deleted accounts from reappearing from legacy environment state. A never-configured passive read does not persist an empty roster, so later intentional first environment bootstrap remains possible; any existing empty roster or explicit clear remains a durable tombstone. First bootstrap/import and explicit deletion serialize through real KV compare-and-set, while a targeted nonexistent deletion changes no state. A local account label is not verified upstream identity. Credential import does not grant principals access. Explicit stored access policy is authoritative after an intentional admin change, and account-targeted credential, workspace, selection and guarded-clear operations remain in the existing provider controls, not a standalone dashboard card.
+
+Switching the active subscription and advancing to paid providers are separate decisions. Keep the active account across restarts, reordering and unchanged binding; change it only for explicit operator selection, removal or authoritative applicable exhaustion/current-credential invalidity. Paid continuation requires fresh, applicable, current-binding strong evidence for the entire selected eligible pool. Transient transport failures, unknown discovery, configuration rejection and upstream server errors do not prove exhaustion. Quota, health and model capability evidence belongs to its exact account/cohort; an in-flight result cannot overwrite a replacement or reblock a newly cleared guard. Advertised reasoning capabilities and native translations require actual upstream metadata, not a model-name guess.
+
+Claude historical windows and hourly rollups are additive to the existing Codex and metered history contracts. Persist actual upstream observations through the quota writer's accepted-observation seam, registered before the first inference; admin reads never create samples. The source observation clock is the gateway receipt time of raw upstream headers, not a provider-issued timestamp; sampling/persistence time is separate. Preserve missing observation times as null, absent windows and gaps across staleness, cohorts and reset anchors. Bounded sampling, retention and truncation remain explicit. Claude window series share the existing Analytics chart without altering the Codex capacity denominator. Retained legacy unbound evidence is not silently relabeled as an account's history, and host-local persistence is not a claim of cross-host synchronization.
+
+Feature parity does not justify invented upstream operations: expose only capabilities supported by the supplied credentials and actual provider contracts. A setup token without refresh material does not establish automatic refresh, a second live account has not been supplied for live failover acceptance, and local fixtures do not establish live banked-reset or redemption support.

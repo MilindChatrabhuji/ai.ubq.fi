@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { bindForegroundRefresh } from "../static/foreground-refresh.js";
@@ -14,7 +15,7 @@ const pageShow = (persisted?: boolean) => {
   return event;
 };
 
-Deno.test("foreground refresh coalesces focus events and ignores hidden pages", async () => {
+test("foreground refresh coalesces focus events and ignores hidden pages", async () => {
   const windowTarget = new EventTarget();
   const documentTarget = new TestDocument();
   let refreshes = 0;
@@ -47,7 +48,7 @@ Deno.test("foreground refresh coalesces focus events and ignores hidden pages", 
   assert.equal(refreshes, 2);
 });
 
-Deno.test("foreground refresh refreshes on a bfcache pageshow but not on the first load", async () => {
+test("foreground refresh refreshes on a bfcache pageshow but not on the first load", async () => {
   const windowTarget = new EventTarget();
   const documentTarget = new TestDocument();
   let refreshes = 0;

@@ -1,9 +1,10 @@
+import { test } from "bun:test";
 // codex-banked-reset suite part: tests moved out of tests/codex-banked-reset.test.ts.
 
 import assert from "node:assert/strict";
 import {
-  CodexResetRedemptionRecord,
-  CodexUsageResetProviderContract,
+  type CodexResetRedemptionRecord,
+  type CodexUsageResetProviderContract,
   FakeCodexUsageResetProvider,
   MemoryKv,
   TestClock,
@@ -18,7 +19,7 @@ import {
   unavailableCodexUsageResetProvider,
 } from "./helpers/codex-banked-reset-harness.ts";
 
-Deno.test("config and durable-record parsers are strict, and an unproven provider contract keeps live mode disabled", async () => {
+test("config and durable-record parsers are strict, and an unproven provider contract keeps live mode disabled", async () => {
   const defaults = parseCodexBankedResetConfig(() => undefined);
   assert.deepEqual(
     {

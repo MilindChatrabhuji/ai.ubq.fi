@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { toast } from "../static/toast.js";
 
@@ -48,7 +49,7 @@ class ToastElement {
   }
 }
 
-Deno.test("a synchronous toast burst keeps three active notifications while older nodes exit", () => {
+test("a synchronous toast burst keeps three active notifications while older nodes exit", () => {
   const body = new ToastElement(true);
   const timers: { callback: () => void; delay: number }[] = [];
   const replacements = {
@@ -95,7 +96,7 @@ Deno.test("a synchronous toast burst keeps three active notifications while olde
   }
 });
 
-Deno.test("loading toasts persist beyond normal durations and remain dismissible after completion", () => {
+test("loading toasts persist beyond normal durations and remain dismissible after completion", () => {
   const body = new ToastElement(true);
   const timers = new Map<number, { callback: () => void; deadline: number }>();
   let now = 0;

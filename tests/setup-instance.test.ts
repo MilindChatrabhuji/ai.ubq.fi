@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { runSequence } from "./helpers/sequence.ts";
 import assert from "node:assert/strict";
 
 import { deriveRsaPublicKeyPemFromPrivateKey, normalizeMultilineSecret, runSetupInstance } from "../scripts/setup-instance.ts";
@@ -106,13 +108,13 @@ const environment = (entries: Record<string, string | undefined>): Readonly<{ ge
   get: (name) => entries[name],
 });
 
-Deno.test("setup-instance derives matching SPKI public PEM from PKCS#8 and escaped GitHub PKCS#1", async () => {
+test("setup-instance derives matching SPKI public PEM from PKCS#8 and escaped GitHub PKCS#1", async () => {
   assert.equal(await deriveRsaPublicKeyPemFromPrivateKey(fixture.pkcs8Pem), fixture.publicPem);
   assert.equal(await deriveRsaPublicKeyPemFromPrivateKey(fixture.pkcs1Pem.replace(/\n/g, "\\n")), fixture.publicPem);
   assert.equal(normalizeMultilineSecret(fixture.pkcs1Pem.replace(/\n/g, "\\n")), fixture.pkcs1Pem.trim());
 });
 
-Deno.test("setup-instance posts the derived key with the deploy token", async () => {
+test("setup-instance posts the derived key with the deploy token", async () => {
   const captured = { request: null as Request | null };
   const output = logger();
   const exitCode = await runSetupInstance({
@@ -146,60 +148,61 @@ Deno.test("setup-instance posts the derived key with the deploy token", async ()
   assert.deepEqual(output.errors, []);
 });
 
-Deno.test("setup-instance fails without the deploy token and on network or HTTP failures", async (t) => {
-  const base = {
-    APP_ID: "9",
-    APP_PRIVATE_KEY: fixture.pkcs8Pem,
-    UOS_AI_TOKEN: "legacy-token-is-not-an-admin-token",
-  };
+test("setup-instance fails without the deploy token and on network or HTTP failures", () =>
+  runSequence(async (step) => {
+    const base = {
+      APP_ID: "9",
+      APP_PRIVATE_KEY: fixture.pkcs8Pem,
+      UOS_AI_TOKEN: "legacy-token-is-not-an-admin-token",
+    };
 
-  await t.step("missing DENO_DEPLOY_TOKEN", async () => {
-    let calls = 0;
-    const output = logger();
-    const exitCode = await runSetupInstance({
-      env: environment(base),
-      fetch: () => {
-        calls += 1;
-        return Promise.resolve(new Response("unexpected"));
-      },
-      log: output,
+    await step("missing DENO_DEPLOY_TOKEN", async () => {
+      let calls = 0;
+      const output = logger();
+      const exitCode = await runSetupInstance({
+        env: environment(base),
+        fetch: () => {
+          calls += 1;
+          return Promise.resolve(new Response("unexpected"));
+        },
+        log: output,
+      });
+      assert.equal(exitCode, 1);
+      assert.equal(calls, 0);
+      assert.match(String(output.errors[0]?.[0]), /DENO_DEPLOY_TOKEN/);
     });
-    assert.equal(exitCode, 1);
-    assert.equal(calls, 0);
-    assert.match(String(output.errors[0]?.[0]), /DENO_DEPLOY_TOKEN/);
-  });
 
-  await t.step("invalid APP_ID", async () => {
-    let calls = 0;
-    const exitCode = await runSetupInstance({
-      env: environment({ ...base, APP_ID: "0", DENO_DEPLOY_TOKEN: "deploy-token" }),
-      fetch: () => {
-        calls += 1;
-        return Promise.resolve(new Response("unexpected"));
-      },
-      log: logger(),
+    await step("invalid APP_ID", async () => {
+      let calls = 0;
+      const exitCode = await runSetupInstance({
+        env: environment({ ...base, APP_ID: "0", DENO_DEPLOY_TOKEN: "deploy-token" }),
+        fetch: () => {
+          calls += 1;
+          return Promise.resolve(new Response("unexpected"));
+        },
+        log: logger(),
+      });
+      assert.equal(exitCode, 1);
+      assert.equal(calls, 0);
     });
-    assert.equal(exitCode, 1);
-    assert.equal(calls, 0);
-  });
 
-  await t.step("network failure", async () => {
-    const exitCode = await runSetupInstance({
-      env: environment({ ...base, DENO_DEPLOY_TOKEN: "deploy-token" }),
-      fetch: () => Promise.reject(new TypeError("network offline")),
-      log: logger(),
+    await step("network failure", async () => {
+      const exitCode = await runSetupInstance({
+        env: environment({ ...base, DENO_DEPLOY_TOKEN: "deploy-token" }),
+        fetch: () => Promise.reject(new TypeError("network offline")),
+        log: logger(),
+      });
+      assert.equal(exitCode, 1);
     });
-    assert.equal(exitCode, 1);
-  });
 
-  await t.step("non-2xx response", async () => {
-    const output = logger();
-    const exitCode = await runSetupInstance({
-      env: environment({ ...base, DENO_DEPLOY_TOKEN: "deploy-token" }),
-      fetch: () => Promise.resolve(new Response("forbidden", { status: 403 })),
-      log: output,
+    await step("non-2xx response", async () => {
+      const output = logger();
+      const exitCode = await runSetupInstance({
+        env: environment({ ...base, DENO_DEPLOY_TOKEN: "deploy-token" }),
+        fetch: () => Promise.resolve(new Response("forbidden", { status: 403 })),
+        log: output,
+      });
+      assert.equal(exitCode, 1);
+      assert.match(String(output.errors[0]?.[0]), /status 403/);
     });
-    assert.equal(exitCode, 1);
-    assert.match(String(output.errors[0]?.[0]), /status 403/);
-  });
-});
+  }));
