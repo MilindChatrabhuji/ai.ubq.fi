@@ -28,6 +28,7 @@ import {
   loadClaudeCodeWorkspaceState,
 } from "./claude-code-credentials.ts";
 import { isRecord } from "../utils.ts";
+import { isClaudeCodeAccountCurrent, updateClaudeCodeAccount, type ClaudeCodeAccountBinding } from "./claude-code-accounts.ts";
 import {
   claudeCodeExhaustionFromResponse,
   claudeCodeQuotaBlocked,
@@ -250,6 +251,7 @@ export const classifyClaudeCodeErrorBody = (classification: ClaudeCodeResponseCl
 };
 
 export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
+  accountBinding?: ClaudeCodeAccountBinding;
   /** Resolved credential; resolved from KV and the environment when absent. */
   credential?: ClaudeCodeResolvedCredential | null;
   /** Resolved workspace; resolved from KV and the environment when absent. */
@@ -263,12 +265,15 @@ export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
   reasoningReplayScope?: string;
   /** Positive disabled-thinking proof for this exact credential/workspace model. */
   supportsNativeDisabledThinking?: boolean;
+  nativeReasoningEfforts?: readonly string[];
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | undefined>;
   onDispatch?: () => void;
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
 export type ClaudeCodeResponsesResult = Readonly<{
+  account_binding?: ClaudeCodeAccountBinding;
+  observed_at_ms: number;
   response: Response;
   request_id: string | null;
   credential: ClaudeCodeResolvedCredential;
@@ -307,6 +312,7 @@ export const claudeCodeRequestHeaders = (credential: ClaudeCodeAuthHeaders, opti
 
 const claudeCodeTransportFailure = (error: unknown, signal: AbortSignal | undefined, headersDeadline: AbortController): unknown => {
   if (error instanceof ApiKeyQuotaDispatchError) return error;
+  if (error instanceof ClaudeCodeError) return error;
   if (signal?.aborted) return signal.reason ?? error;
   if (headersDeadline.signal.aborted) return headersDeadline.signal.reason ?? error;
   if (error instanceof Error && error.name === "AbortError") return error;
@@ -368,6 +374,7 @@ export const buildClaudeCodeRequest = (
     /** Subscription credentials lead their system blocks with the native attribution. */
     systemAttribution?: boolean;
     supportsNativeDisabledThinking?: boolean;
+    nativeReasoningEfforts?: readonly string[];
   }> = {}
 ): ReturnType<typeof buildSurplusClaudeRequest> => {
   if (!isSurplusClaudeModel(body.model)) return null;
@@ -377,7 +384,8 @@ export const buildClaudeCodeRequest = (
     reasoningReplayScope: options.reasoningReplayScope,
     // The direct Messages route carries the documented adaptive-thinking wire
     // the shared builder already emits.
-    supportsNativeReasoningEffort: true,
+    supportsNativeReasoningEffort: (options.nativeReasoningEfforts?.length ?? 0) > 0,
+    nativeReasoningEfforts: options.nativeReasoningEfforts,
     supportsNativeDisabledThinking: options.supportsNativeDisabledThinking,
   });
   if (!built) return null;
@@ -433,7 +441,8 @@ const pickWorkspace = (entries: readonly ClaudeCodeWorkspaceListEntry[]): Claude
 };
 
 export type ClaudeCodeWorkspaceDiscoveryResult =
-  Readonly<{ ok: true; workspace: ClaudeCodeResolvedWorkspace }> | Readonly<{ ok: false; status: number | null; error: string | null }>;
+  | Readonly<{ ok: true; workspace: ClaudeCodeResolvedWorkspace; account_binding?: ClaudeCodeAccountBinding }>
+  | Readonly<{ ok: false; status: number | null; error: string | null }>;
 
 /**
  * Discover the workspace an organization-scoped credential must name. The
@@ -442,7 +451,13 @@ export type ClaudeCodeWorkspaceDiscoveryResult =
  * configuration over the discovered entry.
  */
 export const discoverClaudeCodeWorkspace = async (
-  options: Readonly<{ credential: ClaudeCodeAuthHeaders; kv?: Kv | null; fetcher?: ClaudeCodeFetch; signal?: AbortSignal }>
+  options: Readonly<{
+    credential: ClaudeCodeAuthHeaders;
+    kv?: Kv | null;
+    fetcher?: ClaudeCodeFetch;
+    signal?: AbortSignal;
+    accountBinding?: ClaudeCodeAccountBinding;
+  }>
 ): Promise<ClaudeCodeWorkspaceDiscoveryResult> => {
   const kv = options.kv ?? null;
   const headers = claudeCodeRequestHeaders(options.credential, { stream: false });
@@ -472,13 +487,17 @@ export const discoverClaudeCodeWorkspace = async (
   const picked = pickWorkspace(parseWorkspaceList(parsed));
   if (!picked) return { ok: false, status: response.status, error: "No usable workspace was listed for this credential." };
   const workspace: ClaudeCodeResolvedWorkspace = { id: picked.id, name: picked.name, source: "discovered" };
+  let accountBinding = options.accountBinding;
   if (kv) {
+    if (options.accountBinding && !(await isClaudeCodeAccountCurrent(kv, options.accountBinding)))
+      return { ok: false, status: null, error: "Claude account changed during workspace discovery." };
     const previous = await loadClaudeCodeWorkspaceState(kv).catch(() => null);
-    await storeClaudeCodeWorkspaceState(kv, mergeClaudeCodeWorkspaceState(previous, { id: workspace.id, name: workspace.name, source: "discovered" })).catch(
-      () => false
-    );
+    const state = mergeClaudeCodeWorkspaceState(previous, { id: workspace.id, name: workspace.name, source: "discovered" });
+    if (options.accountBinding)
+      accountBinding = await updateClaudeCodeAccount(kv, { accountId: options.accountBinding.account_id, workspace: state, expected: options.accountBinding });
+    else await storeClaudeCodeWorkspaceState(kv, state);
   }
-  return { ok: true, workspace };
+  return { ok: true, workspace, account_binding: accountBinding };
 };
 
 const performClaudeCodeMessagesAttempt = async (
@@ -494,7 +513,13 @@ const performClaudeCodeMessagesAttempt = async (
     sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
   }>
 ): Promise<
-  Readonly<{ response: Response; classification: ClaudeCodeResponseClassification; quota: ClaudeCodeQuotaObservation | null; requestId: string | null }>
+  Readonly<{
+    response: Response;
+    classification: ClaudeCodeResponseClassification;
+    quota: ClaudeCodeQuotaObservation | null;
+    requestId: string | null;
+    observedAtMs: number;
+  }>
 > => {
   const headers = claudeCodeRequestHeaders(options.credential, { stream: options.stream, workspaceId: options.workspace?.id ?? null });
   const headersDeadline = new AbortController();
@@ -531,11 +556,12 @@ const performClaudeCodeMessagesAttempt = async (
   }
 
   const requestId = responseRequestId(response);
+  const observedAtMs = Date.now();
   const base = classifyClaudeCodeResponse(response.status, response.headers);
   const classification = base.kind === "ok" ? base : classifyClaudeCodeErrorBody(base, await readErrorBodyText(response));
-  const quota = observeClaudeCodeQuota(response.headers);
+  const quota = observeClaudeCodeQuota(response.headers, observedAtMs);
   const recorded = upstreamAttempt ? upstreamAttempt.wrap(response) : response;
-  return { response: recorded, classification, quota, requestId };
+  return { response: recorded, classification, quota, requestId, observedAtMs };
 };
 
 export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCodeAuthenticatedFetchOptions = {}): Promise<ClaudeCodeResponsesResult> => {
@@ -547,6 +573,7 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   const native = buildClaudeCodeRequest(body, {
     reasoningReplayScope: options.reasoningReplayScope,
     supportsNativeDisabledThinking: options.supportsNativeDisabledThinking,
+    nativeReasoningEfforts: options.nativeReasoningEfforts,
     maxOutputTokens: undefined,
     // Only the subscription lane carries the native attribution; a Console API
     // key request must stay a plain API request.
@@ -580,6 +607,7 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   } as const;
 
   let workspace = initialWorkspace;
+  let accountBinding = options.accountBinding;
   let attempt = await performClaudeCodeMessagesAttempt({ ...attemptOptions, workspace });
   // An organization-scoped key rejects the first request with a workspace
   // requirement; one discovery call (cached in KV) resolves it for the whole
@@ -587,9 +615,18 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   // Disabled thinking was proven for the original binding, not a newly found
   // workspace. Preserve its first failure rather than transfer that permission.
   if (attempt.classification.kind === "workspace_required" && !workspace && !(isRecord(native.body.thinking) && native.body.thinking.type === "disabled")) {
-    const discovered = await discoverClaudeCodeWorkspace({ credential, kv, fetcher: options.fetcher, signal: options.signal }).catch(() => null);
+    const discovered = await discoverClaudeCodeWorkspace({
+      credential,
+      kv,
+      fetcher: options.fetcher,
+      signal: options.signal,
+      accountBinding: options.accountBinding,
+    }).catch(() => null);
     if (discovered?.ok) {
       workspace = discovered.workspace;
+      accountBinding = discovered.account_binding ?? accountBinding;
+      if (accountBinding && !(await isClaudeCodeAccountCurrent(kv, accountBinding)))
+        throw new ClaudeCodeError("Claude account changed during workspace discovery.", "claude_code_request_invalid", 400);
       // The retry is the same client dispatch: the single-use pre-transport
       // reservation and the first-provider attribution already happened for
       // this request and must not be claimed twice.
@@ -606,6 +643,8 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
     provider: "claude_code",
   });
   return {
+    ...(accountBinding ? { account_binding: accountBinding } : {}),
+    observed_at_ms: attempt.observedAtMs,
     response: delivered,
     request_id: attempt.requestId,
     credential,
