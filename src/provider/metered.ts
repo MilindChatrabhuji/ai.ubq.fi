@@ -176,6 +176,8 @@ export const fetchMeteredModels = async (
   }
 };
 
+export const meteredModelsSnapshot = (): MeteredModelsSnapshot | null => meteredModelsCache;
+
 export const resetMeteredModelsCacheForTest = (): void => {
   meteredModelsFetchInFlight = null;
   meteredModelsFetchGeneration += 1;
