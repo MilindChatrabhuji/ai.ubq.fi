@@ -61,20 +61,27 @@ function journalMessage(value: unknown): string | null {
   // A null MESSAGE is a field journalctl did not print in full, which could hide a request row.
   return incomplete();
 }
-function checkedRow(line: string, proof: VpsJournalCoverage): { message: string; at: number; cursor: string } | null {
+function checkedRow(line: string, proof: VpsJournalCoverage): { message: string; at: number; cursor: string; lifecycle: boolean } | null {
   const row = JSON.parse(line) as Record<string, unknown>;
   if (row._BOOT_ID !== proof.bootId || typeof row.__CURSOR !== "string" || !row.__CURSOR || typeof row.__REALTIME_TIMESTAMP !== "string") return incomplete();
   const at = Number(row.__REALTIME_TIMESTAMP) / 1000;
   if (!Number.isFinite(at) || at < proof.windowStart || at >= proof.windowEnd) return incomplete();
   if (row._SYSTEMD_UNIT !== proof.unit) {
-    // `--unit` also returns PID 1's own messages about the unit, such as the driver's restart. They are never request rows.
-    if (row._PID === "1" && row.UNIT === proof.unit) return null;
+    // PID 1 rows are never requests. Completed exits/restarts bound lost terminals. With Type=simple,
+    // "Started" can follow a live admission from the new process, so startup notices cannot end its cohort.
+    if (row._PID === "1" && row.UNIT === proof.unit) {
+      const message = typeof row.MESSAGE === "string" ? row.MESSAGE : "";
+      const lifecycle = /^(?:Stopped |ai-ubq-fi\.service: (?:Main process exited|Deactivated successfully\.|Failed with result |Scheduled restart job))/.test(
+        message
+      );
+      return { message: "", at, cursor: row.__CURSOR, lifecycle };
+    }
     return incomplete();
   }
   const message = journalMessage(row.MESSAGE);
   if (message === null) return null;
   if (/^(?:Suppressed \d+ messages from .+|Missed \d+ kernel messages)$/.test(message)) return incomplete();
-  return { message, at, cursor: row.__CURSOR };
+  return { message, at, cursor: row.__CURSOR, lifecycle: false };
 }
 function checkedTerminal(value: Record<string, unknown>, status: number): void {
   if (
@@ -117,17 +124,19 @@ async function projectedEvent(row: { message: string; at: number; cursor: string
   };
   return { ...projection, digest: await vpsDigest({ ...projection, cursor: row.cursor, bootId }) };
 }
-async function journalEvents(raw: string, proof: VpsJournalCoverage, identity: VpsIdentity): Promise<VpsMetricEvent[]> {
+async function journalEvents(raw: string, proof: VpsJournalCoverage, identity: VpsIdentity): Promise<Pick<VpsJoinSlice, "events" | "lifecycleAt">> {
   if (new TextEncoder().encode(raw).byteLength > VPS_METRICS_MAX_BYTES) return incomplete();
   const lines = raw.split("\n").filter((line) => line.length > 0);
   if (lines.length > VPS_METRICS_MAX_ENTRIES) return incomplete();
   const events: VpsMetricEvent[] = [];
+  let lifecycleAt: number | null = null;
   for (const line of lines) {
     const row = checkedRow(line, proof);
-    const event = row ? await projectedEvent(row, proof.bootId, identity) : null;
+    if (row?.lifecycle) lifecycleAt = Math.max(lifecycleAt ?? 0, row.at);
+    const event = row && !row.lifecycle ? await projectedEvent(row, proof.bootId, identity) : null;
     if (event) events.push(event);
   }
-  return events;
+  return { events, lifecycleAt };
 }
 function checkedOptions(value: unknown): VpsMetricsOptions {
   const object = exactObject(value, ["retention", "context", "storage", "cipher", "deadline"]);
@@ -151,7 +160,7 @@ const sameFacts = (left: VpsMetricEvent, right: VpsMetricEvent) =>
   left.at === right.at &&
   left.stream === right.stream &&
   left.latencyMs === right.latencyMs;
-type Joined = { members: [VpsMetricEvent, VpsMetricEvent][]; pending: boolean; orphanFloor: number | null };
+type Joined = { members: [VpsMetricEvent, VpsMetricEvent][]; pending: boolean; orphanFloor: number | null; terminalLost: boolean };
 /** Admissions and terminals by request id; a request id seen twice must carry the same facts both times. */
 function indexed(slices: readonly VpsJoinSlice[]): { accepted: Map<string, VpsMetricEvent>; terminals: Map<string, VpsMetricEvent> } {
   const accepted = new Map<string, VpsMetricEvent>(),
@@ -183,7 +192,13 @@ function joined(cohort: VpsJoinCohort, slices: readonly VpsJoinSlice[], floor: n
     if (terminal.latencyMs === null) return incomplete();
     orphanFloor = Math.max(orphanFloor ?? floor, terminal.at - terminal.latencyMs - VPS_METRICS_SLICE_MS);
   }
-  return { members, pending: members.length !== admissions.length, orphanFloor };
+  const lifecycleAt = Math.max(-1, ...slices.map((slice) => slice.lifecycleAt ?? -1));
+  return {
+    members,
+    pending: members.length !== admissions.length,
+    orphanFloor,
+    terminalLost: admissions.some((event) => !terminals.has(event.id) && event.at < lifecycleAt),
+  };
 }
 async function summarized(
   binding: string,
@@ -230,6 +245,7 @@ function cohortFor(checkpoint: VpsJoinCheckpoint, input: VpsJournalRequest, iden
     scanEnd: input.windowStart,
     bootId: null,
     summary: null,
+    terminalLost: false,
   };
   checkpoint.cohorts.push(created);
   return created;
@@ -278,9 +294,9 @@ export class VpsJournalMetrics {
     const limits = this._limits();
     const proof = parseCoverage(await this._reader.coverage(start, end, limits), start, end);
     if (this._now() >= this._deadline) throw new VpsQueryBudgetError();
-    const events = await journalEvents(await this._reader.read(start, end, limits), proof, ledger.identity);
+    const projection = await journalEvents(await this._reader.read(start, end, limits), proof, ledger.identity);
     if (this._now() >= this._deadline) throw new VpsQueryBudgetError();
-    const slice = { coverage: proof, events };
+    const slice = { coverage: proof, ...projection };
     insertSlice(ledger, slice);
     return slice;
   }
@@ -315,19 +331,23 @@ export class VpsJournalMetrics {
     }
     return true;
   }
-  private async _scan(binding: string, ledger: VpsJoinLedger, cohort: VpsJoinCohort, key: string, floor: number, availableEnd: number): Promise<void> {
+  private async _scan(binding: string, ledger: VpsJoinLedger, cohort: VpsJoinCohort, key: string, floor: number, availableEnd: number): Promise<boolean> {
     anchored(ledger, cohort);
     for (;;) {
       const slices = tiledSlices(ledger, cohort.scanStart, cohort.scanEnd) ?? incomplete();
-      const { members, pending, orphanFloor } = joined(cohort, slices, floor);
+      const { members, pending, orphanFloor, terminalLost } = joined(cohort, slices, floor);
       const covered = cohort.scanEnd >= cohort.windowEnd;
+      if (covered && terminalLost) {
+        cohort.terminalLost = true;
+        return true;
+      }
       if (covered && orphanFloor === null && !pending) {
         cohort.summary = await summarized(binding, cohort, slices, members);
-        return;
+        return false;
       }
       const backward = covered && orphanFloor !== null;
       if (backward && cohort.scanStart <= orphanFloor) return incomplete();
-      if (!(await this._extend(ledger, cohort, key, floor, availableEnd, backward))) return;
+      if (!(await this._extend(ledger, cohort, key, floor, availableEnd, backward))) return false;
     }
   }
   private async _scope(input: VpsJournalRequest, identity: VpsIdentity, sampledAt: number) {
@@ -345,8 +365,9 @@ export class VpsJournalMetrics {
 
     return { scope, floor };
   }
-  private _progressOf(summary: VpsJoinSummary | null): VpsMetricsProgress {
-    if (summary !== null) return { state: "complete", reason: null };
+  private _progressOf(cohort: VpsJoinCohort): VpsMetricsProgress {
+    if (cohort.terminalLost) return { state: "unavailable", reason: "terminal_lost" };
+    if (cohort.summary !== null) return { state: "complete", reason: null };
     // Past the operation deadline no tick can read again, so a pending window is final rather than still collecting.
     if (this._now() >= this._options.deadline) return { state: "unavailable", reason: "deadline_exceeded" };
     return { state: "collecting", reason: "terminal_or_slice_pending" };
@@ -396,11 +417,11 @@ export class VpsJournalMetrics {
       const loaded = await this._checkpoints.load(scope),
         checkpoint = loaded.checkpoint;
       const cohort = cohortFor(checkpoint, input, identity);
-      if (cohort.summary === null) {
+      if (cohort.summary === null && !cohort.terminalLost) {
         const ledger = joinLedger(checkpoint, identity, input.windowStart);
-        await this._scan(checkpoint.binding, ledger, cohort, key, floor, sampledAt - this._lagMs);
-        // The window scanned last is the best estimate of how far back the next window will reach.
-        ledger.retainFrom = cohort.scanStart;
+        const terminalLost = await this._scan(checkpoint.binding, ledger, cohort, key, floor, sampledAt - this._lagMs);
+        // A lost terminal must not pin the failed window's slices. Otherwise share the last scan with the next window.
+        ledger.retainFrom = terminalLost ? cohort.scanEnd : cohort.scanStart;
       }
       const summary = cohort.summary;
       // A baseline window is sampled for its result alone; once complete, nothing of it is kept.
@@ -408,7 +429,7 @@ export class VpsJournalMetrics {
       pruneJoinLedgers(checkpoint);
       if (canonicalVps(await this._options.context(input)) !== canonicalVps(scope)) return incomplete();
       await this._checkpoints.save(scope, checkpoint, loaded.expected);
-      this._states.set(key, this._progressOf(summary));
+      this._states.set(key, this._progressOf(cohort));
       return summary === null ? missing() : this._counted(input, identity, sampledAt, summary);
     } catch {
       return missing();
