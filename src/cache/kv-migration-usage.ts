@@ -661,7 +661,8 @@ const inspectKernelQuotaReservations = async (
   prefix: KvKey,
   scope: "repo" | "org",
   errors: string[],
-  reservedByWindow: Map<string, number>
+  reservedByWindow: Map<string, number>,
+  resetAtByWindow: Map<string, number>
 ): Promise<number> => {
   let count = 0;
   for await (const entry of kv.list({ prefix })) {
@@ -681,6 +682,12 @@ const inspectKernelQuotaReservations = async (
       continue;
     }
     const reference = kernelWindowReference(scope, reservation.owner, reservation.repo, reservation.window_created_at_ms);
+    const knownResetAtMs = resetAtByWindow.get(reference);
+    if (knownResetAtMs !== undefined && knownResetAtMs !== reservation.window_reset_at_ms) {
+      errors.push(`kernel quota V2 reservation window identity is inconsistent: ${reference}`);
+    } else {
+      resetAtByWindow.set(reference, reservation.window_reset_at_ms);
+    }
     if (reservation.state === "reserved") {
       reservedByWindow.set(reference, (reservedByWindow.get(reference) ?? 0) + 1);
     }
@@ -692,15 +699,20 @@ const inspectKernelQuotaV2 = async (kv: Kv): Promise<KernelQuotaV2Inventory> => 
   const errors: string[] = [];
   const windows = new Map<string, KernelQuotaWindowEntry>();
   const reservedByWindow = new Map<string, number>();
+  const resetAtByWindow = new Map<string, number>();
   const [repoPolicies, orgPolicies, repoWindows, orgWindows, repoReservations, orgReservations] = await Promise.all([
     inspectKernelQuotaPolicies(kv, KERNEL_REPO_POLICY_V2_PREFIX, "repo", errors),
     inspectKernelQuotaPolicies(kv, KERNEL_ORG_POLICY_V2_PREFIX, "org", errors),
     inspectKernelQuotaWindows(kv, KERNEL_REPO_WINDOW_V2_PREFIX, "repo", errors, windows),
     inspectKernelQuotaWindows(kv, KERNEL_ORG_WINDOW_V2_PREFIX, "org", errors, windows),
-    inspectKernelQuotaReservations(kv, KERNEL_REPO_RESERVATION_V2_PREFIX, "repo", errors, reservedByWindow),
-    inspectKernelQuotaReservations(kv, KERNEL_ORG_RESERVATION_V2_PREFIX, "org", errors, reservedByWindow),
+    inspectKernelQuotaReservations(kv, KERNEL_REPO_RESERVATION_V2_PREFIX, "repo", errors, reservedByWindow, resetAtByWindow),
+    inspectKernelQuotaReservations(kv, KERNEL_ORG_RESERVATION_V2_PREFIX, "org", errors, reservedByWindow, resetAtByWindow),
   ]);
   for (const [reference, { window, hasReservationAggregate }] of windows) {
+    const reservationResetAtMs = resetAtByWindow.get(reference);
+    if (reservationResetAtMs !== undefined && reservationResetAtMs !== window.usage_reset_at_ms) {
+      errors.push(`kernel quota V2 reservation window reset is inconsistent: ${reference}`);
+    }
     if (hasReservationAggregate && window.reserved_requests !== (reservedByWindow.get(reference) ?? 0)) {
       errors.push(`kernel quota V2 reserved aggregate is inconsistent: ${reference}`);
     }
