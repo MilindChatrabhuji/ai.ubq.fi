@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Real CI checks for Sentinel and merge groups - 2026-10-18
+
+Issue #1206 preserves real successful checks for Sentinel's delivery and base-failure attribution. Run the complete job set for merge groups, PRs targeting exactly `queue-canary`, Sentinel-authored PRs targeting exactly `development`, development pushes, and development PRs changing the CI workflow or selector itself. Use the PR author, not the actor who reruns a workflow. Ordinary owner PRs retain changed-path job selection.
+
+This selects jobs without broadening dependency-scoped test selection. Native KV and Darwin signing fixtures retain their existing eligibility rules; admitted native, sandbox and artifact jobs still execute their real verification commands. Documentation wrappers may truthfully select zero tests. Never substitute successful placeholder checks or accept skipped checks as success. Development and merge-group runs retain their non-cancelling concurrency groups, and CI never deploys.
+
+Sentinel R81 attributes a red head check using the same check name on the exact base. Restoring successful base jobs provides that evidence for future runs; it does not prove identical test-file coverage across differently scoped runs or repair historical skipped evidence. Reversing this exception can strand otherwise eligible Sentinel repairs or queue entries without usable check evidence.
+
 ## Owner-only follow-ups from #1132 remain pending - 2026-10-18 (#1176)
 
 PR #1156 closed #1132 on 2026-10-18 without resolving the two owner-only actions below. #1176 tracks both; this entry records pending work, not an owner decision or authorization to change runtime behavior. Keep #1176 open until the owner resolves these actions or each is transferred to a linked open owner task.
