@@ -1,7 +1,6 @@
 import { test } from "bun:test";
 import type { NetAddr } from "#http";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { authenticateAdmin, authenticateClient, handleV1Auth } from "../src/auth/index.ts";
@@ -27,21 +26,32 @@ const enabledOptions: ServeRuntimeOptions = Object.freeze({ disableAdminAuth: tr
 const disabledOptions: ServeRuntimeOptions = Object.freeze({ disableAdminAuth: false });
 
 test("serve runtime options keep admin auth enabled by default", () => {
-  assert.deepEqual(parseServeRuntimeOptions([], { isDeploy: false }), { disableAdminAuth: false });
-  assert.equal(Object.isFrozen(parseServeRuntimeOptions([], { isDeploy: false })), true);
+  assert.deepEqual(parseServeRuntimeOptions([], { isDeploy: false, isProductionTimeline: false }), { disableAdminAuth: false });
+  assert.equal(Object.isFrozen(parseServeRuntimeOptions([], { isDeploy: false, isProductionTimeline: false })), true);
 });
 
 test("serve runtime options accept only one exact disable-admin-auth flag", () => {
-  assert.deepEqual(parseServeRuntimeOptions(["--disable-admin-auth"], { isDeploy: false }), {
+  assert.deepEqual(parseServeRuntimeOptions(["--disable-admin-auth"], { isDeploy: false, isProductionTimeline: false }), {
     disableAdminAuth: true,
   });
-  assert.throws(() => parseServeRuntimeOptions(["--disable-admin-auth", "--disable-admin-auth"], { isDeploy: false }), /may only be specified once/);
-  assert.throws(() => parseServeRuntimeOptions(["--disable-admin-auth=true"], { isDeploy: false }), /Unknown server argument/);
-  assert.throws(() => parseServeRuntimeOptions(["--disable-auth"], { isDeploy: false }), /Unknown server argument/);
+  assert.throws(
+    () => parseServeRuntimeOptions(["--disable-admin-auth", "--disable-admin-auth"], { isDeploy: false, isProductionTimeline: false }),
+    /may only be specified once/
+  );
+  assert.throws(() => parseServeRuntimeOptions(["--disable-admin-auth=true"], { isDeploy: false, isProductionTimeline: false }), /Unknown server argument/);
+  assert.throws(() => parseServeRuntimeOptions(["--disable-auth"], { isDeploy: false, isProductionTimeline: false }), /Unknown server argument/);
 });
 
 test("disable-admin-auth is rejected in Deno Deploy", () => {
-  assert.throws(() => parseServeRuntimeOptions(["--disable-admin-auth"], { isDeploy: true }), /unavailable in Deno Deploy/);
+  assert.throws(() => parseServeRuntimeOptions(["--disable-admin-auth"], { isDeploy: true, isProductionTimeline: false }), /unavailable in Deno Deploy/);
+});
+
+test("disable-admin-auth is rejected on the production timeline", () => {
+  assert.throws(
+    () => parseServeRuntimeOptions(["--disable-admin-auth"], { isDeploy: false, isProductionTimeline: true }),
+    /unavailable on the production timeline/
+  );
+  assert.deepEqual(parseServeRuntimeOptions([], { isDeploy: false, isProductionTimeline: true }), { disableAdminAuth: false });
 });
 
 test("loopback detection accepts local TCP hostnames only", () => {
@@ -305,18 +315,50 @@ test("the production VPS timeline refuses unauthenticated loopback client reques
   });
 });
 
-type TimelineProbe = Readonly<{ isDeploy: boolean; isProductionTimeline: boolean; ok: boolean; method: string | null; status: number | null }>;
+test("the production timeline refuses a configured listener or Mac loopback bypass", async () => {
+  // Each enabler is reached in code, as a launcher would reach it; only the timeline differs.
+  const enablers: readonly (readonly [string, () => void])[] = [
+    ["listener", () => configureAdminAuthForListener(enabledOptions, tcpAddress("127.0.0.1"))],
+    ["mac", () => configureMacLocalAdminAuthBypassForListener(macListenerAddress)],
+  ];
+  const loopbackRequest = (path: string): Request => {
+    const request = new Request("http://127.0.0.1:7999" + path);
+    configureAdminAuthPeerForRequest(tcpAddress("127.0.0.1"), request);
+    return request;
+  };
+  for (const [name, enable] of enablers) {
+    enable();
+    try {
+      await withProductionTimeline(false, async () => {
+        assert.equal(isAdminAuthDisabledForRequest(loopbackRequest("/v1/models")), true, name);
+        assert.equal((await authenticateAdmin(loopbackRequest("/admin/api-keys"))).ok, true, name);
+      });
+      await withProductionTimeline(true, async () => {
+        assert.equal(isAdminAuthDisabledForRequest(loopbackRequest("/v1/models")), false, name);
+        const client = await authenticateClient(loopbackRequest("/v1/models"));
+        assert.equal(client.ok ? client.method.kind : client.response.status, 401, name);
+        const admin = await authenticateAdmin(loopbackRequest("/admin/api-keys"));
+        assert.equal(admin.ok ? admin.method.kind : admin.response.status, 401, name);
+        const whoami = await handleV1Auth(loopbackRequest("/uos/auth"));
+        assert.equal(whoami.status, 401, name);
+      });
+    } finally {
+      configureAdminAuthForListener(disabledOptions, tcpAddress("127.0.0.1"));
+    }
+  }
+});
 
-/** Loads config and client auth in a fresh process whose only timeline input is `DENO_TIMELINE`. */
-const probeLoopbackClientAuth = async (timeline: string | null): Promise<TimelineProbe> => {
+/** Runs `lines` after loading config and auth in a fresh process whose only timeline input is `DENO_TIMELINE`. */
+const runTimelineProbe = async (timeline: string | null, lines: readonly string[]): Promise<unknown> => {
   const module = (path: string): string => JSON.stringify(new URL(path, import.meta.url).href);
   const source = [
     `const { setKvForTest } = await import(${module("../src/kv.ts")});`,
     `const { config } = await import(${module("../src/config.ts")});`,
-    `const { authenticateClient } = await import(${module("../src/auth/index.ts")});`,
+    `const { authenticateAdmin, authenticateClient } = await import(${module("../src/auth/index.ts")});`,
+    `const localAdmin = await import(${module("../src/auth/local-admin.ts")});`,
     "setKvForTest(null);",
-    'const result = await authenticateClient(new Request("http://127.0.0.1:7999/v1/responses", { method: "POST", body: "{}" }));',
-    "console.log(JSON.stringify({ isDeploy: config.isDeploy, isProductionTimeline: config.isProductionTimeline, ok: result.ok, method: result.ok ? result.method.kind : null, status: result.ok ? null : result.response.status }));",
+    "const outcome = (result) => (result.ok ? result.method.kind : result.response.status);",
+    ...lines,
   ].join("\n");
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
   if (timeline !== null) env.DENO_TIMELINE = timeline;
@@ -330,25 +372,54 @@ const probeLoopbackClientAuth = async (timeline: string | null): Promise<Timelin
   });
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   assert.equal(code, 0, stderr);
-  return JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as TimelineProbe;
+  return JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
 };
+
+const probeLoopbackClientAuth = (timeline: string | null): Promise<unknown> =>
+  runTimelineProbe(timeline, [
+    'const result = await authenticateClient(new Request("http://127.0.0.1:7999/v1/responses", { method: "POST", body: "{}" }));',
+    "console.log(JSON.stringify({ isDeploy: config.isDeploy, isProductionTimeline: config.isProductionTimeline, ok: result.ok, method: result.ok ? result.method.kind : null, status: result.ok ? null : result.response.status }));",
+  ]);
 
 test("DENO_TIMELINE=production disables the loopback hostname client-auth bypass at startup", async () => {
   assert.deepEqual(await probeLoopbackClientAuth("production"), { isDeploy: false, isProductionTimeline: true, ok: false, method: null, status: 401 });
   assert.deepEqual(await probeLoopbackClientAuth(null), { isDeploy: false, isProductionTimeline: false, ok: true, method: "disabled", status: null });
 });
 
-test("the VPS entrypoint requires the production timeline and never enables a loopback auth bypass", async () => {
-  const source = await readFile(new URL("../scripts/serve-vps.ts", import.meta.url), "utf8");
-  assert.match(source, /if \(process\.env\.DENO_TIMELINE !== "production"\) throw /);
-  for (const enabler of [
-    "configureAdminAuthForListener",
-    "configureMacLocalAdminAuthBypassForListener",
-    "configureAdminAuthPeerForRequest",
-    "configureLoopbackServeRuntime",
-    "--disable-admin-auth",
-    "auth/local-admin",
-  ]) {
-    assert.equal(source.includes(enabler), false, enabler);
-  }
+// Whatever a launcher imports, the code itself refuses every development bypass on the production
+// timeline: the flag fails at parse time, and an enabled listener or Mac bypass grants nothing.
+const probeBypassEnablers = (timeline: string | null): Promise<unknown> =>
+  runTimelineProbe(timeline, [
+    'let flag = "accepted";',
+    "try {",
+    '  localAdmin.parseServeRuntimeOptions(["--disable-admin-auth"], config);',
+    "} catch (error) {",
+    "  flag = error.message;",
+    "}",
+    'const peer = { transport: "tcp", hostname: "127.0.0.1", port: 50000 };',
+    "const loopback = (path) => {",
+    '  const request = new Request("http://127.0.0.1:7999" + path);',
+    "  localAdmin.configureAdminAuthPeerForRequest(peer, request);",
+    "  return request;",
+    "};",
+    "const attempt = async (enable) => {",
+    "  enable();",
+    '  return { client: outcome(await authenticateClient(loopback("/v1/models"))), admin: outcome(await authenticateAdmin(loopback("/admin/api-keys"))) };',
+    "};",
+    'const listener = await attempt(() => localAdmin.configureAdminAuthForListener({ disableAdminAuth: true }, { transport: "tcp", hostname: "127.0.0.1", port: 7999 }));',
+    'const mac = await attempt(() => localAdmin.configureMacLocalAdminAuthBypassForListener({ transport: "tcp", hostname: "0.0.0.0", port: 7999 }));',
+    "console.log(JSON.stringify({ flag, listener, mac }));",
+  ]);
+
+test("DENO_TIMELINE=production refuses the disable-admin-auth flag and every enabled loopback bypass", async () => {
+  assert.deepEqual(await probeBypassEnablers("production"), {
+    flag: "[ai.ubq.fi] --disable-admin-auth is unavailable on the production timeline (DENO_TIMELINE=production).",
+    listener: { client: 401, admin: 401 },
+    mac: { client: 401, admin: 401 },
+  });
+  assert.deepEqual(await probeBypassEnablers(null), {
+    flag: "accepted",
+    listener: { client: "disabled", admin: "disabled" },
+    mac: { client: "disabled", admin: "disabled" },
+  });
 });
