@@ -14,11 +14,27 @@ const REMOTE_BACKEND_BASE = "https://ai.ubq.fi";
 // automatically to the hosted gateway.
 export const LOCAL_DEVELOPMENT_ADMIN_TOKEN = "local-dev-admin";
 
+const isIpv4Loopback = (hostname) => {
+  const octets = hostname.split(".");
+  if (octets.length !== 4) return false;
+  const parsed = octets.map((octet) => Number(octet));
+  return (
+    parsed.every(
+      (octet, index) => Number.isInteger(octet) && octet >= 0 && octet <= 255 && String(octet) === octets[index]
+    ) && parsed[0] === 127
+  );
+};
+
+const isIpv6Loopback = (hostname) => hostname === "::1" || hostname === "0:0:0:0:0:0:0:1";
+
 export const isLocalDevelopmentOrigin = () => {
   const location = globalThis.location;
   if (!location || String(location.protocol ?? "").toLowerCase() !== "http:") return false;
   const hostname = String(location.hostname ?? "").toLowerCase();
-  return hostname === "localhost" || hostname === "127.0.0.1";
+  const unbracketedHostname = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  return (
+    unbracketedHostname === "localhost" || isIpv6Loopback(unbracketedHostname) || isIpv4Loopback(unbracketedHostname)
+  );
 };
 
 const normalizeBaseChoice = (value) => {
