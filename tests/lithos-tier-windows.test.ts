@@ -103,10 +103,10 @@ const completion = (model: string): Response =>
     usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
   });
 
-const refusal = (waitMs: number): Response =>
+const refusal = (waitMs: number, retryable = true): Response =>
   Response.json(
     { error: { message: "Fixture input token limit", type: "input_tokens", code: "rate_limit_exceeded" } },
-    { status: 429, headers: { "retry-after-ms": String(waitMs) } }
+    { status: 429, headers: { "retry-after-ms": String(waitMs), ...(retryable ? {} : { "x-should-retry": "false" }) } }
   );
 
 /** Only the real Lithos HTTP destination is redirected to this disposable loopback server. */
@@ -202,6 +202,20 @@ Deno.test("real Lithos Chat and Responses HTTP dispatch returns to each recovere
     Date.now = originalNow;
     clearLithosFailoverWindows();
   }
+});
+
+Deno.test("a no-retry tier is not dispatched again after a later tier names the wait window", async () => {
+  await withHttpFixture(async ({ models, setHandler }) => {
+    setHandler((model, index) => {
+      if (index === 1) return refusal(1, false);
+      if (index <= 3) return refusal(1);
+      return completion(model);
+    });
+    const response = await dispatch("chat", ULTRA);
+    assert.equal(response.status, 200);
+    await response.text();
+    assert.deepEqual(models, [ULTRA, FAST, BASE, FAST]);
+  });
 });
 
 Deno.test("real Lithos HTTP transient failure does not fail over to another tier or provider", async () => {

@@ -30,7 +30,11 @@ export const setNativeCodexAuthHooksForTest = (value: NativeAuthHooks | null): v
 
 const nativeHome = (): string | null => {
   if (hooks?.codexHome) return hooks.codexHome;
-  if ((hooks?.os ?? Deno.build.os) !== "darwin" || config.isDeploy) return null;
+  const os = hooks?.os ?? Deno.build.os;
+  // Darwin keeps its original single-home behavior. Linux uses the same single home so the
+  // VPS gateway can delegate refresh to the local daemon; multiple homes stay out of scope,
+  // and a credential-home path is never trusted from a remote upload.
+  if ((os !== "darwin" && os !== "linux") || config.isDeploy) return null;
   try {
     const getEnv = hooks?.getEnv ?? ((name: string) => Deno.env.get(name));
     const codexHome = getEnv("CODEX_HOME");

@@ -67,6 +67,7 @@ import {
   lithosRateLimitWait,
   lithosRateLimitSnapshot,
   lithosRefusalWait,
+  lithosRetryProhibited,
   logLithosRateLimitFailover,
   logLithosRateLimitRefusal,
   logLithosRateLimitWait,
@@ -272,6 +273,8 @@ type LithosDispatchProgress = Readonly<{
   attemptModel: string;
   /** How many ladder tiers this cycle has already tried; 0 means only the requested tier. */
   ladderIndex: number;
+  /** Tiers whose refusal explicitly forbade another attempt during this request. */
+  noRetryModels: ReadonlySet<string>;
   /** Waited time spent so far, so the total pause stays bounded. */
   waitedMs: number;
   /** Absorbed pauses so far, so a stream of tiny windows cannot loop forever. */
@@ -321,31 +324,45 @@ const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Respon
  * saturated tier again. A refusal that names no window (or carries
  * `x-should-retry: false`) opens nothing and stays a per-request failover.
  */
-const lithosOpenFailoverWindowFrom = (modelRaw: string, refusal: Response, target: string): void => {
+const lithosOpenFailoverWindowFrom = (modelRaw: string, refusal: Response, target: string, refusedRung: string): void => {
   const window = lithosRateLimitWait(refusal.headers, Date.now());
   if (window === null) return;
-  lithosOpenFailoverWindow(modelRaw, Date.now(), window.waitMs, target);
+  lithosOpenFailoverWindow(modelRaw, Date.now(), window.waitMs, target, refusedRung);
 };
 
 /**
- * The next rung of the failover ladder for a refusal, or null once the ladder is
- * exhausted (the whole stack refused) and the request must wait out the vendor's
- * own window before retrying the requested tier.
+ * The next eligible rung of the failover ladder for a refusal, or null once the
+ * ladder is exhausted (the whole stack refused) and the request must wait out
+ * the vendor's own window before retrying an eligible tier.
  */
 const lithosFailoverProgress = (
   input: Readonly<{ modelRaw: string; usageContext: UsageContext | undefined }>,
   state: LithosDispatchProgress
 ): LithosDispatchProgress | null => {
-  const next = lithosFailoverLadderFor(input.modelRaw).at(state.ladderIndex);
-  if (next === undefined) return null;
-  logLithosRateLimitFailover({
-    request_id: input.usageContext?.requestId ?? null,
-    model: input.modelRaw,
-    sibling_model: next,
-    attempt: state.attempt,
-  });
-  recordLithosFailoverModel(input.usageContext, next);
-  return { ...state, attemptModel: next, ladderIndex: state.ladderIndex + 1 };
+  const ladder = lithosFailoverLadderFor(input.modelRaw);
+  for (let index = state.ladderIndex; index < ladder.length; index += 1) {
+    const next = ladder[index];
+    if (state.noRetryModels.has(next)) continue;
+    logLithosRateLimitFailover({
+      request_id: input.usageContext?.requestId ?? null,
+      model: input.modelRaw,
+      sibling_model: next,
+      attempt: state.attempt,
+    });
+    recordLithosFailoverModel(input.usageContext, next);
+    return { ...state, attemptModel: next, ladderIndex: index + 1 };
+  }
+  return null;
+};
+
+/** The highest tier that has not explicitly prohibited a retry, with its next ladder position. */
+const lithosRetryStart = (modelRaw: string, noRetryModels: ReadonlySet<string>): Readonly<{ attemptModel: string; ladderIndex: number }> | null => {
+  if (!noRetryModels.has(modelRaw)) return { attemptModel: modelRaw, ladderIndex: 0 };
+  const ladder = lithosFailoverLadderFor(modelRaw);
+  for (let index = 0; index < ladder.length; index += 1) {
+    if (!noRetryModels.has(ladder[index])) return { attemptModel: ladder[index], ladderIndex: index + 1 };
+  }
+  return null;
 };
 
 /** One pass: a terminal outcome, the state the next attempt runs from, or a deferral the streamed route opens its stream behind. */
@@ -388,27 +405,33 @@ const lithosDispatchPass = async (
     attempt: progressed.attempt,
     ...lithosRateLimitSnapshot(attempt.headers),
   });
-  // A refusal with a window deepens later requests to the next ladder tier; the
-  // window's target is re-derived per refusal, so fast refusing deepens it to
+  const noRetryModels = lithosRetryProhibited(attempt.headers)
+    ? new Set([...progressed.noRetryModels, progressed.attemptModel])
+    : progressed.noRetryModels;
+  const eligible = { ...progressed, noRetryModels };
+  // A refusal with a window deepens later requests to the next eligible ladder
+  // tier; the target is re-derived per refusal, so fast refusing deepens it to
   // the family's normal tier instead of bouncing back to saturated ultra.
-  const nextTier = lithosFailoverLadderFor(input.modelRaw).at(progressed.ladderIndex);
-  if (nextTier !== undefined) lithosOpenFailoverWindowFrom(input.modelRaw, attempt, nextTier);
-  const failover = lithosFailoverProgress(input, progressed);
+  const failover = lithosFailoverProgress(input, eligible);
   if (failover !== null) {
+    lithosOpenFailoverWindowFrom(input.modelRaw, attempt, failover.attemptModel, progressed.attemptModel);
     cancelResponseBody(attempt);
     return { kind: "retry", state: failover };
   }
-  // Both tiers refused (or this tier has no sibling). The vendor names its own
-  // reset instant on these refusals, so one bounded pause followed by a retry of
-  // the requested tier absorbs the refusal instead of surfacing it. Past the
-  // caps the refusal is relayed unchanged.
+  // The eligible ladder is exhausted (or this tier has no sibling). The vendor
+  // names its own reset instant on these refusals, so one bounded pause followed
+  // by a retry of an eligible tier absorbs the refusal instead of surfacing it.
+  // Past the caps the refusal is relayed unchanged.
   const planned = lithosRefusalWait(attempt.headers, progressed.waitedMs, progressed.waits, policy);
   if (planned !== null) {
+    const retryStart = lithosRetryStart(input.modelRaw, noRetryModels);
+    if (retryStart === null) return { kind: "result", result: await lithosAttemptOutcome(input, attempt, progressed.attemptModel) };
     const waitedMs = progressed.waitedMs + planned.waitMs;
     const nextState: LithosDispatchProgress = {
       attempt: progressed.attempt,
-      attemptModel: input.modelRaw,
-      ladderIndex: 0,
+      attemptModel: retryStart.attemptModel,
+      ladderIndex: retryStart.ladderIndex,
+      noRetryModels,
       waitedMs,
       waits: progressed.waits + 1,
     };
@@ -534,7 +557,7 @@ const dispatchLithosUpstreamResult = async (
   }
   return await runLithosDispatch(
     { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, waitedMs: 0, waits: 0 },
+    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, noRetryModels: new Set(), waitedMs: 0, waits: 0 },
     streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
     streamed
   );
