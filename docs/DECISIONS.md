@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## VPS join lifecycle bounds and conservative orphan handling - 2026-10-18
+
+For issue #1165, keep PID 1 rows about `ai-ubq-fi.service` out of request counts, but retain completed exit/restart timestamps as lifecycle evidence. Once a fully covered window has an unmatched admission before such a marker, persist `unavailable` / `terminal_lost`, stop its forward scan and release its slice pin. A startup notice, a mere stopping/starting notice or unrelated manager output is not evidence that an admitted request was lost. With `Type=simple`, a `Started` row can follow a live admission from the new process, so it never establishes this cutoff. Matched requests remain countable. Checkpoint schema 3 includes lifecycle markers and terminal-lost state; older schemas fail closed rather than silently discarding that evidence. This does not impose a new maximum stream lifetime or activate the standalone release bridge.
+
+Retain the conservative orphan-terminal rule from #1155: an unmatched accepted-stage or legacy null-stage terminal at or after a window's start can refuse that window even when `at - latency_ms - VPS_METRICS_SLICE_MS >= windowEnd`. Its reported latency bounds the backward admission search, but is not trusted to exclude it from the cohort. Ignoring it would let an under-reported latency hide a lost admission and produce falsely complete counts. Prefer a monitoring restart over that fail-open result; explicit `pre_admission` terminals remain excluded.
+
+Pending windows retain whole ledger slices. Evidence therefore grows with request rate times the longest in-flight lifetime, plus backward lookback and slice/proof overhead, until a terminal/lifecycle bound resolves the window or a configured limit refuses it. The hard byte cap is a refusal boundary, not a promise of constant-size or always-completable evidence. Sizing examples and the remaining no-lifecycle-marker limitation are in `ops/README.md`.
+
 ## Assistant output replay accepts and drops log probabilities - 2026-10-17
 
 Responses `output_text` accepts the official `logprobs` field when it is an array, including an empty array. Validation intentionally checks only the array shape, matching the existing `annotations` rule; neither field's entries affect generation. Both fields are dropped when constructing `MessageContentItem`, so the Codex subscription and paid provider request bodies carry only the replayed text. Non-array values retain a precise nested field error, non-assistant `output_text` remains invalid, and genuinely unknown fields remain rejected.
@@ -596,16 +604,17 @@ manifest is written only after a complete copy, so an interrupted rebuild is reb
 its `dsh-gnupg-<uid>` parent must be real directories owned by the caller and are forced to mode 0700; anything else
 fails closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
 
-Three rules were added on 2026-10-17 (#1141). A GnuPG configuration file in the seed (`gpg.conf` or a versioned
-`gpg.conf-<version>`, `gpg-agent.conf`, `scdaemon.conf`, `common.conf`, or any other top-level `*.conf` or `*.conf-*`)
-also stops the seed's agent and discards the seed: the helper never writes one, so it was planted from inside the
-sandbox, which can write `$TMPDIR`, and a planted `pinentry-program` would see the passphrase at the next agent start.
-The seed's parent is per user, `dsh-gnupg-<uid>`, rather than one `dsh-gnupg` shared by every user, and a seed left at
-the earlier `$TMPDIR/dsh-gnupg/<uid>` is discarded with its agent when this user owns that parent, together with the
-rebuild lock and any staging or set-aside copy an earlier helper left beside it (`<uid>.lock`, `<uid>.new.*`,
-`<uid>.old.*`). Each pass over the inputs hashes all of them with one digest process (a reused seed takes one pass, a
-rebuild a second one under the rebuild lock), because macOS `shasum` is a perl script and one process per file added a
-perl start per seeded file to every sandboxed commit.
+The #1141 helper changes from #1159 are combined with staged rebuilds (2026-10-18, #1168). A GnuPG configuration
+file in the seed (`gpg.conf` or a versioned `gpg.conf-<version>`, `gpg-agent.conf`, `scdaemon.conf`, `common.conf`, or any
+other top-level `*.conf` or `*.conf-*`, including dangling symlinks) invalidates the recorded manifest and stops the
+seed's agent before replacing the seed. The helper never writes configuration files, so one was planted from inside
+the sandbox; a planted `pinentry-program` could capture the passphrase at the next agent start. The seed's parent is
+per user, even when `TMPDIR` is unset and `/tmp` is shared. Under the new rebuild lock, the helper also stops the agent
+and removes this user's earlier `$TMPDIR/dsh-gnupg/<uid>` seed, rebuild locks and leftover staging/set-aside copies,
+but only when this user owns the real legacy parent and copies. Do not run an older installed helper concurrently during migration.
+Each manifest uses one digest process for all inputs: macOS `shasum` is a perl script, so one process per file added a
+perl start per seeded file to every sandboxed commit. A mismatch is re-hashed under the lock before copying, and all
+copies still go into the private stage, never into a published seed.
 
 Rebuilds are serialized and published whole (added 2026-10-17, #1139). Before this, every call that found a stale
 manifest stopped the agent, removed the shared seed, and rebuilt it in place, with no lock. Calls started together after
@@ -617,10 +626,19 @@ call (a mismatch, a missing seed, or a leftover copy beside it) waits for `<seed
 inputs, so a burst of calls after one change rebuilds once and the others reuse that seed. The holder copies the inputs
 into a private sibling (`<seed>.new.XXXXXX`) and records the manifest there. It then stops the seed's `gpg-agent`,
 renames the old seed aside (`<seed>.old.XXXXXX`), renames the new one into place, and only then removes the old one. No
-call writes into a seed that another call has published, and no call sees a partly copied seed. Leftover siblings from
-a killed rebuild are removed under the lock. A lock held for 15 seconds is treated as left by a killed holder and
-broken, and a waiter gives up (exit 2) after 60 seconds. A signing that is already running from the seed when an input
-changes can still fail, because the rebuild removes the old seed once the new one is in place.
+call writes into a seed that another call has published, and no call sees a partly copied seed. Leftover copies from
+a killed rebuild are removed under the lock, including any nested `*.new.*` or `*.old.*` copies. The post-publication
+check removes unexpected copies and fails closed if portable `mv` nested a stage rather than renaming it. A lock held
+for 15 seconds with no live owner is treated as left by a killed holder and broken. A live slow or hung holder
+retains the lock: taking it over by age alone would let that holder resume and publish alongside its replacement.
+Breakers serialize on `<seed>.lock.break` and re-check the owner under that gate before deleting; lock creation/owner
+writes and release use the same gate so
+neither a blank-owner observation nor delayed cleanup can delete a fresh lock. The owner is read before sampling the
+clock, and a future start time is treated as live, not stale (2026-10-18, #1168). Failed stale-lock removals return to
+waiting rather than aborting the signing, and a waiter gives up (exit 2) after 60 seconds. A SIGKILL while holding
+the short-lived breaker gate can leave it behind: callers time out fail-closed, and the owner must confirm no helper
+is running before removing that gate. A signing that is already running from the seed when an input changes can
+still fail, because the rebuild removes the old seed once the new one is in place.
 
 Reason: the sandbox exposes no configuration hook for adding writable roots — `writableRoots` takes only the policy and
 hard-codes the three roots — so the only durable fix inside the existing policy is to put the signing homedir where the
@@ -631,12 +649,11 @@ Reversal risk: pointing `gpg.program` back at the real `gpg` restores the denial
 private key to a stable non-writable-root location such as `~/.local/share` looks persistent but is unwritable under the
 restricted policy and silently reintroduces the escalation. The seed is not trusted to disappear by itself: `$TMPDIR`
 is not cleared at boot for every caller, and an unset `TMPDIR` falls back to `/tmp`. The manifest check on every call
-is what keeps the seed from becoming a second long-lived key store. Going back to a shared `$TMPDIR/dsh-gnupg` parent
-breaks every other user once one user owns it under a shared `/tmp`, and lets that owner swap a user's seed for a
-symbolic link between the helper's checks; dropping the configuration check lets a planted `gpg-agent.conf` survive
-until the next key change. Going back to a `pubring.kbx`-only trigger lets a deleted or re-protected secret key keep
-signing from the seed. Rebuilding in place, or without the lock, brings back the failed concurrent signings after an
-input change and the window in which a deleted key survives in a seed stamped as current.
+is what keeps the seed from becoming a second long-lived key store. Going back to a `pubring.kbx`-only trigger lets a
+deleted or re-protected secret key keep signing from the seed. Rebuilding in place, or without the lock, brings back
+the failed concurrent signings after an input change and the window in which a deleted key survives in a seed stamped
+as current. Dropping the planted-configuration check restores the pinentry-capture risk, and returning to a shared
+`dsh-gnupg` parent breaks other users under `/tmp` once one user owns it.
 
 ## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
 

@@ -45,7 +45,8 @@ test("only the explicitly selected e2e segment selects the live policy", () => {
     }
   }
   expect(groupsFor("files", ["tests/live-default-model.e2e.ts"]).map((group) => group.network)).toEqual([undefined]);
-  const [e2e] = groupsFor("e2e", []);
+  // Explicit fixture selection keeps this policy check independent of the current changed-path scope.
+  const [e2e] = groupsFor("e2e", ["tests/live-default-model.e2e.ts"]);
   expect(e2e.network).toBe("live");
   // The runner approves the same default origin the e2e file falls back to: one shared constant.
   expect(LIVE_E2E_DEFAULT_BASE_URL).toBe("https://ai.ubq.fi");
@@ -55,7 +56,7 @@ test("only the explicitly selected e2e segment selects the live policy", () => {
 });
 
 test("the runner builds every group's network boundary before the native build", () => {
-  const [e2e] = groupsFor("e2e", []);
+  const [e2e] = groupsFor("e2e", ["tests/live-default-model.e2e.ts"]);
   const built: { command: readonly string[]; policy: TestNetworkPolicy }[] = [];
   const missingMount = (command: readonly string[], policy: TestNetworkPolicy = {}): string[] => {
     built.push({ command, policy });

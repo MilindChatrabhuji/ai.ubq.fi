@@ -225,7 +225,7 @@ jobs:
   verify-artifact:
     needs: [scope, validate, native, mac-containment, darwin-native]
     if: ${{ always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && needs.native.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04-arm
     permissions:
       actions: read
       contents: read
