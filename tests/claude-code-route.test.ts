@@ -5,7 +5,8 @@ import { attemptClaudeCodeSubscription } from "../src/paid-fallback/claude-code-
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { CLAUDE_CODE_QUOTA_KV_KEY, clearClaudeCodeQuotaGuards, loadClaudeCodeQuotaState } from "../src/provider/claude-code-quota.ts";
+import { claudeCodeQuotaKey, clearClaudeCodeQuotaGuards, loadClaudeCodeQuotaState } from "../src/provider/claude-code-quota.ts";
+import { resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
 import { resetClaudeCodeCredentialCacheForTest, resolveClaudeCodeWorkspace } from "../src/provider/claude-code-credentials.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -14,6 +15,24 @@ const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 class RouteKv {
   readonly values = new Map<string, unknown>();
+
+  atomic() {
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (..._entries: unknown[]) => operation,
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => this.values.set(keyOf(key), value));
+        return operation;
+      },
+      commit: () => {
+        for (const write of writes) {
+          write();
+        }
+        return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+      },
+    };
+    return operation;
+  }
 
   get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
@@ -154,11 +173,13 @@ test("a durable subscription rejection falls through and blocks the tier until t
     const rejected = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher: rejection });
     assert.equal(rejected, null, "a rejected subscription never serves the request itself");
     assert.equal(captured.length, 0);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv);
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
     assert(quota, "the durable window block is persisted");
     assert.equal(quota.block_window, "5h");
     assert(quota.blocked_until_ms !== null && quota.blocked_until_ms > Date.now() + 3_600_000, "the reset margin is added to the upstream reset");
-    assert(kv.values.has(keyOf([...CLAUDE_CODE_QUOTA_KV_KEY])));
+    assert(kv.values.has(keyOf(claudeCodeQuotaKey(account))));
 
     const second = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher });
     assert.equal(second, null);
@@ -166,7 +187,7 @@ test("a durable subscription rejection falls through and blocks the tier until t
   });
 });
 
-test("a local request-build failure falls through without recording an upstream health event", async () => {
+test("a local lossless-build refusal cannot authorize paid continuation or an upstream health event", async () => {
   await withRouteKv(async (kv) => {
     captured.length = 0;
     const rejected = await attemptClaudeCodeSubscription(
@@ -175,7 +196,9 @@ test("a local request-build failure falls through without recording an upstream 
       { model, input: "hello", previous_response_id: "resp_123" },
       { model, usageContext, env: envLookup(env), fetcher }
     );
-    assert.equal(rejected, null);
+    assert(rejected);
+    assert.equal(rejected.response.status, 400);
+    assert.equal((await rejected.response.json()).error.code, "claude_code_request_invalid");
     assert.equal(captured.length, 0, "the transport must not run for a local build failure");
     assert.deepEqual(
       [...kv.values.keys()].filter((key) => key.includes("provider_health")),
@@ -185,7 +208,7 @@ test("a local request-build failure falls through without recording an upstream 
   });
 });
 
-test("a transient rate limit falls through with a short cooldown and no durable block", async () => {
+test("a transient rate limit retains its original failure without authorizing paid continuation", async () => {
   await withRouteKv(async (kv) => {
     const transient = (): Promise<Response> =>
       Promise.resolve(
@@ -195,8 +218,12 @@ test("a transient rate limit falls through with a short cooldown and no durable 
         })
       );
     const rejected = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher: transient });
-    assert.equal(rejected, null);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv);
+    assert(rejected);
+    assert.equal(rejected.response.status, 429);
+    assert.deepEqual(await rejected.response.json(), { type: "error", error: { type: "rate_limit_error" } });
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
     assert(quota, "the transient outcome is still recorded");
     assert.equal(quota.blocked_until_ms, null, "a generic 429 never becomes durable exhaustion");
     assert(quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());
@@ -364,8 +391,10 @@ test("a billing rejection becomes an operator-visible configuration state and sk
       { model, input: "hello" },
       { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
     );
-    assert.equal(rejected, null, "a billing rejection never serves the request itself");
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv);
+    assert.equal(rejected?.response.status, 400, "billing failure is preserved, not paid-fallback authority");
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
     assert(quota?.last_error?.message);
     assert.equal(quota.last_error.kind, "billing_blocked");
     assert(quota.last_error.message.includes("credit balance"));
@@ -374,15 +403,15 @@ test("a billing rejection becomes an operator-visible configuration state and sk
 
     const callsAfterFirst = captured.length;
     const second = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher });
-    assert.equal(second, null);
+    assert.equal(second?.response.status, 400);
     assert.equal(captured.length, callsAfterFirst, "the configuration cooldown keeps the tier from hammering the upstream");
 
-    await clearClaudeCodeQuotaGuards(kv as unknown as Kv);
+    await clearClaudeCodeQuotaGuards(kv as unknown as Kv, account);
     const afterClear = await attemptClaudeCodeSubscription(
       { model, input: "hello" },
       { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
     );
-    assert.equal(afterClear, null, "the rejection still cannot serve, but the tier was retried");
+    assert.equal(afterClear?.response.status, 400, "the original failure remains, but the tier was retried");
     assert.equal(captured.length, callsAfterFirst + 1, "clearing the guards retries the tier immediately");
   });
 });

@@ -1,4 +1,4 @@
-import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import type { AtomicCheck, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
@@ -52,10 +52,48 @@ delete process.env.SURPLUS_API_KEY;
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
 
-/** Minimal Kv stand-in: the selection paths only read and write one key. */
+/** Versioned KV stand-in for selection and account-discovery bootstrap. */
 class SelectionKv {
   readonly values = new Map<string, unknown>();
+  private readonly _versions = new Map<string, string>();
+  private _revision = 1;
   failReads = false;
+
+  private _version(key: KvKey): string | null {
+    return this.values.has(keyOf(key)) ? (this._versions.get(keyOf(key)) ?? "00000000000000000001") : null;
+  }
+
+  atomic() {
+    const checks: AtomicCheck[] = [];
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (...entries: AtomicCheck[]) => {
+        checks.push(...entries);
+        return operation;
+      },
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => {
+          this.values.set(keyOf(key), value);
+          this._versions.set(keyOf(key), String(this._revision).padStart(20, "0"));
+        });
+        return operation;
+      },
+      delete: (key: KvKey) => {
+        writes.push(() => {
+          this.values.delete(keyOf(key));
+          this._versions.delete(keyOf(key));
+        });
+        return operation;
+      },
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
+        if (checks.some((entry) => entry.versionstamp !== this._version(entry.key))) return Promise.resolve({ ok: false });
+        this._revision++;
+        for (const write of writes) write();
+        return Promise.resolve({ ok: true, versionstamp: String(this._revision).padStart(20, "0") });
+      },
+    };
+    return operation;
+  }
 
   get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     if (this.failReads) return Promise.reject(new Error("KV read failed"));
@@ -63,13 +101,16 @@ class SelectionKv {
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
-      versionstamp: stored === undefined ? null : "00000000000000000001",
+      versionstamp: this._version(key),
     } as KvEntryMaybe<T>);
   }
 
   set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+    this._revision++;
+    const versionstamp = String(this._revision).padStart(20, "0");
+    this._versions.set(keyOf(key), versionstamp);
+    return Promise.resolve({ ok: true, versionstamp });
   }
 
   storedSelection(): unknown {
