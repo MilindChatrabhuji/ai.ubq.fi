@@ -13,8 +13,10 @@ import { handleTerminalRoute } from "../src/handler/terminal-route.ts";
 import { getOpenRouterProviderHealth, resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { openRouterUpstreamModelFor, resolveOpenRouterUpstreamModel } from "../src/provider/openrouter.ts";
 import { handleOpenRouterChatCompletions, handleOpenRouterResponses } from "../src/provider/openrouter-handlers.ts";
+import { streamOpenRouterResponses } from "../src/provider/openrouter-streams.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
+import { ResponsesStreamError } from "../src/responses-stream.ts";
 import type { ApiKeyHashRecord } from "../src/types.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
@@ -502,6 +504,39 @@ Deno.test("openrouter responses relays native events and records the terminal", 
     assert.equal(telemetry.streamTerminalType, "response.completed");
     assert.equal(telemetry.outputTokens, 1);
   });
+});
+
+Deno.test("openrouter responses records a shared inactivity timeout as a deadline", async () => {
+  const telemetry = createResponseTelemetryState();
+  const failure = new ResponsesStreamError("inactive", { kind: "inactivity_timeout" });
+  const upstream = new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(failure);
+      },
+    }),
+    { status: 200, headers: { "content-type": "text/event-stream" } }
+  );
+  const response = streamOpenRouterResponses(upstream, null, streamUsageContext(telemetry), new AbortController().signal, new AbortController().signal);
+
+  await response.text();
+  assert.equal(telemetry.streamTerminalType, "deadline");
+  assert.equal(telemetry.failureKind, "inactivity_timeout");
+});
+
+Deno.test("openrouter responses records a shared premature EOF as eof", async () => {
+  const telemetry = createResponseTelemetryState();
+  const response = streamOpenRouterResponses(
+    sseResponse([`event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1"}}\n\n`]),
+    null,
+    streamUsageContext(telemetry),
+    new AbortController().signal,
+    new AbortController().signal
+  );
+
+  await response.text();
+  assert.equal(telemetry.streamTerminalType, "eof");
+  assert.equal(telemetry.failureKind, "premature_eof");
 });
 
 Deno.test("openrouter resolves a served id from a cold catalogue and stays cache-authoritative once warm", async () => {
