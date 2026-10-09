@@ -320,6 +320,75 @@ for (const wire of ["chat", "responses"] as const) {
   });
 }
 
+const refusalAdapter: ProviderStreamAdapter = {
+  responseHeaders: () => ({}),
+  frames: async function* () {
+    yield* ([] as ProviderStreamFrame[]);
+  },
+  recordResponseHealth: () => {},
+  recordProviderError: () => {},
+  recordCancellation: () => {},
+  recordIncompleteResponse: () => {},
+  recordFinishFailureKind: () => {},
+  recordTransportFailure: () => {},
+  terminalTypeForError: () => "response.failed",
+  streamErrorCode: "provider_gateway_timeout",
+  responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
+};
+
+for (const wire of ["chat", "responses"] as const) {
+  Deno.test(`Provider ${wire} distinguishes an upstream 504 from a local deadline`, async () => {
+    const downstream = new AbortController();
+    const request = new AbortController();
+    const refused = new Response(JSON.stringify({ error: { code: "provider_gateway_timeout", message: "provider gateway timed out" } }), { status: 504 });
+    const upstreamFailure =
+      wire === "chat"
+        ? relayChatCompletionStream(refusalAdapter, refused, null, undefined, downstream.signal, request.signal, "deepseek-flash")
+        : relayResponsesStream(refusalAdapter, {
+            upstream: refused,
+            requestedModel: "deepseek-flash",
+            responseId: "resp_refusal",
+            createdAtSeconds: 1,
+            echo: { tools: [], tool_choice: "auto", parallel_tool_calls: true, instructions: null },
+            toolNames: new Map(),
+            customToolNames: new Set(),
+            providerRequestId: null,
+            usageContext: undefined,
+            downstreamSignal: downstream.signal,
+            requestSignal: request.signal,
+            upstreamModel: "deepseek-flash",
+          });
+    const upstreamText = await upstreamFailure.text();
+    assert.match(upstreamText, /provider_gateway_timeout/);
+    assert.match(upstreamText, /provider gateway timed out/);
+
+    const localDeadline = new AbortController();
+    localDeadline.abort(new DOMException("Gateway deadline fixture", "TimeoutError"));
+    const localResponse = new Response(
+      JSON.stringify({ error: { code: "gateway_timeout", message: "Upstream request exceeded the gateway deadline." } }),
+      { status: 504 }
+    );
+    const localFailure =
+      wire === "chat"
+        ? relayChatCompletionStream(refusalAdapter, localResponse, null, undefined, downstream.signal, localDeadline.signal, "deepseek-flash")
+        : relayResponsesStream(refusalAdapter, {
+            upstream: localResponse,
+            requestedModel: "deepseek-flash",
+            responseId: "resp_deadline",
+            createdAtSeconds: 1,
+            echo: { tools: [], tool_choice: "auto", parallel_tool_calls: true, instructions: null },
+            toolNames: new Map(),
+            customToolNames: new Set(),
+            providerRequestId: null,
+            usageContext: undefined,
+            downstreamSignal: downstream.signal,
+            requestSignal: localDeadline.signal,
+            upstreamModel: "deepseek-flash",
+          });
+    assert.equal(await localFailure.text(), "");
+  });
+}
+
 Deno.test("Responses proxy releases an in-flight upstream read when its reader cancels", async () => {
   const probe = probeUpstream();
   const reader = proxyResponsesStream(probe.stream).getReader();

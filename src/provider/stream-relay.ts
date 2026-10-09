@@ -176,8 +176,9 @@ export const relayChatCompletionStream = (
     const detail = await readUpstreamStreamRefusal(refusal);
     // A wait the caller abandoned - a client cancellation, or the gateway's own
     // deadline - is not a provider refusal: it keeps its own terminal and emits
-    // no error frame, exactly like a stream interrupted mid-read.
-    if (detail.status === 499 || detail.status === 504) {
+    // no error frame, exactly like a stream interrupted mid-read. An upstream
+    // 504 is a refusal when the inference signal is still live.
+    if (detail.status === 499 || (detail.status === 504 && requestSignal.aborted)) {
       settleTerminal(detail.status === 499 ? "cancelled" : "deadline");
       if (detail.status === 499) adapter.recordCancellation(usageContext);
       else adapter.recordTransportFailure(usageContext, new Error("The gateway deadline passed while waiting for the provider retry window."), "deadline");
@@ -448,8 +449,9 @@ export const relayResponsesStream = (
     }
     const detail = await readUpstreamStreamRefusal(refusal);
     // The caller's own cancellation or deadline keeps its terminal and emits no
-    // error frame; only a provider refusal travels as one.
-    if (detail.status === 499 || detail.status === 504) {
+    // error frame; only a provider refusal travels as one. An upstream 504 is a
+    // refusal when the inference signal is still live.
+    if (detail.status === 499 || (detail.status === 504 && requestSignal.aborted)) {
       settleTerminal(detail.status === 499 ? "cancelled" : "deadline");
       if (detail.status === 499) adapter.recordCancellation(usageContext);
       else adapter.recordTransportFailure(usageContext, new Error("The gateway deadline passed while waiting for the provider retry window."), "deadline");
