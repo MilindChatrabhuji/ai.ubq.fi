@@ -18,6 +18,7 @@
  */
 
 import { buildCerebrasHarmonyRequest, type HarmonyRequestOptions, type HarmonyTransport, normalizeHarmonyChatCompletion, runHarmonyTurn } from "./adapter.ts";
+import { projectCerebrasRequest } from "../provider/cerebras.ts";
 import {
   type BootstrapClassifierRequestOptions,
   type BootstrapClassifierVerdict,
@@ -209,6 +210,12 @@ const rawMessageRole = (message: unknown): string => {
   return JSON.stringify(role);
 };
 
+/** Reads message roles after the same projection used by the Cerebras transport. */
+const projectedMessageRoles = (body: Record<string, unknown>): readonly string[] => {
+  const projected = projectCerebrasRequest(body);
+  return Array.isArray(projected.messages) ? projected.messages.map(rawMessageRole) : [];
+};
+
 /** Reads the wire `response_format.type` as the probe summary vocabulary. */
 const responseFormatOf = (body: Record<string, unknown>): ProbeRequestSummary["responseFormat"] => {
   const format = body.response_format;
@@ -221,7 +228,7 @@ const responseFormatOf = (body: Record<string, unknown>): ProbeRequestSummary["r
 const summarizeRawBody = (body: Record<string, unknown>): ProbeRequestSummary => {
   const tools = summarizeRawTools(body.tools);
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const roles = messages.map(rawMessageRole);
+  const roles = projectedMessageRoles(body);
   return {
     style: "generic",
     model: typeof body.model === "string" ? body.model : "?",
@@ -303,7 +310,7 @@ export const createProbeContext = (transport: HarmonyTransport, now: () => Date 
         const request: ProbeRequestSummary = {
           style: built.style,
           model: built.metadata.model,
-          roles: built.metadata.messageRoles,
+          roles: projectedMessageRoles(built.body),
           tools: built.metadata.toolEntries.length > 0 ? built.metadata.toolEntries : null,
           toolStrictnessValues: built.metadata.toolStrictnessValues,
           reasoningEffortTopLevel: built.metadata.reasoningEffortTopLevel,
@@ -461,7 +468,7 @@ export const createProbeContext = (transport: HarmonyTransport, now: () => Date 
       const request: ProbeRequestSummary = {
         style: "classifier",
         model: typeof body.model === "string" ? body.model : "?",
-        roles: ["system", "developer", "user"],
+        roles: projectedMessageRoles(body),
         tools: null,
         toolStrictnessValues: [],
         reasoningEffortTopLevel: null,

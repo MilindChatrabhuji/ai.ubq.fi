@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
-import type { HarmonyTransport } from "../src/harmony/adapter.ts";
-import { createProbeContext } from "../src/harmony/probes.ts";
+import { createCerebrasTransport, type HarmonyTransport } from "../src/harmony/adapter.ts";
+import { createProbeContext, user } from "../src/harmony/probes.ts";
 import { PROBE_SCENARIOS } from "../src/harmony/probe-scenarios.ts";
 
 type WireMessage = Record<string, unknown> & { role: string; content?: unknown };
@@ -147,6 +147,24 @@ Deno.test("reasoning effort probe runs deterministically through the fake transp
   assert.equal(result.turns[0].response.contentPreview, "4");
   assert.deepEqual(result.turns[0].request?.roles, ["user"]);
   assert.equal(result.durationMs, 0);
+});
+
+Deno.test("native probe records the projected Cerebras message roles", async () => {
+  let wireRoles: unknown[] = [];
+  const transport = createCerebrasTransport({
+    apiKey: "test-key",
+    fetcher: (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      wireRoles = Array.isArray(body.messages) ? body.messages.map((message) => (message as Record<string, unknown>).role) : [];
+      return Promise.resolve(new Response(scriptedCompletion({ content: "done" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    },
+  });
+  const ctx = createProbeContext(transport, () => new Date(0));
+  const result = await ctx.runTurn(user("hello"), { style: "native" });
+
+  assert.equal(result.record.outcome, "ok");
+  assert.deepEqual(wireRoles, ["system", "user"]);
+  assert.deepEqual(result.record.request?.roles, ["system", "user"]);
 });
 
 Deno.test("generic tool sequence reproduces call/result shape and replays the result", async () => {
