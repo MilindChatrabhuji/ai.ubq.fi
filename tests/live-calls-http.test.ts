@@ -416,12 +416,8 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    let fixture: LiveCallsFixture | null = null;
-    fixture = await startLiveCallsFixture(async (accountId) => {
+    const fixture = await startLiveCallsFixture((accountId) => {
       if (accountId !== ACCOUNT_A) return acceptedAnswer();
-      // The failing account leaves the pool while its rejection is in flight,
-      // so the retry's strong reselection has exactly one eligible account.
-      await fixture?.setAuthPool([codexAccount(ACCOUNT_B, Date.now())]);
       return Response.json({ detail: "credential expired" }, { status: 401 });
     });
     try {

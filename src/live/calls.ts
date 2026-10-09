@@ -3,7 +3,7 @@
 
 import { CODEX_QUOTA_BLOCKED_ERROR_CODE, CodexError, getAuthPoolEntry } from "../codex/auth.ts";
 import { getCurrentAccountEntry, getValidAuth } from "../codex/auth-refresh.ts";
-import { selectCodexRoutingAccountsStrong } from "../codex/account-routing.ts";
+import { markCodexCredentialInvalid, reconcileCodexRoutingAccount, selectCodexRoutingAccountsStrong } from "../codex/account-routing.ts";
 import {
   awaitPendingCodexProbeTransitions,
   fetchCodexResponseWithAuth,
@@ -160,7 +160,7 @@ const selectLiveCallAccount = async (attemptedAccountIds: ReadonlySet<string>, m
   return { ok: true, account };
 };
 
-type LiveCallAttempt = Readonly<{ ok: true; accountId: string; auth: CodexAuthState }> | Readonly<{ ok: false; response: Response }>;
+type LiveCallAttempt = Readonly<{ ok: true; accountId: string; routing: RoutingAccount; auth: CodexAuthState }> | Readonly<{ ok: false; response: Response }>;
 
 /**
  * Routing selects the account; the credential that is actually dispatched comes
@@ -175,7 +175,12 @@ const resolveLiveCallAttempt = async (attemptedAccountIds: ReadonlySet<string>, 
   const accountId = selection.account.auth.account_id;
   try {
     const current = await getCurrentAccountEntry(accountId, true);
-    return { ok: true, accountId, auth: await getValidAuth(current) };
+    const auth = await getValidAuth(current);
+    const routing =
+      auth.access_token === selection.account.auth.access_token && auth.refresh_token === selection.account.auth.refresh_token
+        ? selection.account
+        : await reconcileCodexRoutingAccount(selection.account, auth);
+    return { ok: true, accountId, routing, auth };
   } catch (error) {
     if (error instanceof CodexError) {
       const status = error.status === 401 || error.status === 404 || error.status === 429 ? error.status : 503;
@@ -244,7 +249,7 @@ export const handleLiveCallCreate = async (req: Request, principal: string): Pro
   for (let attempt = 1; attempt <= LIVE_CALL_MAX_UPSTREAM_ATTEMPTS; attempt += 1) {
     const resolved = await resolveLiveCallAttempt(attemptedAccountIds, model);
     if (!resolved.ok) return captured ?? resolved.response;
-    const { accountId, auth } = resolved;
+    const { accountId, routing, auth } = resolved;
     attemptedAccountIds.add(accountId);
 
     let upstream: Response;
@@ -257,9 +262,14 @@ export const handleLiveCallCreate = async (req: Request, principal: string): Pro
     await recordCodexResponseHealth(accountId, upstream, auth, "success");
 
     const credentialFailure = upstream.status === 401 || upstream.status === 403;
-    if (!credentialFailure || attempt === LIVE_CALL_MAX_UPSTREAM_ATTEMPTS) return await relayLiveCallResponse(upstream, accountId, principal);
-    // The retry re-evaluates durable routing, so any transition the recorded
-    // failure started must be observable first. The serial selector exposes one
+    if (!credentialFailure) return await relayLiveCallResponse(upstream, accountId, principal);
+    // Passive provider health does not participate in account eligibility. Fence
+    // the credential before the strong reselection so the attempted-account
+    // filter does not turn the bounded retry into the captured first failure.
+    await markCodexCredentialInvalid(routing);
+    if (attempt === LIVE_CALL_MAX_UPSTREAM_ATTEMPTS) return await relayLiveCallResponse(upstream, accountId, principal);
+    // The retry re-evaluates durable routing after the credential fence, so any
+    // transition it started must be observable first. The serial selector exposes one
     // eligible account at a time, and only a reselection that offers a different
     // one (a credential fence or a pool change) turns this into a real retry.
     await awaitPendingCodexProbeTransitions();
