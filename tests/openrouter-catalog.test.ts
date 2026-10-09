@@ -272,6 +272,30 @@ Deno.test("codex catalog: an empty whitelist is no filter and OpenRouter rows st
   });
 });
 
+Deno.test("codex catalog: the metered fallback omits disabled OpenRouter rows with an empty whitelist", async () => {
+  await withFixture([], async () => {
+    kvStore.set(keyToString([...PROVIDER_SELECTION_KV_KEY]), {
+      value: { provider_ids: ["codex", "deepseek"], updated_at_ms: 1 },
+      versionstamp: nextVersion(),
+    });
+    resetProviderSelectionCacheForTest();
+    Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve(new Response("unavailable", { status: 503 }));
+    try {
+      const response = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as { models: Record<string, unknown>[] };
+      const slugs = payload.models.map((model) => model.slug);
+      assert.equal(slugs.includes("vendor/alpha"), false);
+      assert.equal(slugs.includes("vendor/beta"), false);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 Deno.test("codex catalog: an active whitelist filters a fresh stored-catalog hit instead of short-circuiting", async () => {
   await withFixture(["gpt-0.100.0"], async () => {
     kvStore.set(keyToString([...PROVIDER_SELECTION_KV_KEY]), { value: { provider_ids: ["codex"], updated_at_ms: 1 }, versionstamp: nextVersion() });
