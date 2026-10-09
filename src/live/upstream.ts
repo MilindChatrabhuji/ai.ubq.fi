@@ -158,3 +158,17 @@ export const readLiveCallMapping = async (callId: string): Promise<LiveCallMappi
     return null;
   }
 };
+
+/** Retires a call after the upstream says that it no longer exists. */
+export const retireLiveCallMapping = async (callId: string): Promise<void> => {
+  const kv = await getKv();
+  if (!kv) return;
+  try {
+    await kv.delete(liveCallAccountKey(callId));
+  } catch (error) {
+    console.warn(
+      "[ai.ubq.fi] live_call_account_mapping_retire_failed",
+      JSON.stringify({ call_id: callId, reason: error instanceof Error ? error.name : "unknown" })
+    );
+  }
+};
