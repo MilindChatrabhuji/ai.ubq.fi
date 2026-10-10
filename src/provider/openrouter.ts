@@ -67,7 +67,9 @@ export const openRouterUpstreamModelFor = (model: string): string | null => {
  */
 export const resolveOpenRouterUpstreamModel = async (model: string): Promise<string | null> => {
   const resolved = openRouterUpstreamModelFor(model);
-  if (resolved !== null || openRouterModelsSnapshot() !== null) return resolved;
+  const trimmed = model.trim();
+  const separator = trimmed.indexOf("/");
+  if (resolved !== null || openRouterModelsSnapshot() !== null || separator <= 0 || separator === trimmed.length - 1) return resolved;
   if (readOpenRouterApiKey() === null) return null;
   await fetchOpenRouterModels().catch(() => null);
   return openRouterUpstreamModelFor(model);

@@ -513,6 +513,9 @@ Deno.test("openrouter resolves a served id from a cold catalogue and stays cache
     return Promise.resolve(jsonResponse(catalogue));
   }) as typeof fetch);
   try {
+    resetOpenRouterModelsCacheForTest();
+    assert.equal(await resolveOpenRouterUpstreamModel("gpt-5-codex"), null, "a Codex-shaped id does not refresh a cold catalogue");
+    assert.equal(fetches, 0);
     assert.equal(await resolveOpenRouterUpstreamModel("vendor/alpha"), "vendor/alpha", "a cold cache refreshes before refusing a served id");
     assert.equal(fetches, 1);
     assert.equal(await resolveOpenRouterUpstreamModel("vendor/gamma"), null, "a warm cache stays authoritative");

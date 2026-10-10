@@ -832,7 +832,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   // OpenRouter serves the Responses wire natively; only an id in its served
   // catalogue takes this branch, and a switched-off provider leaves its ids to
   // the ordinary availability check.
-  if (requestedModel && (await resolveOpenRouterUpstreamModel(requestedModel)) && isProviderEnabled("openrouter", await loadProviderSelectionCached())) {
+  if (requestedModel && isProviderEnabled("openrouter", await loadProviderSelectionCached()) && (await resolveOpenRouterUpstreamModel(requestedModel))) {
     return await handleOpenRouterResponses(req, rawRecord, requestedModel, usageContext);
   }
   return await runOrdinaryResponsesTail(req, rawRecord, rawBody, usageContext);
