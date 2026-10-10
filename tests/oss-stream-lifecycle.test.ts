@@ -320,6 +320,73 @@ for (const wire of ["chat", "responses"] as const) {
   });
 }
 
+Deno.test("Provider relays cancel a late deferred response without reading it", async () => {
+  const adapter: ProviderStreamAdapter = {
+    responseHeaders: () => ({}),
+    frames: iterateDeepSeekChatCompletionStream,
+    recordResponseHealth: () => {},
+    recordProviderError: () => {},
+    recordCancellation: () => {},
+    recordIncompleteResponse: () => {},
+    recordFinishFailureKind: () => {},
+    recordTransportFailure: () => {},
+    terminalTypeForError: () => "cancelled",
+    streamErrorCode: "upstream_stream_error",
+    responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
+  };
+  for (const wire of ["chat", "responses"] as const) {
+    const lateUpstream = probeUpstream();
+    let resolvePending: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      resolvePending = resolve;
+    });
+    let pendingResolved = false;
+    const signal = new AbortController().signal;
+    const pendingDispatch = new AbortController();
+    let pendingCancellationCount = 0;
+    const cancelPending = (reason?: unknown): void => {
+      pendingCancellationCount += 1;
+      pendingDispatch.abort(reason);
+    };
+    const response =
+      wire === "chat"
+        ? relayChatCompletionStream(adapter, pending, null, undefined, signal, signal, "deepseek-flash", cancelPending)
+        : relayResponsesStream(adapter, {
+            upstream: pending,
+            requestedModel: "deepseek-flash",
+            responseId: "resp_deferred_cancel",
+            createdAtSeconds: 1,
+            echo: { tools: [], tool_choice: "auto", parallel_tool_calls: true, instructions: null },
+            toolNames: new Map(),
+            customToolNames: new Set(),
+            providerRequestId: null,
+            usageContext: undefined,
+            downstreamSignal: signal,
+            requestSignal: signal,
+            upstreamModel: "deepseek-flash",
+            cancelPending,
+          });
+    const reader = response.body?.getReader();
+    assert.ok(reader);
+    const pendingRead = reader.read();
+    try {
+      await reader.cancel("client disconnected");
+      assert.equal(pendingCancellationCount, 1, "client cancellation must reach the deferred dispatch");
+      assert.equal(pendingDispatch.signal.aborted, true);
+      pendingResolved = true;
+      resolvePending(new Response(lateUpstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      assert.equal(await settlesWithin(pendingRead, 500), true, "the abandoned downstream read must settle");
+      assert.equal(await settlesWithin(lateUpstream.cancelled, 500), true, "the late upstream body must be cancelled");
+      assert.equal(lateUpstream.cancelCount(), 1, "the late upstream body must be cancelled exactly once");
+      assert.equal(lateUpstream.started(), 0, "cancellation must not start an upstream read");
+    } finally {
+      if (!pendingResolved) resolvePending(new Response(lateUpstream.stream));
+      await reader.cancel("test cleanup").catch(() => {});
+      await releaseProbe(lateUpstream);
+    }
+  }
+});
+
 Deno.test("Responses proxy releases an in-flight upstream read when its reader cancels", async () => {
   const probe = probeUpstream();
   const reader = proxyResponsesStream(probe.stream).getReader();
