@@ -272,11 +272,23 @@ type LithosDispatchProgress = Readonly<{
   attemptModel: string;
   /** How many ladder tiers this cycle has already tried; 0 means only the requested tier. */
   ladderIndex: number;
-  /** Waited time spent so far, so the total pause stays bounded. */
+  /** Planned wait time so far, so the total pause stays bounded. */
   waitedMs: number;
+  /** Actual time spent waiting so far, for terminal telemetry. */
+  elapsedWaitMs: number;
   /** Absorbed pauses so far, so a stream of tiny windows cannot loop forever. */
   waits: number;
 }>;
+
+/** Waits out one planned window while recording the elapsed time, including an abort. */
+const waitForLithosRateLimit = async (input: LithosDispatchInput, plannedWaitMs: number, elapsedWaitMs: number): Promise<number> => {
+  let elapsed = 0;
+  await waitForLithosRetry(plannedWaitMs, input.requestSignal, (measuredMs) => {
+    elapsed = measuredMs;
+    recordLithosRateLimitWaitMs(input.usageContext, elapsedWaitMs + measuredMs);
+  });
+  return elapsed;
+};
 
 /** One provider attempt with the route's transport hooks. */
 const lithosDispatchAttempt = async (
@@ -410,6 +422,7 @@ const lithosDispatchPass = async (
       attemptModel: input.modelRaw,
       ladderIndex: 0,
       waitedMs,
+      elapsedWaitMs: progressed.elapsedWaitMs,
       waits: progressed.waits + 1,
     };
     if (defer) {
@@ -427,11 +440,10 @@ const lithosDispatchPass = async (
       waited_ms: waitedMs,
       cap_ms: LITHOS_REFUSAL_WAIT_CAP_MS,
     });
-    recordLithosRateLimitWaitMs(input.usageContext, waitedMs);
     // The refused body is never read, so it is released here.
     cancelResponseBody(attempt);
-    await waitForLithosRetry(planned.waitMs, input.requestSignal);
-    return { kind: "retry", state: nextState };
+    const elapsedWaitMs = await waitForLithosRateLimit(input, planned.waitMs, progressed.elapsedWaitMs);
+    return { kind: "retry", state: { ...nextState, elapsedWaitMs: progressed.elapsedWaitMs + elapsedWaitMs } };
   }
   // This pass is terminal: its refusal body is read by the responders below, so
   // it must not be cancelled here (only the discarded attempts above are).
@@ -474,12 +486,16 @@ const runLithosDispatch = async (
         waited_ms: pass.state.waitedMs,
         cap_ms: LITHOS_REFUSAL_WAIT_CAP_MS,
       });
-      recordLithosRateLimitWaitMs(input.usageContext, pass.state.waitedMs);
       return {
         pending: (async (): Promise<LithosDispatchOutcome> => {
           try {
-            await waitForLithosRetry(pass.planned.waitMs, input.requestSignal);
-            const continued = await runLithosDispatch(input, pass.state, policy, false);
+            const elapsedWaitMs = await waitForLithosRateLimit(input, pass.planned.waitMs, pass.state.elapsedWaitMs);
+            const continued = await runLithosDispatch(
+              input,
+              { ...pass.state, elapsedWaitMs: pass.state.elapsedWaitMs + elapsedWaitMs },
+              policy,
+              false
+            );
             if ("pending" in continued) throw new Error("A resumed LithosAI dispatch cannot defer again.");
             return continued;
           } catch (error) {
@@ -534,7 +550,7 @@ const dispatchLithosUpstreamResult = async (
   }
   return await runLithosDispatch(
     { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, waitedMs: 0, waits: 0 },
+    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, waitedMs: 0, elapsedWaitMs: 0, waits: 0 },
     streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
     streamed
   );
