@@ -1624,3 +1624,25 @@ the last resort rather than be skipped by a chat-only wire record, and the pin c
 found. Reversal risk: the paid hops depend on their own tier credentials and catalog records, so a model missing from
 one paid catalog now fails that hop closed instead of advancing to the sibling tier within the same hop; the next hop in
 the waterfall still runs, and the pin only narrows one request's paid selection.
+
+## Owner-only Claude Code subscription tier - 2026-10-11
+
+`claude_code` is a new selectable provider, second in roster order after `codex` and first for Claude models on the
+request path. It speaks the native Anthropic Messages wire (`https://api.anthropic.com/v1/messages`) with the
+subscriber's own credential through `Authorization: Bearer` plus `anthropic-version: 2023-06-01` and
+`anthropic-beta: oauth-2025-04-20`, and no synthesized client fingerprint. Every gate is conjunctive and deliberate: the
+operator selection must keep the provider on, `CLAUDE_CODE_OAUTH_TOKEN` must hold a credential (v1: the documented
+one-year `claude setup-token` token), the request principal's key id must be in `CLAUDE_CODE_ALLOWED_KEY_IDS` (no
+wildcard, empty allowlist means nobody), and no authoritative quota window may still block. Any missing gate leaves the
+request on the unchanged paid path, and a dormant tier costs no storage read. Durable exhaustion is recorded only from
+the documented `anthropic-ratelimit-unified-*` evidence on a rejection, blocked until the upstream reset plus a margin;
+a generic 429 becomes only a short local cooldown, and 401/403 never permanently label the account. The tier is off by
+default: no credential and no allowlist exist in the deployment until the owner adds them.
+
+Reason: the operator asked to add Claude Code subscription support to the gateway; the 2026-10-11 research (docs/
+research/claude-code-subscription-2026-10-11.md) rates a hosted gateway serving other users on the owner's Pro/Max
+credentials RED and an owner-gated proxy AMBER, so the implemented scope is strictly owner-only, fails over to the paid
+waterfall on every failure, and never reuses the Codex plumbing to serve team traffic. Reversal risk: the AMBER verdict
+means Anthropic has not clearly authorized this exact bridge; the owner must accept that residual account risk in
+writing before live activation, and a stored provider selection written after this change must include `claude_code` to
+keep the tier servable, exactly like every other provider.
