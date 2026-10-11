@@ -160,9 +160,9 @@ export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): P
   if (milliseconds <= 0) return Promise.resolve();
   if (signal.aborted) {
     return Promise.reject(
-      signal.reason instanceof Error
-        ? signal.reason
-        : new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
+      signal.reason === undefined
+        ? new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
+        : signal.reason
     );
   }
   return new Promise<void>((resolve, reject) => {
@@ -173,9 +173,9 @@ export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): P
     function onAbort(): void {
       clearTimeout(timer);
       reject(
-        signal.reason instanceof Error
-          ? signal.reason
-          : new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
+        signal.reason === undefined
+          ? new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
+          : signal.reason
       );
     }
     signal.addEventListener("abort", onAbort, { once: true });
