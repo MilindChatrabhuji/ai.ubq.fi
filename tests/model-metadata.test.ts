@@ -242,11 +242,12 @@ Deno.test("a default-only Codex null remains explicit none while an omitted defa
   }
 });
 
-Deno.test("the versioned catalog publishes a default-only source and keeps an unknown model none-only", async () => {
-  const { handleModels } = await import("../src/models/catalog.ts");
+Deno.test("catalogs do not publish none for a source with only low and high tiers", async () => {
+  const { handleModelCapabilities, handleModels } = await import("../src/models/catalog.ts");
   const { setKvForTest } = await import("../src/kv.ts");
   const { CountingKv } = await import("./helpers/counting-kv.ts");
   const { resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
+  const { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/provider/metered.ts");
   const { resetProviderSelectionCacheForTest } = await import("../src/provider/selection.ts");
   const keys = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "METERED_API_KEY", "SURPLUS_API_KEY", "OPENROUTER_API_KEY"];
   const originals = keys.map((key) => Deno.env.get(key));
@@ -261,7 +262,16 @@ Deno.test("the versioned catalog publishes a default-only source and keeps an un
     await fetchOpenRouterModels({
       force: true,
       fetcher: () =>
-        Promise.resolve(Response.json({ data: [{ id: "synthetic/default-only", reasoning: { default_effort: "high" } }, { id: "synthetic/unknown" }] })),
+        Promise.resolve(
+          Response.json({
+            data: [
+              { id: "synthetic/default-only", reasoning: { default_effort: "high" } },
+              { id: "synthetic/tiers-only", reasoning: { supported_efforts: ["low", "high"] } },
+              { id: "synthetic/paid-tiers-only", reasoning: { supported_efforts: ["low", "high"] } },
+              { id: "synthetic/unknown" },
+            ],
+          })
+        ),
     });
     const response = await handleModels(new Request("https://ai.ubq.fi/v1/models?client_version=0.200.0"));
     assert.equal(response.status, 200);
@@ -270,11 +280,41 @@ Deno.test("the versioned catalog publishes a default-only source and keeps an un
     assert.equal(declared?.default_reasoning_level, "high");
     assert.deepEqual(declared.supported_reasoning_levels, [{ effort: "high", description: "Reasoning effort: high" }]);
     assert.equal(resolveModelMetadata("synthetic/default-only").reasoning_source, "openrouter");
+    const tiersOnly = payload.models.find((model) => model.slug === "synthetic/tiers-only");
+    assert.ok(tiersOnly);
+    assert.deepEqual(tiersOnly.supported_reasoning_levels, [
+      { effort: "low", description: "Reasoning effort: low" },
+      { effort: "high", description: "Reasoning effort: high" },
+    ]);
+    assert.equal("default_reasoning_level" in tiersOnly, false);
     const unknown = payload.models.find((model) => model.slug === "synthetic/unknown");
     assert.equal(unknown?.default_reasoning_level, "none");
     assert.deepEqual(unknown.supported_reasoning_levels, [{ effort: "none", description: "No reasoning" }]);
     assert.equal(resolveModelMetadata("synthetic/unknown").reasoning_source, "unknown");
+
+    Deno.env.set("METERED_API_KEY", "synthetic-metered-key");
+    resetMeteredModelsCacheForTest();
+    setMeteredModelsFetchForTest(() =>
+      Promise.resolve(
+        Response.json({
+          data: [{ id: "synthetic/paid-tiers-only", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        })
+      )
+    );
+    const capabilitiesResponse = await handleModelCapabilities();
+    assert.equal(capabilitiesResponse.status, 200);
+    const capabilities = (await capabilitiesResponse.json()) as { data: Record<string, unknown>[] };
+    const tiersOnlyCapabilities = capabilities.data.find((model) => model.id === "synthetic/tiers-only");
+    assert.ok(tiersOnlyCapabilities);
+    assert.deepEqual(tiersOnlyCapabilities.supported_reasoning_levels, ["low", "high"]);
+    assert.equal("default_reasoning_effort" in tiersOnlyCapabilities, false);
+    const paidTiersOnlyCapabilities = capabilities.data.find((model) => model.id === "synthetic/paid-tiers-only");
+    assert.ok(paidTiersOnlyCapabilities);
+    assert.deepEqual(paidTiersOnlyCapabilities.supported_reasoning_levels, ["low", "high"]);
+    assert.equal("default_reasoning_effort" in paidTiersOnlyCapabilities, false);
   } finally {
+    setMeteredModelsFetchForTest(null);
+    resetMeteredModelsCacheForTest();
     setKvForTest(null);
     resetCodexAuthCacheForTest();
     resetProviderSelectionCacheForTest();
