@@ -435,7 +435,10 @@ export const dispatchDeepSeekUpstream = async (
   usageContext: UsageContext | undefined
 ): Promise<DeepSeekDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
-  const requestSignal = inferenceSignal(req, usageContext);
+  // Streaming owns a renewable first-event/inactivity deadline in the stream
+  // reader. The buffered signal would remain attached for the entire stream
+  // and cut off a healthy generation at its absolute wall-clock limit.
+  const requestSignal = body.stream === true ? downstreamSignal : inferenceSignal(req, usageContext);
   let upstream: Response;
   let bodyDiagnostic: Record<string, unknown> | undefined;
   try {

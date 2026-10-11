@@ -1,6 +1,7 @@
 // openai-compat suite, part 10 of 12: tests moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
+import { BUFFERED_INFERENCE_DEADLINE_MS } from "../src/inference-deadline.ts";
 import { deepSeekChatBodyDiagnostic } from "../src/upstream-wire.ts";
 import {
   DEEPSEEK_CHAT_COMPLETIONS_URL,
@@ -451,6 +452,43 @@ Deno.test("openai: DeepSeek official Chat Completions adapter streams natively a
       // The first frame is readable while the upstream response is still open.
       assert.equal(observed.firstText, firstFrame);
       assert.equal(observed.rest, "data: [DONE]\n\n");
+    });
+
+    await t.step("keeps a producing stream alive past the buffered deadline", async () => {
+      const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+      const bufferedDeadline = new AbortController();
+      const deadlineTimer = setTimeout(() => bufferedDeadline.abort(new DOMException("buffered deadline", "TimeoutError")), 20);
+      const firstFrame = `data: ${JSON.stringify(streamChunk({ content: "first" }))}\n\n`;
+      const secondFrame = `data: ${JSON.stringify(streamChunk({ content: "second" }, { finish_reason: "stop" }))}\n\n`;
+      let cancelled = false;
+      const upstream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(TEXT_ENCODER.encode(firstFrame));
+          await new Promise<void>((resolve) => setTimeout(resolve, 60));
+          if (cancelled) return;
+          controller.enqueue(TEXT_ENCODER.encode(`${secondFrame}data: [DONE]\n\n`));
+          controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+
+      (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = (milliseconds) =>
+        milliseconds === BUFFERED_INFERENCE_DEADLINE_MS ? bufferedDeadline.signal : originalTimeout(milliseconds);
+      try {
+        const response = await withFetchMock(
+          () => new Response(upstream, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+          () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: true }))
+        );
+        assert.equal(response.status, 200);
+        assert.equal(await response.text(), `${firstFrame}${secondFrame}data: [DONE]\n\n`);
+        // The stream path must not install the buffered signal; its reader's
+        // first-event watchdog becomes renewable inactivity instead.
+      } finally {
+        clearTimeout(deadlineTimer);
+        (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = originalTimeout;
+      }
     });
 
     await t.step("forwards the bounded upstream error without relaying unlisted provider headers", async () => {
