@@ -62,6 +62,27 @@ Deno.test("deepseek responses: maps Responses input onto Chat messages", () => {
   ]);
 });
 
+Deno.test("deepseek responses: preserves reasoning between merged tool calls", () => {
+  const result = toDeepSeekChatMessages([
+    { type: "reasoning", summary: [{ type: "summary_text", text: "A" }] },
+    { type: "function_call", name: "first", arguments: "{}", call_id: "call_a" },
+    { type: "reasoning", summary: [{ type: "summary_text", text: "B" }] },
+    { type: "function_call", name: "second", arguments: "{}", call_id: "call_b" },
+  ], null);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, [
+    {
+      role: "assistant",
+      content: null,
+      reasoning_content: "AB",
+      tool_calls: [
+        { id: "call_a", type: "function", function: { name: "first", arguments: "{}" } },
+        { id: "call_b", type: "function", function: { name: "second", arguments: "{}" } },
+      ],
+    },
+  ]);
+});
+
 Deno.test("deepseek responses: rejects input shapes it cannot translate", () => {
   const badRole = toDeepSeekChatMessages([{ type: "message", role: "system", content: "x" }], null);
   assert.equal(badRole.ok, false);
