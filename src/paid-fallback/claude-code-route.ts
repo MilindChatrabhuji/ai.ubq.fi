@@ -12,6 +12,7 @@ import { ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
 import { type RoutedResponsesUpstream, recordFirstProviderDispatch, type UsageContext } from "../openai-telemetry.ts";
 import { bestEffortPaidFallbackBookkeeping, codexCacheScopeForUsageContext } from "./health.ts";
 import {
+  ClaudeCodeError,
   fetchClaudeCodeResponses,
   readClaudeCodeAllowedKeyIds,
   readClaudeCodeToken,
@@ -72,6 +73,10 @@ export const attemptClaudeCodeSubscription = async (
   const quotaKv = await getKv();
   const eligibility = resolveClaudeCodeEligibility({ ...cheapGates, quota: await loadClaudeCodeQuotaState(quotaKv) });
   if (!eligibility.eligible) return null;
+  // The API-key reservation records exactly one pre-transport dispatch per
+  // request, so a failed subscription attempt keeps this request's first
+  // attribution exactly as a failed Codex primary already does; the paid hop
+  // that ultimately serves receives no second dispatch context by design.
 
   let result: Awaited<ReturnType<typeof fetchClaudeCodeResponses>>;
   try {
@@ -89,7 +94,13 @@ export const attemptClaudeCodeSubscription = async (
   } catch (error) {
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
     if (options.signal?.aborted) throw options.signal.reason ?? error;
-    await bestEffortPaidFallbackBookkeeping("claude_code failure recording", () => recordClaudeCodeProviderHealth("upstream_error", null));
+    // A local build failure never reached the upstream, so it must not record
+    // an upstream health event; only real transport failures degrade the route.
+    const localRequestFailure =
+      error instanceof ClaudeCodeError && (error.code === "claude_code_request_invalid" || error.code === "claude_code_credential_missing");
+    if (!localRequestFailure) {
+      await bestEffortPaidFallbackBookkeeping("claude_code failure recording", () => recordClaudeCodeProviderHealth("upstream_error", null));
+    }
     return null;
   }
 
