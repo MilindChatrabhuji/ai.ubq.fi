@@ -56,6 +56,27 @@ const messagesOf = (call: UpstreamCall | undefined): Record<string, unknown>[] =
   return messages as Record<string, unknown>[];
 };
 
+Deno.test("cerebras chat: a reasoning-only null completion fails closed", async () => {
+  await withCerebrasKey(async () => {
+    const response = await withFetchMock(
+      () => chatCompletion({ role: "assistant", content: null, reasoning: "Budget spent mid-thought." }, "length"),
+      () =>
+        handleChatCompletions(
+          specialProviderChatRequest({
+            model: QWEN,
+            reasoning_effort: "none",
+            stream: false,
+            messages: [{ role: "user", content: "Explain everything." }],
+          })
+        )
+    );
+
+    assert.equal(response.status, 502);
+    const payload = (await response.json()) as { error?: { code?: string } };
+    assert.equal(payload.error?.code, "cerebras_upstream_invalid_response");
+  });
+});
+
 Deno.test("cerebras chat: a replayed assistant reasoning_content is absent upstream while content and the tool round trip survive", async () => {
   await withCerebrasKey(async () => {
     const calls: UpstreamCall[] = [];
