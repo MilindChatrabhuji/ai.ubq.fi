@@ -107,13 +107,14 @@ const parseChatCompletionsEnvelope = async (
   if (!body || !isRecord(body)) return { ok: false, response: openaiError(400, "Invalid JSON body", "invalid_request_error") };
 
   const rawRecord = body as Record<string, unknown>;
-  // The DeepSeek route dispatches before the Codex/paid path and speaks the
+  // The enabled DeepSeek route dispatches before the Codex/paid path and speaks the
   // provider's own documented Chat contract, which includes `thinking`. Accept
   // that one field there so a first-party DeepSeek client can reach this route
   // at all; every other route keeps the strict OpenAI allowlist. The field is
   // read for its documented semantics (it selects thinking mode) and is not
   // forwarded verbatim: `projectDeepSeekRequest` owns the wire translation.
-  const isDeepSeekRoute = deepSeekUpstreamModelFor(getString(rawRecord.model)?.trim() ?? "") !== null;
+  const selection = await loadProviderSelectionCached();
+  const isDeepSeekRoute = isProviderEnabled("deepseek", selection) && deepSeekUpstreamModelFor(getString(rawRecord.model)?.trim() ?? "") !== null;
   const providerExtensions = isDeepSeekRoute ? DEEPSEEK_CHAT_EXTENSION_KEYS : await openRouterPromptCacheRequestExtensions(rawRecord);
   const unknownKey = findUnknownKey(rawRecord, CHAT_COMPLETIONS_ALLOWED_KEYS, providerExtensions);
   if (unknownKey) {

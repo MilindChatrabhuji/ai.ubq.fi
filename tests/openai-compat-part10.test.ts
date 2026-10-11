@@ -20,7 +20,34 @@ import {
   specialProviderResponsesRequest,
   sseResponse,
   withFetchMock,
+  withProviderSelection,
 } from "./helpers/openai-compat-harness.ts";
+
+Deno.test("openai: DeepSeek thinking is rejected when the direct provider is disabled", async () => {
+  await withProviderSelection(["codex"], async () => {
+    let dispatched = false;
+    const response = await withFetchMock(
+      () => {
+        dispatched = true;
+        throw new Error("a disabled DeepSeek route must not reach the ordinary bridge");
+      },
+      () =>
+        handleChatCompletions(
+          specialProviderChatRequest({
+            model: DEEPSEEK_V4_FLASH_MODEL,
+            messages: [{ role: "user", content: "Say hello." }],
+            thinking: { type: "enabled" },
+            stream: false,
+          })
+        )
+    );
+    assert.equal(response.status, 400);
+    const payload = (await response.json()) as { error?: { message?: unknown; type?: unknown } };
+    assert.equal(payload.error?.type, "invalid_request_error");
+    assert.match(String(payload.error?.message), /thinking/);
+    assert.equal(dispatched, false);
+  });
+});
 
 Deno.test("openai: DeepSeek official Chat Completions adapter streams natively and stays content-safe", async (t) => {
   const envKey = "DEEPSEEK_API_KEY";
