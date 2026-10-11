@@ -105,13 +105,12 @@ Deno.test("chat projection: a message item normalizes its role and content shape
   assert.deepEqual(messagesOf([{ type: "message", role: "assistant", content: [{ type: "refusal", refusal: "no" }] }]), [{ role: "assistant", content: "no" }]);
 });
 
+Deno.test("chat projection: a system message item is forwarded as a system turn", () => {
+  assert.deepEqual(messagesOf([{ type: "message", role: "system", content: "system rules" }]), [{ role: "system", content: "system rules" }]);
+});
+
 Deno.test("chat projection: every malformed content shape is rejected with its param", () => {
   assert.deepEqual(rejectionOf([42]), { ok: false, param: "input", message: "input items must be objects" });
-  assert.deepEqual(rejectionOf([{ type: "message", role: "system", content: "x" }]), {
-    ok: false,
-    param: "input.role",
-    message: "input role 'system' is not supported",
-  });
   assert.deepEqual(rejectionOf([{ type: "message", role: "user", content: 42 }]), {
     ok: false,
     param: "input.content",
