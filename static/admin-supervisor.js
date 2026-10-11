@@ -548,6 +548,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const revision = text(entry.revision) ?? "";
       const existing = followSeen.get(key);
       if (existing) {
+        // Keep evicted keys as tombstones: the server can re-emit a changed
+        // entry below the cursor, but it must not re-enter the retained window.
+        if (existing.evicted) continue;
         // The same item index can gain command output, status and an exit code
         // later; update the rendered entry in place instead of appending.
         if (existing.revision === revision) continue;
@@ -558,14 +561,20 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const wrapper = document.createElement("div");
       wrapper.dataset.followKey = key;
       fillFollowEntry(wrapper, entry);
-      followSeen.set(key, { node: wrapper, revision });
+      followSeen.set(key, { node: wrapper, revision, evicted: false });
       followLog.append(wrapper);
     }
     while (followLog.childElementCount > FOLLOW_ENTRY_LIMIT) {
       const oldest = followLog.firstElementChild;
       if (!oldest) break;
       const trimmedKey = oldest.dataset.followKey;
-      if (trimmedKey) followSeen.delete(trimmedKey);
+      if (trimmedKey) {
+        const trimmed = followSeen.get(trimmedKey);
+        if (trimmed) {
+          trimmed.evicted = true;
+          trimmed.node = null;
+        }
+      }
       oldest.remove();
     }
     const age = formatClock(payload.sampledAtMs);

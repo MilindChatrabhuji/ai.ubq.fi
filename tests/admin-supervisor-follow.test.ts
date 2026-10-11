@@ -50,6 +50,10 @@ class FakeElement {
     return this.children.length;
   }
 
+  get firstElementChild(): FakeElement | null {
+    return this.children[0] ?? null;
+  }
+
   append(...nodes: FakeElement[]): void {
     for (const node of nodes) {
       node.parentElement = this;
@@ -241,10 +245,12 @@ const createHarness = () => {
   };
 };
 
-const entriesFrame = (text: string) => {
-  const payload = { entries: [{ key: `late:${text}`, kind: "message", text }], sampledAtMs: 1_790_000_000_001 };
+const followEntriesFrame = (entries: unknown[]) => {
+  const payload = { entries, sampledAtMs: 1_790_000_000_001 };
   return `event: entries\ndata: ${JSON.stringify(payload)}\n\n`;
 };
+
+const entriesFrame = (text: string) => followEntriesFrame([{ key: `late:${text}`, kind: "message", text }]);
 
 Deno.test("a late abort rejection from a superseded follow never reports against or clears the new session", async () => {
   const harness = createHarness();
@@ -305,6 +311,44 @@ Deno.test("the owning follow still consumes frames and cleans up when the stream
     harness.endRead("thread-a");
     await flush();
     assert.equal(harness.followStatus.textContent, "Follow stream closed. Select the session again to resume recorded output.");
+  } finally {
+    harness.restore();
+  }
+});
+
+Deno.test("an update to an evicted follow entry cannot displace newer output", async () => {
+  const harness = createHarness();
+  try {
+    harness.view.setActive(true);
+    await flush();
+    harness.clickFollow("local:thread-a");
+    await flush();
+
+    const initialEntries = Array.from({ length: 201 }, (_, index) => ({
+      key: `entry:${index}`,
+      kind: "message",
+      text: `entry ${index}`,
+      revision: "1",
+    }));
+    harness.resolveRead("thread-a", followEntriesFrame(initialEntries));
+    await flush();
+    const retainedKeys = Array.from({ length: 200 }, (_, index) => `entry:${index + 1}`);
+    assert.deepEqual(
+      harness.followLog.children.map((entry) => entry.dataset.followKey),
+      retainedKeys,
+      "the initial trim removes only the oldest entry",
+    );
+
+    harness.resolveRead(
+      "thread-a",
+      followEntriesFrame([{ key: "entry:0", kind: "message", text: "updated entry 0", revision: "2" }]),
+    );
+    await flush();
+    assert.deepEqual(
+      harness.followLog.children.map((entry) => entry.dataset.followKey),
+      retainedKeys,
+      "a revision of the evicted entry must not append after newer output or evict it",
+    );
   } finally {
     harness.restore();
   }
