@@ -129,6 +129,7 @@ Deno.test("a narrower third-party entry never shrinks a first-party window", () 
     openRouter: enrichment({ context_window_tokens: 300_000, max_context_window_tokens: 300_000 }),
   });
   assert.equal(resolved.context_window_tokens, 400_000);
+  assert.equal(resolved.max_context_window_tokens, 400_000);
   assert.equal(resolved.context_source, "codex_upload");
 });
 
