@@ -160,6 +160,25 @@ Deno.test("a durable subscription rejection falls through and blocks the tier un
   });
 });
 
+Deno.test("a local request-build failure falls through without recording an upstream health event", async () => {
+  await withRouteKv(async (kv) => {
+    captured.length = 0;
+    const rejected = await attemptClaudeCodeSubscription(
+      // `previous_response_id` has no lossless native Messages representation,
+      // so the request fails locally before any transport exists.
+      { model, input: "hello", previous_response_id: "resp_123" },
+      { model, usageContext, env: envLookup(env), fetcher }
+    );
+    assert.equal(rejected, null);
+    assert.equal(captured.length, 0, "the transport must not run for a local build failure");
+    assert.deepEqual(
+      [...kv.values.keys()].filter((key) => key.includes("provider_health")),
+      [],
+      "no upstream health event may be recorded when nothing reached the upstream"
+    );
+  });
+});
+
 Deno.test("a transient rate limit falls through with a short cooldown and no durable block", async () => {
   await withRouteKv(async (kv) => {
     const transient = (): Promise<Response> =>
