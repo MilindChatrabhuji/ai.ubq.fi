@@ -96,12 +96,18 @@ export const paidProviderErrorStatus = (error: unknown): number | null =>
  * - OpenLux reports an exhausted wallet as 403 with `local:insufficient_quota`
  *   in the body, which is quota exhaustion and not an auth fault.
  * - Surplus rejects transiently saturated requests with a fast 402 that is not
- *   a balance signal, so it is recorded as an upstream error.
+ *   a balance signal, so it is recorded as an upstream error. Its
+ *   `insufficient_credit` response is the balance-signal exception.
  * This is local to the paid-provider path; Codex account health is untouched.
  */
-const paidProviderHealthEvent = (provider: "metered" | "surplus", status: number | null, meteredQuotaExhausted: boolean): PaidProviderHealthEvent | null => {
+const paidProviderHealthEvent = (
+  provider: "metered" | "surplus",
+  status: number | null,
+  meteredQuotaExhausted: boolean,
+  surplusQuotaExhausted = false
+): PaidProviderHealthEvent | null => {
   if (status === 401 || status === 403) return provider === "metered" && meteredQuotaExhausted ? "quota_exhausted" : "auth_invalid";
-  if (status === 402 || status === 429) return provider === "surplus" && status === 402 ? "upstream_error" : "quota_exhausted";
+  if (status === 402 || status === 429) return provider === "surplus" && status === 402 && !surplusQuotaExhausted ? "upstream_error" : "quota_exhausted";
   if (status === null || status >= 500) return "upstream_error";
   if (status >= 100) return "reachable";
   return null;
@@ -110,9 +116,10 @@ const paidProviderHealthEvent = (provider: "metered" | "surplus", status: number
 export const paidProviderHealthClassification = (
   provider: "metered" | "surplus",
   status: number | null,
-  meteredQuotaExhausted: boolean
+  meteredQuotaExhausted: boolean,
+  surplusQuotaExhausted = false
 ): PaidProviderHealthClassification | null => {
-  const event = paidProviderHealthEvent(provider, status, meteredQuotaExhausted);
+  const event = paidProviderHealthEvent(provider, status, meteredQuotaExhausted, surplusQuotaExhausted);
   return event ? { event, status } : null;
 };
 
@@ -137,14 +144,35 @@ export const meteredForbiddenIndicatesQuotaExhaustion = async (response: Respons
   }
 };
 
+/**
+ * Surplus uses HTTP 402 for both transient saturation and an exhausted credit
+ * balance. Inspect only a clone so the provider response remains deliverable.
+ */
+export const surplus402IndicatesQuotaExhaustion = async (response: Response, signal: AbortSignal | undefined): Promise<boolean> => {
+  if (response.status !== 402) return false;
+  const { bytes, complete } = await readBoundedResponseBody(response.clone(), { signal, cancellationReason: "Surplus 402 classification read" });
+  if (!complete) return false;
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    if (!isRecord(payload)) return false;
+    const error = isRecord(payload.error) ? payload.error : payload;
+    const code = typeof error?.code === "string" ? error.code.trim().toLowerCase() : "";
+    const type = typeof error?.type === "string" ? error.type.trim().toLowerCase() : "";
+    return code === "insufficient_credit" || type === "insufficient_credit";
+  } catch {
+    return false;
+  }
+};
+
 export const recordPaidProviderResponseHealth = async (
   provider: "metered" | "surplus",
   status: number | null,
   providerRequestId: string | null = null,
-  meteredQuotaExhausted = false
+  meteredQuotaExhausted = false,
+  surplusQuotaExhausted = false
 ): Promise<void> => {
   try {
-    const classification = paidProviderHealthClassification(provider, status, meteredQuotaExhausted);
+    const classification = paidProviderHealthClassification(provider, status, meteredQuotaExhausted, surplusQuotaExhausted);
     if (!classification) return;
     const record = provider === "surplus" ? recordSurplusProviderHealth : recordMeteredProviderHealth;
     await record(classification.event, status, Date.now, providerRequestId);
@@ -484,7 +512,8 @@ export const fetchTemporaryFreeSurplusRoutedResponses = async (
     recordFirstProviderHeaders(options.usageContext);
     const providerRequestId = normalizeProviderRequestId(result.request_id);
     recordTemporarySurplusMetadata(telemetry, result, providerRequestId);
-    await recordPaidProviderResponseHealth("surplus", result.response.status, providerRequestId);
+    const surplusQuotaExhausted = await surplus402IndicatesQuotaExhaustion(result.response, options.signal);
+    await recordPaidProviderResponseHealth("surplus", result.response.status, providerRequestId, false, surplusQuotaExhausted);
     return {
       response: result.response,
       provider: "surplus",

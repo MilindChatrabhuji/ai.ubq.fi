@@ -173,6 +173,36 @@ Deno.test("openai: paid-provider health classification follows the provider body
       assert.equal(surplusHealth.last_provider_request_id, "surplus-402-request");
       assert.notEqual(surplusHealth.state, "exhausted");
     });
+
+    await t.step("a Surplus 402 with insufficient_credit records quota exhaustion", async () => {
+      clearMeteredAndSurplusProviderHealth();
+      resetProviderHealthThrottleForTest();
+      await seedPaidFallthroughProviders();
+      let surplusCalls = 0;
+      let meteredCalls = 0;
+      const response = await runRequest("surplus-402-credit", (url) => {
+        if (url === "https://api.surplusintelligence.ai/v1/responses") {
+          surplusCalls += 1;
+          return new Response(JSON.stringify({ error: { message: "insufficient balance", code: "insufficient_credit" } }), {
+            status: 402,
+            headers: { "Content-Type": "application/json", "X-Oneapi-Request-Id": "surplus-402-credit-request" },
+          });
+        }
+        assert.equal(url, "https://api.openlux.ai/v1/responses");
+        meteredCalls += 1;
+        return sseResponse(baseSseChunks());
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      assert.equal(surplusCalls, 1);
+      assert.equal(meteredCalls, 1);
+      await response.text();
+      const surplusHealth = await getSurplusProviderHealth();
+      assert.equal(surplusHealth.last_event, "quota_exhausted");
+      assert.equal(surplusHealth.last_status, 402);
+      assert.equal(surplusHealth.last_provider_request_id, "surplus-402-credit-request");
+      assert.equal(surplusHealth.state, "exhausted");
+    });
   } finally {
     atomicCommitObservation.observer = previousAtomicObserver;
     resetMeteredModelsCacheForTest();
