@@ -2193,6 +2193,7 @@ const rememberCapacityChartScroll = () => {
   const plotLeft = Number(svg.dataset.capacityChartPlotLeft);
   const plotWidth = Number(svg.dataset.capacityChartPlotWidth);
   const atNewestEdge = maximum <= 1 || maximum - scrollLeft <= 2;
+  capacityChartFollowsLatest = atNewestEdge;
   capacityChartScrollState = {
     atNewestEdge,
     anchorAtMs: !atNewestEdge && clientWidth > 0 && Number.isFinite(startAtMs) && Number.isFinite(durationMs) &&
@@ -2678,8 +2679,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   chartScrollControls.append(olderButton, newerButton);
 
   const syncCapacityChartScroll = () => {
-    capacityChartFollowsLatest = capacityChartScrollMaximum(chartScroll) <= 1 ||
-      capacityChartScrollMaximum(chartScroll) - chartScroll.scrollLeft <= 2;
     rememberCapacityChartScroll();
     updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
   };

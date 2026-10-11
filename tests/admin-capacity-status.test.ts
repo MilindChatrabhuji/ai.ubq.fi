@@ -86,6 +86,74 @@ Deno.test("unavailable, stale and expired access retain warnings, while inferenc
   }
 });
 
+type CapacityScrollNode = {
+  clientWidth: number;
+  offsetWidth: number;
+  scrollWidth: number;
+  scrollLeft: number;
+  querySelector: (_selector: string) => { dataset: Record<string, string> } | null;
+};
+
+let visibleCapacityScroll: CapacityScrollNode | null = null;
+const capacityScrollContext = {
+  providerCapacityChart: {
+    querySelector: () => visibleCapacityScroll,
+  },
+};
+const markerStart = sourceText.indexOf("const capacityChartMarkerX");
+const markerEnd = sourceText.indexOf("const capacityChartPromptCacheBuckets", markerStart);
+const scrollStart = sourceText.indexOf("const capacityChartScrollMaximum");
+const scrollEnd = sourceText.indexOf("const capacityChartOptimalSpendCoordinates", scrollStart);
+assert.ok(markerStart >= 0 && markerEnd > markerStart, "shipped capacity marker fixture boundary");
+assert.ok(scrollStart >= 0 && scrollEnd > scrollStart, "shipped capacity scroll fixture boundary");
+runInNewContext(
+  [
+    "let capacityChartScrollState = null;",
+    "let capacityChartFollowsLatest = true;",
+    sourceText.slice(markerStart, markerEnd),
+    sourceText.slice(scrollStart, scrollEnd),
+    "globalThis.remember = rememberCapacityChartScroll; globalThis.restore = restoreCapacityChartScroll;",
+  ].join("\n"),
+  capacityScrollContext,
+  { timeout: 1000 },
+);
+const capacityScrollPresenter = capacityScrollContext as typeof capacityScrollContext & {
+  remember: () => void;
+  restore: (scroll: CapacityScrollNode, displayWindow: { startAtMs: number; durationMs: number }, plot: { left: number; width: number }) => void;
+};
+
+Deno.test("capacity refresh preserves a scrolled anchor before the queued scroll event", () => {
+  const svg = {
+    dataset: {
+      capacityChartStartAtMs: "0",
+      capacityChartDurationMs: "1000",
+      capacityChartPlotLeft: "10",
+      capacityChartPlotWidth: "1000",
+    },
+  };
+  const oldScroll: CapacityScrollNode = {
+    clientWidth: 100,
+    offsetWidth: 100,
+    scrollWidth: 500,
+    scrollLeft: 150,
+    querySelector: () => svg,
+  };
+  visibleCapacityScroll = oldScroll;
+  capacityScrollPresenter.remember();
+
+  const refreshedScroll: CapacityScrollNode = {
+    clientWidth: 100,
+    offsetWidth: 100,
+    scrollWidth: 600,
+    scrollLeft: 0,
+    querySelector: () => svg,
+  };
+  visibleCapacityScroll = refreshedScroll;
+  capacityScrollPresenter.restore(refreshedScroll, { startAtMs: 0, durationMs: 1000 }, { left: 10, width: 1000 });
+
+  assert.equal(refreshedScroll.scrollLeft, 150);
+});
+
 const retentionContext = { errorsRetention: new TestElement() };
 runInNewContext(
   [
