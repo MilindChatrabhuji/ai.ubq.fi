@@ -8,6 +8,7 @@ import { readJsonBody } from "./request.ts";
 import { type RemovedProviderCircuitProbe } from "./provider/removed-provider-circuit.ts";
 import { fetchMeteredModels } from "./provider/metered.ts";
 import { loadProviderSelectionCached } from "./provider/selection.ts";
+import { validateOpenRouterPromptCacheRequestControl } from "./provider/openrouter-request-controls.ts";
 import { resolvePaidRoutingState } from "./paid-fallback/health.ts";
 import { DEEPSEEK_WATERFALL_PAID_MODEL_ID } from "./deepseek/waterfall.ts";
 import { isGatewayFailoverWarningItem } from "./responses-failover-stream.ts";
@@ -127,10 +128,19 @@ export const readResponsesRequest = async (
   return { ok: true, value: { rawBody, rawRecord: rawBody as Record<string, unknown> } };
 };
 
-export const validateResponsesRequestFields = (rawRecord: Record<string, unknown>, rawBody: ResponsesRequest): Response | null => {
-  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, CODEX_RESPONSES_EXTENSION_KEYS);
+export const validateResponsesRequestFields = (
+  rawRecord: Record<string, unknown>,
+  rawBody: ResponsesRequest,
+  providerExtensions?: ReadonlySet<string>
+): Response | null => {
+  const extensions = providerExtensions ? new Set([...CODEX_RESPONSES_EXTENSION_KEYS, ...providerExtensions]) : CODEX_RESPONSES_EXTENSION_KEYS;
+  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, extensions);
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+  }
+  if (providerExtensions?.has("cache_control")) {
+    const invalidCacheControl = validateOpenRouterPromptCacheRequestControl(rawRecord);
+    if (invalidCacheControl) return invalidCacheControl;
   }
   const maxOutputTokens = rawRecord.max_output_tokens;
   if (

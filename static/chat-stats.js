@@ -30,13 +30,13 @@ export const readChatCompletionUsage = (value) => {
     : null;
   const cacheWriteInputTokens = promptTokenDetails && "cache_write_tokens" in promptTokenDetails
     ? getNonNegativeInteger(promptTokenDetails.cache_write_tokens)
-    : 0;
+    : null;
 
   return {
     inputTokens,
     outputTokens,
     cachedInputTokens: cachedInputTokens !== null && cachedInputTokens <= inputTokens ? cachedInputTokens : null,
-    cacheWriteInputTokens: cacheWriteInputTokens ?? 0,
+    cacheWriteInputTokens,
   };
 };
 

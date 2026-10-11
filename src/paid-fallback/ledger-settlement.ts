@@ -286,13 +286,24 @@ const recordSettlementGrowthV3 = async (kv: Deno.Kv, settledRow: PaidFallbackReq
   });
 };
 
+const settlementSpendMicrocredits = (
+  providerQuota: number,
+  quotaPerCredit: number,
+  correlation: "provider_request_id" | "surplus_reservation",
+  surplusBuyerCostMicro?: number
+): number => {
+  if (correlation === "surplus_reservation" && surplusBuyerCostMicro !== undefined) return surplusBuyerCostMicro;
+  return Math.round((providerQuota * MICROCREDITS_PER_CREDIT) / quotaPerCredit);
+};
+
 const settlePaidFallbackRequestV3 = async (
   kv: Deno.Kv,
   keyId: string,
   requestId: string,
   providerLog: MeteredTokenLogEntry,
   now: number,
-  correlation: "provider_request_id" | "surplus_reservation" = "provider_request_id"
+  correlation: "provider_request_id" | "surplus_reservation" = "provider_request_id",
+  surplusBuyerCostMicro?: number
 ): Promise<Readonly<{ settled: boolean; retry_delay_ms: number | null }>> => {
   const requestKey = paidFallbackRequestV3Key(keyId, requestId);
   const pendingKey = paidFallbackPendingV3Key(keyId, requestId);
@@ -315,7 +326,7 @@ const settlePaidFallbackRequestV3 = async (
     if (!pendingEntry.value || !correlationMatchesV3(request, providerLog, correlation)) {
       return { settled: false, retry_delay_ms: null };
     }
-    const calculatedSpend = Math.round((providerLog.quota * MICROCREDITS_PER_CREDIT) / request.quota_per_credit);
+    const calculatedSpend = settlementSpendMicrocredits(providerLog.quota, request.quota_per_credit, correlation, surplusBuyerCostMicro);
     if (!Number.isSafeInteger(calculatedSpend) || calculatedSpend < 0) {
       return {
         settled: false,
@@ -367,6 +378,8 @@ export type PaidFallbackUsageSettlementV3 = Readonly<{
   output_tokens: number;
   model: string;
   created_at_ms: number;
+  /** Surplus-only exact provider amount; quota conversion can round odd microcredits. */
+  buyer_cost_micro?: number;
 }>;
 
 /**
@@ -392,7 +405,8 @@ export const settlePaidFallbackUsageV3 = async (reservation: PaidFallbackAdmissi
       created_at: Math.max(0, Math.trunc(usage.created_at_ms / 1_000)),
     },
     Date.now(),
-    "surplus_reservation"
+    "surplus_reservation",
+    usage.buyer_cost_micro
   );
   return result.settled;
 };

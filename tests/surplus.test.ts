@@ -63,6 +63,7 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
             supported_parameters: ["tools"],
             supported_features: ["tools"],
             description: "test model",
+            top_provider: { max_completion_tokens: 128000 },
           },
         ],
       })
@@ -87,6 +88,7 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
   assert.equal(snapshot.models[0].supports_parallel_tool_calls, true);
   assert.deepEqual(snapshot.models[0].supported_endpoint_types, ["openai", "openai-response"]);
   assert.equal(snapshot.models[1].description, "test model");
+  assert.equal(snapshot.models[1].max_output_tokens, 128000);
   assert.equal(snapshot.models[1].supports_tools, undefined);
   assert.equal(snapshot.models[1].supports_parallel_tool_calls, undefined);
   assert.equal(calls.length, 1);
@@ -97,7 +99,7 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
 
 Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and returns the request ID", async () => {
   const body = {
-    model: "claude-opus-5",
+    model: "gpt-6-sol",
     input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
     stream: true,
     parallel_tool_calls: true,
@@ -123,7 +125,7 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
   assert.deepEqual(JSON.parse(bodyText(calls[0].init.body)), {
-    model: "claude-opus-5",
+    model: "gpt-6-sol",
     input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
     stream: true,
   });

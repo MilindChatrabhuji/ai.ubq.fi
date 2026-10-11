@@ -768,6 +768,9 @@ const reductionForTruncation = (value: unknown): DeepSeekResponsesResult<Forward
   return failure("truncation", `truncation '${typeof value === "string" ? value : typeof value}' is not supported; expected 'auto' or 'disabled'`);
 };
 
+const providerPromptCacheFields = (rawRecord: Record<string, unknown>, profile: ChatOnlyResponsesProfile): Record<string, unknown> =>
+  profile.id === "cerebras" && Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_key") ? { prompt_cache_key: rawRecord.prompt_cache_key } : {};
+
 /**
  * Builds the Chat Completions body for a Responses request under one provider
  * profile. Translation failures are returned so the caller can answer with a
@@ -796,7 +799,15 @@ export const toDeepSeekResponsesChatBody = (
   if (!messages.ok) return messages;
   if (!messages.value.length) return failure("input", "input must contain at least one message");
 
-  const body: Record<string, unknown> = { model: canonical, messages: messages.value, stream: clientWantsStream };
+  // Cerebras documents this optional routing hint on its Chat wire. Keep the
+  // caller's value through Responses translation; the other profiles keep
+  // their existing automatic-cache wire without an unverified field mapping.
+  const body: Record<string, unknown> = {
+    model: canonical,
+    messages: messages.value,
+    stream: clientWantsStream,
+    ...providerPromptCacheFields(rawRecord, profile),
+  };
   // A provider that reports streaming usage only when asked requires the option
   // beside `stream`; one that reports it unconditionally must not be sent it.
   if (clientWantsStream && profile.requiresStreamUsageOption) body.stream_options = { include_usage: true };

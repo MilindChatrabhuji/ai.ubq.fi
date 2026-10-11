@@ -292,13 +292,21 @@ Deno.test("prompt cache modes and breakpoints follow the request shape", () => {
   assert.equal(countExplicitPromptCacheBreakpoints([]), 0);
 });
 
-Deno.test("chat usage extraction requires a complete, non-negative token triple", () => {
+Deno.test("chat usage extraction preserves partial measurements and rejects malformed token counts", () => {
   assert.deepEqual(extractChatUsageTokens({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 })?.inputTokens, 10);
   assert.equal(extractChatUsageTokens(null), null);
   assert.equal(extractChatUsageTokens([]), null);
-  assert.equal(extractChatUsageTokens({ prompt_tokens: 10, completion_tokens: 5 }), null, "a missing total is unusable");
-  assert.equal(extractChatUsageTokens({ prompt_tokens: -1, completion_tokens: 5, total_tokens: 4 }), null);
-  assert.equal(extractChatUsageTokens({ prompt_tokens: 1.5, completion_tokens: 5, total_tokens: 6 })?.inputTokens, 1);
+  const partial = extractChatUsageTokens({ prompt_tokens: 10, completion_tokens: 5 });
+  assert.ok(partial);
+  assert.equal(partial.inputTokens, 10);
+  assert.equal(partial.totalTokens, null, "a missing total remains unknown without discarding measured counters");
+  assert.equal(partial.status, "partial");
+  for (const promptTokens of [-1, 1.5]) {
+    const invalid = extractChatUsageTokens({ prompt_tokens: promptTokens, completion_tokens: 5, total_tokens: 6 });
+    assert.ok(invalid);
+    assert.equal(invalid.inputTokens, null, "malformed counts must not be rounded into a token measurement");
+    assert.equal(invalid.status, "invalid");
+  }
   const cached = extractChatUsageTokens({
     prompt_tokens: 10,
     completion_tokens: 5,

@@ -160,6 +160,23 @@ Deno.test("chat stats keep cache-write details out of the OpenAI prompt total", 
   assert.match(formatChatStatsLine(stats), /Cache hit 40% \| Input 100 tok · Output 25 tok$/);
 });
 
+Deno.test("chat stats preserve unknown cache measurements instead of publishing a measured zero", () => {
+  for (const details of [undefined, { cached_tokens: -0.1, cache_write_tokens: 0.9 }]) {
+    assert.deepEqual(readChatCompletionUsage({ prompt_tokens: 100, completion_tokens: 10, ...(details ? { prompt_tokens_details: details } : {}) }), {
+      inputTokens: 100,
+      outputTokens: 10,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+    });
+  }
+  assert.deepEqual(readChatCompletionUsage({ prompt_tokens: 100, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } }), {
+    inputTokens: 100,
+    outputTokens: 10,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+  });
+});
+
 Deno.test("chat stats omit throughput without measured tokens or elapsed LLM time", () => {
   const withoutUsage = createChatStatsAccumulator();
   recordCompletedChatResponse(withoutUsage, { llmMs: 1_000, decodeMs: 500 });
