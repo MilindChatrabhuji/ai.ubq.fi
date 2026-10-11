@@ -161,6 +161,7 @@ export const relayChatCompletionStream = (
     const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
     settleTerminal(terminalType);
     adapter.recordTransportFailure(usageContext, error, terminalType);
+    if (usage) recordTerminalUsage(usageContext, usage, false);
     if (terminalType !== "cancelled") {
       adapter.recordProviderError(null, providerRequestId);
       await recordErrorUsage(usageContext);
@@ -505,6 +506,7 @@ export const relayResponsesStream = (
     const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
     settleTerminal(terminalType);
     adapter.recordTransportFailure(usageContext, error, terminalType);
+    if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
     try {
       if (terminalType !== "cancelled") {
         adapter.recordProviderError(null, providerRequestId);

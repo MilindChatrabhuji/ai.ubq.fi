@@ -359,6 +359,73 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
     assert.equal(settledWindowAfterReplay.value?.settled_microcredits, settledWindowBeforeReplay.value?.settled_microcredits);
     assert.equal(settledWindowAfterReplay.value?.reserved_microcredits, settledWindowBeforeReplay.value?.reserved_microcredits);
 
+    // Real native Surplus measurements must override the catalog estimate.
+    // An odd 69-microcredit charge cannot round through 500,000 quota/credit
+    // into 70 microcredits, and an explicitly free completion stays free.
+    for (const fixture of [
+      { id: "surplus-native-fill", cost: 1056, cached: null, written: 1028 },
+      { id: "surplus-native-read", cost: 69, cached: 1028, written: null },
+      { id: "surplus-native-free", cost: 0, cached: null, written: null },
+    ]) {
+      const reservation = await reserve(fixture.id, now);
+      await recordMeteredUpstreamResponse(reservation, new Response(null, { status: 200 }), null, "surplus");
+      await recordMeteredTerminal(reservation, "completed", "surplus");
+      const usage = {
+        input_tokens: 1043,
+        cached_input_tokens: fixture.cached,
+        cache_write_input_tokens: fixture.written,
+        output_tokens: 4,
+        buyer_cost_micro: fixture.cost,
+      };
+      const pricing = {
+        input_price_per_token: 0.000001,
+        output_price_per_token: 0.000003,
+        cache_read_price_per_token: 0.0000001,
+        cache_write_price_per_token: 0.000002,
+      };
+      await recordSurplusUsage(reservation, `surplus:${fixture.id}`, "gpt-5-codex", usage, pricing);
+      const actual = await readRequest(fixture.id);
+      assert.equal(actual.billing_state, "settled");
+      assert.equal(actual.spend_microcredits, fixture.cost);
+      assert.equal(actual.cached_input_tokens, fixture.cached, "unknown cache reads must stay unknown in the authoritative settlement");
+      const windowBeforeReplay = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, reservation.window_reset_at_ms));
+      await recordSurplusUsage(reservation, `surplus:${fixture.id}`, "gpt-5-codex", usage, pricing);
+      const windowAfterReplay = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, reservation.window_reset_at_ms));
+      assert.equal((await readRequest(fixture.id)).spend_microcredits, fixture.cost);
+      assert.equal(windowAfterReplay.value?.settled_microcredits, windowBeforeReplay.value?.settled_microcredits);
+      assert.equal(windowAfterReplay.value?.reserved_microcredits, windowBeforeReplay.value?.reserved_microcredits);
+    }
+
+    for (const buyerCostMicro of [-1, 0.1, Number.MAX_SAFE_INTEGER + 1, null]) {
+      const id = `surplus-native-invalid-${String(buyerCostMicro)}`;
+      const reservation = await reserve(id, now);
+      await recordMeteredUpstreamResponse(reservation, new Response(null, { status: 200 }), null, "surplus");
+      await recordMeteredTerminal(reservation, "completed", "surplus");
+      await recordSurplusUsage(
+        reservation,
+        `surplus:${id}`,
+        "gpt-5-codex",
+        { input_tokens: 1043, cached_input_tokens: 1028, cache_write_input_tokens: null, output_tokens: 4, buyer_cost_micro: buyerCostMicro },
+        { input_price_per_token: 0.000001, output_price_per_token: 0.000003 }
+      );
+      const actual = await readRequest(id);
+      assert.equal(actual.billing_state, "pending", "a malformed authoritative charge must not fall back to guessed pricing");
+      assert.equal(actual.spend_microcredits, null);
+    }
+
+    const nativeUnmeasured = await reserve("surplus-native-unmeasured-cost", now);
+    await recordMeteredUpstreamResponse(nativeUnmeasured, new Response(null, { status: 200 }), null, "surplus");
+    await recordMeteredTerminal(nativeUnmeasured, "completed", "surplus");
+    await recordSurplusUsage(
+      nativeUnmeasured,
+      "surplus:native-unmeasured",
+      "gpt-5-codex",
+      { input_tokens: 1043, cached_input_tokens: null, cache_write_input_tokens: 1028, output_tokens: 4 },
+      { input_price_per_token: 0.000001, output_price_per_token: 0.000003, cache_write_price_per_token: 0.000002, require_provider_cost: true }
+    );
+    assert.equal((await readRequest(nativeUnmeasured.request_id)).billing_state, "pending", "native gross cache writes must not use legacy additive pricing");
+    assert.equal((await readRequest(nativeUnmeasured.request_id)).spend_microcredits, null);
+
     const incompleteReservation = await reserve("surplus-incomplete", now + 1);
     await recordMeteredUpstreamResponse(incompleteReservation, new Response(null, { status: 200 }), "surplus-incomplete-request", "surplus");
     await recordMeteredTerminal(incompleteReservation, "completed", "surplus");
@@ -386,6 +453,19 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
     assert.equal(incomplete.billing_state, "pending");
     assert.equal(incomplete.spend_microcredits, null);
     assert.ok((await memoryKv.get(paidFallbackPendingV3Key(keyId, incomplete.request_id))).value);
+
+    const meteredReservation = await reserve("metered-must-ignore-surplus-cost", now);
+    await recordMeteredUpstreamResponse(meteredReservation, new Response(null, { status: 200 }), "metered-request", "metered");
+    await recordMeteredTerminal(meteredReservation, "completed", "metered");
+    await recordSurplusUsage(
+      meteredReservation,
+      "surplus:must-not-match-metered",
+      "gpt-5-codex",
+      { input_tokens: 1043, cached_input_tokens: 1028, cache_write_input_tokens: null, output_tokens: 4, buyer_cost_micro: 69 },
+      { input_price_per_token: 0.000001, output_price_per_token: 0.000003 }
+    );
+    assert.equal((await readRequest(meteredReservation.request_id)).billing_state, "pending");
+    assert.equal((await readRequest(meteredReservation.request_id)).spend_microcredits, null);
   } finally {
     Deno.env.get = originalEnvGet;
   }

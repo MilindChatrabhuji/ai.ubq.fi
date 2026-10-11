@@ -1,6 +1,9 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "../inference-deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
 import type { SentinelUpstreamRecorder } from "../sentinel/upstream-capture.ts";
+import type { PromptCacheMode } from "../openai-telemetry.ts";
+import { buildSurplusClaudeRequest, isSurplusClaudeModel } from "./surplus-claude-request.ts";
+import { normalizeAnthropicResponsesResponse } from "./anthropic-responses.ts";
 
 export const METERED_BASE_URL = "https://api.openlux.ai";
 
@@ -10,6 +13,7 @@ const METERED_MODELS_URL = `${METERED_BASE_URL}/v1/models`;
 const METERED_RATIO_CONFIG_URL = `${METERED_BASE_URL}/api/ratio_config`;
 const METERED_STATUS_URL = `${METERED_BASE_URL}/api/status`;
 const METERED_RESPONSES_URL = `${METERED_BASE_URL}/v1/responses`;
+const METERED_MESSAGES_URL = `${METERED_BASE_URL}/v1/messages`;
 const METERED_TOKEN_LOGS_URL = `${METERED_BASE_URL}/api/log/token`;
 // Billing reconciliation runs after the client response and must not hold a
 // queue delivery indefinitely when the provider stalls.
@@ -26,6 +30,7 @@ export type MeteredModel = Readonly<{
   model_type?: string;
   description?: string;
   tags?: string;
+  max_output_tokens?: number;
 }>;
 
 export type MeteredModelsSnapshot = Readonly<{
@@ -79,6 +84,8 @@ const meteredModelFromUpstream = (value: unknown): MeteredModel | null => {
   const modelType = nonEmptyString(value.model_type);
   const description = nonEmptyString(value.description);
   const tags = nonEmptyString(value.tags);
+  const topProvider = isRecord(value.top_provider) ? value.top_provider : null;
+  const maxOutputTokens = value.max_completion_tokens ?? value.max_output_tokens ?? topProvider?.max_completion_tokens;
   return {
     id,
     object: "model",
@@ -88,6 +95,7 @@ const meteredModelFromUpstream = (value: unknown): MeteredModel | null => {
     ...(modelType ? { model_type: modelType } : {}),
     ...(description ? { description } : {}),
     ...(tags ? { tags } : {}),
+    ...(isNonNegativeSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? { max_output_tokens: maxOutputTokens } : {}),
   };
 };
 
@@ -225,6 +233,8 @@ export type MeteredAuthenticatedFetchOptions = Readonly<{
   apiKey?: string | null;
   fetcher?: MeteredFetch;
   signal?: AbortSignal;
+  /** Private authenticated identity for signed native reasoning replay; never sent upstream. */
+  reasoningReplayScope?: string;
   /**
    * Quota hook. Producers fulfil with `undefined` when no dispatch result is
    * available; `Promise.resolve(undefined)` at the call sites keeps that
@@ -246,9 +256,17 @@ export type MeteredTokenLogFetchOptions = MeteredAuthenticatedFetchOptions &
 export type MeteredResponsesResult = Readonly<{
   response: Response;
   request_id: string | null;
+  prompt_cache_mode?: PromptCacheMode;
+  explicit_breakpoint_count?: number;
 }>;
 
 const METERED_REASONING_SUFFIX_MODELS = new Set(["gpt-5.6-sol"]);
+
+// OpenLux omits output limits from its catalog. The same exact Opus 5.5
+// weights publish 128000 at the primary marketplace model endpoint:
+// https://api.surplusintelligence.ai/v1/models/claude-opus-5.5 (2026-10-11).
+// Use the model maximum, not an invented smaller generation budget.
+const METERED_NATIVE_MAX_OUTPUT_TOKENS: Readonly<Partial<Record<string, number>>> = { "claude-opus-5-5": 128_000 };
 
 const toMeteredResponsesBody = (body: JsonRecord): JsonRecord => {
   const model = nonEmptyString(body.model);
@@ -273,6 +291,7 @@ export type MeteredTokenLogEntry = Readonly<{
   quota: number;
   prompt_tokens: number;
   cached_prompt_tokens?: number;
+  cache_write_prompt_tokens?: number;
   completion_tokens: number;
   model: string;
   created_at: number;
@@ -491,24 +510,73 @@ export const initializeMeteredPricing = async (options: InitializeMeteredPricing
   };
 };
 
-export const fetchMeteredResponses = async (body: unknown, options: MeteredAuthenticatedFetchOptions = {}): Promise<MeteredResponsesResult> => {
-  if (!isRecord(body)) {
-    throw new MeteredError("Metered Responses requests must use a canonical JSON object body.", "metered_request_invalid", 400);
-  }
+const meteredClaudeRequest = (body: JsonRecord, options: MeteredAuthenticatedFetchOptions): ReturnType<typeof buildSurplusClaudeRequest> => {
+  if (!isSurplusClaudeModel(body.model)) return null;
+  const catalogModel = meteredModelsCache?.models.find((model) => model.id === body.model);
+  const trustedCap = METERED_NATIVE_MAX_OUTPUT_TOKENS[body.model];
+  if (trustedCap === undefined && !catalogModel?.supported_endpoint_types.includes("anthropic")) return null;
+  return buildSurplusClaudeRequest(body, catalogModel?.max_output_tokens ?? trustedCap, {
+    provider: "metered",
+    reasoningReplayScope: options.reasoningReplayScope,
+    // Native adaptive thinking is observed, but the route's explicit effort
+    // contract needs separate proof before it can replace Responses requests.
+    supportsNativeReasoningEffort: false,
+  });
+};
 
+const deliverMeteredResponse = async (
+  body: JsonRecord,
+  response: Response,
+  requestId: string | null,
+  options: MeteredAuthenticatedFetchOptions,
+  native: ReturnType<typeof buildSurplusClaudeRequest>
+): Promise<Response> => {
+  if (native) {
+    return await normalizeAnthropicResponsesResponse(response, {
+      model: String(body.model),
+      requestId: requestId ?? undefined,
+      signal: options.signal,
+      reasoningSummary: isRecord(body.reasoning) ? (nonEmptyString(body.reasoning.summary) ?? undefined) : undefined,
+      reasoningReplayScope: options.reasoningReplayScope,
+      provider: "metered",
+    });
+  }
+  if (!isSurplusClaudeModel(body.model)) return response;
+  const warnings = new Headers(response.headers);
+  const previous = warnings.get("x-uos-warning");
+  const warning = "openlux_claude_native_prompt_cache_unavailable";
+  warnings.set("x-uos-warning", previous ? `${previous}, ${warning}` : warning);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: warnings });
+};
+
+const encodeMeteredResponseBody = (body: JsonRecord): string => {
   let encodedBody: string;
   try {
-    encodedBody = JSON.stringify(toMeteredResponsesBody(body));
+    encodedBody = JSON.stringify(body);
   } catch {
     throw new MeteredError("Metered Responses requests must use a JSON-serializable body.", "metered_request_invalid", 400);
   }
   if (typeof encodedBody !== "string") {
     throw new MeteredError("Metered Responses requests must use a JSON-serializable body.", "metered_request_invalid", 400);
   }
+  return encodedBody;
+};
 
-  const apiKey = requireMeteredApiKey(options.apiKey);
-  const headers = authenticatedHeaders(apiKey, "text/event-stream");
+const meteredResponsesHeaders = (apiKey: string, native: ReturnType<typeof buildSurplusClaudeRequest>): Headers => {
+  const headers = authenticatedHeaders(apiKey, native && native.body.stream !== true ? "application/json" : "text/event-stream");
   headers.set("Content-Type", "application/json");
+  if (native) headers.set("anthropic-version", "2023-06-01");
+  return headers;
+};
+
+export const fetchMeteredResponses = async (body: unknown, options: MeteredAuthenticatedFetchOptions = {}): Promise<MeteredResponsesResult> => {
+  if (!isRecord(body)) {
+    throw new MeteredError("Metered Responses requests must use a canonical JSON object body.", "metered_request_invalid", 400);
+  }
+
+  const native = meteredClaudeRequest(body, options);
+  const encodedBody = encodeMeteredResponseBody(native?.body ?? toMeteredResponsesBody(body));
+  const headers = meteredResponsesHeaders(requireMeteredApiKey(options.apiKey), native);
 
   let response: Response;
   let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
@@ -532,7 +600,7 @@ export const fetchMeteredResponses = async (body: unknown, options: MeteredAuthe
     dispatch?.markTransportStarted();
     options.onDispatch?.();
     upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("metered") ?? null;
-    response = await (options.fetcher ?? fetch)(METERED_RESPONSES_URL, {
+    response = await (options.fetcher ?? fetch)(native ? METERED_MESSAGES_URL : METERED_RESPONSES_URL, {
       method: "POST",
       headers,
       body: encodedBody,
@@ -552,26 +620,58 @@ export const fetchMeteredResponses = async (body: unknown, options: MeteredAuthe
     clearTimeout(headersTimer);
   }
 
+  const requestId =
+    nonEmptyString(response.headers.get("X-Api-Request-Id")) ??
+    nonEmptyString(response.headers.get("X-Oneapi-Request-Id")) ??
+    nonEmptyString(response.headers.get("X-Request-Id"));
+  const recorded = upstreamAttempt ? upstreamAttempt.wrap(response) : response;
+  const delivered = await deliverMeteredResponse(body, recorded, requestId, options, native);
   return {
-    response: upstreamAttempt ? upstreamAttempt.wrap(response) : response,
-    request_id:
-      nonEmptyString(response.headers.get("X-Api-Request-Id")) ??
-      nonEmptyString(response.headers.get("X-Oneapi-Request-Id")) ??
-      nonEmptyString(response.headers.get("X-Request-Id")),
+    response: delivered,
+    request_id: requestId,
+    ...(native ? { prompt_cache_mode: native.promptCacheMode, explicit_breakpoint_count: native.explicitBreakpointCount } : {}),
+  };
+};
+
+const tokenLogMetadata = (value: unknown): JsonRecord | null => {
+  if (isRecord(value)) return value;
+  if (typeof value !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    // Ignore malformed provider metadata, retaining authoritative quota.
+    return null;
+  }
+};
+
+const tokenLogCacheCounts = (
+  model: string,
+  promptTokens: number,
+  cachedPromptTokens: unknown,
+  other: JsonRecord | null
+): Pick<MeteredTokenLogEntry, "prompt_tokens" | "cached_prompt_tokens" | "cache_write_prompt_tokens"> => {
+  const fallback = { prompt_tokens: promptTokens, ...(isNonNegativeSafeInteger(cachedPromptTokens) ? { cached_prompt_tokens: cachedPromptTokens } : {}) };
+  // OpenLux's native Claude logs report uncached input in prompt_tokens, with
+  // cache reads/writes separately in `other`. The actual Messages receipts
+  // and settled rows agree on this contract. Never apply it to a model or row
+  // whose native Claude flag/counters are absent or invalid.
+  if (!isSurplusClaudeModel(model) || other?.claude !== true || !isNonNegativeSafeInteger(other.cache_tokens)) return fallback;
+  const write = other.cache_creation_tokens === undefined ? 0 : other.cache_creation_tokens;
+  if (!isNonNegativeSafeInteger(write)) return fallback;
+  const gross = promptTokens + other.cache_tokens + write;
+  if (!isNonNegativeSafeInteger(gross)) return fallback;
+  return {
+    prompt_tokens: gross,
+    cached_prompt_tokens: other.cache_tokens,
+    ...(other.cache_creation_tokens === undefined ? {} : { cache_write_prompt_tokens: write }),
   };
 };
 
 const normalizeTokenLogEntry = (value: unknown): MeteredTokenLogEntry | null => {
   if (!isRecord(value)) return null;
-  let requestId = nonEmptyString(value.request_id);
-  if (!requestId && typeof value.other === "string") {
-    try {
-      const other = JSON.parse(value.other) as unknown;
-      if (isRecord(other)) requestId = nonEmptyString(other.request_id);
-    } catch {
-      // Ignore malformed provider metadata.
-    }
-  }
+  const other = tokenLogMetadata(value.other);
+  const requestId = nonEmptyString(value.request_id) ?? (other ? nonEmptyString(other.request_id) : null);
   const model = nonEmptyString(value.model_name);
   if (
     !requestId ||
@@ -587,8 +687,7 @@ const normalizeTokenLogEntry = (value: unknown): MeteredTokenLogEntry | null => 
   return {
     request_id: requestId,
     quota: value.quota,
-    prompt_tokens: value.prompt_tokens,
-    ...(isNonNegativeSafeInteger(value.cached_prompt_tokens) ? { cached_prompt_tokens: value.cached_prompt_tokens } : {}),
+    ...tokenLogCacheCounts(model, value.prompt_tokens, value.cached_prompt_tokens, other),
     completion_tokens: value.completion_tokens,
     model,
     created_at: value.created_at,

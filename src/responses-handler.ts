@@ -11,6 +11,7 @@ import { cerebrasUpstreamModelFor } from "./provider/cerebras.ts";
 import { lithosUpstreamModelFor } from "./provider/lithos.ts";
 import { resolveOpenRouterUpstreamModel } from "./provider/openrouter.ts";
 import { handleOpenRouterResponses } from "./provider/openrouter-handlers.ts";
+import { openRouterPromptCacheRequestExtensions } from "./provider/openrouter-request-controls.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import { createStreamFirstEventDeadline, createStreamSemanticDeadline, STREAM_FAILOVER_RESERVE_MS } from "./inference-deadline.ts";
 import { ResponsesStreamError, type ResponsesStreamEvent, withSseKeepalive } from "./responses-stream.ts";
@@ -799,7 +800,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const request = await readResponsesRequest(req, parsedBody);
   if (!request.ok) return request.response;
   const { rawRecord, rawBody } = request.value;
-  const invalidField = validateResponsesRequestFields(rawRecord, rawBody);
+  const invalidField = validateResponsesRequestFields(rawRecord, rawBody, await openRouterPromptCacheRequestExtensions(rawRecord));
   if (invalidField) return invalidField;
   // DeepSeek official models are dispatched from the Responses adapter before
   // the Codex catalog lookup, exactly as the Chat Completions route is

@@ -415,6 +415,7 @@ const fetchPaidProviderResponses = async (
   if (provider === "surplus") {
     return await fetchSurplusResponses(body, {
       signal: fallbackSignal,
+      reasoningReplayScope: codexCacheScopeForUsageContext(options.usageContext),
       supportsParallelToolCalls: surplusCatalog?.models.find((entry) => entry.id === options.model)?.supports_parallel_tool_calls === true,
       beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("surplus") ?? Promise.resolve(undefined),
       onDispatch: () => {
@@ -426,6 +427,7 @@ const fetchPaidProviderResponses = async (
   }
   return await fetchMeteredResponses(body, {
     signal: fallbackSignal,
+    reasoningReplayScope: codexCacheScopeForUsageContext(options.usageContext),
     beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(undefined),
     onDispatch: () => {
       dispatchState.transportStarted = true;
@@ -623,15 +625,29 @@ const deliverPaidProviderResponse = async (
   fallbackReason: InferenceFallbackReason
 ): Promise<RoutedResponsesUpstream> => {
   const providerRequestId = normalizeProviderRequestId(attempts.result.request_id);
-  if (telemetry) telemetry.providerRequestId = providerRequestId;
+  if (telemetry) {
+    telemetry.providerRequestId = providerRequestId;
+    if ("prompt_cache_mode" in attempts.result && attempts.result.prompt_cache_mode !== undefined) {
+      telemetry.promptCacheMode = attempts.result.prompt_cache_mode;
+    }
+    if ("explicit_breakpoint_count" in attempts.result && attempts.result.explicit_breakpoint_count !== undefined) {
+      telemetry.explicitBreakpointCount = attempts.result.explicit_breakpoint_count;
+    }
+  }
   await bestEffortPaidFallbackBookkeeping("upstream response recording", () =>
     recordMeteredUpstreamResponse(reservation, attempts.result.response, providerRequestId, attempts.selectedProvider)
   );
+  let paidFallbackBilling = attempts.selectedProvider === "surplus" ? surplusBilling : null;
+  if (paidFallbackBilling && "prompt_cache_mode" in attempts.result) {
+    // Claude's cache-aware adapters require the exact provider charge rather
+    // than projecting native cache accounting through legacy Responses prices.
+    paidFallbackBilling = { ...paidFallbackBilling, require_provider_cost: true };
+  }
   return {
     response: attempts.result.response,
     provider: attempts.selectedProvider,
     paidFallback: reservation,
-    paidFallbackBilling: attempts.selectedProvider === "surplus" ? surplusBilling : null,
+    paidFallbackBilling,
     paidFallbackProviderRequestId: providerRequestId,
     ...(attempts.errorHealth ? { paidFallbackErrorHealth: attempts.errorHealth } : {}),
     gatewayResponse: false,

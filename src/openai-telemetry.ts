@@ -655,14 +655,9 @@ export type UsageTokens = Readonly<{
   outputTokens: number | null;
   totalTokens: number | null;
   status: UsageTelemetryStatus;
+  /** Exact Surplus charge in microcredits; null means a present malformed amount. */
+  buyerCostMicro?: number | null;
 }>;
-
-const normalizeTokenCount = (value: unknown): number | null => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const count = Math.trunc(value);
-  if (count < 0) return null;
-  return count;
-};
 
 type ParsedUsageToken = Readonly<{ value: number | null; invalid: boolean }>;
 
@@ -736,6 +731,7 @@ export const extractUsageTokens = (value: unknown): UsageTokens | null => {
     outputTokens: outputTokens.value,
     totalTokens: totalTokens.value,
     status,
+    ...(has("buyer_cost_micro") ? { buyerCostMicro: parseUsageToken(value.buyer_cost_micro, true).value } : {}),
   };
 };
 
@@ -799,26 +795,19 @@ export const promptCacheKeyPresent = (rawRecord: Record<string, unknown>): boole
  */
 export const extractChatUsageTokens = (value: unknown): UsageTokens | null => {
   if (!isRecord(value) || Array.isArray(value)) return null;
-  const inputTokens = normalizeTokenCount(value.prompt_tokens);
-  const outputTokens = normalizeTokenCount(value.completion_tokens);
-  const totalTokens = normalizeTokenCount(value.total_tokens);
-  if (inputTokens === null || outputTokens === null || totalTokens === null) return null;
-  const details = isRecord(value.prompt_tokens_details) && !Array.isArray(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
-  const cachedInputTokens = normalizeTokenCount(details?.cached_tokens);
-  const cacheWriteInputTokens = normalizeTokenCount(details?.cache_write_tokens);
-  return extractUsageTokens({
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    total_tokens: totalTokens,
-    ...(cachedInputTokens === null && cacheWriteInputTokens === null
-      ? {}
-      : {
-          input_tokens_details: {
-            ...(cachedInputTokens === null ? {} : { cached_tokens: cachedInputTokens }),
-            ...(cacheWriteInputTokens === null ? {} : { cache_write_tokens: cacheWriteInputTokens }),
-          },
-        }),
-  });
+  const responsesUsage: Record<string, unknown> = {};
+  for (const [chatKey, responsesKey] of [
+    ["prompt_tokens", "input_tokens"],
+    ["completion_tokens", "output_tokens"],
+    ["total_tokens", "total_tokens"],
+    ["prompt_tokens_details", "input_tokens_details"],
+    ["buyer_cost_micro", "buyer_cost_micro"],
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(value, chatKey)) responsesUsage[responsesKey] = value[chatKey];
+  }
+  // Preserve field presence and exact values for the shared strict parser:
+  // truncating a fractional counter can fabricate a measured cache miss.
+  return extractUsageTokens(responsesUsage);
 };
 
 export const recordRequestUsage = (
