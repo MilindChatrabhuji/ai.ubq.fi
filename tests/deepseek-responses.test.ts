@@ -208,6 +208,28 @@ Deno.test("deepseek responses: flattens namespaced tools and drops what the API 
   assert.deepEqual(body.tool_choice, { type: "function", function: { name: "now" } });
 });
 
+Deno.test("deepseek responses: forwards sampling controls when thinking is disabled", () => {
+  const disabled = toDeepSeekResponsesChatBody(
+    { input: "hi", reasoning: { effort: "none" }, temperature: 0, top_p: 0.4 },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(disabled.ok, true);
+  assert.equal(disabled.value.body.temperature, 0);
+  assert.equal(disabled.value.body.top_p, 0.4);
+  assert.deepEqual(disabled.value.warnings, []);
+
+  const active = toDeepSeekResponsesChatBody(
+    { input: "hi", reasoning: { effort: "high" }, temperature: 0, top_p: 0.4 },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(active.ok, true);
+  assert.equal("temperature" in active.value.body, false);
+  assert.equal("top_p" in active.value.body, false);
+  assert.deepEqual(active.value.warnings, ["temperature_ignored", "top_p_ignored"]);
+});
+
 Deno.test("deepseek responses: a namespaced tool call returns its namespace to the client", () => {
   const body = toDeepSeekResponsesChatBody(
     {

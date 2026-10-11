@@ -9,6 +9,7 @@ import {
   failure,
   originalToolName,
 } from "./responses.ts";
+import { deepSeekThinkingModeActive } from "./index.ts";
 import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
 import { getString, isRecord } from "../utils.ts";
 
@@ -693,6 +694,20 @@ const applyReasoning = (
   return { ok: true, value: undefined };
 };
 
+const applySamplingControls = (body: Record<string, unknown>, rawRecord: Record<string, unknown>, profile: ChatOnlyResponsesProfile): string[] => {
+  const thinkingActive = profile.id === "deepseek" && deepSeekThinkingModeActive(body.reasoning_effort, rawRecord.thinking);
+  const warnings: string[] = [];
+  for (const key of ["temperature", "top_p"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(rawRecord, key)) continue;
+    if (thinkingActive) {
+      warnings.push(`${key}_ignored`);
+      continue;
+    }
+    body[key] = rawRecord[key];
+  }
+  return warnings;
+};
+
 const applyTools = (
   body: Record<string, unknown>,
   rawRecord: Record<string, unknown>,
@@ -787,6 +802,7 @@ export const toDeepSeekResponsesChatBody = (
     toolNames: ReadonlyMap<string, OriginalToolName>;
     customToolNames: ReadonlySet<string>;
     elisions: readonly ForwardedPayloadElision[];
+    warnings: string[];
   }>
 > => {
   const canonical = profile.upstreamModelFor(requestedModel);
@@ -815,6 +831,7 @@ export const toDeepSeekResponsesChatBody = (
   if (!outputLimit.ok) return outputLimit;
   const reasoning = applyReasoning(body, rawRecord, profile);
   if (!reasoning.ok) return reasoning;
+  const warnings = applySamplingControls(body, rawRecord, profile);
   const toolNames = applyTools(body, rawRecord, profile);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
@@ -827,7 +844,7 @@ export const toDeepSeekResponsesChatBody = (
     }
     ensureTrailingAssistantReasoning(messages.value);
   }
-  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions } };
+  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions, warnings } };
 };
 
 /**
