@@ -313,6 +313,22 @@ Deno.test("applyCodexAuthPlan replaces only the affected account and preserves t
   assert.equal(pool.accounts[1].access_token, broken.access_token);
 });
 
+Deno.test("applyCodexAuthPlan refuses a candidate that expires during assessment", () => {
+  const untouched = account("acct-a", NOW_MS + 3_600_000);
+  const broken = account("acct-b", NOW_MS + 3_600_000);
+  const pool = poolOf([untouched, broken]);
+  const replacement = candidate("vps-pool", "acct-b", NOW_MS + 1_000, { refresh: "refresh-from-vps" });
+  const plan = planCodexAuthRepair({
+    accounts: [localAccount(1, untouched, valid()), localAccount(2, broken, invalid())],
+    candidates: [assessed(replacement, valid())],
+    nowMs: NOW_MS,
+  });
+
+  assert.equal(plan.selections.length, 1);
+  assert.equal(applyCodexAuthPlan(pool, plan, NOW_MS + 1_000), null);
+  assert.equal(pool.accounts[1].access_token, broken.access_token);
+});
+
 Deno.test("applyCodexAuthPlan with an empty plan returns an equivalent pool", () => {
   const pool = poolOf([account("acct-a", NOW_MS + 3_600_000)]);
   const plan = planCodexAuthRepair({ accounts: [localAccount(1, pool.accounts[0], valid())], candidates: [], nowMs: NOW_MS });
