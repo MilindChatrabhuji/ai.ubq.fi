@@ -351,6 +351,7 @@ const appendMessageItem = (
     message.reasoning_content = pending.reasoning;
     pending.reasoning = "";
   }
+  if (role === "user") pending.reasoning = "";
   // DeepSeek, like OpenAI Chat, has no developer role.
   messages.push(message);
   return { ok: true, value: undefined };
@@ -434,6 +435,7 @@ const appendInputItem = (
     const content = boundedForwardedText(rawItem, path, reduction, elisions);
     if (!content.ok) return content;
     messages.push({ role: "user", content: content.value });
+    pending.reasoning = "";
     return { ok: true, value: undefined };
   }
   if (!isRecord(rawItem) || Array.isArray(rawItem)) return failure("input", "input items must be objects");
@@ -461,6 +463,7 @@ const appendInputItem = (
     const agentMessage = chatAgentMessageItem(rawItem, reduction, `${path}.content`, elisions);
     if (!agentMessage.ok) return agentMessage;
     messages.push(agentMessage.value);
+    pending.reasoning = "";
     return { ok: true, value: undefined };
   }
   if (type !== "message") return failure("input.type", `input item type '${type}' is not supported`);
