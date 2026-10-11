@@ -208,6 +208,42 @@ Deno.test("deepseek responses: flattens namespaced tools and drops what the API 
   assert.deepEqual(body.tool_choice, { type: "function", function: { name: "now" } });
 });
 
+Deno.test("deepseek responses: preserves namespace for a colliding tool choice and call", () => {
+  const body = toDeepSeekResponsesChatBody(
+    {
+      input: "hi",
+      reasoning: { effort: "none" },
+      tool_choice: { type: "function", name: "now", namespace: "clock" },
+      tools: [
+        { type: "function", name: "now", parameters: { type: "object" } },
+        { type: "namespace", name: "clock", tools: [{ type: "function", name: "now", parameters: { type: "object" } }] },
+      ],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.value.body.tool_choice, { type: "function", function: { name: "clock_now" } });
+
+  const payload = toDeepSeekResponsesPayload(
+    chatCompletion({ content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }] }),
+    "deepseek-flash",
+    "resp_collision",
+    echo,
+    body.value.toolNames,
+    body.value.customToolNames
+  );
+  assert.deepEqual((payload.output as Record<string, unknown>[])[0], {
+    id: "fc_resp_collision_0_0",
+    type: "function_call",
+    status: "completed",
+    call_id: "call_1",
+    name: "now",
+    namespace: "clock",
+    arguments: "{}",
+  });
+});
+
 Deno.test("deepseek responses: a namespaced tool call returns its namespace to the client", () => {
   const body = toDeepSeekResponsesChatBody(
     {

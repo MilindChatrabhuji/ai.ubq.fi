@@ -7,7 +7,6 @@ import {
   type DeepSeekResponsesResult,
   type OriginalToolName,
   failure,
-  originalToolName,
 } from "./responses.ts";
 import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
 import { getString, isRecord } from "../utils.ts";
@@ -641,6 +640,17 @@ const toChatTools = (
   return { ok: true, value: { tools: collector.tools, toolNames: collector.toolNames, customToolNames: collector.customNames } };
 };
 
+const chatToolName = (name: string, namespace: string | null, toolNames: ReadonlyMap<string, OriginalToolName>): string => {
+  // An unqualified name already identifies the bare Chat function unless a
+  // namespaced function took that Chat name first and the bare function was
+  // suffixed later.
+  if (namespace === null && !toolNames.has(name)) return name;
+  for (const [chatName, original] of toolNames) {
+    if (original.name === name && original.namespace === namespace) return chatName;
+  }
+  return name;
+};
+
 const toChatToolChoice = (value: unknown, toolNames: ReadonlyMap<string, OriginalToolName>): DeepSeekResponsesResult<unknown> => {
   if (value === undefined || value === null) return { ok: true, value: undefined };
   if (typeof value === "string") {
@@ -648,9 +658,11 @@ const toChatToolChoice = (value: unknown, toolNames: ReadonlyMap<string, Origina
     return failure("tool_choice", `tool_choice '${value}' is not supported`);
   }
   if (!isRecord(value) || Array.isArray(value)) return failure("tool_choice", "tool_choice must be a string or an object");
-  const name = getString(value.name) ?? (isRecord(value.function) ? getString(value.function.name) : null);
+  const nestedFunction = isRecord(value.function) && !Array.isArray(value.function) ? value.function : null;
+  const name = getString(value.name) ?? getString(nestedFunction?.name);
   if (!name) return failure("tool_choice.name", "a named tool_choice requires a name");
-  return { ok: true, value: { type: "function", function: { name: originalToolName(name, toolNames) } } };
+  const namespace = value.namespace === undefined ? getString(nestedFunction?.namespace) : getString(value.namespace);
+  return { ok: true, value: { type: "function", function: { name: chatToolName(name, namespace, toolNames) } } };
 };
 
 /** Responses nests the output format under `text.format`; Chat has one flat field. */
