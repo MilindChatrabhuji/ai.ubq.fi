@@ -55,13 +55,16 @@ export const lithosFailoverTargetAt = (modelRaw: string, nowMs: number): string 
   return null;
 };
 
-/** Opens (or extends) the refused rung's own window, inferred from its legal next target. */
-export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number, target: string): void => {
+/** Opens (or extends) the refused rung's own window, inferred from its legal next target unless supplied. */
+export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number, target: string, refusedRungOverride?: string): void => {
   const ladder = lithosFailoverLadderFor(modelRaw);
   const targetIndex = ladder.indexOf(target);
   const deadlineMs = nowMs + waitMs;
   if (targetIndex === -1 || !Number.isFinite(nowMs) || !Number.isFinite(waitMs) || waitMs <= 0 || !Number.isFinite(deadlineMs)) return;
-  const refusedRung = targetIndex === 0 ? modelRaw : ladder[targetIndex - 1];
+  const refusedRung = refusedRungOverride ?? (targetIndex === 0 ? modelRaw : ladder[targetIndex - 1]);
+  const refusedIndex = refusedRung === modelRaw ? -1 : ladder.indexOf(refusedRung);
+  if (refusedRung !== modelRaw && refusedIndex === -1) return;
+  if (refusedIndex >= targetIndex) return;
   const currentDeadlineMs = lithosFailoverWindows.get(refusedRung);
   const unexpiredDeadlineMs = currentDeadlineMs !== undefined && currentDeadlineMs > nowMs ? currentDeadlineMs : deadlineMs;
   lithosFailoverWindows.set(refusedRung, Math.max(deadlineMs, unexpiredDeadlineMs));
@@ -227,6 +230,9 @@ export const logLithosRateLimitFailover = (fields: LithosRateLimitLogFields): vo
 /** One refusal hint parsed from the vendor's own headers. */
 export type LithosRateLimitWait = Readonly<{ waitMs: number; source: string }>;
 
+/** True when the vendor explicitly forbids retrying the tier that returned these headers. */
+export const lithosRetryProhibited = (headers: Headers): boolean => headers.get("x-should-retry")?.trim().toLowerCase() === "false";
+
 const lithosIntegerHeader = (raw: string | null): number | null => {
   if (raw === null) return null;
   const value = raw.trim();
@@ -294,7 +300,7 @@ const lithosRetryAfterMs = (raw: string | null, nowMs: number): number | null =>
  * because it is the whole header contract in one pure function.
  */
 export const lithosRateLimitWait = (headers: Headers, nowMs: number): LithosRateLimitWait | null => {
-  if (headers.get("x-should-retry")?.trim().toLowerCase() === "false") return null;
+  if (lithosRetryProhibited(headers)) return null;
   const retryAfterMs = lithosIntegerHeader(headers.get("retry-after-ms"));
   if (retryAfterMs !== null) return { waitMs: retryAfterMs, source: "retry-after-ms" };
   const retryAfter = lithosRetryAfterMs(headers.get("retry-after"), nowMs);
