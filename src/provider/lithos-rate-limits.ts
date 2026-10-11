@@ -25,11 +25,21 @@ const LITHOS_FAILOVER_LADDERS: ReadonlyMap<string, readonly string[]> = new Map(
   ["moonshotai/Kimi-K3-fast", ["moonshotai/Kimi-K3"]],
 ]);
 
+/** Canonical spellings for ladder rungs, using the same trim/case contract as model dispatch. */
+const LITHOS_CANONICAL_FAILOVER_MODELS = new Map<string, string>(
+  [...LITHOS_FAILOVER_LADDERS.entries()]
+    .flatMap(([model, ladder]) => [model, ...ladder])
+    .map((model) => [model.toLowerCase(), model] as const)
+);
+
+const lithosCanonicalFailoverModelFor = (modelRaw: string): string => LITHOS_CANONICAL_FAILOVER_MODELS.get(modelRaw.trim().toLowerCase()) ?? modelRaw;
+
 /** The ordered tiers to try after a request model refuses, or an empty list at the bottom. */
-export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => LITHOS_FAILOVER_LADDERS.get(modelRaw) ?? [];
+export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => LITHOS_FAILOVER_LADDERS.get(lithosCanonicalFailoverModelFor(modelRaw)) ?? [];
 
 /** True when `target` is a legal failover destination for `modelRaw`. */
-export const lithosIsLadderTarget = (modelRaw: string, target: string): boolean => lithosFailoverLadderFor(modelRaw).includes(target);
+export const lithosIsLadderTarget = (modelRaw: string, target: string): boolean =>
+  lithosFailoverLadderFor(modelRaw).includes(lithosCanonicalFailoverModelFor(target));
 
 /**
  * The in-process failover windows: a tier whose refusal named a reset instant
@@ -46,22 +56,24 @@ const lithosFailoverWindows = new Map<string, number>();
 /** The ladder tier this request model must start on right now, or null once the window has passed. */
 export const lithosFailoverTargetAt = (modelRaw: string, nowMs: number): string | null => {
   if (!Number.isFinite(nowMs)) return null;
-  for (const rung of [modelRaw, ...lithosFailoverLadderFor(modelRaw)]) {
+  const canonicalModel = lithosCanonicalFailoverModelFor(modelRaw);
+  for (const rung of [canonicalModel, ...lithosFailoverLadderFor(canonicalModel)]) {
     const deadlineMs = lithosFailoverWindows.get(rung);
     if (deadlineMs !== undefined && nowMs < deadlineMs) continue;
     lithosFailoverWindows.delete(rung);
-    return rung === modelRaw ? null : rung;
+    return rung === canonicalModel ? null : rung;
   }
   return null;
 };
 
 /** Opens (or extends) the refused rung's own window, inferred from its legal next target. */
 export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number, target: string): void => {
-  const ladder = lithosFailoverLadderFor(modelRaw);
-  const targetIndex = ladder.indexOf(target);
+  const canonicalModel = lithosCanonicalFailoverModelFor(modelRaw);
+  const ladder = lithosFailoverLadderFor(canonicalModel);
+  const targetIndex = ladder.indexOf(lithosCanonicalFailoverModelFor(target));
   const deadlineMs = nowMs + waitMs;
   if (targetIndex === -1 || !Number.isFinite(nowMs) || !Number.isFinite(waitMs) || waitMs <= 0 || !Number.isFinite(deadlineMs)) return;
-  const refusedRung = targetIndex === 0 ? modelRaw : ladder[targetIndex - 1];
+  const refusedRung = targetIndex === 0 ? canonicalModel : ladder[targetIndex - 1];
   const currentDeadlineMs = lithosFailoverWindows.get(refusedRung);
   const unexpiredDeadlineMs = currentDeadlineMs !== undefined && currentDeadlineMs > nowMs ? currentDeadlineMs : deadlineMs;
   lithosFailoverWindows.set(refusedRung, Math.max(deadlineMs, unexpiredDeadlineMs));
