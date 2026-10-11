@@ -345,9 +345,25 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   const helperServers: Deno.HttpServer[] = [];
   const releaseFixture = f.dispose;
   f.dispose = async () => {
-    closeReservations();
-    for (const server of helperServers.splice(0)) await server.shutdown();
-    await releaseFixture();
+    const cleanupFailures: unknown[] = [];
+    try {
+      closeReservations();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      const settled = await Promise.allSettled(helperServers.splice(0).map((server) => Promise.resolve().then(() => server.shutdown())));
+      cleanupFailures.push(...settled.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])));
+    } catch (error) {
+      cleanupFailures.push(error);
+    } finally {
+      try {
+        await releaseFixture();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
+    if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "VPS fixture cleanup failed");
   };
   assert.notEqual(ports[0], ports[1]);
   assert.ok(!ports.includes(7999) && !ports.includes(8001));
@@ -526,7 +542,11 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   try {
     await start(profile === "legacy");
   } catch (error) {
-    await f.dispose();
+    try {
+      await f.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "VPS activation and fixture cleanup failed");
+    }
     throw error;
   }
   const prefix = "#!/bin/sh\nset -eu\nfixture_root=" + quote(root) + "\nfixture_log=" + quote(root + "/.data/trace") + "\n";
@@ -668,11 +688,21 @@ const withLauncher = (name: string, test: (f: Fixture, active: Active) => Promis
     ignore: ingressFixtureIgnored,
     fn: async () => {
       const f = await createFixture({ branch: "development", tracking: "match", relocate: true });
+      let primaryFailure: unknown;
+      let hasPrimaryFailure = false;
       try {
         await test(f, await prepareActivationFixture(f, profile));
-      } finally {
-        await f.dispose();
+      } catch (error) {
+        hasPrimaryFailure = true;
+        primaryFailure = error;
       }
+      try {
+        await f.dispose();
+      } catch (cleanupError) {
+        if (hasPrimaryFailure) throw new AggregateError([primaryFailure, cleanupError], "VPS fixture test and cleanup failed");
+        throw cleanupError;
+      }
+      if (hasPrimaryFailure) throw primaryFailure;
     },
   });
 };
