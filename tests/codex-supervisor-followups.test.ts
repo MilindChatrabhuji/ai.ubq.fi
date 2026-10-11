@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { extractFollowEntries, followEntryRevision, selectFollowUpdates } from "../src/codex/supervisor-follow.ts";
+import { FOLLOW_MAX_ENTRIES } from "../src/codex/supervisor-config.ts";
 import type { SupervisorSource } from "../src/codex/supervisor-config.ts";
 import { buildSupervisorBriefPrompt, collectBriefTranscript } from "../src/codex/supervisor-brief.ts";
 import { openSupervisorConnection, setSupervisorWebSocketConstructorForTest, type SupervisorConnection } from "../src/codex/supervisor-transport.ts";
@@ -43,6 +44,47 @@ Deno.test("follow updates re-emit one command index as its output, status and ex
   const reconnect = new Map<string, string>();
   assert.equal(selectFollowUpdates(completed, 0, reconnect).length, 1, "a reconnect re-baselines the current item once");
   assert.equal(selectFollowUpdates(completed, 0, reconnect).length, 0, "the reconnected stream then stays quiet");
+});
+
+Deno.test("follow retains a completed entry that falls outside a sampled update batch", () => {
+  const count = FOLLOW_MAX_ENTRIES + 1;
+  const partial = extractFollowEntries(
+    "turn-gap",
+    Array.from({ length: count }, (_, index) => ({
+      type: "commandExecution",
+      id: `c${index}`,
+      command: `command ${index}`,
+      status: "in_progress",
+      exitCode: null,
+      aggregatedOutput: `partial ${index}`,
+    })),
+  );
+  const revisions = new Map<string, string>();
+  const first = selectFollowUpdates(partial, -1, revisions);
+  assert.equal(first.length, FOLLOW_MAX_ENTRIES);
+
+  const completed = extractFollowEntries(
+    "turn-gap",
+    Array.from({ length: count }, (_, index) => ({
+      type: "commandExecution",
+      id: `c${index}`,
+      command: `command ${index}`,
+      status: "completed",
+      exitCode: index === 0 ? 7 : 0,
+      aggregatedOutput: index === 0 ? "final output" : `final ${index}`,
+    })),
+  );
+  const cursor = count - 1;
+  const second = selectFollowUpdates(completed, cursor, revisions);
+  assert.equal(second.length, FOLLOW_MAX_ENTRIES);
+  assert.equal(second.some((entry) => entry.key === "turn-gap:c0"), false, "the completed entry is outside this oversized update batch");
+
+  const [delivered] = selectFollowUpdates(completed, cursor, revisions);
+  assert.ok(delivered);
+  assert.equal(delivered.key, "turn-gap:c0");
+  assert.equal(delivered.text, "final output");
+  assert.equal(delivered.status, "completed");
+  assert.equal(delivered.exitCode, 7);
 });
 
 /* ------------------------------------------------------------------ issue 401 */
