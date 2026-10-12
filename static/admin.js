@@ -292,6 +292,7 @@ let capacityChartScrollState = null;
 // the Analytics view is hidden measures a zero-width container, and a remembered
 // zero would park the graph at the beginning of the retained history.
 let capacityChartFollowsLatest = true;
+let capacityChartScrollNeedsVisiblePosition = false;
 let latestProviderHealth = null;
 let errorsLoading = false;
 let errorsLoadId = 0;
@@ -2184,7 +2185,12 @@ const rememberCapacityChartScroll = () => {
   const svg = current?.querySelector("[data-capacity-chart-svg]");
   if (!current || !svg) return;
   // A hidden view measures as zero width; recording that would drop the newest-edge intent.
-  if (current.clientWidth <= 0) return;
+  if (current.clientWidth <= 0) {
+    capacityChartScrollNeedsVisiblePosition = true;
+    return;
+  }
+  // A replacement made while hidden starts at scrollLeft 0; wait for its visible restore.
+  if (capacityChartScrollNeedsVisiblePosition) return;
   const maximum = capacityChartScrollMaximum(current);
   const scrollLeft = Number.isFinite(current.scrollLeft) ? current.scrollLeft : 0;
   const clientWidth = current.clientWidth;
@@ -2206,7 +2212,9 @@ const rememberCapacityChartScroll = () => {
 const restoreCapacityChartScroll = (scroll, displayWindow, plot) => {
   // The hidden view cannot be measured or scrolled; leaving the intent untouched
   // lets the next visible render place the chart on the newest edge.
+  capacityChartScrollNeedsVisiblePosition = scroll.clientWidth <= 0;
   if (scroll.clientWidth <= 0) return;
+  capacityChartScrollNeedsVisiblePosition = false;
   const maximum = capacityChartScrollMaximum(scroll);
   const state = capacityChartScrollState;
   let nextScrollLeft = maximum;

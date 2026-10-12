@@ -110,9 +110,15 @@ runInNewContext(
   [
     "let capacityChartScrollState = null;",
     "let capacityChartFollowsLatest = true;",
+    "let capacityChartScrollNeedsVisiblePosition = false;",
     sourceText.slice(markerStart, markerEnd),
     sourceText.slice(scrollStart, scrollEnd),
     "globalThis.remember = rememberCapacityChartScroll; globalThis.restore = restoreCapacityChartScroll;",
+    "globalThis.reset = () => {",
+    "  capacityChartScrollState = null;",
+    "  capacityChartFollowsLatest = true;",
+    "  capacityChartScrollNeedsVisiblePosition = false;",
+    "};",
   ].join("\n"),
   capacityScrollContext,
   { timeout: 1000 },
@@ -120,9 +126,11 @@ runInNewContext(
 const capacityScrollPresenter = capacityScrollContext as typeof capacityScrollContext & {
   remember: () => void;
   restore: (scroll: CapacityScrollNode, displayWindow: { startAtMs: number; durationMs: number }, plot: { left: number; width: number }) => void;
+  reset: () => void;
 };
 
 Deno.test("capacity refresh preserves a scrolled anchor before the queued scroll event", () => {
+  capacityScrollPresenter.reset();
   const svg = {
     dataset: {
       capacityChartStartAtMs: "0",
@@ -152,6 +160,39 @@ Deno.test("capacity refresh preserves a scrolled anchor before the queued scroll
   capacityScrollPresenter.restore(refreshedScroll, { startAtMs: 0, durationMs: 1000 }, { left: 10, width: 1000 });
 
   assert.equal(refreshedScroll.scrollLeft, 150);
+});
+
+Deno.test("capacity refresh retains follow-latest intent after a hidden render", () => {
+  capacityScrollPresenter.reset();
+  const hiddenScroll: CapacityScrollNode = {
+    clientWidth: 0,
+    offsetWidth: 0,
+    scrollWidth: 0,
+    scrollLeft: 0,
+    querySelector: () => ({ dataset: {} }),
+  };
+  visibleCapacityScroll = hiddenScroll;
+  capacityScrollPresenter.restore(hiddenScroll, { startAtMs: 0, durationMs: 1000 }, { left: 10, width: 1000 });
+
+  const visibleScroll: CapacityScrollNode = {
+    clientWidth: 100,
+    offsetWidth: 100,
+    scrollWidth: 600,
+    scrollLeft: 0,
+    querySelector: () => ({
+      dataset: {
+        capacityChartStartAtMs: "0",
+        capacityChartDurationMs: "1000",
+        capacityChartPlotLeft: "10",
+        capacityChartPlotWidth: "1000",
+      },
+    }),
+  };
+  visibleCapacityScroll = visibleScroll;
+  capacityScrollPresenter.remember();
+  capacityScrollPresenter.restore(visibleScroll, { startAtMs: 0, durationMs: 1000 }, { left: 10, width: 1000 });
+
+  assert.equal(visibleScroll.scrollLeft, 500);
 });
 
 const retentionContext = { errorsRetention: new TestElement() };
