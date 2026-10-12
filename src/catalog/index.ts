@@ -27,6 +27,7 @@ import {
   releaseRefreshLease,
   startRefreshLeaseHeartbeat,
   storeCodexCatalog,
+  touchCodexCatalog,
   waitForColdCatalog,
 } from "./store.ts";
 import {
@@ -285,19 +286,25 @@ const readUpstreamCatalogBody = async (upstream: Response, version: string): Pro
   return { body, readFailed };
 };
 
-/** Re-store the catalog the upstream confirmed with a 304, or fall back to a replacement. */
+/** Revalidate the upstream body without treating the previously enriched body as its declaration. */
 const revalidateCachedCatalog = async (context: CodexCatalogRefreshContext, cached: LoadedCodexCatalog): Promise<Response> => {
   if (context.leaseLost() || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
     return rotatedCatalogResponse(context.kv, context.req, context.version);
   }
-  const revalidated = await storeCodexCatalog(context.kv, {
-    clientVersion: context.version,
-    authGeneration: context.authGeneration,
-    body: cached.body,
-    etag: cached.metadata.etag,
-    contentType: cached.metadata.content_type,
-    fetchedAtMs: context.nowMs,
-  });
+  const revalidated = cached.source_body === undefined
+    ? await touchCodexCatalog(context.kv, {
+      clientVersion: context.version,
+      authGeneration: context.authGeneration,
+      fetchedAtMs: context.nowMs,
+    })
+    : await storeCodexCatalog(context.kv, {
+      clientVersion: context.version,
+      authGeneration: context.authGeneration,
+      body: cached.source_body,
+      etag: cached.metadata.etag,
+      contentType: cached.metadata.content_type,
+      fetchedAtMs: context.nowMs,
+    });
   if (!revalidated || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
     return rotatedCatalogResponse(context.kv, context.req, context.version);
   }
@@ -334,7 +341,9 @@ const storeRefreshedCatalog = async (context: CodexCatalogRefreshContext, payloa
 const refreshCodexCatalog = async (context: CodexCatalogRefreshContext): Promise<Response> => {
   const upstream = await fetchCodexModels({
     clientVersion: context.version,
-    ifNoneMatch: context.cached?.metadata.etag ?? null,
+    // Caches written before source-body retention cannot safely be re-enriched
+    // from their served bytes, so make their first refresh fetch the body again.
+    ifNoneMatch: context.cached?.source_body === undefined ? null : context.cached.metadata.etag,
     onProviderTransportFailure: () => {
       context.observeProviderDegradation();
     },
