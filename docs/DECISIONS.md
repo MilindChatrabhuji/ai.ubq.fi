@@ -1303,9 +1303,16 @@ gives:
 | `finish_reason: "length"`                            | `{ kind: "max-tokens" }`, a first-class turn-end reason with its own UI notice    |
 
 So the harness is **not** a backstop for the gateway's completion-validity rule: it maps the wire faithfully and accepts
-a degenerate `stop` as a success. Codex is the stricter client of the two. That is the reason the gateway owns G3 rather
-than delegating it to the client, and it is why the Chat Completions route keeps its current shape: a client-side
-backstop does not exist to lean on.
+a degenerate `stop` as a success. Codex is the stricter client of the two. G3 is gateway-owned where a route implements
+it, but this does **not** mean that G3 protects DeepSeek Chat Completions.
+
+The DeepSeek Chat Completions route deliberately carries no gateway completion-validity guard. On the streamed route,
+`relayChatCompletionStream`'s `finishStream` records completion usage, settles `response.completed`, records success
+health, and emits `[DONE]` without testing `chatCompletionHasAnswerBearingOutput`; on the buffered route,
+`handleDeepSeekChatCompletions` uses that predicate only to mark telemetry before returning HTTP 200. A reasoning-only
+or empty-content `stop` is therefore reported as success to the harness. If a guard is added later, the route-local
+terminal seams are `finishStream` for streaming and the buffered handler immediately before its successful 200 response,
+not the harness.
 
 **The truncated-generation path itself is unchanged for the harness.** `length` maps to `max-tokens` on both the pi-ai
 adapter and the vendored `dsh-llm-deepseek` adapter, so a truncation the gateway reports stays reported. The gap is
@@ -1337,8 +1344,9 @@ all three were on routes that already had them:
 | `src/openai.ts:10683` | `rejectEmptyChatCompletion` | the shared Chat preflight, not the DeepSeek branch |
 
 The DeepSeek routes bypass `rejectEmptyChatCompletion` by dispatch order: both DeepSeek handlers return before the
-shared preflight runs. That is why the original G3 landed as a route-local guard rather than as a reuse of that
-function, and it is why the buffered branch below needed its own guard rather than inheriting one.
+shared preflight runs. The Responses route therefore implements G3 in its own streamed and buffered terminal seams;
+DeepSeek Chat Completions deliberately does not implement a completion-validity guard and cannot inherit one from that
+shared preflight.
 
 ### The buffered DeepSeek Responses branch was missing G3
 
