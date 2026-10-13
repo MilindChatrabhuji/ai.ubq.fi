@@ -1663,9 +1663,9 @@ reports `requiresOpenaiAuth: false`) returns no account from `account/read` even
 credentials; that exact blank reply is accepted only when it is the daemon's own shape and the home's credential file
 holds the account id the pool entry was bound to. Every other reply keeps requiring a matching ChatGPT identity, and the
 caller still refuses any rotation that fails to advance the persisted generation. The admin upstream health block also
-reports each slot's refresh-token SHA-256 and bound native-owner home so a local watchdog can detect an unbound pool slot that
-shares a refresh lineage with a credential file without seeing token material, while treating equality on a slot bound to that same
-home as the expected delegation state.
+reports each slot's refresh-token SHA-256 and bound native-owner home so a local watchdog can detect an unbound pool
+slot that shares a refresh lineage with a credential file without seeing token material, while treating equality on a
+slot bound to that same home as the expected delegation state.
 
 Reason: the 2026-10-13 VPS auth recovery proved a gateway KV slot and the native CLI store rotated one personal lineage
 until the first consumer invalidated the second (`refresh_token_reused`); the VPS daemon cannot name its ChatGPT account
