@@ -405,9 +405,7 @@ const lithosDispatchPass = async (
     attempt: progressed.attempt,
     ...lithosRateLimitSnapshot(attempt.headers),
   });
-  const noRetryModels = lithosRetryProhibited(attempt.headers)
-    ? new Set([...progressed.noRetryModels, progressed.attemptModel])
-    : progressed.noRetryModels;
+  const noRetryModels = lithosRetryProhibited(attempt.headers) ? new Set([...progressed.noRetryModels, progressed.attemptModel]) : progressed.noRetryModels;
   const eligible = { ...progressed, noRetryModels };
   // A refusal with a window deepens later requests to the next eligible ladder
   // tier; the target is re-derived per refusal, so fast refusing deepens it to

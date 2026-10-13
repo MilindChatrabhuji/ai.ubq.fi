@@ -283,8 +283,8 @@ Deno.test("cerebras responses: rejects non-text developer content instead of dro
     assert.equal(calls.length, 0);
     const payload = (await result.json()) as { error?: { code?: string; type?: string; message?: string } };
     assert.equal(payload.error?.code, "cerebras_request_invalid");
-    assert.equal(payload.error?.type, "invalid_request_error");
-    assert.match(payload.error?.message ?? "", /only text content/);
+    assert.equal(payload.error.type, "invalid_request_error");
+    assert.match(payload.error.message ?? "", /only text content/);
   });
 });
 

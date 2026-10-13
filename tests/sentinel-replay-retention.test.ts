@@ -720,7 +720,6 @@ Deno.test({
       for (let index = 0; index < middle * 2 + 1; index += 1) {
         const admission = await admitForTest(kv, `reap-stranded-${index}`, now + index, budgetBytes);
         assert.equal(admission.ok, true);
-        if (!admission.ok) throw new Error("unreachable");
         keys.push(admission.accounting_key);
         totalCharge += admission.charge;
       }
