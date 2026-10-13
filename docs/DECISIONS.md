@@ -1654,3 +1654,21 @@ waterfall on every failure, and never reuses the Codex plumbing to serve team tr
 means Anthropic has not clearly authorized this exact bridge; the owner must accept that residual account risk in
 writing before live activation, and a stored provider selection written after this change must include `claude_code` to
 keep the tier servable, exactly like every other provider.
+
+## Linux gateways delegate a shared CLI credential lineage to the local native daemon - 2026-10-13
+
+The gateway's native-owner binding now runs on Linux with the same single canonical home as macOS (`CODEX_HOME` or
+`~/.codex`). A managed-auth daemon whose active provider does not require OpenAI auth (a gateway-routed custom provider
+reports `requiresOpenaiAuth: false`) returns no account from `account/read` even though it refreshes the home's ChatGPT
+credentials; that exact blank reply is accepted only when it is the daemon's own shape and the home's credential file
+holds the account id the pool entry was bound to. Every other reply keeps requiring a matching ChatGPT identity, and the
+caller still refuses any rotation that fails to advance the persisted generation. The admin upstream health block also
+reports each slot's refresh-token SHA-256 so a local watchdog can detect a pool slot that shares a refresh lineage with
+a credential file without seeing token material.
+
+Reason: the 2026-10-13 VPS auth recovery proved a gateway KV slot and the native CLI store rotated one personal lineage
+until the first consumer invalidated the second (`refresh_token_reused`); the VPS daemon cannot name its ChatGPT account
+while it routes inference through the gateway, which blocked the previous Darwin-only binding handshake. Reversal risk:
+a blank-account reply from a daemon holding the wrong file account stays refused, but a same-account file swap between
+bind and refresh is caught only by the generation checks; the fallback trusts the local home configured on that host,
+never a remote path.
