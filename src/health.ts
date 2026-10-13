@@ -19,7 +19,7 @@ import {
   type ProviderHealthView,
   type ProviderHealthState,
 } from "./provider/health.ts";
-import { decodeBase64ToString } from "./utils.ts";
+import { decodeBase64ToString, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
 import { readMeteredApiKey } from "./provider/metered.ts";
 import { readOpenRouterApiKey } from "./provider/openrouter.ts";
@@ -47,6 +47,11 @@ type HealthAuthMetaBase = {
     slot: number;
     updated_at_ms: number | null;
     access_token_exp_ms: number | null;
+    /**
+     * SHA-256 of the slot's refresh token. A digest only: it lets a local watchdog compare
+     * the pool against credential files without exposing token material.
+     */
+    refresh_sha256: string | null;
   }[];
 };
 
@@ -112,7 +117,7 @@ const enrichAuthMeta = (meta: HealthAuthMetaBase): HealthAuthMeta => {
   };
 };
 
-const loadEnvCodexAuth = (): CodexAuthContext | null => {
+const loadEnvCodexAuth = async (): Promise<CodexAuthContext | null> => {
   if (!config.codexAuthJsonB64) return null;
   try {
     const decoded = decodeBase64ToString(config.codexAuthJsonB64);
@@ -131,6 +136,7 @@ const loadEnvCodexAuth = (): CodexAuthContext | null => {
             slot: 1,
             updated_at_ms: null,
             access_token_exp_ms: accessTokenExpMs,
+            refresh_sha256: await sha256Hex(auth.refresh_token),
           },
         ],
       },
@@ -147,11 +153,12 @@ const getCodexAuthContext = async (): Promise<CodexAuthContext> => {
     const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY);
     const pool = parseCodexAuthPool(entry.value);
     if (pool) {
-      const accounts = pool.accounts.map((account, index) => ({
+      const accounts = await Promise.all(pool.accounts.map(async (account, index) => ({
         slot: index + 1,
         updated_at_ms: account.updated_at_ms,
         access_token_exp_ms: getJwtExpMs(account.access_token),
-      }));
+        refresh_sha256: await sha256Hex(account.refresh_token),
+      })));
       const expirations = accounts.map((account) => account.access_token_exp_ms).filter((value): value is number => typeof value === "number");
       return {
         meta: {
@@ -166,7 +173,7 @@ const getCodexAuthContext = async (): Promise<CodexAuthContext> => {
     }
   }
 
-  const envMeta = loadEnvCodexAuth();
+  const envMeta = await loadEnvCodexAuth();
   if (envMeta) return envMeta;
 
   return {
