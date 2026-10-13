@@ -77,7 +77,7 @@ export const chatOutputTextPartKey = (event: Record<string, unknown>): string =>
   return `output:${chatOutputTextPartIndexText(event.output_index ?? 0)}:${chatOutputTextPartIndexText(event.content_index ?? 0)}`;
 };
 
-const chatOutputTextPartStorageKey = (event: Record<string, unknown>): string => chatOutputTextPartPositionKey(event) ?? chatOutputTextPartKey(event);
+export const chatOutputTextPartStorageKey = (event: Record<string, unknown>): string => chatOutputTextPartPositionKey(event) ?? chatOutputTextPartKey(event);
 
 type ReconciledChatContent = Readonly<{ outputText: string; refusal: string }>;
 
@@ -96,11 +96,6 @@ const completedPartRepeatsEmittedContent = (emittedParts: ReadonlyMap<string, st
   if (positionKey !== null) {
     const emitted = emittedParts.get(positionKey);
     if (emitted !== undefined) return emitted === completed || emitted.startsWith(completed);
-    const unpositioned = [...emittedParts.entries()].filter(([key]) => key.startsWith("item:"));
-    if (unpositioned.length === 1) {
-      const [, unpositionedText] = unpositioned[0];
-      return unpositionedText === completed || unpositionedText.startsWith(completed);
-    }
     return false;
   }
   const emitted = [...emittedParts.values()].join("");
