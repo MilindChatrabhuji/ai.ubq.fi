@@ -13,6 +13,7 @@ export type VpsJournalCoverage = {
   digest: string;
 };
 export type VpsJournalReader = { read(start: number, end: number): Promise<string>; coverage(start: number, end: number): Promise<VpsJournalCoverage | null> };
+/** @public Standalone Sentinel's pinned VPS bridge composes its actual unit-scoped journal reader here. */
 export function createVpsJournalReader(run: VpsCommand, root: string, coverage: VpsJournalReader["coverage"]): VpsJournalReader {
   return {
     coverage,

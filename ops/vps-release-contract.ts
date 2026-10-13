@@ -35,7 +35,6 @@ export type VpsHealthProof = {
   headersMatch: boolean;
   originMatches: boolean;
 };
-export type VpsInferenceProof = { revision: string; observedAt: number; origin: "mac-direct-vps"; authenticated: true; succeeded: true; proofDigest: string };
 export type VpsMetricsSample = {
   identity: VpsIdentity;
   windowStart: number;
