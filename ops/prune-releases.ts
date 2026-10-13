@@ -5,8 +5,9 @@
 // retention existed, and for a launchd agent or systemd timer that enforces the
 // bound without deploying. Run it from the repository root.
 import { pruneReleases, RELEASE_RETENTION_KEEP } from "./release-retention.ts";
+import { withVpsDeployLock } from "./vps-release-journal.ts";
 
-const report = await pruneReleases();
+const report = await withVpsDeployLock(await Deno.realPath("."), () => pruneReleases());
 console.log(
   JSON.stringify(
     {
