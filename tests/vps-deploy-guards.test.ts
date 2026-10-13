@@ -107,6 +107,10 @@ const relocateDeployScript = async (root: string): Promise<string> => {
 const relocateRetentionModule = async (root: string): Promise<void> => {
   const source = await Deno.readTextFile(OPS_RELEASE_RETENTION_SOURCE);
   await Deno.writeTextFile(`${root}/release-retention.ts`, source);
+  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts"]) {
+    const dependency = await Deno.readTextFile(new URL("../ops/" + name, import.meta.url));
+    await Deno.writeTextFile(`${root}/${name}`, dependency);
+  }
 };
 
 const createFixture = async (options: { branch: string; tracking: "match" | "mismatch" | "missing"; relocate: boolean }): Promise<Fixture> => {
@@ -130,7 +134,16 @@ const createFixture = async (options: { branch: string; tracking: "match" | "mis
   // The relocated script and the module it imports are committed with the
   // release so the fixture checkout stays tracked-clean for the guard's
   // `git status --porcelain --untracked-files=no` check.
-  if (options.relocate) await runFixtureGit(root, env, ["add", "--", "deploy.fixture.ts", "release-retention.ts"]);
+  if (options.relocate)
+    await runFixtureGit(root, env, [
+      "add",
+      "--",
+      "deploy.fixture.ts",
+      "release-retention.ts",
+      "vps-release-store.ts",
+      "vps-release-journal.ts",
+      "vps-release-contract.ts",
+    ]);
   await runFixtureGit(root, env, ["commit", "-q", "-m", "fixture release"]);
   const releaseSha = await runFixtureGit(root, env, ["rev-parse", "HEAD"]);
   if (options.tracking === "mismatch") {
@@ -536,7 +549,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       'printf "git %s\\n" "$*" >> "$fixture_log"\nif [ "$1" = "archive" ] && [ -f "$fixture_root/archive-refused" ]; then printf "fixture archive refused\\n" >&2; exit 76; fi\nexec /usr/bin/git "$@"\n',
     tar:
       prefix +
-      'printf "tar %s\\n" "$*" >> "$fixture_log"\n[ "$#" -eq 4 ] && [ "$1" = "-xf" ] && [ "$3" = "-C" ] && [ "$2" = "$4.tar" ]\ncase "$4" in .data/releases/.staging-*) ;; *) exit 75 ;; esac\nif [ -f "$fixture_root/preparation-refused" ]; then printf "fixture preparation refused\\n" >&2; exit 78; fi\nexec /usr/bin/tar "$@"\n',
+      'printf "tar %s\\n" "$*" >> "$fixture_log"\n[ "$#" -eq 4 ] && [ "$1" = "-xf" ] && [ "$3" = "-C" ] && [ "$2" = "$4.tar" ]\ncase "$4" in .data/releases/.staging-*|"$fixture_root"/.data/releases/.staging-*) ;; *) exit 75 ;; esac\nif [ -f "$fixture_root/preparation-refused" ]; then printf "fixture preparation refused\\n" >&2; exit 78; fi\nexec /usr/bin/tar "$@"\n',
     sudo:
       prefix +
       [
@@ -566,7 +579,8 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
     "const actualFetch = globalThis.fetch;",
     'const log = (event: string): void => Deno.writeTextFileSync(".data/trace", event + "\\n", { append: true });',
     "Deno.symlink = async (target: string, path: string): Promise<void> => {",
-    ' if (!/^releases\\/[0-9a-f]{40}$/.test(target) || !/^\\.data\\/current-[0-9a-f-]{36}$/.test(path)) throw new Error("fixture symlink scope refused");',
+    ' const relative = path.startsWith(fixtureRoot + "/") ? path.slice(fixtureRoot.length + 1) : path;',
+    ' if (!/^releases\\/[0-9a-f]{40}$/.test(target) || !/^\\.data\\/current-[0-9a-f-]{36}$/.test(relative)) throw new Error("fixture symlink scope refused");',
     ' if (await Deno.realPath(".data") !== fixtureRoot + "/.data" || await Deno.realPath(".data/" + target) !== fixtureRoot + "/.data/" + target) throw new Error("fixture symlink ownership refused");',
     ' const result = await new Deno.Command("/bin/ln", { args: ["-s", target, path], stdout: "piped", stderr: "piped" }).output();',
     ' if (!result.success) throw new Error("fixture ln failed"); log("selector-link " + target);',
