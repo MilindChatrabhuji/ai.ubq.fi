@@ -52,6 +52,12 @@ type HealthAuthMetaBase = {
      * the pool against credential files without exposing token material.
      */
     refresh_sha256: string | null;
+    /**
+     * The bound native-owner home, when the slot delegates its refresh. A digest matching a
+     * credential file is expected for a slot bound to that home; without a binding it means
+     * two independent refreshers share one lineage.
+     */
+    native_owner_codex_home: string | null;
   }[];
 };
 
@@ -137,6 +143,7 @@ const loadEnvCodexAuth = async (): Promise<CodexAuthContext | null> => {
             updated_at_ms: null,
             access_token_exp_ms: accessTokenExpMs,
             refresh_sha256: await sha256Hex(auth.refresh_token),
+            native_owner_codex_home: null,
           },
         ],
       },
@@ -158,6 +165,7 @@ const getCodexAuthContext = async (): Promise<CodexAuthContext> => {
         updated_at_ms: account.updated_at_ms,
         access_token_exp_ms: getJwtExpMs(account.access_token),
         refresh_sha256: await sha256Hex(account.refresh_token),
+        native_owner_codex_home: account.native_owner?.codex_home ?? null,
       })));
       const expirations = accounts.map((account) => account.access_token_exp_ms).filter((value): value is number => typeof value === "number");
       return {

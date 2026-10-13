@@ -483,8 +483,11 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
 
     assert.equal(upstream.status, 503);
     assert.equal(upstreamPayload.status, 503);
-    const authBlock = upstreamPayload.auth as { accounts?: { refresh_sha256?: string | null }[] } | undefined;
+    const authBlock = upstreamPayload.auth as {
+      accounts?: { refresh_sha256?: string | null; native_owner_codex_home?: string | null }[];
+    } | undefined;
     assert.equal(authBlock?.accounts?.[0]?.refresh_sha256, await sha256Hex("refresh"));
+    assert.equal(authBlock?.accounts?.[0]?.native_owner_codex_home, null);
     assert.equal((upstreamPayload.probes as { codex?: { provider?: string; status?: number } } | undefined)?.codex?.provider, "chatgpt_codex");
     assert.equal((upstreamPayload.probes as { codex?: { status?: number } } | undefined)?.codex?.status, 503);
   } finally {
