@@ -37,6 +37,7 @@ export type VpsDriverDependencies = {
   /** Read back the exact committed release-state terminal before releasing pins. */
   verifySettlement: (receipt: VpsReceipt, settlement: VpsSettlement) => Promise<boolean>;
 };
+/** @public Standalone Sentinel's pinned VPS bridge uses this native command capability. */
 export async function runVpsCommand(program: string, args: string[], cwd: string): Promise<string> {
   const result = await new Deno.Command(program, { args, cwd, signal: AbortSignal.timeout(240_000), stdout: "piped", stderr: "piped" }).output();
   if (!result.success) throw new Error("VPS deployment command failed");
