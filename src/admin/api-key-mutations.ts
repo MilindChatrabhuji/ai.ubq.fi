@@ -770,10 +770,14 @@ const releaseLocalDeletionClaim = async (kv: Deno.Kv, entry: Deno.KvEntryMaybe<A
 
 /** A failed ID deletion can release only after a fresh read still proves the key is revoked. */
 const releaseLocalDeletionClaimAfterConflict = async (kv: Deno.Kv, idKey: Deno.KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<void> => {
-  if (!claim) return;
-  const entry = await kv.get<ApiKeyRecord>(idKey, { consistency: "strong" });
-  if (!entry.value?.revoked_at_ms) return;
-  await releaseLocalDeletionClaim(kv, entry, claim);
+  try {
+    if (!claim) return;
+    const entry = await kv.get<ApiKeyRecord>(idKey, { consistency: "strong" });
+    if (!entry.value?.revoked_at_ms) return;
+    await releaseLocalDeletionClaim(kv, entry, claim);
+  } catch (error) {
+    console.error("[ai.ubq.fi] Failed to release local API key deletion claim after a concurrent update:", { error });
+  }
 };
 
 const completeLocalDeletion = async (kv: Deno.Kv, idKey: Deno.KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<Response | null> => {
@@ -859,13 +863,7 @@ export const handleAdminApiKeysDelete = async (req: Request, context?: ApiKeyAud
 
   const commit = await atomic.commit();
   if (!commit.ok) {
-    try {
-      await releaseLocalDeletionClaimAfterConflict(kv, idKey, localDeletionClaim);
-    } catch (error) {
-      console.error("[ai.ubq.fi] Failed to release local API key deletion claim after a concurrent update:", {
-        error,
-      });
-    }
+    await releaseLocalDeletionClaimAfterConflict(kv, idKey, localDeletionClaim);
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
   invalidateApiKeyPolicy(id);

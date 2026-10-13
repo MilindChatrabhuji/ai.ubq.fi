@@ -212,16 +212,16 @@ Deno.test("two accounts may each redeem once per UTC day, and one account's seco
   const provider = new FakeCodexUsageResetProvider();
   const configured = liveIncidentConfig();
   const deps = dependencies(kv, provider, clock, configured);
-  const accountAFirst = candidate({ accountId: "incident-account-a" });
+  const accountFirstA = candidate({ accountId: "incident-account-a" });
   const accountB = candidate({ accountId: "incident-account-b", requestId: "incident-account-b" });
   // A second, distinct quota window for account A later the same UTC day
   // (a new quota generation, so the window ledger alone would allow it).
-  const accountASecond = candidate({ accountId: "incident-account-a", requestId: "incident-account-a-second", quotaResetAtMs: clock.nowMs + 120_000 });
-  await seedFences(kv, accountAFirst);
+  const accountSecondA = candidate({ accountId: "incident-account-a", requestId: "incident-account-a-second", quotaResetAtMs: clock.nowMs + 120_000 });
+  await seedFences(kv, accountFirstA);
   await seedFences(kv, accountB);
-  await seedFences(kv, accountASecond);
+  await seedFences(kv, accountSecondA);
 
-  const first = await attemptCodexBankedReset(accountAFirst, deps);
+  const first = await attemptCodexBankedReset(accountFirstA, deps);
   assert.equal(first.kind, "verified");
   assert.equal(await accountDayCount(kv, "incident-account-a", day), 1);
 
@@ -232,7 +232,7 @@ Deno.test("two accounts may each redeem once per UTC day, and one account's seco
   assert.equal(await accountDayCount(kv, "incident-account-a", day), 1);
   assert.equal(await accountDayCount(kv, "incident-account-b", day), 1);
 
-  const refused = await attemptCodexBankedReset(accountASecond, deps);
+  const refused = await attemptCodexBankedReset(accountSecondA, deps);
   assert.equal(refused.kind, "skipped");
   assert.equal(refused.reason, "account_day_limit_reached");
   assert.equal(await accountDayCount(kv, "incident-account-a", day), 1);

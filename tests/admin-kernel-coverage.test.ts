@@ -952,7 +952,10 @@ Deno.test("codex reset settings expose bounded credit expiries without raw credi
   });
   const stub = (inventory: () => Response | Promise<Response>) => {
     globalThis.fetch = (input) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      let url: string;
+      if (typeof input === "string") url = input;
+      else if (input instanceof URL) url = input.toString();
+      else url = input.url;
       if (!url.endsWith("/backend-api/wham/rate-limit-reset-credits")) throw new Error(`unexpected request ${url}`);
       return Promise.resolve(inventory());
     };
