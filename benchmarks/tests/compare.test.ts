@@ -1,14 +1,17 @@
+import { test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import { broadToolSurface, compactToolSurface, surfaceTokenCost } from "../../src/harmony/reliability/surfaces.ts";
 import { buildContextEvidence } from "../compare.ts";
 import { loadTasks } from "../manifest.ts";
 
-const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
+const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
 
 function freshOptions() {
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const runsRoot = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const runsRoot = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   return { runsRoot };
 }
 
@@ -17,7 +20,7 @@ function requireFound<T>(value: T | undefined, description: string): T {
   return value;
 }
 
-Deno.test("compare: evidence runs deterministically without inference", async () => {
+test("compare: evidence runs deterministically without inference", async () => {
   const { runsRoot } = freshOptions();
   try {
     const tasks = loadTasks(TASKS_DIR).filter((t) => ["nav-001", "fail-001", "long-003"].includes(t.id));
@@ -58,11 +61,11 @@ Deno.test("compare: evidence runs deterministically without inference", async ()
     );
     assert.ok(medium.structured_tokens < medium.full_transcript_tokens, `structured ${medium.structured_tokens} < full ${medium.full_transcript_tokens}`);
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("compare: surfaces report compact always cheaper than broad", () => {
+test("compare: surfaces report compact always cheaper than broad", () => {
   const compact = compactToolSurface();
   const broad = broadToolSurface();
   assert.equal(compact.definitions.length, 9);
@@ -71,7 +74,7 @@ Deno.test("compare: surfaces report compact always cheaper than broad", () => {
   assert.equal(surfaceTokenCost(compact), surfaceTokenCost(compactToolSurface()));
 });
 
-Deno.test("compare: aggregation carries per-budget evidence", async () => {
+test("compare: aggregation carries per-budget evidence", async () => {
   const { runsRoot } = freshOptions();
   try {
     const tasks = loadTasks(TASKS_DIR).filter((t) => t.id === "nav-001");
@@ -83,6 +86,6 @@ Deno.test("compare: aggregation carries per-budget evidence", async () => {
       assert.ok(agg.structured_ratio > 0);
     }
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });

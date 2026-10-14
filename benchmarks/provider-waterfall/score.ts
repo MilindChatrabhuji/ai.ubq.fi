@@ -1,3 +1,4 @@
+import { readdir, readFile, writeFile } from "node:fs/promises";
 // Normalization and overall scoring for the DeepSeek V4.1 Flash provider
 // waterfall benchmark. Cost 50%, reliability 30%, speed 20%, each dimension
 // normalized to 0-100 across the providers under comparison.
@@ -230,21 +231,21 @@ const parseArgs = (args: readonly string[]): Map<string, string> => {
 
 const listJsonl = async (dir: string): Promise<string[]> => {
   const files: string[] = [];
-  for await (const entry of Deno.readDir(dir)) {
-    if (entry.isFile && entry.name.endsWith(".jsonl") && !entry.name.startsWith("probe-")) files.push(`${dir}/${entry.name}`);
+  for await (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.startsWith("probe-")) files.push(`${dir}/${entry.name}`);
   }
   return files.sort((left, right) => left.localeCompare(right));
 };
 
 if (import.meta.main) {
-  const args = parseArgs(Deno.args);
+  const args = parseArgs(process.argv.slice(2));
   const dir = args.get("dir") ?? new URL("results/", import.meta.url).pathname;
   const period = args.get("period") ?? "w1-eve";
   const filesArg = args.get("files");
   const files = filesArg ? filesArg.split(",") : await listJsonl(dir);
   const records: AttemptRecord[] = [];
   for (const file of files) {
-    const text = await Deno.readTextFile(file);
+    const text = await readFile(file, "utf8");
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       const record = JSON.parse(line) as AttemptRecord;
@@ -256,8 +257,8 @@ if (import.meta.main) {
   const costs = summarizeCosts(records);
   const rows = scoreProviders(metrics, costs);
   const out = args.get("out") ?? `${dir.replace(/\/$/, "")}/scores.json`;
-  await Deno.writeTextFile(out, JSON.stringify({ generated_at: new Date().toISOString(), sources: files, costs, rows }, null, 1));
-  await Deno.writeTextFile(out.replace(/\.json$/, ".md"), `${renderComparisonTable(rows)}\n`);
+  await writeFile(out, JSON.stringify({ generated_at: new Date().toISOString(), sources: files, costs, rows }, null, 1));
+  await writeFile(out.replace(/\.json$/, ".md"), `${renderComparisonTable(rows)}\n`);
   console.log(renderComparisonTable(rows));
   console.log(`[score] wrote ${out}`);
 }

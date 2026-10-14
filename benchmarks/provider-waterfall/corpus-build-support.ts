@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises";
+import { isFsError } from "../fs-errors.ts";
 // corpus-build.ts — m1-corpus module worker for the DeepSeek V4.1 Flash provider waterfall benchmark.
 // Builds the frozen v1 corpus from recorded DeepSeek V4.1 Flash subagent sessions under
 // /Users/nv/.codex/sessions/2026/10 per DESIGN.md ("Frozen corpus"): one entry per chosen
@@ -417,8 +419,8 @@ const parseSession = (path: string, relativePath: string, content: string): Sess
 
 const listDayFiles = async (monthDir: string, day: string): Promise<string[]> => {
   const names: string[] = [];
-  for await (const entry of Deno.readDir(`${monthDir}/${day}`)) {
-    if (entry.isFile && entry.name.endsWith(".jsonl")) names.push(entry.name);
+  for await (const entry of await readdir(`${monthDir}/${day}`, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) names.push(entry.name);
   }
   names.sort(compareText);
   return names.map((name) => `${monthDir}/${day}/${name}`);
@@ -427,9 +429,9 @@ const listDayFiles = async (monthDir: string, day: string): Promise<string[]> =>
 const listMonthDays = async (monthDir: string): Promise<string[]> => {
   const days: string[] = [];
   try {
-    for await (const entry of Deno.readDir(monthDir)) if (entry.isDirectory) days.push(entry.name);
+    for await (const entry of await readdir(monthDir, { withFileTypes: true })) if (entry.isDirectory()) days.push(entry.name);
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return [];
+    if (isFsError(error, "ENOENT")) return [];
     throw error;
   }
   return days.sort(compareText);
@@ -447,7 +449,7 @@ export const listJsonlFiles = async (months: readonly (readonly [string, string]
 export const harvest = async (files: readonly string[], root: string): Promise<SessionData[]> => {
   const sessions: SessionData[] = [];
   for (const path of files) {
-    const content = await Deno.readTextFile(path);
+    const content = await readFile(path, "utf8");
     const relativePath = path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
     const session = parseSession(path, relativePath, content);
     if (session) sessions.push(session);

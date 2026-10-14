@@ -1,4 +1,13 @@
-import { BENCHMARK_SCHEMA_VERSION, SchemaError, TrajectoryEvent, validateBenchmarkResult, validateTaskManifest, validateTrajectoryEvent } from "../schemas.ts";
+import { test } from "bun:test";
+import { readdirSync } from "node:fs";
+import {
+  BENCHMARK_SCHEMA_VERSION,
+  SchemaError,
+  type TrajectoryEvent,
+  validateBenchmarkResult,
+  validateTaskManifest,
+  validateTrajectoryEvent,
+} from "../schemas.ts";
 import { loadTasks, selectTasks, taskFamily } from "../manifest.ts";
 import { computeFixtureRevision } from "../fixture.ts";
 
@@ -20,12 +29,12 @@ function baseManifest(): Record<string, unknown> {
   };
 }
 
-Deno.test("schemas: valid manifest round-trips", () => {
+test("schemas: valid manifest round-trips", () => {
   const m = validateTaskManifest(baseManifest());
   if (m.id !== "t-001" || m.category !== "navigation") throw new Error("identity lost");
 });
 
-Deno.test("schemas: manifest rejects unknown category", () => {
+test("schemas: manifest rejects unknown category", () => {
   const m = baseManifest();
   m.category = "space";
   let threw = false;
@@ -37,7 +46,7 @@ Deno.test("schemas: manifest rejects unknown category", () => {
   if (!threw) throw new Error("expected SchemaError for bad category");
 });
 
-Deno.test("schemas: manifest rejects malformed fixture revision", () => {
+test("schemas: manifest rejects malformed fixture revision", () => {
   const m = baseManifest();
   m.fixture_revision = "sha256:zz";
   let threw = false;
@@ -49,7 +58,7 @@ Deno.test("schemas: manifest rejects malformed fixture revision", () => {
   if (!threw) throw new Error("expected rejection of malformed revision");
 });
 
-Deno.test("schemas: manifest rejects empty allowed_write_scope", () => {
+test("schemas: manifest rejects empty allowed_write_scope", () => {
   const m = baseManifest();
   m.allowed_write_scope = [];
   let threw = false;
@@ -61,7 +70,7 @@ Deno.test("schemas: manifest rejects empty allowed_write_scope", () => {
   if (!threw) throw new Error("expected rejection of empty scope");
 });
 
-Deno.test("schemas: manifest rejects min > max tool calls", () => {
+test("schemas: manifest rejects min > max tool calls", () => {
   const m = baseManifest();
   m.min_tool_calls = 11;
   let threw = false;
@@ -73,7 +82,7 @@ Deno.test("schemas: manifest rejects min > max tool calls", () => {
   if (!threw) throw new Error("expected rejection of min > max");
 });
 
-Deno.test("schemas: manifest validates file-check invert as boolean", () => {
+test("schemas: manifest validates file-check invert as boolean", () => {
   const m = baseManifest();
   m.oracle = { file_checks: [{ path: "a", kind: "exists", invert: 1 }] };
   let threw = false;
@@ -85,7 +94,7 @@ Deno.test("schemas: manifest validates file-check invert as boolean", () => {
   if (!threw) throw new Error("expected rejection of non-boolean invert");
 });
 
-Deno.test("schemas: trajectory run event validates", () => {
+test("schemas: trajectory run event validates", () => {
   const event: TrajectoryEvent = {
     type: "run",
     at: "2026-01-01T00:00:00.000Z",
@@ -100,7 +109,7 @@ Deno.test("schemas: trajectory run event validates", () => {
   validateTrajectoryEvent(event);
 });
 
-Deno.test("schemas: trajectory tool_call requires valid flag", () => {
+test("schemas: trajectory tool_call requires valid flag", () => {
   let threw = false;
   try {
     validateTrajectoryEvent({
@@ -116,7 +125,7 @@ Deno.test("schemas: trajectory tool_call requires valid flag", () => {
   if (!threw) throw new Error("expected rejection of tool_call without valid");
 });
 
-Deno.test("schemas: result validates and rejects unknown failure class", () => {
+test("schemas: result validates and rejects unknown failure class", () => {
   const result = {
     schema_version: BENCHMARK_SCHEMA_VERSION,
     run_id: "r1",
@@ -164,10 +173,10 @@ Deno.test("schemas: result validates and rejects unknown failure class", () => {
 // Manifest corpus
 // ---------------------------------------------------------------------------
 
-const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
-const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
+const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
-Deno.test("manifests: 25 tasks across all required categories", () => {
+test("manifests: 25 tasks across all required categories", () => {
   const tasks = loadTasks(TASKS_DIR);
   if (tasks.length !== 25) throw new Error(`expected 25 tasks, got ${tasks.length}`);
   for (const cat of ["navigation", "coding", "sequential", "failure", "long"]) {
@@ -175,7 +184,7 @@ Deno.test("manifests: 25 tasks across all required categories", () => {
   }
 });
 
-Deno.test("manifests: every task declares fixture revision, verify command, trail, and write scope", () => {
+test("manifests: every task declares fixture revision, verify command, trail, and write scope", () => {
   const tasks = loadTasks(TASKS_DIR);
   for (const task of tasks) {
     if (task.fixture_revision === "") throw new Error(`${task.id}: missing fixture_revision`);
@@ -183,7 +192,7 @@ Deno.test("manifests: every task declares fixture revision, verify command, trai
     if (!task.scripted_trail?.length) throw new Error(`${task.id}: missing scripted_trail`);
     if (task.allowed_write_scope.length === 0) throw new Error(`${task.id}: empty write scope`);
     const head = `${FIXTURES_DIR}/${task.fixture}`;
-    const entries = [...Deno.readDirSync(head)];
+    const entries = [...readdirSync(head, { withFileTypes: true })];
     if (entries.length === 0) throw new Error(`${task.id}: fixture dir ${task.fixture} is empty`);
     // Reference adapter records exactly one tool_call event per trail step.
     if (task.scripted_trail.length < task.min_tool_calls) {
@@ -192,7 +201,7 @@ Deno.test("manifests: every task declares fixture revision, verify command, trai
   }
 });
 
-Deno.test("manifests: fixture revisions match the checked-in snapshots", async () => {
+test("manifests: fixture revisions match the checked-in snapshots", async () => {
   const tasks = loadTasks(TASKS_DIR);
   for (const task of tasks) {
     const actual = await computeFixtureRevision(`${FIXTURES_DIR}/${task.fixture}`);
@@ -202,7 +211,7 @@ Deno.test("manifests: fixture revisions match the checked-in snapshots", async (
   }
 });
 
-Deno.test("manifests: long-horizon tasks exceed 10 and 20 tool calls", () => {
+test("manifests: long-horizon tasks exceed 10 and 20 tool calls", () => {
   const tasks = loadTasks(TASKS_DIR);
   const over10 = tasks.filter((t) => t.min_tool_calls > 10);
   const over20 = tasks.filter((t) => t.min_tool_calls > 20);
@@ -211,7 +220,7 @@ Deno.test("manifests: long-horizon tasks exceed 10 and 20 tool calls", () => {
   if (over20.some((t) => t.min_tool_calls <= 20)) throw new Error("over20 selection wrong");
 });
 
-Deno.test("manifests: selection supports id, glob, category, and rejects unknown", () => {
+test("manifests: selection supports id, glob, category, and rejects unknown", () => {
   const tasks = loadTasks(TASKS_DIR);
   if (
     selectTasks(tasks, ["nav-001"])

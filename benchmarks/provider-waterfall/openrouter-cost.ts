@@ -1,3 +1,4 @@
+import { readdir, readFile, writeFile } from "node:fs/promises";
 // Reconciles OpenRouter's authoritative per-generation cost against the
 // expected rate-card cost for every successful OpenRouter attempt that
 // recorded a generation id. Metadata-only GETs; writes
@@ -11,7 +12,7 @@ const isRecord = (value: unknown): value is Json => typeof value === "object" &&
 
 const readEnv = (name: string): string | null => {
   try {
-    const value = Deno.env.get(name);
+    const value = process.env[name];
     return value?.trim() ? value : null;
   } catch {
     return null;
@@ -20,8 +21,8 @@ const readEnv = (name: string): string | null => {
 
 const listJsonl = async (dir: string): Promise<string[]> => {
   const files: string[] = [];
-  for await (const entry of Deno.readDir(dir)) {
-    if (entry.isFile && entry.name.endsWith(".jsonl") && entry.name.startsWith("openrouter-")) files.push(`${dir}/${entry.name}`);
+  for await (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.startsWith("openrouter-")) files.push(`${dir}/${entry.name}`);
   }
   return files.sort((left, right) => left.localeCompare(right));
 };
@@ -94,7 +95,7 @@ const main = async (): Promise<void> => {
   let unavailable = 0;
   const reconcileFile = async (file: string): Promise<Readonly<{ reconciled: number; missing: number; unavailable: number }>> => {
     const counts = { reconciled: 0, missing: 0, unavailable: 0 };
-    const text = await Deno.readTextFile(file);
+    const text = await readFile(file, "utf8");
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       const record = JSON.parse(line) as AttemptRecord;
@@ -117,7 +118,7 @@ const main = async (): Promise<void> => {
     missingId += counts.missing;
     unavailable += counts.unavailable;
   }
-  await Deno.writeTextFile(
+  await writeFile(
     `${dir}openrouter-observed-costs.json`,
     JSON.stringify({ generated_at: new Date().toISOString(), reconciled, missing_id: missingId, unavailable, rows }, null, 1)
   );

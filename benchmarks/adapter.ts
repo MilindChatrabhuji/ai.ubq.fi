@@ -30,7 +30,7 @@ import type { ContextBudgetKind } from "../src/harmony/reliability/context.ts";
 import type { RetryPolicy } from "../src/harmony/reliability/retry.ts";
 import type { VerificationPolicy } from "../src/harmony/reliability/verify.ts";
 import { FixtureWorkspace, WriteScopeViolationError } from "./fixture.ts";
-import { type ModelRequestEvent, TaskManifest, TrailStep, TrajectoryEvent } from "./schemas.ts";
+import { type ModelRequestEvent, type TaskManifest, type TrailStep, type TrajectoryEvent } from "./schemas.ts";
 import { type ToolBackends, type WorkspaceBackend } from "../src/harmony/tools/backend.ts";
 import { createFakeToolBackends } from "../src/harmony/tools/fakes.ts";
 import { ToolExecutionError, toolFailure } from "../src/harmony/tools/result.ts";

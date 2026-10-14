@@ -1,11 +1,13 @@
+import { statSync, writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 /**
  * Benchmark runner CLI.
  *
  * Usage (from the repository root):
- *   deno task benchmark:run -- --configs=reference            # hermetic default
- *   deno task benchmark:run -- --configs=reference --tasks=nav-*,fail-*
- *   deno task benchmark:run -- --configs=reference --tasks=category:long --limit=3
- *   deno task benchmark:run -- --runs=benchmark-runs --configs=all
+ *   bun run benchmark:run -- --configs=reference            # hermetic default
+ *   bun run benchmark:run -- --configs=reference --tasks=nav-*,fail-*
+ *   bun run benchmark:run -- --configs=reference --tasks=category:long --limit=3
+ *   bun run benchmark:run -- --runs=benchmark-runs --configs=all
  *
  * The runner only executes adapters registered in defaultAdapters(). The
  * built-in `reference` adapter is deterministic and calls no external model;
@@ -14,7 +16,7 @@
  * configuration surface; no environment variables are read.
  */
 
-import { AdapterRunContext, BenchmarkAdapter, defaultAdapters, TaskTimeoutError, ToolCallLimitExceededError } from "./adapter.ts";
+import { type AdapterRunContext, type BenchmarkAdapter, defaultAdapters, TaskTimeoutError, ToolCallLimitExceededError } from "./adapter.ts";
 import { computeFixtureRevision, FixtureRevisionMismatchError, FixtureWorkspace } from "./fixture.ts";
 import { loadTasks, selectTasks } from "./manifest.ts";
 import { aggregateResults, deriveMetrics, formatSummary } from "./metrics.ts";
@@ -23,14 +25,14 @@ import { deriveReliability } from "./reliability.ts";
 import {
   BENCHMARK_ROOT,
   BENCHMARK_SCHEMA_VERSION,
-  BenchmarkResult,
+  type BenchmarkResult,
   DEFAULT_RUNS_ROOT,
-  FailureClass,
-  TaskManifest,
-  TrajectoryEvent,
+  type FailureClass,
+  type TaskManifest,
+  type TrajectoryEvent,
   validateBenchmarkResult,
   validateTrajectoryEvent,
-  VerificationOutcome,
+  type VerificationOutcome,
 } from "./schemas.ts";
 
 // ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ export function defaultRunOptions(): RunOptions {
 }
 
 export function parseRunArgs(argv: string[]): RunOptions | { help: true } {
-  // `deno task benchmark:run -- args` forwards a literal "--"; accept both forms.
+  // `bun run benchmark:run -- args` forwards a literal "--"; accept both forms.
   if (argv[0] === "--") argv = argv.slice(1);
   const opts = defaultRunOptions();
   for (const arg of argv) {
@@ -80,7 +82,7 @@ export function parseRunArgs(argv: string[]): RunOptions | { help: true } {
   return opts;
 }
 
-export const RUN_HELP = `usage: deno task benchmark:run -- [--configs=reference] [--tasks=*] [--limit=N] [--runs=benchmark-runs]
+export const RUN_HELP = `usage: bun run benchmark:run -- [--configs=reference] [--tasks=*] [--limit=N] [--runs=benchmark-runs]
 
   --configs    comma-separated adapter config ids, or "all" (default: reference)
   --tasks      comma-separated selectors: exact id, glob (* pattern), "category:<name>"
@@ -112,7 +114,7 @@ function uniqueRunId(runsRoot: string, configId: string, taskId: string): string
 
 function exists(path: string): boolean {
   try {
-    Deno.statSync(path);
+    statSync(path);
     return true;
   } catch {
     return false;
@@ -121,7 +123,7 @@ function exists(path: string): boolean {
 
 function writeJsonl(path: string, records: unknown[]): void {
   const body = records.map((r) => JSON.stringify(r)).join("\n") + "\n";
-  Deno.writeTextFileSync(path, body);
+  writeFileSync(path, body);
 }
 
 export type RunOneOutcome = {
@@ -182,7 +184,7 @@ function classifyRunFailure(
 export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts: RunOptions, runIdHint = ""): Promise<RunOneOutcome> {
   const runId = runIdHint || uniqueRunId(opts.runsRoot, adapter.configId, task.id);
   const runDir = `${opts.runsRoot}/runs/${runId}`;
-  await Deno.mkdir(runDir, { recursive: true });
+  await mkdir(runDir, { recursive: true });
 
   const events: TrajectoryEvent[] = [];
   const started = isoNow();
@@ -379,8 +381,8 @@ export async function runBenchmarks(opts: RunOptions): Promise<BenchmarkResult[]
   const selected = selectTasks(tasks, opts.taskSelectors);
   const chosen = selectAdapters(opts, opts.adapters ?? defaultAdapters());
 
-  await Deno.mkdir(`${opts.runsRoot}/runs`, { recursive: true });
-  await Deno.mkdir(`${opts.runsRoot}/tmp`, { recursive: true });
+  await mkdir(`${opts.runsRoot}/runs`, { recursive: true });
+  await mkdir(`${opts.runsRoot}/tmp`, { recursive: true });
 
   const results: BenchmarkResult[] = [];
   for (const task of selected) {
@@ -401,20 +403,20 @@ export async function runBenchmarks(opts: RunOptions): Promise<BenchmarkResult[]
 
 if (import.meta.main) {
   try {
-    const parsed = parseRunArgs(Deno.args);
+    const parsed = parseRunArgs(process.argv.slice(2));
     if ("help" in parsed) {
       console.log(RUN_HELP);
-      Deno.exit(0);
+      process.exit(0);
     }
     console.log(`benchmark run: configs=[${parsed.configs.join(",")}] tasks=[${parsed.taskSelectors.join(",")}] runs=${parsed.runsRoot}`);
     const results = await runBenchmarks(parsed);
     const summary = aggregateResults(results, parsed.runsRoot);
     console.log("");
     console.log(formatSummary(summary, true));
-    if (results.some((r) => !r.success)) Deno.exit(1);
+    if (results.some((r) => !r.success)) process.exit(1);
   } catch (err) {
     console.error(`error: ${(err as Error).message}`);
     console.error(RUN_HELP);
-    Deno.exit(2);
+    process.exit(2);
   }
 }

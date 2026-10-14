@@ -1,9 +1,11 @@
+import { statSync, realpathSync, mkdirSync } from "node:fs";
+import { openKv, type Kv } from "#kv";
+import { serveHttp, type ServeDefaultExport } from "#http";
 // Benchmark-only gateway instance.
 //
 // Runs the immutable release selected by the main checkout's `.data/current`
-// symlink on loopback port 7998 with an isolated Deno KV
-// (`.data/benchmark/kv.sqlite3`, seeded from the production KV before first
-// use). The benchmark runner narrows the provider selection on this instance
+// symlink on loopback port 7998 with an isolated Bun KV
+// (`.data/benchmark/kv-bun.sqlite3`). The benchmark runner narrows the provider selection on this instance
 // only, so the production Mac gateway on port 7999 never sees benchmark
 // routing changes. The instance reads the same root `.env` upstream
 // credentials as production because the benchmark measures provider behavior,
@@ -11,15 +13,13 @@
 //
 // Run from the goal lane (the trailing argument enables the loopback-only
 // local development principal, exactly as a dev server does):
-//   deno run --unstable-kv --allow-env --allow-net --allow-sys=hostname \
-//     --allow-read=<repo-root>,<repo-root>/.codex --allow-write=<repo-root>/.data \
-//     benchmarks/provider-waterfall/instance.ts --disable-admin-auth
+//   bun benchmarks/provider-waterfall/instance.ts --disable-admin-auth
 
 const PORT = 7998;
 
 const pathExists = (url: URL): boolean => {
   try {
-    Deno.statSync(url);
+    statSync(url);
     return true;
   } catch {
     return false;
@@ -37,43 +37,41 @@ const findRepoRoot = (): URL => {
 };
 
 const root = findRepoRoot();
-const rootPath = Deno.realPathSync(root.pathname);
-const releasePath = Deno.realPathSync(new URL(".data/current/", root).pathname);
+const rootPath = realpathSync(root.pathname);
+const releasePath = realpathSync(new URL(".data/current/", root).pathname);
 console.log(`[benchmark] repo root ${rootPath}`);
 console.log(`[benchmark] release ${releasePath}`);
 
 for (const name of ["DENO_DEPLOY", "DENO_DEPLOYMENT_ID", "DENO_DEPLOY_BUILD_ID", "DENO_REGION", "DENO_TIMELINE"]) {
-  Deno.env.delete(name);
+  delete process.env[name];
 }
 
 const kvDir = `${rootPath}/.data/benchmark`;
-Deno.mkdirSync(kvDir, { recursive: true });
-const kv = await Deno.openKv(`${kvDir}/kv.sqlite3`);
-const { initializeKv } = (await import(`file://${releasePath}/src/kv.ts`)) as Readonly<{ initializeKv: (kv: Deno.Kv) => void }>;
+mkdirSync(kvDir, { recursive: true });
+const kv = await openKv(`${kvDir}/kv-bun.sqlite3`);
+const { initializeKv } = (await import(`file://${releasePath}/src/kv.ts`)) as Readonly<{ initializeKv: (kv: Kv) => void }>;
 initializeKv(kv);
 
 type ReleaseServe = Readonly<{
-  default: Readonly<{
-    fetch(request: Request, info: Deno.ServeHandlerInfo): Promise<Response>;
-    onListen?: (address: Deno.Addr) => void;
-  }>;
+  application: ServeDefaultExport;
   shutdownOptionalTelemetry: () => Promise<void>;
-  startMacMaintenance: (kv: Deno.Kv) => () => Promise<void>;
+  startMacMaintenance: (kv: Kv) => () => Promise<void>;
 }>;
 
 const serve = (await import(`file://${releasePath}/serve.ts`)) as ReleaseServe;
 const stopMaintenance = serve.startMacMaintenance(kv);
 
-const server = Deno.serve(
+const server = serveHttp(
   {
     hostname: "127.0.0.1",
     port: PORT,
     onListen(address) {
-      serve.default.onListen?.(address);
+      serve.application.onListen?.(address);
       console.log(`[benchmark] listening on ${address.hostname}:${address.port} (loopback only)`);
     },
+    upgrade: serve.application.upgrade,
   },
-  serve.default.fetch
+  serve.application.fetch
 );
 
 let stopping = false;
@@ -84,10 +82,10 @@ const shutdown = () => {
   void stopMaintenance();
   void server.shutdown();
 };
-Deno.addSignalListener("SIGTERM", shutdown);
-Deno.addSignalListener("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 await server.finished;
 await stopMaintenance();
 await serve.shutdownOptionalTelemetry();
 kv.close();
-Deno.exit(0);
+process.exit(0);

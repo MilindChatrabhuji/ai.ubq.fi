@@ -1,3 +1,4 @@
+import { readFile, readdir, writeFile } from "node:fs/promises";
 // Metric derivation for the DeepSeek V4.1 Flash provider waterfall benchmark.
 //
 // Aggregation unit: one (provider, corpus entry) item. Every attempt is a row;
@@ -205,7 +206,7 @@ export const computeProviderMetrics = (records: readonly AttemptRecord[]): reado
 export const loadRunRecords = async (paths: readonly string[]): Promise<readonly AttemptRecord[]> => {
   const records: AttemptRecord[] = [];
   for (const path of paths) {
-    const text = await Deno.readTextFile(path);
+    const text = await readFile(path, "utf8");
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       records.push(JSON.parse(line) as AttemptRecord);
@@ -228,14 +229,14 @@ const parseArgs = (args: readonly string[]): Map<string, string> => {
 
 const listJsonl = async (dir: string): Promise<string[]> => {
   const files: string[] = [];
-  for await (const entry of Deno.readDir(dir)) {
-    if (entry.isFile && entry.name.endsWith(".jsonl")) files.push(`${dir}/${entry.name}`);
+  for await (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(`${dir}/${entry.name}`);
   }
   return files.sort((left, right) => left.localeCompare(right));
 };
 
 if (import.meta.main) {
-  const args = parseArgs(Deno.args);
+  const args = parseArgs(process.argv.slice(2));
   const dir = args.get("dir") ?? new URL("results/", import.meta.url).pathname;
   const filesArg = args.get("files");
   const paths = filesArg ? filesArg.split(",") : await listJsonl(dir);
@@ -244,7 +245,7 @@ if (import.meta.main) {
   const records = args.get("all") === "true" ? all : all.filter((record) => record.period === period);
   const metrics = computeProviderMetrics(records);
   const out = args.get("out") ?? `${dir.replace(/\/$/, "")}/metrics.json`;
-  await Deno.writeTextFile(out, JSON.stringify({ generated_at: new Date().toISOString(), sources: paths, providers: metrics }, null, 1));
+  await writeFile(out, JSON.stringify({ generated_at: new Date().toISOString(), sources: paths, providers: metrics }, null, 1));
   for (const row of metrics) {
     console.log(
       `${row.provider.padEnd(11)} n=${row.samples} ok=${row.successful_items} first=${row.first_attempt_success_rate.toFixed(3)} ` +
