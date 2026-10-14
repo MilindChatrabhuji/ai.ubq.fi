@@ -47,7 +47,8 @@ Deno.test("VPS recovery resumes interrupted restart after the prior selector was
 for (const disposition of ["accepted", "rolled_back", "failed"] as const) {
   Deno.test(`VPS recovery retries ${disposition} pin cleanup with exact terminal CAS and original settlement`, async () => {
     const fixture = await makeVpsDriverFixture();
-    const releasePin = VpsOperationJournal.prototype.releasePin;
+    const releasePin = Object.getOwnPropertyDescriptor(VpsOperationJournal.prototype, "releasePin");
+    assert.ok(releasePin);
     try {
       let predecessor = await fixture.prepare();
       if (disposition !== "failed") predecessor = await fixture.driver.activate(await mutation(predecessor));
@@ -60,7 +61,7 @@ for (const disposition of ["accepted", "rolled_back", "failed"] as const) {
       };
       VpsOperationJournal.prototype.releasePin = () => Promise.reject(new Error("fake pin cleanup interruption"));
       await assert.rejects(() => fixture.driver.settle(input), /pin cleanup interruption/);
-      VpsOperationJournal.prototype.releasePin = releasePin;
+      Object.defineProperty(VpsOperationJournal.prototype, "releasePin", releasePin);
       const terminal = await fixture.driver.observe(input);
       assert.equal(terminal.phase, disposition);
       assert.equal((await readVpsPins(`${fixture.root}/.data/vps-release-pins.json`)).length, 1);
@@ -83,7 +84,7 @@ for (const disposition of ["accepted", "rolled_back", "failed"] as const) {
       assert.equal(await Deno.readTextFile(journal.path(terminal.operationId)), before);
       assert.deepEqual([fixture.system.calls.length, fixture.system.healthCalls], effects);
     } finally {
-      VpsOperationJournal.prototype.releasePin = releasePin;
+      Object.defineProperty(VpsOperationJournal.prototype, "releasePin", releasePin);
       await fixture.cleanup();
     }
   });
