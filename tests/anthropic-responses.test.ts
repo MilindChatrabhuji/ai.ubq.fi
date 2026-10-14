@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { normalizeAnthropicResponsesResponse, toAnthropicResponsesUsage } from "../src/provider/anthropic-responses.ts";
 import { extractUsageTokens } from "../src/openai-telemetry.ts";
@@ -47,7 +48,7 @@ const collect = async (response: Response): Promise<JsonRecord[]> => {
 };
 const terminalResponse = (events: JsonRecord[]): JsonRecord => events.at(-1)?.response as JsonRecord;
 
-Deno.test("Anthropic Responses usage counts native cache-fill input once and preserves unknown reads", () => {
+test("Anthropic Responses usage counts native cache-fill input once and preserves unknown reads", () => {
   const usage = toAnthropicResponsesUsage({ input_tokens: 15, output_tokens: 4, cache_creation_input_tokens: 1028, buyer_cost_micro: 1056 });
   assert.deepEqual(usage, {
     input_tokens: 1043,
@@ -63,7 +64,7 @@ Deno.test("Anthropic Responses usage counts native cache-fill input once and pre
   assert.equal(parsed.cachedInputTokens, null);
 });
 
-Deno.test("Anthropic Responses usage preserves measured reads and original buyer micro-cost", () => {
+test("Anthropic Responses usage preserves measured reads and original buyer micro-cost", () => {
   const usage = toAnthropicResponsesUsage({ input_tokens: 15, output_tokens: 4, cache_read_input_tokens: 1028, buyer_cost_micro: 69 });
   assert.deepEqual(usage, {
     input_tokens: 1043,
@@ -75,7 +76,7 @@ Deno.test("Anthropic Responses usage preserves measured reads and original buyer
   assert.equal(extractUsageTokens(usage)?.cacheWriteInputTokens, null);
 });
 
-Deno.test("Anthropic Responses usage adds mixed reads and writes without double counting", () => {
+test("Anthropic Responses usage adds mixed reads and writes without double counting", () => {
   assert.deepEqual(toAnthropicResponsesUsage({ input_tokens: 15, output_tokens: 4, cache_read_input_tokens: 1000, cache_creation_input_tokens: 28 }), {
     input_tokens: 1043,
     input_tokens_details: { cached_tokens: 1000, cache_write_tokens: 28 },
@@ -84,7 +85,7 @@ Deno.test("Anthropic Responses usage adds mixed reads and writes without double 
   });
 });
 
-Deno.test("Anthropic Responses usage does not invent absent cache counters or zero invalid counts", () => {
+test("Anthropic Responses usage does not invent absent cache counters or zero invalid counts", () => {
   assert.deepEqual(toAnthropicResponsesUsage({ input_tokens: 15, output_tokens: 4 }), { input_tokens: 15, output_tokens: 4, total_tokens: 19 });
   for (const invalid of [-1, 0.5, "1028", null, Number.NaN, Number.POSITIVE_INFINITY]) {
     const converted = toAnthropicResponsesUsage({ input_tokens: 15, output_tokens: 4, cache_read_input_tokens: invalid });
@@ -99,13 +100,13 @@ Deno.test("Anthropic Responses usage does not invent absent cache counters or ze
   assert.equal(toAnthropicResponsesUsage(null), null);
 });
 
-Deno.test("Anthropic Responses usage preserves malformed authoritative costs for fail-closed settlement", () => {
+test("Anthropic Responses usage preserves malformed authoritative costs for fail-closed settlement", () => {
   for (const cost of [null, -1, "69", 0.5, { amount: 69 }]) {
     assert.deepEqual(toAnthropicResponsesUsage({ input_tokens: 15, output_tokens: 4, buyer_cost_micro: cost })?.buyer_cost_micro, cost);
   }
 });
 
-Deno.test("Anthropic Responses maps native thinking tokens to canonical reasoning usage", () => {
+test("Anthropic Responses maps native thinking tokens to canonical reasoning usage", () => {
   assert.deepEqual(
     toAnthropicResponsesUsage({
       input_tokens: 15,
@@ -129,7 +130,7 @@ Deno.test("Anthropic Responses maps native thinking tokens to canonical reasonin
   }
 });
 
-Deno.test("Anthropic Responses JSON maps text, cache read and cost provenance", async () => {
+test("Anthropic Responses JSON maps text, cache read and cost provenance", async () => {
   const upstream = new Response(
     JSON.stringify(message([{ type: "text", text: "OK" }], { input_tokens: 15, output_tokens: 4, cache_read_input_tokens: 1028, buyer_cost_micro: 69 })),
     {
@@ -150,7 +151,7 @@ Deno.test("Anthropic Responses JSON maps text, cache read and cost provenance", 
   assert.equal(response.headers.get("content-length"), null);
 });
 
-Deno.test("Anthropic Responses JSON preserves tool IDs and arguments without exposing thinking signatures", async () => {
+test("Anthropic Responses JSON preserves tool IDs and arguments without exposing thinking signatures", async () => {
   const native = message(
     [
       { type: "thinking", thinking: "Use the requested tool.", signature: "provider-private-signature" },
@@ -176,7 +177,7 @@ Deno.test("Anthropic Responses JSON preserves tool IDs and arguments without exp
   assert.deepEqual(replay.input, [{ type: "function_call", status: "completed", call_id: "toolu_123", name: "weather", arguments: '{"city":"Paris"}' }]);
 });
 
-Deno.test("Anthropic Responses redacted thinking stays opaque rather than being forged into an OpenAI replay payload", async () => {
+test("Anthropic Responses redacted thinking stays opaque rather than being forged into an OpenAI replay payload", async () => {
   const native = message(
     [
       { type: "redacted_thinking", data: "opaque" },
@@ -191,7 +192,7 @@ Deno.test("Anthropic Responses redacted thinking stays opaque rather than being 
   assert.equal(JSON.stringify(payload).includes("opaque"), false);
 });
 
-Deno.test("Anthropic Responses respects an explicit reasoning summary none", async () => {
+test("Anthropic Responses respects an explicit reasoning summary none", async () => {
   const native = message(
     [
       { type: "thinking", thinking: "Do not expose this.", signature: "private" },
@@ -208,7 +209,7 @@ Deno.test("Anthropic Responses respects an explicit reasoning summary none", asy
   assert.equal(JSON.stringify(payload).includes("Do not expose this."), false);
 });
 
-Deno.test("Anthropic Responses JSON max_tokens is incomplete and unknown stops are failed", async () => {
+test("Anthropic Responses JSON max_tokens is incomplete and unknown stops are failed", async () => {
   for (const [reason, status] of [
     ["max_tokens", "incomplete"],
     ["pause_turn", "failed"],
@@ -223,7 +224,7 @@ Deno.test("Anthropic Responses JSON max_tokens is incomplete and unknown stops a
   }
 });
 
-Deno.test("Anthropic Responses SSE emits full text lifecycle and gross terminal usage", async () => {
+test("Anthropic Responses SSE emits full text lifecycle and gross terminal usage", async () => {
   const response = await normalizeAnthropicResponsesResponse(streamResponse(textEvents()), { model });
   const events = await collect(response);
   assert.deepEqual(
@@ -256,7 +257,7 @@ Deno.test("Anthropic Responses SSE emits full text lifecycle and gross terminal 
   });
 });
 
-Deno.test("Anthropic Responses SSE closes signed thinking before tool calls and preserves fragmented arguments", async () => {
+test("Anthropic Responses SSE closes signed thinking before tool calls and preserves fragmented arguments", async () => {
   const native = [
     start(),
     { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
@@ -287,7 +288,7 @@ Deno.test("Anthropic Responses SSE closes signed thinking before tool calls and 
   assert.equal(JSON.stringify(events).includes("encrypted_content"), false);
 });
 
-Deno.test("Anthropic Responses SSE handles initial text, multiple text blocks and zero-argument tools", async () => {
+test("Anthropic Responses SSE handles initial text, multiple text blocks and zero-argument tools", async () => {
   const native = [
     start(),
     { type: "content_block_start", index: 0, content_block: { type: "text", text: "First." } },
@@ -312,7 +313,7 @@ Deno.test("Anthropic Responses SSE handles initial text, multiple text blocks an
   );
 });
 
-Deno.test("Anthropic Responses SSE handles fragmented UTF-8, CRLF, ping and trailing message_stop", async () => {
+test("Anthropic Responses SSE handles fragmented UTF-8, CRLF, ping and trailing message_stop", async () => {
   const native = textEvents();
   native[2] = { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "🌤" } };
   native.splice(1, 0, { type: "ping" });
@@ -330,7 +331,7 @@ Deno.test("Anthropic Responses SSE handles fragmented UTF-8, CRLF, ping and trai
   assert.equal((output[0].content as JsonRecord[])[0].text, "🌤K");
 });
 
-Deno.test("Anthropic Responses SSE max_tokens emits incomplete, not completed", async () => {
+test("Anthropic Responses SSE max_tokens emits incomplete, not completed", async () => {
   const native = textEvents();
   native[5] = { type: "message_delta", delta: { stop_reason: "max_tokens" }, usage: { output_tokens: 4 } };
   const events = await collect(await normalizeAnthropicResponsesResponse(streamResponse(native), { model }));
@@ -338,7 +339,7 @@ Deno.test("Anthropic Responses SSE max_tokens emits incomplete, not completed", 
   assert.deepEqual(terminalResponse(events).incomplete_details, { reason: "max_output_tokens" });
 });
 
-Deno.test("Anthropic Responses preserves HTTP error status and translates native SSE errors", async () => {
+test("Anthropic Responses preserves HTTP error status and translates native SSE errors", async () => {
   const errorResponse = new Response('{"type":"error","error":{"type":"overloaded_error","message":"capacity"}}', { status: 529 });
   const normalized = await normalizeAnthropicResponsesResponse(errorResponse, { model });
   assert.equal(normalized.status, 529);
@@ -349,7 +350,7 @@ Deno.test("Anthropic Responses preserves HTTP error status and translates native
   assert.deepEqual(events, [{ type: "error", code: "overloaded_error", message: "capacity", param: null, sequence_number: 0 }]);
 });
 
-Deno.test("Anthropic Responses HTTP error normalization retains provider codes and retry/cost provenance", async () => {
+test("Anthropic Responses HTTP error normalization retains provider codes and retry/cost provenance", async () => {
   const upstream = new Response('{"type":"error","error":{"type":"quota_error","code":"insufficient_funds","message":"capacity","param":null}}', {
     status: 429,
     headers: { "content-type": "application/json", "retry-after": "60", "x-cost-micro": "0", "x-request-id": "native-error" },
@@ -365,7 +366,7 @@ Deno.test("Anthropic Responses HTTP error normalization retains provider codes a
   assert.equal(await unrecognized.text(), "unrecognized upstream body");
 });
 
-Deno.test("Anthropic Responses fails closed on malformed JSON, unknown blocks and invalid message lifecycles", async () => {
+test("Anthropic Responses fails closed on malformed JSON, unknown blocks and invalid message lifecycles", async () => {
   for (const body of [
     "{",
     JSON.stringify({ type: "message", role: "assistant", content: [{ type: "unknown", data: "x" }] }),
@@ -388,7 +389,7 @@ Deno.test("Anthropic Responses fails closed on malformed JSON, unknown blocks an
   }
 });
 
-Deno.test("Anthropic Responses detects premature EOF instead of manufacturing completed usage", async () => {
+test("Anthropic Responses detects premature EOF instead of manufacturing completed usage", async () => {
   const native = textEvents().slice(0, -1);
   await assert.rejects(
     collect(await normalizeAnthropicResponsesResponse(streamResponse(native), { model })),
@@ -396,7 +397,7 @@ Deno.test("Anthropic Responses detects premature EOF instead of manufacturing co
   );
 });
 
-Deno.test("Anthropic Responses propagates client cancellation to the upstream reader", async () => {
+test("Anthropic Responses propagates client cancellation to the upstream reader", async () => {
   let cancelled = false;
   const source = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -415,7 +416,7 @@ Deno.test("Anthropic Responses propagates client cancellation to the upstream re
   reader.releaseLock();
 });
 
-Deno.test("Anthropic Responses preserves an external abort while a native stream stalls", async () => {
+test("Anthropic Responses preserves an external abort while a native stream stalls", async () => {
   let cancelled = false;
   const source = new ReadableStream<Uint8Array>({
     cancel() {
@@ -436,7 +437,7 @@ Deno.test("Anthropic Responses preserves an external abort while a native stream
   reader.releaseLock();
 });
 
-Deno.test("Anthropic Responses cancellation before its first pull still cancels the upstream", async () => {
+test("Anthropic Responses cancellation before its first pull still cancels the upstream", async () => {
   let cancelled = false;
   const source = new ReadableStream<Uint8Array>({
     cancel() {
@@ -449,7 +450,7 @@ Deno.test("Anthropic Responses cancellation before its first pull still cancels 
   assert.equal(cancelled, true);
 });
 
-Deno.test("Anthropic Responses JSON privately preserves signed assistant blocks for scoped replay", async () => {
+test("Anthropic Responses JSON privately preserves signed assistant blocks for scoped replay", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const content = [
     { type: "thinking", thinking: "Use the requested tool.", signature: "opaque-signature" },
@@ -473,7 +474,7 @@ Deno.test("Anthropic Responses JSON privately preserves signed assistant blocks 
   assert.equal(restoreAnthropicReplay(payload.output, { scope, provider: "metered", model }), null);
 });
 
-Deno.test("Anthropic Responses SSE privately reconstructs fragmented thinking signatures and tool arguments", async () => {
+test("Anthropic Responses SSE privately reconstructs fragmented thinking signatures and tool arguments", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const native = [
     start(),
@@ -503,7 +504,7 @@ Deno.test("Anthropic Responses SSE privately reconstructs fragmented thinking si
   assert.equal(JSON.stringify(events).includes("prefix-signature"), false);
 });
 
-Deno.test("Anthropic Responses summary none retains private signed and redacted blocks for native tool continuation", async () => {
+test("Anthropic Responses summary none retains private signed and redacted blocks for native tool continuation", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const content = [
     { type: "redacted_thinking", data: "opaque-redacted" },
@@ -530,7 +531,7 @@ Deno.test("Anthropic Responses summary none retains private signed and redacted 
   assert.equal(JSON.stringify(payload).includes("Hidden summary."), false);
 });
 
-Deno.test("Anthropic Responses does not retain incomplete signed turns as native replay receipts", async () => {
+test("Anthropic Responses does not retain incomplete signed turns as native replay receipts", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const content = [
     { type: "thinking", thinking: "Partial.", signature: "incomplete-signature" },
@@ -549,7 +550,7 @@ Deno.test("Anthropic Responses does not retain incomplete signed turns as native
   assert.equal(restoreAnthropicReplay(payload.output, { scope, provider: "surplus", model }), null);
 });
 
-Deno.test("Anthropic Messages observed usage survives a subsequent premature stream EOF", async () => {
+test("Anthropic Messages observed usage survives a subsequent premature stream EOF", async () => {
   const response = await normalizeAnthropicResponsesResponse(streamResponse(textEvents().slice(0, -1)), { model });
   const body = response.body;
   assert.ok(body);

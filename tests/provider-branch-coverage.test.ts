@@ -1,3 +1,5 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -96,14 +98,14 @@ const storedSnapshot = (overrides: Record<string, unknown> = {}): Record<string,
   ...overrides,
 });
 
-Deno.test("capacity parse: an account label falls back to the slot for a blank email", () => {
+test("capacity parse: an account label falls back to the slot for a blank email", () => {
   assert.equal(codexAccountLabel(1), "Codex account 1");
   assert.equal(codexAccountLabel(2, null), "Codex account 2");
   assert.equal(codexAccountLabel(1, "   "), "Codex account 1");
   assert.equal(codexAccountLabel(1, "  codex@example.test  "), "codex@example.test");
 });
 
-Deno.test("capacity parse: a clock that answers with an unusable value falls back to the wall clock", () => {
+test("capacity parse: a clock that answers with an unusable value falls back to the wall clock", () => {
   const fixed = safeNow(() => 1_700_000_000_123.9);
   assert.equal(fixed, 1_700_000_000_123);
   const before = Date.now();
@@ -117,12 +119,12 @@ Deno.test("capacity parse: a clock that answers with an unusable value falls bac
   assert.equal(isSafeTimestamp(1.5), false);
 });
 
-Deno.test("capacity parse: the usage URL and last-available key are built from the contract", () => {
+test("capacity parse: the usage URL and last-available key are built from the contract", () => {
   assert.match(codexUsageUrl(), /\/backend-api\/wham\/usage$/);
   assert.deepEqual(providerCapacityLastAvailableKey(2).at(-1), 2);
 });
 
-Deno.test("capacity parse: a codex usage payload requires a rate-limit object and keeps partial windows", () => {
+test("capacity parse: a codex usage payload requires a rate-limit object and keeps partial windows", () => {
   assert.equal(parseCodexUsage(null), null);
   assert.equal(parseCodexUsage({}), null);
   assert.equal(parseCodexUsage({ rate_limit: "not-an-object" }), null);
@@ -177,7 +179,7 @@ Deno.test("capacity parse: a codex usage payload requires a rate-limit object an
   assert.deepEqual(parseCodexUsage({ rate_limit: {}, additional_rate_limits: "none" })?.additional_rate_limits, []);
 });
 
-Deno.test("capacity parse: an unanchored additional window is filtered out of the routing view", () => {
+test("capacity parse: an unanchored additional window is filtered out of the routing view", () => {
   const snapshotAtMs = 1_700_000_000_000;
   // A window whose reset is exactly "snapshot plus one full window" was computed
   // from the snapshot rather than anchored to a real quota cycle.
@@ -231,7 +233,7 @@ Deno.test("capacity parse: an unanchored additional window is filtered out of th
   assert.deepEqual(additionalRateLimitsForRouting([overflowing], snapshotAtMs), [overflowing]);
 });
 
-Deno.test("capacity parse: stored codex sources round-trip only well-formed rows", () => {
+test("capacity parse: stored codex sources round-trip only well-formed rows", () => {
   const fallback = 1_700_000_000_000;
   const stored = readStoredCodexSource(codexSource(), fallback);
   assert.equal(stored?.state, "available");
@@ -276,7 +278,7 @@ Deno.test("capacity parse: stored codex sources round-trip only well-formed rows
   assert.equal(outOfRange.state, "available");
 });
 
-Deno.test("capacity parse: a stored codex source normalizes labels, cohort ids and windows", () => {
+test("capacity parse: a stored codex source normalizes labels, cohort ids and windows", () => {
   const stored = readStoredCodexSource(
     codexSource({
       label: "   ",
@@ -331,7 +333,7 @@ Deno.test("capacity parse: a stored codex source normalizes labels, cohort ids a
   assert.deepEqual(rejectedShape?.windows.primary, null);
 });
 
-Deno.test("capacity parse: a stored metered source validates its state, wallet and enumerations", () => {
+test("capacity parse: a stored metered source validates its state, wallet and enumerations", () => {
   const stored = readStoredSnapshot(storedSnapshot());
   assert.ok(stored);
   const wallet = meteredSources(stored.sources)[0]?.wallet;
@@ -369,7 +371,7 @@ Deno.test("capacity parse: a stored metered source validates its state, wallet a
   assert.equal(meteredSources(coerced?.sources ?? [])[0]?.wallet.cycle_started_at_ms, null);
 });
 
-Deno.test("capacity parse: a stored snapshot requires both codex slots and a metered source", () => {
+test("capacity parse: a stored snapshot requires both codex slots and a metered source", () => {
   assert.equal(readStoredSnapshot(null), null);
   assert.equal(readStoredSnapshot({ snapshot_at_ms: "now", sources: [] }), null);
   assert.equal(readStoredSnapshot({ snapshot_at_ms: 1_700_000_000_000, sources: "none" }), null);
@@ -380,28 +382,28 @@ Deno.test("capacity parse: a stored snapshot requires both codex slots and a met
   assert.equal(readStoredSnapshot(storedSnapshot({ sources: [codexSource({ slot: 1 }), meteredSource()] })), null);
 });
 
-Deno.test("capacity parse: snapshot reads swallow a KV failure and decode a healthy row", async () => {
+test("capacity parse: snapshot reads swallow a KV failure and decode a healthy row", async () => {
   const stored = storedSnapshot();
   const healthy = {
-    get: (key: Deno.KvKey) => {
+    get: (key: KvKey) => {
       assert.deepEqual(key, PROVIDER_CAPACITY_SNAPSHOT_KEY);
-      return Promise.resolve({ key, value: stored, versionstamp: "00000000000000000001" } as Deno.KvEntryMaybe<unknown>);
+      return Promise.resolve({ key, value: stored, versionstamp: "00000000000000000001" } as KvEntryMaybe<unknown>);
     },
-  } as unknown as Deno.Kv;
+  } as unknown as Kv;
   assert.equal((await readCapacitySnapshot(healthy))?.sources.length, 3);
 
   const failing = {
     get: () => Promise.reject(new Error("kv unavailable")),
-  } as unknown as Deno.Kv;
+  } as unknown as Kv;
   assert.equal(await readCapacitySnapshot(failing), null);
 
   const empty = {
-    get: (key: Deno.KvKey) => Promise.resolve({ key, value: null, versionstamp: null } as Deno.KvEntryMaybe<unknown>),
-  } as unknown as Deno.Kv;
+    get: (key: KvKey) => Promise.resolve({ key, value: null, versionstamp: null } as KvEntryMaybe<unknown>),
+  } as unknown as Kv;
   assert.equal(await readCapacitySnapshot(empty), null);
 });
 
-Deno.test("capacity parse: a stored history point substitutes the unavailable metered source", () => {
+test("capacity parse: a stored history point substitutes the unavailable metered source", () => {
   const point = {
     bucket_start_at_ms: 1_700_000_000_000,
     sampled_at_ms: 1_700_000_060_000,
@@ -433,7 +435,7 @@ Deno.test("capacity parse: a stored history point substitutes the unavailable me
   }
 });
 
-Deno.test("capacity parse: unavailable stubs describe an unobserved provider", () => {
+test("capacity parse: unavailable stubs describe an unobserved provider", () => {
   const codex = unavailableCodexSource(1, 1_700_000_000_000);
   assert.equal(codex.state, "unavailable");
   assert.equal(codex.failure_kind, "not_configured");
@@ -451,7 +453,7 @@ Deno.test("capacity parse: unavailable stubs describe an unobserved provider", (
   assert.equal(metered.wallet.total_available, null);
 });
 
-Deno.test("capacity parse: the parsed snapshot type keeps its codex sources addressable", () => {
+test("capacity parse: the parsed snapshot type keeps its codex sources addressable", () => {
   const parsed = readStoredSnapshot(storedSnapshot());
   assert.ok(parsed);
   const sources = codexSources(parsed.sources);

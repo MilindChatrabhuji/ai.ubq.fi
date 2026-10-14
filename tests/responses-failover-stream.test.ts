@@ -1,3 +1,5 @@
+import { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   appendResponsesPrecommitEvent,
@@ -22,7 +24,7 @@ const event = (value: Record<string, unknown>): ResponsesStreamEvent => response
 // `return()`, so the fixture drains its events through an asynchronous source.
 const iterator = (events: ResponsesStreamEvent[]): ResponsesStreamIterator =>
   (async function* () {
-    yield* ReadableStream.from(events);
+    yield* NodeReadableStream.from(events);
   })();
 
 // Reads through an explicitly `unknown` parameter: the failure callbacks below assign
@@ -36,13 +38,13 @@ const parseSseData = (payload: string | undefined): Record<string, unknown> => {
 
 const responseValues = (text: string): Record<string, unknown>[] => [...text.matchAll(/^data: (.+)$/gm)].map((match) => parseSseData(match[1]));
 
-Deno.test("Responses semantic detector ignores setup and empty deltas", () => {
+test("Responses semantic detector ignores setup and empty deltas", () => {
   assert.equal(responsesEventSemanticKind(event({ type: "response.created", response: { id: "resp_1" } })), null);
   assert.equal(responsesEventSemanticKind(event({ type: "response.output_text.delta", delta: "" })), null);
   assert.equal(responsesEventSemanticKind(event({ type: "response.reasoning_summary_text.delta", delta: "" })), null);
 });
 
-Deno.test("Responses progress detector accepts valid reasoning events without making them semantic", () => {
+test("Responses progress detector accepts valid reasoning events without making them semantic", () => {
   const progressEvents = [
     event({ type: "response.reasoning_summary_text.delta", summary_index: 0, delta: "considering" }),
     event({ type: "response.reasoning_summary_text.done", summary_index: 0, text: "considered" }),
@@ -105,7 +107,7 @@ Deno.test("Responses progress detector accepts valid reasoning events without ma
   }
 });
 
-Deno.test("Responses semantic detector commits on visible text, refusal, and completed tools", () => {
+test("Responses semantic detector commits on visible text, refusal, and completed tools", () => {
   assert.equal(responsesEventSemanticKind(event({ type: "response.output_text.delta", delta: "x" })), "text");
   assert.equal(responsesEventSemanticKind(event({ type: "response.reasoning_summary_text.delta", delta: "thinking" })), null);
   assert.equal(
@@ -185,7 +187,7 @@ Deno.test("Responses semantic detector commits on visible text, refusal, and com
   );
 });
 
-Deno.test("Responses precommit preparation holds setup until semantic output", async () => {
+test("Responses precommit preparation holds setup until semantic output", async () => {
   const created = event({ type: "response.created", response: { id: "resp_1" } });
   const empty = event({ type: "response.output_text.delta", delta: "" });
   const semantic = event({ type: "response.output_text.delta", delta: "hello" });
@@ -198,7 +200,7 @@ Deno.test("Responses precommit preparation holds setup until semantic output", a
   assert.equal(prepared.semanticKind, "text");
 });
 
-Deno.test("Responses precommit can release on hidden-reasoning progress without marking semantic output", async () => {
+test("Responses precommit can release on hidden-reasoning progress without marking semantic output", async () => {
   const created = event({ type: "response.created", response: { id: "resp_reasoning" } });
   const reasoning = event({
     type: "response.reasoning_summary_text.delta",
@@ -221,13 +223,13 @@ Deno.test("Responses precommit can release on hidden-reasoning progress without 
   await prepared.iterator.return("test complete").catch(() => {});
 });
 
-Deno.test("Responses precommit bounds cover delayed discovery events and characters", () => {
+test("Responses precommit bounds cover delayed discovery events and characters", () => {
   const buffered = Array.from({ length: MAX_RESPONSES_PRECOMMIT_EVENTS }, (_, index) => event({ type: "response.in_progress", sequence_number: index }));
   assert.throws(() => appendResponsesPrecommitEvent(buffered, event({ type: "response.in_progress" }), 0), /precommit buffer exceeded/);
   assert.throws(() => appendResponsesPrecommitEvent([], event({ type: "response.in_progress" }), MAX_RESPONSES_PRECOMMIT_CHARS), /precommit buffer exceeded/);
 });
 
-Deno.test("Failover warning is a valid assistant item at zero and shifts later output indices", () => {
+test("Failover warning is a valid assistant item at zero and shifts later output indices", () => {
   const warning = buildFailoverWarningEvents("google/gemini-2.5-pro", "resp_1", 10);
   assert.equal(warning.events.length, 6);
   assert.equal(warning.events[0]?.value.output_index, 0);
@@ -250,7 +252,7 @@ Deno.test("Failover warning is a valid assistant item at zero and shifts later o
   assert.equal(rewritten.value.delta, "pw");
 });
 
-Deno.test("Failover terminal rewrite prefixes warning output and owns one failed terminal", () => {
+test("Failover terminal rewrite prefixes warning output and owns one failed terminal", () => {
   const warning = buildFailoverWarningEvents("google/gemini-2.5-pro", "resp_1");
   const completed = rewriteResponsesEventForWarning(
     event({
@@ -266,7 +268,7 @@ Deno.test("Failover terminal rewrite prefixes warning output and owns one failed
   assert.equal(failed.terminal, true);
 });
 
-Deno.test("Responses precommit keeps reasoning-only completion nonsemantic for the empty-output check", async () => {
+test("Responses precommit keeps reasoning-only completion nonsemantic for the empty-output check", async () => {
   const completed = event({
     type: "response.completed",
     response: { id: "resp_empty", object: "response", status: "completed", output: [] },
@@ -300,7 +302,7 @@ Deno.test("Responses precommit keeps reasoning-only completion nonsemantic for t
   assert.equal(prepared.terminal, completed);
 });
 
-Deno.test("Owned stream rewrites a post-release reasoning-only completion as empty", async () => {
+test("Owned stream rewrites a post-release reasoning-only completion as empty", async () => {
   let observedFailure: {
     failureKind: string;
     semanticCommitmentObserved: boolean;
@@ -359,7 +361,7 @@ Deno.test("Owned stream rewrites a post-release reasoning-only completion as emp
   assert.equal(observedUpstreamTerminal, completed);
 });
 
-Deno.test("Owned stream forwards a completion whose terminal contains visible output", async () => {
+test("Owned stream forwards a completion whose terminal contains visible output", async () => {
   let failureCount = 0;
   const body = createOwnedResponsesStream({
     initial: [
@@ -397,7 +399,7 @@ Deno.test("Owned stream forwards a completion whose terminal contains visible ou
   assert.equal(failureCount, 0);
 });
 
-Deno.test("Failover warning output does not hide an empty provider completion", async () => {
+test("Failover warning output does not hide an empty provider completion", async () => {
   let semanticCommitmentObserved: boolean | null = null;
   let observedUpstreamTerminal: ResponsesStreamEvent | null = null;
   const completed = event({
@@ -439,7 +441,7 @@ Deno.test("Failover warning output does not hide an empty provider completion", 
   assert.equal(observedUpstreamTerminal, completed);
 });
 
-Deno.test("Owned failover stream emits warning first, shifts output, and emits one terminal", async () => {
+test("Owned failover stream emits warning first, shifts output, and emits one terminal", async () => {
   const initial = [
     event({ type: "response.created", sequence_number: 0, response: { id: "resp_1", model: "google/gemini" } }),
     event({
@@ -479,7 +481,7 @@ Deno.test("Owned failover stream emits warning first, shifts output, and emits o
   assert.equal(values.filter((value) => value.type === "response.failed").length, 0);
 });
 
-Deno.test("Owned failover stream preserves a legitimate incomplete terminal", async () => {
+test("Owned failover stream preserves a legitimate incomplete terminal", async () => {
   const responseTemplate = {
     id: "resp_incomplete",
     object: "response",
@@ -526,7 +528,7 @@ Deno.test("Owned failover stream preserves a legitimate incomplete terminal", as
   assert.deepEqual(terminal.usage, { input_tokens: 2, output_tokens: 3, total_tokens: 5 });
 });
 
-Deno.test("Owned stream forwards a committed upstream error terminal", async () => {
+test("Owned stream forwards a committed upstream error terminal", async () => {
   const upstreamError = event({
     type: "error",
     sequence_number: 2,
@@ -561,7 +563,7 @@ Deno.test("Owned stream forwards a committed upstream error terminal", async () 
   assert.equal(values.filter((value) => value.type === "response.failed").length, 0);
 });
 
-Deno.test("Owned stream synthetic failure preserves template, text, tools, and sequence order", async () => {
+test("Owned stream synthetic failure preserves template, text, tools, and sequence order", async () => {
   const responseTemplate = {
     id: "resp_broken",
     object: "response",
@@ -625,7 +627,8 @@ Deno.test("Owned stream synthetic failure preserves template, text, tools, and s
   assert.equal(output.find((item) => item.id === "ctc_broken")?.status, "completed");
 });
 
-Deno.test("Owned stream synthesizes a Codex failure after semantic output without response.created", async () => {
+test("Owned stream synthesizes a Codex failure after semantic output without response.created", async () => {
+  const failureObserved = Promise.withResolvers<undefined>();
   let observedFailure: {
     failureKind: string;
     responseCreatedObserved: boolean;
@@ -649,9 +652,11 @@ Deno.test("Owned stream synthesizes a Codex failure after semantic output withou
     responseId: null,
     onFailure: (_error, details) => {
       observedFailure = details;
+      failureObserved.resolve(undefined);
     },
   });
   const values = responseValues(await new Response(body).text());
+  await failureObserved.promise;
   assert.deepEqual(
     values.map((value) => value.type),
     ["response.output_text.delta", "response.failed"]
@@ -669,7 +674,7 @@ Deno.test("Owned stream synthesizes a Codex failure after semantic output withou
   });
 });
 
-Deno.test("Owned stream closes its iterator after a post-commit validation failure", async () => {
+test("Owned stream closes its iterator after a post-commit validation failure", async () => {
   let returned = false;
   const rest = (async function* (): ResponsesStreamIterator {
     try {
@@ -708,7 +713,7 @@ Deno.test("Owned stream closes its iterator after a post-commit validation failu
   assert.equal(returned, true);
 });
 
-Deno.test("Owned stream preserves refusal text in synthetic failure output", async () => {
+test("Owned stream preserves refusal text in synthetic failure output", async () => {
   const body = createOwnedResponsesStream({
     initial: [
       event({
@@ -732,7 +737,7 @@ Deno.test("Owned stream preserves refusal text in synthetic failure output", asy
   assert.match(JSON.stringify(values.at(-1)?.response), /I cannot help with that/);
 });
 
-Deno.test("Owned stream marks recovered text completed only after a done event", async () => {
+test("Owned stream marks recovered text completed only after a done event", async () => {
   const responseTemplate = {
     id: "resp_done_text",
     object: "response",
@@ -772,7 +777,7 @@ Deno.test("Owned stream marks recovered text completed only after a done event",
   assert.equal(output.find((item) => item.id === "msg_done_text")?.status, "completed");
 });
 
-Deno.test("failover warning guard recognises exactly the injected notice", () => {
+test("failover warning guard recognises exactly the injected notice", () => {
   const warning = buildFailoverWarningEvents("google/gemini-2.5-pro", "resp_1").item;
   assert.equal(isGatewayFailoverWarningItem(warning), true);
 
@@ -782,7 +787,7 @@ Deno.test("failover warning guard recognises exactly the injected notice", () =>
   assert.equal(text, failoverWarningText("google/gemini-2.5-pro"));
 });
 
-Deno.test("failover warning guard rejects lookalikes and ordinary assistant turns", () => {
+test("failover warning guard rejects lookalikes and ordinary assistant turns", () => {
   const genuine = buildFailoverWarningEvents("google/gemini-2.5-pro", "resp_1").item;
 
   // An assistant turn the model actually wrote must pass through untouched.

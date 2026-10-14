@@ -1,3 +1,5 @@
+import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   buildClaudeCodeRequest,
@@ -24,26 +26,26 @@ import {
   recordClaudeCodeQuotaOutcome,
 } from "../src/provider/claude-code-quota.ts";
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
-/** Minimal Deno.Kv stand-in for the two keys this tier reads and writes. */
+/** Minimal Kv stand-in for the two keys this tier reads and writes. */
 class QuotaKv {
   readonly values = new Map<string, unknown>();
   failWrites = false;
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
       versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     if (this.failWrites) return Promise.reject(new Error("KV write failed"));
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as Deno.KvCommitResult);
+    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as KvCommitResult);
   }
 }
 
@@ -53,7 +55,7 @@ const envLookup =
     values[name] ?? null;
 const allowed = new Set(["owner-key"]);
 
-Deno.test("credential and allowlist reads are explicit and empty by default", () => {
+test("credential and allowlist reads are explicit and empty by default", () => {
   assert.equal(readClaudeCodeToken(envLookup({})), null);
   assert.equal(readClaudeCodeToken(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: "  " })), null);
   assert.equal(readClaudeCodeToken(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: " token-1 " })), "token-1");
@@ -63,7 +65,7 @@ Deno.test("credential and allowlist reads are explicit and empty by default", ()
   assert.deepEqual([...readClaudeCodeAllowedKeyIds(envLookup({ CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" }))], ["owner-key"]);
 });
 
-Deno.test("eligibility is the conjunction of model, provider, principal, credential, and quota gates", () => {
+test("eligibility is the conjunction of model, provider, principal, credential, and quota gates", () => {
   const base = { model: "claude-opus-5-5", keyId: "owner-key", providerEnabled: true, allowedKeyIds: allowed, token: "token-1", quota: null } as const;
   assert.deepEqual(resolveClaudeCodeEligibility(base), { eligible: true, token: "token-1" });
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, model: "gpt-5.6-sol" }), { eligible: false, reason: "model_unsupported" });
@@ -73,7 +75,7 @@ Deno.test("eligibility is the conjunction of model, provider, principal, credent
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, token: null }), { eligible: false, reason: "token_missing" });
 });
 
-Deno.test("an active durable block or cooldown removes eligibility until it expires", () => {
+test("an active durable block or cooldown removes eligibility until it expires", () => {
   const nowMs = 1_800_000_000_000;
   const blocked = {
     windows: {},
@@ -90,7 +92,7 @@ Deno.test("an active durable block or cooldown removes eligibility until it expi
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, quota: cooling }), { eligible: false, reason: "cooling_down" });
 });
 
-Deno.test("observations read the documented unified headers and reject malformed values", () => {
+test("observations read the documented unified headers and reject malformed values", () => {
   const headers = new Headers({
     "anthropic-ratelimit-unified-5h-status": "allowed",
     "anthropic-ratelimit-unified-5h-utilization": "0.25",
@@ -117,7 +119,7 @@ Deno.test("observations read the documented unified headers and reject malformed
   assert.deepEqual(statusOnly.windows["7d"], { status: "limited", utilization: null, reset_at_ms: null, observed_at_ms: 1_800_000_000_000 });
 });
 
-Deno.test("response classification keeps durable exhaustion, transient limits, and auth failures apart", () => {
+test("response classification keeps durable exhaustion, transient limits, and auth failures apart", () => {
   assert.equal(classifyClaudeCodeResponse(200, new Headers()).kind, "ok");
   const durable = new Headers({
     "anthropic-ratelimit-unified-5h-status": "limited",
@@ -140,7 +142,7 @@ Deno.test("response classification keeps durable exhaustion, transient limits, a
   assert.equal(classifyClaudeCodeResponse(400, new Headers()).kind, "request_rejected");
 });
 
-Deno.test("quota state merges newest window observations and never resurrects stale windows", () => {
+test("quota state merges newest window observations and never resurrects stale windows", () => {
   const early = {
     windows: { "5h": { status: "allowed", utilization: 0.1, reset_at_ms: 1_783_000_000_000, observed_at_ms: 1_800_000_000_000 } },
     representative_claim: null,
@@ -158,7 +160,7 @@ Deno.test("quota state merges newest window observations and never resurrects st
   assert.equal(stale.windows["5h"]?.utilization, 0.4, "an older observation never replaces a newer one");
 });
 
-Deno.test("durable blocks extend past the reset margin, survive merges, and expire", () => {
+test("durable blocks extend past the reset margin, survive merges, and expire", () => {
   const nowMs = 1_800_000_000_000;
   const observation = { windows: {}, representative_claim: null, observed_at_ms: nowMs };
   const blocked = mergeClaudeCodeQuotaState(null, observation, { window: "5h", reset_at_ms: nowMs + 100_000 }, nowMs);
@@ -173,7 +175,7 @@ Deno.test("durable blocks extend past the reset margin, survive merges, and expi
   assert.equal(noReset.blocked_until_ms, nowMs + CLAUDE_CODE_MIN_BLOCK_MS);
 });
 
-Deno.test("recorded outcomes persist windows, blocks, and cooldowns through KV", async () => {
+test("recorded outcomes persist windows, blocks, and cooldowns through KV", async () => {
   const kv = new QuotaKv();
   const nowMs = 1_800_000_000_000;
   const headers = new Headers({
@@ -182,18 +184,18 @@ Deno.test("recorded outcomes persist windows, blocks, and cooldowns through KV",
     "anthropic-ratelimit-unified-5h-utilization": "1",
   });
   const classification = classifyClaudeCodeResponse(429, headers, nowMs);
-  const recorded = await recordClaudeCodeQuotaOutcome(kv as unknown as Deno.Kv, {
+  const recorded = await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
     observation: observeClaudeCodeQuota(headers, nowMs),
     exhaustion: classification.exhaustion,
     transient: null,
     nowMs,
   });
   assert.equal(recorded?.blocked_until_ms, nowMs + 60_000 + CLAUDE_CODE_RESET_MARGIN_MS);
-  const reloaded = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+  const reloaded = await loadClaudeCodeQuotaState(kv as unknown as Kv);
   assert.equal(reloaded?.windows["5h"]?.utilization, 1);
   assert.equal(claudeCodeQuotaBlocked(reloaded, nowMs), true);
 
-  const transient = await recordClaudeCodeQuotaOutcome(kv as unknown as Deno.Kv, {
+  const transient = await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
     observation: null,
     exhaustion: null,
     transient: { retry_after_ms: null },
@@ -203,7 +205,7 @@ Deno.test("recorded outcomes persist windows, blocks, and cooldowns through KV",
   assert.equal(transient.cooldown_until_ms, nowMs + CLAUDE_CODE_TRANSIENT_COOLDOWN_MS);
   assert.equal(transient.blocked_until_ms, nowMs + 60_000 + CLAUDE_CODE_RESET_MARGIN_MS, "a transient limit never touches the durable block");
   assert.equal(claudeCodeQuotaCoolingDown(transient, nowMs + 1_000), true);
-  const reloadedState = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+  const reloadedState = await loadClaudeCodeQuotaState(kv as unknown as Kv);
   assert(reloadedState);
   assert.equal(reloadedState.cooldown_until_ms, nowMs + CLAUDE_CODE_TRANSIENT_COOLDOWN_MS);
   assert.deepEqual([...kv.values.keys()], [keyOf([...CLAUDE_CODE_QUOTA_KV_KEY])]);
@@ -214,7 +216,7 @@ Deno.test("recorded outcomes persist windows, blocks, and cooldowns through KV",
   assert.equal(parseClaudeCodeQuotaState({ windows: {}, updated_at_ms: 0 }), null);
 });
 
-Deno.test("the native request builder defaults max_tokens, strips router hints, and refuses non-Claude models", () => {
+test("the native request builder defaults max_tokens, strips router hints, and refuses non-Claude models", () => {
   const built = buildClaudeCodeRequest({
     model: "claude-opus-5-5",
     input: "hello",
@@ -233,7 +235,7 @@ Deno.test("the native request builder defaults max_tokens, strips router hints, 
   assert.equal(buildClaudeCodeRequest({ model: "gpt-5.6-sol", input: "hi" }), null);
 });
 
-Deno.test("subscription headers carry Bearer, the API version, and the OAuth beta without an API key", () => {
+test("subscription headers carry Bearer, the API version, and the OAuth beta without an API key", () => {
   const streaming = claudeCodeRequestHeaders("token-1", true);
   assert.equal(streaming.get("authorization"), "Bearer token-1");
   assert.equal(streaming.get("anthropic-version"), "2023-06-01");

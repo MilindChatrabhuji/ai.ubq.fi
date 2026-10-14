@@ -1,3 +1,9 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { KvU64 } from "#kv";
+import type { Kv, KvKey } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/prompt-cache-scope-experiment-harness.ts";
+import { runSequence } from "./helpers/sequence.ts";
 // Suite part: tests moved out of the original file.
 
 import assert from "node:assert/strict";
@@ -45,24 +51,27 @@ import {
   waitForCodexHealth,
 } from "./helpers/prompt-cache-scope-experiment-harness.ts";
 
-Deno.test("prompt-cache Stage 0 diagnostic is read-only and redacts the server-selected target", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("prompt-cache Stage 0 diagnostic is read-only and redacts the server-selected target", async () => {
   seed();
   await seedStage0Baseline(MODEL);
   const originalFetch = globalThis.fetch;
   const originalBeforeGet = kv.beforeGet;
-  const readKeys: Deno.KvKey[] = [];
+  const readKeys: KvKey[] = [];
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("Stage 0 diagnostics must not contact upstream");
-  };
+  });
   kv.beforeGet = (key) => {
     readKeys.push(key);
   };
 
   try {
     const baseline = await readPromptCacheScopeExperimentTelemetryBaseline({
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       release: TELEMETRY_RELEASE,
     });
     assert.equal(baseline.status, "eligible");
@@ -88,7 +97,7 @@ Deno.test("prompt-cache Stage 0 diagnostic is read-only and redacts the server-s
   }
 });
 
-Deno.test("prompt-cache Stage 0 diagnostic does not expose target-selection failures", async () => {
+test("prompt-cache Stage 0 diagnostic does not expose target-selection failures", async () => {
   const secret = "target-or-kv-detail-must-not-be-exposed";
   const logs: unknown[][] = [];
   const originalConsoleError = console.error;
@@ -107,21 +116,21 @@ Deno.test("prompt-cache Stage 0 diagnostic does not expose target-selection fail
   }
 });
 
-Deno.test("a missing or mismatched pinned slot is an inconclusive scope result", async () => {
+test("a missing or mismatched pinned slot is an inconclusive scope result", async () => {
   const response = sseCompleted(0, 2_560);
   const result = await readPromptCacheScopeExperimentCompletedUsage(response, 1, MODEL, performance.now(), new AbortController().signal);
 
   assert.deepEqual(result, { status: "inconclusive", reason: "slot_drift" });
 });
 
-Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope, and stores only redacted evidence", async () => {
+test("prompt-cache scope uses three fixed cycles, publishes canonical scope, and stores only redacted evidence", async () => {
   seed();
   resetProviderHealthThrottleForTest();
   const originalFetch = globalThis.fetch;
   const requests: { account: string | null; conversation: string | null; body: string }[] = [];
   let responseIndex = 0;
   let refreshes = 0;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshes += 1;
@@ -146,7 +155,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     // probe must still treat cached_tokens as a conclusive read signal.
     const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_LEADING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
-  };
+  });
 
   try {
     const first = await runExperiment();
@@ -301,16 +310,16 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
   }
 });
 
-Deno.test("prompt-cache scope makes a sample with neither read nor write telemetry inconclusive", async () => {
+test("prompt-cache scope makes a sample with neither read nor write telemetry inconclusive", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
     return Promise.resolve(sseCompleted(0, 0));
-  };
+  });
 
   try {
     const result = await runExperiment();
@@ -326,16 +335,16 @@ Deno.test("prompt-cache scope makes a sample with neither read nor write telemet
   }
 });
 
-Deno.test("prompt-cache scope stops on an unexpected warm cache read", async () => {
+test("prompt-cache scope stops on an unexpected warm cache read", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
     return Promise.resolve(sseCompleted(2_560, 0));
-  };
+  });
 
   try {
     const result = await runExperiment();
@@ -351,96 +360,98 @@ Deno.test("prompt-cache scope stops on an unexpected warm cache read", async () 
   }
 });
 
-Deno.test("prompt-cache scope rejects sub-prefix, inconsistent, or impossible counter evidence before account-slot classification", async (t) => {
-  for (const { name, cachedTokens, cacheWriteTokens } of [
-    { name: "small write", cachedTokens: 0, cacheWriteTokens: 1 },
-    { name: "small read beside a full write", cachedTokens: 1, cacheWriteTokens: 2_560 },
-    { name: "inconsistent prefix-scale write", cachedTokens: 0, cacheWriteTokens: 2_048 },
-    { name: "inconsistent prefix-scale read", cachedTokens: 2_048, cacheWriteTokens: 0 },
-    { name: "write larger than input", cachedTokens: 0, cacheWriteTokens: 3_001 },
-  ]) {
-    await t.step(name, async () => {
-      seed();
-      const originalFetch = globalThis.fetch;
-      let inferenceCalls = 0;
-      globalThis.fetch = (input) => {
-        const url = fetchInputUrl(input);
-        if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
-        const step = inferenceCalls++;
-        if (step === 0) return Promise.resolve(sseCompleted(0, 2_560));
-        if (step === 1) return Promise.resolve(sseCompleted(2_560, 2_560));
-        if (step === 2) return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
-        throw new Error("scope experiment should stop on the discriminating account-slot sample");
-      };
+test("prompt-cache scope rejects sub-prefix, inconsistent, or impossible counter evidence before account-slot classification", () =>
+  runSequence(async (step) => {
+    for (const { name, cachedTokens, cacheWriteTokens } of [
+      { name: "small write", cachedTokens: 0, cacheWriteTokens: 1 },
+      { name: "small read beside a full write", cachedTokens: 1, cacheWriteTokens: 2_560 },
+      { name: "inconsistent prefix-scale write", cachedTokens: 0, cacheWriteTokens: 2_048 },
+      { name: "inconsistent prefix-scale read", cachedTokens: 2_048, cacheWriteTokens: 0 },
+      { name: "write larger than input", cachedTokens: 0, cacheWriteTokens: 3_001 },
+    ]) {
+      await step(name, async () => {
+        seed();
+        const originalFetch = globalThis.fetch;
+        let inferenceCalls = 0;
+        globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
+          const url = fetchInputUrl(input);
+          if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
+          const step = inferenceCalls++;
+          if (step === 0) return Promise.resolve(sseCompleted(0, 2_560));
+          if (step === 1) return Promise.resolve(sseCompleted(2_560, 2_560));
+          if (step === 2) return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
+          throw new Error("scope experiment should stop on the discriminating account-slot sample");
+        });
 
-      try {
-        const result = await runExperiment();
-        assert.equal(result.status, "inconclusive");
-        assert.equal(result.inconclusive_reason, "invalid_cache_signal");
-        assert.equal(inferenceCalls, 3);
-        const snapshot = JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)));
-        assert.equal(snapshot.includes('"scope"'), false);
-      } finally {
-        globalThis.fetch = originalFetch;
-        resetCodexAuthCacheForTest();
-        resetRuntimeConfigCacheForTest();
-      }
-    });
-  }
-});
-
-Deno.test("prompt-cache scope rejects mixed cache evidence on every discriminator sample", async (t) => {
-  const expectedCachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560];
-  const expectedCacheWriteTokens = [2_560, 2_560, 2_560, 0, 0, 0, 0, 0, 0, 0];
-  for (const { name, index } of [
-    { name: "account-slot first sample", index: 2 },
-    { name: "post-refresh first sample", index: 5 },
-    { name: "changed-conversation first sample", index: 7 },
-  ]) {
-    await t.step(name, async () => {
-      seed();
-      const originalFetch = globalThis.fetch;
-      let inferenceCalls = 0;
-      let refreshes = 0;
-      globalThis.fetch = (input) => {
-        const url = fetchInputUrl(input);
-        if (url === "https://auth.openai.com/oauth/token") {
-          refreshes += 1;
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                access_token: `access-refreshed-${refreshes}`,
-                refresh_token: `refresh-refreshed-${refreshes}`,
-              }),
-              { headers: { "Content-Type": "application/json" } }
-            )
-          );
+        try {
+          const result = await runExperiment();
+          assert.equal(result.status, "inconclusive");
+          assert.equal(result.inconclusive_reason, "invalid_cache_signal");
+          assert.equal(inferenceCalls, 3);
+          const snapshot = JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)));
+          assert.equal(snapshot.includes('"scope"'), false);
+        } finally {
+          globalThis.fetch = originalFetch;
+          resetCodexAuthCacheForTest();
+          resetRuntimeConfigCacheForTest();
         }
-        const step = inferenceCalls++;
-        if (step > index) throw new Error("scope experiment should stop at the mixed discriminator sample");
-        return Promise.resolve(
-          sseCompleted(step === index ? 2_560 : cycleValue(expectedCachedTokens, step), step === index ? 2_560 : cycleValue(expectedCacheWriteTokens, step))
-        );
-      };
+      });
+    }
+  }));
 
-      try {
-        const result = await runExperiment();
-        assert.equal(result.status, "inconclusive");
-        assert.equal(result.inconclusive_reason, "invalid_cache_signal");
-        assert.equal(inferenceCalls, index + 1);
-        assert.equal(refreshes, index >= 5 ? 1 : 0);
-        const snapshot = JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)));
-        assert.equal(snapshot.includes('"scope"'), false);
-      } finally {
-        globalThis.fetch = originalFetch;
-        resetCodexAuthCacheForTest();
-        resetRuntimeConfigCacheForTest();
-      }
-    });
-  }
-});
+test("prompt-cache scope rejects mixed cache evidence on every discriminator sample", () =>
+  runSequence(async (step) => {
+    const expectedCachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560];
+    const expectedCacheWriteTokens = [2_560, 2_560, 2_560, 0, 0, 0, 0, 0, 0, 0];
+    for (const { name, index } of [
+      { name: "account-slot first sample", index: 2 },
+      { name: "post-refresh first sample", index: 5 },
+      { name: "changed-conversation first sample", index: 7 },
+    ]) {
+      await step(name, async () => {
+        seed();
+        const originalFetch = globalThis.fetch;
+        let inferenceCalls = 0;
+        let refreshes = 0;
+        globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
+          const url = fetchInputUrl(input);
+          if (url === "https://auth.openai.com/oauth/token") {
+            refreshes += 1;
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  access_token: `access-refreshed-${refreshes}`,
+                  refresh_token: `refresh-refreshed-${refreshes}`,
+                }),
+                { headers: { "Content-Type": "application/json" } }
+              )
+            );
+          }
+          const step = inferenceCalls++;
+          if (step > index) throw new Error("scope experiment should stop at the mixed discriminator sample");
+          return Promise.resolve(
+            sseCompleted(step === index ? 2_560 : cycleValue(expectedCachedTokens, step), step === index ? 2_560 : cycleValue(expectedCacheWriteTokens, step))
+          );
+        });
 
-Deno.test("a target-scoped cycle lease blocks a concurrent same-target invocation", async () => {
+        try {
+          const result = await runExperiment();
+          assert.equal(result.status, "inconclusive");
+          assert.equal(result.inconclusive_reason, "invalid_cache_signal");
+          assert.equal(inferenceCalls, index + 1);
+          assert.equal(refreshes, index >= 5 ? 1 : 0);
+          const snapshot = JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)));
+          assert.equal(snapshot.includes('"scope"'), false);
+        } finally {
+          globalThis.fetch = originalFetch;
+          resetCodexAuthCacheForTest();
+          resetRuntimeConfigCacheForTest();
+        }
+      });
+    }
+  }));
+
+test("a target-scoped cycle lease blocks a concurrent same-target invocation", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let releaseFirst = () => {};
@@ -453,7 +464,7 @@ Deno.test("a target-scoped cycle lease blocks a concurrent same-target invocatio
       })
   );
   let inferenceCalls = 0;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
@@ -462,7 +473,7 @@ Deno.test("a target-scoped cycle lease blocks a concurrent same-target invocatio
       return heldResponse;
     }
     return Promise.resolve(sseCompleted(0, 0));
-  };
+  });
   let first: ReturnType<typeof runPromptCacheScopeExperiment> | null = null;
   try {
     first = runExperiment();
@@ -483,14 +494,14 @@ Deno.test("a target-scoped cycle lease blocks a concurrent same-target invocatio
   }
 });
 
-Deno.test("a provider campaign lease blocks a sibling target between cycles and prevents OAuth interleaving", async () => {
+test("a provider campaign lease blocks a sibling target between cycles and prevents OAuth interleaving", async () => {
   const modelA = "gpt-5.5-cache-scope-target-a";
   const modelB = "gpt-5.6-cache-scope-target-b";
   seed({ models: [modelB, modelA], defaultModel: modelB });
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   let refreshes = 0;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshes += 1;
@@ -506,7 +517,7 @@ Deno.test("a provider campaign lease blocks a sibling target between cycles and 
     const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
     const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens, body.model));
-  };
+  });
 
   try {
     const firstA = await runExperiment(modelA);
@@ -537,9 +548,9 @@ Deno.test("a provider campaign lease blocks a sibling target between cycles and 
   }
 });
 
-Deno.test("a v4 campaign lease cannot block the v5 plain-key experiment", async () => {
+test("a v4 campaign lease cannot block the v5 plain-key experiment", async () => {
   seed();
-  const legacyCampaignKey: Deno.KvKey = [
+  const legacyCampaignKey: KvKey = [
     "uos_ai",
     "prompt_cache_scope_experiment",
     "v4",
@@ -556,12 +567,12 @@ Deno.test("a v4 campaign lease cannot block the v5 plain-key experiment", async 
   });
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
     return Promise.resolve(sseCompleted(0, 0));
-  };
+  });
 
   try {
     const result = await runExperiment();
@@ -576,12 +587,12 @@ Deno.test("a v4 campaign lease cannot block the v5 plain-key experiment", async 
   }
 });
 
-Deno.test("an expired target session clears its prior evidence before starting a fresh cycle", async () => {
+test("an expired target session clears its prior evidence before starting a fresh cycle", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   let refreshes = 0;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshes += 1;
@@ -599,7 +610,7 @@ Deno.test("an expired target session clears its prior evidence before starting a
     const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
     const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
-  };
+  });
 
   try {
     assert.equal((await runExperiment()).status, "in_progress");
@@ -641,12 +652,12 @@ Deno.test("an expired target session clears its prior evidence before starting a
   }
 });
 
-Deno.test("a same-account credential rotation during forced refresh is inconclusive auth-pool drift", async () => {
+test("a same-account credential rotation during forced refresh is inconclusive auth-pool drift", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   let rotationApplied = false;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       if (rotationApplied) throw new Error("the forced refresh must not retry after credential rotation");
@@ -684,7 +695,7 @@ Deno.test("a same-account credential rotation during forced refresh is inconclus
     const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
     const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
-  };
+  });
 
   try {
     const result = await runExperiment();
@@ -700,13 +711,13 @@ Deno.test("a same-account credential rotation during forced refresh is inconclus
   }
 });
 
-Deno.test("malformed v3 target state or evidence fails closed before any outbound work", async () => {
+test("malformed v3 target state or evidence fails closed before any outbound work", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("malformed durable data must fail closed before upstream work");
-  };
+  });
 
   try {
     for (const kind of ["state", "evidence"] as const) {
@@ -744,13 +755,13 @@ Deno.test("malformed v3 target state or evidence fails closed before any outboun
   }
 });
 
-Deno.test("semantically malformed v3 timestamps fail closed before any outbound work", async () => {
+test("semantically malformed v3 timestamps fail closed before any outbound work", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("semantically malformed durable timestamps must fail closed before upstream work");
-  };
+  });
 
   try {
     for (const kind of ["future_state", "inverted_evidence", "future_evidence"] as const) {
@@ -793,7 +804,7 @@ Deno.test("semantically malformed v3 timestamps fail closed before any outbound 
       await assert.rejects(
         () =>
           assertPromptCacheScopeExperimentTelemetryBaseline({
-            kv: kv as unknown as Deno.Kv,
+            kv: kv as unknown as Kv,
             release: TELEMETRY_RELEASE,
           }),
         PromptCacheScopeExperimentUnavailableError,
@@ -810,7 +821,7 @@ Deno.test("semantically malformed v3 timestamps fail closed before any outbound 
   }
 });
 
-Deno.test("semantically inconsistent ready-to-promote state cannot publish a scope", async () => {
+test("semantically inconsistent ready-to-promote state cannot publish a scope", async () => {
   seed();
   const baseline = await scopeBaselineFor();
   const startedAtMs = Date.now();
@@ -842,10 +853,10 @@ Deno.test("semantically inconsistent ready-to-promote state cannot publish a sco
   });
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("a malformed ready state must not dispatch or refresh");
-  };
+  });
 
   try {
     await assert.rejects(() => runPromptCacheScopeExperiment(baseline), PromptCacheScopeExperimentUnavailableError);
@@ -858,14 +869,14 @@ Deno.test("semantically inconsistent ready-to-promote state cannot publish a sco
   }
 });
 
-Deno.test("a completed target advances the bodyless campaign to the next exact model", async () => {
+test("a completed target advances the bodyless campaign to the next exact model", async () => {
   const modelA = "gpt-5.5-cache-scope-completed-a";
   const modelB = "gpt-5.6-cache-scope-pending-b";
   seed({ models: [modelB, modelA], defaultModel: modelB });
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   let refreshes = 0;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshes += 1;
@@ -885,7 +896,7 @@ Deno.test("a completed target advances the bodyless campaign to the next exact m
     const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
     const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens, body.model));
-  };
+  });
 
   try {
     assert.equal((await runExperiment(modelA)).status, "in_progress");
@@ -899,7 +910,7 @@ Deno.test("a completed target advances the bodyless campaign to the next exact m
 
     await seedStage0Baseline(modelB);
     const nextBaseline = await assertPromptCacheScopeExperimentTelemetryBaseline({
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       release: TELEMETRY_RELEASE,
     });
     assert.equal(nextBaseline.target.model, modelB);
@@ -910,16 +921,16 @@ Deno.test("a completed target advances the bodyless campaign to the next exact m
   }
 });
 
-Deno.test("an inconclusive target is retried before the campaign advances to another model", async () => {
+test("an inconclusive target is retried before the campaign advances to another model", async () => {
   const modelA = "gpt-5.5-cache-scope-retry-a";
   const modelB = "gpt-5.6-cache-scope-pending-b";
   seed({ models: [modelB, modelA], defaultModel: modelB });
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     return Promise.resolve(sseCompleted(0, 0, modelA));
-  };
+  });
 
   try {
     const inconclusive = await runExperiment(modelA);
@@ -929,7 +940,7 @@ Deno.test("an inconclusive target is retried before the campaign advances to ano
     await seedStage0Baseline(modelA);
     await seedStage0Baseline(modelB);
     const retryBaseline = await assertPromptCacheScopeExperimentTelemetryBaseline({
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       release: TELEMETRY_RELEASE,
     });
     assert.equal(retryBaseline.target.model, modelA);
@@ -940,12 +951,12 @@ Deno.test("an inconclusive target is retried before the campaign advances to ano
   }
 });
 
-Deno.test("completed evidence survives token rotation but is reprobeable after an account-pool membership change", async () => {
+test("completed evidence survives token rotation but is reprobeable after an account-pool membership change", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   let refreshes = 0;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshes += 1;
@@ -963,7 +974,7 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
     const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
     const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
-  };
+  });
 
   try {
     assert.equal((await runExperiment()).status, "in_progress");
@@ -1003,7 +1014,7 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
     await assert.rejects(
       () =>
         assertPromptCacheScopeExperimentTelemetryBaseline({
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           release: TELEMETRY_RELEASE,
         }),
       PromptCacheScopeExperimentUnavailableError
@@ -1033,7 +1044,7 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
       updated_at_ms: Date.now(),
     });
     const membershipBaseline = await assertPromptCacheScopeExperimentTelemetryBaseline({
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       release: TELEMETRY_RELEASE,
     });
     assert.notEqual(membershipBaseline.target.auth_pool_identity_fingerprint, tokenOnlyBaseline.target.auth_pool_identity_fingerprint);
@@ -1046,11 +1057,11 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
   }
 });
 
-Deno.test("prompt-cache scope admin trigger rejects request fields before any outbound work", async () => {
+test("prompt-cache scope admin trigger rejects request fields before any outbound work", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("request fields must be rejected before dispatch");
-  };
+  });
   try {
     const response = await handleAdminCodexCacheScopeExperiment(
       new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", {
@@ -1064,14 +1075,14 @@ Deno.test("prompt-cache scope admin trigger rejects request fields before any ou
   }
 });
 
-Deno.test("prompt-cache scope admin trigger requires a current-release Stage 0 baseline before any outbound work", async () => {
+test("prompt-cache scope admin trigger requires a current-release Stage 0 baseline before any outbound work", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("the Stage 0 gate must run before any upstream work");
-  };
+  });
   try {
     const response = await handleAdminCodexCacheScopeExperiment(
       new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" })
@@ -1088,44 +1099,44 @@ Deno.test("prompt-cache scope admin trigger requires a current-release Stage 0 b
   }
 });
 
-Deno.test("prompt-cache scope Stage 0 baseline uses the Codex telemetry provider identity", async () => {
+test("prompt-cache scope Stage 0 baseline uses the Codex telemetry provider identity", async () => {
   seed();
   const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
   assert.ok(counterKeys);
   for (const route of counterKeys.routes) {
-    kv.put(route.completed, new Deno.KvU64(5_000n));
-    kv.put(route.reported, new Deno.KvU64(5_000n));
-    kv.put(route.cache_write_reported, new Deno.KvU64(5_000n));
+    kv.put(route.completed, new KvU64(5_000n));
+    kv.put(route.reported, new KvU64(5_000n));
+    kv.put(route.cache_write_reported, new KvU64(5_000n));
   }
 
   await assert.doesNotReject(() =>
     assertPromptCacheScopeExperimentTelemetryBaseline({
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       release: TELEMETRY_RELEASE,
     })
   );
 });
 
-Deno.test("prompt-cache scope Stage 0 baseline rejects reported usage without cache-write fields before any scope traffic", async () => {
+test("prompt-cache scope Stage 0 baseline rejects reported usage without cache-write fields before any scope traffic", async () => {
   seed();
   const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
   assert.ok(counterKeys);
   for (const route of counterKeys.routes) {
-    kv.put(route.completed, new Deno.KvU64(5_000n));
-    kv.put(route.reported, new Deno.KvU64(5_000n));
+    kv.put(route.completed, new KvU64(5_000n));
+    kv.put(route.reported, new KvU64(5_000n));
   }
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("incomplete Stage 0 telemetry must block scope traffic");
-  };
+  });
 
   try {
     await assert.rejects(
       () =>
         assertPromptCacheScopeExperimentTelemetryBaseline({
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           release: TELEMETRY_RELEASE,
         }),
       PromptCacheScopeExperimentUnavailableError
@@ -1138,28 +1149,28 @@ Deno.test("prompt-cache scope Stage 0 baseline rejects reported usage without ca
   }
 });
 
-Deno.test("prompt-cache scope Stage 0 baseline requires Responses telemetry for its paid transport", async () => {
+test("prompt-cache scope Stage 0 baseline requires Responses telemetry for its paid transport", async () => {
   seed();
   const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
   assert.ok(counterKeys);
   const chat = counterKeys.routes.find((route) => route.route === "chat.completions");
   assert.ok(chat);
-  kv.put(chat.completed, new Deno.KvU64(10_000n));
-  kv.put(chat.reported, new Deno.KvU64(10_000n));
-  kv.put(chat.cache_write_reported, new Deno.KvU64(10_000n));
+  kv.put(chat.completed, new KvU64(10_000n));
+  kv.put(chat.reported, new KvU64(10_000n));
+  kv.put(chat.cache_write_reported, new KvU64(10_000n));
 
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("Chat-only telemetry must not unlock paid Responses scope traffic");
-  };
+  });
 
   try {
     await assert.rejects(
       () =>
         assertPromptCacheScopeExperimentTelemetryBaseline({
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           release: TELEMETRY_RELEASE,
         }),
       PromptCacheScopeExperimentUnavailableError
@@ -1172,25 +1183,25 @@ Deno.test("prompt-cache scope Stage 0 baseline requires Responses telemetry for 
   }
 });
 
-Deno.test("a catalog roster change after the Stage 0 gate stops before paid scope traffic", async () => {
+test("a catalog roster change after the Stage 0 gate stops before paid scope traffic", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("a stale Stage 0 binding must fail before any outbound work");
-  };
+  });
 
   try {
     const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
     assert.ok(counterKeys);
     for (const route of counterKeys.routes) {
-      kv.put(route.completed, new Deno.KvU64(5_000n));
-      kv.put(route.reported, new Deno.KvU64(5_000n));
-      kv.put(route.cache_write_reported, new Deno.KvU64(5_000n));
+      kv.put(route.completed, new KvU64(5_000n));
+      kv.put(route.reported, new KvU64(5_000n));
+      kv.put(route.cache_write_reported, new KvU64(5_000n));
     }
     const baseline = await assertPromptCacheScopeExperimentTelemetryBaseline({
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       release: TELEMETRY_RELEASE,
     });
 
@@ -1217,14 +1228,14 @@ Deno.test("a catalog roster change after the Stage 0 gate stops before paid scop
   }
 });
 
-Deno.test("a runtime default-only switch preserves a selected non-default target", async () => {
+test("a runtime default-only switch preserves a selected non-default target", async () => {
   const targetModel = "gpt-5.5-cache-scope-non-default";
   const firstDefault = "gpt-5.7-cache-scope-default-one";
   const secondDefault = "gpt-5.8-cache-scope-default-two";
   seed({ models: [targetModel, firstDefault, secondDefault], defaultModel: firstDefault });
   await seedStage0Baseline(targetModel);
   const baseline = await assertPromptCacheScopeExperimentTelemetryBaseline({
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     release: TELEMETRY_RELEASE,
   });
   assert.equal(baseline.target.model, targetModel);
@@ -1233,7 +1244,7 @@ Deno.test("a runtime default-only switch preserves a selected non-default target
   let inferenceCalls = 0;
   let refreshes = 0;
   const requestedModels: string[] = [];
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshes += 1;
@@ -1264,7 +1275,7 @@ Deno.test("a runtime default-only switch preserves a selected non-default target
     const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
     const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens, body.model));
-  };
+  });
 
   try {
     const result = await runPromptCacheScopeExperiment(baseline);
@@ -1282,7 +1293,7 @@ Deno.test("a runtime default-only switch preserves a selected non-default target
   }
 });
 
-Deno.test("a catalog roster drift during a scope cycle stops before the next paid sample", async () => {
+test("a catalog roster drift during a scope cycle stops before the next paid sample", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
@@ -1313,7 +1324,7 @@ Deno.test("a catalog roster drift during a scope cycle stops before the next pai
     updated_at_ms: number;
   };
 
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       throw new Error("a model change after sample one must stop before credential refresh");
@@ -1324,7 +1335,7 @@ Deno.test("a catalog roster drift during a scope cycle stops before the next pai
       kv.put(RUNTIME_CONFIG_V2_KEY, { ...runtime, updated_at_ms: Date.now() });
     }
     return Promise.resolve(sseCompleted(0, 2_560));
-  };
+  });
 
   try {
     const result = await runExperiment();
@@ -1339,7 +1350,7 @@ Deno.test("a catalog roster drift during a scope cycle stops before the next pai
   }
 });
 
-Deno.test("a target capability drift stops before the next paid sample", async () => {
+test("a target capability drift stops before the next paid sample", async () => {
   seed();
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
@@ -1349,7 +1360,7 @@ Deno.test("a target capability drift stops before the next paid sample", async (
     updated_at_ms: number;
     models: Record<string, unknown>[];
   };
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") {
       throw new Error("capability drift must stop before credential refresh");
@@ -1363,7 +1374,7 @@ Deno.test("a target capability drift stops before the next paid sample", async (
       });
     }
     return Promise.resolve(sseCompleted(0, 2_560));
-  };
+  });
 
   try {
     const result = await runExperiment();

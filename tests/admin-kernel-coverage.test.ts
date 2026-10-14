@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { AtomicOperation, Kv, KvCommitError, KvEntryMaybe, KvKey, KvListIterator, KvListSelector } from "#kv";
+import { test } from "bun:test";
 // Coverage tests for the admin kernel handlers (src/admin/kernel.ts) and the
 // kernel auth usage ledger (src/kernel/usage.ts). The KV is an in-process
 // substitute so every handler-visible branch can be driven without a real
@@ -34,10 +37,10 @@ import { paidFallbackUsageRollupKey, type PaidFallbackUsageRollup } from "../src
 import { sha256Hex } from "../src/utils.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
 
-const KERNEL_PUBKEYS_KEY: Deno.KvKey = ["uos_ai", "kernel_pubkeys"];
-const KERNEL_POLICY_QUEUE_KEY: Deno.KvKey = ["uos_ai", "kernel_policy_queue"];
-const DEFAULT_CUTOVER_KEY: Deno.KvKey = ["uos_ai", "kernel_quota", "v2", "default_window_cutover"];
-const CODEX_AUTH_POOL_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
+const KERNEL_PUBKEYS_KEY: KvKey = ["uos_ai", "kernel_pubkeys"];
+const KERNEL_POLICY_QUEUE_KEY: KvKey = ["uos_ai", "kernel_policy_queue"];
+const DEFAULT_CUTOVER_KEY: KvKey = ["uos_ai", "kernel_quota", "v2", "default_window_cutover"];
+const CODEX_AUTH_POOL_KEY: KvKey = ["ubq_ai", "codex_auth"];
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const HOUR_MS = 60 * 60 * 1_000;
 
@@ -46,13 +49,13 @@ const VALID_PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkq\n-----END PUBLIC KEY
 /** The same in-memory KV as the shared harness, plus a programmable CAS failure. */
 class ConflictKv extends CountingKv {
   commitsToFail = 0;
-  override atomic(): Deno.AtomicOperation {
+  override atomic(): AtomicOperation {
     const operation = super.atomic();
     const commit = operation.commit.bind(operation);
     operation.commit = async () => {
       if (this.commitsToFail > 0) {
         this.commitsToFail -= 1;
-        return { ok: false } as Deno.KvCommitError;
+        return { ok: false } as KvCommitError;
       }
       return await commit();
     };
@@ -64,18 +67,18 @@ class ConflictKv extends CountingKv {
 class ThrowingKv extends CountingKv {
   failGet = false;
   failList = false;
-  override get<T = unknown>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  override get<T = unknown>(key: KvKey): Promise<KvEntryMaybe<T>> {
     if (this.failGet) throw new Error("kv get failed");
     return super.get<T>(key);
   }
-  override list<T = unknown>(selector: Deno.KvListSelector): Deno.KvListIterator<T> {
+  override list<T = unknown>(selector: KvListSelector): KvListIterator<T> {
     if (this.failList) throw new Error("kv list failed");
     return super.list<T>(selector);
   }
 }
 
 const kv = new ConflictKv();
-setKvForTest(kv as unknown as Deno.Kv);
+setKvForTest(kv as unknown as Kv);
 
 type ErrorBody = { error: { message: string; type: string; code: string | null } };
 
@@ -117,9 +120,9 @@ const windowRecord = (scope: "repo" | "org", owner: string, repo: string | undef
     updated_at_ms: 2,
   }) as Record<string, unknown>;
 
-const repoPolicyKey = (owner: string, repo: string): Deno.KvKey => ["uos_ai", "kernel_quota", "v2", "repo_policy", owner, repo];
-const orgPolicyKey = (owner: string): Deno.KvKey => ["uos_ai", "kernel_quota", "v2", "org_policy", owner];
-const repoWindowKey = (owner: string, repo: string): Deno.KvKey => ["uos_ai", "kernel_quota", "v2", "repo_window", owner, repo];
+const repoPolicyKey = (owner: string, repo: string): KvKey => ["uos_ai", "kernel_quota", "v2", "repo_policy", owner, repo];
+const orgPolicyKey = (owner: string): KvKey => ["uos_ai", "kernel_quota", "v2", "org_policy", owner];
+const repoWindowKey = (owner: string, repo: string): KvKey => ["uos_ai", "kernel_quota", "v2", "repo_window", owner, repo];
 
 const seedRepoPolicy = (owner: string, repo: string, limit: number, windowMs: number, usageRequests = 0): void => {
   kv.seed(repoPolicyKey(owner, repo), policyRecord("repo", owner, repo, limit, windowMs));
@@ -185,7 +188,7 @@ const codexPoolEntry = (accountId: string): Record<string, unknown> => {
   };
 };
 
-Deno.test("kernel pubkey list reports the stored keys and fails closed without KV", async () => {
+test("kernel pubkey list reports the stored keys and fails closed without KV", async () => {
   kv.clearData();
   kv.seed(KERNEL_PUBKEYS_KEY, [{ app_id: 7, pem: VALID_PEM, owner: "acme", added_at_ms: 5 }]);
   const ok = await handleAdminKernelPubKeysList();
@@ -203,18 +206,18 @@ Deno.test("kernel pubkey list reports the stored keys and fails closed without K
     assert.equal(unavailable.status, 500);
     assert.equal((await readError(unavailable)).error.message, "Deno KV is not available");
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 });
 
-Deno.test("kernel pubkey create rejects invalid bodies, app ids and PEM values", async () => {
+test("kernel pubkey create rejects invalid bodies, app ids and PEM values", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
     const unavailable = await handleAdminKernelPubKeysCreate(new Request("https://ai.ubq.fi/admin/kernel-pubkeys", { method: "POST", body: "{}" }));
     assert.equal(unavailable.status, 500);
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   const nonJson = await handleAdminKernelPubKeysCreate(
@@ -245,7 +248,7 @@ Deno.test("kernel pubkey create rejects invalid bodies, app ids and PEM values",
   assert.equal((await readError(duplicate)).error.message, "Public key for App ID 9 already exists");
 });
 
-Deno.test("kernel pubkey create stores the key with its owner and reports a lost compare-and-set", async () => {
+test("kernel pubkey create stores the key with its owner and reports a lost compare-and-set", async () => {
   kv.clearData();
   const createdAtMs = Date.now();
   const response = await handleAdminKernelPubKeysCreate(usageBody({ app_id: 11, pem: `  ${VALID_PEM}  ` }));
@@ -273,14 +276,14 @@ Deno.test("kernel pubkey create stores the key with its owner and reports a lost
   kv.commitsToFail = 0;
 });
 
-Deno.test("kernel pubkey delete validates app_id, reports 404 and removes the stored key", async () => {
+test("kernel pubkey delete validates app_id, reports 404 and removes the stored key", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
     const unavailable = await handleAdminKernelPubKeysDelete(new Request("https://ai.ubq.fi/admin/kernel-pubkeys?app_id=1", { method: "DELETE" }));
     assert.equal(unavailable.status, 500);
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   const missingParam = await handleAdminKernelPubKeysDelete(new Request("https://ai.ubq.fi/admin/kernel-pubkeys", { method: "DELETE" }));
@@ -301,7 +304,7 @@ Deno.test("kernel pubkey delete validates app_id, reports 404 and removes the st
   assert.deepEqual((await kv.get<unknown[]>(KERNEL_PUBKEYS_KEY)).value, []);
 });
 
-Deno.test("kernel pubkey delete reports a lost compare-and-set without dropping the key", async () => {
+test("kernel pubkey delete reports a lost compare-and-set without dropping the key", async () => {
   kv.clearData();
   kv.seed(KERNEL_PUBKEYS_KEY, [{ app_id: 31, pem: VALID_PEM, owner: "acme", added_at_ms: 5 }]);
   kv.commitsToFail = 1;
@@ -312,7 +315,7 @@ Deno.test("kernel pubkey delete reports a lost compare-and-set without dropping 
   kv.commitsToFail = 0;
 });
 
-Deno.test("kernel policy queue reports only gaps without an org or repo policy", async () => {
+test("kernel policy queue reports only gaps without an org or repo policy", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
@@ -320,7 +323,7 @@ Deno.test("kernel policy queue reports only gaps without an org or repo policy",
     assert.equal(unavailable.status, 500);
     assert.equal((await readError(unavailable)).error.message, "Deno KV is not available");
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   const empty = await handleAdminKernelPolicyQueueList();
@@ -348,7 +351,7 @@ Deno.test("kernel policy queue reports only gaps without an org or repo policy",
   );
 });
 
-Deno.test("kernel usage inventory reports repo and org records with normalized daily series", async () => {
+test("kernel usage inventory reports repo and org records with normalized daily series", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
@@ -356,7 +359,7 @@ Deno.test("kernel usage inventory reports repo and org records with normalized d
     assert.equal(unavailable.status, 500);
     assert.equal((await readError(unavailable)).error.message, "Deno KV is not available");
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   kv.seed(kernelUsageKey("acme", "demo"), usageEntry("acme", "demo", 9));
@@ -415,9 +418,9 @@ Deno.test("kernel usage inventory reports repo and org records with normalized d
   assert.equal(await getKernelOrgUsage("nobody"), null);
 });
 
-Deno.test("kernel usage ledger fails closed when KV reads and listings fail", async () => {
+test("kernel usage ledger fails closed when KV reads and listings fail", async () => {
   const throwing = new ThrowingKv();
-  setKvForTest(throwing as unknown as Deno.Kv);
+  setKvForTest(throwing as unknown as Kv);
   try {
     throwing.failGet = true;
     assert.equal(await getKernelUsage("acme", "demo"), null);
@@ -438,11 +441,11 @@ Deno.test("kernel usage ledger fails closed when KV reads and listings fail", as
       assert.match(error.error.message, /Failed to load kernel (org )?usage inventory/);
     }
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 });
 
-Deno.test("kernel usage list projects declared limits, their usage and malformed policy rows", async () => {
+test("kernel usage list projects declared limits, their usage and malformed policy rows", async () => {
   kv.clearData();
   seedRepoPolicy("acme", "demo", 12, 60_000, 3);
   seedRepoPolicy("acme", "beta", -1, 60_000);
@@ -484,14 +487,14 @@ Deno.test("kernel usage list projects declared limits, their usage and malformed
   assert.equal(Object.hasOwn(plainLimits[0], "usage"), false);
 });
 
-Deno.test("kernel usage get validates its target and fails closed on a corrupt policy", async () => {
+test("kernel usage get validates its target and fails closed on a corrupt policy", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
     const unavailable = await handleAdminKernelUsageGet(new Request("https://ai.ubq.fi/admin/kernel-usage?owner=acme&repo=demo"));
     assert.equal(unavailable.status, 500);
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   const missingOwner = await handleAdminKernelUsageGet(new Request("https://ai.ubq.fi/admin/kernel-usage"));
@@ -518,7 +521,7 @@ Deno.test("kernel usage get validates its target and fails closed on a corrupt p
   assert.equal(await getKernelOrgUsageLimitSnapshot("acme"), null);
 });
 
-Deno.test("kernel usage get returns repo and org snapshots with their committed usage", async () => {
+test("kernel usage get returns repo and org snapshots with their committed usage", async () => {
   kv.clearData();
   seedRepoPolicy("acme", "demo", 4, 60_000, 3);
   kv.seed(kernelUsageKey("acme", "demo"), usageEntry("acme", "demo", 3));
@@ -558,14 +561,14 @@ Deno.test("kernel usage get returns repo and org snapshots with their committed 
   assert.equal((await readBody(legacy)).ok, true);
 });
 
-Deno.test("kernel usage set rejects invalid targets, limits and flags", async () => {
+test("kernel usage set rejects invalid targets, limits and flags", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
     const unavailable = await handleAdminKernelUsageSet(usageBody({ owner: "acme", repo: "demo", usage_limit_requests: 5 }));
     assert.equal(unavailable.status, 500);
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   const nonJson = await handleAdminKernelUsageSet(jsonRequest("https://ai.ubq.fi/admin/kernel-usage", "POST", "{"));
@@ -611,7 +614,7 @@ Deno.test("kernel usage set rejects invalid targets, limits and flags", async ()
   assert.deepEqual((await kv.get(repoPolicyKey("acme", "demo"))).value, null);
 });
 
-Deno.test("kernel usage set writes repo and org policies with their window overrides", async () => {
+test("kernel usage set writes repo and org policies with their window overrides", async () => {
   kv.clearData();
   const repoSet = await handleAdminKernelUsageSet(usageBody({ owner: "acme", repo: "demo", usage_limit_requests: 7, window_ms: 120_000, expires_at_ms: -1 }));
   assert.equal(repoSet.status, 200);
@@ -645,7 +648,7 @@ Deno.test("kernel usage set writes repo and org policies with their window overr
   assert.equal(windows?.usage_requests, 0);
 });
 
-Deno.test("kernel usage set reports a concurrent modification conflict", async () => {
+test("kernel usage set reports a concurrent modification conflict", async () => {
   kv.clearData();
   kv.commitsToFail = 3;
   const conflicted = await handleAdminKernelUsageSet(usageBody({ owner: "acme", repo: "demo", usage_limit_requests: 7 }));
@@ -659,14 +662,14 @@ Deno.test("kernel usage set reports a concurrent modification conflict", async (
   kv.commitsToFail = 0;
 });
 
-Deno.test("kernel usage delete validates its target and reports 404, conflict and success", async () => {
+test("kernel usage delete validates its target and reports 404, conflict and success", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
     const unavailable = await handleAdminKernelUsageDelete(usageDelete({ owner: "acme", repo: "demo" }));
     assert.equal(unavailable.status, 500);
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   const nonJson = await handleAdminKernelUsageDelete(jsonRequest("https://ai.ubq.fi/admin/kernel-usage", "DELETE", "{"));
@@ -709,7 +712,7 @@ Deno.test("kernel usage delete validates its target and reports 404, conflict an
   assert.equal((await getKernelOrgUsageLimitSnapshot("acme"))?.source, "default");
 });
 
-Deno.test("kernel usage delete fails closed when every compare-and-set is lost", async () => {
+test("kernel usage delete fails closed when every compare-and-set is lost", async () => {
   kv.clearData();
   seedRepoPolicy("acme", "demo", 7, 60_000);
   kv.commitsToFail = 3;
@@ -720,7 +723,7 @@ Deno.test("kernel usage delete fails closed when every compare-and-set is lost",
   assert.notEqual((await kv.get(repoPolicyKey("acme", "demo"))).value, null);
 });
 
-Deno.test("quota projection reports retention, rollups and unavailable scans", async () => {
+test("quota projection reports retention, rollups and unavailable scans", async () => {
   kv.clearData();
   const hourBucket = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
   kv.seed(paidFallbackUsageRollupKey(hourBucket, "gpt-5.6-sol", "metered", 0), rollupEntry(hourBucket, "gpt-5.6-sol", "metered", 4));
@@ -788,7 +791,7 @@ Deno.test("quota projection reports retention, rollups and unavailable scans", a
   assert.equal(Object.hasOwn(body, "snapshot"), false);
 });
 
-Deno.test("quota projection normalizes window parameters and tolerates a missing ledger", async () => {
+test("quota projection normalizes window parameters and tolerates a missing ledger", async () => {
   kv.clearData();
   const sevenDay = await handleAdminProvidersQuotaProjection(
     new Request("https://ai.ubq.fi/admin/providers/quota-projection?window_days=7&balance_window_days=90")
@@ -818,15 +821,15 @@ Deno.test("quota projection normalizes window parameters and tolerates a missing
     assert.equal(body.balance_history_scan, "unavailable");
     assert.deepEqual(body.balance_history, []);
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 });
 
-Deno.test("quota projection resamples stored balance history for the configured account", async () => {
+test("quota projection resamples stored balance history for the configured account", async () => {
   kv.clearData();
   const apiKey = "metered-projection-key";
-  const previous = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", apiKey);
+  const previous = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = apiKey;
   try {
     const { meterQuotaAccountFingerprint, readMeteredAccountCredentials } = await import("../src/metered-quota.ts");
     const fingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials());
@@ -857,12 +860,12 @@ Deno.test("quota projection resamples stored balance history for the configured 
     assert.equal(history[0].observed_at_ms, observedAtMs);
     assert.equal(history[0].balance_quota, 5_000);
   } finally {
-    if (previous === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", previous);
+    if (previous === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = previous;
   }
 });
 
-Deno.test("quota projection backfill honours its limit and fails closed without KV", async () => {
+test("quota projection backfill honours its limit and fails closed without KV", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
@@ -870,7 +873,7 @@ Deno.test("quota projection backfill honours its limit and fails closed without 
     assert.equal(unavailable.status, 503);
     assert.equal((await readError(unavailable)).error.message, "KV is unavailable");
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   const empty = await handleAdminProvidersQuotaProjectionBackfill(new Request("https://ai.ubq.fi/admin/providers/quota-projection/backfill?limit=abc"));
@@ -888,7 +891,7 @@ Deno.test("quota projection backfill honours its limit and fails closed without 
   assert.equal(capped.status, 200);
 });
 
-Deno.test("codex reset settings list and patch the account switch", async () => {
+test("codex reset settings list and patch the account switch", async () => {
   kv.clearData();
   setKvForTest(null);
   try {
@@ -896,7 +899,7 @@ Deno.test("codex reset settings list and patch the account switch", async () => 
     assert.equal(unavailable.status, 503);
     assert.equal((await readError(unavailable)).error.message, "Settings storage unavailable");
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 
   kv.seed(CODEX_AUTH_POOL_KEY, codexPoolEntry("account-coverage-1"));
@@ -924,7 +927,7 @@ Deno.test("codex reset settings list and patch the account switch", async () => 
   assert.equal(patched.status, 200);
   assert.deepEqual(await readBody(patched), patchBody);
   assert.deepEqual((await kv.get(codexResetUsageKey(accountIdHash))).value, { enabled: false });
-  assert.equal((await readCodexResetUsage(kv as unknown as Deno.Kv, accountIdHash)).allowed, false);
+  assert.equal((await readCodexResetUsage(kv as unknown as Kv, accountIdHash)).allowed, false);
 
   const relisted = await handleAdminCodexResetSettings(new Request("https://ai.ubq.fi/admin/providers/codex/banked-resets"));
   const relistedRows = (await readBody(relisted)).data as { enabled: boolean }[];
@@ -937,10 +940,10 @@ Deno.test("codex reset settings list and patch the account switch", async () => 
     })
   );
   assert.equal(reenabled.status, 200);
-  assert.equal((await readCodexResetUsage(kv as unknown as Deno.Kv, accountIdHash)).allowed, true);
+  assert.equal((await readCodexResetUsage(kv as unknown as Kv, accountIdHash)).allowed, true);
 });
 
-Deno.test("codex reset settings expose bounded credit expiries without raw credit ids", async () => {
+test("codex reset settings expose bounded credit expiries without raw credit ids", async () => {
   const originalFetch = globalThis.fetch;
   kv.clearData();
   kv.seed(CODEX_AUTH_POOL_KEY, codexPoolEntry("account-reset-credits-1"));
@@ -951,11 +954,14 @@ Deno.test("codex reset settings expose bounded credit expiries without raw credi
     expires_at: expiresAt,
   });
   const stub = (inventory: () => Response | Promise<Response>) => {
-    globalThis.fetch = (input) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
+      let url: string;
+      if (typeof input === "string") url = input;
+      else if (input instanceof URL) url = input.toString();
+      else url = input.url;
       if (!url.endsWith("/backend-api/wham/rate-limit-reset-credits")) throw new Error(`unexpected request ${url}`);
       return Promise.resolve(inventory());
-    };
+    });
   };
   try {
     // The detailed list is sorted by earliest expiry and never carries the raw id.
@@ -999,7 +1005,7 @@ Deno.test("codex reset settings expose bounded credit expiries without raw credi
   }
 });
 
-Deno.test("codex reset settings patch rejects invalid bodies and stale subscriptions", async () => {
+test("codex reset settings patch rejects invalid bodies and stale subscriptions", async () => {
   kv.clearData();
   kv.seed(CODEX_AUTH_POOL_KEY, codexPoolEntry("account-coverage-2"));
   const accountIdHash = await sha256Hex("account-coverage-2");

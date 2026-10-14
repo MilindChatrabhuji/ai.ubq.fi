@@ -1,3 +1,7 @@
+import type { KvU64 } from "#kv";
+import type { Kv, KvKey } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/provider-capacity-harness.ts";
 import assert from "node:assert/strict";
 
 import { setKvForTest } from "../src/kv.ts";
@@ -78,7 +82,10 @@ const historyRecord = (bucketStartAtMs: number, sampledAtMs = bucketStartAtMs + 
   sources: [historySource(1, sampledAtMs, state), historySource(2, sampledAtMs, state)],
 });
 
-Deno.test("sampler creates one fixed combined bucket and redacts account credentials", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("sampler creates one fixed combined bucket and redacts account credentials", async () => {
   seed();
   const calls: { account: string | null; authorization: string | null; url: string }[] = [];
   const live = await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher(calls), now: () => nowMs });
@@ -116,7 +123,7 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   assert.equal(callsInSameBucket.length, 3);
   assert.equal(second.history.length, 1);
   const historyKeyCount = [...kvStore.keys()]
-    .map((key) => JSON.parse(key) as Deno.KvKey)
+    .map((key) => JSON.parse(key) as KvKey)
     .filter((key) => PROVIDER_CAPACITY_HISTORY_KEY_PREFIX.every((part, index) => key[index] === part)).length;
   assert.equal(historyKeyCount, 1);
 
@@ -129,7 +136,7 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   }
 });
 
-Deno.test("sampler refresh observes Metered token usage", async () => {
+test("sampler refresh observes Metered token usage", async () => {
   seed();
   const initial = await refreshProviderCapacity({
     kv: kvStub,
@@ -158,7 +165,7 @@ Deno.test("sampler refresh observes Metered token usage", async () => {
   assert.equal(topupCalls.length, 3);
 });
 
-Deno.test("sampler preserves an exhaustion point when a reset refills the same bucket", async () => {
+test("sampler preserves an exhaustion point when a reset refills the same bucket", async () => {
   seed();
   let phase = 0;
   const calls: { account: string | null; authorization: string | null; url: string }[] = [];
@@ -178,7 +185,7 @@ Deno.test("sampler preserves an exhaustion point when a reset refills the same b
   assert.equal(refilled.history[1]?.sources[0]?.windows.primary?.used_percent, 0);
 });
 
-Deno.test("sampler records a substantial rate-limit reset and preserves both same-bucket samples", async () => {
+test("sampler records a substantial rate-limit reset and preserves both same-bucket samples", async () => {
   seed();
   let phase = 0;
   const fetcher = createFetcher(
@@ -233,12 +240,12 @@ Deno.test("sampler records a substantial rate-limit reset and preserves both sam
   const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs + 1_000 });
   assert.deepEqual(persisted.rate_limit_reset_events, reset.rate_limit_reset_events);
   const eventKeys = [...kvStore.keys()]
-    .map((key) => JSON.parse(key) as Deno.KvKey)
+    .map((key) => JSON.parse(key) as KvKey)
     .filter((key) => PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX.every((part, index) => key[index] === part));
   assert.equal(eventKeys.length, 1);
 });
 
-Deno.test("sampler does not correlate reset evidence across reordered accounts", async () => {
+test("sampler does not correlate reset evidence across reordered accounts", async () => {
   seed();
   let phase = 0;
   const fetcher = createFetcher(
@@ -277,7 +284,7 @@ Deno.test("sampler does not correlate reset evidence across reordered accounts",
   assert.equal(reorderedSlotTwo?.account_cohort_id, firstSlotOne?.account_cohort_id);
   const persisted = JSON.stringify(
     [...kvStore.entries()].flatMap(([encodedKey, stored]) => {
-      const key = JSON.parse(encodedKey) as Deno.KvKey;
+      const key = JSON.parse(encodedKey) as KvKey;
       return key[0] === "uos_ai" && key[1] === "provider_capacity" ? [stored.value] : [];
     })
   );
@@ -285,7 +292,7 @@ Deno.test("sampler does not correlate reset evidence across reordered accounts",
   assert.equal(persisted.includes("account-two"), false);
 });
 
-Deno.test("rejected comparison read preserves the coherent durable reset evidence", async () => {
+test("rejected comparison read preserves the coherent durable reset evidence", async () => {
   seed();
   let phase = 0;
   const fetcher = createFetcher(
@@ -310,7 +317,7 @@ Deno.test("rejected comparison read preserves the coherent durable reset evidenc
   const lastAvailableKey = ["uos_ai", "provider_capacity", "v1", "last_available", 1] as const;
   let rejectedHistoryRead = false;
   const failingKv = {
-    get: (key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }) => {
+    get: (key: KvKey, options?: { consistency?: "strong" | "eventual" }) => {
       if (!rejectedHistoryRead && options?.consistency === "strong" && keyToString(key) === keyToString(bucketKey)) {
         rejectedHistoryRead = true;
         return Promise.reject(new Error("injected history comparison read failure"));
@@ -322,7 +329,7 @@ Deno.test("rejected comparison read preserves the coherent durable reset evidenc
     list: kvStub.list.bind(kvStub),
     atomic: kvStub.atomic.bind(kvStub),
     close: kvStub.close.bind(kvStub),
-  } as unknown as Deno.Kv;
+  } as unknown as Kv;
 
   phase = 1;
   const live = await refreshProviderCapacity({ kv: failingKv, fetcher, now: () => nowMs + 1_000 });
@@ -344,7 +351,7 @@ Deno.test("rejected comparison read preserves the coherent durable reset evidenc
   );
 });
 
-Deno.test("sampler detects a reset when the healthy sample follows a 401 outage", async () => {
+test("sampler detects a reset when the healthy sample follows a 401 outage", async () => {
   seed();
   let phase = 0;
   const calls: { account: string | null; authorization: string | null; url: string }[] = [];
@@ -421,7 +428,7 @@ Deno.test("sampler detects a reset when the healthy sample follows a 401 outage"
   );
 });
 
-Deno.test("sampler does not backfill an outage reset across an account replacement", async () => {
+test("sampler does not backfill an outage reset across an account replacement", async () => {
   seed();
   let phase = 0;
   const calls: { account: string | null; authorization: string | null; url: string }[] = [];
@@ -481,7 +488,7 @@ Deno.test("sampler does not backfill an outage reset across an account replaceme
   assert.deepEqual(persisted.rate_limit_reset_events, []);
 });
 
-Deno.test("sampler does not record a capacity gain when the reset timer does not advance", async () => {
+test("sampler does not record a capacity gain when the reset timer does not advance", async () => {
   seed();
   let phase = 0;
   const fetcher = createFetcher(
@@ -506,7 +513,7 @@ Deno.test("sampler does not record a capacity gain when the reset timer does not
   assert.deepEqual(changed.rate_limit_reset_events, []);
 });
 
-Deno.test("sampler does not record a timer advance below the substantial-gain threshold", async () => {
+test("sampler does not record a timer advance below the substantial-gain threshold", async () => {
   seed();
   let phase = 0;
   const belowThreshold = PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS - 1;
@@ -535,7 +542,7 @@ Deno.test("sampler does not record a timer advance below the substantial-gain th
   assert.deepEqual(changed.rate_limit_reset_events, []);
 });
 
-Deno.test("persisted history keeps seven days and filters older buckets", async () => {
+test("persisted history keeps seven days and filters older buckets", async () => {
   seed();
   const currentBucket = Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
   const oldBucket = currentBucket - PROVIDER_CAPACITY_HISTORY_RETENTION_MS - PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
@@ -553,7 +560,7 @@ Deno.test("persisted history keeps seven days and filters older buckets", async 
   assert.equal(view.history[0]?.sources[1]?.windows.secondary?.limit_window_seconds, 86_400);
 });
 
-Deno.test("persisted history backfills a reset across an unavailable outage", async () => {
+test("persisted history backfills a reset across an unavailable outage", async () => {
   seed();
   const beforeMs = nowMs - 3 * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
   const outageMs = nowMs - 2 * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
@@ -595,7 +602,7 @@ Deno.test("persisted history backfills a reset across an unavailable outage", as
   assert.equal([...kvStore.keys()].filter((key) => key.includes("rate_limit_reset_event")).length, 2);
 });
 
-Deno.test("legacy history without account cohorts remains readable but cannot infer resets", async () => {
+test("legacy history without account cohorts remains readable but cannot infer resets", async () => {
   seed();
   const sampledAtMs = [
     nowMs - 3 * PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
@@ -625,7 +632,7 @@ Deno.test("legacy history without account cohorts remains readable but cannot in
   assert.deepEqual(view.rate_limit_reset_events, []);
 });
 
-Deno.test("capacity view backfills recent verified reset events from the redacted redemption ledger", async () => {
+test("capacity view backfills recent verified reset events from the redacted redemption ledger", async () => {
   seed();
   const accountIdHash = "account-hash-one";
   const quotaGeneration = "v1:quota-generation-one";
@@ -685,7 +692,7 @@ Deno.test("capacity view backfills recent verified reset events from the redacte
     },
   ]);
   const storedEventKeys = [...kvStore.keys()]
-    .map((key) => JSON.parse(key) as Deno.KvKey)
+    .map((key) => JSON.parse(key) as KvKey)
     .filter((key) => PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX.every((part, index) => key[index] === part));
   assert.equal(storedEventKeys.length, 1);
 });
@@ -693,13 +700,13 @@ Deno.test("capacity view backfills recent verified reset events from the redacte
 const codexSourceAt = (sources: readonly ProviderCapacitySource[], slot: 1 | 2): ProviderCapacityCodexSource | undefined =>
   sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot);
 
-Deno.test("capacity endpoint revalidates stale reads and reuses fresh persisted snapshots", async () => {
+test("capacity endpoint revalidates stale reads and reuses fresh persisted snapshots", async () => {
   seed();
-  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "input_tokens"), { value: 200n } as Deno.KvU64);
-  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cached_input_tokens"), { value: 100n } as Deno.KvU64);
-  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cache_write_input_tokens"), { value: 50n } as Deno.KvU64);
-  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cache_write_reported_sample_count"), { value: 2n } as Deno.KvU64);
-  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "sample_count"), { value: 2n } as Deno.KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "input_tokens"), { value: 200n } as KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cached_input_tokens"), { value: 100n } as KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cache_write_input_tokens"), { value: 50n } as KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "cache_write_reported_sample_count"), { value: 2n } as KvU64);
+  kvStore.put(promptCacheAnalyticsCounterKey(nowMs, "sample_count"), { value: 2n } as KvU64);
   const calls: { account: string | null; authorization: string | null; url: string }[] = [];
   const fetcher = createFetcher(calls);
 
@@ -746,7 +753,7 @@ Deno.test("capacity endpoint revalidates stale reads and reuses fresh persisted 
   assert.equal(calls.filter((call) => call.url.startsWith("https://api.openlux.ai/api/")).length, 1);
 });
 
-Deno.test("stale default read delivers the changed upstream Codex quota value", async () => {
+test("stale default read delivers the changed upstream Codex quota value", async () => {
   seed();
   let primaryUsed = 80;
   const usage = () => [primaryUsed, 20] as const;
@@ -769,7 +776,7 @@ Deno.test("stale default read delivers the changed upstream Codex quota value", 
   assert.equal(calls.filter((call) => call.url.startsWith("https://api.openlux.ai/api/")).length, 0);
 });
 
-Deno.test("event capacity samples still force-refresh Metered quota", async () => {
+test("event capacity samples still force-refresh Metered quota", async () => {
   seed();
   await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher([]), now: () => nowMs });
 
@@ -784,7 +791,7 @@ Deno.test("event capacity samples still force-refresh Metered quota", async () =
   assert.equal(calls.filter((call) => call.url.startsWith("https://api.openlux.ai/api/")).length, 1);
 });
 
-Deno.test("concurrent stale default reads share one upstream refresh", async () => {
+test("concurrent stale default reads share one upstream refresh", async () => {
   seed();
   // A default (non-`refresh=live`) read only revalidates stale sources. Seed past
   // both the 30s read-freshness window and the Metered wallet's five-minute
@@ -829,7 +836,7 @@ Deno.test("concurrent stale default reads share one upstream refresh", async () 
   assert.equal(codexSourceAt(secondBody.sources ?? [], 1)?.windows.primary?.used_percent, 5);
 });
 
-Deno.test("failed stale revalidation reports unavailable quota instead of zero", async () => {
+test("failed stale revalidation reports unavailable quota instead of zero", async () => {
   seed();
   await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher([]), now: () => nowMs - 40_000 });
   const response = await handleProviderCapacity(new Request("https://ai.ubq.fi/admin/providers/capacity"), {
@@ -845,7 +852,7 @@ Deno.test("failed stale revalidation reports unavailable quota instead of zero",
   assert.equal(codexSourceAt(body.sources ?? [], 2)?.state, "available");
 });
 
-Deno.test("read freshness window stays separate from the fifteen-minute history bucket", async () => {
+test("read freshness window stays separate from the fifteen-minute history bucket", async () => {
   seed();
   assert.equal(PROVIDER_CAPACITY_READ_FRESH_MS, 30_000);
   assert.ok(PROVIDER_CAPACITY_READ_FRESH_MS < PROVIDER_CAPACITY_HISTORY_BUCKET_MS);
@@ -874,7 +881,7 @@ const createGatedFetcher =
     return response;
   };
 
-Deno.test("concurrent live refreshes coalesce through the durable lease", async () => {
+test("concurrent live refreshes coalesce through the durable lease", async () => {
   seed();
   const calls: { account: string | null; authorization: string | null; url: string }[] = [];
   let releaseFetch = () => {};
@@ -911,7 +918,7 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
   assert.equal(kvStore.get(keyToString(PROVIDER_CAPACITY_LEASE_KEY)), undefined);
 });
 
-Deno.test("partial sampler failures retain redacted downtime evidence for graph bridges", async () => {
+test("partial sampler failures retain redacted downtime evidence for graph bridges", async () => {
   seed();
   const firstCalls: { account: string | null; authorization: string | null; url: string }[] = [];
   await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher(firstCalls), now: () => nowMs });
@@ -935,7 +942,7 @@ Deno.test("partial sampler failures retain redacted downtime evidence for graph 
   assert.equal(JSON.stringify(partial).includes("upstream-secret-body"), false);
 });
 
-Deno.test("downtime evidence is redacted, deduplicated per chart bucket, and retained in the view", async () => {
+test("downtime evidence is redacted, deduplicated per chart bucket, and retained in the view", async () => {
   seed();
   const firstObservedAtMs = nowMs + 1_000;
   assert.equal(
@@ -970,7 +977,7 @@ Deno.test("downtime evidence is redacted, deduplicated per chart bucket, and ret
   );
   assert.equal(
     [...kvStore.keys()].filter((key) => {
-      const parsed = JSON.parse(key) as Deno.KvKey;
+      const parsed = JSON.parse(key) as KvKey;
       return PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX.every((part, index) => parsed[index] === part);
     }).length,
     1
@@ -979,7 +986,7 @@ Deno.test("downtime evidence is redacted, deduplicated per chart bucket, and ret
   assert.deepEqual(view.downtime_events, events);
 });
 
-Deno.test("persisted Codex data becomes stale after the missed-run allowance", async () => {
+test("persisted Codex data becomes stale after the missed-run allowance", async () => {
   seed();
   await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher([]), now: () => nowMs });
   const stale = await getPersistedProviderCapacityView({
@@ -992,7 +999,7 @@ Deno.test("persisted Codex data becomes stale after the missed-run allowance", a
   assert.equal(stale.history[0]?.sources[0]?.state, "available");
 });
 
-Deno.test("capacity route requires admin authentication", async () => {
+test("capacity route requires admin authentication", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(new Request("https://ai.ubq.fi/admin/providers/capacity"));
   assert.equal(response.status, 401);
@@ -1028,28 +1035,28 @@ const seedCountingCapacityKv = (kv: CountingKv): void => {
 };
 
 const withCountingCapacityEnvironment = async (run: () => Promise<void>): Promise<void> => {
-  const originalApiKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-api-key");
+  const originalApiKey = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-api-key";
   try {
     await run();
   } finally {
     setKvForTest(kvStub);
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
-    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalApiKey;
   }
 };
 
-Deno.test("event sampler persists capacity without building the discarded admin projection", async () => {
+test("event sampler persists capacity without building the discarded admin projection", async () => {
   await withCountingCapacityEnvironment(async () => {
     const samplerKv = new CountingKv();
     seedCountingCapacityKv(samplerKv);
-    setKvForTest(samplerKv as unknown as Deno.Kv);
+    setKvForTest(samplerKv as unknown as Kv);
     const samplerCalls: { account: string | null; authorization: string | null; url: string }[] = [];
     const finishSamplerBudget = samplerKv.beginMeasurement({ authKind: "background", outcome: "capacity_sampler" });
     await sampleProviderCapacityOnEvent({
-      kv: samplerKv as unknown as Deno.Kv,
+      kv: samplerKv as unknown as Kv,
       fetcher: createFetcher(samplerCalls),
       now: () => nowMs,
       createLeaseOwner: () => "event-sampler",
@@ -1073,21 +1080,21 @@ Deno.test("event sampler persists capacity without building the discarded admin 
     assert.equal((await samplerKv.get(PROVIDER_CAPACITY_LEASE_KEY)).value, null);
 
     const stale = await getPersistedProviderCapacityView({
-      kv: samplerKv as unknown as Deno.Kv,
+      kv: samplerKv as unknown as Kv,
       now: () => nowMs + PROVIDER_CAPACITY_SOURCE_STALE_MS,
     });
     assert.equal(stale.cache_state, "stale");
 
     const liveRefreshKv = new CountingKv();
     seedCountingCapacityKv(liveRefreshKv);
-    setKvForTest(liveRefreshKv as unknown as Deno.Kv);
+    setKvForTest(liveRefreshKv as unknown as Kv);
     const liveRefreshCalls: { account: string | null; authorization: string | null; url: string }[] = [];
     const finishLiveRefreshBudget = liveRefreshKv.beginMeasurement({
       authKind: "background",
       outcome: "capacity_view",
     });
     await refreshProviderCapacity({
-      kv: liveRefreshKv as unknown as Deno.Kv,
+      kv: liveRefreshKv as unknown as Kv,
       fetcher: createFetcher(liveRefreshCalls),
       now: () => nowMs,
       createLeaseOwner: () => "live-refresh",
@@ -1105,31 +1112,31 @@ Deno.test("event sampler persists capacity without building the discarded admin 
   });
 });
 
-Deno.test("event sampler preserves a same-bucket reset transition", async () => {
+test("event sampler preserves a same-bucket reset transition", async () => {
   await withCountingCapacityEnvironment(async () => {
     const countingKv = new CountingKv();
     seedCountingCapacityKv(countingKv);
-    setKvForTest(countingKv as unknown as Deno.Kv);
+    setKvForTest(countingKv as unknown as Kv);
     let phase = 0;
     const calls: { account: string | null; authorization: string | null; url: string }[] = [];
     const fetcher = createFetcher(calls, null, {}, () => (phase === 0 ? [100, 100] : [0, 0]));
 
     await sampleProviderCapacityOnEvent({
-      kv: countingKv as unknown as Deno.Kv,
+      kv: countingKv as unknown as Kv,
       fetcher,
       now: () => nowMs,
       createLeaseOwner: () => "exhausted",
     });
     phase = 1;
     await sampleProviderCapacityOnEvent({
-      kv: countingKv as unknown as Deno.Kv,
+      kv: countingKv as unknown as Kv,
       fetcher,
       now: () => nowMs + 1_000,
       createLeaseOwner: () => "refilled",
     });
 
     const view = await getPersistedProviderCapacityView({
-      kv: countingKv as unknown as Deno.Kv,
+      kv: countingKv as unknown as Kv,
       now: () => nowMs + 1_000,
     });
     assert.equal(calls.length, 6);
@@ -1142,11 +1149,11 @@ Deno.test("event sampler preserves a same-bucket reset transition", async () => 
   });
 });
 
-Deno.test("concurrent event samplers keep one provider probe under the durable lease", async () => {
+test("concurrent event samplers keep one provider probe under the durable lease", async () => {
   await withCountingCapacityEnvironment(async () => {
     const countingKv = new CountingKv();
     seedCountingCapacityKv(countingKv);
-    setKvForTest(countingKv as unknown as Deno.Kv);
+    setKvForTest(countingKv as unknown as Kv);
     const calls: { account: string | null; authorization: string | null; url: string }[] = [];
     let releaseFetch = (): void => {};
     const fetchReleased = new Promise<void>((resolve) => {
@@ -1156,7 +1163,7 @@ Deno.test("concurrent event samplers keep one provider probe under the durable l
     const fetcher = createGatedFetcher(baseFetcher, fetchReleased);
 
     const first = sampleProviderCapacityOnEvent({
-      kv: countingKv as unknown as Deno.Kv,
+      kv: countingKv as unknown as Kv,
       fetcher,
       now: () => nowMs,
       createLeaseOwner: () => "first-event",
@@ -1167,7 +1174,7 @@ Deno.test("concurrent event samplers keep one provider probe under the durable l
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     const second = sampleProviderCapacityOnEvent({
-      kv: countingKv as unknown as Deno.Kv,
+      kv: countingKv as unknown as Kv,
       fetcher,
       now: () => nowMs,
       createLeaseOwner: () => "second-event",

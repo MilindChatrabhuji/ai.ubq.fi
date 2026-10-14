@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   MAX_RESPONSES_SSE_EVENT_BYTES,
@@ -38,7 +39,7 @@ const chunked = (value: string, boundaries: number[], cancel?: () => void): Read
   });
 };
 
-Deno.test("Responses SSE parser handles mixed separators, multiline data, and fragmented UTF-8", async () => {
+test("Responses SSE parser handles mixed separators, multiline data, and fragmented UTF-8", async () => {
   const payload =
     ': keepalive\r\ndata: {"type":"response.output_text.delta",\r\ndata: "delta":"hi 🌍"}\r\n\r\n' +
     'data: {"type":"response.completed","response":{"status":"completed"}}';
@@ -60,7 +61,7 @@ Deno.test("Responses SSE parser handles mixed separators, multiline data, and fr
   }
 });
 
-Deno.test("Responses SSE parser accepts an LF then CRLF event boundary", async () => {
+test("Responses SSE parser accepts an LF then CRLF event boundary", async () => {
   const source = chunked(
     'data: {"type":"response.output_text.delta","delta":"x"}\n\r\n' + 'data: {"type":"response.completed","response":{"status":"completed"}}\r\n\r\n',
     []
@@ -73,7 +74,7 @@ Deno.test("Responses SSE parser accepts an LF then CRLF event boundary", async (
   );
 });
 
-Deno.test("Responses SSE parser rejects malformed JSON and EOF before terminal", async () => {
+test("Responses SSE parser rejects malformed JSON and EOF before terminal", async () => {
   const malformed = await captureError(async () => {
     await Array.fromAsync(readResponsesStream(chunked("data: nope\n\n", [])));
   });
@@ -87,7 +88,7 @@ Deno.test("Responses SSE parser rejects malformed JSON and EOF before terminal",
   assert.equal(eof.kind, "premature_eof");
 });
 
-Deno.test("Responses parser rejects terminal events without their protocol payload", async () => {
+test("Responses parser rejects terminal events without their protocol payload", async () => {
   const error = await captureError(async () => {
     await Array.fromAsync(readResponsesStream(chunked('data: {"type":"response.completed"}\n\n', [])));
   });
@@ -95,7 +96,7 @@ Deno.test("Responses parser rejects terminal events without their protocol paylo
   assert.equal(error.kind, "malformed_event");
 });
 
-Deno.test("Responses parser rejects array-valued terminal response payloads", async () => {
+test("Responses parser rejects array-valued terminal response payloads", async () => {
   for (const type of ["response.completed", "response.failed", "response.incomplete"]) {
     const error = await captureError(async () => {
       await Array.fromAsync(readResponsesStream(chunked(`data: ${JSON.stringify({ type, response: [] })}\n\n`, [])));
@@ -105,7 +106,7 @@ Deno.test("Responses parser rejects array-valued terminal response payloads", as
   }
 });
 
-Deno.test("Responses parser rejects an array-valued nested error payload", async () => {
+test("Responses parser rejects an array-valued nested error payload", async () => {
   const error = await captureError(async () => {
     await Array.fromAsync(readResponsesStream(chunked('data: {"type":"error","error":[]}\n\n', [])));
   });
@@ -113,7 +114,7 @@ Deno.test("Responses parser rejects an array-valued nested error payload", async
   assert.equal(error.kind, "malformed_event");
 });
 
-Deno.test("Responses parser rejects an array-valued nested error despite valid flat fields", async () => {
+test("Responses parser rejects an array-valued nested error despite valid flat fields", async () => {
   const error = await captureError(async () => {
     await Array.fromAsync(
       readResponsesStream(chunked('data: {"type":"error","error":[],"code":"provider_error","message":"Provider stopped.","param":null}\n\n', []))
@@ -123,7 +124,7 @@ Deno.test("Responses parser rejects an array-valued nested error despite valid f
   assert.equal(error.kind, "malformed_event");
 });
 
-Deno.test("Responses parser accepts an official flat error terminal", async () => {
+test("Responses parser accepts an official flat error terminal", async () => {
   const events = [];
   for await (const event of readResponsesStream(chunked('data: {"type":"error","code":"provider_error","message":"Provider stopped.","param":null}\n\n', [])))
     events.push(event);
@@ -132,7 +133,7 @@ Deno.test("Responses parser accepts an official flat error terminal", async () =
   assert.equal(events[0]?.value.code, "provider_error");
 });
 
-Deno.test("Responses parser accepts a nullable code in an official flat error terminal", async () => {
+test("Responses parser accepts a nullable code in an official flat error terminal", async () => {
   const events = [];
   for await (const event of readResponsesStream(chunked('data: {"type":"error","code":null,"message":"Provider stopped.","param":"input"}\n\n', [])))
     events.push(event);
@@ -141,7 +142,7 @@ Deno.test("Responses parser accepts a nullable code in an official flat error te
   assert.equal(events[0]?.value.param, "input");
 });
 
-Deno.test("Responses preflight surfaces immediate failures before a stream response is created", async () => {
+test("Responses preflight surfaces immediate failures before a stream response is created", async () => {
   const malformed = await captureError(async () => {
     await preflightResponsesStream(chunked("data: nope\n\n", []));
   });
@@ -155,7 +156,7 @@ Deno.test("Responses preflight surfaces immediate failures before a stream respo
   assert.equal(eof.kind, "premature_eof");
 });
 
-Deno.test("Responses activity observes comments and partial frames before parsed events", async () => {
+test("Responses activity observes comments and partial frames before parsed events", async () => {
   const source = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(bytes(": keepalive\n\n"));
@@ -181,7 +182,7 @@ Deno.test("Responses activity observes comments and partial frames before parsed
   );
 });
 
-Deno.test("Responses parser wraps reader exceptions and releases its lock", async () => {
+test("Responses parser wraps reader exceptions and releases its lock", async () => {
   const source = new ReadableStream<Uint8Array>({
     pull(controller) {
       controller.error(new Error("socket reset"));
@@ -195,7 +196,7 @@ Deno.test("Responses parser wraps reader exceptions and releases its lock", asyn
   assert.equal(source.locked, false);
 });
 
-Deno.test("Responses parser keeps one absolute first-event deadline across non-event frames", async () => {
+test("Responses parser keeps one absolute first-event deadline across non-event frames", async () => {
   let cancelled = 0;
   let active = true;
   const source = new ReadableStream<Uint8Array>({
@@ -218,7 +219,7 @@ Deno.test("Responses parser keeps one absolute first-event deadline across non-e
   assert.equal(cancelled, 1);
 });
 
-Deno.test("Responses parser rejects one fragmented oversized SSE event and cancels once", async () => {
+test("Responses parser rejects one fragmented oversized SSE event and cancels once", async () => {
   let cancelled = 0;
   const oversized = `data: ${"x".repeat(MAX_RESPONSES_SSE_EVENT_BYTES + 1)}`;
   const source = new ReadableStream<Uint8Array>({
@@ -240,7 +241,7 @@ Deno.test("Responses parser rejects one fragmented oversized SSE event and cance
   assert.equal(cancelled, 1);
 });
 
-Deno.test("Responses proxy forwards only the first terminal and cancels a hanging upstream once", async () => {
+test("Responses proxy forwards only the first terminal and cancels a hanging upstream once", async () => {
   let cancelCount = 0;
   const source = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -261,10 +262,13 @@ Deno.test("Responses proxy forwards only the first terminal and cancels a hangin
   assert.doesNotMatch(output, /response.completed/);
   assert.doesNotMatch(output, /post-terminal/);
   assert.equal(cancelCount, 1);
+  for (let turn = 0; source.locked && turn < 10; turn += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   assert.equal(source.locked, false);
 });
 
-Deno.test("Responses proxy keeps first-event delivery, byte framing, and terminal cancellation incremental", async () => {
+test("Responses proxy keeps first-event delivery, byte framing, and terminal cancellation incremental", async () => {
   const firstFrame = 'data: {"type":"response.output_text.delta","delta":"first"}\n\n';
   const terminalFrame = 'data: {"type":"response.completed","response":{"status":"completed"}}\n\n';
   let releaseTerminal = (): void => {};
@@ -343,7 +347,7 @@ Deno.test("Responses proxy keeps first-event delivery, byte framing, and termina
   assert.equal(source.locked, false);
 });
 
-Deno.test("Responses proxy emits an official error event after premature EOF", async () => {
+test("Responses proxy emits an official error event after premature EOF", async () => {
   const source = chunked('data: {"type":"response.output_text.delta","delta":"x"}\n\n', []);
   const output = await new Response(proxyResponsesStream(source)).text();
   assert.match(output, /response.output_text.delta/);
@@ -351,7 +355,7 @@ Deno.test("Responses proxy emits an official error event after premature EOF", a
   assert.doesNotMatch(output, /response.completed/);
 });
 
-Deno.test("SSE keepalive emits short comment bursts while the provider is quiet", async () => {
+test("SSE keepalive emits short comment bursts while the provider is quiet", async () => {
   const encoder = new TextEncoder();
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
@@ -384,7 +388,7 @@ Deno.test("SSE keepalive emits short comment bursts while the provider is quiet"
   assert.equal((await reader.read()).done, true);
 });
 
-Deno.test("Responses proxy does not wait for lifecycle callbacks before terminal delivery", async () => {
+test("Responses proxy does not wait for lifecycle callbacks before terminal delivery", async () => {
   const never = new Promise<void>(() => {});
   const source = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -402,7 +406,7 @@ Deno.test("Responses proxy does not wait for lifecycle callbacks before terminal
   assert.match(output, /response.completed/);
 });
 
-Deno.test("Responses proxy cancellation is forwarded once without waiting for bookkeeping", async () => {
+test("Responses proxy cancellation is forwarded once without waiting for bookkeeping", async () => {
   let upstreamCancelCount = 0;
   let downstreamCancelCount = 0;
   const never = new Promise<void>(() => {});

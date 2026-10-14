@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv } from "#kv";
+import { serveHttp } from "#http";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { apiKeyHashKey } from "../src/api-keys.ts";
 import {
@@ -90,7 +94,7 @@ const ledgerFixture = (id: string, usageLimitRequests: number, nowMs = Date.now(
 
 /** Admits one request through the same deferred path the terminal wrapper uses. */
 const admissionFor = async (kv: CountingKv, policy: ApiKeyPolicy, requestId: string): Promise<ApiKeyUsageReservation> => {
-  const decision = await reserveApiKeyUsageV3(policy, requestId, "systemone", { kv: kv as unknown as Deno.Kv, deferWhenFull: true });
+  const decision = await reserveApiKeyUsageV3(policy, requestId, "systemone", { kv: kv as unknown as Kv, deferWhenFull: true });
   if (!decision.ok) throw new Error(`unexpected admission failure: ${decision.response.status}`);
   return decision.reservation;
 };
@@ -111,7 +115,7 @@ const storedWindow = (kv: CountingKv, policy: ApiKeyPolicy): ApiKeyUsageWindowV3
 const storedRequest = (kv: CountingKv, policy: ApiKeyPolicy, requestId: string): ApiKeyUsageRequestV3 | null =>
   (kv.entries.get(JSON.stringify(apiKeyUsageV3RequestKey(policy, requestId)))?.value as ApiKeyUsageRequestV3 | undefined) ?? null;
 
-Deno.test("systemone cancels an expired pre-dispatch reservation before returning a bounded upstream error", async () => {
+test("systemone cancels an expired pre-dispatch reservation before returning a bounded upstream error", async () => {
   const { kv, policy } = ledgerFixture("deadline", 1);
   const reservation = await admissionFor(kv, policy, "systemone-deadline");
   let fetchCalls = 0;
@@ -155,7 +159,7 @@ Deno.test("systemone cancels an expired pre-dispatch reservation before returnin
   assert.equal(storedRequest(kv, policy, "systemone-deadline")?.release_reason, "transport_cancelled_before_fetch");
 });
 
-Deno.test("systemone loopback deadline responses preserve quota hook errors and headers", async () => {
+test("systemone loopback deadline responses preserve quota hook errors and headers", async () => {
   const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
   let deadline: AbortSignal | null = null;
   let fetchCalls = 0;
@@ -168,13 +172,13 @@ Deno.test("systemone loopback deadline responses preserve quota hook errors and 
     headers: { "RateLimit-Limit": "1", "RateLimit-Remaining": "0" },
   });
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetProviderHealthThrottleForTest();
   AbortSignal.timeout = () => {
     deadline = originalTimeout(1);
     return deadline;
   };
-  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req) =>
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req) =>
     handleSystemOne(
       req,
       {
@@ -206,6 +210,7 @@ Deno.test("systemone loopback deadline responses preserve quota hook errors and 
     )
   );
   try {
+    await server.ready;
     for (const path of ["/v1/systemone", "/quota", "/cancel-quota"]) {
       const response = await fetch(`http://127.0.0.1:${server.addr.port}${path}`, {
         method: "POST",
@@ -240,14 +245,14 @@ Deno.test("systemone loopback deadline responses preserve quota hook errors and 
   }
 });
 
-Deno.test("systemone commits the api-key request reservation exactly once before dispatch", async () => {
+test("systemone commits the api-key request reservation exactly once before dispatch", async () => {
   const { kv, policy } = ledgerFixture("commit-once", 2);
   const reservation = await admissionFor(kv, policy, "systemone-commit-once");
   let fetchCalls = 0;
-  const fetcher = (() => {
+  const fetcher = createFetchMock(() => {
     fetchCalls += 1;
     return Promise.resolve(Response.json(answerPayload));
-  }) as typeof fetch;
+  });
 
   const response = await handleSystemOne(request({ state, questions }), usageContextWith(reservation), { fetcher, apiKey: () => "or-test-key" });
 
@@ -262,16 +267,16 @@ Deno.test("systemone commits the api-key request reservation exactly once before
   assert.equal(row.provider, "openrouter");
 });
 
-Deno.test("systemone refuses an exhausted api-key window before the upstream fetch", async () => {
+test("systemone refuses an exhausted api-key window before the upstream fetch", async () => {
   const { kv, policy } = ledgerFixture("exhausted", 1);
   const first = await admissionFor(kv, policy, "systemone-exhausted-1");
   await first.beforeProviderDispatch("openrouter");
   const second = await admissionFor(kv, policy, "systemone-exhausted-2");
   let fetchCalls = 0;
-  const fetcher = (() => {
+  const fetcher = createFetchMock(() => {
     fetchCalls += 1;
     return Promise.resolve(Response.json(answerPayload));
-  }) as typeof fetch;
+  });
 
   const response = await handleSystemOne(request({ state, questions }), usageContextWith(second), { fetcher, apiKey: () => "or-test-key" });
 
@@ -289,18 +294,18 @@ Deno.test("systemone refuses an exhausted api-key window before the upstream fet
   assert.equal(storedRequest(kv, policy, "systemone-exhausted-2"), null);
 });
 
-Deno.test("systemone proxies one typed question set upstream with the server key", async () => {
+test("systemone proxies one typed question set upstream with the server key", async () => {
   const captured: { url: string; headers: Headers | null; body: unknown } = {
     url: "",
     headers: null,
     body: null,
   };
-  const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const fetcher = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     captured.url = urlOf(input);
     captured.headers = new Headers(init?.headers);
     captured.body = jsonBodyOf(init);
     return Promise.resolve(Response.json(answerPayload));
-  }) as typeof fetch;
+  });
 
   const response = await handleSystemOne(request({ state, questions }), undefined, {
     fetcher,
@@ -319,12 +324,12 @@ Deno.test("systemone proxies one typed question set upstream with the server key
   assert.equal(payload.answers.candidate.confidence, 0.99);
 });
 
-Deno.test("systemone accepts an explicit typesafe model and rejects other models", async () => {
+test("systemone accepts an explicit typesafe model and rejects other models", async () => {
   const seen: string[] = [];
-  const fetcher = ((_input: RequestInfo | URL, init?: RequestInit) => {
+  const fetcher = createFetchMock((_input: RequestInfo | URL, init?: RequestInit) => {
     seen.push((jsonBodyOf(init) as { model: string }).model);
     return Promise.resolve(Response.json(answerPayload));
-  }) as typeof fetch;
+  });
 
   const ok = await handleSystemOne(request({ state, questions, model: "~typesafe/jev-1.13.0" }), undefined, {
     fetcher,
@@ -343,15 +348,15 @@ Deno.test("systemone accepts an explicit typesafe model and rejects other models
   assert.deepEqual(seen, ["~typesafe/jev-1.13.0"]);
 });
 
-Deno.test("systemone requires configuration and refuses malformed question sets", async () => {
+test("systemone requires configuration and refuses malformed question sets", async () => {
   const unconfigured = await handleSystemOne(request({ state, questions }), undefined, {
-    fetcher: (() => Promise.resolve(Response.json(answerPayload))) as typeof fetch,
+    fetcher: createFetchMock(() => Promise.resolve(Response.json(answerPayload))),
     apiKey: () => null,
   });
   assert.equal(unconfigured.status, 503);
   assert.equal((await unconfigured.json()).error.code, "openrouter_api_key_missing");
 
-  const fetcher = (() => Promise.reject(new Error("must not reach upstream"))) as typeof fetch;
+  const fetcher = createFetchMock(() => Promise.reject(new Error("must not reach upstream")));
   const apiKey = () => "or-test-key";
   const cases: unknown[] = [
     { state, questions, extra: true },
@@ -366,11 +371,11 @@ Deno.test("systemone requires configuration and refuses malformed question sets"
   }
 });
 
-Deno.test("systemone maps upstream upsets to bounded errors", async () => {
+test("systemone maps upstream upsets to bounded errors", async () => {
   const apiKey = () => "or-test-key";
 
   const unreachable = await handleSystemOne(request({ state, questions }), undefined, {
-    fetcher: (() => Promise.reject(new Error("connect timeout"))) as typeof fetch,
+    fetcher: createFetchMock(() => Promise.reject(new Error("connect timeout"))),
     apiKey,
   });
   assert.equal(unreachable.status, 502);
@@ -382,36 +387,37 @@ Deno.test("systemone maps upstream upsets to bounded errors", async () => {
     [503, 502],
   ] as const) {
     const failed = await handleSystemOne(request({ state, questions }), undefined, {
-      fetcher: (() => Promise.resolve(new Response("{}", { status }))) as typeof fetch,
+      fetcher: createFetchMock(() => Promise.resolve(new Response("{}", { status }))),
       apiKey,
     });
     assert.equal(failed.status, expected);
   }
 
   const invalid = await handleSystemOne(request({ state, questions }), undefined, {
-    fetcher: (() => Promise.resolve(Response.json({ model: "typesafe/jev-1.13-20260917" }))) as typeof fetch,
+    fetcher: createFetchMock(() => Promise.resolve(Response.json({ model: "typesafe/jev-1.13-20260917" }))),
     apiKey,
   });
   assert.equal(invalid.status, 502);
   assert.equal((await invalid.json()).error.code, "openrouter_upstream_invalid_response");
 });
 
-Deno.test("systemone is a terminal inference route with its own quota route", () => {
+test("systemone is a terminal inference route with its own quota route", () => {
   assert.equal(terminalRouteForRequest("POST", "/v1/systemone"), "systemone");
   assert.equal(kernelQuotaRouteForRequest("POST", "/v1/systemone"), "systemone");
   // Hard cutover: the previous UOS platform path no longer routes.
   assert.equal(terminalRouteForRequest("POST", "/uos/systemone"), null);
 });
 
-Deno.test("systemone attaches reported usage telemetry to its response", async () => {
-  const fetcher = (() =>
+test("systemone attaches reported usage telemetry to its response", async () => {
+  const fetcher = createFetchMock(() =>
     Promise.resolve(
       Response.json({
         model: "typesafe/jev-1.13-20260917",
         answers: { candidate: { type: "choice", choice: "yes", confidence: 0.9 } },
         usage: { input_tokens: 310, output_tokens: 20, cost: 0.00001302 },
       })
-    )) as typeof fetch;
+    )
+  );
   const response = await handleSystemOne(request({ state, questions }), undefined, {
     fetcher,
     apiKey: () => "or-test-key",
@@ -441,9 +447,9 @@ for (const [status, upstreamBody, expectedEvent, expectedState, clientStatus] of
   [400, '{"error":{"message":"Insufficient credits"}}', "reachable", "degraded", 400],
   [null, "", "upstream_error", "degraded", 502],
 ] as const) {
-  Deno.test(`systemone records upstream ${status ?? "transport failure"} health for ${upstreamBody}`, async () => {
+  test(`systemone records upstream ${status ?? "transport failure"} health for ${upstreamBody}`, async () => {
     const kv = new CountingKv();
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     resetProviderHealthThrottleForTest();
     let fetchCalls = 0;
     try {
