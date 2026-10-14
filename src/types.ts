@@ -4,7 +4,14 @@ export type CodexAuthState = Readonly<{
   account_id: string;
   updated_at_ms: number;
   /** Local native Codex owns this account's rotating credential lineage. */
-  native_owner?: Readonly<{ codex_home: string; generation_hash: string; native_refreshed_at?: string }>;
+  native_owner?: Readonly<{
+    codex_home: string;
+    generation_hash: string;
+    native_refreshed_at?: string;
+    /** A native external consumer receives access authorization, never rotating credentials. */
+    auth_mode?: "chatgptAuthTokens";
+    chatgpt_user_id?: string;
+  }>;
 }>;
 
 export type CodexAuthPoolState = Readonly<{

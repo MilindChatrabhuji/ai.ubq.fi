@@ -1,4 +1,4 @@
-export type MacSandboxPaths = Readonly<{ release: string; runtime: string; root: string; nativeHome: string; control: string }>;
+export type MacSandboxPaths = Readonly<{ release: string; runtime: string; root: string; nativeHome: string; control: string; externalNativeAuth?: string }>;
 /** Seatbelt applies before Bun starts the application child. */
 export const macSandboxProfile = (paths: MacSandboxPaths): string => {
   const quote = (path: string): string => JSON.stringify(path);
@@ -16,6 +16,7 @@ export const macSandboxProfile = (paths: MacSandboxPaths): string => {
   ];
   const exactRead = [
     paths.root + "/.env",
+    ...(paths.externalNativeAuth ? [paths.externalNativeAuth] : []),
     "/dev/null",
     "/dev/urandom",
     "/dev/random",

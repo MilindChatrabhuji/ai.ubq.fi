@@ -38,6 +38,7 @@ type FixtureInput = {
   runtime: string;
   runtimeHash: string;
   dormantRuntime: string;
+  namedFile?: string;
 };
 type FixtureCase = {
   name: string;
@@ -90,6 +91,11 @@ const childFixture = async (api: ChildApi, input: FixtureInput): Promise<void> =
   globalThis.fetch = Object.assign(() => Promise.reject(new Error("No real provider call is permitted")), { preconnect: fetch.preconnect });
   assert.equal(Bun.version, "1.4.0");
   assert.equal(process.execPath, input.runtime, "the child must execute the managed fixture artifact");
+  if (input.namedFile) {
+    assert.equal(await readFile(input.namedFile, "utf8"), "synthetic-external-native-leaf");
+    await assert.rejects(writeFile(input.namedFile, "forbidden"), denied);
+    await assert.rejects(writeFile(input.namedFile.replace("auth.json", "other.txt"), "forbidden"), denied);
+  }
   api.setNativeCodexAuthHooksForTest({
     os: "darwin",
     refresh: async (home, email, accountId) => {
@@ -278,6 +284,9 @@ const prepare = async (testCase: FixtureCase): Promise<{ base: string; input: Fi
   await writeFile(dormantRuntime, "unrestricted dormant-runtime baseline");
   assert.equal(await readFile(dormantRuntime, "utf8"), "unrestricted dormant-runtime baseline");
   await copyFile(process.execPath, dormantRuntime);
+  const namedFile = base + "/owner-home/.codex-ubiquity/auth.json";
+  await mkdir(base + "/owner-home/.codex-ubiquity", { recursive: true });
+  await writeFile(namedFile, "synthetic-external-native-leaf");
   const input = {
     root,
     home,
@@ -288,6 +297,7 @@ const prepare = async (testCase: FixtureCase): Promise<{ base: string; input: Fi
     runtime,
     runtimeHash,
     dormantRuntime,
+    namedFile: testCase.noHome || testCase.missing ? undefined : namedFile,
   };
   if (!testCase.absent) await mkdir(home + "/app-server-control", { recursive: true });
   await mkdir(release + "/scripts", { recursive: true });

@@ -346,8 +346,7 @@ const parseCodexAuthPoolSnapshot = (value: unknown): CodexAuthPoolState | null =
     if (!isRecord(candidate)) return null;
     const accountId = getString(candidate.account_id);
     const accessToken = getString(candidate.access_token);
-    const refreshToken = getString(candidate.refresh_token);
-    if (!accountId || !accessToken || !refreshToken || !isSafeMs(candidate.updated_at_ms) || accountIds.has(accountId)) return null;
+    if (!accountId || !accessToken || !isSafeMs(candidate.updated_at_ms) || accountIds.has(accountId)) return null;
     accountIds.add(accountId);
   }
   // Preserve validated ownership and the canonical maximum-pool bound.

@@ -26,6 +26,25 @@ This task authorizes source delivery through the normal PR and local Codex revie
 
 Reason: the owner explicitly selected Bun for the complete first-party program. Reversal risk: treating execution as a type check, treating JavaScriptCore bytes as Deno V8 values, settling quota before transport delivery, restoring stale state after Bun writes, or preparing artifacts during startup would discard a correctness or custody boundary. Full settled canonical verification/CI, the exact native artifact, real Mac/platform confinement, the complete gateway acceptance surface, and the owner-gated Sentinel reader remain explicit acceptance obligations. This decision records no pass for unresolved gates or completed production acceptance.
 
+## Native external consumers share access authorization without refresh credentials - 2026-10-14
+
+The owner authorized recovery of the Mac primary and Ubiquity profiles from working same-user/workspace peers. The
+gateway accepts the official native `chatgptAuthTokens` access-only leaf only from its fixed primary or
+`.codex-ubiquity` home, with an empty refresh field and identical access/id JWT. Durable external ownership records the
+native home, user, workspace, and credential generation; ordinary uploads, env seeds and managed donor candidates remain
+strict. The existing repair CLI validates the current regular local leaf, preserves valid managed accounts and siblings,
+checks passive authorization, rechecks file bytes and commits the matching slot with pool CAS. External consumers never
+invoke local native refresh or OAuth; their owner must publish renewed access authorization before expiry. Managed
+native refresh retains its existing expiry and precise generation-order guards.
+
+The named home receives read permission for its auth file only. The gateway never writes either credential file. Native
+daemon adoption and relay ownership remain separate watchdog operations: a file proves the pool's local source, not the
+running daemon's auth mode. Initial managed-to-external native migration changes relay ownership; subsequent
+same-user/workspace renewal must preserve it. A missing, stale or mismatched publication defers with an owner error
+rather than switching accounts or rotating a donor. Native persistent external file loading is source-confirmed for
+0.162.1 but undocumented and requires separate synthetic and passive runtime acceptance. Age-order protection remains in
+this release, so recovery from an older peer generation is not a universal failover guarantee.
+
 ## External reasoning tiers use ascending Codex picker order - 2026-10-10
 
 The native Codex catalog orders standard tiers from `none` through `ultra` only when projecting external provider
@@ -1160,18 +1179,18 @@ was taken at a context size far below the real sessions, which is why it came ba
 only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
 effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
 
-| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
-| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
-| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
-| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
-| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
-| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
-| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
-| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
+| Model                           | Actual input tokens |   n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | --: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 |  10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 |  10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 |  10 |                 9 |                    1 |     10% |
+| `deepseek-flash` (effort `max`) |              18,787 |  10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              66,533 |  10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 |  10 |                10 |                    0 |      0% |
 
 Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
 

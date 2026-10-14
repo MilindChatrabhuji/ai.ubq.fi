@@ -33,9 +33,17 @@ const selectedHome = resolve(logicalHome);
 const nativeHome = (await exists(selectedHome)) ? await realpath(selectedHome) : selectedHome;
 const logicalControl = join(nativeHome, "app-server-control");
 const control = (await exists(logicalControl)) ? await realpath(logicalControl) : logicalControl;
+const externalNativeAuth = process.env.HOME ? join(resolve(process.env.HOME), ".codex-ubiquity", "auth.json") : undefined;
 await rm(join(root, ".data/legacy-rollback-active.json"), { force: true });
 if (mode === "mac") {
-  const profile = macSandboxProfile({ root, release, runtime, nativeHome, control });
+  const profile = macSandboxProfile({
+    root,
+    release,
+    runtime,
+    nativeHome,
+    control,
+    ...(externalNativeAuth && (await exists(externalNativeAuth)) ? { externalNativeAuth: await realpath(externalNativeAuth) } : {}),
+  });
   const child = Bun.spawn(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", join(release, "scripts/serve-mac.ts")], {
     cwd: root,
     env: process.env,

@@ -45,6 +45,9 @@ import {
   planCodexAuthRepair,
 } from "../src/codex/auth-repair.ts";
 import { getJwtExpMs, parseCodexAuthPool } from "../src/codex/index.ts";
+import { isRecord } from "../src/utils.ts";
+import { parseExternalNativeCodexDocument } from "../src/codex/external-auth.ts";
+import { nativeCodexConsumerHomes, planExternalNativeCodexAdoption } from "../src/codex/native-auth.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const CODEX_AUTH_POOL_KEY = ["ubq_ai", "codex_auth"] as const;
@@ -104,7 +107,7 @@ const expandTilde = (path: string): string => {
   return path;
 };
 
-const resolveFlags = (args: readonly string[]): Flags => {
+export const resolveFlags = (args: readonly string[]): Flags => {
   const flags = parseArgs(args);
   return Object.freeze({
     apply: flags.apply === true,
@@ -150,7 +153,7 @@ const sha256Prefix = async (value: string): Promise<string> => {
 const formatTime = (ms: number | null): string => (ms === null ? "n/a" : new Date(ms).toISOString());
 
 /** Reads a local KV pool entry with the versionstamp the write must still match. */
-const readLocalPool = async (kvPath: string): Promise<{ pool: CodexAuthPoolState; versionstamp: string } | { error: string }> => {
+export const readLocalPool = async (kvPath: string): Promise<{ pool: CodexAuthPoolState; versionstamp: string } | { error: string }> => {
   let kv: Kv;
   try {
     kv = await openKv(kvPath);
@@ -612,6 +615,73 @@ const applyPlannedRepair = async (
   const written = await writeLocalPool(flags.kv, versionstamp, next);
   if (!written.ok) return { ok: false, exitCode: 1, message: written.error };
   return { ok: true, applied: true };
+};
+
+type ExternalRepairHooks = {
+  readText?: (path: string) => Promise<string>;
+  isRegularFile?: (path: string) => Promise<boolean>;
+  probe?: typeof probeAccessToken;
+  write?: typeof writeLocalPool;
+};
+
+const readExternalRepairFile = async (
+  path: string,
+  pool: CodexAuthPoolState,
+  readText: (path: string) => Promise<string>
+): Promise<{ text: string; raw: unknown } | null> => {
+  const registered = pool.accounts.some((auth) => auth.native_owner?.auth_mode === "chatgptAuthTokens" && `${auth.native_owner.codex_home}/auth.json` === path);
+  let text: string;
+  let raw: unknown;
+  try {
+    text = await readText(path);
+    raw = JSON.parse(text);
+  } catch {
+    if (registered) throw new Error("Registered external native leaf is unavailable; peer collection was refused");
+    return null;
+  }
+  if (!isRecord(raw) || raw.auth_mode !== "chatgptAuthTokens") {
+    if (registered) throw new Error("Registered external native leaf changed mode; peer collection was refused");
+    return null;
+  }
+  return { text, raw };
+};
+
+/** A recognized external file never reaches SSH collection or a managed refresh path. */
+export const repairExternalNativePool = async (
+  flags: Pick<Flags, "apply" | "authJson" | "kv" | "codexBaseUrl">,
+  local: { pool: CodexAuthPoolState; versionstamp: string },
+  hooks: ExternalRepairHooks = {}
+): Promise<{ status: "healthy" | "repaired" | "repair_available"; applied: boolean } | null> => {
+  const readText = hooks.readText ?? ((path: string) => readFile(path, "utf8"));
+  const source = await readExternalRepairFile(flags.authJson, local.pool, readText);
+  if (!source) return null;
+  const { text, raw } = source;
+  const home = nativeCodexConsumerHomes().find((candidate) => flags.authJson === `${candidate}/auth.json`);
+  const regular =
+    hooks.isRegularFile ??
+    (async (path: string): Promise<boolean> => {
+      const info = await stat(path);
+      return info.isFile() && !info.isSymbolicLink();
+    });
+  const document = parseExternalNativeCodexDocument(raw);
+  if (!home || !document || !(await regular(flags.authJson))) throw new Error("External native auth requires the current regular fixed-home leaf");
+  const previous = local.pool.accounts.find((auth) => auth.account_id === document.auth.account_id);
+  if (!previous) throw new Error("External native auth has no matching durable account");
+  const probe = hooks.probe ?? probeAccessToken;
+  const nowMs = Date.now();
+  const expired = (getJwtExpMs(previous.access_token) ?? Infinity) <= nowMs;
+  const ownedConsumer = previous.native_owner?.auth_mode === "chatgptAuthTokens" && previous.native_owner.codex_home === home;
+  const previousProbe = expired || ownedConsumer ? null : await probe(previous.access_token, previous.account_id, flags.codexBaseUrl, fetch);
+  const next = await planExternalNativeCodexAdoption(local.pool, raw, home, nowMs, previousProbe?.outcome === "invalid");
+  if (next === local.pool) return { status: "healthy", applied: false };
+  const authorization = await probe(document.auth.access_token, document.auth.account_id, flags.codexBaseUrl, fetch);
+  if (authorization.outcome !== "valid") throw new Error("External native access authorization was not proven; nothing was written");
+  if (!flags.apply) return { status: "repair_available", applied: false };
+  if (!(await regular(flags.authJson)) || (await readText(flags.authJson)) !== text)
+    throw new Error("External native leaf changed while planning; nothing was written");
+  const written = await (hooks.write ?? writeLocalPool)(flags.kv, local.versionstamp, next);
+  if (!written.ok) throw new Error(written.error);
+  return { status: "repaired", applied: true };
 };
 
 const main = async (): Promise<number> => {

@@ -14,6 +14,7 @@ import {
 } from "./auth.ts";
 import type { CodexAuthAccountEntry, CodexAuthPoolEntry } from "./auth.ts";
 import { requestNativeCodexRefresh } from "./native-auth-transport.ts";
+import { externalCodexIdentity, parseExternalNativeCodexDocument } from "./external-auth.ts";
 
 type NativeAuthHooks = {
   codexHome?: string;
@@ -47,6 +48,18 @@ const nativeHome = (): string | null => {
   }
 };
 
+/** The recovery contract permits the primary and the one existing named Ubiquity home. */
+export const nativeCodexConsumerHomes = (): readonly string[] => {
+  const primary = nativeHome();
+  if (!primary) return [];
+  try {
+    const home = (hooks?.getEnv ?? ((name: string) => process.env[name]))("HOME");
+    return home ? [...new Set([primary, `${home}/.codex-ubiquity`])] : [primary];
+  } catch {
+    return [primary];
+  }
+};
+
 export const nativeCodexCredentialGeneration = async (auth: Pick<CodexAuthState, "account_id" | "access_token" | "refresh_token">): Promise<string> =>
   await sha256Hex(JSON.stringify([auth.account_id, auth.access_token, auth.refresh_token]));
 
@@ -55,9 +68,18 @@ const sameCredentials = (
   right: Pick<CodexAuthState, "access_token" | "refresh_token">
 ): boolean => left.access_token === right.access_token && left.refresh_token === right.refresh_token;
 
-type NativeDocument = { auth: CodexAuthState; email: string | null; refreshedAt: string | null };
+type NativeDocument = { auth: CodexAuthState; email: string | null; refreshedAt: string | null; externalUserId?: string };
 const readNativeDocument = async (home: string): Promise<NativeDocument> => {
   const raw: unknown = hooks?.readAuth ? await hooks.readAuth() : JSON.parse(await readFile(`${home}/auth.json`, "utf8"));
+  const external = parseExternalNativeCodexDocument(raw);
+  if (external) {
+    return {
+      auth: { ...external.auth, updated_at_ms: Date.now() },
+      email: getCodexAccountEmail(external.auth.access_token),
+      refreshedAt: external.refreshedAt,
+      externalUserId: external.userId,
+    };
+  }
   const auth = parseCodexAuthFromAuthJson(raw);
   if (!auth || !isRecord(raw) || (raw.auth_mode !== undefined && raw.auth_mode !== "chatgpt")) {
     throw new CodexError("Native Codex credentials are not managed ChatGPT auth.", "codex_auth_owner_unavailable", 503);
@@ -120,6 +142,7 @@ const nativeRefreshTime = (value: string | null | undefined): bigint | null => {
 
 const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument, requireUsableAccessToken = true): void => {
   const next = document.auth;
+  verifyExternalNativeIdentity(previous, document);
   const previousExpiry = getJwtExpMs(previous.access_token);
   const nextExpiry = getJwtExpMs(next.access_token);
   const priorNativeTime = nativeRefreshTime(previous.native_owner?.native_refreshed_at);
@@ -134,6 +157,61 @@ const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument
   ) {
     throw new CodexError("Native Codex credential generation did not advance; no stale credentials were adopted.", "codex_auth_refresh_failed", 503);
   }
+};
+
+const verifyExternalNativeIdentity = (previous: CodexAuthState, document: NativeDocument): void => {
+  if (!document.externalUserId && previous.native_owner?.auth_mode !== "chatgptAuthTokens") return;
+  const identity = externalCodexIdentity(previous.access_token);
+  if (!document.externalUserId || document.externalUserId !== identity?.userId || identity.accountId !== previous.account_id) {
+    throw new CodexError("External native Codex user or workspace changed; nothing was adopted.", "codex_auth_owner_conflict", 409);
+  }
+};
+
+const nativeOwnerForDocument = async (document: NativeDocument, home: string): Promise<NonNullable<CodexAuthState["native_owner"]>> => ({
+  codex_home: home,
+  generation_hash: await nativeCodexCredentialGeneration(document.auth),
+  ...(document.refreshedAt ? { native_refreshed_at: document.refreshedAt } : {}),
+  ...(document.externalUserId ? { auth_mode: "chatgptAuthTokens" as const, chatgpt_user_id: document.externalUserId } : {}),
+});
+
+/** The CLI proves the current fixed-home file and passive authorization before this plan. */
+export const planExternalNativeCodexAdoption = async (
+  pool: CodexAuthPoolState,
+  raw: unknown,
+  home: string,
+  nowMs: number,
+  previousRejected: boolean
+): Promise<CodexAuthPoolState> => {
+  const external = parseExternalNativeCodexDocument(raw);
+  const index = external ? pool.accounts.findIndex((auth) => auth.account_id === external.auth.account_id) : -1;
+  if (!external || index < 0 || !nativeCodexConsumerHomes().includes(home)) {
+    throw new CodexError("External native Codex requires the current fixed-home account.", "codex_auth_owner_unavailable", 503);
+  }
+  const previous = pool.accounts[index];
+  const owner = previous.native_owner;
+  if (owner && (owner.codex_home !== home || owner.generation_hash !== (await nativeCodexCredentialGeneration(previous)))) {
+    throw new CodexError("External native Codex destination ownership changed.", "codex_auth_owner_conflict", 409);
+  }
+  const document: NativeDocument = {
+    auth: { ...external.auth, updated_at_ms: nowMs },
+    email: null,
+    refreshedAt: external.refreshedAt,
+    externalUserId: external.userId,
+  };
+  verifyExternalNativeIdentity(previous, document);
+  if (sameCredentials(previous, document.auth) && owner?.auth_mode === "chatgptAuthTokens") {
+    if ((getJwtExpMs(previous.access_token) ?? 0) <= nowMs + 120_000) {
+      throw new CodexError("External native access is expired or awaiting renewal.", "codex_auth_owner_unavailable", 503);
+    }
+    return pool;
+  }
+  if (owner?.auth_mode !== "chatgptAuthTokens" && !previousRejected && (getJwtExpMs(previous.access_token) ?? Infinity) > nowMs) {
+    throw new CodexError("A valid managed Codex account cannot be replaced by an external consumer.", "codex_auth_owner_conflict", 409);
+  }
+  verifyNativeProgress(previous, document);
+  const accounts = [...pool.accounts];
+  accounts[index] = { ...document.auth, native_owner: await nativeOwnerForDocument(document, home) };
+  return { accounts, updated_at_ms: nowMs };
 };
 
 const persistNativeGeneration = async (current: CodexAuthAccountEntry, document: NativeDocument, home: string): Promise<CodexAuthState> => {
@@ -154,11 +232,7 @@ const persistNativeGeneration = async (current: CodexAuthAccountEntry, document:
     verifyNativeProgress(previous, document);
     const next = {
       ...document.auth,
-      native_owner: {
-        codex_home: home,
-        generation_hash: await nativeCodexCredentialGeneration(document.auth),
-        ...(document.refreshedAt ? { native_refreshed_at: document.refreshedAt } : {}),
-      },
+      native_owner: await nativeOwnerForDocument(document, home),
     };
     const accounts = [...pool.accounts];
     accounts[index] = next;
@@ -181,15 +255,17 @@ const verifyNativeAccountBinding = async (pool: CodexAuthPoolState, accountId: s
   if (auth.native_owner.generation_hash !== (await nativeCodexCredentialGeneration(auth))) {
     throw new CodexError("Native Codex ownership no longer matches its durable credentials.", "codex_auth_owner_unavailable", 503);
   }
+  verifyExternalNativeIdentity(auth, document);
   return auth;
 };
 
 type NativeAccountContext = { home: string; document: NativeDocument; current: CodexAuthAccountEntry };
 const loadNativeOwnedAccount = async (input: CodexAuthState): Promise<NativeAccountContext | null> => {
-  const home = nativeHome();
+  const homes = nativeCodexConsumerHomes();
+  const home = input.native_owner?.codex_home ?? homes.at(0) ?? null;
   if (!home && !input.native_owner) return null;
   const ownerHome = input.native_owner?.codex_home;
-  if (!home || (ownerHome && ownerHome !== home)) {
+  if (!home || !homes.includes(home) || (ownerHome && ownerHome !== home)) {
     throw new CodexError("Native Codex credential home is unavailable or changed.", "codex_auth_owner_unavailable", 503);
   }
   const kv = await getKv();
@@ -235,6 +311,9 @@ export const refreshNativeCodexAuthIfOwned = async (input: CodexAuthState, rejec
     // Prove generation order before asking its owner to repair an expired token.
     // The expired generation is never adopted; persistence still requires usability.
     verifyNativeProgress(auth, document, false);
+  }
+  if (document.externalUserId || auth.native_owner?.auth_mode === "chatgptAuthTokens") {
+    throw new CodexError("External Codex access must be renewed by its credential owner; local refresh was refused.", "codex_auth_owner_unavailable", 503);
   }
   if (!document.email) throw new CodexError("Native Codex account identity could not be verified.", "codex_auth_owner_unavailable", 503);
   try {
