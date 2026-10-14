@@ -166,12 +166,11 @@ export class ImmutableVpsReleaseStore {
       port = Number(matches[0]?.[1]);
     const profile = await vpsTextDigest(launcher.replace(/port: \d+/, "port: 0"));
     const unit = await this.unitDigest(sha);
-    const supported =
-      profile === VPS_LAUNCHER_PROFILE_SHA256
-        ? unit === VPS_UNIT_SHA256
-        : profile === HISTORICAL_BUN_VPS_PROFILE_SHA256
-          ? unit === HISTORICAL_BUN_VPS_UNIT_SHA256
-          : profile === (await this.currentLauncherProfile()) && unit === (await vpsBytesDigest(await readFile(this.absolute("ops/ai-ubq-fi.service"))));
+    let supported: boolean;
+    if (profile === VPS_LAUNCHER_PROFILE_SHA256) supported = unit === VPS_UNIT_SHA256;
+    else if (profile === HISTORICAL_BUN_VPS_PROFILE_SHA256) supported = unit === HISTORICAL_BUN_VPS_UNIT_SHA256;
+    else
+      supported = profile === (await this.currentLauncherProfile()) && unit === (await vpsBytesDigest(await readFile(this.absolute("ops/ai-ubq-fi.service"))));
     if (matches.length !== 1 || port < 1 || port > 65535 || !supported) throw new Error("Unsupported previous launcher or service layout");
     return { ...previous, selector: selected, port, profile };
   }

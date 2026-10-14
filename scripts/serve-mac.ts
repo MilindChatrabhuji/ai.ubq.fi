@@ -11,8 +11,8 @@ if (manifest.schema !== 3) throw new Error("The custom native SDK requires immut
 prepareNativeKvBackend(nativeKvReleaseBinding(releasePath, manifest.native_kv));
 const { openKv } = await import("#kv");
 const { serveHttp } = await import("#http");
-for (const name of ["DENO_DEPLOY", "DENO_DEPLOYMENT_ID", "DENO_DEPLOY_BUILD_ID", "DENO_REGION", "DENO_TIMELINE"]) delete process.env[name];
-const { runtimeGitSha } = await import(new URL("src/config.ts", release).href);
+for (const name of ["DENO_DEPLOY", "DENO_DEPLOYMENT_ID", "DENO_DEPLOY_BUILD_ID", "DENO_REGION", "DENO_TIMELINE"]) Reflect.deleteProperty(process.env, name);
+const { runtimeGitSha } = (await import(new URL("src/config.ts", release).href)) as typeof import("../src/config.ts");
 const gitSha = runtimeGitSha();
 if (!/^[0-9a-f]{40}$/.test(gitSha) || !releasePath.endsWith("/releases/" + gitSha))
   throw new Error("The immutable Mac release does not match its Git identity");

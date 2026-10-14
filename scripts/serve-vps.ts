@@ -11,7 +11,7 @@ const { openKv } = await import("#kv");
 const { serveHttp } = await import("#http");
 const root = new URL("../../../", release);
 process.chdir(root.pathname);
-const { config, runtimeGitSha } = await import(new URL("src/config.ts", release).href);
+const { config, runtimeGitSha } = (await import(new URL("src/config.ts", release).href)) as typeof import("../src/config.ts");
 const { initializeKv } = await import(new URL("src/kv.ts", release).href);
 if (config.isDeploy) throw new Error("The VPS entrypoint cannot run in Deno Deploy");
 if (!config.adminTokens.size) throw new Error("DENO_DEPLOY_TOKEN must configure administrator authentication");

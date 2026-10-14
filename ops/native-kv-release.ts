@@ -14,6 +14,10 @@ export type NativeKvReleaseManifest = Readonly<{
   inputs_manifest: string;
 }>;
 const files = ["LICENSE", "native-kv.node", "native-kv.provenance.json"];
+const compareCodepoints = (left: string, right: string): number => {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+};
 const object = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Malformed native KV release input");
   return value as Record<string, unknown>;
@@ -73,7 +77,7 @@ const verifiedInputs = async (root: string, platform: string): Promise<Readonly<
 export const readNativeKvReleaseManifest = (value: unknown, platform: string): NativeKvReleaseManifest => {
   const manifest = object(value);
   if (
-    Object.keys(manifest).sort().join(",") !== "artifact_sha256,inputs_manifest,inputs_sha256,provenance_sha256,tree_sha256" ||
+    Object.keys(manifest).sort(compareCodepoints).join(",") !== "artifact_sha256,inputs_manifest,inputs_sha256,provenance_sha256,tree_sha256" ||
     manifest.inputs_manifest !== nativeKvInputsPath(platform) ||
     ![manifest.tree_sha256, manifest.artifact_sha256, manifest.provenance_sha256, manifest.inputs_sha256].every(
       (entry) => typeof entry === "string" && /^[0-9a-f]{64}$/.test(entry)
@@ -90,7 +94,10 @@ export const nativeKvReleaseBinding = (root: string, manifest: NativeKvReleaseMa
 export const verifyNativeKvReleasePayload = async (root: string, platform: string, manifest: NativeKvReleaseManifest): Promise<void> => {
   await regular(join(root, ".native"), true);
   await regular(join(root, ".native/kv"), true);
-  if ((await readdir(join(root, ".native"))).join(",") !== "kv" || (await readdir(join(root, ".native/kv"))).sort().join(",") !== files.join(","))
+  if (
+    (await readdir(join(root, ".native"))).join(",") !== "kv" ||
+    (await readdir(join(root, ".native/kv"))).sort(compareCodepoints).join(",") !== files.join(",")
+  )
     throw new Error("Unexpected native KV payload tree");
   for (const file of files) await regular(join(root, ".native/kv", file));
   const inputs = await verifiedInputs(root, platform);
