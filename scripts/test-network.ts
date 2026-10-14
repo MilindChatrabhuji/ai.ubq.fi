@@ -10,8 +10,9 @@ const systemTool = (name: string): string => {
 /**
  * Wrap one test child, never the primary or a shared service. The fresh network namespace
  * has only its own loopback and no external routes. Children and Workers inherit it;
- * pathname Unix sockets remain usable. PID isolation plus kill-child settles descendants
- * when the wrapper exits or is killed. Missing kernel/tool support fails closed.
+ * pathname Unix sockets remain usable. A waiting shell stays PID1 to reap orphaned
+ * descendants; Bun cannot serve as namespace init. PID isolation plus kill-child settles
+ * descendants when the wrapper exits or is killed. Missing kernel/tool support fails closed.
  * Primary CLI contract: https://man7.org/linux/man-pages/man1/unshare.1.html.
  * Darwin needs a separately validated local-only Seatbelt profile; no unconfined fallback.
  */
@@ -25,7 +26,7 @@ export const testNetworkArgv = (command: readonly string[]): string[] => {
   }
   const before = readlinkSync("/proc/self/ns/net");
   const bootstrap =
-    'if test "$("$1" /proc/self/ns/net)" = "$2"; then echo "Test network namespace was not isolated" >&2; exit 78; fi; shift 2; "$1" link set dev lo up; shift; exec "$@"';
+    'if test "$("$1" /proc/self/ns/net)" = "$2"; then echo "Test network namespace was not isolated" >&2; exit 78; fi; shift 2; "$1" link set dev lo up; shift; "$@" <&0 & testChildPid=$!; set +e; wait "$testChildPid"; status=$?; exit "$status"';
   const namespace = [
     systemTool("unshare"),
     "--user",
@@ -65,8 +66,12 @@ if (import.meta.main) {
   const stop = (signal: NodeJS.Signals): void => {
     if (child.exitCode === null) child.kill(signal);
   };
-  const interrupt = (): void => stop("SIGINT");
-  const terminate = (): void => stop("SIGTERM");
+  const interrupt = (): void => {
+    stop("SIGINT");
+  };
+  const terminate = (): void => {
+    stop("SIGTERM");
+  };
   process.on("SIGINT", interrupt);
   process.on("SIGTERM", terminate);
   try {
