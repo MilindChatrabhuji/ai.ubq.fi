@@ -13,13 +13,17 @@ Autonomous agents should start at `https://ai.ubq.fi/llms.txt`. The machine-read
 First-party TypeScript runs directly with Bun 1.4.0, pinned by `package.json` and CI. Require the committed lockfile before installing the root dependency graph, then run the repository gates:
 
 ```bash
-test -f bun.lock && bun install --frozen-lockfile
-bun run verify
+test -f bun.lock && test -f tools/lint/bun.lock && bun --no-env-file install --frozen-lockfile
+bun --no-env-file run verify
 ```
 
-`bun run build` performs the separate TypeScript check; Bun execution does not type-check. `bun run test` runs the deterministic repository suites. Run both after a lint autofix. The migration is delivered through the normal PR and local Codex review workflow; merging its source does not restart production or convert the live database. [The 2026-10-14 decision](docs/DECISIONS.md#bun-executes-first-party-typescript-live-cutover-remains-separate---2026-10-14) records the runtime, storage, and rollout boundaries.
+The public scripts are `bun run build`, `bun run test`, and `bun run verify`. For isolated execution, use `bun --no-env-file run <script>`. `build` delegates to strict no-emit TypeScript checking; executing TypeScript with Bun does not type-check it. `test` retains the deterministic repository segments, and `verify` aggregates type, format, lint, dead-code, size, and configured test gates. Run build and test after a lint autofix. [Quality tooling](tools/lint/README.md) owns the exact segment and formatter contract.
 
-Isolated checks use `bun --no-env-file` with synthetic credentials and disposable state so Bun cannot load a checkout's `.env`. Do not invoke live or paid-provider checks as part of migration verification.
+Isolated test children disable dotenv and auto-install, use sparse named environment profiles and disposable state, and require the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected. Do not invoke live or paid-provider checks as part of migration verification.
+
+TypeScript starts directly from verified immutable releases. Runtime/dependency/native artifacts must be prepared and manifest-bound before publication; launchers use `--no-env-file --no-install`, explicitly load the repository-root `.env`, and fail closed without downloading, installing, or compiling at startup. `build:native` prepares auxiliary native guard artifacts separately; it is not an application TypeScript compile step. Merging this source does not activate production or convert its database.
+
+The migration requires settled canonical verification and CI, exact native/runtime artifact proof, real platform confinement acceptance, and the requested gateway checks before readiness can be claimed. Real macOS Seatbelt and the standalone Sentinel frozen-reader acceptance remain separate prerequisites; this document records no pass for them. [The 2026-10-14 decision](docs/DECISIONS.md#bun-executes-first-party-typescript-live-cutover-remains-separate---2026-10-14) records the runtime, storage, and rollout boundaries.
 
 ## Development hooks
 
@@ -691,16 +695,19 @@ exported token is still sent as `Authorization: Bearer ...`; unset both variable
 deployment credential. A non-loopback `BASE_URL` requires one, exactly like the loopback server itself, which has admin
 authentication disabled.
 
+The dev wrappers explicitly source `.env` before invoking Bun with `--no-env-file`; `dev:local` retains its existing optional native-auth seed. Direct commands below do not discover dotenv files, so export their intended credentials first. The named `application` export and explicit entry point use the receipt-preserving `node:http` server, not Bun's automatic default-export server startup.
+
 Admin authentication is disabled only when the server's actual TCP listener, the request's TCP peer, and the request URL
 are all loopback. A local reverse proxy or tunnel that forwards an external request to this loopback server is
 indistinguishable from a direct local connection (its upstream peer is loopback and the `Host` header is client
 controlled), so the bypass also applies there: never expose the loopback dev server to the network. Startup fails if you
-make the listener public (e.g. `--host 0.0.0.0`), in Deno Deploy, with a duplicated flag, or with an unknown server
-argument. To require a real admin token even on loopback (for example to exercise the sign-in flow), start the server
+pass a listener override, run in Deno Deploy, duplicate a flag, or supply an unknown server argument; the direct entry
+is fixed to `127.0.0.1:8000`. To require a real admin token even on loopback (for example to exercise the sign-in flow), start the server
 directly without the baked-in flag:
 
 ```bash
-deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts
+export DENO_DEPLOY_TOKEN="..."
+bun --no-env-file --no-install serve.ts
 ```
 
 A loopback server with disabled admin authentication also provisions one unrestricted API key named
@@ -714,18 +721,21 @@ paid-provider routing off — local requests then fall back to the policy-free p
 pricing. Provisioning is gated on the loopback-only `--disable-admin-auth` flag, so it never runs on a hosted
 deployment.
 
-The equivalent direct command that mirrors the dev task's behavior must place the application flag after the entry
-point:
+To start the same loopback listener directly with the development auth bypass, place the existing application flag after the entry point:
 
 ```bash
-deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth
+bun --no-env-file --no-install serve.ts --disable-admin-auth
 ```
 
 ## Legacy database conversion for Bun
 
-The shared SQLite backend does not make Deno V8 values compatible with Bun's JavaScriptCore serialization. A Bun database must carry its own codec marker; an unmarked legacy database must be refused. Convert offline into a new database with the matching legacy decoder, after stopping and draining all source writers and making a verified consistent backup. Validate exact values and retained state on the converted database, and prove rollback restores the previous immutable release with the untouched source database. Startup and deployment must not convert the live database automatically.
+The shared SQLite backend does not make Deno V8 values compatible with Bun's JavaScriptCore serialization. The Bun target is the explicitly marked `.data/kv-bun.sqlite3`; the legacy `.data/kv.sqlite3` remains untouched. Stop and drain all source writers, preserve a verified consistent backup, and convert offline into a new destination. Validate raw keys, revisions, absolute expiry, typed values, and the complete conversion receipt. Startup and deployment must not convert the live database automatically.
 
-The migration PR and disposable fixture tests do not authorize a live conversion or restart. Follow the finalized conversion and rollout procedure in [VPS operations](ops/README.md) only after that separate work is authorized.
+`bun --no-env-file run kv:convert` runs the explicit converter. Its required arguments are `--direction deno-to-bun|bun-to-deno`, `--source`, `--destination`, `--receipt`, `--deno`, and `--deno-sha256`. The checksum-pinned Deno 2.9.7 child is only an offline V8 codec tool with an empty environment; it is not the application runtime or a normal build/test/CI requirement. Ordinary raw remote Deno KV helpers fail closed; the historical remote commands below are not a Bun migration path.
+
+Rollback to an accepted Bun code release preserves the latest marked Bun database. Returning to Deno after Bun has written data requires stopping Bun and reverse-converting its latest durable state into a new Deno destination with a verified private receipt before restoring the supported legacy release/profile. Reusing the original Deno database or migration backup discards later writes. Follow [VPS operations](ops/README.md#bun-runtime-and-offline-cutover) only for a separately authorized cutover or rollback; the PR and disposable fixture tests authorize no live conversion or restart.
+
+Production Bun cutover also requires the standalone Sentinel integration owner's accepted frozen-source reader update: trusted offline Bun/runtime dependencies and hashes, disabled dotenv/installs, equivalent OS isolation, and proved process-execution denial. This gateway work grants no Sentinel checkout or caller-write authority; old captures stay bound to their recorded source SHA.
 
 ## Historical Deno-to-Deno KV migration
 

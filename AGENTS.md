@@ -2,9 +2,11 @@
 
 ## Runtime and Migration Scope
 
-- Run first-party TypeScript with the pinned Bun runtime, using root `package.json` dependencies and frozen `bun.lock` installs. TypeScript checking is a separate required gate; Bun execution alone does not type-check the program. The 2026-10-14 decision in `docs/DECISIONS.md` supersedes Deno-only runtime, dependency-location, and gate commands only for this repository.
-- Preserve the `node:http` transport delivery receipt and the `ws@8.18.3` custom-header and Unix-domain-socket contracts. Quota and paid-accounting settlement require the existing semantic terminal and actual delivery outcome, with one admission lifetime and exactly one settlement.
-- Treat legacy Deno V8 and Bun JavaScriptCore storage value codecs as incompatible. Open only a correctly codec-marked Bun database; conversion requires a consistent backup, an explicit offline new-database operation, exact-value validation, and a proven rollback path. Never rewrite a live database during startup or deployment.
+- Run first-party TypeScript directly with pinned Bun 1.4.0, using root `package.json` dependencies and frozen `bun.lock` installs. Strict no-emit TypeScript checking is a separate required gate; Bun execution alone does not type-check the program. The 2026-10-14 decision in `docs/DECISIONS.md` supersedes Deno-only runtime, dependency-location, and gate commands only for this repository.
+- Preserve the `node:http` transport delivery receipt and the actual pinned `ws@8.18.3` custom-header, payload-limit, and Unix-domain-socket contracts. Use the `#http` WebSocket loader rather than Bun's bare-`ws` substitute. Quota and paid-accounting settlement require the existing semantic terminal and actual delivery outcome, with one admission lifetime and exactly one settlement; durable request writes must drain before telemetry and KV closure.
+- Disable automatic dotenv discovery for isolated checks and runtime launchers. Immutable launchers use `--no-env-file --no-install`, explicitly load only the repository-root `.env`, and refuse missing or corrupt runtime, dependency, or native artifacts. Prepare and bind artifacts before immutable publication; never download, install, or compile at application startup. Auxiliary native guard or KV builds do not compile application TypeScript.
+- Treat legacy Deno V8 and Bun JavaScriptCore storage value codecs as incompatible. Open only a correctly codec-marked Bun database at `.data/kv-bun.sqlite3`; retain the legacy `.data/kv.sqlite3` untouched. Conversion requires a stopped source, consistent backup, explicit new destination, and validation of raw keys, revisions, absolute expiry, and typed values. Returning to Deno after Bun writes requires reverse conversion of the latest stopped Bun state, a verified private rollback receipt, and the supported legacy release/profile; restoring a stale backup loses writes. Never convert a live database during startup or deployment.
+- Pinned Deno is permitted only for the explicit offline legacy V8 codec and reverse-conversion helper, plus the external tool-owned evidence helper. It is not the application runtime or an ordinary build, test, or CI dependency. Preserve real OS read/write/network/process confinement; unsupported platform enforcement must fail closed rather than use a JavaScript permission facade.
 - The Bun migration PR does not authorize production or Mac service activation, live database conversion, credential changes, or provider-credit spend. Retain every credential, routing, accounting, review, ownership, immutable-release, and client-acceptance rule below.
 
 ## Local Credential Recovery Safety
@@ -53,8 +55,7 @@
   advance the provider waterfall only after a fresh strong proof that every current pool account is exhausted.
 - Production runs on `codex@vps.pavlovcik.com` in `/home/codex/repos/ubiquity/ai.ubq.fi`. Deno Deploy hosting is
   retired; do not deploy this service there.
-- Keep the service configuration in `ops/` and link its systemd files from `/etc/systemd/system/`. Keep secrets in the
-  repository-root `.env`, KV in `.data/kv.sqlite3`, and immutable releases in `.data/releases/<full-git-sha>`.
+- Keep the service configuration in `ops/` and link its systemd files from `/etc/systemd/system/`. Keep secrets in the repository-root `.env`, the marked Bun KV in `.data/kv-bun.sqlite3`, the retained legacy Deno KV in `.data/kv.sqlite3`, and immutable releases in `.data/releases/<full-git-sha>`.
 - Serialize VPS deployment writers with `.data/deploy.lock`. Run `bun run deploy:vps` from the clean VPS checkout
   after required CI passes. The launcher resolves `.data/current` once so live code and assets stay on the selected
   release.
@@ -83,6 +84,7 @@
 - The owner approved authenticated failure capture/export, bounded upstream replay data, and exact-build receipts on
   2026-09-07 for the standalone Sentinel integration. Keep scheduling and agents standalone; live activation and
   promotion ownership transfer remain separate from this integration.
+- Before production Bun cutover, the standalone Sentinel integration owner must authorize and accept its frozen-source causal reader against the captured Bun source and trusted offline runtime/dependency artifacts, with frozen hashes, no dotenv or automatic installs, equivalent OS isolation, and proven process-execution denial. This migration transfers no Sentinel checkout or caller-write authority. Legacy captures remain bound to their recorded source SHA; source PR or gateway tests do not prove that external reader gate.
 
 ## Rolling Local Code Review Workflow
 
@@ -122,9 +124,9 @@
 
 ## Lint, Format and Type Gates
 
-- Run `bun run verify` (or `sh scripts/verify.sh`) before declaring any change ready. It runs every gate and reports all failures rather than stopping at the first: explicit TypeScript checking, format checks, ESLint, Knip, the file-size ratchet (`bun run size:check`), and the full deterministic test program. Require the committed `bun.lock` to exist before `bun install --frozen-lockfile`; do not regenerate the lockfile to make verification pass.
-- Give every tracked file one formatter, using the committed formatting configuration and `scripts/format.sh`. Preserve Prettier's `printWidth: 160` for TypeScript and `.mjs`; use the migrated format gate rather than a Deno formatter fallback.
-- Run `bun run build` and `bun run test` after any `--fix` run. The explicit TypeScript checker is the type authority; Bun's successful execution or transpilation cannot replace it.
+- Run `bun --no-env-file run verify` (or `sh scripts/verify.sh`) before declaring any change ready. The public script is `bun run verify`; it aggregates strict TypeScript checking, Prettier, ESLint, Knip, the file-size ratchet, and the configured deterministic test segments rather than stopping at the first failure. Both root and `tools/lint/bun.lock` must exist before a frozen install; never regenerate either lockfile to make verification pass or fall back to another package manager.
+- Prettier owns every supported first-party format through `.prettierrc`, `.prettierignore`, and `scripts/format.sh`: TypeScript and `.mjs` retain 160 columns, supported non-TypeScript formats retain 120, and Markdown preserves paragraph wrapping. Use `bun --no-env-file run format:check`; do not add a Deno formatter fallback or apply a whole-repository autofix.
+- Run `bun --no-env-file run build` and `bun --no-env-file run test` after any `--fix` run. `build` delegates to the strict no-emit `check` task; the explicit TypeScript checker is the type authority, and successful execution or transpilation cannot replace it. Isolated test children disable dotenv and auto-install, retain their original named environment profiles, and run behind the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected.
 - The TypeScript check and test suite decide whether a lint fix is correct. Never add `eslint-disable`, `@ts-ignore` or `as any` to silence a finding: if a finding is deliberate-by-design, narrow it in `tools/lint/eslint.config.mjs` with the measurement recorded in a comment, the way the existing DIVERGENCE entries do.
 - File-size no-growth is enforced by `scripts/file-size-ratchet.ts`: source files cap at 1000 lines and tests at 1500,
   and `file-size-baseline.json` records a per-file ceiling for every grandfathered oversized file. Never raise a
