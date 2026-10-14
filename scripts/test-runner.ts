@@ -2,6 +2,7 @@ import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { testNetworkArgv } from "./test-network.ts";
+import { createTestNativeKvPreload, prepareTestNativeKv, verifiedTestNativeKvBinding, type TestNativeKvBinding } from "./test-native-kv.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let interrupted = false;
@@ -55,7 +56,7 @@ const filesBelow = (directory: string): string[] => {
 };
 const group = (profile: string, files: readonly string[], environment: readonly string[] = []): Group => ({ profile, files, environment });
 const measurement = (): Group => group("measurement", ["tests/usage-optimization-measurement.test.ts"], ["UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"]);
-const quality = (): Group => group("quality", ["scripts/quality-contract.test.ts"], ["PATH"]);
+const quality = (): Group => group("quality", ["scripts/quality-contract.test.ts", "scripts/test-native-kv.test.ts"], ["PATH"]);
 const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
   switch (segment) {
     case "main":
@@ -77,7 +78,14 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
         group("mac-maintenance", ["ops/tests/mac-event-maintenance.test.ts"], ["PATH"]),
       ];
     case "vps":
-      return [group("vps", ["ops/tests/vps-release.test.ts", "ops/tests/release-retention.test.ts"])];
+      return [
+        group("vps", [
+          "ops/tests/vps-release.test.ts",
+          "ops/tests/release-retention.test.ts",
+          "ops/tests/vps-release-driver.test.ts",
+          "ops/tests/vps-release-metrics.test.ts",
+        ]),
+      ];
     case "deploy-guards":
       return [group("deploy-guards", ["tests/vps-deploy-guards.test.ts"], ["PATH"])];
     case "measurement":
@@ -133,7 +141,12 @@ const checkedPath = (path: string): string => {
   if (local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local)) throw new Error("Test paths must stay inside this checkout");
   return absolute;
 };
-const childEnvironment = (selected: Group): Record<string, string> => {
+const validatedGroups = (groups: readonly Group[]) =>
+  groups.map((item) => {
+    if (item.files.length === 0) throw new Error(`Test segment ${item.profile} contains no files`);
+    return { ...item, files: item.files.map((label) => ({ label, path: checkedPath(label) })) };
+  });
+const childEnvironment = (selected: Pick<Group, "profile" | "environment">): Record<string, string> => {
   const environment: Record<string, string> = { UOS_TEST_PROFILE: selected.profile, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
   // Keep only transport necessities and this segment's existing named inputs.
   for (const name of new Set(["PATH", "TMPDIR", "SYSTEMROOT", ...selected.environment])) {
@@ -159,9 +172,28 @@ const settleGroup = async (pid: number): Promise<void> => {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
   }
 };
-const runFile = async (path: string, selected: Group, wallTimeMs: number): Promise<number> => {
+const runFile = async (
+  path: string,
+  selected: Pick<Group, "profile" | "environment">,
+  wallTimeMs: number,
+  binding: TestNativeKvBinding,
+  preload: string
+): Promise<number> => {
   if (interrupted) throw new Error("Test runner interrupted; no further files were started");
-  const argv = testNetworkArgv([process.execPath, "--no-env-file", "--no-install", "test", "--no-orphans", "--max-concurrency=1", "--timeout=300000", path]);
+  const argv = testNetworkArgv([
+    process.execPath,
+    "--no-env-file",
+    "--no-install",
+    "test",
+    "--define",
+    "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(binding),
+    "--preload",
+    preload,
+    "--no-orphans",
+    "--max-concurrency=1",
+    "--timeout=300000",
+    path,
+  ]);
   const child = Bun.spawn(argv, {
     cwd: ROOT,
     detached: true,
@@ -200,10 +232,11 @@ const runFile = async (path: string, selected: Group, wallTimeMs: number): Promi
     await settleGroup(child.pid);
   }
 };
-const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: boolean; wallTimeMs: number }> => {
+const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: boolean; wallTimeMs: number; nativeBinding?: string }> => {
   const files: string[] = [];
   let list = false;
   let wallTimeMs = MAX_FILE_WALL_TIME_MS;
+  let nativeBinding: string | undefined;
   for (const arg of args) {
     if (arg === "--list") list = true;
     else if (arg.startsWith("--file-timeout-ms=")) {
@@ -211,9 +244,10 @@ const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: 
       if (!Number.isInteger(wallTimeMs) || wallTimeMs <= 0 || wallTimeMs > MAX_FILE_WALL_TIME_MS) {
         throw new Error(`--file-timeout-ms must be an integer from 1 through ${MAX_FILE_WALL_TIME_MS}`);
       }
-    } else files.push(arg);
+    } else if (arg.startsWith("--native-kv-binding=")) nativeBinding = arg.slice("--native-kv-binding=".length);
+    else files.push(arg);
   }
-  return { files, list, wallTimeMs };
+  return { files, list, wallTimeMs, nativeBinding };
 };
 const main = async (): Promise<void> => {
   if (Bun.version !== "1.4.0") throw new Error("The test runner requires Bun 1.4.0");
@@ -225,17 +259,20 @@ const main = async (): Promise<void> => {
     console.log(JSON.stringify(selected, null, 2));
     return;
   }
+  // Resolve every requested file before an expensive parent build can start.
+  const resolved = validatedGroups(selected);
+  const binding = options.nativeBinding === undefined ? await prepareTestNativeKv(ROOT) : verifiedTestNativeKvBinding(options.nativeBinding);
+  const preload = createTestNativeKvPreload(ROOT);
   let files = 0;
   let failures = 0;
-  for (const item of selected) {
-    if (item.files.length === 0) throw new Error(`Test segment ${item.profile} contains no files`);
+  for (const item of resolved) {
     for (const file of item.files) {
-      console.log(`\n==> ${item.profile}: ${file}`);
-      const code = await runFile(checkedPath(file), item, options.wallTimeMs);
+      console.log(`\n==> ${item.profile}: ${file.label}`);
+      const code = await runFile(file.path, item, options.wallTimeMs, binding, preload);
       files++;
       if (code !== 0) {
         failures++;
-        console.error(`FAILED ${file} (exit ${code})`);
+        console.error(`FAILED ${file.label} (exit ${code})`);
       }
     }
   }
