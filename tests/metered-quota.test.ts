@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 import assert from "node:assert/strict";
 import { buildCodexQuotaHeaders, METERED_CODEX_LIMIT_NAME } from "../src/codex/quota.ts";
 import {
@@ -17,42 +19,42 @@ import {
   updateMeteredQuotaState,
 } from "../src/metered-quota.ts";
 
-const keyString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyString = (key: KvKey): string => JSON.stringify(key);
 
 class MemoryKv {
   #values = new Map<string, { value: unknown; version: number }>();
   #nextVersion = 1;
 
-  seed(key: Deno.KvKey, value: unknown): void {
+  seed(key: KvKey, value: unknown): void {
     this.#values.set(keyString(key), { value, version: this.#nextVersion++ });
   }
 
-  value(key: Deno.KvKey): unknown {
+  value(key: KvKey): unknown {
     return this.#values.get(keyString(key))?.value ?? null;
   }
 
-  get<T>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey): Promise<KvEntryMaybe<T>> {
     const stored = this.#values.get(keyString(key));
     return Promise.resolve({
       key,
       value: (stored?.value as T | undefined) ?? null,
       versionstamp: stored ? String(stored.version).padStart(20, "0") : null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: Deno.KvEntryMaybe<unknown>[] = [];
-    const mutations: { kind: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+  atomic(): AtomicOperation {
+    const checks: KvEntryMaybe<unknown>[] = [];
+    const mutations: { kind: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
     const operation = {
-      check: (...entries: Deno.KvEntryMaybe<unknown>[]) => {
+      check: (...entries: KvEntryMaybe<unknown>[]) => {
         checks.push(...entries);
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
         mutations.push({ kind: "set", key, value });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ kind: "delete", key });
         return operation;
       },
@@ -69,27 +71,27 @@ class MemoryKv {
         return Promise.resolve({ ok: true, versionstamp: String(this.#nextVersion).padStart(20, "0") } as const);
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 }
 
 const credentials = { apiKey: "metered-api-key" };
 
 const restoreEnv = (key: string, value: string | undefined): void => {
-  if (value === undefined) Deno.env.delete(key);
-  else Deno.env.set(key, value);
+  if (value === undefined) Reflect.deleteProperty(process.env, key);
+  else process.env[key] = value;
 };
 
-Deno.test("Metered account credentials require a non-whitespace API key", () => {
-  const originalApiKey = Deno.env.get(METERED_API_KEY_ENV);
+test("Metered account credentials require a non-whitespace API key", () => {
+  const originalApiKey = process.env[METERED_API_KEY_ENV];
   try {
-    Deno.env.set(METERED_API_KEY_ENV, credentials.apiKey);
+    process.env[METERED_API_KEY_ENV] = credentials.apiKey;
     assert.deepEqual(readMeteredAccountCredentials(), credentials);
 
-    Deno.env.set(METERED_API_KEY_ENV, "");
+    process.env[METERED_API_KEY_ENV] = "";
     assert.equal(readMeteredAccountCredentials(), null);
 
-    Deno.env.set(METERED_API_KEY_ENV, "contains whitespace");
+    process.env[METERED_API_KEY_ENV] = "contains whitespace";
     assert.equal(readMeteredAccountCredentials(), null);
   } finally {
     restoreEnv(METERED_API_KEY_ENV, originalApiKey);
@@ -166,7 +168,7 @@ const meteredFetcher =
     throw new Error(`Unexpected URL: ${url}`);
   };
 
-Deno.test("Metered account observation reads wallet balance and latest successful top-up", async () => {
+test("Metered account observation reads wallet balance and latest successful top-up", async () => {
   const calls: { url: string; headers: Headers }[] = [];
   const result = await fetchMeteredQuotaObservation(credentials, {
     fetcher: meteredFetcher(calls),
@@ -191,7 +193,7 @@ Deno.test("Metered account observation reads wallet balance and latest successfu
   assert.equal(calls[0]?.headers.has("Cookie"), false);
 });
 
-Deno.test("Metered token usage preserves provider totals, including negative available values", async () => {
+test("Metered token usage preserves provider totals, including negative available values", async () => {
   const result = await fetchMeteredQuotaObservation(credentials, {
     fetcher: meteredFetcher([]),
     now: () => 2_000_000,
@@ -202,7 +204,7 @@ Deno.test("Metered token usage preserves provider totals, including negative ava
   assert.equal(result.total_used, 52_868);
 });
 
-Deno.test("Metered quota seeds a provisional baseline from the first observation", () => {
+test("Metered quota seeds a provisional baseline from the first observation", () => {
   const next = updateMeteredQuotaState(null, observation());
   assert.equal(next.current_balance_quota, 50_000_000);
   assert.equal(next.post_refill_baseline_quota, 50_000_000);
@@ -210,14 +212,14 @@ Deno.test("Metered quota seeds a provisional baseline from the first observation
   assert.equal(next.last_inferred_credit_quota, 0);
 });
 
-Deno.test("Metered quota seeds a partially spent first cycle from the latest refill amount", () => {
+test("Metered quota seeds a partially spent first cycle from the latest refill amount", () => {
   const next = updateMeteredQuotaState(null, observation({ balance_quota: 40_000_000 }));
   assert.equal(next.current_balance_quota, 40_000_000);
   assert.equal(next.post_refill_baseline_quota, 50_000_000);
   assert.equal(next.confidence, "provisional");
 });
 
-Deno.test("Metered quota keeps the refill baseline across known and external debits", () => {
+test("Metered quota keeps the refill baseline across known and external debits", () => {
   const previous = state();
   const next = updateMeteredQuotaState(
     previous,
@@ -233,7 +235,7 @@ Deno.test("Metered quota keeps the refill baseline across known and external deb
   assert.equal(next.confidence, "provisional");
 });
 
-Deno.test("Metered quota detects a refill despite intervening debits and starts a new baseline", () => {
+test("Metered quota detects a refill despite intervening debits and starts a new baseline", () => {
   const previous = state({
     current_balance_quota: 20_000_000,
     post_refill_baseline_quota: 50_000_000,
@@ -260,7 +262,7 @@ Deno.test("Metered quota detects a refill despite intervening debits and starts 
   assert.equal(next.latest_refill_amount_credits, 50);
 });
 
-Deno.test("Metered quota restores post-refill debits when the wallet carries a prior balance", () => {
+test("Metered quota restores post-refill debits when the wallet carries a prior balance", () => {
   const previous = state({
     current_balance_quota: 10_000_000,
     post_refill_baseline_quota: 50_000_000,
@@ -285,7 +287,7 @@ Deno.test("Metered quota restores post-refill debits when the wallet carries a p
   assert.equal(next.post_refill_baseline_quota, 35_000_000);
 });
 
-Deno.test("Metered quota keeps reconstructed refill capacity within safe integer bounds", () => {
+test("Metered quota keeps reconstructed refill capacity within safe integer bounds", () => {
   const previous = state({
     current_balance_quota: Number.MAX_SAFE_INTEGER,
     last_observed_used_quota: 100_000,
@@ -307,7 +309,7 @@ Deno.test("Metered quota keeps reconstructed refill capacity within safe integer
   assert.equal(Number.isSafeInteger(next.post_refill_baseline_quota), true);
 });
 
-Deno.test("Metered quota never starts a refill cycle below the observed top-up amount", () => {
+test("Metered quota never starts a refill cycle below the observed top-up amount", () => {
   const previous = state({
     current_balance_quota: 20_000_000,
     post_refill_baseline_quota: 50_000_000,
@@ -331,7 +333,7 @@ Deno.test("Metered quota never starts a refill cycle below the observed top-up a
   assert.equal(next.confidence, "refill_observed");
 });
 
-Deno.test("Metered quota treats an unlisted positive adjustment as an inferred credit", () => {
+test("Metered quota treats an unlisted positive adjustment as an inferred credit", () => {
   const previous = state({ current_balance_quota: 10_000_000 });
   const next = updateMeteredQuotaState(
     previous,
@@ -346,7 +348,7 @@ Deno.test("Metered quota treats an unlisted positive adjustment as an inferred c
   assert.equal(next.confidence, "inferred_adjustment");
 });
 
-Deno.test("Metered quota ignores a reset used counter unless the wallet itself rises", () => {
+test("Metered quota ignores a reset used counter unless the wallet itself rises", () => {
   const previous = state({ current_balance_quota: 10_000_000, last_observed_used_quota: 5_000_000 });
   const debit = updateMeteredQuotaState(
     previous,
@@ -370,13 +372,13 @@ Deno.test("Metered quota ignores a reset used counter unless the wallet itself r
   assert.equal(credit.last_inferred_credit_quota, 2_000_000);
 });
 
-Deno.test("Metered quota cache serves fresh state without an upstream request", async () => {
+test("Metered quota cache serves fresh state without an upstream request", async () => {
   const kv = new MemoryKv();
   const now = 10_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS + 1 }));
   let fetches = 0;
   const snapshot = await getMeteredQuotaSnapshot(credentials, {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
     fetcher: () => {
       fetches += 1;
@@ -388,13 +390,13 @@ Deno.test("Metered quota cache serves fresh state without an upstream request", 
   assert.equal(snapshot.remaining_percent, 100);
 });
 
-Deno.test("Metered quota forced refresh bypasses a fresh cached state", async () => {
+test("Metered quota forced refresh bypasses a fresh cached state", async () => {
   const kv = new MemoryKv();
   const now = 11_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - 1_000 }));
   const calls: { url: string; headers: Headers }[] = [];
   const snapshot = await getMeteredQuotaSnapshot(credentials, {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
     fetcher: meteredFetcher(calls),
     forceRefresh: true,
@@ -404,14 +406,14 @@ Deno.test("Metered quota forced refresh bypasses a fresh cached state", async ()
   assert.equal(calls.length, 1);
 });
 
-Deno.test("Metered quota cache marks an invalidated observation stale", async () => {
+test("Metered quota cache marks an invalidated observation stale", async () => {
   const kv = new MemoryKv();
   const now = 15_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
   kv.seed(METERED_QUOTA_INVALIDATION_KEY, { invalidated_at_ms: now });
 
   const snapshot = await getCachedMeteredQuotaSnapshot({
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
   });
 
@@ -419,18 +421,18 @@ Deno.test("Metered quota cache marks an invalidated observation stale", async ()
   assert.equal(snapshot.remaining_percent, 100);
 });
 
-Deno.test("Metered quota invalidation forces a fresh account observation", async () => {
+test("Metered quota invalidation forces a fresh account observation", async () => {
   const kv = new MemoryKv();
   const now = 16_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now }));
   await invalidateMeteredQuotaSnapshot({
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
   });
   const calls: { url: string; headers: Headers }[] = [];
 
   const snapshot = await getMeteredQuotaSnapshot(credentials, {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
     fetcher: meteredFetcher(calls),
     createLeaseOwner: () => "invalidation-refresh-owner",
@@ -441,7 +443,7 @@ Deno.test("Metered quota invalidation forces a fresh account observation", async
   assert.equal(kv.value(METERED_QUOTA_INVALIDATION_KEY), null);
 });
 
-Deno.test("Metered quota refresh stores a new observation and computes its percentage", async () => {
+test("Metered quota refresh stores a new observation and computes its percentage", async () => {
   const kv = new MemoryKv();
   const now = 20_000_000;
   kv.seed(
@@ -456,7 +458,7 @@ Deno.test("Metered quota refresh stores a new observation and computes its perce
   );
   const calls: { url: string; headers: Headers }[] = [];
   const snapshot = await getMeteredQuotaSnapshot(credentials, {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
     fetcher: meteredFetcher(calls),
     createLeaseOwner: () => "refresh-owner",
@@ -470,12 +472,12 @@ Deno.test("Metered quota refresh stores a new observation and computes its perce
   assert.equal(calls.length, 1);
 });
 
-Deno.test("Metered quota serves stale state on refresh failure and drops expired state", async () => {
+test("Metered quota serves stale state on refresh failure and drops expired state", async () => {
   const now = 30_000_000;
   const staleKv = new MemoryKv();
   staleKv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS }));
   const stale = await getMeteredQuotaSnapshot(credentials, {
-    kv: staleKv as unknown as Deno.Kv,
+    kv: staleKv as unknown as Kv,
     now: () => now,
     fetcher: () => Promise.reject(new Error("temporary outage")),
   });
@@ -484,14 +486,14 @@ Deno.test("Metered quota serves stale state on refresh failure and drops expired
   const expiredKv = new MemoryKv();
   expiredKv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_RETENTION_MS }));
   const expired = await getMeteredQuotaSnapshot(credentials, {
-    kv: expiredKv as unknown as Deno.Kv,
+    kv: expiredKv as unknown as Kv,
     now: () => now,
     fetcher: () => Promise.reject(new Error("temporary outage")),
   });
   assert.equal(expired, null);
 });
 
-Deno.test("Metered quota refresh lease permits only one upstream refresh", async () => {
+test("Metered quota refresh lease permits only one upstream refresh", async () => {
   const kv = new MemoryKv();
   const now = 40_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS }));
@@ -508,7 +510,7 @@ Deno.test("Metered quota refresh lease permits only one upstream refresh", async
   let owner = 0;
   const requests = Array.from({ length: 12 }, () =>
     getMeteredQuotaSnapshot(credentials, {
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       now: () => now,
       fetcher,
       createLeaseOwner: () => `owner-${++owner}`,
@@ -523,7 +525,7 @@ Deno.test("Metered quota refresh lease permits only one upstream refresh", async
   assert.equal(snapshots.filter((snapshot) => snapshot?.cache_state === "stale").length, 11);
 });
 
-Deno.test("Metered quota invalidation rejects an in-flight pre-debit refresh", async () => {
+test("Metered quota invalidation rejects an in-flight pre-debit refresh", async () => {
   const kv = new MemoryKv();
   const now = 50_000_000;
   const previous = state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS });
@@ -543,14 +545,14 @@ Deno.test("Metered quota invalidation rejects an in-flight pre-debit refresh", a
     return await baseFetcher(input, init);
   };
   const pending = getMeteredQuotaSnapshot(credentials, {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
     fetcher,
     createLeaseOwner: () => "pre-debit-refresh-owner",
   });
   await fetchStarted;
   await invalidateMeteredQuotaSnapshot({
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now + 1,
   });
   releaseFetch();
@@ -578,7 +580,7 @@ const quotaSnapshot = (usedPercent: number): MeteredQuotaSnapshot => ({
   total_used: null,
 });
 
-Deno.test("Codex quota headers replace every parseable upstream family with canonical Metered", () => {
+test("Codex quota headers replace every parseable upstream family with canonical Metered", () => {
   const headers = buildCodexQuotaHeaders(
     new Headers({
       "x-codex-primary-used-percent": "96.5",
@@ -631,7 +633,7 @@ Deno.test("Codex quota headers replace every parseable upstream family with cano
   assert.equal(headers.get("x-uos-router-revision"), "routing-revision");
 });
 
-Deno.test("Codex quota headers publish a healthy Metered balance canonically", () => {
+test("Codex quota headers publish a healthy Metered balance canonically", () => {
   const headers = buildCodexQuotaHeaders({}, quotaSnapshot(50));
   assert.equal(headers.get("x-codex-limit-name"), METERED_CODEX_LIMIT_NAME);
   assert.equal(headers.get("x-codex-primary-used-percent"), "50");
@@ -639,7 +641,7 @@ Deno.test("Codex quota headers publish a healthy Metered balance canonically", (
   assert.equal(headers.has("x-codex-primary-reset-at"), false);
 });
 
-Deno.test("Codex quota headers emit no percentage and strip every family without Metered state", () => {
+test("Codex quota headers emit no percentage and strip every family without Metered state", () => {
   const headers = buildCodexQuotaHeaders(
     {
       "x-codex-primary-used-percent": "42",

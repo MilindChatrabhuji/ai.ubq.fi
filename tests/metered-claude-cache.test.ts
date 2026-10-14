@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   fetchMeteredModels,
@@ -41,7 +42,7 @@ const capture = (upstream: () => Response = () => jsonResponse(nativeMessage()))
   return { calls, fetcher };
 };
 
-Deno.test("OpenLux Claude uses native block caching and preserves actual gross cache/thinking usage", async () => {
+test("OpenLux Claude uses native block caching and preserves actual gross cache/thinking usage", async () => {
   resetMeteredModelsCacheForTest();
   const body = { model, instructions: "Reusable instructions", input: "Reply exactly OK.", max_output_tokens: 128, stream: false };
   const unchanged = structuredClone(body);
@@ -74,7 +75,7 @@ Deno.test("OpenLux Claude uses native block caching and preserves actual gross c
   assert.deepEqual(body, unchanged);
 });
 
-Deno.test("OpenLux omitted generation budget uses the exact documented Opus5.5 maximum", async () => {
+test("OpenLux omitted generation budget uses the exact documented Opus5.5 maximum", async () => {
   resetMeteredModelsCacheForTest();
   const { calls, fetcher } = capture();
   const result = await fetchMeteredResponses({ model, input: "Hello" }, { apiKey: "fixture-key", fetcher });
@@ -83,9 +84,9 @@ Deno.test("OpenLux omitted generation budget uses the exact documented Opus5.5 m
   await result.response.body?.cancel();
 });
 
-Deno.test("OpenLux uses catalog native capability and output caps without inventing limits for other Claude models", async () => {
-  const previous = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "discovery-fixture-key");
+test("OpenLux uses catalog native capability and output caps without inventing limits for other Claude models", async () => {
+  const previous = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "discovery-fixture-key";
   resetMeteredModelsCacheForTest();
   try {
     await fetchMeteredModels({
@@ -113,13 +114,13 @@ Deno.test("OpenLux uses catalog native capability and output caps without invent
       await result.response.body?.cancel();
     }
   } finally {
-    if (previous === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", previous);
+    if (previous === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = previous;
     resetMeteredModelsCacheForTest();
   }
 });
 
-Deno.test("OpenLux native streaming exposes reasoning and text through canonical Responses events", async () => {
+test("OpenLux native streaming exposes reasoning and text through canonical Responses events", async () => {
   const events = [
     {
       type: "message_start",
@@ -161,7 +162,7 @@ Deno.test("OpenLux native streaming exposes reasoning and text through canonical
   });
 });
 
-Deno.test("OpenLux preserves explicit cache breakpoints without adding another marker", async () => {
+test("OpenLux preserves explicit cache breakpoints without adding another marker", async () => {
   const { calls, fetcher } = capture();
   const body = {
     model,
@@ -192,7 +193,7 @@ Deno.test("OpenLux preserves explicit cache breakpoints without adding another m
   await result.response.body?.cancel();
 });
 
-Deno.test("OpenLux keeps requested effort and unrepresentable controls on the original Responses route", async () => {
+test("OpenLux keeps requested effort and unrepresentable controls on the original Responses route", async () => {
   resetMeteredModelsCacheForTest();
   for (const extra of [
     { reasoning: { effort: "max", summary: "auto" } },
@@ -214,7 +215,7 @@ Deno.test("OpenLux keeps requested effort and unrepresentable controls on the or
   }
 });
 
-Deno.test("OpenLux transport restores native signed tool history only within the authenticated provider scope", async () => {
+test("OpenLux transport restores native signed tool history only within the authenticated provider scope", async () => {
   const scope = "metered-cache-fixture-principal";
   const blocks = [
     { type: "thinking", thinking: "Inspect the file", signature: "signed-provider-fixture" },
@@ -259,7 +260,7 @@ const log = (id: string, other: JsonRecord, overrides: JsonRecord = {}): JsonRec
 const readLogs = (items: JsonRecord[]) =>
   fetchMeteredTokenLogs({ apiKey: "fixture-key", fetcher: () => Promise.resolve(jsonResponse({ success: true, data: { items, total: items.length } })) });
 
-Deno.test("OpenLux settled native logs preserve actual cache reads/writes and authoritative quota", async () => {
+test("OpenLux settled native logs preserve actual cache reads/writes and authoritative quota", async () => {
   const logs = await readLogs([
     log("cache-write", { claude: true, cache_tokens: 0, cache_creation_tokens: 1028, cache_creation_tokens_5m: 1028 }),
     log("cache-read", { claude: true, cache_tokens: 1028 }, { quota: 136, completion_tokens: 64 }),
@@ -279,7 +280,7 @@ Deno.test("OpenLux settled native logs preserve actual cache reads/writes and au
   ]);
 });
 
-Deno.test("OpenLux does not infer native net input for unknown routes or malformed cache metadata", async () => {
+test("OpenLux does not infer native net input for unknown routes or malformed cache metadata", async () => {
   const rows = [
     log("unknown-model", { claude: true, cache_tokens: 1028 }, { model_name: "gpt-5.6-sol" }),
     log("unknown-flag", { cache_tokens: 1028 }),

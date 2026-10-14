@@ -1,3 +1,9 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import type { Kv } from "#kv";
+import { installHarness, cleanupHarness } from "./helpers/kv-budget-harness.ts";
+beforeEach(installHarness);
+afterEach(cleanupHarness);
 // kv-budget suite part: tests moved out of tests/kv-budget.test.ts.
 
 import assert from "node:assert/strict";
@@ -64,14 +70,14 @@ import {
   waitFor,
 } from "./helpers/kv-budget-harness.ts";
 
-Deno.test("Kernel quota retries failed settlement and rejects terminal-state changes", async () => {
+test("Kernel quota retries failed settlement and rejects terminal-state changes", async () => {
   kv.values.clear();
   kv.resetCounts();
   seedKernelDefaultLimit(1, KERNEL_QUOTA_RESERVATION_LEASE_MS * 2);
   const owner = "kernel-settlement-retry-org";
   const requestId = "settlement-retry-request";
   const decision = await reserveKernelOrgUsageLimit(owner, requestId, "responses", {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 80,
   });
   assert.equal(decision.ok, true);
@@ -113,7 +119,7 @@ Deno.test("Kernel quota retries failed settlement and rejects terminal-state cha
   assert.equal(settledWindow.reserved_requests, 0);
 });
 
-Deno.test("Kernel quota blocks reset and deletion while a reservation is active", async () => {
+test("Kernel quota blocks reset and deletion while a reservation is active", async () => {
   kv.values.clear();
   kv.resetCounts();
   seedKernelDefaultLimit(10);
@@ -121,7 +127,7 @@ Deno.test("Kernel quota blocks reset and deletion while a reservation is active"
   const configured = await setKernelOrgUsageLimit(owner, 5);
   assert.ok(configured);
   const decision = await reserveKernelOrgUsageLimit(owner, "policy-cutover-request", "responses", {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
   });
   assert.equal(decision.ok, true);
 
@@ -132,14 +138,14 @@ Deno.test("Kernel quota blocks reset and deletion while a reservation is active"
   assert.equal(await deleteKernelOrgUsageLimit(owner), true);
 });
 
-Deno.test("Kernel quota blocks repo override creation while its effective org reservation is active", async () => {
+test("Kernel quota blocks repo override creation while its effective org reservation is active", async () => {
   kv.values.clear();
   kv.resetCounts();
   seedKernelDefaultLimit(1);
   const owner = "kernel-org-repo-cutover-org";
   const repo = "kernel-org-repo-cutover-repo";
   const decision = await reserveEffectiveKernelUsageLimit(owner, repo, "org-repo-cutover-request", "responses", {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
   });
   assert.equal(decision.ok, true);
 
@@ -149,12 +155,12 @@ Deno.test("Kernel quota blocks repo override creation while its effective org re
   assert.ok(await setKernelUsageLimit(owner, repo, 1));
 });
 
-Deno.test("Kernel default-window cutover blocks active default-backed reservations", async () => {
+test("Kernel default-window cutover blocks active default-backed reservations", async () => {
   kv.values.clear();
   kv.resetCounts();
   seedKernelDefaultLimit(2, 60_000);
   const decision = await reserveKernelOrgUsageLimit("kernel-default-window-cutover-org", "default-window-cutover-request", "responses", {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
   });
   assert.equal(decision.ok, true);
 
@@ -175,14 +181,14 @@ Deno.test("Kernel default-window cutover blocks active default-backed reservatio
   assert.equal(kv.values.get(encodeKey(DEFAULT_KERNEL_POLICY_WINDOW_KEY)), 120_000);
 });
 
-Deno.test("Kernel quota preserves the requested terminal state after natural window replacement", async () => {
+test("Kernel quota preserves the requested terminal state after natural window replacement", async () => {
   kv.values.clear();
   kv.resetCounts();
   seedKernelDefaultLimit(1);
   const owner = "kernel-window-replaced-org";
   const requestId = "window-replaced-request";
   const decision = await reserveKernelOrgUsageLimit(owner, requestId, "responses", {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
   });
   assert.equal(decision.ok, true);
 
@@ -209,14 +215,14 @@ Deno.test("Kernel quota preserves the requested terminal state after natural win
   assert.equal(reservation.release_reason, null);
 });
 
-Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates", async () => {
+test("KV budget: warm kernel inference writes no ordinary usage aggregates", async () => {
   kv.values.clear();
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool());
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(sse());
+  globalThis.fetch = createFetchMock(() => Promise.resolve(sse()));
   const kernelContext = {
     keyId: null,
     kernelRepo: { owner: "ubiquity", repo: "kernel" },
@@ -256,7 +262,7 @@ Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates"
   }
 });
 
-Deno.test("terminal inference telemetry includes resolved defaults and response usage", async () => {
+test("terminal inference telemetry includes resolved defaults and response usage", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -267,12 +273,12 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   await seedKey(token, "telemetry", -1);
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
-  const originalGitRevision = Deno.env.get("GIT_REVISION");
-  const originalGithubSha = Deno.env.get("GITHUB_SHA");
-  const originalBuildId = Deno.env.get("DENO_DEPLOY_BUILD_ID");
-  const originalDeploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
+  const originalGitRevision = process.env.GIT_REVISION;
+  const originalGithubSha = process.env.GITHUB_SHA;
+  const originalBuildId = process.env.DENO_DEPLOY_BUILD_ID;
+  const originalDeploymentId = process.env.DENO_DEPLOYMENT_ID;
   const logs: unknown[][] = [];
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       sse({
         input_tokens: 1,
@@ -280,12 +286,13 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
         output_tokens: 1,
         total_tokens: 2,
       })
-    );
+    )
+  );
   console.info = (...args: unknown[]) => logs.push(args);
-  Deno.env.delete("GIT_REVISION");
-  Deno.env.delete("GITHUB_SHA");
-  Deno.env.delete("DENO_DEPLOY_BUILD_ID");
-  Deno.env.delete("DENO_DEPLOYMENT_ID");
+  Reflect.deleteProperty(process.env, "GIT_REVISION");
+  Reflect.deleteProperty(process.env, "GITHUB_SHA");
+  Reflect.deleteProperty(process.env, "DENO_DEPLOY_BUILD_ID");
+  Reflect.deleteProperty(process.env, "DENO_DEPLOYMENT_ID");
   const promptCacheKey = "must-not-appear-in-terminal-telemetry";
   try {
     const response = await handler(
@@ -368,7 +375,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     assert.equal(acceptedPayload.request_id, requestId);
     assert.equal(Object.prototype.hasOwnProperty.call(acceptedPayload, "key_id"), false);
 
-    globalThis.fetch = () =>
+    globalThis.fetch = createFetchMock(() =>
       Promise.resolve(
         sse({
           input_tokens: 1,
@@ -376,7 +383,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
           output_tokens: 0,
           total_tokens: 1,
         })
-      );
+      )
+    );
     const invalidCacheRead = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
@@ -396,14 +404,15 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     // reporting a zero cache read/write. Keep that distinction in the terminal
     // event so downstream counter aggregation does not turn missing telemetry
     // into a false zero-token observation.
-    globalThis.fetch = () =>
+    globalThis.fetch = createFetchMock(() =>
       Promise.resolve(
         sse({
           input_tokens: 1,
           output_tokens: 0,
           total_tokens: 1,
         })
-      );
+      )
+    );
     const partial = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
@@ -421,18 +430,18 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
-    if (originalGitRevision === undefined) Deno.env.delete("GIT_REVISION");
-    else Deno.env.set("GIT_REVISION", originalGitRevision);
-    if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
-    else Deno.env.set("GITHUB_SHA", originalGithubSha);
-    if (originalBuildId === undefined) Deno.env.delete("DENO_DEPLOY_BUILD_ID");
-    else Deno.env.set("DENO_DEPLOY_BUILD_ID", originalBuildId);
-    if (originalDeploymentId === undefined) Deno.env.delete("DENO_DEPLOYMENT_ID");
-    else Deno.env.set("DENO_DEPLOYMENT_ID", originalDeploymentId);
+    if (originalGitRevision === undefined) Reflect.deleteProperty(process.env, "GIT_REVISION");
+    else process.env.GIT_REVISION = originalGitRevision;
+    if (originalGithubSha === undefined) Reflect.deleteProperty(process.env, "GITHUB_SHA");
+    else process.env.GITHUB_SHA = originalGithubSha;
+    if (originalBuildId === undefined) Reflect.deleteProperty(process.env, "DENO_DEPLOY_BUILD_ID");
+    else process.env.DENO_DEPLOY_BUILD_ID = originalBuildId;
+    if (originalDeploymentId === undefined) Reflect.deleteProperty(process.env, "DENO_DEPLOYMENT_ID");
+    else process.env.DENO_DEPLOYMENT_ID = originalDeploymentId;
   }
 });
 
-Deno.test("streaming inference emits one terminal log only after the response body completes", async () => {
+test("streaming inference emits one terminal log only after the response body completes", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -452,7 +461,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(
         new ReadableStream<Uint8Array>({
@@ -464,7 +473,8 @@ Deno.test("streaming inference emits one terminal log only after the response bo
         }),
         { status: 200, headers: { "Content-Type": "text/event-stream" } }
       )
-    );
+    )
+  );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const requestController = new AbortController();
@@ -527,14 +537,14 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   }
 });
 
-Deno.test("streaming timeout after dispatch emits one delivered terminal and keeps quota committed", async () => {
+test("streaming timeout after dispatch emits one delivered terminal and keeps quota committed", async () => {
   const { token, policy } = await prepareApiKeyInference("6", "stream-deadline-telemetry", 5);
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
   const encoder = new TextEncoder();
   setStreamFirstEventDeadlineMsForTest(250);
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(
         new ReadableStream<Uint8Array>({
@@ -547,7 +557,8 @@ Deno.test("streaming timeout after dispatch emits one delivered terminal and kee
           headers: { "Content-Type": "text/event-stream" },
         }
       )
-    );
+    )
+  );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const completed = deferred();
@@ -585,7 +596,7 @@ Deno.test("streaming timeout after dispatch emits one delivered terminal and kee
   }
 });
 
-Deno.test("streaming drain timing remains separate from V3 dispatch accounting", async () => {
+test("streaming drain timing remains separate from V3 dispatch accounting", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -603,7 +614,7 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(
         new ReadableStream<Uint8Array>({
@@ -615,7 +626,8 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
         }),
         { status: 200, headers: { "Content-Type": "text/event-stream" } }
       )
-    );
+    )
+  );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const response = await handler(streamingRequest(token, "responses"));
@@ -647,7 +659,7 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
   }
 });
 
-Deno.test("semantic Responses stream drops without response.created emit one failed terminal and redacted diagnostics", async () => {
+test("semantic Responses stream drops without response.created emit one failed terminal and redacted diagnostics", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -663,7 +675,7 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
   const originalInfo = console.info;
   const logs: unknown[][] = [];
   const encoder = new TextEncoder();
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(
         new ReadableStream<Uint8Array>({
@@ -676,7 +688,8 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
         }),
         { status: 200, headers: { "Content-Type": "text/event-stream" } }
       )
-    );
+    )
+  );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const completed = deferred();
@@ -720,7 +733,7 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
   }
 });
 
-Deno.test("Chat streaming terminal telemetry reports ordered timings once", async () => {
+test("Chat streaming terminal telemetry reports ordered timings once", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -732,13 +745,14 @@ Deno.test("Chat streaming terminal telemetry reports ordered timings once", asyn
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const logs: unknown[][] = [];
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(`${semanticSseEvent()}${completedSseEvent()}`, {
         status: 200,
         headers: { "Content-Type": "text/event-stream" },
       })
-    );
+    )
+  );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const response = await handler(streamingRequest(token, "chat"));
@@ -757,7 +771,7 @@ Deno.test("Chat streaming terminal telemetry reports ordered timings once", asyn
   }
 });
 
-Deno.test("Images preserve Codex quota responses without hidden-model paid fallback", async () => {
+test("Images preserve Codex quota responses without hidden-model paid fallback", async () => {
   kv.values.clear();
   resetProviderHealthThrottleForTest();
   resetApiKeyPolicyCacheForTest();
@@ -772,13 +786,13 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
   await seedPaidFallbackKey(token, keyId);
 
   const originalFetch = globalThis.fetch;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const originalMeteredApiKey = process.env.METERED_API_KEY;
+  const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
   let codexCalls = 0;
   let meteredCalls = 0;
   (await import("../src/images.ts")).setImageBaseModelForTest(MODEL);
-  Deno.env.set("METERED_API_KEY", "metered-image-gate-test-key");
-  Deno.env.delete("SURPLUS_API_KEY");
+  process.env.METERED_API_KEY = "metered-image-gate-test-key";
+  Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
   await fetchMeteredModels({
     force: true,
     fetcher: () =>
@@ -788,7 +802,7 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
         })
       ),
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://api.openlux.ai/v1/responses") {
       meteredCalls += 1;
@@ -806,7 +820,7 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
         }
       )
     );
-  };
+  });
   try {
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/images/generations", {
@@ -829,14 +843,14 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
     (await import("../src/images.ts")).setImageBaseModelForTest(null);
-    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
-    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+    if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = originalMeteredApiKey;
+    if (originalSurplusApiKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = originalSurplusApiKey;
   }
 });
 
-Deno.test("paid fallback releases its dispatch intent when metered quota admission fails before fetch", async () => {
+test("paid fallback releases its dispatch intent when metered quota admission fails before fetch", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -848,17 +862,17 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
   await seedPaidFallbackKey(token, keyId);
 
   const originalFetch = globalThis.fetch;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalMeteredApiKey = process.env.METERED_API_KEY;
   let meteredCalls = 0;
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
-  globalThis.fetch = (input) => {
+  process.env.METERED_API_KEY = "metered-test-key";
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       meteredCalls += 1;
       return Promise.reject(new Error("Metered transport must not start"));
     }
     return Promise.resolve(authoritativeCodexQuotaResponse());
-  };
+  });
   try {
     const response = await handleResponses(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -894,12 +908,12 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
     assert.equal(window.pending_count, 0);
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = originalMeteredApiKey;
   }
 });
 
-Deno.test("expired Codex credentials exhaust both accounts and fail closed without paid fallback", async () => {
+test("expired Codex credentials exhaust both accounts and fail closed without paid fallback", async () => {
   kv.values.clear();
   resetProviderHealthThrottleForTest();
   resetApiKeyPolicyCacheForTest();
@@ -913,13 +927,13 @@ Deno.test("expired Codex credentials exhaust both accounts and fail closed witho
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalMeteredApiKey = process.env.METERED_API_KEY;
   const accountIds: string[] = [];
   const logs: unknown[][] = [];
   let refreshCalls = 0;
   let meteredCalls = 0;
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
-  globalThis.fetch = (input, init) => {
+  process.env.METERED_API_KEY = "metered-test-key";
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshCalls += 1;
@@ -941,7 +955,7 @@ Deno.test("expired Codex credentials exhaust both accounts and fail closed witho
         headers: { "Content-Type": "application/json" },
       })
     );
-  };
+  });
   console.info = (...args: unknown[]) => logs.push(args);
 
   try {
@@ -970,12 +984,12 @@ Deno.test("expired Codex credentials exhaust both accounts and fail closed witho
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
     resetCodexAuthCacheForTest();
-    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = originalMeteredApiKey;
   }
 });
 
-Deno.test("paid fallback terminal telemetry records Metered lifecycle", async () => {
+test("paid fallback terminal telemetry records Metered lifecycle", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -987,10 +1001,10 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalMeteredApiKey = process.env.METERED_API_KEY;
   const logs: unknown[][] = [];
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
-  globalThis.fetch = (input) => {
+  process.env.METERED_API_KEY = "metered-test-key";
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       return new Promise<Response>((resolve) =>
@@ -1000,7 +1014,7 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
       );
     }
     return Promise.resolve(authoritativeCodexQuotaResponse());
-  };
+  });
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const response = await handler(request(token));
@@ -1021,12 +1035,12 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
-    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = originalMeteredApiKey;
   }
 });
 
-Deno.test("paid fallback cancellation telemetry records a cancelled Metered lifecycle", async () => {
+test("paid fallback cancellation telemetry records a cancelled Metered lifecycle", async () => {
   kv.values.clear();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
@@ -1041,12 +1055,12 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
 
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalMeteredApiKey = process.env.METERED_API_KEY;
   const logs: unknown[][] = [];
   const encoder = new TextEncoder();
   let upstreamCancellations = 0;
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
-  globalThis.fetch = (input) => {
+  process.env.METERED_API_KEY = "metered-test-key";
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       return Promise.resolve(
@@ -1065,7 +1079,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
       );
     }
     return Promise.resolve(authoritativeCodexQuotaResponse());
-  };
+  });
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const requestController = new AbortController();
@@ -1120,12 +1134,12 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
-    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = originalMeteredApiKey;
   }
 });
 
-Deno.test("V3 limit-only changes preserve the active aggregate identity and committed usage", async () => {
+test("V3 limit-only changes preserve the active aggregate identity and committed usage", async () => {
   const token = `u_${"4".repeat(64)}`;
   const { hash, record } = await seedKey(token, "limit-change", 100);
   const original = apiKeyPolicyFromHashRecord(hash, record, now);
@@ -1135,12 +1149,12 @@ Deno.test("V3 limit-only changes preserve the active aggregate identity and comm
   kv.values.set(encodeKey(apiKeyUsageV3WindowKey(original)), { ...makeApiKeyUsageWindowV3(original), committed_requests: 12 });
   kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", hash]), { ...record, usage_limit_requests: 10 });
   resetApiKeyPolicyCacheForTest();
-  const decision = await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now });
+  const decision = await authenticateApiKeyToken(token, { kv: kv as unknown as Kv, nowMs: now });
   assert.equal(decision.ok, true, "authentication must not perform inference quota admission");
   assert.equal(usageWindow(lowered).committed_requests, 12);
 });
 
-Deno.test("/uos/auth projects committed V3 usage while models stay quota-ledger independent", async () => {
+test("/uos/auth projects committed V3 usage while models stay quota-ledger independent", async () => {
   const { token, hash, record, policy } = await prepareApiKeyInference("5", "auth-projection", 10);
   kv.values.set(encodeKey(apiKeyUsageV3WindowKey(policy)), { ...makeApiKeyUsageWindowV3(policy), committed_requests: 7, reserved_requests: 1 });
   kv.values.set(encodeKey(["ubq_ai", "api_keys", "id", policy.key_id]), {
@@ -1172,7 +1186,7 @@ Deno.test("/uos/auth projects committed V3 usage while models stay quota-ledger 
   }
 });
 
-Deno.test("V3 automatic window advancement changes aggregate identity only when the effective window changes", async () => {
+test("V3 automatic window advancement changes aggregate identity only when the effective window changes", async () => {
   const token = `u_${"6".repeat(64)}`;
   const { hash, record } = await seedKey(token, "window-advance", 100);
   const expired = { ...record, usage_reset_at_ms: now - 1 };
@@ -1185,7 +1199,7 @@ Deno.test("V3 automatic window advancement changes aggregate identity only when 
   assert.notDeepEqual(apiKeyUsageV3WindowKey(explicitlyReset), apiKeyUsageV3WindowKey(beforeAdvance));
 });
 
-Deno.test("KV budget: runtime configuration revalidates after the bounded isolate TTL", async () => {
+test("KV budget: runtime configuration revalidates after the bounded isolate TTL", async () => {
   resetRuntimeConfigCacheForTest();
   const first = structuredClone(runtime);
   const second = {
@@ -1205,18 +1219,18 @@ Deno.test("KV budget: runtime configuration revalidates after the bounded isolat
   };
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), first);
   kv.resetCounts();
-  assert.equal((await loadRuntimeConfig(kv as unknown as Deno.Kv, now))?.default_model, MODEL);
+  assert.equal((await loadRuntimeConfig(kv as unknown as Kv, now))?.default_model, MODEL);
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), second);
-  assert.equal((await loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS - 1))?.default_model, MODEL);
-  const refreshed = await Promise.all(Array.from({ length: 20 }, () => loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1)));
+  assert.equal((await loadRuntimeConfig(kv as unknown as Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS - 1))?.default_model, MODEL);
+  const refreshed = await Promise.all(Array.from({ length: 20 }, () => loadRuntimeConfig(kv as unknown as Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1)));
   assert.ok(refreshed.every((config) => config?.default_model === second.default_model));
   assert.equal(kv.reads, 2);
 });
 
-Deno.test("KV budget: failed runtime configuration refresh backs off with stale configuration", async () => {
+test("KV budget: failed runtime configuration refresh backs off with stale configuration", async () => {
   resetRuntimeConfigCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  assert.equal((await loadRuntimeConfig(kv as unknown as Deno.Kv, now))?.default_model, MODEL);
+  assert.equal((await loadRuntimeConfig(kv as unknown as Kv, now))?.default_model, MODEL);
 
   let failedReads = 0;
   const unavailableKv = {
@@ -1224,13 +1238,13 @@ Deno.test("KV budget: failed runtime configuration refresh backs off with stale 
       failedReads += 1;
       return Promise.reject(new Error("runtime config KV unavailable"));
     },
-  } as unknown as Deno.Kv;
+  } as unknown as Kv;
   assert.equal((await loadRuntimeConfig(unavailableKv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1))?.default_model, MODEL);
   assert.equal((await loadRuntimeConfig(unavailableKv, now + RUNTIME_CONFIG_CACHE_TTL_MS * 2))?.default_model, MODEL);
   assert.equal(failedReads, 1);
 });
 
-Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry refreshes revocation", async () => {
+test("KV budget: malformed tokens are rejected without KV and policy expiry refreshes revocation", async () => {
   const originalInfo = console.info;
   const logs: unknown[][] = [];
   console.info = (...args: unknown[]) => logs.push(args);
@@ -1258,9 +1272,9 @@ Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry
   const token = `u_${"3".repeat(64)}`;
   const { hash, record } = await seedKey(token, "revoked", -1);
   resetApiKeyPolicyCacheForTest();
-  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now })).ok, true);
+  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Kv, nowMs: now })).ok, true);
   kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", hash]), { ...record, revoked_at_ms: now + 1 });
-  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now + 29_999 })).ok, true);
-  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now + 30_001 })).ok, false);
+  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Kv, nowMs: now + 29_999 })).ok, true);
+  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Kv, nowMs: now + 30_001 })).ok, false);
   invalidateApiKeyPolicy("revoked");
 });

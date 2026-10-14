@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } from "../src/models/openrouter-models.ts";
@@ -89,7 +90,7 @@ const functionTool = (wire: Wire) => {
   return wire === "chat" ? { type: "function", function: definition } : { type: "function", ...definition };
 };
 
-Deno.test("OpenRouter dispatch gives current and older OpenAI models web tools on both wires and stream modes", async () => {
+test("OpenRouter dispatch gives current and older OpenAI models web tools on both wires and stream modes", async () => {
   await withServedCatalogue(async () => {
     for (const wire of ["chat", "responses"] as const) {
       for (const model of [PRO_MODEL, "openai/gpt-4o", "~openai/gpt-6.1-sol-pro"]) {
@@ -107,7 +108,7 @@ Deno.test("OpenRouter dispatch gives current and older OpenAI models web tools o
   });
 });
 
-Deno.test("OpenRouter web defaults retain client function tools, schemas, and automatic tool controls", async () => {
+test("OpenRouter web defaults retain client function tools, schemas, and automatic tool controls", async () => {
   await withServedCatalogue(async () => {
     for (const wire of ["chat", "responses"] as const) {
       const clientTool = functionTool(wire);
@@ -124,7 +125,7 @@ Deno.test("OpenRouter web defaults retain client function tools, schemas, and au
   });
 });
 
-Deno.test("OpenRouter retains configured server and native web tools without adding duplicate equivalents", async () => {
+test("OpenRouter retains configured server and native web tools without adding duplicate equivalents", async () => {
   await withServedCatalogue(async () => {
     const searchTypes = ["openrouter:web_search", "web_search", "web_search_preview", "web_search_2025_08_26", "web_search_preview_2025_03_11"];
     for (const wire of ["chat", "responses"] as const) {
@@ -147,7 +148,7 @@ Deno.test("OpenRouter retains configured server and native web tools without add
   });
 });
 
-Deno.test("OpenRouter defaults respect empty tools and disabled, required, or constrained tool choices", async () => {
+test("OpenRouter defaults respect empty tools and disabled, required, or constrained tool choices", async () => {
   await withServedCatalogue(async () => {
     for (const wire of ["chat", "responses"] as const) {
       const empty: unknown[] = [];
@@ -166,7 +167,7 @@ Deno.test("OpenRouter defaults respect empty tools and disabled, required, or co
   });
 });
 
-Deno.test("OpenRouter defaults preserve deprecated function controls and malformed tools for upstream validation", async () => {
+test("OpenRouter defaults preserve deprecated function controls and malformed tools for upstream validation", async () => {
   await withServedCatalogue(async () => {
     for (const wire of ["chat", "responses"] as const) {
       for (const legacy of [
@@ -186,7 +187,7 @@ Deno.test("OpenRouter defaults preserve deprecated function controls and malform
   });
 });
 
-Deno.test("OpenRouter leaves batch and other vendors unchanged while retaining their explicit tools", async () => {
+test("OpenRouter leaves batch and other vendors unchanged while retaining their explicit tools", async () => {
   await withServedCatalogue(async () => {
     for (const wire of ["chat", "responses"] as const) {
       for (const model of [`${PRO_MODEL}:batch`, "vendor/alpha", "openaiish/model"]) {
