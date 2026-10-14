@@ -1,10 +1,12 @@
+import { setKvForTest } from "../../src/kv.ts";
+import type { Kv, KvEntry, KvEntryMaybe, KvKey, KvListOptions, KvListSelector } from "#kv";
 // Shared harness for this suite, moved out of the original test file.
 
 import { DEFAULT_REASONING_EFFORT_KEY } from "../../src/defaults.ts";
 import { sha256Hex } from "../../src/utils.ts";
 
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
-const keyHasPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => {
+const keyToString = (key: KvKey): string => JSON.stringify(key);
+const keyHasPrefix = (key: KvKey, prefix: KvKey): boolean => {
   if (key.length < prefix.length) return false;
   for (let i = 0; i < prefix.length; i += 1) {
     if (key[i] !== prefix[i]) return false;
@@ -19,7 +21,7 @@ const compareKeyPart = (a: unknown, b: unknown): number => {
   return String(a).localeCompare(String(b));
 };
 
-const compareKeys = (a: Deno.KvKey, b: Deno.KvKey): number => {
+const compareKeys = (a: KvKey, b: KvKey): number => {
   const len = Math.max(a.length, b.length);
   for (let i = 0; i < len; i += 1) {
     if (i >= a.length) return -1;
@@ -33,7 +35,7 @@ const compareKeys = (a: Deno.KvKey, b: Deno.KvKey): number => {
 const kvStore = new Map<string, unknown>();
 const kvExpirations = new Map<string, number | undefined>();
 const kvVersions = new Map<string, number>();
-const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
+const VOYAGE_RATE_LIMIT_KEY: KvKey = ["embeddings", "v1", "rate", "voyage"];
 const EMBEDDINGS_JOB_TTL_MS = 24 * 60 * 60_000;
 const EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS = 256;
 const EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS = 7 * 24 * 60 * 60_000;
@@ -58,9 +60,9 @@ const embeddingsCacheKey = (
   dimensions: TestDimension = 1024,
   encodingFormat: TestEncodingFormat = "float",
   truncation = true
-): Deno.KvKey => ["embeddings", "v2", "cache", embeddingsProfileKey(inputType, dimensions, encodingFormat, truncation), hash];
+): KvKey => ["embeddings", "v2", "cache", embeddingsProfileKey(inputType, dimensions, encodingFormat, truncation), hash];
 
-const embeddingsCacheGlobalIndexKey = (createdAtMs: number, cacheProfileKey: string, hash: string): Deno.KvKey => [
+const embeddingsCacheGlobalIndexKey = (createdAtMs: number, cacheProfileKey: string, hash: string): KvKey => [
   "embeddings",
   "v2",
   "cache_index_global",
@@ -69,16 +71,9 @@ const embeddingsCacheGlobalIndexKey = (createdAtMs: number, cacheProfileKey: str
   hash,
 ];
 
-const embeddingsJobKey = (tokenHash: string, cacheProfileKey: string, jobId: string): Deno.KvKey => [
-  "embeddings",
-  "jobs",
-  "v2",
-  tokenHash,
-  cacheProfileKey,
-  jobId,
-];
+const embeddingsJobKey = (tokenHash: string, cacheProfileKey: string, jobId: string): KvKey => ["embeddings", "jobs", "v2", tokenHash, cacheProfileKey, jobId];
 
-const embeddingsJobLookupKey = (tokenHash: string, jobId: string): Deno.KvKey => ["embeddings", "jobs", "v2", "lookup", tokenHash, jobId];
+const embeddingsJobLookupKey = (tokenHash: string, jobId: string): KvKey => ["embeddings", "jobs", "v2", "lookup", tokenHash, jobId];
 
 const testVector = (dimensions: TestDimension, seed = 0): number[] => Array.from({ length: dimensions }, (_, index) => seed + index / Math.max(1, dimensions));
 // Keep these in sync with tests/openai-compat.test.ts so whichever test imports
@@ -110,11 +105,9 @@ kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
-const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
-const originalVoyageApiKey = Deno.env.get("VOYAGEAI_API_KEY");
-Deno.env.delete("VOYAGEAI_API_KEY");
+const originalVoyageApiKey = process.env["VOYAGEAI_API_KEY"];
 
-let failNextAtomicCommit: ((checks: readonly Deno.KvEntryMaybe<unknown>[], ops: readonly { type: string; key: Deno.KvKey }[]) => boolean | Error) | null = null;
+let failNextAtomicCommit: ((checks: readonly KvEntryMaybe<unknown>[], ops: readonly { type: string; key: KvKey }[]) => boolean | Error) | null = null;
 
 export const setFailNextAtomicCommit = (value: typeof failNextAtomicCommit): void => {
   failNextAtomicCommit = value;
@@ -127,36 +120,36 @@ const bumpKvVersion = (rawKey: string): void => {
 };
 
 const kvStub = {
-  get: (key: Deno.KvKey) => {
+  get: (key: KvKey) => {
     const rawKey = keyToString(key);
     return Promise.resolve({
       key,
       value: kvStore.get(rawKey) ?? null,
       versionstamp: kvVersionstamp(rawKey),
-    } as Deno.KvEntryMaybe<unknown>);
+    } as KvEntryMaybe<unknown>);
   },
-  set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+  set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => {
     const rawKey = keyToString(key);
     kvStore.set(rawKey, value);
     kvExpirations.set(rawKey, options?.expireIn);
     bumpKvVersion(rawKey);
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     const rawKey = keyToString(key);
     kvStore.delete(rawKey);
     kvExpirations.delete(rawKey);
     bumpKvVersion(rawKey);
     return Promise.resolve();
   },
-  list: function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+  list: function* (selector: KvListSelector, options?: KvListOptions) {
     const prefix = "prefix" in selector ? selector.prefix : null;
     if (!prefix) {
       yield* [];
       return;
     }
     const limit = Math.max(0, Math.trunc(options?.limit ?? Infinity));
-    const entries: Deno.KvEntry<unknown>[] = [];
+    const entries: KvEntry<unknown>[] = [];
     for (const [rawKey, value] of kvStore.entries()) {
       let key: unknown;
       try {
@@ -165,8 +158,8 @@ const kvStub = {
         key = null;
       }
       if (!Array.isArray(key)) continue;
-      if (!keyHasPrefix(key as Deno.KvKey, prefix)) continue;
-      entries.push({ key: key as Deno.KvKey, value } as Deno.KvEntry<unknown>);
+      if (!keyHasPrefix(key as KvKey, prefix)) continue;
+      entries.push({ key: key as KvKey, value } as KvEntry<unknown>);
     }
     entries.sort((a, b) => compareKeys(a.key, b.key));
     for (const entry of entries.slice(0, limit)) {
@@ -174,18 +167,18 @@ const kvStub = {
     }
   },
   atomic: () => {
-    const checks: Deno.KvEntryMaybe<unknown>[] = [];
-    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown; expireIn?: number }[] = [];
+    const checks: KvEntryMaybe<unknown>[] = [];
+    const ops: { type: "set" | "delete"; key: KvKey; value?: unknown; expireIn?: number }[] = [];
     const chain = {
-      check: (entry: Deno.KvEntryMaybe<unknown>) => {
+      check: (entry: KvEntryMaybe<unknown>) => {
         checks.push(entry);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value, expireIn: options?.expireIn });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ type: "delete", key });
         return chain;
       },
@@ -223,13 +216,11 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
+} as unknown as Kv;
 
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 const { handleUosEmbeddings } = await import("../../src/embeddings/handlers.ts");
 const { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } = await import("../../src/embeddings/jobs.ts");
 const { getKv } = await import("../../src/kv.ts");
-await getKv();
 
 type FetchMockQueue = {
   chain: Promise<void>;
@@ -268,12 +259,15 @@ const withFetchMock = async <T>(
   await prev;
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = requestInputUrl(input);
-    const bodyText = typeof init?.body === "string" ? init.body : null;
-    const headers = new Headers(init?.headers);
-    return await handler(url, bodyText, headers);
-  };
+  globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestInputUrl(input);
+      const bodyText = typeof init?.body === "string" ? init.body : null;
+      const headers = new Headers(init?.headers);
+      return await handler(url, bodyText, headers);
+    },
+    { preconnect: originalFetch.preconnect }
+  );
   try {
     return await fn();
   } finally {
@@ -329,7 +323,7 @@ const responseErrorCode = async (response: Response): Promise<string | null> => 
   return typeof payload.error?.code === "string" ? payload.error.code : null;
 };
 
-const uosEmbeddingsIdempotencyRecordKey = async (principal: string, idempotencyKey: string): Promise<Deno.KvKey> => [
+const uosEmbeddingsIdempotencyRecordKey = async (principal: string, idempotencyKey: string): Promise<KvKey> => [
   "embeddings",
   "idempotency",
   "v1",
@@ -337,7 +331,7 @@ const uosEmbeddingsIdempotencyRecordKey = async (principal: string, idempotencyK
   await sha256Hex(`uos-embeddings-key-v1:${idempotencyKey}`),
 ];
 
-const uosEmbeddingsIdempotencyResponsePrefix = async (principal: string, idempotencyKey: string): Promise<Deno.KvKey> => [
+const uosEmbeddingsIdempotencyResponsePrefix = async (principal: string, idempotencyKey: string): Promise<KvKey> => [
   "embeddings",
   "idempotency",
   "v1",
@@ -402,7 +396,6 @@ export {
   kvStub,
   kvVersions,
   kvVersionstamp,
-  originalOpenKv,
   originalVoyageApiKey,
   requestInputUrl,
   resetVoyageRateLimit,
@@ -419,3 +412,25 @@ export {
 };
 export type { FetchMockQueue, TestDimension, TestEncodingFormat, TestInputType };
 export { sha256Hex } from "../../src/utils.ts";
+
+let harnessEnvironment: Map<string, string | undefined> | null = null;
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  harnessEnvironment ??= new Map(["VOYAGEAI_API_KEY"].map((name) => [name, process.env[name]]));
+  delete process.env["VOYAGEAI_API_KEY"];
+  setKvForTest(kvStub);
+};
+export const resetHarness = (): void => {
+  setFailNextAtomicCommit(null);
+  resetVoyageRateLimit();
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  for (const [name, value] of harnessEnvironment ?? []) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  harnessEnvironment = null;
+  setKvForTest(null);
+};

@@ -1,5 +1,8 @@
+import { lstat, mkdir, readFile, readdir, readlink, rm, realpath, stat, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { openKv, type Kv } from "#kv";
 // Manual, hermetic acceptance: real codex-cli 0.160.0, synthetic auth, loopback only.
-// This is deliberately not a Deno.test: native subprocess permission is a separate capture.
+// This standalone capture requires the authorized native subprocess profile.
 import assert from "node:assert/strict";
 import type WebSocket from "ws";
 import type { CodexAuthPoolState, CodexAuthState } from "../../src/types.ts";
@@ -8,13 +11,14 @@ const NATIVE_CODEX = "/Users/nv/.codex/bin/codex";
 const EMAIL = "native-fixture@example.invalid";
 const ACCOUNT = "uos-native-fixture-account";
 const MODEL = "gpt-6.1-sol";
-const PROOF_ROOT = `${Deno.cwd()}/.data/native-auth-acceptance/${crypto.randomUUID()}`;
-const TLS_DIRECTORY = `${Deno.cwd()}/.data/native-auth-acceptance/tls-v6`;
+const PROOF_ROOT = `${process.cwd()}/.data/native-auth-acceptance/${crypto.randomUUID()}`;
+const TLS_DIRECTORY = `${process.cwd()}/.data/native-auth-acceptance/tls-v6`;
 const TLS_CA_PATH = `${TLS_DIRECTORY}/ca.pem`;
 const TLS_CA_SHA256 = "ede418068bd26e8c4eba427f88ed0b353ba630c997af43f9abf1ebe354d5dadf";
 let fixtureCaHash = "";
 const RPC_TIMEOUT_MS = 8_000;
 const decoder = new TextDecoder();
+const isMissingPath = (error: unknown): boolean => error instanceof Error && "code" in error && error.code === "ENOENT";
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const pollUntil = async (predicate: () => Promise<boolean>, label: string, signal?: AbortSignal): Promise<void> => {
@@ -68,7 +72,7 @@ const fakeAuth = (generation: number, expired = false): FakeAuth => ({
   last_refresh: new Date().toISOString(),
 });
 const readAuth = async (home: string): Promise<FakeAuth> => {
-  const value: unknown = JSON.parse(await Deno.readTextFile(`${home}/auth.json`));
+  const value: unknown = JSON.parse(await readFile(`${home}/auth.json`, "utf8"));
   assert(isRecord(value) && isRecord(value.tokens));
   assert.equal(value.tokens.account_id, ACCOUNT);
   assert.equal(typeof value.tokens.access_token, "string");
@@ -140,7 +144,7 @@ const openRpc = async (socketPath: string, home: string, verifyIdentity = true):
   try {
     const initialized = await call("initialize", { clientInfo: { name: "uos_native_auth_fixture", version: "1" }, capabilities: { experimentalApi: true } });
     assert(isRecord(initialized));
-    assert.equal(await Deno.realPath(String(initialized.codexHome)), await Deno.realPath(home), "initialize must identify the isolated home");
+    assert.equal(await realpath(String(initialized.codexHome)), await realpath(home), "initialize must identify the isolated home");
     socket.send(JSON.stringify({ method: "initialized" }));
     if (verifyIdentity) verifyNativeAccount(await call("account/read", { refreshToken: false }));
     return { call, events, close: () => socket.terminate() };
@@ -159,19 +163,21 @@ const failureDetails = (value: unknown): Record<string, unknown> => {
 };
 const writeDiagnostic = async (filename: string, value: unknown): Promise<unknown[]> => {
   try {
-    await Deno.writeTextFile(`${PROOF_ROOT}/${filename}`, `${JSON.stringify(value, null, 2)}\n`);
+    await writeFile(`${PROOF_ROOT}/${filename}`, `${JSON.stringify(value, null, 2)}\n`);
     return [];
   } catch (error) {
     return [error];
   }
 };
-type NativeProcess = { pid: number; child: Deno.ChildProcess; output: Promise<{ code: number; signal: Deno.Signal | null; stdout: string; stderr: string }> };
+type NativeProcess = {
+  pid: number;
+  child: Bun.Subprocess<"ignore", "pipe", "pipe">;
+  output: Promise<{ code: number; signal: Bun.Subprocess["signalCode"]; stdout: string; stderr: string }>;
+};
 const activeProcesses = new Set<NativeProcess>();
 const launch = (home: string, endpoint: string, args: string[]): NativeProcess => {
-  const child = new Deno.Command(NATIVE_CODEX, {
-    args,
+  const child = Bun.spawn([NATIVE_CODEX, ...args], {
     cwd: PROOF_ROOT,
-    clearEnv: true,
     env: {
       HOME: home,
       CODEX_HOME: home,
@@ -180,10 +186,10 @@ const launch = (home: string, endpoint: string, args: string[]): NativeProcess =
       CODEX_REFRESH_TOKEN_URL_OVERRIDE: `${endpoint}/oauth/token`,
       CODEX_CA_CERTIFICATE: TLS_CA_PATH,
     },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const metadata = {
     pid: child.pid,
     argv: [NATIVE_CODEX, ...args],
@@ -196,9 +202,9 @@ const launch = (home: string, endpoint: string, args: string[]): NativeProcess =
   const process: NativeProcess = {
     pid: child.pid,
     child,
-    output: child.output().then(async (output) => {
+    output: Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]).then(async ([code, stdout, stderr]) => {
       activeProcesses.delete(process);
-      const result = { code: output.code, signal: output.signal, stdout: decoder.decode(output.stdout), stderr: decoder.decode(output.stderr) };
+      const result = { code, signal: child.signalCode, stdout, stderr };
       const failures = await writeDiagnostic(`native-process-${child.pid}.json`, {
         ...metadata,
         state: "exited",
@@ -211,7 +217,7 @@ const launch = (home: string, endpoint: string, args: string[]): NativeProcess =
   };
   activeProcesses.add(process);
   void process.output.catch(() => {});
-  Deno.writeTextFileSync(`${PROOF_ROOT}/native-process-${child.pid}.json`, `${JSON.stringify({ ...metadata, state: "spawned" }, null, 2)}\n`);
+  writeFileSync(`${PROOF_ROOT}/native-process-${child.pid}.json`, `${JSON.stringify({ ...metadata, state: "spawned" }, null, 2)}\n`);
   return process;
 };
 const settleProcess = async (process: NativeProcess): Promise<Awaited<NativeProcess["output"]>> => {
@@ -257,15 +263,15 @@ const recordSocketEvidence = async (pid: number, rendezvous: string): Promise<un
   let evidence: Record<string, unknown> = { pid, rendezvous, observedAt: new Date().toISOString() };
   let present = false;
   try {
-    const info = await Deno.lstat(rendezvous);
+    const info = await lstat(rendezvous);
     present = true;
     evidence = {
       ...evidence,
       present: true,
-      isSymlink: info.isSymlink,
-      linkTarget: info.isSymlink ? await Deno.readLink(rendezvous) : null,
+      isSymlink: info.isSymbolicLink(),
+      linkTarget: info.isSymbolicLink() ? await readlink(rendezvous) : null,
     };
-    evidence.physicalTarget = await Deno.realPath(rendezvous);
+    evidence.physicalTarget = await realpath(rendezvous);
   } catch (error) {
     evidence = { ...evidence, present, inspectionFailure: failureDetails(error) };
   }
@@ -280,10 +286,10 @@ const startManager = async (home: string, socket: string, endpoint: string, veri
       pollUntil(
         async () => {
           try {
-            await Deno.stat(socket);
+            await stat(socket);
             return true;
           } catch (error) {
-            if (!(error instanceof Deno.errors.NotFound)) throw error;
+            if (!isMissingPath(error)) throw error;
             return false;
           }
         },
@@ -312,7 +318,7 @@ const startManager = async (home: string, socket: string, endpoint: string, veri
 const stopManager = async (manager: { process: NativeProcess; rpc: Rpc }): Promise<void> => {
   manager.rpc.close();
   const output = await settleProcess(manager.process);
-  await Deno.writeTextFile(`${PROOF_ROOT}/manager-${manager.process.pid}.json`, JSON.stringify({ pid: manager.process.pid, ...output }));
+  await writeFile(`${PROOF_ROOT}/manager-${manager.process.pid}.json`, JSON.stringify({ pid: manager.process.pid, ...output }));
 };
 
 type RefreshAttempt = { tokenGeneration: number; arrivedAt: number; repliedAt: number | null; outcome: "waiting" | "rotated" | "reused" };
@@ -418,7 +424,7 @@ class MockAuthority {
 
 const nativePreflightRefusals = async (home: string, mock: MockAuthority, rpc: Rpc): Promise<Record<string, unknown>> => {
   const { requestNativeCodexRefresh } = await import("../../src/codex/native-auth-transport.ts");
-  const initialBytes = await Deno.readTextFile(`${home}/auth.json`);
+  const initialBytes = await readFile(`${home}/auth.json`, "utf8");
   const refused = async (expectedAccountId: string): Promise<string> => {
     let message: string | null = null;
     try {
@@ -428,7 +434,7 @@ const nativePreflightRefusals = async (home: string, mock: MockAuthority, rpc: R
     }
     assert(message, "native refresh must fail closed before OAuth");
     assert.equal(mock.attempts.length, 0, "preflight refusal must send zero OAuth requests");
-    assert.equal(await Deno.readTextFile(`${home}/auth.json`), initialBytes, "preflight refusal must preserve credential bytes");
+    assert.equal(await readFile(`${home}/auth.json`, "utf8"), initialBytes, "preflight refusal must preserve credential bytes");
     return message;
   };
   // The manager starts while matching routing is absent, preventing a positive cache from hiding this control.
@@ -452,8 +458,8 @@ type Gateway = {
   pool: () => Promise<CodexAuthPoolState>;
   reset: () => void;
 };
-const createGateway = async (endpoint: string, kv: Deno.Kv): Promise<Gateway> => {
-  Deno.env.set("CODEX_BASE_URL", `${endpoint}/codex`);
+const createGateway = async (endpoint: string, kv: Kv): Promise<Gateway> => {
+  process.env["CODEX_BASE_URL"] = `${endpoint}/codex`;
   const auth = await import("../../src/codex/auth.ts");
   const refresh = await import("../../src/codex/auth-refresh.ts");
   const native = await import("../../src/codex/native-auth.ts");
@@ -547,7 +553,7 @@ const cliInference = async (home: string, endpoint: string): Promise<{ pid: numb
     await bounded(process.output, "CLI timeout settlement", 3_000);
     throw error;
   }
-  await Deno.writeTextFile(`${PROOF_ROOT}/cli-${process.pid}.json`, JSON.stringify({ pid: process.pid, ...output }));
+  await writeFile(`${PROOF_ROOT}/cli-${process.pid}.json`, JSON.stringify({ pid: process.pid, ...output }));
   assert.equal(output.code, 0, output.stderr);
   assert(output.stdout.includes('"type":"turn.completed"'));
   assert(output.stdout.includes("native-generation-"));
@@ -559,7 +565,7 @@ const persistedProof = async (home: string, mock: MockAuthority, gateway: Gatewa
   assert(mock.winner);
   assert.equal(auth.tokens.access_token, mock.winner.tokens.access_token);
   assert.equal(auth.tokens.refresh_token, mock.winner.tokens.refresh_token);
-  const mode = (await Deno.stat(`${home}/auth.json`)).mode;
+  const mode = (await stat(`${home}/auth.json`)).mode;
   assert(mode !== null);
   assert.equal(mode & 0o777, 0o600);
   const pool = await gateway.pool();
@@ -580,10 +586,10 @@ const runCase = async (
 ): Promise<Record<string, unknown>> => {
   const directory = `${PROOF_ROOT}/${kind}`;
   const home = `${aliasRoot}/${kind === "one-manager" ? "a" : "b"}`;
-  await Deno.mkdir(directory, { recursive: true });
-  await Deno.mkdir(home);
+  await mkdir(directory, { recursive: true });
+  await mkdir(home);
   const initial = fakeAuth(0);
-  await Deno.writeTextFile(`${home}/auth.json`, JSON.stringify(initial), { mode: 0o600 });
+  await writeFile(`${home}/auth.json`, JSON.stringify(initial), { mode: 0o600 });
   mock.home = home;
   mock.barrierCount = kind === "one-manager" ? 1 : 2;
   await gateway.seed(home, initial);
@@ -594,7 +600,7 @@ const runCase = async (
   let cleanupFailures: unknown[];
   const progress = { phase: "manager-start" };
   try {
-    await Deno.mkdir(`${home}/app-server-control`);
+    await mkdir(`${home}/app-server-control`);
     const needsPreflightControls = kind === "one-manager";
     mock.routingIdentityAvailable = !needsPreflightControls;
     managers.push(await startManager(home, `${home}/app-server-control/app-server-control.sock`, endpoint, !needsPreflightControls));
@@ -694,23 +700,23 @@ const runCase = async (
 };
 
 const requireFixtureBase = async (): Promise<string> => {
-  assert.equal(Deno.args.length, 1, "Provide exactly one preallocated fixture base directory");
-  const base = Deno.args[0];
+  assert.equal(process.argv.slice(2).length, 1, "Provide exactly one preallocated fixture base directory");
+  const base = process.argv.slice(2)[0];
   assert.equal(/^\/tmp\/uos268-[a-zA-Z0-9_-]+/u.exec(base)?.[0], base, "Fixture base must be one absolute /tmp/uos268-* directory");
-  const info = await Deno.lstat(base);
-  assert(info.isDirectory && !info.isSymlink, "Fixture base must be an existing real directory");
+  const info = await lstat(base);
+  assert(info.isDirectory() && !info.isSymbolicLink(), "Fixture base must be an existing real directory");
   assert.equal(info.uid, 501, "Fixture base must belong to the authorized Mac fixture owner");
   assert(info.mode !== null);
   assert.equal(info.mode & 0o777, 0o700, "Fixture base must have mode 0700");
-  for await (const entry of Deno.readDir(base)) throw new Error(`Fixture base is not empty: ${entry.name}`);
+  for (const entry of await readdir(base, { withFileTypes: true })) throw new Error(`Fixture base is not empty: ${entry.name}`);
   return base;
 };
 
 const main = async (): Promise<void> => {
   const aliasRoot = await requireFixtureBase();
-  await Deno.mkdir(PROOF_ROOT, { recursive: true });
-  let kv: Deno.Kv | null = null;
-  let server: Deno.HttpServer<Deno.NetAddr> | null = null;
+  await mkdir(PROOF_ROOT, { recursive: true });
+  let kv: Kv | null = null;
+  let server: Bun.Server<undefined> | null = null;
   let activeMock = new MockAuthority();
   let gateway: Gateway | null = null;
   let receipt: Record<string, unknown> | null = null;
@@ -719,13 +725,13 @@ const main = async (): Promise<void> => {
   const progress = { phase: "fixture-setup" };
   try {
     progress.phase = "fixture-tls";
-    const ca = await Deno.readFile(TLS_CA_PATH);
+    const ca = await readFile(TLS_CA_PATH);
     fixtureCaHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", ca)), (byte) => byte.toString(16).padStart(2, "0")).join("");
     assert.equal(fixtureCaHash, TLS_CA_SHA256, "Task-owned fixture CA must match the verified certificate");
-    const [cert, key] = await Promise.all([Deno.readTextFile(`${TLS_DIRECTORY}/server.pem`), Deno.readTextFile(`${TLS_DIRECTORY}/server.key`)]);
-    kv = await Deno.openKv(`${PROOF_ROOT}/fixture.sqlite3`);
-    server = Deno.serve({ hostname: "127.0.0.1", port: 0, cert, key, onListen: () => {} }, (request) => activeMock.handle(request));
-    const endpoint = `https://127.0.0.1:${server.addr.port}`;
+    const [cert, key] = await Promise.all([readFile(`${TLS_DIRECTORY}/server.pem`, "utf8"), readFile(`${TLS_DIRECTORY}/server.key`, "utf8")]);
+    kv = await openKv(`${PROOF_ROOT}/fixture.sqlite3`);
+    server = Bun.serve({ hostname: "127.0.0.1", port: 0, tls: { cert, key }, fetch: (request) => activeMock.handle(request) });
+    const endpoint = `https://127.0.0.1:${server.port}`;
     progress.phase = "native-version";
     const versionProcess = launch(aliasRoot, endpoint, ["--version"]);
     const version = await bounded(versionProcess.output, "native version", 3_000);
@@ -764,13 +770,13 @@ const main = async (): Promise<void> => {
       cleanupFailures.push(error);
     }
     try {
-      await bounded(server?.shutdown() ?? Promise.resolve(), "mock server shutdown", 3_000);
+      await bounded(server?.stop(true) ?? Promise.resolve(), "mock server shutdown", 3_000);
     } catch (error) {
       cleanupFailures.push(error);
     }
     if (activeProcesses.size === 0) {
       try {
-        await Deno.remove(aliasRoot, { recursive: true });
+        await rm(aliasRoot, { recursive: true });
       } catch (error) {
         cleanupFailures.push(error);
       }
@@ -792,15 +798,15 @@ const main = async (): Promise<void> => {
   if (failures.length) throw new AggregateError(failures, "Native authentication acceptance failed");
   assert(receipt);
   try {
-    await Deno.stat(aliasRoot);
+    await stat(aliasRoot);
     throw new Error("Isolated fixture home remains after cleanup");
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    if (!isMissingPath(error)) throw error;
   }
   receipt.nativeProcessesSettled = true;
   receipt.isolatedHomeRemoved = true;
   receipt.cleanupComplete = true;
-  await Deno.writeTextFile(`${PROOF_ROOT}/receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
+  await writeFile(`${PROOF_ROOT}/receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
   console.log(JSON.stringify({ receiptPath: `${PROOF_ROOT}/receipt.json`, ...receipt }));
 };
 

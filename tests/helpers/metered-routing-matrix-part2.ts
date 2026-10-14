@@ -1,13 +1,14 @@
+import type { SequenceStep } from "./sequence.ts";
 // Metered paid fallback routing matrix, part 2 of 2, moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
-  CodexAuthPoolState,
+  type CodexAuthPoolState,
   DEBUG_ROUTING_KEY,
   DEFAULT_TEST_MODEL,
   Deferred,
-  OpenAiAtomicOp,
+  type OpenAiAtomicOp,
   TEXT_ENCODER,
   atomicCommitObservation,
   atomicWritesForKey,
@@ -36,11 +37,11 @@ import {
   withFetchMock,
 } from "./openai-compat-harness.ts";
 
-export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Promise<void> => {
-  const originalApiKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
+export const runMeteredPaidFallbackMatrixPart2 = async (step: SequenceStep): Promise<void> => {
+  const originalApiKey = process.env["METERED_API_KEY"];
+  process.env["METERED_API_KEY"] = "metered-test-key";
   try {
-    await t.step("direct Codex failure selects RemovedProvider without failed metadata", async () => {
+    await step("direct Codex failure selects RemovedProvider without failed metadata", async () => {
       const debugKey = keyToString(DEBUG_ROUTING_KEY);
       const previousDebugRouting = kvStore.get(debugKey);
       const originalInfo = console.info;
@@ -154,7 +155,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("Metered pre-header deadlines return an attributed 504 without retrying", async () => {
+    await step("Metered pre-header deadlines return an attributed 504 without retrying", async () => {
       const routeCases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -230,7 +231,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("missing Metered bodies are recorded as ambiguous across routes and stream modes", async () => {
+    await step("missing Metered bodies are recorded as ambiguous across routes and stream modes", async () => {
       const routeCases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -299,7 +300,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("premature EOF, malformed events, and reader errors remain billable and ambiguous", async () => {
+    await step("premature EOF, malformed events, and reader errors remain billable and ambiguous", async () => {
       const routeCases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -401,7 +402,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("downstream cancellation marks dispatched streaming requests cancelled", async () => {
+    await step("downstream cancellation marks dispatched streaming requests cancelled", async () => {
       for (const route of ["responses", "chat"] as const) {
         const keyId = `fallback-downstream-cancel-${route}`;
         const requestId = `request-${keyId}`;
@@ -479,7 +480,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("buffered post-header cancellation returns the OpenAI-shaped 499 contract", async () => {
+    await step("buffered post-header cancellation returns the OpenAI-shaped 499 contract", async () => {
       for (const route of ["responses", "chat"] as const) {
         const keyId = `fallback-buffered-cancel-${route}`;
         const requestId = `request-${keyId}`;
@@ -565,7 +566,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("validated terminals survive later client-body cancellation", async () => {
+    await step("validated terminals survive later client-body cancellation", async () => {
       for (const provider of ["chatgpt_codex", "metered"] as const) {
         for (const route of ["responses", "chat"] as const) {
           for (const terminalType of ["response.completed", "response.incomplete"] as const) {
@@ -575,7 +576,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("validated Codex terminals resolve each half-open probe once", async () => {
+    await step("validated Codex terminals resolve each half-open probe once", async () => {
       const authPoolKey = keyToString(["ubq_ai", "codex_auth"]);
       const routingKey = keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY);
       const previousAuthPool = kvStore.get(authPoolKey);
@@ -775,7 +776,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("gateway logs a preflight terminal once after body cancellation", async () => {
+    await step("gateway logs a preflight terminal once after body cancellation", async () => {
       const originalInfo = console.info;
       const logs: unknown[][] = [];
       const providerRequestId = "provider-terminal-log-once";
@@ -849,7 +850,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("buffered Chat preflight terminals record usage exactly once", async () => {
+    await step("buffered Chat preflight terminals record usage exactly once", async () => {
       for (const terminalType of ["response.completed", "response.incomplete"] as const) {
         const observedTerminalUsages: { completed: boolean; inputTokens: number | null }[] = [];
         const response = await withFetchMock(
@@ -916,7 +917,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("Chat streaming remains bounded until the downstream client pulls", async () => {
+    await step("Chat streaming remains bounded until the downstream client pulls", async () => {
       const keyId = "fallback-chat-backpressure";
       const requestId = `request-${keyId}`;
       seedPaidFallbackKey(keyId);
@@ -996,7 +997,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       assert.equal(upstreamCancelCount, 1);
     });
 
-    await t.step("Metered HTTP errors use OpenAI envelopes without changing routing", async (t) => {
+    await step("Metered HTTP errors use OpenAI envelopes without changing routing", async (step) => {
       const cases = [
         {
           name: "responses preserves an existing error envelope and 429",
@@ -1067,7 +1068,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       ] as const;
 
       for (const [index, testCase] of cases.entries()) {
-        await t.step(testCase.name, async () => {
+        await step(testCase.name, async () => {
           const keyId = `fallback-metered-normalized-${index}`;
           const requestId = `request-fallback-metered-normalized-${index}`;
           seedPaidFallbackKey(keyId);
@@ -1141,7 +1142,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("a ledger write failure after Metered accepts preserves the usable response", async () => {
+    await step("a ledger write failure after Metered accepts preserves the usable response", async () => {
       const keyId = "fallback-ledger-write-failure";
       const requestId = "request-fallback-ledger-write-failure";
       const providerRequestId = "metered-ledger-write-failure";
@@ -1198,7 +1199,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("reconciliation failures preserve chat and Responses results across stream modes", async () => {
+    await step("reconciliation failures preserve chat and Responses results across stream modes", async () => {
       const cases = [
         { route: "responses", stream: false },
         { route: "responses", stream: true },
@@ -1304,7 +1305,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
       }
     });
 
-    await t.step("reconciliation failure does not replace the original Metered error", async () => {
+    await step("reconciliation failure does not replace the original Metered error", async () => {
       const keyId = "fallback-error-reconcile-failure";
       const requestId = "request-fallback-error-reconcile-failure";
       const providerRequestId = "metered-error-reconcile-failure";
@@ -1377,7 +1378,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (t: Deno.TestContext): Pr
     kvStore.delete(keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY));
     resetCodexAccountRoutingForTest();
     resetCodexAuthCacheForTest();
-    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) delete process.env["METERED_API_KEY"];
+    else process.env["METERED_API_KEY"] = originalApiKey;
   }
 };
