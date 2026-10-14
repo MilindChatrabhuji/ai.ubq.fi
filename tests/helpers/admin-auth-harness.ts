@@ -2,7 +2,7 @@ import { setKvForTest } from "../../src/kv.ts";
 import type { Kv, KvEntryMaybe, KvKey, KvKeyPart, KvListOptions, KvListSelector } from "#kv";
 // Shared harness for this suite, moved out of the original test file.
 
-import { keyToJSON } from "@deno/kv-utils/json";
+import { keyToJson as keyToJSON } from "../../src/kv-conversion/profile-json.ts";
 
 const keyToString = (key: KvKey): string => JSON.stringify(key);
 const urlOf = (input: RequestInfo | URL): string => {
