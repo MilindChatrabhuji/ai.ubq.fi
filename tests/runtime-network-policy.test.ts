@@ -186,3 +186,93 @@ linuxTest("test network timeout settles the entire private process tree", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+const settlementSource = String.raw`
+import assert from "node:assert/strict";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+const config = JSON.parse(process.argv.at(-1));
+const { testNetworkArgv } = await import(config.module);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const signalGroup = (pid, signal) => {
+  try { process.kill(-pid, signal); return true; }
+  catch (error) { if (error.code === "ESRCH") return false; throw error; }
+};
+const members = (pid) => readdirSync("/proc").filter((name) => /^\d+$/.test(name)).flatMap((name) => {
+  try {
+    const stat = readFileSync("/proc/" + name + "/stat", "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return Number(fields[2]) === pid ? [{ pid: Number(name), state: fields[0], parent: Number(fields[1]) }] : [];
+  } catch { return []; }
+});
+const proof = [];
+for (const mode of ["normal", "timeout", "SIGTERM", "SIGKILL"]) {
+  const marker = join(config.root, config.depth + "-" + mode + ".txt");
+  const heartbeat = 'import { writeFileSync } from "node:fs"; setInterval(() => writeFileSync(process.argv.at(-1), String(Date.now())), 10);';
+  const source = 'import { existsSync } from "node:fs"; Bun.spawn([process.execPath, "--no-env-file", "--no-install", "-e", ' + JSON.stringify(heartbeat) + ', ' + JSON.stringify(marker) + '], { stdout: "ignore", stderr: "ignore" });' +
+    (mode === "normal" ? 'while (!existsSync(' + JSON.stringify(marker) + ')) await Bun.sleep(10); process.exit(7);' : 'await new Promise(() => {});');
+  const child = Bun.spawn(testNetworkArgv([process.execPath, "-e", source]), {
+    detached: true,
+    env: { PATH: "/usr/bin:/bin", HOME: config.home, TMPDIR: config.root, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+    stdout: "pipe", stderr: "pipe", ...(mode === "timeout" ? { timeout: 1000 } : {}),
+  });
+  const readyDeadline = Date.now() + 3000;
+  while (!existsSync(marker)) {
+    if (Date.now() >= readyDeadline) throw new Error("Heartbeat never started: " + mode);
+    await sleep(10);
+  }
+  if (mode === "SIGTERM" || mode === "SIGKILL") signalGroup(child.pid, mode);
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  assert.equal(stdout, "");
+  assert.equal(stderr, "");
+  mode === "normal" ? assert.equal(code, 7) : assert.notEqual(code, 0);
+  signalGroup(child.pid, "SIGKILL");
+  const settlementDeadline = Date.now() + 3000;
+  while (signalGroup(child.pid, 0)) {
+    if (Date.now() >= settlementDeadline) throw new Error("Process group did not settle: " + JSON.stringify({ mode, members: members(child.pid) }));
+    await sleep(20);
+  }
+  const stopped = readFileSync(marker, "utf8");
+  await sleep(100);
+  assert.equal(readFileSync(marker, "utf8"), stopped, "The descendant heartbeat must stop");
+  proof.push({ mode, code, groupAbsent: true, heartbeatStopped: true });
+}
+console.log(JSON.stringify({ depth: config.depth, proof }));
+`;
+
+for (const depth of ["direct", "nested"]) {
+  linuxTest(
+    "test network reaps every process group after normal exit, timeout, SIGTERM and SIGKILL: " + depth,
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "m22-network-settlement-"));
+      try {
+        const home = join(root, "home");
+        await mkdir(home);
+        const source = join(root, "settlement.ts");
+        await writeFile(source, settlementSource);
+        const config = { root, home, depth, module: new URL("../scripts/test-network.ts", import.meta.url).href };
+        const command = [process.execPath, "--no-env-file", "--no-install", source, JSON.stringify(config)];
+        const child = Bun.spawn(depth === "nested" ? testNetworkArgv(command) : command, {
+          env: sparseEnv(root),
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 15_000,
+        });
+        const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+        expect(stderr).toBe("");
+        expect(code).toBe(0);
+        const receipt = JSON.parse(stdout.trim()) as { depth: string; proof: { groupAbsent: boolean; heartbeatStopped: boolean }[] };
+        expect(receipt.depth).toBe(depth);
+        expect(receipt.proof).toHaveLength(4);
+        for (const result of receipt.proof) {
+          expect(result.groupAbsent).toBe(true);
+          expect(result.heartbeatStopped).toBe(true);
+        }
+        console.log(stdout.trim());
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    20_000
+  );
+}
