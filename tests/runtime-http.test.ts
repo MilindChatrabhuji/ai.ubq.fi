@@ -400,3 +400,34 @@ test("HTTP unfinished POST disconnect interrupts input and rejects delivery", as
     await server.shutdown();
   }
 }, 4000);
+
+test("HTTP unread POST refusal completes its response and server shutdown", async () => {
+  let phase = "request";
+  const observed = deferred<{ completed: Promise<void>; signal: AbortSignal }>();
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, async (request, info) => {
+    if (new URL(request.url).pathname === "/accept") return request.text().then((body) => new Response(body));
+    observed.resolve({ completed: info.completed, signal: request.signal });
+    await Bun.sleep(25);
+    return new Response("content type refused", { status: 400 });
+  });
+  const address = await server.ready;
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/refuse`, { method: "POST", body: "not multipart" });
+    phase = "response";
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("content type refused");
+    phase = "second request";
+    const accepted = await fetch(`http://127.0.0.1:${address.port}/accept`, { method: "POST", body: "second request body" });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.text()).toBe("second request body");
+    const receipt = await observed.promise;
+    await receipt.completed;
+    phase = "shutdown";
+    expect(receipt.signal.aborted).toBe(false);
+    await server.shutdown();
+    phase = "settled";
+  } finally {
+    if (phase !== "settled") console.error(`unread POST stopped at ${phase}`);
+    await server.shutdown();
+  }
+}, 2500);
