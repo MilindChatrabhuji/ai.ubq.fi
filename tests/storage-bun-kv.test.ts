@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { assertPortableKvKeyBytes, BUN_KV_CODEC, KvU64, openKv, type Kv } from "#kv";
+import { assertPortableKvKeyBytes, BUN_KV_CODEC, KvU64, openKv, type Kv, type KvListOptions, type KvListSelector } from "#kv";
 import { getKv, initializeKv, setKvForTest } from "../src/kv.ts";
 import { guardNativeKv } from "../src/storage/native-kv.ts";
 
@@ -59,6 +59,41 @@ test("atomic compare-and-set refuses stale checks without partial writes", async
   expect(await kv.atomic().check(absent).set(["quota"], { reserved: 2 }).set(["partial"], true).commit()).toEqual({ ok: false });
   expect((await kv.get(["partial"])).versionstamp).toBeNull();
   expect(quota.value).toEqual({ reserved: 1 });
+});
+
+test("native facade permits captured list and atomic instance overrides without recursion", async () => {
+  const kv = await openFixture();
+  await kv.set(["facade"], "root");
+  await kv.set(["facade", 1], "child");
+  const originalList = kv.list;
+  const originalAtomic = kv.atomic;
+  let lists = 0;
+  let atomics = 0;
+  const listOverride: Kv["list"] = <T>(selector: KvListSelector, options?: KvListOptions) => {
+    lists += 1;
+    return originalList<T>(selector, options);
+  };
+  const atomicOverride: Kv["atomic"] = () => {
+    atomics += 1;
+    return originalAtomic();
+  };
+  kv.list = listOverride;
+  kv.atomic = atomicOverride;
+  expect(kv.list).toBe(listOverride);
+  expect(kv.atomic).toBe(atomicOverride);
+  expect((await Array.fromAsync(kv.list({ prefix: ["facade"] }, { limit: 1 }))).map((row) => row.value)).toEqual(["child"]);
+  expect(lists).toBe(1);
+  const absent = await kv.get(["facade-claim"]);
+  expect((await kv.atomic().check(absent).set(["facade-claim"], "owned").commit()).ok).toBe(true);
+  expect(await kv.atomic().check(absent).set(["facade-stale"], true).commit()).toEqual({ ok: false });
+  expect((await kv.get(["facade-stale"])).versionstamp).toBeNull();
+  await kv.set(["facade-wrong-sum"], 3n);
+  await expect(kv.atomic().set(["facade-partial"], true).sum(["facade-wrong-sum"], 1n).commit()).rejects.toThrow("KvU64");
+  expect((await kv.get(["facade-partial"])).versionstamp).toBeNull();
+  const error = new Error("fixture", { cause: "unsupported" });
+  await expect(kv.atomic().set(["facade-value-partial"], true).set(["facade-value"], error).commit()).rejects.toThrow("Error.cause");
+  expect((await kv.get(["facade-value-partial"])).versionstamp).toBeNull();
+  expect(atomics).toBe(4);
 });
 
 test("native TTL retains its absolute deadline and expires across restart", async () => {

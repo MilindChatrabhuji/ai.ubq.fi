@@ -119,16 +119,35 @@ const checkedList = <T>(kv: Kv, selector: KvListSelector, options: KvListOptions
 };
 
 /** Preserve the native API while guarding arithmetic rollback and SQLite contention. */
-export const guardNativeKv = (kv: Kv): Kv =>
-  new Proxy(kv, {
-    get(target, property) {
-      if (property === "atomic") return () => checkedAtomic(target);
-      if (property === "set") return (key: KvKey, value: unknown, options?: { expireIn?: number }) => checkedAtomic(target).set(key, value, options).commit();
-      if (property === "delete") return async (key: KvKey) => void (await checkedAtomic(target).delete(key).commit());
-      if (property === "get") return <T>(...args: Parameters<Kv["get"]>) => retrySqliteBusy(() => target.get<T>(...args));
-      if (property === "getMany") return (...args: Parameters<Kv["getMany"]>) => retrySqliteBusy(() => target.getMany(...args));
-      if (property === "list") return <T>(selector: KvListSelector, options?: KvListOptions) => checkedList<T>(target, selector, options);
-      const value: unknown = Reflect.get(target, property);
-      return typeof value === "function" ? value.bind(target) : value;
+export const guardNativeKv = (kv: Kv): Kv => {
+  // Capture methods before a caller can instrument the writable public facade.
+  const native: Kv = {
+    get: kv.get.bind(kv),
+    getMany: kv.getMany.bind(kv),
+    set: kv.set.bind(kv),
+    delete: kv.delete.bind(kv),
+    list: kv.list.bind(kv),
+    atomic: kv.atomic.bind(kv),
+    enqueue: kv.enqueue.bind(kv),
+    listenQueue: kv.listenQueue.bind(kv),
+    watch: kv.watch.bind(kv),
+    close: kv.close.bind(kv),
+    [Symbol.dispose]: kv[Symbol.dispose].bind(kv),
+  };
+  return {
+    ...native,
+    atomic: () => checkedAtomic(native),
+    set: async (key, value, options) => {
+      const result = await checkedAtomic(native).set(key, value, options).commit();
+      if (!result.ok) throw new Error("Unconditional KV set failed");
+      return result;
     },
-  });
+    delete: async (key) => {
+      if (!(await checkedAtomic(native).delete(key).commit()).ok) throw new Error("Unconditional KV delete failed");
+    },
+    get: <T>(...args: Parameters<Kv["get"]>) => retrySqliteBusy(() => native.get<T>(...args)),
+    getMany: <T extends readonly unknown[]>(keys: readonly [...{ [K in keyof T]: KvKey }], options?: Parameters<Kv["getMany"]>[1]) =>
+      retrySqliteBusy(() => native.getMany<T>(keys, options)),
+    list: <T>(selector: KvListSelector, options?: KvListOptions) => checkedList<T>(native, selector, options),
+  };
+};
