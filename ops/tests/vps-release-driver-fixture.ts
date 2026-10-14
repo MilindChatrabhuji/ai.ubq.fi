@@ -34,6 +34,9 @@ export class FakeVpsSystem {
   failDaemonReload = false;
   failPublic = false;
   publicFailureRevision: string | null = null;
+  listenerFailures = new Map<string, number>();
+  restartFailures = 0;
+  healthCalls = 0;
   calls: string[] = [];
   settlementAllowed = true;
   settlementProof: ((receipt: VpsReceipt, input: import("../vps-release-contract.ts").VpsSettlement) => Promise<boolean>) | null = null;
@@ -43,14 +46,26 @@ export class FakeVpsSystem {
     this.calls.push(args.join(" "));
     if (args.includes("show")) return "42";
     if (args.includes("daemon-reload") && this.failDaemonReload) throw new Error("fake daemon reload refusal");
-    if (args.includes("restart")) this.serviceSha = (await readlink(`${this._root}/.data/current`)).split("/").at(-1) ?? "";
+    if (args.includes("restart")) {
+      if (this.restartFailures > 0) {
+        this.restartFailures--;
+        throw new Error("fake interruption before restart");
+      }
+      this.serviceSha = (await readlink(`${this._root}/.data/current`)).split("/").at(-1) ?? "";
+    }
     return "";
   };
   fetch: typeof fetch = createFetchMock((input) => {
+    this.healthCalls++;
     let url: string;
     if (typeof input === "string") url = input;
     else if (input instanceof URL) url = input.href;
     else url = input.url;
+    const failures = this.listenerFailures.get(this.serviceSha) ?? 0;
+    if (!url.startsWith("https:") && failures > 0) {
+      this.listenerFailures.set(this.serviceSha, failures - 1);
+      return Promise.reject(new TypeError("fake listener is still starting"));
+    }
     const revision =
       url.startsWith("https:") && this.failPublic && (this.publicFailureRevision === null || this.publicFailureRevision === this.serviceSha)
         ? "f".repeat(40)

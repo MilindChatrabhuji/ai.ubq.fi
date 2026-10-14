@@ -83,6 +83,7 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
           "ops/tests/vps-release.test.ts",
           "ops/tests/release-retention.test.ts",
           "ops/tests/vps-release-driver.test.ts",
+          "ops/tests/vps-release-recovery.test.ts",
           "ops/tests/vps-release-metrics.test.ts",
         ]),
       ];

@@ -119,8 +119,8 @@ test("VPS discovery includes both upstream additions exactly once without prepar
   assert.equal(result.code, 0, result.output);
   const groups = JSON.parse(result.output) as { files: string[] }[];
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].files.length, 4);
-  for (const name of ["vps-release-driver.test.ts", "vps-release-metrics.test.ts"]) {
+  assert.equal(groups[0].files.length, 5);
+  for (const name of ["vps-release-driver.test.ts", "vps-release-recovery.test.ts", "vps-release-metrics.test.ts"]) {
     assert.equal(groups[0].files.filter((path) => path.endsWith(name)).length, 1);
     const focused = await run([process.execPath, "--no-env-file", "--no-install", join(ROOT, "scripts/test-runner.ts"), "vps", "ops/tests/" + name, "--list"]);
     assert.equal(focused.code, 0, focused.output);

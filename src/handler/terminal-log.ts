@@ -28,6 +28,9 @@ import {
 } from "../sentinel/replay-capture.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "../sentinel/incident-outbox.ts";
 
+/** Whether the request passed the request_accepted logging boundary. */
+export type TerminalAdmissionStage = "pre_admission" | "accepted";
+
 const logTerminalRequest = async (
   input: Readonly<{
     route: string;
@@ -37,6 +40,7 @@ const logTerminalRequest = async (
     downstreamDrainedAtMonotonicMs?: number;
     deliveryOutcome: DeliveryOutcome;
     requestId: string;
+    admissionStage?: TerminalAdmissionStage;
     recordCacheAnalytics?: typeof recordPromptCacheAnalytics;
     recordTelemetry?: typeof recordPromptCacheTelemetry;
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
@@ -71,6 +75,7 @@ const logTerminalRequest = async (
     provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
     latency_ms: latencyMs,
     admission_wait_ms: input.admissionWaitMs ?? null,
+    admission_stage: input.admissionStage ?? null,
     first_provider_dispatch_ms: telemetry?.firstProviderDispatchMs ?? null,
     first_provider_headers_ms: telemetry?.firstProviderHeadersMs ?? null,
     first_codex_dispatch_ms: telemetry?.firstCodexDispatchMs ?? null,
@@ -257,6 +262,7 @@ export const withTerminalRequestLog = (
     telemetryResponse?: Response;
     startedAtMonotonicMs: number;
     requestId: string;
+    admissionStage?: TerminalAdmissionStage;
     onTerminal?: (outcome: "completed" | "incomplete", reason?: string) => Promise<void>;
     /**
      * Runs exactly once, when the wrapped response's body and delivery have
@@ -637,6 +643,7 @@ const withRejectionTerminalLog = (
   route: string | null,
   input: Readonly<{
     requestId: string;
+    admissionStage: TerminalAdmissionStage;
     startedAtMonotonicMs: number;
     delivery?: RequestDeliveryInfo;
     onSettled?: () => void;
@@ -651,6 +658,7 @@ const withRejectionTerminalLog = (
     route,
     startedAtMonotonicMs: input.startedAtMonotonicMs,
     requestId: input.requestId,
+    admissionStage: input.admissionStage,
     deliveryCompleted: input.delivery?.completed,
     deliverySignal: input.delivery?.downstreamSignal,
     onSettled: input.onSettled,
