@@ -72,8 +72,32 @@ jobs:
       - name: Actual macOS Seatbelt acceptance
         run: bun --no-env-file --no-install ops/verify-mac-sandbox.ts
 
+  darwin-native:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - name: Frozen dependencies
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+      - name: Prepare checksum-pinned ephemeral native toolchain
+        run: bash ops/prepare-ci-native-toolchain.sh
+      - name: Build and bind the Darwin native KV artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun --no-env-file --no-install -e 'import {join,resolve} from "node:path"; import {buildNativeKv} from "./scripts/build-native-kv.ts"; const workspace=process.env.RUNNER_TEMP; if(!workspace) throw new Error("Missing runner temporary directory"); const artifactDirectory=join(workspace,"uos-native-kv/artifact"); const buildReceipt=await buildNativeKv(artifactDirectory,{toolchainDirectory:join(workspace,"uos-native-kv/toolchain/bin")}); console.log(JSON.stringify({artifactDirectory,expectedProvenanceSha256:buildReceipt.provenanceSha256,inputsManifest:resolve("tools/native-kv/inputs.json"),buildReceipt}));' > "$RUNNER_TEMP/uos-native-kv/receipt.json"
+      - name: Prove Darwin native loading, startup, confinement and quality gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
+
   verify-artifact:
-    needs: [validate, mac-containment]
+    needs: [validate, mac-containment, darwin-native]
     runs-on: ubuntu-24.04-arm
     permissions:
       actions: read
