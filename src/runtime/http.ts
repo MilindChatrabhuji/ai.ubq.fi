@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { Readable } from "node:stream";
+import { createIncomingBody, type IncomingBody } from "./http-body.ts";
 import { createRequestTaskDrain } from "./http-tasks.ts";
 import { createWebSocketUpgrades, type ServeUpgradeHandler } from "./http-upgrade.ts";
 
@@ -29,6 +29,7 @@ export type HttpServer = Readonly<{
 }>;
 
 const interrupted = (): Error => new Error("The client disconnected before its response was sent");
+const requestBodies = new WeakMap<Request, IncomingBody>();
 
 const incomingHeaders = (incoming: IncomingMessage): Headers => {
   const headers = new Headers();
@@ -45,13 +46,20 @@ const incomingRequest = (incoming: IncomingMessage, signal: AbortSignal): Reques
   const host = incoming.headers.host ?? "localhost";
   const method = incoming.method ?? "GET";
   const init: RequestInit & { duplex?: "half" } = { method, headers: incomingHeaders(incoming), signal };
+  let body: IncomingBody | null = null;
   if (method !== "GET" && method !== "HEAD") {
-    // node:stream declares a separate Web Stream type; Bun returns the standard
-    // runtime ReadableStream of incoming byte buffers at this boundary.
-    init.body = Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>;
+    body = createIncomingBody(incoming, signal);
+    init.body = body.stream;
     init.duplex = "half";
   }
-  return new Request(new URL(incoming.url ?? "/", `http://${host}`), init);
+  try {
+    const request = new Request(new URL(incoming.url ?? "/", `http://${host}`), init);
+    if (body) requestBodies.set(request, body);
+    return request;
+  } catch (error) {
+    body?.dispose();
+    throw error;
+  }
 };
 
 const responseHeaders = (response: Response, outgoing: ServerResponse): void => {
@@ -95,6 +103,12 @@ const sendResponse = async (request: Request, response: Response, outgoing: Serv
     return;
   }
   responseHeaders(response, outgoing);
+  if (requestBodies.get(request)?.cancelled) {
+    // The rejected upload must not hold its response or be reused as a new
+    // keep-alive request. Close only after the response has been written.
+    outgoing.shouldKeepAlive = false;
+    outgoing.setHeader("connection", "close");
+  }
   if (!response.body || request.method === "HEAD" || response.status === 204 || response.status === 205 || response.status === 304) {
     void response.body?.cancel().catch(() => {});
     outgoing.end();
@@ -178,8 +192,9 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
       resolveCompleted();
     });
     const task = (async (): Promise<void> => {
+      let request: Request | null = null;
       try {
-        const request = incomingRequest(incoming, controller.signal);
+        request = incomingRequest(incoming, controller.signal);
         const response = await handler(request, {
           remoteAddr: { transport: "tcp", hostname: incoming.socket.remoteAddress ?? "", port: incoming.socket.remotePort ?? 0 },
           completed,
@@ -196,6 +211,10 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
         }
       }
       await completed.catch(() => {});
+      if (request) {
+        requestBodies.get(request)?.dispose();
+        requestBodies.delete(request);
+      }
       await drainTasks();
       incoming.removeListener("aborted", aborted);
       incoming.removeListener("error", fail);
