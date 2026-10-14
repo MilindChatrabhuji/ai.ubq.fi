@@ -153,7 +153,9 @@ Deno.test("terminal admission: accepted cancellation remains in the real produce
           start,
           performance.now()
         ),
-      () => caller.abort(new DOMException("fixture accepted cancellation", "AbortError"))
+      () => {
+        caller.abort(new DOMException("fixture accepted cancellation", "AbortError"));
+      }
     );
     assert.equal(response.status, 499);
     assert.equal(dispatched, 0);
