@@ -1,9 +1,12 @@
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { testNetworkArgv } from "./test-network.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let interrupted = false;
+const MAX_FILE_WALL_TIME_MS = 600_000;
+const KILL_GRACE_MS = 3000;
 const PROVIDER_ENV = [
   "CEREBRAS_API_KEY",
   "DEEPSEEK_API_KEY",
@@ -94,7 +97,7 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
         group("sentinel-consumer", ["tests/sentinel-replay-consumer.test.ts"], ["DENO_DIR", "DENO_NO_UPDATE_CHECK", "PATH", "HOME"]),
       ];
     case "benchmark":
-      return [group("benchmark", filesBelow("benchmarks/tests"))];
+      return [group("benchmark", [...filesBelow("benchmarks/tests"), ...filesBelow("benchmarks/baselines/tests")])];
     case "quality":
       return [quality()];
     case "files":
@@ -131,7 +134,7 @@ const checkedPath = (path: string): string => {
   return absolute;
 };
 const childEnvironment = (selected: Group): Record<string, string> => {
-  const environment: Record<string, string> = { UOS_TEST_PROFILE: selected.profile };
+  const environment: Record<string, string> = { UOS_TEST_PROFILE: selected.profile, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
   // Keep only transport necessities and this segment's existing named inputs.
   for (const name of new Set(["PATH", "TMPDIR", "SYSTEMROOT", ...selected.environment])) {
     const value = process.env[name];
@@ -139,48 +142,86 @@ const childEnvironment = (selected: Group): Record<string, string> => {
   }
   return environment;
 };
-const runFile = async (path: string, selected: Group): Promise<number> => {
+const signalGroup = (pid: number, signal: NodeJS.Signals | 0): boolean => {
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+    throw error;
+  }
+};
+const settleGroup = async (pid: number): Promise<void> => {
+  signalGroup(pid, "SIGKILL");
+  const deadline = Date.now() + KILL_GRACE_MS;
+  while (signalGroup(pid, 0)) {
+    if (Date.now() >= deadline) throw new Error(`Test child process group ${pid} did not settle`);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+  }
+};
+const runFile = async (path: string, selected: Group, wallTimeMs: number): Promise<number> => {
   if (interrupted) throw new Error("Test runner interrupted; no further files were started");
-  const child = Bun.spawn([process.execPath, "--no-env-file", "test", "--no-orphans", "--max-concurrency=1", "--timeout=300000", path], {
+  const argv = testNetworkArgv([process.execPath, "--no-env-file", "--no-install", "test", "--no-orphans", "--max-concurrency=1", "--timeout=300000", path]);
+  const child = Bun.spawn(argv, {
     cwd: ROOT,
+    detached: true,
     env: childEnvironment(selected),
     stdin: "ignore",
     stdout: "inherit",
     stderr: "inherit",
   });
+  const control = { timedOut: false };
   let forceTimer: ReturnType<typeof setTimeout> | undefined;
   const terminate = () => {
-    if (child.exitCode !== null) return;
-    child.kill("SIGTERM");
+    signalGroup(child.pid, "SIGTERM");
     forceTimer = setTimeout(() => {
-      if (child.exitCode === null) child.kill("SIGKILL");
-    }, 3000);
+      signalGroup(child.pid, "SIGKILL");
+    }, KILL_GRACE_MS);
   };
   const interrupt = () => {
     interrupted = true;
     terminate();
   };
-  const timer = setTimeout(terminate, 600_000);
+  const timer = setTimeout(() => {
+    control.timedOut = true;
+    console.error(`Wall-time limit exceeded for ${path} (${wallTimeMs}ms)`);
+    terminate();
+  }, wallTimeMs);
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   try {
-    return await child.exited;
+    const code = await child.exited;
+    return control.timedOut ? 124 : code;
   } finally {
     clearTimeout(timer);
     if (forceTimer !== undefined) clearTimeout(forceTimer);
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", interrupt);
+    await settleGroup(child.pid);
   }
+};
+const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: boolean; wallTimeMs: number }> => {
+  const files: string[] = [];
+  let list = false;
+  let wallTimeMs = MAX_FILE_WALL_TIME_MS;
+  for (const arg of args) {
+    if (arg === "--list") list = true;
+    else if (arg.startsWith("--file-timeout-ms=")) {
+      wallTimeMs = Number(arg.slice("--file-timeout-ms=".length));
+      if (!Number.isInteger(wallTimeMs) || wallTimeMs <= 0 || wallTimeMs > MAX_FILE_WALL_TIME_MS) {
+        throw new Error(`--file-timeout-ms must be an integer from 1 through ${MAX_FILE_WALL_TIME_MS}`);
+      }
+    } else files.push(arg);
+  }
+  return { files, list, wallTimeMs };
 };
 const main = async (): Promise<void> => {
   if (Bun.version !== "1.4.0") throw new Error("The test runner requires Bun 1.4.0");
   if (!existsSync(join(ROOT, "bun.lock"))) throw new Error("Restore bun.lock before running tests");
   const [segment = "main", ...args] = process.argv.slice(2);
-  const selected = groupsFor(
-    segment,
-    args.filter((arg) => arg !== "--list")
-  );
-  if (args.includes("--list")) {
+  const options = invocation(args);
+  const selected = groupsFor(segment, options.files);
+  if (options.list) {
     console.log(JSON.stringify(selected, null, 2));
     return;
   }
@@ -190,7 +231,7 @@ const main = async (): Promise<void> => {
     if (item.files.length === 0) throw new Error(`Test segment ${item.profile} contains no files`);
     for (const file of item.files) {
       console.log(`\n==> ${item.profile}: ${file}`);
-      const code = await runFile(checkedPath(file), item);
+      const code = await runFile(checkedPath(file), item, options.wallTimeMs);
       files++;
       if (code !== 0) {
         failures++;
