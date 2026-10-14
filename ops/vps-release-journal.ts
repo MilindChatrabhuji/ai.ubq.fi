@@ -118,6 +118,20 @@ export class VpsOperationJournal {
       for (const key of ["binding", "controllerSha", "driverSha256", "candidate", "prior", "createdAt"] as const)
         if (canonicalVps(receipt[key]) !== canonicalVps(previous[key])) return unavailable();
       if (terminalReceipt(previous)) return unavailable();
+      if (previous.intent !== null && receipt.intent === null) return unavailable();
+      if (
+        receipt.phase === "failed" &&
+        receipt.intent === null &&
+        (previous.phase !== "prepared" ||
+          previous.sequence !== 1 ||
+          previous.intent !== null ||
+          previous.loopback !== null ||
+          previous.public !== null ||
+          previous.restoration !== null ||
+          previous.settlement !== null ||
+          previous.error !== null)
+      )
+        return unavailable();
     } else if (receipt.sequence !== 1 || receipt.phase !== "prepared") return unavailable();
     // Publish the conservative retention hold first; a crash can only retain too much.
     const pins = await readVpsPins(this.pinsPath);

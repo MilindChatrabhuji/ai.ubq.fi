@@ -288,12 +288,21 @@ export function parseVpsReceipt(value: unknown): VpsReceipt {
       digest: sha256(item.digest),
     };
   }
-  const phase = object.phase as VpsPhase;
-  if (phase !== "prepared" && intent === null) return invalidVps();
+  const phase = object.phase as VpsPhase,
+    sequence = count(object.sequence, 1),
+    error = object.error === null ? null : boundedText(object.error, 128);
+  const failedBeforePromotion =
+    phase === "failed" &&
+    sequence === 2 &&
+    settlement?.disposition === "failed" &&
+    error === "acceptance_insufficient" &&
+    loopback === null &&
+    publicHealth === null &&
+    restoration === null;
+  if (phase !== "prepared" && intent === null && !failedBeforePromotion) return invalidVps();
   if (phase === "accepted" && (!loopback || !publicHealth || !isHealthyVps(loopback) || !isHealthyVps(publicHealth) || settlement?.disposition !== "accepted"))
     return invalidVps();
   if (phase === "rolled_back" && restoration === null) return invalidVps();
-  const error = object.error === null ? null : boundedText(object.error, 128);
   if (phase === "failed" && error === null) return invalidVps();
   return {
     schema: 1,
@@ -306,7 +315,7 @@ export function parseVpsReceipt(value: unknown): VpsReceipt {
     candidate,
     prior,
     phase,
-    sequence: count(object.sequence, 1),
+    sequence,
     createdAt,
     updatedAt,
     intent,
