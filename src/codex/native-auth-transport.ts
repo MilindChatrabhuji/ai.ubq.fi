@@ -1,8 +1,8 @@
+import { loadWebSocketModule } from "#http";
 import { readFile, realpath } from "node:fs/promises";
 import type WebSocket from "ws";
 import { getString, isRecord } from "../utils.ts";
 
-const WS_PACKAGE = "ws";
 const CALL_TIMEOUT_MS = 12_000;
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
@@ -49,7 +49,7 @@ const readNativeAccountId = async (codexHome: string): Promise<string | null> =>
 
 /** Fixed auth capability; the supervisor's read-only transport stays unchanged. */
 export const requestNativeCodexRefresh = async (codexHome: string, expectedEmail: string, expectedAccountId: string): Promise<void> => {
-  const module: unknown = await import(WS_PACKAGE);
+  const module: unknown = await loadWebSocketModule();
   const constructor = isRecord(module) ? module.default : null;
   if (typeof constructor !== "function") throw new Error("Native Codex socket transport unavailable");
   const NATIVE_SOCKET = constructor as SocketConstructor;
