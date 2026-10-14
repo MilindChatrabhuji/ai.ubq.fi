@@ -20,6 +20,7 @@ run "Bun test (immutable releases and retention)" bun --no-env-file scripts/test
 run "Bun test (main and isolated measurement/hook/Mac fixtures)" bun --no-env-file scripts/test-runner.ts main
 run "Bun test (sentinel local)" bun --no-env-file scripts/test-runner.ts sentinel
 run "Bun test (quality contracts)" bun --no-env-file scripts/test-runner.ts quality
+run "Bun test (benchmark harness and baselines)" bun --no-env-file scripts/test-runner.ts benchmark
 printf '\n'
 if [ "$fail" -ne 0 ]; then echo "verify: FAILED"; exit 1; fi
 echo "verify: OK"
