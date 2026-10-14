@@ -42,14 +42,18 @@ export const createIncomingBody = (incoming: IncomingMessage, signal: AbortSigna
           stop();
           controller.error(reason);
         };
-        const abort = (): void => failed(signal.reason);
+        const abort = (): void => {
+          failed(signal.reason);
+        };
         cleanup = (): void => {
           incoming.removeListener("data", data);
           incoming.removeListener("end", end);
           incoming.removeListener("error", failed);
           signal.removeEventListener("abort", abort);
         };
-        dispose = (): void => failed(new Error("The HTTP response settled before the request body was consumed"));
+        dispose = (): void => {
+          failed(new Error("The HTTP response settled before the request body was consumed"));
+        };
         incoming.pause();
         incoming.on("data", data);
         incoming.once("end", end);
@@ -78,6 +82,8 @@ export const createIncomingBody = (incoming: IncomingMessage, signal: AbortSigna
     get consumed() {
       return consumed;
     },
-    dispose: () => dispose(),
+    dispose: () => {
+      dispose();
+    },
   };
 };

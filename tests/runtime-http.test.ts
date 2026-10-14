@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { connect } from "node:net";
 import { serveHttp, trackRequestTask } from "#http";
 import WebSocket from "ws";
@@ -50,9 +51,9 @@ test("HTTP sends fragmented streams, preserves cookies and observes transport co
 });
 
 test("HTTP disconnect rejects delivery and cancels a pending response pull", async () => {
-  const cancelled = deferred<void>();
+  const cancelled = deferred<undefined>();
   const receipt = deferred<{ completed: Promise<void>; signal: AbortSignal }>();
-  const pending = deferred<void>();
+  const pending = deferred<undefined>();
   const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, (request, info) => {
     receipt.resolve({ completed: info.completed, signal: request.signal });
     return new Response(
@@ -64,7 +65,7 @@ test("HTTP disconnect rejects delivery and cancels a pending response pull", asy
           await pending.promise;
         },
         cancel() {
-          cancelled.resolve();
+          cancelled.resolve(undefined);
         },
       }),
       { headers: { "content-type": "text/event-stream" } }
@@ -72,19 +73,21 @@ test("HTTP disconnect rejects delivery and cancels a pending response pull", asy
   });
   try {
     const address = await server.ready;
-    const closed = deferred<void>();
+    const closed = deferred<undefined>();
     const socket = connect({ host: "127.0.0.1", port: address.port });
     socket.once("connect", () => socket.write("GET /disconnect HTTP/1.1\r\nHost: localhost\r\n\r\n"));
     socket.once("data", () => socket.destroy());
     socket.once("error", () => {});
-    socket.once("close", () => closed.resolve());
+    socket.once("close", () => {
+      closed.resolve(undefined);
+    });
     await closed.promise;
     await cancelled.promise;
     const observation = await receipt.promise;
-    await expect(observation.completed).rejects.toThrow("disconnected");
+    await assert.rejects(observation.completed, /disconnected/);
     expect(observation.signal.aborted).toBe(true);
   } finally {
-    pending.resolve();
+    pending.resolve(undefined);
     await server.shutdown();
   }
 }, 5000);
@@ -113,8 +116,8 @@ test("HTTP retains POST bodies and strips HEAD and bodyless response bodies", as
 });
 
 test("HTTP gracefully drains an active stream before finished resolves", async () => {
-  const release = deferred<void>();
-  const started = deferred<void>();
+  const release = deferred<undefined>();
+  const started = deferred<undefined>();
   const server = serveHttp(
     { hostname: "127.0.0.1", port: 0 },
     () =>
@@ -122,7 +125,7 @@ test("HTTP gracefully drains an active stream before finished resolves", async (
         new ReadableStream<Uint8Array>({
           async start(controller) {
             controller.enqueue(new TextEncoder().encode("first"));
-            started.resolve();
+            started.resolve(undefined);
             await release.promise;
             controller.enqueue(new TextEncoder().encode("last"));
             controller.close();
@@ -140,24 +143,24 @@ test("HTTP gracefully drains an active stream before finished resolves", async (
     });
     await Bun.sleep(20);
     expect(stopped).toBe(false);
-    release.resolve();
+    release.resolve(undefined);
     expect(await response.text()).toBe("firstlast");
     await shutdown;
     expect(stopped).toBe(true);
   } finally {
-    release.resolve();
+    release.resolve(undefined);
     await server.shutdown();
   }
 });
 
 test("HTTP shutdown waits for delivery-triggered durable application writes", async () => {
-  const writeStarted = deferred<void>();
-  const releaseWrite = deferred<void>();
+  const writeStarted = deferred<undefined>();
+  const releaseWrite = deferred<undefined>();
   const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, (_request, info) => {
     trackRequestTask(
       info.completed,
       info.completed.then(async () => {
-        writeStarted.resolve();
+        writeStarted.resolve(undefined);
         await releaseWrite.promise;
       })
     );
@@ -173,11 +176,11 @@ test("HTTP shutdown waits for delivery-triggered durable application writes", as
     });
     await Bun.sleep(25);
     expect(stopped).toBe(false);
-    releaseWrite.resolve();
+    releaseWrite.resolve(undefined);
     await shutdown;
     expect(stopped).toBe(true);
   } finally {
-    releaseWrite.resolve();
+    releaseWrite.resolve(undefined);
     await server.shutdown();
   }
 });
@@ -206,7 +209,7 @@ test("HTTP quiet streams survive Bun's native ten-second default idle timeout", 
 }, 15_000);
 
 test("WebSocket authorization refuses before upgrade and preserves real bidirectional frames", async () => {
-  const accepted = deferred<void>();
+  const accepted = deferred<undefined>();
   const server = serveHttp(
     {
       hostname: "127.0.0.1",
@@ -217,8 +220,10 @@ test("WebSocket authorization refuses before upgrade and preserves real bidirect
         return {
           maxPayloadBytes: 1024,
           accept(socket) {
-            socket.on("message", (bytes) => socket.send(bytes));
-            accepted.resolve();
+            socket.on("message", (bytes) => {
+              socket.send(bytes);
+            });
+            accepted.resolve(undefined);
           },
         };
       },
@@ -242,13 +247,23 @@ test("WebSocket authorization refuses before upgrade and preserves real bidirect
     const echoed = deferred<string>();
     const client = new WebSocket(origin, { headers: { authorization: "Bearer fixture-token" } });
     clients.push(client);
-    client.once("open", () => client.send("fixture frame"));
-    client.once("message", (bytes) => echoed.resolve(String(bytes)));
-    client.once("error", (error) => echoed.reject(error));
+    client.once("open", () => {
+      client.send("fixture frame");
+    });
+    client.once("message", (bytes) => {
+      const buffer = Array.isArray(bytes) ? Buffer.concat(bytes) : bytes;
+      const value = buffer instanceof ArrayBuffer ? Buffer.from(buffer) : buffer;
+      echoed.resolve(value.toString());
+    });
+    client.once("error", (error) => {
+      echoed.reject(error);
+    });
     await accepted.promise;
     expect(await echoed.promise).toBe("fixture frame");
     const closed = deferred<number>();
-    client.once("close", (code) => closed.resolve(code));
+    client.once("close", (code) => {
+      closed.resolve(code);
+    });
     await server.shutdown();
     expect(await closed.promise).toBe(1001);
   } finally {
@@ -282,12 +297,22 @@ test("WebSocket hard payload limit preserves the route's failure close contract"
   try {
     const address = await server.ready;
     const closed = deferred<{ code: number; reason: string }>();
-    const timeout = setTimeout(() => closed.reject(new Error(`Payload fixture did not close: messages=${messages}, readyState=${client?.readyState}`)), 1000);
-    void closed.promise.finally(() => clearTimeout(timeout)).catch(() => {});
+    const timeout = setTimeout(() => {
+      closed.reject(new Error(`Payload fixture did not close: messages=${messages}, readyState=${client?.readyState}`));
+    }, 1000);
+    void closed.promise
+      .finally(() => {
+        clearTimeout(timeout);
+      })
+      .catch(() => {});
     client = new WebSocket(`ws://127.0.0.1:${address.port}`);
     client.once("open", () => client?.send(new Uint8Array(1025)));
-    client.once("close", (code, reason) => closed.resolve({ code, reason: String(reason) }));
-    client.once("error", (error) => closed.reject(error));
+    client.once("close", (code, reason) => {
+      closed.resolve({ code, reason: reason.toString() });
+    });
+    client.once("error", (error) => {
+      closed.reject(error);
+    });
     expect(await closed.promise).toEqual({ code: 1011, reason: "fixture payload limit" });
     expect(messages).toBe(0);
   } finally {
@@ -357,14 +382,18 @@ test("HTTP cancelled request body sends an early 413 while the upload is unfinis
   const address = await server.ready;
   const socket = connect({ host: "127.0.0.1", port: address.port });
   const response = deferred<string>();
-  const timer = setTimeout(() => response.reject(new Error("The cancelled upload did not receive its early response")), 1500);
+  const timer = setTimeout(() => {
+    response.reject(new Error("The cancelled upload did not receive its early response"));
+  }, 1500);
   let wire = "";
   socket.once("connect", () => socket.write("POST /oversize HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1025\r\nConnection: close\r\n\r\nx"));
   socket.on("data", (chunk: Buffer) => {
     wire += chunk.toString();
     if (wire.includes(body)) response.resolve(wire);
   });
-  socket.once("error", (error) => response.reject(error));
+  socket.once("error", (error) => {
+    response.reject(error);
+  });
   try {
     const received = await response.promise;
     const receipt = await observed.promise;
@@ -393,7 +422,7 @@ test("HTTP unfinished POST disconnect interrupts input and rejects delivery", as
   try {
     const receipt = await observed.promise;
     socket.destroy();
-    await expect(receipt.completed).rejects.toThrow();
+    await assert.rejects(receipt.completed);
     expect(receipt.signal.aborted).toBe(true);
   } finally {
     socket.destroy();
