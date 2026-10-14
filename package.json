@@ -15,7 +15,7 @@
   "scripts": {
     "build": "bun --no-env-file run check",
     "check": "bun --no-env-file node_modules/typescript/bin/tsc --noEmit --project tsconfig.json",
-    "build:native": "bun --no-env-file scripts/build-permissions.ts",
+    "build:native": "sh -c 'set -e; case \"$(uname -s)\" in Linux) bun --no-env-file scripts/build-permissions.ts ;; esac; exec bun --no-env-file --no-install scripts/prepare-native-runtime.ts'",
     "dev": "sh -c 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec bun --no-env-file --watch serve.ts --disable-admin-auth \"$@\"' --",
     "dev:local": "sh -c 'if [ -z \"${CODEX_AUTH_JSON_B64:-}\" ]; then if [ -f \"$HOME/.codex/auth.json\" ]; then export CODEX_AUTH_JSON_B64=\"$(base64 < \"$HOME/.codex/auth.json\" | tr -d \"\\n\")\"; echo \"Loaded CODEX_AUTH_JSON_B64 from ~/.codex/auth.json\"; else echo \"No CODEX_AUTH_JSON_B64 and no ~/.codex/auth.json found. /v1/models will stay empty until a model snapshot is initialized.\"; fi; fi; if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec bun --no-env-file --watch serve.ts --disable-admin-auth \"$@\"' --",
     "dev:play": "bun --no-env-file run dev:local",
