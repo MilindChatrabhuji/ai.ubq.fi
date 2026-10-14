@@ -27,6 +27,10 @@
     "@types/bun": "1.4.0",
     "@types/node": "25.6.0",
     "@types/ws": "8.18.1",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "node-api-headers": "1.9.0"
+  },
+  "patchedDependencies": {
+    "@deno/kv@0.14.0": "src/storage/patches/deno-kv-0.14.0.patch"
   }
 }
