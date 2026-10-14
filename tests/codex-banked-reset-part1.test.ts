@@ -1,12 +1,14 @@
+import { test } from "bun:test";
+import { runSequence } from "./helpers/sequence.ts";
 // codex-banked-reset suite part: tests moved out of tests/codex-banked-reset.test.ts.
 
 import assert from "node:assert/strict";
 import {
   CODEX_BANKED_RESET_LEASE_MS,
-  CodexBankedResetConfig,
-  CodexBankedResetTelemetryFields,
-  CodexResetRedemptionRecord,
-  CodexUsageResetProviderContract,
+  type CodexBankedResetConfig,
+  type CodexBankedResetTelemetryFields,
+  type CodexResetRedemptionRecord,
+  type CodexUsageResetProviderContract,
   Deferred,
   FakeCodexUsageResetProvider,
   MemoryKv,
@@ -31,7 +33,7 @@ import {
   testHash,
 } from "./helpers/codex-banked-reset-harness.ts";
 
-Deno.test("banked reset disabled, shadow, and invalid limits make zero provider calls", async () => {
+test("banked reset disabled, shadow, and invalid limits make zero provider calls", async () => {
   const clock = new TestClock();
   const cases: Readonly<{
     name: string;
@@ -82,7 +84,7 @@ Deno.test("banked reset disabled, shadow, and invalid limits make zero provider 
   }
 });
 
-Deno.test("banked reset accepts any account ID or stable account hash", async () => {
+test("banked reset accepts any account ID or stable account hash", async () => {
   const clock = new TestClock();
   const reset = candidate();
   const accountIdHash = await testHash(reset.accountId);
@@ -96,7 +98,7 @@ Deno.test("banked reset accepts any account ID or stable account hash", async ()
   assert.equal(allowedProvider.commitCount, 1);
 });
 
-Deno.test("banked reset live happy path commits exactly once with a stable durable identity", async () => {
+test("banked reset live happy path commits exactly once with a stable durable identity", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -137,7 +139,7 @@ Deno.test("banked reset live happy path commits exactly once with a stable durab
   assert.equal(provider.commitCount, 1);
 });
 
-Deno.test("a verified reset from an older routing generation is not reusable", async () => {
+test("a verified reset from an older routing generation is not reusable", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -163,7 +165,7 @@ Deno.test("a verified reset from an older routing generation is not reusable", a
   assert.equal(provider.commitCount, 1);
 });
 
-Deno.test("banked reset production owner token generator is called with its Crypto receiver", async () => {
+test("banked reset production owner token generator is called with its Crypto receiver", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -181,7 +183,7 @@ Deno.test("banked reset production owner token generator is called with its Cryp
   assert.equal(provider.commitCount, 1);
 });
 
-Deno.test("unknown provider outcome is recovered through lookup with the same key and no second redemption", async () => {
+test("unknown provider outcome is recovered through lookup with the same key and no second redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -216,7 +218,7 @@ Deno.test("unknown provider outcome is recovered through lookup with the same ke
   assert.equal(recovered.idempotencyKeyHash, first.idempotencyKeyHash);
 });
 
-Deno.test("concurrent claims for one generation permit one provider submission and prevent the duplicate", async () => {
+test("concurrent claims for one generation permit one provider submission and prevent the duplicate", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -245,7 +247,7 @@ Deno.test("concurrent claims for one generation permit one provider submission a
   assert.equal(provider.redeemInputs.length, 1);
 });
 
-Deno.test("an expired recovery lookup rejection stays unknown while the original redemption may be in flight", async () => {
+test("an expired recovery lookup rejection stays unknown while the original redemption may be in flight", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -278,7 +280,7 @@ Deno.test("an expired recovery lookup rejection stays unknown while the original
   assert.equal(kv.redemptionRecord(codexResetRedemptionKey(requiredHash(recovery.accountIdHash), requiredHash(recovery.quotaGeneration)))?.state, "unknown");
 });
 
-Deno.test("live claims require seeded current fences and CAS-check both routing and credential records", async () => {
+test("live claims require seeded current fences and CAS-check both routing and credential records", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -305,7 +307,7 @@ Deno.test("live claims require seeded current fences and CAS-check both routing 
   );
 });
 
-Deno.test("a malformed truthy verification result remains unknown and cannot authorize a reset", async () => {
+test("a malformed truthy verification result remains unknown and cannot authorize a reset", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -323,7 +325,7 @@ Deno.test("a malformed truthy verification result remains unknown and cannot aut
   assert.equal(provider.verificationInputs.length, 1);
 });
 
-Deno.test("a reloadable kill switch changed during inventory leaves the claim durable and makes no redemption", async () => {
+test("a reloadable kill switch changed during inventory leaves the claim durable and makes no redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -350,7 +352,7 @@ Deno.test("a reloadable kill switch changed during inventory leaves the claim du
   assert.equal(provider.commitCount, 0);
 });
 
-Deno.test("inventory that returns after the quota deadline cannot cross the submission boundary", async () => {
+test("inventory that returns after the quota deadline cannot cross the submission boundary", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -380,7 +382,7 @@ Deno.test("inventory that returns after the quota deadline cannot cross the subm
   );
 });
 
-Deno.test("an already-expired quota window is never claimed or charged against the daily cap", async () => {
+test("an already-expired quota window is never claimed or charged against the daily cap", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -398,7 +400,7 @@ Deno.test("an already-expired quota window is never claimed or charged against t
   assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value, null);
 });
 
-Deno.test("a quota deadline crossing during submission preparation cannot reserve daily capacity", async () => {
+test("a quota deadline crossing during submission preparation cannot reserve daily capacity", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -425,7 +427,7 @@ Deno.test("a quota deadline crossing during submission preparation cannot reserv
   assert.equal((await kv.get(dailyKey)).value, null);
 });
 
-Deno.test("a quota deadline crossing during the final renewal cannot reach redemption", async () => {
+test("a quota deadline crossing during the final renewal cannot reach redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -453,7 +455,7 @@ Deno.test("a quota deadline crossing during the final renewal cannot reach redem
   assert.equal(kv.atomicCommitCount, 3);
 });
 
-Deno.test("a kill switch landing after the durable boundary still blocks provider redemption", async () => {
+test("a kill switch landing after the durable boundary still blocks provider redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -480,7 +482,7 @@ Deno.test("a kill switch landing after the durable boundary still blocks provide
   assert.equal(provider.commitCount, 0);
 });
 
-Deno.test("a kill switch landing during the final renewal still blocks provider redemption", async () => {
+test("a kill switch landing during the final renewal still blocks provider redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -508,7 +510,7 @@ Deno.test("a kill switch landing during the final renewal still blocks provider 
   assert.equal(provider.commitCount, 0);
 });
 
-Deno.test("the persistent usage toggle blocks resets and re-enabling preserves normal redemption", async () => {
+test("the persistent usage toggle blocks resets and re-enabling preserves normal redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -537,7 +539,7 @@ Deno.test("the persistent usage toggle blocks resets and re-enabling preserves n
   assert.equal(provider.redeemInputs.length, 1);
 });
 
-Deno.test("a saved disable races with either submission transaction without spending a credit", async () => {
+test("a saved disable races with either submission transaction without spending a credit", async () => {
   for (const boundary of [2, 3]) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();
@@ -568,7 +570,7 @@ Deno.test("a saved disable races with either submission transaction without spen
   }
 });
 
-Deno.test("a disabled subscription does not block another subscription", async () => {
+test("a disabled subscription does not block another subscription", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const otherProvider = new FakeCodexUsageResetProvider();
@@ -593,7 +595,7 @@ Deno.test("a disabled subscription does not block another subscription", async (
   assert.equal(blocked.reason, "usage_disabled");
 });
 
-Deno.test("disabling a subscription during inventory prevents a late shadow or live-arm decision", async () => {
+test("disabling a subscription during inventory prevents a late shadow or live-arm decision", async () => {
   for (const mode of ["shadow", "live"] as const) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();
@@ -622,7 +624,7 @@ Deno.test("disabling a subscription during inventory prevents a late shadow or l
   }
 });
 
-Deno.test("an unapproved provider receipt stays out of the durable record and telemetry", async () => {
+test("an unapproved provider receipt stays out of the durable record and telemetry", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider({
     ...provenContract(),
@@ -653,56 +655,57 @@ Deno.test("an unapproved provider receipt stays out of the durable record and te
   );
 });
 
-Deno.test("documented terminal outcomes enable one-shot redemption and retain the exact safe result", async (t) => {
-  for (const testCase of [
-    { providerKind: "completed", telemetryKind: "reset" },
-    { providerKind: "already_redeemed", telemetryKind: "already_redeemed" },
-  ] as const) {
-    await t.step(testCase.telemetryKind, async () => {
-      const kv = new MemoryKv();
-      const provider = new FakeCodexUsageResetProvider({
-        ...provenContract(),
-        idempotency: { callerSupplied: true, retentionMs: null },
-        lookup: { byIdempotencyKey: false, byProviderReceiptId: false },
-        verification: { independentlyVerifiable: false },
-        redeemOutcomeIsFinal: true,
-        receiptIdsSafeToPersistAndLog: false,
+test("documented terminal outcomes enable one-shot redemption and retain the exact safe result", () =>
+  runSequence(async (step) => {
+    for (const testCase of [
+      { providerKind: "completed", telemetryKind: "reset" },
+      { providerKind: "already_redeemed", telemetryKind: "already_redeemed" },
+    ] as const) {
+      await step(testCase.telemetryKind, async () => {
+        const kv = new MemoryKv();
+        const provider = new FakeCodexUsageResetProvider({
+          ...provenContract(),
+          idempotency: { callerSupplied: true, retentionMs: null },
+          lookup: { byIdempotencyKey: false, byProviderReceiptId: false },
+          verification: { independentlyVerifiable: false },
+          redeemOutcomeIsFinal: true,
+          receiptIdsSafeToPersistAndLog: false,
+        });
+        const clock = new TestClock();
+        const reset = candidate({ requestId: `terminal-${testCase.telemetryKind}` });
+        await seedFences(kv, reset);
+        provider.redeemResult = {
+          kind: testCase.providerKind,
+          providerReceiptId: "must-not-persist",
+        };
+        provider.verifyResult = false;
+        const verified: CodexBankedResetTelemetryFields[] = [];
+
+        const result = await attemptCodexBankedReset(
+          reset,
+          dependencies(kv, provider, clock, config({ maxPerAccountPerDay: 1 }), {
+            event: (event, fields) => {
+              if (event === "codex_reset_verified") verified.push(fields);
+            },
+          })
+        );
+
+        assert.equal(result.kind, "verified");
+        assert.equal(result.reason, `redeem_outcome_${testCase.telemetryKind}`);
+        assert.equal(result.record?.state, "verified");
+        assert.equal(result.record.provider_receipt_id, null);
+        assert.deepEqual(
+          verified.map((fields) => fields.redeem_outcome),
+          [testCase.telemetryKind]
+        );
+        assert.equal(provider.redeemInputs.length, 1);
+        assert.equal(provider.verificationInputs.length, 0);
+        assert.equal(provider.lookupInputs.length, 0);
       });
-      const clock = new TestClock();
-      const reset = candidate({ requestId: `terminal-${testCase.telemetryKind}` });
-      await seedFences(kv, reset);
-      provider.redeemResult = {
-        kind: testCase.providerKind,
-        providerReceiptId: "must-not-persist",
-      };
-      provider.verifyResult = false;
-      const verified: CodexBankedResetTelemetryFields[] = [];
+    }
+  }));
 
-      const result = await attemptCodexBankedReset(
-        reset,
-        dependencies(kv, provider, clock, config({ maxPerAccountPerDay: 1 }), {
-          event: (event, fields) => {
-            if (event === "codex_reset_verified") verified.push(fields);
-          },
-        })
-      );
-
-      assert.equal(result.kind, "verified");
-      assert.equal(result.reason, `redeem_outcome_${testCase.telemetryKind}`);
-      assert.equal(result.record?.state, "verified");
-      assert.equal(result.record.provider_receipt_id, null);
-      assert.deepEqual(
-        verified.map((fields) => fields.redeem_outcome),
-        [testCase.telemetryKind]
-      );
-      assert.equal(provider.redeemInputs.length, 1);
-      assert.equal(provider.verificationInputs.length, 0);
-      assert.equal(provider.lookupInputs.length, 0);
-    });
-  }
-});
-
-Deno.test("a terminal-only provider requires an exact per-account daily cap of one", async () => {
+test("a terminal-only provider requires an exact per-account daily cap of one", async () => {
   for (const maxPerAccountPerDay of [0, 2]) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider({
@@ -724,7 +727,7 @@ Deno.test("a terminal-only provider requires an exact per-account daily cap of o
   }
 });
 
-Deno.test("an ambiguous one-shot outcome stays unknown and never submits again", async () => {
+test("an ambiguous one-shot outcome stays unknown and never submits again", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider({
     ...provenContract(),
@@ -761,7 +764,7 @@ Deno.test("an ambiguous one-shot outcome stays unknown and never submits again",
   assert.equal(provider.verificationInputs.length, 0);
 });
 
-Deno.test("a malformed terminal reconciliation capability fails closed without provider calls", async () => {
+test("a malformed terminal reconciliation capability fails closed without provider calls", async () => {
   let lookupReads = 0;
   const terminalContract = {
     idempotency: { callerSupplied: true, retentionMs: null },
@@ -804,7 +807,7 @@ Deno.test("a malformed terminal reconciliation capability fails closed without p
   assert.equal(provider.verificationInputs.length, 0);
 });
 
-Deno.test("banked-reset telemetry retains only safe correlation fields", async () => {
+test("banked-reset telemetry retains only safe correlation fields", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider({
     ...provenContract(),
@@ -846,7 +849,7 @@ Deno.test("banked-reset telemetry retains only safe correlation fields", async (
   }
 });
 
-Deno.test("a lease-expired replacement takes over while the stale owner is blocked before redemption", async () => {
+test("a lease-expired replacement takes over while the stale owner is blocked before redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -875,7 +878,7 @@ Deno.test("a lease-expired replacement takes over while the stale owner is block
   assert.equal(provider.commitCount, 1);
 });
 
-Deno.test("an expired claimed record cannot be taken over after its quota deadline", async () => {
+test("an expired claimed record cannot be taken over after its quota deadline", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -907,7 +910,7 @@ Deno.test("an expired claimed record cannot be taken over after its quota deadli
   assert.equal(provider.redeemInputs.length, 0);
 });
 
-Deno.test("a quota deadline crossing during claimed-takeover fence reads leaves the claim untouched", async () => {
+test("a quota deadline crossing during claimed-takeover fence reads leaves the claim untouched", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -943,7 +946,7 @@ Deno.test("a quota deadline crossing during claimed-takeover fence reads leaves 
   assert.equal(provider.redeemInputs.length, 0);
 });
 
-Deno.test("a post-submission lease takeover fences the paused owner before provider redemption", async () => {
+test("a post-submission lease takeover fences the paused owner before provider redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -982,7 +985,7 @@ Deno.test("a post-submission lease takeover fences the paused owner before provi
   assert.equal(provider.commitCount, 0);
 });
 
-Deno.test("a routing-fence change between the strong read and durable submission CAS prevents redemption", async () => {
+test("a routing-fence change between the strong read and durable submission CAS prevents redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -1007,7 +1010,7 @@ Deno.test("a routing-fence change between the strong read and durable submission
   assert.equal(hasKey(kv.atomicCheckBatches[1] ?? [], routingFenceKey(reset.accountId)), true);
 });
 
-Deno.test("a routing-fence change after submission is caught by the final renewal CAS", async () => {
+test("a routing-fence change after submission is caught by the final renewal CAS", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -1032,7 +1035,7 @@ Deno.test("a routing-fence change after submission is caught by the final renewa
   assert.equal(hasKey(kv.atomicCheckBatches[2] ?? [], credentialFenceKey(reset.accountId)), true);
 });
 
-Deno.test("an auth fence change after submission is caught by the final renewal CAS", async () => {
+test("an auth fence change after submission is caught by the final renewal CAS", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -1057,7 +1060,7 @@ Deno.test("an auth fence change after submission is caught by the final renewal 
   assert.equal(hasKey(kv.atomicCheckBatches[2] ?? [], credentialFenceKey(reset.accountId)), true);
 });
 
-Deno.test("a credential-rotation-style fence change before durable submission prevents redemption", async () => {
+test("a credential-rotation-style fence change before durable submission prevents redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -1081,7 +1084,7 @@ Deno.test("a credential-rotation-style fence change before durable submission pr
   assert.equal(hasKey(kv.atomicCheckBatches[1] ?? [], credentialFenceKey(reset.accountId)), true);
 });
 
-Deno.test("a durable unknown reset is reconciled while live configuration is disabled without a second redemption", async () => {
+test("a durable unknown reset is reconciled while live configuration is disabled without a second redemption", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -1111,7 +1114,7 @@ Deno.test("a durable unknown reset is reconciled while live configuration is dis
   assert.equal(provider.commitCount, 1);
 });
 
-Deno.test("seeded state-machine invariant: one account/window never reaches more than one fake provider commit", async () => {
+test("seeded state-machine invariant: one account/window never reaches more than one fake provider commit", async () => {
   let seed = 0x5eed_c0de;
   const next = (): number => {
     seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;

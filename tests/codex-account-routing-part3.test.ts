@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type Kv } from "#kv";
 // codex-account-routing suite, part 3 of 3: tests moved out of tests/codex-account-routing.test.ts.
 
 import assert from "node:assert/strict";
@@ -7,7 +10,7 @@ import {
   CODEX_AUTH_POOL_KV_KEY,
   CODEX_CAPACITY_ROUTING_MAX_AGE_MS,
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
-  CodexAuthPoolState,
+  type CodexAuthPoolState,
   PROVIDER_CAPACITY_SNAPSHOT_KEY,
   PROVIDER_SELECTION_KV_KEY,
   RoutingKv,
@@ -47,9 +50,8 @@ import {
 // though the request under test never reached any upstream. Attributing the
 // count to this test's own body keeps the assertion about the routing decision
 // while ignoring bookkeeping traffic that no test owns.
-const countingUpstreamFetch =
-  (marker: string, onDispatch: () => void): typeof globalThis.fetch =>
-  async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+const countingUpstreamFetch = (marker: string, onDispatch: () => void): typeof globalThis.fetch =>
+  createFetchMock(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
     const body = await request
       .clone()
@@ -57,11 +59,11 @@ const countingUpstreamFetch =
       .catch(() => "");
     if (body.includes(marker)) onDispatch();
     return new Response(null, { status: 200 });
-  };
+  });
 
-Deno.test("clearing a class preserves an independent unknown quota fence", async () => {
+test("clearing a class preserves an independent unknown quota fence", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -137,9 +139,9 @@ Deno.test("clearing a class preserves an independent unknown quota fence", async
   }
 });
 
-Deno.test("a newer inference 429 remains authoritative over an older positive capacity sample", async () => {
+test("a newer inference 429 remains authoritative over an older positive capacity sample", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -198,9 +200,9 @@ Deno.test("a newer inference 429 remains authoritative over an older positive ca
   }
 });
 
-Deno.test("stale positive capacity cannot reopen a quota circuit", async () => {
+test("stale positive capacity cannot reopen a quota circuit", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -243,9 +245,9 @@ Deno.test("stale positive capacity cannot reopen a quota circuit", async () => {
   }
 });
 
-Deno.test("the persisted analytics snapshot reopens the matching account for its model", async () => {
+test("the persisted analytics snapshot reopens the matching account for its model", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -304,9 +306,9 @@ Deno.test("the persisted analytics snapshot reopens the matching account for its
   }
 });
 
-Deno.test("a legacy slot-only dashboard snapshot cannot attach to a replacement account", async () => {
+test("a legacy slot-only dashboard snapshot cannot attach to a replacement account", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -357,9 +359,9 @@ Deno.test("a legacy slot-only dashboard snapshot cannot attach to a replacement 
   }
 });
 
-Deno.test("capacity reconciliation uses the requested model instead of any additional headroom", async () => {
+test("capacity reconciliation uses the requested model instead of any additional headroom", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -429,9 +431,9 @@ Deno.test("capacity reconciliation uses the requested model instead of any addit
   }
 });
 
-Deno.test("capacity reconciliation preserves reset ambiguity and an active recovery probe", async () => {
+test("capacity reconciliation preserves reset ambiguity and an active recovery probe", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
@@ -492,9 +494,9 @@ Deno.test("capacity reconciliation preserves reset ambiguity and an active recov
   }
 });
 
-Deno.test("capacity observations expire old account identities from durable routing state", async () => {
+test("capacity observations expire old account identities from durable routing state", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const firstAtMs = 1_700_000_000_000;
@@ -529,17 +531,17 @@ Deno.test("capacity observations expire old account identities from durable rout
   }
 });
 
-Deno.test("a relative Retry-After quota answer moves the active account to the sibling", async () => {
+test("a relative Retry-After quota answer moves the active account to the sibling", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
   const authPool: CodexAuthPoolState = { accounts: pool.accounts.map((account) => ({ ...account, updated_at_ms: now })), updated_at_ms: now };
   const calls: string[] = [];
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = (input, init): Promise<Response> => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
       const url = requestUrl(input);
       if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
       calls.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "");
@@ -552,7 +554,7 @@ Deno.test("a relative Retry-After quota answer moves the active account to the s
         );
       }
       return Promise.resolve(new Response(JSON.stringify({ id: "served-by-sibling" }), { status: 200 }));
-    };
+    });
 
     const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "relative-quota" }, { retrySleep: async () => {} });
     assert.equal(response.status, 200);
@@ -565,17 +567,17 @@ Deno.test("a relative Retry-After quota answer moves the active account to the s
   }
 });
 
-Deno.test("a generic 429 retries the same account and never switches siblings", async () => {
+test("a generic 429 retries the same account and never switches siblings", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
   const authPool: CodexAuthPoolState = { accounts: pool.accounts.map((account) => ({ ...account, updated_at_ms: now })), updated_at_ms: now };
   const calls: string[] = [];
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = (input, init): Promise<Response> => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
       const url = requestUrl(input);
       if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
       calls.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "");
@@ -588,7 +590,7 @@ Deno.test("a generic 429 retries the same account and never switches siblings", 
         );
       }
       return Promise.resolve(new Response(JSON.stringify({ id: "same-account-retry" }), { status: 200 }));
-    };
+    });
 
     const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "generic-429" }, { retrySleep: async () => {} });
     assert.equal(response.status, 200);
@@ -601,19 +603,21 @@ Deno.test("a generic 429 retries the same account and never switches siblings", 
   }
 });
 
-Deno.test("a mixed quota and invalid-credential cohort cannot open paid fallback", async () => {
+test("a mixed quota and invalid-credential cohort cannot open paid fallback", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
   const authPool: CodexAuthPoolState = { accounts: pool.accounts.map((account) => ({ ...account, updated_at_ms: now })), updated_at_ms: now };
   let dispatches = 0;
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = countingUpstreamFetch("mixed-cohort", () => {
-      dispatches += 1;
-    });
+    globalThis.fetch = createFetchMock(
+      countingUpstreamFetch("mixed-cohort", () => {
+        dispatches += 1;
+      })
+    );
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
     await markCodexQuotaBlocked(initial.accounts[0], httpDateQuotaResponse(now + 60_000), now);
@@ -632,7 +636,7 @@ Deno.test("a mixed quota and invalid-credential cohort cannot open paid fallback
   }
 });
 
-Deno.test("a genuinely all-exhausted relative cohort preserves paid fallback eligibility", async () => {
+test("a genuinely all-exhausted relative cohort preserves paid fallback eligibility", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
@@ -643,13 +647,15 @@ Deno.test("a genuinely all-exhausted relative cohort preserves paid fallback eli
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": "3600" },
     });
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = countingUpstreamFetch("relative-exhausted", () => {
-      dispatches += 1;
-    });
+    globalThis.fetch = createFetchMock(
+      countingUpstreamFetch("relative-exhausted", () => {
+        dispatches += 1;
+      })
+    );
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
     await markCodexQuotaBlocked(initial.accounts[0], relativeQuotaResponse(), now);
@@ -668,19 +674,21 @@ Deno.test("a genuinely all-exhausted relative cohort preserves paid fallback eli
   }
 });
 
-Deno.test("a held recovery lease alone cannot open paid fallback", async () => {
+test("a held recovery lease alone cannot open paid fallback", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
   const authPool: CodexAuthPoolState = { accounts: pool.accounts.map((account) => ({ ...account, updated_at_ms: now })), updated_at_ms: now };
   let dispatches = 0;
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = countingUpstreamFetch("lease-only", () => {
-      dispatches += 1;
-    });
+    globalThis.fetch = createFetchMock(
+      countingUpstreamFetch("lease-only", () => {
+        dispatches += 1;
+      })
+    );
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
     await markCodexQuotaBlocked(initial.accounts[0], httpDateQuotaResponse(now + 60_000), now);
@@ -706,9 +714,9 @@ Deno.test("a held recovery lease alone cannot open paid fallback", async () => {
   }
 });
 
-Deno.test("a claimed expired-circuit probe refreshes its own admission fence exactly once", async () => {
+test("a claimed expired-circuit probe refreshes its own admission fence exactly once", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -743,9 +751,9 @@ Deno.test("a claimed expired-circuit probe refreshes its own admission fence exa
   }
 });
 
-Deno.test("same-account credential rotation refreshes admission without changing the active generation", async () => {
+test("same-account credential rotation refreshes admission without changing the active generation", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -770,9 +778,9 @@ Deno.test("same-account credential rotation refreshes admission without changing
   }
 });
 
-Deno.test("a stale admission cannot dispatch after a concurrent active switch", async () => {
+test("a stale admission cannot dispatch after a concurrent active switch", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -796,9 +804,9 @@ Deno.test("a stale admission cannot dispatch after a concurrent active switch", 
   }
 });
 
-Deno.test("a stale admission cannot dispatch after concurrent credential invalidation", async () => {
+test("a stale admission cannot dispatch after concurrent credential invalidation", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -822,9 +830,9 @@ Deno.test("a stale admission cannot dispatch after concurrent credential invalid
   }
 });
 
-Deno.test("concurrent cold admission converges on one durable active generation", async () => {
+test("concurrent cold admission converges on one durable active generation", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -858,9 +866,9 @@ Deno.test("concurrent cold admission converges on one durable active generation"
   }
 });
 
-Deno.test("the durable active account follows authoritative transitions without late rollback", async () => {
+test("the durable active account follows authoritative transitions without late rollback", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -925,9 +933,9 @@ Deno.test("the durable active account follows authoritative transitions without 
   }
 });
 
-Deno.test("malformed durable active state fails retryably and preserves the record", async () => {
+test("malformed durable active state fails retryably and preserves the record", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -960,9 +968,9 @@ Deno.test("malformed durable active state fails retryably and preserves the reco
 
 /** Seed the operator selection and drop the routing selection cache. */
 
-Deno.test("a selected Codex subscription restricts which account may serve inference", async () => {
+test("a selected Codex subscription restricts which account may serve inference", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
@@ -1003,9 +1011,9 @@ Deno.test("a selected Codex subscription restricts which account may serve infer
   }
 });
 
-Deno.test("a selection that names no configured subscription leaves no eligible Codex account", async () => {
+test("a selection that names no configured subscription leaves no eligible Codex account", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const now = Date.now();
