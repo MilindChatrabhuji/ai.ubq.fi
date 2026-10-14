@@ -896,6 +896,7 @@ const raceLithosReaderRead = async (
   signal: AbortSignal | undefined
 ): Promise<Awaited<ReturnType<typeof reader.read>>> => {
   if (!signal) return await reader.read();
+  if (signal.aborted) throw abortError(signal);
   let onAbort = (): void => {};
   const aborted = new Promise<never>((_, reject) => {
     onAbort = () => {
