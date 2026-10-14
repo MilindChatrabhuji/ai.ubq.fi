@@ -2,7 +2,7 @@ import type { NapiInterface } from "@deno/kv";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
@@ -86,7 +86,7 @@ export const verifyNativeKvArtifact = (binding: NativeKvArtifactBinding): Verifi
   return { path: realpathSync(path), artifactSha256, provenanceSha256, inputsSha256 };
 };
 
-let prepared: Readonly<{ binding: string; napi: NapiInterface }> | null = null;
+let prepared: Readonly<{ binding: string; artifact: NativeKvArtifactBinding; napi: NapiInterface }> | null = null;
 
 /** The launcher supplies the provenance hash from its independently verified release manifest. */
 export const prepareNativeKvBackend = (binding: NativeKvArtifactBinding): void => {
@@ -101,7 +101,21 @@ export const prepareNativeKvBackend = (binding: NativeKvArtifactBinding): void =
   const exports = object(loaded);
   if (!NATIVE_EXPORTS.every((name) => typeof exports[name] === "function"))
     throw new Error("Native KV artifact exports do not satisfy its pinned NAPI interface");
-  prepared = { binding: identity, napi: loaded as NapiInterface };
+  prepared = {
+    binding: identity,
+    artifact: {
+      artifactDirectory: dirname(verified.path),
+      expectedProvenanceSha256: verified.provenanceSha256,
+      inputsManifest: realpathSync(pathOf(binding.inputsManifest ?? INPUTS_MANIFEST)),
+    },
+    napi: loaded as NapiInterface,
+  };
+};
+
+/** Pass the same independently verified binding to task-owned child processes. */
+export const preparedNativeKvArtifactBinding = (): NativeKvArtifactBinding => {
+  if (!prepared) throw new Error("Prepare the verified native KV artifact before starting a child");
+  return { ...prepared.artifact };
 };
 
 export const preparedNativeKvBackend = (): NapiInterface => {

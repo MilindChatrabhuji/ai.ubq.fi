@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { deserialize, serialize } from "node:v8";
 import { guardNativeKv, retrySqliteBusy } from "./native-kv.ts";
 import { assertPortableKvValue } from "./value-compatibility.ts";
+import { preparedNativeKvBackend } from "./native-addon.ts";
 
 export type {
   AtomicCheck,
@@ -77,12 +78,14 @@ const prepareDatabase = (path: string): void => {
 /** Open only native SQLite databases whose values belong to the explicit Bun codec. */
 export const openKv = async (path = BUN_KV_DATABASE_PATH): Promise<Kv> => {
   if (!path || /^https?:\/\//i.test(path)) throw new Error("Bun KV requires an explicit local SQLite path or :memory:");
+  const napi = preparedNativeKvBackend();
   const target = path === ":memory:" ? path : resolve(path);
   return await retrySqliteBusy(async () => {
     if (target !== ":memory:") prepareDatabase(target);
     return guardNativeKv(
       await openNativeKv(target, {
         implementation: "sqlite",
+        napi,
         encodeV8: (value: unknown) => {
           assertPortableKvValue(value);
           return serialize(value);
