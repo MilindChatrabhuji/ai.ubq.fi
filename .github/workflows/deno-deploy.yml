@@ -25,10 +25,20 @@ jobs:
         with:
           bun-version: 1.4.0
       - name: Frozen dependencies
-        run: bun --no-env-file install --frozen-lockfile --ignore-scripts
-      - name: Complete Bun gates
-        run: sh scripts/verify.sh
-      - name: Package immutable source, dependencies and native permissions
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+      - name: Prepare checksum-pinned ephemeral native toolchain
+        run: bash ops/prepare-ci-native-toolchain.sh
+      - name: Prepare one independently bound native KV artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun --no-env-file --no-install -e 'import {join,resolve} from "node:path"; import {buildNativeKv} from "./scripts/build-native-kv.ts"; const workspace=process.env.RUNNER_TEMP; if(!workspace) throw new Error("Missing runner temporary directory"); const artifactDirectory=join(workspace,"uos-native-kv/artifact"); const buildReceipt=await buildNativeKv(artifactDirectory,{toolchainDirectory:join(workspace,"uos-native-kv/toolchain/bin")}); console.log(JSON.stringify({artifactDirectory,expectedProvenanceSha256:buildReceipt.provenanceSha256,inputsManifest:resolve("tools/native-kv/inputs.json"),buildReceipt}));'  > "$RUNNER_TEMP/uos-native-kv/receipt.json"
+      - name: Complete Bun gates with the prepared binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
+      - name: Package immutable source, dependencies and native KV/permissions
         shell: bash
         run: |
           set -euo pipefail
@@ -38,7 +48,7 @@ jobs:
           GITHUB_SHA="$GITHUB_SHA" bun --no-env-file -e 'const sha=process.env.GITHUB_SHA; if (!sha || !/^[0-9a-f]{40}$/.test(sha)) throw new Error("Invalid source SHA"); await Bun.write(".release/source/src/release.ts", "// Generated for this immutable VPS release.\nexport const RELEASE_GIT_SHA = " + JSON.stringify(sha) + ";\n");'
           chmod 600 .release/source/src/release.ts
           source_digest="$(sha256sum .release/artifact/source.tar | awk '{print $1}')"
-          bun --no-env-file --no-install ops/release-artifact.ts prepare .release/source "$GITHUB_SHA" "$source_digest"
+          bun --no-env-file --no-install -e 'import {readFile} from "node:fs/promises"; import {prepareReleasePayload} from "./ops/release-artifact.ts"; const [root,sha,archive,receiptPath]=process.argv.slice(1); const receipt=JSON.parse(await readFile(receiptPath,"utf8")); await prepareReleasePayload(root,sha,archive,undefined,{artifactDirectory:receipt.artifactDirectory,expectedProvenanceSha256:receipt.expectedProvenanceSha256,inputsManifest:receipt.inputsManifest});' .release/source "$GITHUB_SHA" "$source_digest" "$RUNNER_TEMP/uos-native-kv/receipt.json"
           bun --no-env-file --no-install ops/release-artifact.ts verify .release/source "$GITHUB_SHA"
           tar -cf .release/artifact/release.tar -C .release/source .
           cp .release/source/.uos-release.json .release/artifact/manifest.json
@@ -100,6 +110,7 @@ jobs:
           bun --no-env-file -e 'const sha=process.env.GITHUB_SHA; await Bun.write(".expected-source/src/release.ts", "// Generated for this immutable VPS release.\nexport const RELEASE_GIT_SHA = " + JSON.stringify(sha) + ";\n");'
           chmod 600 .expected-source/src/release.ts
           bun --no-env-file --no-install -e 'import {releaseSourceTree,verifyReleasePayload} from "./.verified-release/ops/release-artifact.ts"; await verifyReleasePayload(".verified-release", process.env.GITHUB_SHA, await releaseSourceTree(".expected-source"));'
+          test "$(jq -er '.schema' .verified-release/.uos-release.json)" = 3
           cmp .deploy-artifact/manifest.json .verified-release/.uos-release.json
           baked_release_line="export const RELEASE_GIT_SHA = \"${GITHUB_SHA}\";"
           grep -Fx "$baked_release_line" .verified-release/src/release.ts

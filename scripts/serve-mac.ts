@@ -24,6 +24,8 @@ const kv = await openKv(database.pathname);
 const { initializeKv } = await import(new URL("src/kv.ts", release).href);
 initializeKv(kv);
 const { application, shutdownOptionalTelemetry, startMacMaintenance } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
+const upgrade = application.upgrade;
+if (!upgrade) throw new Error("The Mac service requires the application WebSocket upgrade handler");
 const { configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } = await import(new URL("src/auth/local-admin.ts", release).href);
 const { ensureLocalDevelopmentApiKey } = await import(new URL("src/auth/local-development-key.ts", release).href);
 try {
@@ -41,7 +43,7 @@ const server = serveHttp(
     onListen: configureMacLocalAdminAuthBypassForListener,
     upgrade: (request, info) => {
       configureAdminAuthPeerForRequest(info.remoteAddr, request);
-      return application.upgrade(request, info);
+      return upgrade(request, info);
     },
   },
   (request, info) => {

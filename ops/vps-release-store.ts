@@ -134,7 +134,7 @@ export class ImmutableVpsReleaseStore {
     } else if (!create) throw new Error("Previous immutable release is missing");
     const metadata: unknown = present ? JSON.parse(await readTextFile(`${absolute}/.uos-release.json`)) : null;
     const bun = metadata !== null && typeof metadata === "object" && "schema" in metadata && (metadata.schema === 2 || metadata.schema === 3);
-    if (metadata !== null && typeof metadata === "object" && "schema" in metadata && ![1, 2, 3].includes(Number(metadata.schema)))
+    if (metadata !== null && typeof metadata === "object" && "schema" in metadata && metadata.schema !== 1 && metadata.schema !== 2 && metadata.schema !== 3)
       throw new Error("Unsupported immutable release schema");
     const expected = await this.expectedRelease(sha, !present);
     try {
