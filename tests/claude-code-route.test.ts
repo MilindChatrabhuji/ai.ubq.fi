@@ -1,3 +1,5 @@
+import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { attemptClaudeCodeSubscription } from "../src/paid-fallback/claude-code-route.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
@@ -7,23 +9,23 @@ import { CLAUDE_CODE_QUOTA_KV_KEY, loadClaudeCodeQuotaState } from "../src/provi
 
 type JsonRecord = Record<string, unknown>;
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 class RouteKv {
   readonly values = new Map<string, unknown>();
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
       versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as Deno.KvCommitResult);
+    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as KvCommitResult);
   }
 }
 
@@ -76,7 +78,7 @@ const withRouteKv = async (run: (kv: RouteKv) => Promise<void>): Promise<void> =
   const kv = new RouteKv();
   resetProviderSelectionCacheForTest();
   resetProviderHealthThrottleForTest();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     await run(kv);
   } finally {
@@ -84,7 +86,7 @@ const withRouteKv = async (run: (kv: RouteKv) => Promise<void>): Promise<void> =
   }
 };
 
-Deno.test("an eligible owner request is served by the subscription with the documented headers and defaults", async () => {
+test("an eligible owner request is served by the subscription with the documented headers and defaults", async () => {
   await withRouteKv(async () => {
     captured.length = 0;
     const routed = await attemptClaudeCodeSubscription(
@@ -110,7 +112,7 @@ Deno.test("an eligible owner request is served by the subscription with the docu
   });
 });
 
-Deno.test("an ineligible request never reaches the subscription transport", async () => {
+test("an ineligible request never reaches the subscription transport", async () => {
   await withRouteKv(async () => {
     captured.length = 0;
     const noToken = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup({}), fetcher });
@@ -129,7 +131,7 @@ Deno.test("an ineligible request never reaches the subscription transport", asyn
   });
 });
 
-Deno.test("a durable subscription rejection falls through and blocks the tier until the reset margin", async () => {
+test("a durable subscription rejection falls through and blocks the tier until the reset margin", async () => {
   await withRouteKv(async (kv) => {
     captured.length = 0;
     const nowSeconds = Math.trunc(Date.now() / 1_000);
@@ -148,7 +150,7 @@ Deno.test("a durable subscription rejection falls through and blocks the tier un
     const rejected = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher: rejection });
     assert.equal(rejected, null, "a rejected subscription never serves the request itself");
     assert.equal(captured.length, 0);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv);
     assert(quota, "the durable window block is persisted");
     assert.equal(quota.block_window, "5h");
     assert(quota.blocked_until_ms !== null && quota.blocked_until_ms > Date.now() + 3_600_000, "the reset margin is added to the upstream reset");
@@ -160,7 +162,7 @@ Deno.test("a durable subscription rejection falls through and blocks the tier un
   });
 });
 
-Deno.test("a local request-build failure falls through without recording an upstream health event", async () => {
+test("a local request-build failure falls through without recording an upstream health event", async () => {
   await withRouteKv(async (kv) => {
     captured.length = 0;
     const rejected = await attemptClaudeCodeSubscription(
@@ -179,7 +181,7 @@ Deno.test("a local request-build failure falls through without recording an upst
   });
 });
 
-Deno.test("a transient rate limit falls through with a short cooldown and no durable block", async () => {
+test("a transient rate limit falls through with a short cooldown and no durable block", async () => {
   await withRouteKv(async (kv) => {
     const transient = (): Promise<Response> =>
       Promise.resolve(
@@ -190,7 +192,7 @@ Deno.test("a transient rate limit falls through with a short cooldown and no dur
       );
     const rejected = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher: transient });
     assert.equal(rejected, null);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv);
     assert(quota, "the transient outcome is still recorded");
     assert.equal(quota.blocked_until_ms, null, "a generic 429 never becomes durable exhaustion");
     assert(quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());

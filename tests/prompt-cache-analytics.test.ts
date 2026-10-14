@@ -1,3 +1,6 @@
+import { KvU64 } from "#kv";
+import type { Kv, KvEntry, KvKey, KvListIterator, KvListOptions, KvListSelector } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -17,35 +20,29 @@ import {
 } from "../src/cache/prompt-analytics.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
 
-if (typeof Deno.KvU64 !== "function") {
-  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
-    constructor(readonly value: bigint) {}
-  } as typeof Deno.KvU64;
-}
-
 const RELEASE = "0123456789abcdef0123456789abcdef01234567";
 const NOW_MS = 1_800_000_000_000;
 const LEGACY_V1_PREFIX = ["uos_ai", "prompt_cache_analytics", "v1"] as const;
 const V2_PRUNABLE_NAMESPACES = ["all", "dimension", "overflow", "meta"] as const;
 
 class ListSelectorCountingKv extends CountingKv {
-  readonly listSelectors: Deno.KvListSelector[] = [];
-  readonly listedKeys: Deno.KvKey[] = [];
+  readonly listSelectors: KvListSelector[] = [];
+  readonly listedKeys: KvKey[] = [];
 
-  override list<T = unknown>(selector: Deno.KvListSelector, options?: Deno.KvListOptions): Deno.KvListIterator<T> {
+  override list<T = unknown>(selector: KvListSelector, options?: KvListOptions): KvListIterator<T> {
     this.listSelectors.push(structuredClone(selector));
     const source = super.list<T>(selector, options);
     const prefix = "prefix" in selector ? selector.prefix : [];
     const endBucket = "end" in selector ? selector.end[prefix.length] : null;
     const listedKeys = this.listedKeys;
-    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+    const iterator = (async function* (): AsyncGenerator<KvEntry<T>> {
       for await (const entry of source) {
         const bucket = entry.key[prefix.length];
         if (typeof endBucket === "number" && typeof bucket === "number" && bucket >= endBucket) continue;
         listedKeys.push(structuredClone(entry.key));
         yield entry;
       }
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvListIterator<T>;
     Object.defineProperty(iterator, "cursor", { get: () => source.cursor });
     return iterator;
   }
@@ -68,7 +65,7 @@ const event = (overrides: Partial<Parameters<typeof recordPromptCacheAnalytics>[
 });
 
 const options = (kv: CountingKv, now = NOW_MS) => ({
-  kv: kv as unknown as Deno.Kv,
+  kv: kv as unknown as Kv,
   release: RELEASE,
   now: () => now,
 });
@@ -83,7 +80,7 @@ const groupedCounters = (bucket: PromptCacheAnalyticsBucket) => ({
   reported: bucket.usage_reported_sample_count,
 });
 
-Deno.test("prompt-cache analytics v2 aggregates safe cohorts and keeps model and key material opaque", async () => {
+test("prompt-cache analytics v2 aggregates safe cohorts and keeps model and key material opaque", async () => {
   const kv = new CountingKv();
   const rawModel = "gpt-cache-secret-model";
   const rawKey = "prompt-cache-secret-key";
@@ -198,7 +195,7 @@ Deno.test("prompt-cache analytics v2 aggregates safe cohorts and keeps model and
   assert.ok(byProvider.buckets.every((bucket) => !JSON.stringify(bucket).includes(rawModel)));
 });
 
-Deno.test("prompt-cache analytics groups and aggregates model, route, mode, and fallback cohorts", async () => {
+test("prompt-cache analytics groups and aggregates model, route, mode, and fallback cohorts", async () => {
   const kv = new CountingKv();
   const models = ["gpt-dimension-shared", "gpt-dimension-route", "gpt-dimension-mode", "gpt-dimension-fallback"];
   for (const input of [
@@ -320,7 +317,7 @@ Deno.test("prompt-cache analytics groups and aggregates model, route, mode, and 
   );
 });
 
-Deno.test("prompt-cache analytics distinguishes reported zeroes from missing and invalid telemetry", async () => {
+test("prompt-cache analytics distinguishes reported zeroes from missing and invalid telemetry", async () => {
   const kv = new CountingKv();
   await recordPromptCacheAnalytics(event({ usageTelemetryStatus: "partial", inputTokens: null, cachedInputTokens: null }), options(kv));
   await recordPromptCacheAnalytics(event({ inputTokens: 10, cachedInputTokens: 11 }), options(kv));
@@ -359,7 +356,7 @@ Deno.test("prompt-cache analytics distinguishes reported zeroes from missing and
   );
 });
 
-Deno.test("prompt-cache analytics preserves concurrent counters and admits its first grouped cohort", async () => {
+test("prompt-cache analytics preserves concurrent counters and admits its first grouped cohort", async () => {
   const kv = new CountingKv();
   const results = await Promise.all(Array.from({ length: 100 }, () => recordPromptCacheAnalytics(event(), options(kv))));
   assert.ok(results.every((result) => result.status === "recorded"));
@@ -384,7 +381,7 @@ Deno.test("prompt-cache analytics preserves concurrent counters and admits its f
   );
 });
 
-Deno.test("prompt-cache analytics preserves concurrent samples across new-cohort admission conflicts", async () => {
+test("prompt-cache analytics preserves concurrent samples across new-cohort admission conflicts", async () => {
   const kv = new CountingKv();
   const modes = ["implicit", "explicit", "legacy_retention"] as const;
   const cohorts = Array.from({ length: 12 }, (_, index) =>
@@ -411,7 +408,7 @@ Deno.test("prompt-cache analytics preserves concurrent samples across new-cohort
   );
 });
 
-Deno.test("prompt-cache analytics caps cohort cardinality while retaining aggregate evidence", async () => {
+test("prompt-cache analytics caps cohort cardinality while retaining aggregate evidence", async () => {
   const kv = new CountingKv();
   for (let index = 0; index < PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET; index += 1) {
     const result = await recordPromptCacheAnalytics(event({ model: `gpt-cardinality-${index}` }), options(kv));
@@ -484,7 +481,7 @@ Deno.test("prompt-cache analytics caps cohort cardinality while retaining aggreg
   }
 });
 
-Deno.test("prompt-cache analytics caps grouped response cardinality and marks the result", async () => {
+test("prompt-cache analytics caps grouped response cardinality and marks the result", async () => {
   const kv = new CountingKv();
   const bucketCount = Math.ceil(PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS / PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET) + 1;
   for (let bucket = 0; bucket < bucketCount; bucket += 1) {
@@ -500,10 +497,10 @@ Deno.test("prompt-cache analytics caps grouped response cardinality and marks th
   assert.equal(view.buckets.length, PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS);
 });
 
-Deno.test("prompt-cache analytics returns the complete ungrouped seven-day window", async () => {
+test("prompt-cache analytics returns the complete ungrouped seven-day window", async () => {
   const kv = new CountingKv();
   for (let offset = 0; offset <= PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS; offset += 1) {
-    kv.seed(promptCacheAnalyticsCounterKey(NOW_MS - offset * PROMPT_CACHE_ANALYTICS_BUCKET_MS, "sample_count"), new Deno.KvU64(1n));
+    kv.seed(promptCacheAnalyticsCounterKey(NOW_MS - offset * PROMPT_CACHE_ANALYTICS_BUCKET_MS, "sample_count"), new KvU64(1n));
   }
 
   const view = await readPromptCacheAnalytics(options(kv));
@@ -519,24 +516,24 @@ Deno.test("prompt-cache analytics returns the complete ungrouped seven-day windo
   );
 });
 
-Deno.test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 entries with bounded scans", async () => {
+test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 entries with bounded scans", async () => {
   const kv = new ListSelectorCountingKv();
   const expiredBucket = NOW_MS - PROMPT_CACHE_ANALYTICS_RETENTION_MS;
   const freshBucket = NOW_MS;
-  kv.seed([...LEGACY_V1_PREFIX, freshBucket, "input_tokens"], new Deno.KvU64(777n));
-  kv.seed([...LEGACY_V1_PREFIX, freshBucket, "cached_input_tokens"], new Deno.KvU64(777n));
-  kv.seed([...LEGACY_V1_PREFIX, freshBucket, "sample_count"], new Deno.KvU64(1n));
+  kv.seed([...LEGACY_V1_PREFIX, freshBucket, "input_tokens"], new KvU64(777n));
+  kv.seed([...LEGACY_V1_PREFIX, freshBucket, "cached_input_tokens"], new KvU64(777n));
+  kv.seed([...LEGACY_V1_PREFIX, freshBucket, "sample_count"], new KvU64(1n));
   assert.deepEqual((await readPromptCacheAnalytics(options(kv))).buckets, []);
   kv.listSelectors.length = 0;
   kv.listedKeys.length = 0;
   for (const namespace of V2_PRUNABLE_NAMESPACES) {
-    kv.seed([...PROMPT_CACHE_ANALYTICS_KV_PREFIX, namespace, freshBucket, "fresh-fixture"], new Deno.KvU64(1n));
+    kv.seed([...PROMPT_CACHE_ANALYTICS_KV_PREFIX, namespace, freshBucket, "fresh-fixture"], new KvU64(1n));
   }
 
   await recordPromptCacheAnalytics(event({ model: "gpt-expired" }), options(kv, expiredBucket));
-  kv.seed([...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "overflow", expiredBucket, "sample_count"], new Deno.KvU64(1n));
-  kv.seed([...LEGACY_V1_PREFIX, expiredBucket, "input_tokens"], new Deno.KvU64(1n));
-  const pruned = await prunePromptCacheAnalytics({ kv: kv as unknown as Deno.Kv, now: () => NOW_MS });
+  kv.seed([...PROMPT_CACHE_ANALYTICS_KV_PREFIX, "overflow", expiredBucket, "sample_count"], new KvU64(1n));
+  kv.seed([...LEGACY_V1_PREFIX, expiredBucket, "input_tokens"], new KvU64(1n));
+  const pruned = await prunePromptCacheAnalytics({ kv: kv as unknown as Kv, now: () => NOW_MS });
   assert.equal(pruned.status, "pruned");
   assert.ok(pruned.deleted > 1);
   assert.deepEqual(kv.listSelectors, [
@@ -572,7 +569,7 @@ Deno.test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 e
   assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(expiredBucket, "sample_count"))), false);
 });
 
-Deno.test("prompt-cache analytics rejects unknown, duplicate, and over-broad grouping", async () => {
+test("prompt-cache analytics rejects unknown, duplicate, and over-broad grouping", async () => {
   const kv = new CountingKv();
   await assert.rejects(() => readPromptCacheAnalytics({ ...options(kv), groupBy: ["provider", "provider"] }), PromptCacheAnalyticsQueryError);
   await assert.rejects(() => readPromptCacheAnalytics({ ...options(kv), groupBy: ["provider", "route", "mode"] }), PromptCacheAnalyticsQueryError);

@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv, KvEntryMaybe, KvKey, KvKeyPart, KvListSelector } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { setKvForTest } from "../src/kv.ts";
@@ -32,41 +35,41 @@ const CODEX_AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 // The catalog builder reads discovery credentials from the environment.
 // Clearing them keeps this suite on the Cerebras provider it owns and keeps
 // every other provider's discovery from reaching a network.
-Deno.env.delete(CEREBRAS_API_KEY_ENV);
-Deno.env.delete("METERED_API_KEY");
-Deno.env.delete("SURPLUS_API_KEY");
-Deno.env.delete("DEEPSEEK_API_KEY");
-Deno.env.delete("LITHOSAI_API_KEY");
+Reflect.deleteProperty(process.env, CEREBRAS_API_KEY_ENV);
+delete process.env.METERED_API_KEY;
+delete process.env.SURPLUS_API_KEY;
+delete process.env.DEEPSEEK_API_KEY;
+delete process.env.LITHOSAI_API_KEY;
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 const kvStore = new Map<string, unknown>();
 const cerebrasHealthWrites: unknown[] = [];
-type KvOp = { type: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+type KvOp = { type: "set" | "delete"; key: KvKey; value?: unknown };
 const kvStub = {
-  get: (key: Deno.KvKey) =>
+  get: (key: KvKey) =>
     Promise.resolve({
       key,
       value: kvStore.get(keyOf(key)) ?? null,
       versionstamp: kvStore.has(keyOf(key)) ? "00000000000000000001" : null,
-    } as Deno.KvEntryMaybe<unknown>),
-  getMany: (keys: readonly Deno.KvKey[]) =>
+    } as KvEntryMaybe<unknown>),
+  getMany: (keys: readonly KvKey[]) =>
     Promise.resolve(
-      keys.map((key) => ({ key, value: kvStore.get(keyOf(key)) ?? null, versionstamp: kvStore.has(keyOf(key)) ? "1" : null }) as Deno.KvEntryMaybe<unknown>)
+      keys.map((key) => ({ key, value: kvStore.get(keyOf(key)) ?? null, versionstamp: kvStore.has(keyOf(key)) ? "1" : null }) as KvEntryMaybe<unknown>)
     ),
-  set: (key: Deno.KvKey, value: unknown) => {
+  set: (key: KvKey, value: unknown) => {
     kvStore.set(keyOf(key), value);
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyOf(key));
     return Promise.resolve();
   },
-  list: async function* (selector: Deno.KvListSelector) {
+  list: async function* (selector: KvListSelector) {
     const prefix = "prefix" in selector ? selector.prefix : [];
     await Promise.resolve();
     for (const [encoded, value] of kvStore) {
-      const key = JSON.parse(encoded) as Deno.KvKey;
-      if (!prefix.every((part: Deno.KvKeyPart, index: number) => key[index] === part)) continue;
+      const key = JSON.parse(encoded) as KvKey;
+      if (!prefix.every((part: KvKeyPart, index: number) => key[index] === part)) continue;
       yield { key, value, versionstamp: "00000000000000000001" };
     }
   },
@@ -74,11 +77,11 @@ const kvStub = {
     const ops: KvOp[] = [];
     const chain = {
       check: () => chain,
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         ops.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ type: "delete", key });
         return chain;
       },
@@ -95,7 +98,7 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
+} as unknown as Kv;
 
 setKvForTest(kvStub);
 
@@ -115,14 +118,14 @@ const withUpstream = async <T>(
 ): Promise<UpstreamResult<T>> => {
   const calls: UpstreamCall[] = [];
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const call: UpstreamCall = {
       url: requestUrl(input),
       body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {},
     };
     calls.push(call);
     return Promise.resolve(handler(call, calls));
-  };
+  });
   try {
     return { result: await run(), calls };
   } finally {
@@ -167,17 +170,17 @@ const RESPONSES_USAGE = {
 
 /** Runs `run` with the provider credential configured, restoring the ambient value after. */
 const withCerebrasKey = async (run: () => Promise<void>): Promise<void> => {
-  const previous = Deno.env.get(CEREBRAS_API_KEY_ENV);
-  Deno.env.set(CEREBRAS_API_KEY_ENV, CEREBRAS_API_KEY);
+  const previous = process.env[CEREBRAS_API_KEY_ENV];
+  process.env[CEREBRAS_API_KEY_ENV] = CEREBRAS_API_KEY;
   try {
     await run();
   } finally {
-    if (previous === undefined) Deno.env.delete(CEREBRAS_API_KEY_ENV);
-    else Deno.env.set(CEREBRAS_API_KEY_ENV, previous);
+    if (previous === undefined) Reflect.deleteProperty(process.env, CEREBRAS_API_KEY_ENV);
+    else process.env[CEREBRAS_API_KEY_ENV] = previous;
   }
 };
 
-Deno.test("cerebras responses: a qwen-3.8-27b round trip translates the body and returns a Responses object", async () => {
+test("cerebras responses: a qwen-3.8-27b round trip translates the body and returns a Responses object", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
       () => chatCompletion(QWEN, { role: "assistant", content: "pong", reasoning: "The request asked for one word." }),
@@ -228,7 +231,7 @@ Deno.test("cerebras responses: a qwen-3.8-27b round trip translates the body and
  * the provider as two `system` messages and fail the whole turn with
  * `wrong_api_format`; the body dispatched after the collapse is recorded here.
  */
-Deno.test("cerebras responses: instructions and a leading developer item collapse into one leading system message", async () => {
+test("cerebras responses: instructions and a leading developer item collapse into one leading system message", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
       () => chatCompletion(QWEN, { role: "assistant", content: "pong" }),
@@ -255,7 +258,7 @@ Deno.test("cerebras responses: instructions and a leading developer item collaps
   });
 });
 
-Deno.test("cerebras responses: rejects non-text developer content instead of dropping it", async () => {
+test("cerebras responses: rejects non-text developer content instead of dropping it", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
       () => {
@@ -283,12 +286,12 @@ Deno.test("cerebras responses: rejects non-text developer content instead of dro
     assert.equal(calls.length, 0);
     const payload = (await result.json()) as { error?: { code?: string; type?: string; message?: string } };
     assert.equal(payload.error?.code, "cerebras_request_invalid");
-    assert.equal(payload.error?.type, "invalid_request_error");
-    assert.match(payload.error?.message ?? "", /only text content/);
+    assert.equal(payload.error.type, "invalid_request_error");
+    assert.match(payload.error.message ?? "", /only text content/);
   });
 });
 
-Deno.test("cerebras responses: a mid-list developer item collapses into one leading system message", async () => {
+test("cerebras responses: a mid-list developer item collapses into one leading system message", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
       () => chatCompletion(QWEN, { role: "assistant", content: "pong" }),
@@ -318,7 +321,7 @@ Deno.test("cerebras responses: a mid-list developer item collapses into one lead
   });
 });
 
-Deno.test("cerebras responses: gpt-oss-120b is served on /v1/responses instead of being refused", async () => {
+test("cerebras responses: gpt-oss-120b is served on /v1/responses instead of being refused", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
       () => chatCompletion(GPT_OSS, { role: "assistant", content: "pong" }),
@@ -335,7 +338,7 @@ Deno.test("cerebras responses: gpt-oss-120b is served on /v1/responses instead o
   });
 });
 
-Deno.test("cerebras responses: advertised tiers pass through and an unadvertised tier fails closed", async () => {
+test("cerebras responses: advertised tiers pass through and an unadvertised tier fails closed", async () => {
   // `none` is advertised by qwen-3.8-27b alone, so the route's union admits it
   // and the per-id transport enforcement rejects it for gpt-oss-120b.
   const qwen = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" } }, QWEN, false, CEREBRAS_RESPONSES_PROFILE);
@@ -372,7 +375,7 @@ Deno.test("cerebras responses: advertised tiers pass through and an unadvertised
   });
 });
 
-Deno.test("cerebras responses: a streamed request replays the buffered completion as the Responses event sequence", async () => {
+test("cerebras responses: a streamed request replays the buffered completion as the Responses event sequence", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
       () => chatCompletion(QWEN, { role: "assistant", content: "pong", reasoning: "The request asked for one word." }),
@@ -432,7 +435,7 @@ Deno.test("cerebras responses: a streamed request replays the buffered completio
   });
 });
 
-Deno.test("cerebras responses: translated tool schemas reach the upstream through the Cerebras projection", async () => {
+test("cerebras responses: translated tool schemas reach the upstream through the Cerebras projection", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
       () => chatCompletion(GPT_OSS, { role: "assistant", content: "done" }),
@@ -475,7 +478,7 @@ Deno.test("cerebras responses: translated tool schemas reach the upstream throug
   });
 });
 
-Deno.test("cerebras responses: a reasoning-only truncation fails closed instead of returning an empty answer", async () => {
+test("cerebras responses: a reasoning-only truncation fails closed instead of returning an empty answer", async () => {
   await withCerebrasKey(async () => {
     for (const stream of [false, true]) {
       const { result } = await withUpstream(
@@ -499,7 +502,7 @@ for (const stream of [false, true]) {
     ["insufficient_system_resource", "failed", "upstream_error"],
     ["stop", "completed", null],
   ] as const) {
-    Deno.test(`cerebras responses: ${finishReason} terminal health stream=${stream}`, async () => {
+    test(`cerebras responses: ${finishReason} terminal health stream=${stream}`, async () => {
       await withCerebrasKey(async () => {
         const originalNow = Date.now;
         let nowMs = 1_000_000;
@@ -610,7 +613,7 @@ const versionedCatalog = async (version: string): Promise<{ models: Record<strin
   return (await result.json()) as { models: Record<string, unknown>[] };
 };
 
-Deno.test("cerebras responses: the versioned Codex catalog advertises both ids only while the provider is enabled", async () => {
+test("cerebras responses: the versioned Codex catalog advertises both ids only while the provider is enabled", async () => {
   seedCatalogKv();
   const gptOssRow = {
     slug: GPT_OSS,

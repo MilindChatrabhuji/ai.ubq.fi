@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
-import adminScript from "../static/admin.js" with { type: "text" };
+const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
 
 class TestElement {
   dataset: Record<string, string> = {};
@@ -34,7 +36,7 @@ const context = {
   formatDate: (value: number) => String(value),
   formatOptionalText: (value: unknown) => (typeof value === "string" ? value : "unknown"),
 };
-const sourceText = String(adminScript);
+const sourceText = adminScript;
 // Execute the shipped presenters, including their DOM fact writer. No copy of
 // their status conditions or network/application bootstrap runs in this fixture.
 runInNewContext(
@@ -50,7 +52,7 @@ const presenters = context as typeof context & {
   renderMeta: (row: TestElement, source: unknown, provider: unknown) => void;
 };
 
-Deno.test("current accepted quota access is reachable while its failed refresh attempt stays visible", () => {
+test("current accepted quota access is reachable while its failed refresh attempt stays visible", () => {
   const status = presenters.present(source, provider);
   assert.equal(status.label, "Reachable · Live");
   assert.equal(status.badgeState, "ok");
@@ -62,7 +64,7 @@ Deno.test("current accepted quota access is reachable while its failed refresh a
   assert.equal(refresh?.children[1].textContent, `Failed · ${provider.health.last_refresh_at_ms} · Quota reads currently succeed`);
 });
 
-Deno.test("unavailable, stale and expired access retain warnings, while inference success remains healthy", () => {
+test("unavailable, stale and expired access retain warnings, while inference success remains healthy", () => {
   const cases = [
     {
       source: { ...source, state: "unavailable" },
@@ -121,7 +123,7 @@ runInNewContext(
     "};",
   ].join("\n"),
   capacityScrollContext,
-  { timeout: 1000 },
+  { timeout: 1000 }
 );
 const capacityScrollPresenter = capacityScrollContext as typeof capacityScrollContext & {
   remember: () => void;
@@ -129,7 +131,7 @@ const capacityScrollPresenter = capacityScrollContext as typeof capacityScrollCo
   reset: () => void;
 };
 
-Deno.test("capacity refresh preserves a scrolled anchor before the queued scroll event", () => {
+test("capacity refresh preserves a scrolled anchor before the queued scroll event", () => {
   capacityScrollPresenter.reset();
   const svg = {
     dataset: {
@@ -162,7 +164,7 @@ Deno.test("capacity refresh preserves a scrolled anchor before the queued scroll
   assert.equal(refreshedScroll.scrollLeft, 150);
 });
 
-Deno.test("capacity refresh retains follow-latest intent after a hidden render", () => {
+test("capacity refresh retains follow-latest intent after a hidden render", () => {
   capacityScrollPresenter.reset();
   const hiddenScroll: CapacityScrollNode = {
     clientWidth: 0,
@@ -224,7 +226,7 @@ const validRetention: Record<string, unknown> = {
   records: 12,
 };
 
-Deno.test("shipped retention renderer preserves measured zero, normal accounting and storage warnings", () => {
+test("shipped retention renderer preserves measured zero, normal accounting and storage warnings", () => {
   retentionPresenter.render({ retention: validRetention });
   assert.equal(retentionContext.errorsRetention.textContent, "Capture storage 3 MiB of 1 GiB · 12 recordings.");
   retentionPresenter.render({ retention: { ...validRetention, stored_bytes: 0, reserved_bytes: 0, records: 0 } });
@@ -241,7 +243,7 @@ Deno.test("shipped retention renderer preserves measured zero, normal accounting
   assert.match(retentionContext.errorsRetention.textContent, /Approaching the storage limit/);
 });
 
-Deno.test("shipped retention renderer refuses incomplete, errored, unavailable or corrupt accounting without hiding log warnings", () => {
+test("shipped retention renderer refuses incomplete, errored, unavailable or corrupt accounting without hiding log warnings", () => {
   const missingCompleteness = { ...validRetention };
   Reflect.deleteProperty(missingCompleteness, "accounting_complete");
   const invalid: unknown[] = [

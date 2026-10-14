@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/passkeys-harness.ts";
 import assert from "node:assert/strict";
 
 import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT } from "../src/api-keys.ts";
@@ -92,19 +94,18 @@ const seedChallenge = (challenge: string, overrides: Record<string, unknown> = {
 
 /** Runs one handler with the KV binding removed, restoring it afterwards. */
 const withoutKv = async (run: () => Promise<void>): Promise<void> => {
-  const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
-  const original = denoWithKv.openKv;
   setKvForTest(null);
-  denoWithKv.openKv = undefined;
   try {
     await run();
   } finally {
-    denoWithKv.openKv = original;
     setKvForTest(kvStub);
   }
 };
 
-Deno.test("passkey handles are normalized and an empty seed produces no handle", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("passkey handles are normalized and an empty seed produces no handle", async () => {
   assert.equal(await buildPasskeyHandle("   "), "", "a blank seed has no usable fingerprint");
   assert.match(await buildPasskeyHandle("  token-value  "), /^uos-passkey-[0-9a-f]{16}$/);
   assert.equal(normalizePasskeyHandle("---"), "", "leading and trailing separators are stripped");
@@ -113,7 +114,7 @@ Deno.test("passkey handles are normalized and an empty seed produces no handle",
   assert.equal(normalizePasskeyHandle("a".repeat(200)).length, 96);
 });
 
-Deno.test("passkey request metadata prefers a trusted origin and tolerates malformed headers", () => {
+test("passkey request metadata prefers a trusted origin and tolerates malformed headers", () => {
   const canonical = getPasskeyRequestMeta(new Request("https://ai.ubq.fi/auth/passkey/register/start"));
   assert.equal(canonical.origin, "https://ai.ubq.fi");
   assert.equal(canonical.rpId, "ai.ubq.fi");
@@ -135,7 +136,7 @@ Deno.test("passkey request metadata prefers a trusted origin and tolerates malfo
   assert.equal(garbageOrigin.origin, "https://ai.ubq.fi");
 });
 
-Deno.test("passkey sessions reject unknown, expired and orphaned records", async () => {
+test("passkey sessions reject unknown, expired and orphaned records", async () => {
   kvStore.clear();
   assert.equal(await getPasskeySession("uos_ai_session_missing"), null);
   assert.equal(await hasPasskeyUsers(), false);
@@ -159,7 +160,7 @@ Deno.test("passkey sessions reject unknown, expired and orphaned records", async
   assert.ok(await getPasskeySession(token));
 });
 
-Deno.test("a passkey session is read from a bearer token or the relay cookie, and a corrupt cookie is refused", async () => {
+test("a passkey session is read from a bearer token or the relay cookie, and a corrupt cookie is refused", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession("uos_ai_session_cookie");
 
@@ -180,7 +181,7 @@ Deno.test("a passkey session is read from a bearer token or the relay cookie, an
   assert.equal(await getPasskeySessionFromRequest(new Request("https://ai.ubq.fi/x")), null);
 });
 
-Deno.test("passkey handlers fail closed without a KV binding", async () => {
+test("passkey handlers fail closed without a KV binding", async () => {
   await withoutKv(async () => {
     assert.equal(await hasPasskeyUsers(), false);
     assert.equal((await handlePasskeyRegisterStart(jsonRequest("https://ai.ubq.fi/auth/passkey/register/start", {}), {})).status, 503);
@@ -193,7 +194,7 @@ Deno.test("passkey handlers fail closed without a KV binding", async () => {
   });
 });
 
-Deno.test("passkey register start validates the body, refuses a taken username and issues a challenge", async () => {
+test("passkey register start validates the body, refuses a taken username and issues a challenge", async () => {
   kvStore.clear();
   const start = (body: unknown, options: { defaultIsAdmin?: boolean; authenticatedPasskeyToken?: string } = {}) =>
     handlePasskeyRegisterStart(jsonRequest("https://ai.ubq.fi/auth/passkey/register/start", body), options);
@@ -221,7 +222,7 @@ Deno.test("passkey register start validates the body, refuses a taken username a
   assert.equal(unauthorized.status, 401, "an unknown relay token is refused");
 });
 
-Deno.test("passkey register finish rejects every unusable challenge before attestation", async () => {
+test("passkey register finish rejects every unusable challenge before attestation", async () => {
   const finish = (body: unknown) => handlePasskeyRegisterFinish(jsonRequest("https://ai.ubq.fi/auth/passkey/register/finish", body));
   assert.equal((await handlePasskeyRegisterFinish(new Request("https://ai.ubq.fi/x", { method: "POST", body: "not json" }))).status, 400);
   assert.equal((await finish({})).status, 400, "a body without a webauthn response is refused");
@@ -242,7 +243,7 @@ Deno.test("passkey register finish rejects every unusable challenge before attes
   assert.equal(failedAttestation.status, 400, "an invalid attestation is refused");
 });
 
-Deno.test("passkey login start validates the relay origin and tolerates an empty body", async () => {
+test("passkey login start validates the relay origin and tolerates an empty body", async () => {
   kvStore.clear();
   const emptyBody = await handlePasskeyLoginStart(new Request("https://ai.ubq.fi/auth/passkey/login/start", { method: "POST" }));
   assert.equal(emptyBody.status, 200, "an empty login-start body is allowed so the browser can discover the accountless flow");
@@ -258,7 +259,7 @@ Deno.test("passkey login start validates the relay origin and tolerates an empty
   assert.equal(relayed.status, 200, "the canonical relay origin is trusted");
 });
 
-Deno.test("passkey login finish rejects an unusable response, challenge and credential", async () => {
+test("passkey login finish rejects an unusable response, challenge and credential", async () => {
   const finish = (body: unknown) => handlePasskeyLoginFinish(jsonRequest("https://ai.ubq.fi/auth/passkey/login/finish", body));
   assert.equal((await handlePasskeyLoginFinish(new Request("https://ai.ubq.fi/x", { method: "POST", body: "not json" }))).status, 400);
   assert.equal((await finish({})).status, 400);
@@ -279,7 +280,7 @@ Deno.test("passkey login finish rejects an unusable response, challenge and cred
   assert.equal(unknownCredential.status, 400, "an unknown credential is refused");
 });
 
-Deno.test("an expired passkey challenge is consumed once and refused", async () => {
+test("an expired passkey challenge is consumed once and refused", async () => {
   kvStore.clear();
   seedChallenge("expired-challenge", { expires_at_ms: Date.now() - 1 });
   const response = await handlePasskeyRegisterFinish(
@@ -291,7 +292,7 @@ Deno.test("an expired passkey challenge is consumed once and refused", async () 
   assert.equal(kvStore.has(keyToString(passkeyChallengeKey("expired-challenge"))), false, "an expired challenge is deleted when it is read");
 });
 
-Deno.test("passkey user administration lists stored users and validates every update field", async () => {
+test("passkey user administration lists stored users and validates every update field", async () => {
   kvStore.clear();
   const now = Date.now();
   kvStore.set(keyToString(passkeyUserKey("user-old")), {
@@ -339,7 +340,7 @@ Deno.test("passkey user administration lists stored users and validates every up
   assert.equal(conflicted.status, 409, "a concurrently modified user is reported instead of overwritten");
 });
 
-Deno.test("passkey session and logout handlers require a live session", async () => {
+test("passkey session and logout handlers require a live session", async () => {
   kvStore.clear();
   const anonymousSession = await handlePasskeySession(new Request("https://ai.ubq.fi/auth/session"));
   assert.equal(anonymousSession.status, 401);
@@ -425,7 +426,7 @@ const seedHashRecord = async (record: ApiKeyHashRecord, token = TOKEN): Promise<
   return tokenHash;
 };
 
-Deno.test("an api key token shape, the usage window and the reset projection are validated", () => {
+test("an api key token shape, the usage window and the reset projection are validated", () => {
   assert.equal(looksLikeUosApiKey(TOKEN), true);
   assert.equal(looksLikeUosApiKey(`  ${TOKEN}  `), true, "surrounding whitespace is tolerated");
   assert.equal(looksLikeUosApiKey("u_short"), false);
@@ -438,7 +439,7 @@ Deno.test("an api key token shape, the usage window and the reset projection are
   assert.equal(window.reserved_requests, 0);
 });
 
-Deno.test("a malformed usage window or request row is refused instead of trusted", () => {
+test("a malformed usage window or request row is refused instead of trusted", () => {
   const validWindow = {
     v: 3,
     key_id: "key-1",
@@ -500,7 +501,7 @@ Deno.test("a malformed usage window or request row is refused instead of trusted
   assert.equal(normalizeApiKeyUsageRequestV3({ ...released, provider: "cerebras" }), null);
 });
 
-Deno.test("rate-limit policy headers and the used-percent projection describe only bounded policies", () => {
+test("rate-limit policy headers and the used-percent projection describe only bounded policies", () => {
   assert.deepEqual(apiKeyRateLimitPolicyHeaders(null), {});
   assert.deepEqual(apiKeyRateLimitPolicyHeaders(policyOf({ usage_limit_requests: API_KEY_NO_USAGE_LIMIT })), {}, "an unlimited key advertises no policy");
   assert.deepEqual(apiKeyRateLimitPolicyHeaders(policyOf({ usage_limit_requests: 100, window_ms: 3_600_000 })), {
@@ -525,7 +526,7 @@ Deno.test("rate-limit policy headers and the used-percent projection describe on
   assert.equal(spend(9, 0), 100, "a projection is capped");
 });
 
-Deno.test("authentication refuses an absent, revoked, legacy or expired key record", async () => {
+test("authentication refuses an absent, revoked, legacy or expired key record", async () => {
   kvStore.clear();
   resetApiKeyPolicyCacheForTest();
   const nowMs = Date.now();
@@ -554,7 +555,7 @@ Deno.test("authentication refuses an absent, revoked, legacy or expired key reco
   assert.equal(failureStatus(expired), 401);
 });
 
-Deno.test("authentication serves a live policy, reuses its cache and rolls the window forward", async () => {
+test("authentication serves a live policy, reuses its cache and rolls the window forward", async () => {
   kvStore.clear();
   resetApiKeyPolicyCacheForTest();
   const nowMs = Date.now();
@@ -592,7 +593,7 @@ Deno.test("authentication serves a live policy, reuses its cache and rolls the w
   assert.equal(failureStatus(afterExpiry), 401, "a cached policy is rechecked against its expiry");
 });
 
-Deno.test("reserving usage requires a binding, ids and a usable window", async () => {
+test("reserving usage requires a binding, ids and a usable window", async () => {
   kvStore.clear();
   const nowMs = Date.now();
   const policy = policyAt(nowMs);
@@ -640,7 +641,7 @@ Deno.test("reserving usage requires a binding, ids and a usable window", async (
   assert.equal(exhausted.ok, true, "a new window starts empty");
 });
 
-Deno.test("expired leases are reclaimed before admission and can be reclaimed by key", async () => {
+test("expired leases are reclaimed before admission and can be reclaimed by key", async () => {
   kvStore.clear();
   const nowMs = 100_000;
   const policy = policyAt(0, { usage_limit_requests: 1, window_start_ms: 0, usage_reset_at_ms: 60_000 });
@@ -690,7 +691,7 @@ Deno.test("expired leases are reclaimed before admission and can be reclaimed by
   assert.equal(await hasLiveApiKeyUsageReservationsV3(kvStub, "absent-key", nowMs), false);
 });
 
-Deno.test("a quota dispatch error carries its status, code and retry hint", () => {
+test("a quota dispatch error carries its status, code and retry hint", () => {
   const plain = new ApiKeyQuotaDispatchError();
   assert.equal(plain.name, "ApiKeyQuotaDispatchError");
   assert.equal(plain.status, 503);
@@ -715,7 +716,7 @@ Deno.test("a quota dispatch error carries its status, code and retry hint", () =
 
 /* ---------------------------------------------------- chat stream translation */
 
-Deno.test("terminal telemetry events and malformed streams are classified", () => {
+test("terminal telemetry events and malformed streams are classified", () => {
   const event = (terminal: boolean, type: string, value: Record<string, unknown> = {}) => ({ raw: `event: ${type}`, terminal, type, value });
   const ranWithoutThrowing = (run: () => void): boolean => {
     run();
@@ -749,7 +750,7 @@ Deno.test("terminal telemetry events and malformed streams are classified", () =
   assert.throws(() => malformedFunctionCallStream("upstream drift"), /upstream drift/);
 });
 
-Deno.test("completed text and refusal reconciliation accepts a prefix and rejects a conflict", () => {
+test("completed text and refusal reconciliation accepts a prefix and rejects a conflict", () => {
   assert.equal(reconcileCompletedOutputText("hello", "hello world"), " world");
   assert.equal(reconcileCompletedOutputText("hello world", "hello world"), "");
   assert.equal(reconcileCompletedOutputText("hello", "hello"), "");
@@ -764,7 +765,7 @@ Deno.test("completed text and refusal reconciliation accepts a prefix and reject
   assert.throws(() => reconcileCompletedRefusal("no", "yes"), /conflicts with prior refusal deltas/);
 });
 
-Deno.test("a chat content part key prefers the item id, then the output index, then the part index", () => {
+test("a chat content part key prefers the item id, then the output index, then the part index", () => {
   assert.equal(chatOutputTextPartKey({ item_id: "item-1" }), "item:item-1:0");
   assert.equal(chatOutputTextPartKey({ item_id: "item-1", content_index: 2 }), "item:item-1:2");
   assert.equal(chatOutputTextPartKey({ item_id: "   ", output_index: 4 }), "output:4:0", "a blank item id falls back to the output index");
@@ -774,7 +775,7 @@ Deno.test("a chat content part key prefers the item id, then the output index, t
   assert.equal(chatOutputTextPartKey({ content_index: {} }), "output:0:0");
 });
 
-Deno.test("completed chat content parts reject unusable shapes and reconcile repeats", () => {
+test("completed chat content parts reject unusable shapes and reconcile repeats", () => {
   const textParts = new Map<string, string>();
   const refusalParts = new Map<string, string>();
   const identified = { item_id: "item-1" };
@@ -808,7 +809,7 @@ Deno.test("completed chat content parts reject unusable shapes and reconcile rep
   assert.deepEqual(refusal, { outputText: "", refusal: "no" });
 });
 
-Deno.test("completed output items and response outputs accumulate their content", () => {
+test("completed output items and response outputs accumulate their content", () => {
   const textParts = new Map<string, string>();
   const refusalParts = new Map<string, string>();
   assert.deepEqual(reconcileChatOutputItemContent(textParts, refusalParts, {}, null), { outputText: "", refusal: "" });
@@ -831,7 +832,7 @@ Deno.test("completed output items and response outputs accumulate their content"
   assert.deepEqual(response, { outputText: "", refusal: "no" }, "an already-emitted part contributes only its new suffix");
 });
 
-Deno.test("accumulated text, refusal and items are appended only when the response lacks them", () => {
+test("accumulated text, refusal and items are appended only when the response lacks them", () => {
   const empty: Record<string, unknown> = {};
   assert.equal(withAccumulatedResponseText(empty, ""), empty, "an empty accumulator never changes the response");
   const appended = withAccumulatedResponseText(empty, "hello");
@@ -856,7 +857,7 @@ Deno.test("accumulated text, refusal and items are appended only when the respon
   assert.deepEqual(withItems.output, [{ id: "call-1" }]);
 });
 
-Deno.test("a function-call accumulator creates, streams, finalizes and rejects drift", () => {
+test("a function-call accumulator creates, streams, finalizes and rejects drift", () => {
   const calls = new ChatFunctionCallAccumulator();
   assert.equal(calls.hasCalls, false);
   assert.equal(calls.add({ item_id: "call-1" }, "not an item"), null);
@@ -918,7 +919,7 @@ Deno.test("a function-call accumulator creates, streams, finalizes and rejects d
   }, /ended before finalized arguments/);
 });
 
-Deno.test("a chat tool-call delta carries its identity and arguments only when asked", () => {
+test("a chat tool-call delta carries its identity and arguments only when asked", () => {
   const call = { key: "item:call-1", index: 1, callId: "call-1", name: "tool", arguments: "{}", argumentsDone: true };
   assert.deepEqual(chatToolCallDelta(call), { index: 1, function: {} });
   assert.deepEqual(chatToolCallDelta(call, { includeIdentity: true }), {

@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   analyzeStage0CacheTelemetryLines,
@@ -49,7 +50,7 @@ const compareAsText = (a: string | null, b: string | null): number => {
   return 0;
 };
 
-Deno.test("Stage 0 cache telemetry analyzer groups completed inference and preserves null cache values", () => {
+test("Stage 0 cache telemetry analyzer groups completed inference and preserves null cache values", () => {
   const report = analyzeStage0CacheTelemetryLines([
     "an unrelated log line",
     terminalLine({ cached_input_tokens: 0, cache_write_input_tokens: 0 }),
@@ -124,7 +125,7 @@ Deno.test("Stage 0 cache telemetry analyzer groups completed inference and prese
   assert.equal(report.gates.reported_coverage_99_5.all_observed_cohorts_passed, false);
 });
 
-Deno.test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and account cohorts", () => {
+test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and account cohorts", () => {
   const rawModel = "gpt-private-model-must-not-appear";
   const otherRawModel = "zzzz-other-private-model-must-not-appear";
   const accountA = "a".repeat(64);
@@ -184,7 +185,7 @@ Deno.test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and 
   assert.doesNotMatch(JSON.stringify(forwardDimensions), /"account_slot":(?:17|93)/);
 });
 
-Deno.test("Stage 0 cache telemetry analyzer reports completed latency by cache dimension", () => {
+test("Stage 0 cache telemetry analyzer reports completed latency by cache dimension", () => {
   const report = analyzeStage0CacheTelemetryLines([
     terminalLine({ latency_ms: 10 }),
     terminalLine({ latency_ms: 20 }),
@@ -211,7 +212,7 @@ Deno.test("Stage 0 cache telemetry analyzer reports completed latency by cache d
   });
 });
 
-Deno.test("Stage 0 cache telemetry analyzer keeps invalid completed usage out of reported coverage", () => {
+test("Stage 0 cache telemetry analyzer keeps invalid completed usage out of reported coverage", () => {
   const report = analyzeStage0CacheTelemetryLines([
     terminalLine({
       input_tokens: null,
@@ -234,7 +235,7 @@ Deno.test("Stage 0 cache telemetry analyzer keeps invalid completed usage out of
   });
 });
 
-Deno.test("Stage 0 cache telemetry analyzer preserves model-unavailable account transitions", () => {
+test("Stage 0 cache telemetry analyzer preserves model-unavailable account transitions", () => {
   // The terminal logger carries the selected account's routing reason on both
   // successful and failed requests after skipping a model-ineligible account.
   const routing = {
@@ -285,7 +286,7 @@ Deno.test("Stage 0 cache telemetry analyzer preserves model-unavailable account 
   );
 });
 
-Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplete terminal outcomes", () => {
+test("Stage 0 cache telemetry analyzer reports bounded failed and incomplete terminal outcomes", () => {
   const rawCacheKey = "cache-key-secret-must-not-appear";
   const completed = terminalLine({
     model: "gpt-completed-secret",
@@ -448,7 +449,7 @@ Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplet
   assert.doesNotMatch(serialized, /"account_slot":/);
 });
 
-Deno.test("Stage 0 cache telemetry analyzer retains every known inference terminal type outside eligibility", () => {
+test("Stage 0 cache telemetry analyzer retains every known inference terminal type outside eligibility", () => {
   const missingUsage = {
     input_tokens: null,
     cached_input_tokens: null,
@@ -486,7 +487,7 @@ Deno.test("Stage 0 cache telemetry analyzer retains every known inference termin
   assert.equal(outcomes.cohorts.find((cohort) => cohort.outcome === "cancelled")?.model, "model_unknown");
 });
 
-Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, and coverage thresholds", () => {
+test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, and coverage thresholds", () => {
   const aggregateLines = Array.from({ length: STAGE0_AGGREGATE_MIN_COMPLETED }, () => terminalLine({ model: "gpt-large-cohort" }));
   const aggregateReport = analyzeStage0CacheTelemetryLines(aggregateLines);
 
@@ -523,7 +524,7 @@ Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, 
   assert.equal(belowCoverageReport.gates.reported_coverage_99_5.observed_all_completed_passed, false);
 });
 
-Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request-level data", () => {
+test("Stage 0 cache telemetry analyzer fails closed without echoing request-level data", () => {
   const secret = "must-not-appear-in-errors-or-output";
   const malformed = `${TERMINAL_MARKER} {"request_id":"${secret}"`;
   assert.throws(
@@ -633,7 +634,7 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
   assert.doesNotMatch(JSON.stringify(modelReport), new RegExp(modelSecret));
 });
 
-Deno.test("Stage 0 cache telemetry analyzer accepts strict JSON body log envelopes without exposing envelope data", () => {
+test("Stage 0 cache telemetry analyzer accepts strict JSON body log envelopes without exposing envelope data", () => {
   const secret = "envelope-secret";
   const report = analyzeStage0CacheTelemetryLines([
     JSON.stringify({
@@ -652,6 +653,6 @@ Deno.test("Stage 0 cache telemetry analyzer accepts strict JSON body log envelop
   assert.equal(infoEnvelopeReport.completed_inference, 1);
 });
 
-Deno.test("Stage 0 cache telemetry analyzer rejects an empty input stream", () => {
+test("Stage 0 cache telemetry analyzer rejects an empty input stream", () => {
   assert.throws(() => analyzeStage0CacheTelemetryLines([]), /no request_terminal events/);
 });

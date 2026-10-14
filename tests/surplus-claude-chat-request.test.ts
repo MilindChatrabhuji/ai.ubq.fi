@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { buildSurplusClaudeChatRequest } from "../src/provider/surplus-claude-chat-request.ts";
 import { fetchSurplusResponses } from "../src/provider/surplus.ts";
@@ -9,7 +10,7 @@ const fetchUrl = (input: RequestInfo | URL): string => {
 };
 const bodyText = (body: BodyInit | null | undefined): string => (typeof body === "string" ? body : JSON.stringify(body));
 
-Deno.test("Surplus Claude Chat preserves Max, affinity, stream usage and original instruction order", () => {
+test("Surplus Claude Chat preserves Max, affinity, stream usage and original instruction order", () => {
   const body = {
     ...base(),
     stream: true,
@@ -44,7 +45,7 @@ Deno.test("Surplus Claude Chat preserves Max, affinity, stream usage and origina
   assert.equal(buildSurplusClaudeChatRequest({ ...base(), reasoning: { effort: "ultra" } })?.body.reasoning_effort, "max");
 });
 
-Deno.test("Surplus Claude Chat preserves namespaced strict functions and reversible freeform tools", () => {
+test("Surplus Claude Chat preserves namespaced strict functions and reversible freeform tools", () => {
   const result = buildSurplusClaudeChatRequest({
     ...base(),
     tools: [
@@ -75,7 +76,7 @@ Deno.test("Surplus Claude Chat preserves namespaced strict functions and reversi
   assert.deepEqual(messages[3], { role: "tool", tool_call_id: "c2", content: [{ type: "text", text: "1", cache_control: { type: "ephemeral" } }] });
 });
 
-Deno.test("Surplus Claude Chat retains image precision and explicit cache policy without adding a marker", () => {
+test("Surplus Claude Chat retains image precision and explicit cache policy without adding a marker", () => {
   const result = buildSurplusClaudeChatRequest({
     ...base(),
     input: [
@@ -107,7 +108,7 @@ Deno.test("Surplus Claude Chat retains image precision and explicit cache policy
   assert.deepEqual(disabled.body.messages, [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
 });
 
-Deno.test("Surplus Claude Chat uses the catalog output limit and falls back without losing incompatible controls", () => {
+test("Surplus Claude Chat uses the catalog output limit and falls back without losing incompatible controls", () => {
   assert.equal(buildSurplusClaudeChatRequest({ ...base(), max_output_tokens: undefined }, 128000)?.body.max_tokens, 128000);
   const bodies = [
     { ...base(), model: "gpt-6-sol" },
@@ -129,7 +130,7 @@ Deno.test("Surplus Claude Chat uses the catalog output limit and falls back with
   }
 });
 
-Deno.test("Surplus Claude Chat fetch preserves dispatch guards, Max, measured cache and authoritative cost", async () => {
+test("Surplus Claude Chat fetch preserves dispatch guards, Max, measured cache and authoritative cost", async () => {
   const actions: string[] = [];
   let requested = "";
   let wire: unknown;
@@ -177,7 +178,7 @@ Deno.test("Surplus Claude Chat fetch preserves dispatch guards, Max, measured ca
   assert.equal(response.usage.buyer_cost_micro, 69);
 });
 
-Deno.test("Surplus incompatible Claude requests retain the original Responses wire and an honest cache warning", async () => {
+test("Surplus incompatible Claude requests retain the original Responses wire and an honest cache warning", async () => {
   const body = { ...base(), input: [{ type: "reasoning", encrypted_content: "opaque" }], reasoning: { effort: "max" } };
   let requested = "";
   let wire: unknown;
@@ -194,7 +195,7 @@ Deno.test("Surplus incompatible Claude requests retain the original Responses wi
   assert.equal(result.response.headers.get("x-uos-warning"), "surplus_claude_native_prompt_cache_unavailable");
 });
 
-Deno.test("Surplus Claude signed Chat thinking survives a namespaced tool loop only in its authenticated scope", async () => {
+test("Surplus Claude signed Chat thinking survives a namespaced tool loop only in its authenticated scope", async () => {
   const assistant = {
     role: "assistant",
     content: "Reading",

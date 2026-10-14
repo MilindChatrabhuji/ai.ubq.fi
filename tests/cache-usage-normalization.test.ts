@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { extractChatUsageTokens, extractUsageTokens, toChatUsage } from "../src/openai-telemetry.ts";
 
@@ -8,7 +9,7 @@ const chatUsage = (details?: unknown): Record<string, unknown> => ({
   ...(details === undefined ? {} : { prompt_tokens_details: details }),
 });
 
-Deno.test("Chat and Responses cache usage retain identical reported, partial and invalid counters", () => {
+test("Chat and Responses cache usage retain identical reported, partial and invalid counters", () => {
   const cases = [
     undefined,
     { cached_tokens: 0 },
@@ -41,7 +42,7 @@ Deno.test("Chat and Responses cache usage retain identical reported, partial and
   }
 });
 
-Deno.test("Chat usage preserves measured counters when another token field is missing or malformed", () => {
+test("Chat usage preserves measured counters when another token field is missing or malformed", () => {
   assert.deepEqual(extractChatUsageTokens({ prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 80 } }), {
     inputTokens: 100,
     cachedInputTokens: 80,
@@ -62,7 +63,7 @@ Deno.test("Chat usage preserves measured counters when another token field is mi
   }
 });
 
-Deno.test("usage translation keeps unmeasured cache counters absent and preserves measured zero", () => {
+test("usage translation keeps unmeasured cache counters absent and preserves measured zero", () => {
   assert.equal(extractChatUsageTokens(null), null);
   assert.equal(extractChatUsageTokens(undefined), null);
   assert.deepEqual(toChatUsage(extractChatUsageTokens(chatUsage())), chatUsage());
@@ -70,7 +71,7 @@ Deno.test("usage translation keeps unmeasured cache counters absent and preserve
   assert.equal(toChatUsage(extractChatUsageTokens({ prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 80 } })), null);
 });
 
-Deno.test("usage retains an original exact Surplus charge and distinguishes absent or malformed amounts", () => {
+test("usage retains an original exact Surplus charge and distinguishes absent or malformed amounts", () => {
   for (const buyerCostMicro of [0, 69, 1056]) {
     assert.equal(extractChatUsageTokens({ ...chatUsage({ cached_tokens: 0 }), buyer_cost_micro: buyerCostMicro })?.buyerCostMicro, buyerCostMicro);
     assert.equal(

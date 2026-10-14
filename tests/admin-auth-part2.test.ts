@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { KvU64 } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/admin-auth-harness.ts";
 // admin-auth suite part: tests moved out of tests/admin-auth.test.ts.
 
 import assert from "node:assert/strict";
@@ -17,7 +21,10 @@ import {
   urlOf,
 } from "./helpers/admin-auth-harness.ts";
 
-Deno.test("admin paid fallback history exposes V3 request lifecycle and billing fields", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("admin paid fallback history exposes V3 request lifecycle and billing fields", async () => {
   kvStore.clear();
   const keyId = "4ba83596-d68e-447a-9281-0f1c92e8a87e";
   kvStore.set(keyToString(["ubq_ai", "api_keys", "id", keyId]), {
@@ -150,7 +157,7 @@ Deno.test("admin paid fallback history exposes V3 request lifecycle and billing 
   assert.equal(payload.data[0]?.settled_at_ms, 2_500);
 });
 
-Deno.test("authenticated UOS embeddings do not write ordinary request history", async () => {
+test("authenticated UOS embeddings do not write ordinary request history", async () => {
   kvStore.clear();
   kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage-test-key");
   const token = `u_${"a".repeat(64)}`;
@@ -172,7 +179,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
   const keyId = created.id as string;
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const url = urlOf(input);
     assert.equal(url, "https://api.voyageai.com/v1/embeddings");
     const body = JSON.parse(typeof init?.body === "string" ? init.body : "null") as Record<string, unknown>;
@@ -190,7 +197,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
         { status: 200, headers: { "Content-Type": "application/json" } }
       )
     );
-  };
+  });
 
   try {
     const { default: handler } = await import("../src/handler/index.ts");
@@ -220,7 +227,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
   }
 });
 
-Deno.test("API key request log endpoint validates key existence and limit", async () => {
+test("API key request log endpoint validates key existence and limit", async () => {
   kvStore.clear();
   const missing = await handleAdminApiKeysPaidFallbacks(new Request("https://ai.ubq.fi/admin/api-keys/missing/paid-fallbacks?limit=20"), "missing");
   assert.equal(missing.status, 404);
@@ -231,7 +238,7 @@ Deno.test("API key request log endpoint validates key existence and limit", asyn
   assert.equal(invalidLimit.status, 400);
 });
 
-Deno.test("deleting a revoked API key removes its mirrored policy and analytics", async () => {
+test("deleting a revoked API key removes its mirrored policy and analytics", async () => {
   kvStore.clear();
   const keyId = "key-delete-cleanup";
   const neighboringKeyId = `${keyId}-neighbor`;
@@ -274,7 +281,7 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   kvStore.set(keyToString(["ubq_ai", "api_keys", "usage_daily", keyId]), { key_id: keyId, days: [] });
   kvStore.set(keyToString(["uos_ai", "paid_fallback", "ledger", keyId, Date.now(), "request-delete"]), { id: "request-delete", key_id: keyId });
   kvStore.set(keyToString(["ubq_ai", "api_keys", "request_log", keyId, Date.now(), "legacy-request-delete"]), { id: "legacy-request-delete", key_id: keyId });
-  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v2", keyId, "policy", Date.now()]), { value: 1n } as Deno.KvU64);
+  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v2", keyId, "policy", Date.now()]), { value: 1n } as KvU64);
   const v3WindowResetAtMs = Date.now() + 60_000;
   kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-settled"]), {
     v: 3,
@@ -307,7 +314,7 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   const neighboringV3RequestKey = ["uos_ai", "paid_fallback", "v3", "request", neighboringKeyId, "request-v3-neighbor"] as const;
   kvStore.set(keyToString(neighboringPaidFallbackKey), { id: "request-neighbor", key_id: neighboringKeyId });
   kvStore.set(keyToString(neighboringLegacyLogKey), { id: "legacy-request-neighbor", key_id: neighboringKeyId });
-  kvStore.set(keyToString(neighboringCounterKey), { value: 1n } as Deno.KvU64);
+  kvStore.set(keyToString(neighboringCounterKey), { value: 1n } as KvU64);
   kvStore.set(keyToString(neighboringV3RequestKey), {
     v: 3,
     key_id: neighboringKeyId,
@@ -401,7 +408,7 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   assert.equal(kvStore.has(keyToString(neighboringCounterKey)), true);
 });
 
-Deno.test("subscription reset settings persist by account identity across slot reordering", async () => {
+test("subscription reset settings persist by account identity across slot reordering", async () => {
   kvStore.clear();
   const accounts = ["account-a", "account-b"].map((accountId) => ({
     account_id: accountId,

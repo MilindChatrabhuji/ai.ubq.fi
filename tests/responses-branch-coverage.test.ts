@@ -1,3 +1,5 @@
+import type { KvEntry, KvKey, KvListOptions, KvListSelector } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { handleAgentMessagesList, handleAgentMessagesPost } from "../src/agent-messages.ts";
@@ -82,25 +84,25 @@ const apiKeyAuth = () =>
 
 /** A list-capable in-memory KV that records the selector and options it received. */
 class MessageKv {
-  readonly entries: Deno.KvEntry<unknown>[] = [];
-  readonly selectors: Deno.KvListSelector[] = [];
-  readonly options: Deno.KvListOptions[] = [];
+  readonly entries: KvEntry<unknown>[] = [];
+  readonly selectors: KvListSelector[] = [];
+  readonly options: KvListOptions[] = [];
   cursor = "";
 
-  set(key: Deno.KvKey, value: unknown): Promise<unknown> {
+  set(key: KvKey, value: unknown): Promise<unknown> {
     this.entries.push({ key, value, versionstamp: "00000000000000000001" });
     return Promise.resolve({ ok: true });
   }
 
-  list<T>(selector: Deno.KvListSelector, options?: Deno.KvListOptions): AsyncIterableIterator<Deno.KvEntry<T>> & { readonly cursor: string } {
+  list<T>(selector: KvListSelector, options?: KvListOptions): AsyncIterableIterator<KvEntry<T>> & { readonly cursor: string } {
     this.selectors.push(selector);
     this.options.push(options ?? {});
     const entries = this.entries.map((entry) => ({ ...entry, value: entry.value as T }));
     const cursor = this.cursor;
     const iterator = {
       cursor,
-      next: (): Promise<IteratorResult<Deno.KvEntry<T>>> =>
-        Promise.resolve(entries.length > 0 ? { value: entries.shift() as Deno.KvEntry<T>, done: false } : { value: undefined, done: true }),
+      next: (): Promise<IteratorResult<KvEntry<T>>> =>
+        Promise.resolve(entries.length > 0 ? { value: entries.shift() as KvEntry<T>, done: false } : { value: undefined, done: true }),
       [Symbol.asyncIterator]() {
         return this;
       },
@@ -126,7 +128,7 @@ const message = (overrides: Partial<StoredMessage> = {}): StoredMessage => ({
   ...overrides,
 });
 
-Deno.test("agent message posting refuses an unusable token, binding or body", async () => {
+test("agent message posting refuses an unusable token, binding or body", async () => {
   const kv = new MessageKv();
   const post = (body: unknown, deps: Parameters<typeof handleAgentMessagesPost>[1] = {}) =>
     handleAgentMessagesPost(jsonPost("https://ai.ubq.fi/agent/messages", body), { authenticateClient: githubAuth(), kv, ...deps });
@@ -176,7 +178,7 @@ Deno.test("agent message posting refuses an unusable token, binding or body", as
   assert.equal(kv.entries.length, writesBefore + 1, "exactly one message is written per accepted post");
 });
 
-Deno.test("agent message listing filters, bounds and cursor-walks the scan", async () => {
+test("agent message listing filters, bounds and cursor-walks the scan", async () => {
   const kv = new MessageKv();
   const list = (query: string, deps: Parameters<typeof handleAgentMessagesList>[1] = {}) =>
     handleAgentMessagesList(new Request(`https://ai.ubq.fi/agent/messages${query}`), { authenticateClient: githubAuth(), kv, ...deps });
@@ -267,7 +269,7 @@ const telemetryContext = (overrides: Partial<UsageContext> = {}): { context: Usa
   };
 };
 
-Deno.test("prompt cache modes and breakpoints follow the request shape", () => {
+test("prompt cache modes and breakpoints follow the request shape", () => {
   assert.equal(promptCacheModeFor({ prompt_cache_options: { mode: "explicit" } }), "explicit");
   assert.equal(promptCacheModeFor({ prompt_cache_options: { ttl: "1h" } }), "implicit", "options without a mode are implicit");
   assert.equal(promptCacheModeFor({ prompt_cache_options: [] }), "unspecified", "an array is not a usable options object");
@@ -292,7 +294,7 @@ Deno.test("prompt cache modes and breakpoints follow the request shape", () => {
   assert.equal(countExplicitPromptCacheBreakpoints([]), 0);
 });
 
-Deno.test("chat usage extraction preserves partial measurements and rejects malformed token counts", () => {
+test("chat usage extraction preserves partial measurements and rejects malformed token counts", () => {
   assert.deepEqual(extractChatUsageTokens({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 })?.inputTokens, 10);
   assert.equal(extractChatUsageTokens(null), null);
   assert.equal(extractChatUsageTokens([]), null);
@@ -318,7 +320,7 @@ Deno.test("chat usage extraction preserves partial measurements and rejects malf
   assert.equal(unusableDetails?.cachedInputTokens ?? null, null, "an array is not a usable details object");
 });
 
-Deno.test("terminal usage and stream terminal telemetry land on the response state", () => {
+test("terminal usage and stream terminal telemetry land on the response state", () => {
   const { context, state } = telemetryContext();
   recordTerminalUsage(
     context,
@@ -360,7 +362,7 @@ Deno.test("terminal usage and stream terminal telemetry land on the response sta
   assert.equal(completedStream.state.streamTerminalType, "error");
 });
 
-Deno.test("provider dispatch and removed-provider telemetry are recorded only when a context exists", () => {
+test("provider dispatch and removed-provider telemetry are recorded only when a context exists", () => {
   const { context, state } = telemetryContext();
   recordFirstCodexDispatch(context);
   recordFirstCodexHeaders(context);
@@ -393,7 +395,7 @@ Deno.test("provider dispatch and removed-provider telemetry are recorded only wh
   assert.equal(supportsReasoningProgressRelease("lithos"), false);
 });
 
-Deno.test("stream failure classification prefers the timeout, then cancellation, then the stream error kind", () => {
+test("stream failure classification prefers the timeout, then cancellation, then the stream error kind", () => {
   const live = new AbortController();
   const downstream = new AbortController();
   assert.equal(classifyStreamFailure(new CodexError("timeout", "gateway_timeout", 504), live.signal, downstream.signal), "deadline");
@@ -419,7 +421,7 @@ Deno.test("stream failure classification prefers the timeout, then cancellation,
   assert.equal(classifyPreHeaderFailure(new ResponsesStreamError("drift", { kind: "malformed_event" }), live.signal, downstream.signal), "error");
 });
 
-Deno.test("event and failure telemetry recognise the bounded event kinds", () => {
+test("event and failure telemetry recognise the bounded event kinds", () => {
   const { context, state } = telemetryContext();
   const event = (type: string, value: Record<string, unknown> = {}) => ({ raw: `event: ${type}`, type, terminal: false, value });
   recordResponsesEventTelemetry(context, event("response.created"));
@@ -451,7 +453,7 @@ Deno.test("event and failure telemetry recognise the bounded event kinds", () =>
   assert.equal(state.syntheticTerminalType, "error");
 });
 
-Deno.test("aggregating source telemetry reports a shared provider, mixed providers and missing data", () => {
+test("aggregating source telemetry reports a shared provider, mixed providers and missing data", () => {
   const source = (provider: string, overrides: Partial<ReturnType<typeof createResponseTelemetryState>> = {}) => {
     const response = new Response("source");
     attachResponseTelemetry(response, { ...createResponseTelemetryState(), provider, ...overrides });
@@ -507,7 +509,7 @@ Deno.test("aggregating source telemetry reports a shared provider, mixed provide
   assert.equal(getResponseTelemetry(unknownSemantic)?.semanticOutputObserved, null);
 });
 
-Deno.test("stream error responses merge warnings, name the upstream and keep the auth warning explicit", async () => {
+test("stream error responses merge warnings, name the upstream and keep the auth warning explicit", async () => {
   const plain = streamErrorResponse(502, "upstream failed", "upstream_error", "cerebras", []);
   assert.equal(plain.status, 502);
   assert.equal(plain.headers.get("x-uos-upstream"), "cerebras");
