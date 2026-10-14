@@ -6,9 +6,9 @@ case "$uos_release" in "$uos_root"/.data/releases/*) ;; *) echo "Invalid immutab
 uos_schema=$(/usr/bin/jq -r '.schema // 1' "$uos_release/.uos-release.json")
 if test "$uos_schema" = 2; then
   uos_runtime="$uos_root/.data/runtimes/bun/linux-arm64/1.4.0-086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9/bun"
-  test -f "$uos_runtime" && ! test -L "$uos_runtime"
-  uos_hash=$(/usr/bin/sha256sum "$uos_runtime")
-  test "${uos_hash%% *}" = 086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9
+  if ! test -f "$uos_runtime" || test -L "$uos_runtime"; then echo "Managed VPS runtime unavailable or invalid" >&2; exit 1; fi
+  uos_hash=$(/usr/bin/sha256sum "$uos_runtime") || { echo "Managed VPS runtime unavailable or invalid" >&2; exit 1; }
+  if test "${uos_hash%% *}" != 086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9; then echo "Managed VPS runtime unavailable or invalid" >&2; exit 1; fi
   exec "$uos_runtime" --no-env-file --no-install "$uos_release/ops/launch-service.ts" vps
 fi
 # Exact legacy source profile retained for explicitly approved codec recovery.
