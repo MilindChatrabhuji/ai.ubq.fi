@@ -104,9 +104,11 @@ Deno.test("per-window exact-once still prevents a re-spend of the same window", 
 Deno.test("live mode requires an exact per-account daily cap of one and shadow never spends", async () => {
   // The parser reads only the new environment variable; the retired global
   // variable is not read at all.
-  const declared = parseCodexBankedResetConfig((key) =>
-    key === "CODEX_BANKED_RESET_MODE" ? "live" : key === "CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY" ? "2" : undefined
-  );
+  const declared = parseCodexBankedResetConfig((key) => {
+    if (key === "CODEX_BANKED_RESET_MODE") return "live";
+    if (key === "CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY") return "2";
+    return undefined;
+  });
   assert.equal(declared.mode, "live");
   assert.equal(declared.maxPerAccountPerDay, 2);
   const retired = parseCodexBankedResetConfig((key) => (key === "CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY" ? "0" : undefined));

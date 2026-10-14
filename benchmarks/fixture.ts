@@ -476,22 +476,29 @@ export class FixtureWorkspace {
       // A directory being removed has no saved directory metadata (or is
       // replacing a non-directory), but it may have been made read-only after
       // its children were written. Make it removable before rolling it back.
-      if (expected?.kind !== "directory") {
-        const accessMode = currentMode | 0o700;
-        if (currentMode !== accessMode) {
-          Deno.chmodSync(abs, accessMode);
-          // This ancestor is not being rolled back itself, so retain the
-          // command's mode after granting temporary access to its children.
-          if (!unauthorized.has(ancestor)) directoryModes.push({ abs, mode: currentMode });
-        }
-        continue;
+      let accessMode = currentMode | 0o700;
+      let restoreMode = currentMode;
+      if (expected?.kind === "directory") {
+        if (expected.mode === null) continue;
+        accessMode = expected.mode | 0o700;
+        restoreMode = unauthorized.has(ancestor) ? expected.mode : currentMode;
       }
-      if (expected.mode === null) continue;
-      const accessMode = expected.mode | 0o700;
-      if (currentMode === accessMode) continue;
-      Deno.chmodSync(abs, accessMode);
-      directoryModes.push({ abs, mode: unauthorized.has(ancestor) ? expected.mode : currentMode });
+      // An ancestor not being rolled back retains the command's mode.
+      this._grantDirectoryAccess(abs, currentMode, accessMode, restoreMode, expected?.kind === "directory" || !unauthorized.has(ancestor), directoryModes);
     }
+  }
+
+  private _grantDirectoryAccess(
+    abs: string,
+    currentMode: number,
+    accessMode: number,
+    restoreMode: number,
+    recordMode: boolean,
+    directoryModes: { abs: string; mode: number | null }[]
+  ): void {
+    if (currentMode === accessMode) return;
+    Deno.chmodSync(abs, accessMode);
+    if (recordMode) directoryModes.push({ abs, mode: restoreMode });
   }
 
   /** True when every ancestor of `rel` is a real directory inside the workspace. */
@@ -634,9 +641,15 @@ function snapshotWorkspace(root: string, saved?: WorkspaceSnapshot): WorkspaceSn
     for (const entry of [...Deno.readDirSync(dir)].sort((a, b) => a.name.localeCompare(b.name))) {
       const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       const abs = `${dir}/${entry.name}`;
-      recordSnapshotEntry(snapshot, rel, abs, () => {
-        walk(abs, rel);
-      }, saved);
+      recordSnapshotEntry(
+        snapshot,
+        rel,
+        abs,
+        () => {
+          walk(abs, rel);
+        },
+        saved
+      );
     }
   };
   walk(root, "");

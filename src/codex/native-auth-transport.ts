@@ -17,7 +17,7 @@ type SocketConstructor = new (url: string, options: Record<string, unknown>) => 
 export const verifyNativeCodexAccount = (
   account: unknown,
   expected: Readonly<{ email: string; accountId: string }>,
-  fileAccountId: string | null,
+  fileAccountId: string | null
 ): { ok: true } | { ok: false; detail: string } => {
   const identity = isRecord(account) && isRecord(account.account) ? account.account : null;
   if (identity === null) {
@@ -120,7 +120,7 @@ export const requestNativeCodexRefresh = async (codexHome: string, expectedEmail
     const verification = verifyNativeCodexAccount(
       account,
       { email: expectedEmail, accountId: expectedAccountId },
-      reportedIdentity === null ? await readNativeAccountId(codexHome) : null,
+      reportedIdentity === null ? await readNativeAccountId(codexHome) : null
     );
     if (!verification.ok) throw new Error(verification.detail);
     // Native Codex ignores the refresh outcome in this reply. The caller must

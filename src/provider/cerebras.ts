@@ -296,11 +296,7 @@ const isCerebrasSystemMessage = (message: unknown): message is Record<string, un
 
 /** Reject content Cerebras cannot represent instead of silently dropping it. */
 const rejectUnsupportedCerebrasSystemContent = (): never => {
-  throw new CerebrasError(
-    "Cerebras supports only text content in system and developer messages.",
-    "cerebras_request_invalid",
-    400
-  );
+  throw new CerebrasError("Cerebras supports only text content in system and developer messages.", "cerebras_request_invalid", 400);
 };
 
 /** One part of a `system` message's content: a string part whole, or a record part's text. */

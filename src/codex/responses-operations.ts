@@ -93,6 +93,23 @@ import type {
   PreexistingBankedReset,
 } from "./responses-state.ts";
 
+const hasExhaustedBlockedCohort = (
+  pool: Awaited<ReturnType<typeof selectCodexRoutingAccountsStrong>>
+): pool is Extract<Awaited<ReturnType<typeof selectCodexRoutingAccountsStrong>>, { kind: "quota_blocked" }> =>
+  pool.kind === "quota_blocked" && pool.fullCohortExhausted && pool.blockedAccounts.length > 0;
+
+const observedCapacityResetDeadline = (
+  observation: Awaited<ReturnType<typeof loadCodexCapacityRoutingObservations>>[number] | undefined,
+  requestedModel: string | null,
+  nowMs: number
+): number | null => {
+  if (observation?.state !== "available") return null;
+  if (!capacityObservationIsFresh(observation, nowMs)) return null;
+  if (capacityHeadroomForObservation(observation, requestedModel) !== 0) return null;
+  const resetAtMs = observation.windows.primary?.reset_at_ms ?? null;
+  return resetAtMs === null || !Number.isSafeInteger(resetAtMs) || resetAtMs <= nowMs ? null : resetAtMs;
+};
+
 /** Outcomes whose reason proves no banked reset could be redeemed this episode. */
 const OVERAGE_FALLBACK_REASONS: ReadonlySet<string> = new Set([
   "no_eligible_credit",
@@ -463,13 +480,11 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
           const blockedClass = quotaClass(ctx.requestedModel ?? null);
           const currentSlot = existing?.slots.at(slot);
           const currentBlock = currentSlot ? quotaBlockForClass(withLegacyQuotaClassMap(currentSlot), blockedClass) : null;
-          if (currentBlock !== null && currentBlock.blocked_until_ms > nowMs) continue;
+          const blockedUntilMs = currentBlock?.blocked_until_ms;
+          if (blockedUntilMs !== undefined && blockedUntilMs > nowMs) continue;
           const observation = observations.find((candidate) => candidate.account_id_hash === identity.accountIdHash);
-          if (!observation || observation.state !== "available") continue;
-          if (!capacityObservationIsFresh(observation, nowMs)) continue;
-          if (capacityHeadroomForObservation(observation, ctx.requestedModel) !== 0) continue;
-          const resetAtMs = observation.windows.primary?.reset_at_ms ?? null;
-          if (resetAtMs === null || !Number.isSafeInteger(resetAtMs) || resetAtMs <= nowMs) continue;
+          const resetAtMs = observedCapacityResetDeadline(observation, ctx.requestedModel, nowMs);
+          if (resetAtMs === null) continue;
           const account: RoutingAccount = {
             auth,
             slot,
@@ -498,7 +513,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
       return wrote;
     };
     let routedPool = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
-    if (routedPool.kind === "quota_blocked" && routedPool.fullCohortExhausted && routedPool.blockedAccounts.length) {
+    if (hasExhaustedBlockedCohort(routedPool)) {
       const materialized = await materializeCapacityQuotaBlocks();
       if (materialized) {
         routedPool = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
@@ -521,7 +536,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     if (!blockedAccounts.length) {
       await materializeCapacityQuotaBlocks();
       const refreshed = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
-      if (refreshed.kind === "quota_blocked" && refreshed.fullCohortExhausted && refreshed.blockedAccounts.length) {
+      if (hasExhaustedBlockedCohort(refreshed)) {
         routedPool = refreshed;
         blockedAccounts = refreshed.blockedAccounts;
       } else {

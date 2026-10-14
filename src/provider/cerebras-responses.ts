@@ -6,12 +6,7 @@ import { json, openaiError } from "../http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
 import { isRecord } from "../utils.ts";
 import { cerebrasProviderHint, parseStreamField } from "../request-policy.ts";
-import {
-  cerebrasUpstreamModelFor,
-  fetchCerebrasChatCompletions,
-  getCerebrasProviderRequestId,
-  normalizeCerebrasProviderRequestId,
-} from "./cerebras.ts";
+import { cerebrasUpstreamModelFor, fetchCerebrasChatCompletions, getCerebrasProviderRequestId, normalizeCerebrasProviderRequestId } from "./cerebras.ts";
 import {
   cerebrasReasoningEffortRefusal,
   readCerebrasChatCompletion,

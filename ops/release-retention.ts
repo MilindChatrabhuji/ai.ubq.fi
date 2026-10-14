@@ -9,6 +9,8 @@
  * new release is verified live: the running release and the newest few stay.
  */
 
+import { readVpsPins } from "./vps-release-journal.ts";
+
 export const RELEASE_RETENTION_KEEP = 5;
 
 // `git rev-parse HEAD` output. Anything else in the store (a crashed deploy's
@@ -58,6 +60,8 @@ export const pruneReleases = async (options: ReleasePruneOptions = {}): Promise<
   const store = await realPathOrNull(releasesDir);
   if (store === null) return { removed: [], kept: [] };
   const current = await realPathOrNull(currentLink);
+  const pins = await readVpsPins(`${store}/../vps-release-pins.json`);
+  const pinned = new Set(pins.flatMap((pin) => [pin.candidate, pin.prior]));
 
   const releases: { name: string; path: string; modifiedAt: number }[] = [];
   for await (const entry of Deno.readDir(store)) {
@@ -75,7 +79,7 @@ export const pruneReleases = async (options: ReleasePruneOptions = {}): Promise<
   const removed: string[] = [];
   const kept: string[] = [];
   for (const release of releases) {
-    if (retained.has(release.path) || release.path === current) {
+    if (retained.has(release.path) || release.path === current || pinned.has(release.name)) {
       kept.push(release.name);
       continue;
     }

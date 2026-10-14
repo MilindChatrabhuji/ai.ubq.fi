@@ -41,7 +41,11 @@ const encodeBase64 = (bytes: Uint8Array): string => {
   return btoa(binary);
 };
 
-const encodeBase64Url = (bytes: Uint8Array): string => encodeBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+const encodeBase64Url = (bytes: Uint8Array): string =>
+  encodeBase64(bytes)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/u, "");
 
 const encodeJsonBase64Url = (value: unknown): string => encodeBase64Url(TEXT_ENCODER.encode(JSON.stringify(value)));
 

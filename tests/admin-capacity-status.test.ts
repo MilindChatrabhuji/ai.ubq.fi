@@ -121,7 +121,7 @@ runInNewContext(
     "};",
   ].join("\n"),
   capacityScrollContext,
-  { timeout: 1000 },
+  { timeout: 1000 }
 );
 const capacityScrollPresenter = capacityScrollContext as typeof capacityScrollContext & {
   remember: () => void;

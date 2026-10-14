@@ -438,33 +438,37 @@ const appendInputItem = (
   }
   if (!isRecord(rawItem) || Array.isArray(rawItem)) return failure("input", "input items must be objects");
   const type = getString(rawItem.type) ?? "message";
-  if (type === "reasoning") {
-    // Held for the assistant turn that follows it rather than dropped.
-    pending.reasoning += reasoningTextFromItem(rawItem);
-    return { ok: true, value: undefined };
+  switch (type) {
+    case "reasoning":
+      // Held for the assistant turn that follows it rather than dropped.
+      pending.reasoning += reasoningTextFromItem(rawItem);
+      return { ok: true, value: undefined };
+    case "function_call":
+    case "custom_tool_call": {
+      // Freeform calls carry raw text; function calls carry JSON arguments.
+      const call = type === "custom_tool_call" ? chatCustomToolCallItem(rawItem) : chatToolCallItem(rawItem);
+      if (!call.ok) return call;
+      appendToolCall(messages, call.value, pending);
+      return { ok: true, value: undefined };
+    }
+    case "function_call_output":
+    case "custom_tool_call_output": {
+      const result = chatToolResultItems(rawItem, reduction, `${path}.output`, elisions);
+      if (!result.ok) return result;
+      messages.push(...result.value);
+      return { ok: true, value: undefined };
+    }
+    case "agent_message": {
+      const agentMessage = chatAgentMessageItem(rawItem, reduction, `${path}.content`, elisions);
+      if (!agentMessage.ok) return agentMessage;
+      messages.push(agentMessage.value);
+      return { ok: true, value: undefined };
+    }
+    case "message":
+      return appendMessageItem(messages, rawItem, pending, path, reduction, elisions);
+    default:
+      return failure("input.type", `input item type '${type}' is not supported`);
   }
-  // A freeform (`custom`) call carries raw text and a function call carries JSON
-  // arguments; both become one assistant `tool_calls` entry either way.
-  if (type === "function_call" || type === "custom_tool_call") {
-    const call = type === "custom_tool_call" ? chatCustomToolCallItem(rawItem) : chatToolCallItem(rawItem);
-    if (!call.ok) return call;
-    appendToolCall(messages, call.value, pending);
-    return { ok: true, value: undefined };
-  }
-  if (type === "function_call_output" || type === "custom_tool_call_output") {
-    const result = chatToolResultItems(rawItem, reduction, `${path}.output`, elisions);
-    if (!result.ok) return result;
-    messages.push(...result.value);
-    return { ok: true, value: undefined };
-  }
-  if (type === "agent_message") {
-    const agentMessage = chatAgentMessageItem(rawItem, reduction, `${path}.content`, elisions);
-    if (!agentMessage.ok) return agentMessage;
-    messages.push(agentMessage.value);
-    return { ok: true, value: undefined };
-  }
-  if (type !== "message") return failure("input.type", `input item type '${type}' is not supported`);
-  return appendMessageItem(messages, rawItem, pending, path, reduction, elisions);
 };
 
 export const toDeepSeekChatMessages = (
@@ -771,6 +775,23 @@ const reductionForTruncation = (value: unknown): DeepSeekResponsesResult<Forward
 const providerPromptCacheFields = (rawRecord: Record<string, unknown>, profile: ChatOnlyResponsesProfile): Record<string, unknown> =>
   profile.id === "cerebras" && Object.prototype.hasOwnProperty.call(rawRecord, "prompt_cache_key") ? { prompt_cache_key: rawRecord.prompt_cache_key } : {};
 
+const prepareExecutableToolMessages = (
+  body: Record<string, unknown>,
+  rawRecord: Record<string, unknown>,
+  messages: Record<string, unknown>[],
+  reduction: ForwardedPayloadReduction,
+  elisions: ForwardedPayloadElision[]
+): DeepSeekResponsesFailure | null => {
+  if (!Array.isArray(body.tools) || !body.tools.length) return null;
+  // A hard no-tools request never receives a continuation instruction.
+  if (rawRecord.tool_choice !== "none") {
+    const continuationFailure = appendContinuationInstruction(messages, reduction, elisions);
+    if (continuationFailure) return continuationFailure;
+  }
+  ensureTrailingAssistantReasoning(messages);
+  return null;
+};
+
 /**
  * Builds the Chat Completions body for a Responses request under one provider
  * profile. Translation failures are returned so the caller can answer with a
@@ -818,15 +839,8 @@ export const toDeepSeekResponsesChatBody = (
   const toolNames = applyTools(body, rawRecord, profile);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
-  if (Array.isArray(body.tools) && body.tools.length) {
-    // `tool_choice: "none"` stays a hard no-tools request, and a request without
-    // mapped executable tools (ordinary non-agent traffic) is untouched.
-    if (rawRecord.tool_choice !== "none") {
-      const continuationFailure = appendContinuationInstruction(messages.value, reduction.value, elisions);
-      if (continuationFailure) return continuationFailure;
-    }
-    ensureTrailingAssistantReasoning(messages.value);
-  }
+  const continuationFailure = prepareExecutableToolMessages(body, rawRecord, messages.value, reduction.value, elisions);
+  if (continuationFailure) return continuationFailure;
   return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions } };
 };
 
