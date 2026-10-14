@@ -1,5 +1,4 @@
 import { realpath } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadEnvFile } from "node:process";
@@ -22,12 +21,19 @@ const runtime = runtimePath(root, artifact);
 await verifyRuntimeBinary(runtime, artifact);
 if ((await realpath(process.execPath)) !== (await realpath(runtime))) throw new Error("The service must run the checksum-pinned Bun binary");
 loadEnvFile(join(root, ".env"));
-await rm(join(root, ".data/legacy-rollback-active.json"), { force: true });
 const configuredHome = process.env.CODEX_HOME;
-const selectedHome = resolve(configuredHome === undefined || configuredHome === "" ? join(homedir(), ".codex") : configuredHome);
+let logicalHome: string;
+if (configuredHome !== undefined && configuredHome !== "") logicalHome = configuredHome;
+else {
+  const suppliedHome = process.env.HOME;
+  if (suppliedHome === undefined || suppliedHome === "") throw new Error("HOME or CODEX_HOME is required");
+  logicalHome = join(suppliedHome, ".codex");
+}
+const selectedHome = resolve(logicalHome);
 const nativeHome = (await exists(selectedHome)) ? await realpath(selectedHome) : selectedHome;
 const logicalControl = join(nativeHome, "app-server-control");
 const control = (await exists(logicalControl)) ? await realpath(logicalControl) : logicalControl;
+await rm(join(root, ".data/legacy-rollback-active.json"), { force: true });
 if (mode === "mac") {
   const profile = macSandboxProfile({ root, release, runtime, nativeHome, control });
   const child = Bun.spawn(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", join(release, "scripts/serve-mac.ts")], {
