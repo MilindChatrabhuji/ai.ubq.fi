@@ -3,10 +3,9 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { verifyNativeKvArtifact } from "../src/storage/native-addon.ts";
+import { preparedNativeKvArtifactBinding, verifyNativeKvArtifact } from "../src/storage/native-addon.ts";
 import { assertPortableKvKeyBytes, BUN_KV_CODEC, KvU64, openKv, type Kv, type KvListOptions, type KvListSelector } from "#kv";
 import { getKv, initializeKv, setKvForTest } from "../src/kv.ts";
-import { guardNativeKv } from "../src/storage/native-kv.ts";
 
 const fixtureRoot = resolve(".cleanup-evidence/m01-storage");
 mkdirSync(fixtureRoot, { recursive: true });
@@ -102,6 +101,60 @@ test("atomic compare-and-set refuses stale checks without partial writes", async
   expect(await kv.atomic().check(absent).set(["quota"], { reserved: 2 }).set(["partial"], true).commit()).toEqual({ ok: false });
   expect((await kv.get(["partial"])).versionstamp).toBeNull();
   expect(quota.value).toEqual({ reserved: 1 });
+});
+
+test("native check budget preserves paired analytics sums with two and ten caller checks", async () => {
+  const kv = await openFixture();
+  const counters = [
+    ["sample_count", 1n],
+    ["input_tokens", 100n],
+    ["cached_input_tokens", 25n],
+    ["usage_reported_sample_count", 1n],
+    ["request_cache_hit_sample_count", 1n],
+  ] as const;
+  for (const checkCount of [2, 10]) {
+    const prefix = `analytics-${checkCount}`;
+    const fences = await kv.getMany(Array.from({ length: checkCount }, (_, index) => [prefix, "fence", index]));
+    let operation = kv
+      .atomic()
+      .check(...fences)
+      .set([prefix, "marker"], true)
+      .set([prefix, "cardinality"], 1);
+    for (const [counter, amount] of counters) operation = operation.sum([prefix, "dimension", counter], amount).sum([prefix, "aggregate", counter], amount);
+    expect((await operation.commit()).ok).toBe(true);
+    for (const [counter, amount] of counters) {
+      expect((await kv.get<KvU64>([prefix, "dimension", counter])).value?.value).toBe(amount);
+      expect((await kv.get<KvU64>([prefix, "aggregate", counter])).value?.value).toBe(amount);
+    }
+  }
+});
+
+test("maximum caller checks retain stale CAS and late wrong-type rollback without partial counters", async () => {
+  const kv = await openFixture();
+  const keys = Array.from({ length: 10 }, (_, index) => ["max-fence", index]);
+  const fences = await kv.getMany(keys);
+  await kv.set(keys[9], "changed");
+  expect(
+    await kv
+      .atomic()
+      .check(...fences)
+      .set(["stale-marker"], true)
+      .sum(["stale-sum"], 1n)
+      .commit()
+  ).toEqual({ ok: false });
+  expect((await kv.get(["stale-marker"])).versionstamp).toBeNull();
+  expect((await kv.get(["stale-sum"])).versionstamp).toBeNull();
+  const current = await kv.getMany(keys);
+  await kv.set(["late-wrong-type"], 7n);
+  let failed = kv
+    .atomic()
+    .check(...current)
+    .set(["late-marker"], true);
+  for (let index = 0; index < 9; index += 1) failed = failed.sum(["late-sum", index], 1n);
+  await expect(failed.sum(["late-wrong-type"], 1n).commit()).rejects.toThrow();
+  expect((await kv.get(["late-marker"])).versionstamp).toBeNull();
+  for (let index = 0; index < 9; index += 1) expect((await kv.get(["late-sum", index])).versionstamp).toBeNull();
+  expect((await kv.get(["late-wrong-type"])).value).toBe(7n);
 });
 
 test("native facade permits captured list and atomic instance overrides without recursion", async () => {
@@ -266,31 +319,15 @@ test("snapshot reads preserve absent values and clone caller-owned buffers", asy
   expect((await kv.get(["bytes"])).value).toEqual(new Uint8Array([1, 2, 3]));
 });
 
-test("arithmetic guard retries its own fence while a caller CAS failure remains final", async () => {
+test("concurrent native arithmetic retains updates while caller CAS failure remains final", async () => {
   const kv = await openFixture();
   await kv.set(["guard-counter"], new KvU64(0n));
-  let mutateOnRead = true;
-  const injected = new Proxy(kv, {
-    get(target, property) {
-      if (property === "get")
-        return async (...args: Parameters<Kv["get"]>) => {
-          const row = await target.get(...args);
-          if (mutateOnRead && args[0][0] === "guard-counter") {
-            mutateOnRead = false;
-            await target.atomic().sum(["guard-counter"], 1n).commit();
-          }
-          return row;
-        };
-      const member: unknown = Reflect.get(target, property);
-      return typeof member === "function" ? member.bind(target) : member;
-    },
-  });
-  const guarded = guardNativeKv(injected);
-  expect((await guarded.atomic().sum(["guard-counter"], 1n).commit()).ok).toBe(true);
+  const commits = await Promise.all([kv.atomic().sum(["guard-counter"], 1n).commit(), kv.atomic().sum(["guard-counter"], 1n).commit()]);
+  expect(commits.every((result) => result.ok)).toBe(true);
   expect((await kv.get<KvU64>(["guard-counter"])).value?.value).toBe(2n);
   const stale = await kv.get(["caller-fence"]);
   await kv.set(["caller-fence"], true);
-  expect(await guarded.atomic().check(stale).sum(["guard-counter"], 1n).commit()).toEqual({ ok: false });
+  expect(await kv.atomic().check(stale).sum(["guard-counter"], 1n).commit()).toEqual({ ok: false });
   expect((await kv.get<KvU64>(["guard-counter"])).value?.value).toBe(2n);
 });
 
@@ -366,6 +403,46 @@ test("two native handles share CAS fencing and monotonic persisted revisions", a
   expect(await first.atomic().check(before).set(["stale-owner"], true).commit()).toEqual({ ok: false });
 });
 
+test("two native handles preserve ten caller checks under mixed counter-type updates", async () => {
+  const path = temporaryPath();
+  const first = await openFixture(path);
+  const second = await openFixture(path);
+  const fences = await first.getMany(Array.from({ length: 10 }, (_, index) => ["mixed-fence", index]));
+  await first.set(["mixed-counter"], new KvU64(0n));
+  const writer = (async () => {
+    for (let index = 0; index < 40; index += 1) {
+      await second.set(["mixed-counter"], 3n);
+      await second.set(["mixed-counter"], new KvU64(0n));
+    }
+  })();
+  const outcomes: boolean[] = [];
+  try {
+    for (let index = 0; index < 20; index += 1) {
+      try {
+        const result = await first
+          .atomic()
+          .check(...fences)
+          .set(["mixed-marker", index], true)
+          .sum(["mixed-side", index], 1n)
+          .sum(["mixed-counter"], 1n)
+          .commit();
+        expect(result.ok).toBe(true);
+        outcomes.push(true);
+      } catch (error) {
+        if (!(error instanceof TypeError) || !error.message.includes("KvU64")) throw error;
+        outcomes.push(false);
+      }
+    }
+  } finally {
+    await writer;
+  }
+  expect(outcomes).toHaveLength(20);
+  for (let index = 0; index < outcomes.length; index += 1) {
+    expect((await first.get(["mixed-marker", index])).value).toBe(outcomes[index] ? true : null);
+    expect((await first.get<KvU64>(["mixed-side", index])).value?.value ?? null).toBe(outcomes[index] ? 1n : null);
+  }
+}, 10_000);
+
 test("codec mismatch and symlink paths reject before native opening", async () => {
   const path = temporaryPath();
   const first = await openKv(path);
@@ -418,7 +495,8 @@ test("separate Bun processes preserve each quota increment under contention", as
   const storageUrl = new URL("../src/storage/kv.ts", import.meta.url).href;
   writeFileSync(
     worker,
-    `import { openKv } from ${JSON.stringify(storageUrl)};
+    `import { openKv, prepareNativeKvBackend } from ${JSON.stringify(storageUrl)};
+prepareNativeKvBackend(${JSON.stringify(preparedNativeKvArtifactBinding())});
 const kv = await openKv(process.argv[2]);
 try {
   for (let n = 0; n < 20; n += 1) {
@@ -457,7 +535,8 @@ test("an acknowledged transaction survives abrupt writer process termination", a
   const storageUrl = new URL("../src/storage/kv.ts", import.meta.url).href;
   writeFileSync(
     worker,
-    `import { openKv } from ${JSON.stringify(storageUrl)};
+    `import { openKv, prepareNativeKvBackend } from ${JSON.stringify(storageUrl)};
+prepareNativeKvBackend(${JSON.stringify(preparedNativeKvArtifactBinding())});
 const kv = await openKv(process.argv[2]);
 await kv.atomic().set(["reservation"], { request: "fixture", amount: 3n }).set(["billing"], { pending: true }).commit();
 console.log("committed");
