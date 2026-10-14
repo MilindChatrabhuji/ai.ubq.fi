@@ -68,3 +68,39 @@
          }
          else if (typecode === Typecode.False) {
              // boolean false
+--- a/esm/napi_based.js
++++ b/esm/napi_based.js
+@@ -32,14 +32,7 @@
+ //
+ let DEFAULT_NAPI_INTERFACE_LOAD_ERROR;
+ // deno-lint-ignore no-explicit-any
+-const DEFAULT_NAPI_INTERFACE = await (async () => {
+-  try {
+-    return await import('./_napi_index.cjs');
+-  } catch (e) {
+-    DEFAULT_NAPI_INTERFACE_LOAD_ERROR = e;
+-    return undefined;
+-  }
+-})();
++const DEFAULT_NAPI_INTERFACE = undefined;
+ class NapiBasedKv extends ProtoBasedKv {
+     constructor(debug, napi, dbId, decodeV8, encodeV8) {
+         super(debug, decodeV8, encodeV8);
+--- a/script/napi_based.js
++++ b/script/napi_based.js
+@@ -37,14 +37,7 @@
+ //
+ let DEFAULT_NAPI_INTERFACE_LOAD_ERROR;
+ // deno-lint-ignore no-explicit-any
+-const DEFAULT_NAPI_INTERFACE = (() => {
+-  try {
+-    return require('./_napi_index.cjs');
+-  } catch (e) {
+-    DEFAULT_NAPI_INTERFACE_LOAD_ERROR = e;
+-    return undefined;
+-  }
+-})();
++const DEFAULT_NAPI_INTERFACE = undefined;
+ class NapiBasedKv extends proto_based_js_1.ProtoBasedKv {
+     constructor(debug, napi, dbId, decodeV8, encodeV8) {
+         super(debug, decodeV8, encodeV8);

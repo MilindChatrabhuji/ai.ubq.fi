@@ -25,6 +25,8 @@ export type {
 export { KvU64 } from "@deno/kv";
 export { assertPortableKvKeyBytes } from "./key-compatibility.ts";
 export { assertPortableKvValue } from "./value-compatibility.ts";
+export { prepareNativeKvBackend, verifyNativeKvArtifact } from "./native-addon.ts";
+export type { NativeKvArtifactBinding, VerifiedNativeKvArtifact } from "./native-addon.ts";
 
 export const BUN_KV_DATABASE_PATH = ".data/kv-bun.sqlite3";
 export const BUN_KV_CODEC = "bun-jsc-v1";

@@ -2,6 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { verifyNativeKvArtifact } from "../src/storage/native-addon.ts";
 import { assertPortableKvKeyBytes, BUN_KV_CODEC, KvU64, openKv, type Kv, type KvListOptions, type KvListSelector } from "#kv";
 import { getKv, initializeKv, setKvForTest } from "../src/kv.ts";
 import { guardNativeKv } from "../src/storage/native-kv.ts";
@@ -32,6 +34,47 @@ afterEach(() => {
 test("storage checks execute without provider credentials", () => {
   const names = ["CODEX_AUTH_JSON_B64", "DENO_DEPLOY_TOKEN", "UOS_AI_TOKEN", "SURPLUS_API_KEY", "METERED_API_KEY", "OPENROUTER_API_KEY"];
   expect(names.every((name) => !process.env[name])).toBe(true);
+});
+
+test("native artifact verification requires independent provenance and matching frozen inputs", () => {
+  const path = temporaryPath();
+  const directory = `${path}.artifact`;
+  mkdirSync(directory);
+  const hash = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
+  const bytes = new Uint8Array([1, 2, 3]);
+  const inputs = {
+    schema: 1,
+    sdk: { name: "@deno/kv", version: "0.14.0" },
+    source: { commit: "9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5" },
+    patches: [{ file: "fixture.patch", sha256: "a".repeat(64) }],
+    lock: { sha256: "b".repeat(64) },
+    toolchain: { version: "fixture" },
+    recipe: { locked: true },
+    artifact: { file: "native-kv.node", platform: process.platform, architecture: process.arch, target: "fixture-target", napiVersion: 4 },
+  };
+  const inputsText = JSON.stringify(inputs);
+  const provenance = {
+    ...inputs,
+    inputsSha256: hash(inputsText),
+    artifact: { ...inputs.artifact, sha256: hash(bytes) },
+    build: { exitCode: 0, logSha256: "c".repeat(64) },
+  };
+  const provenanceText = JSON.stringify(provenance);
+  writeFileSync(`${directory}/inputs.json`, inputsText);
+  writeFileSync(`${directory}/native-kv.provenance.json`, provenanceText);
+  writeFileSync(`${directory}/native-kv.node`, bytes);
+  const binding = { artifactDirectory: directory, expectedProvenanceSha256: hash(provenanceText), inputsManifest: `${directory}/inputs.json` };
+  expect(verifyNativeKvArtifact(binding).artifactSha256).toBe(hash(bytes));
+  expect(() => verifyNativeKvArtifact({ ...binding, expectedProvenanceSha256: "0".repeat(64) })).toThrow("release binding");
+  writeFileSync(`${directory}/native-kv.node`, new Uint8Array([4]));
+  expect(() => verifyNativeKvArtifact(binding)).toThrow("artifact hash");
+  writeFileSync(`${directory}/native-kv.node`, bytes);
+  const failedBuild = JSON.stringify({ ...provenance, build: { ...provenance.build, exitCode: 1 } });
+  writeFileSync(`${directory}/native-kv.provenance.json`, failedBuild);
+  expect(() => verifyNativeKvArtifact({ ...binding, expectedProvenanceSha256: hash(failedBuild) })).toThrow("build did not complete");
+  writeFileSync(`${directory}/native-kv.provenance.json`, provenanceText);
+  writeFileSync(`${directory}/inputs.json`, JSON.stringify({ ...inputs, recipe: { locked: false } }));
+  expect(() => verifyNativeKvArtifact(binding)).toThrow("frozen inputs");
 });
 
 test("native Bun SQLite retains typed values and KvU64 identity", async () => {
