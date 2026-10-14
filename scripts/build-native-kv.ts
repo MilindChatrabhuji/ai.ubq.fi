@@ -107,7 +107,7 @@ const prepareSource = async (workspace: string, logPath: string, environment: Re
 };
 
 /** CI/packaging preparation only; application startup verifies and loads prepared immutable bytes. */
-export const buildNativeKv = async (outputDirectory: string): Promise<NativeKvArtifact> => {
+export const buildNativeKv = async (outputDirectory: string, options: { toolchainDirectory?: string } = {}): Promise<NativeKvArtifact> => {
   if (process.platform !== inputs.artifact.platform || process.arch !== inputs.artifact.architecture || Bun.version !== "1.4.0") {
     throw new Error("Native KV build requires pinned Bun 1.4.0 on Linux ARM64");
   }
@@ -131,7 +131,7 @@ export const buildNativeKv = async (outputDirectory: string): Promise<NativeKvAr
   }
   const workspace = await mkdtemp(join(tmpdir(), "uos-native-kv-"));
   const buildLogPath = join(workspace, "build.log");
-  const toolchain = join(homedir(), ".rustup", "toolchains", `stable-${inputs.artifact.target}`, "bin");
+  const toolchain = options.toolchainDirectory ?? join(homedir(), ".rustup", "toolchains", `stable-${inputs.artifact.target}`, "bin");
   const rustc = join(toolchain, "rustc");
   const cargo = join(toolchain, "cargo");
   await verifiedBytes(rustc, inputs.toolchain.rustcSha256);
