@@ -1,5 +1,5 @@
-import { chmod, lstat, mkdir, readdir, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
-import { resolve, join, isAbsolute } from "node:path";
+import { chmod, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { resolve, join, isAbsolute, dirname, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BUN_RUNTIMES, selectedRuntime, type RuntimeArtifact } from "./bun-runtime.ts";
 import { command, digest, treeDigest } from "./io.ts";
@@ -38,16 +38,51 @@ const readManifest = async (root: string): Promise<BunReleaseManifest> => {
     throw new Error("Immutable Bun release runtime does not match the approved pin");
   return value as unknown as BunReleaseManifest;
 };
-const validateLinks = async (root: string, directory: string): Promise<void> => {
-  for (const name of await readdir(directory)) {
-    const path = join(directory, name);
-    const stat = await lstat(path);
-    if (stat.isSymbolicLink()) {
-      const target = await readlink(path);
-      if (isAbsolute(target) || !(await realpath(path)).startsWith(root + "/")) throw new Error("Dependency symlink escapes the immutable release");
-    } else if (stat.isDirectory()) await validateLinks(root, path);
-    else if (!stat.isFile()) throw new Error("Unsupported dependency payload entry");
+type DependencyLink = { path: string; target: string; resolved: string; device: number; inode: number };
+const dependencyLinks = async (directory: string): Promise<DependencyLink[]> => {
+  const info = await lstat(directory);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Dependency payload root must be a regular directory");
+  const root = await realpath(directory);
+  const links: DependencyLink[] = [];
+  const walk = async (current: string): Promise<void> => {
+    for (const name of await readdir(current)) {
+      const path = join(current, name);
+      const stat = await lstat(path);
+      if (stat.isSymbolicLink()) {
+        const target = await readlink(path);
+        // realpath rejects dangling links and resolution cycles before any write.
+        const resolved = await realpath(path);
+        if (!resolved.startsWith(root + sep)) throw new Error("Dependency symlink escapes the immutable release");
+        if (dirname(path) === resolved || dirname(path).startsWith(resolved + sep)) throw new Error("Dependency symlink targets an ancestor cycle");
+        const targetInfo = await lstat(resolved);
+        if (!targetInfo.isFile() && !targetInfo.isDirectory()) throw new Error("Unsupported dependency symlink target");
+        links.push({ path, target, resolved, device: stat.dev, inode: stat.ino });
+      } else if (stat.isDirectory()) await walk(path);
+      else if (!stat.isFile()) throw new Error("Unsupported dependency payload entry");
+    }
+  };
+  await walk(root);
+  return links;
+};
+/** Bun cache aliases must remain valid after staging rename and artifact relocation. */
+export const normalizeDependencyLinks = async (directory: string): Promise<void> => {
+  const links = await dependencyLinks(directory);
+  for (const link of links) {
+    if (!isAbsolute(link.target)) continue;
+    const info = await lstat(link.path);
+    if (!info.isSymbolicLink() || info.dev !== link.device || info.ino !== link.inode || (await readlink(link.path)) !== link.target)
+      throw new Error("Dependency symlink changed during immutable preparation");
+    const temporary = link.path + ".uos-link-" + crypto.randomUUID();
+    try {
+      await symlink(relative(dirname(link.path), link.resolved), temporary);
+      await rename(temporary, link.path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
+};
+const validateLinks = async (directory: string): Promise<void> => {
+  for (const link of await dependencyLinks(directory)) if (isAbsolute(link.target)) throw new Error("Dependency symlink escapes the immutable release");
 };
 export const prepareReleasePayload = async (root: string, sha: string, archiveDigest: string, headerDirectory?: string): Promise<BunReleaseManifest> => {
   if (Bun.version !== "1.4.0" || !/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{64}$/.test(archiveDigest))
@@ -65,12 +100,13 @@ export const prepareReleasePayload = async (root: string, sha: string, archiveDi
   // install in nested .data/releases from discovering production credentials.
   await writeFile(join(root, ".env"), "", { flag: "wx", mode: 0o600 });
   try {
-    await command(process.execPath, ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: root, sparse: true });
+    await command(process.execPath, ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts", "--backend=copyfile"], { cwd: root, sparse: true });
   } finally {
     await rm(join(root, ".env"));
   }
   await rm(join(root, ".bun-cache"), { recursive: true, force: true });
-  await validateLinks(await realpath(root), join(root, "node_modules"));
+  await normalizeDependencyLinks(join(root, "node_modules"));
+  await validateLinks(join(root, "node_modules"));
   await mkdir(join(root, ".uos-permissions"), { mode: 0o700 });
   if (process.platform === "linux") {
     const builder = (await import(pathToFileURL(join(root, "scripts/build-permissions.ts")).href)) as {
@@ -98,7 +134,7 @@ export const verifyReleasePayload = async (root: string, sha?: string, expectedS
   const manifest = await readManifest(root);
   if ((sha && manifest.git_sha !== sha) || (expectedSourceTree && manifest.source_tree_sha256 !== expectedSourceTree))
     throw new Error("Immutable Bun release source identity changed");
-  await validateLinks(await realpath(root), join(root, "node_modules"));
+  await validateLinks(join(root, "node_modules"));
   if (
     manifest.dependency_lock_sha256 !== digest(await readFile(join(root, "bun.lock"))) ||
     manifest.source_tree_sha256 !== (await treeDigest(root, excluded)) ||
