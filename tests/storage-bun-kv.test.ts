@@ -177,6 +177,27 @@ test("prefix selectors exclude the exact prefix and native cursors retain cross-
   expect((await Array.fromAsync(kv.list({ prefix: ["prefix"], end: ["prefix", 2] }))).map((row) => row.value)).toEqual(["child"]);
 });
 
+test("native cursor lifecycle clears empty and exhausted scans but preserves limited continuations", async () => {
+  const kv = await openFixture();
+  const empty = kv.list({ prefix: ["empty-cursor"] });
+  expect(() => empty.cursor).toThrow("before first iteration");
+  expect(await Array.fromAsync(empty)).toEqual([]);
+  expect(empty.cursor).toBe("");
+  await kv.set(["cursor", 1], "first");
+  const single = kv.list({ prefix: ["cursor"] });
+  expect((await Array.fromAsync(single)).map((row) => row.value)).toEqual(["first"]);
+  expect(single.cursor).toBe("");
+  await kv.set(["cursor", 2], "second");
+  const limited = kv.list({ prefix: ["cursor"] }, { limit: 1 });
+  expect((await Array.fromAsync(limited)).map((row) => row.value)).toEqual(["first"]);
+  const continuation = limited.cursor;
+  expect(continuation).not.toBe("");
+  const resumed = kv.list({ prefix: ["cursor"] }, { cursor: continuation });
+  expect(resumed.cursor).toBe(continuation);
+  expect((await Array.fromAsync(resumed)).map((row) => row.value)).toEqual(["second"]);
+  expect(resumed.cursor).toBe("");
+});
+
 test("unsigned sums wrap, retain real U64 values, and roll back wrong-type mutations", async () => {
   const kv = await openFixture();
   await kv.set(["sum"], new KvU64(2n ** 64n - 1n));

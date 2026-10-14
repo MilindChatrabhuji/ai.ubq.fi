@@ -106,11 +106,25 @@ const checkedList = <T>(kv: Kv, selector: KvListSelector, options: KvListOptions
     nativeSelector = "end" in selector ? { start, end: selector.end } : { prefix: selector.prefix, start };
   }
   const iterator = nativeSelector === selector ? validated : kv.list<T>(nativeSelector, options);
+  let cursor = options.cursor || undefined;
+  let yielded = 0;
   return {
     get cursor() {
-      return iterator.cursor;
+      if (cursor === undefined) throw new Error("Cannot get cursor before first iteration");
+      return cursor;
     },
-    next: () => retrySqliteBusy(() => iterator.next()),
+    next: async () => {
+      const result = await retrySqliteBusy(() => iterator.next());
+      if (result.done) {
+        // Hitting the requested page limit retains a continuation; exhausting
+        // the underlying range clears it, including a scan with no rows.
+        if (options.limit === undefined || yielded < options.limit) cursor = "";
+      } else {
+        yielded += 1;
+        cursor = iterator.cursor;
+      }
+      return result;
+    },
     return: async () => (await iterator.return?.()) ?? { done: true, value: undefined },
     [Symbol.asyncIterator]() {
       return this;
