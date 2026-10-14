@@ -419,7 +419,7 @@ const parseSession = (path: string, relativePath: string, content: string): Sess
 
 const listDayFiles = async (monthDir: string, day: string): Promise<string[]> => {
   const names: string[] = [];
-  for await (const entry of await readdir(`${monthDir}/${day}`, { withFileTypes: true })) {
+  for (const entry of await readdir(`${monthDir}/${day}`, { withFileTypes: true })) {
     if (entry.isFile() && entry.name.endsWith(".jsonl")) names.push(entry.name);
   }
   names.sort(compareText);
@@ -429,7 +429,7 @@ const listDayFiles = async (monthDir: string, day: string): Promise<string[]> =>
 const listMonthDays = async (monthDir: string): Promise<string[]> => {
   const days: string[] = [];
   try {
-    for await (const entry of await readdir(monthDir, { withFileTypes: true })) if (entry.isDirectory()) days.push(entry.name);
+    for (const entry of await readdir(monthDir, { withFileTypes: true })) if (entry.isDirectory()) days.push(entry.name);
   } catch (error) {
     if (isFsError(error, "ENOENT")) return [];
     throw error;

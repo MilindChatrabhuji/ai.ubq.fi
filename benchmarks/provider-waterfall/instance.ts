@@ -42,9 +42,11 @@ const releasePath = realpathSync(new URL(".data/current/", root).pathname);
 console.log(`[benchmark] repo root ${rootPath}`);
 console.log(`[benchmark] release ${releasePath}`);
 
-for (const name of ["DENO_DEPLOY", "DENO_DEPLOYMENT_ID", "DENO_DEPLOY_BUILD_ID", "DENO_REGION", "DENO_TIMELINE"]) {
-  delete process.env[name];
-}
+delete process.env.DENO_DEPLOY;
+delete process.env.DENO_DEPLOYMENT_ID;
+delete process.env.DENO_DEPLOY_BUILD_ID;
+delete process.env.DENO_REGION;
+delete process.env.DENO_TIMELINE;
 
 const kvDir = `${rootPath}/.data/benchmark`;
 mkdirSync(kvDir, { recursive: true });

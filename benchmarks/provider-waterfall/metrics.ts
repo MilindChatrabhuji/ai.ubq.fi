@@ -229,7 +229,7 @@ const parseArgs = (args: readonly string[]): Map<string, string> => {
 
 const listJsonl = async (dir: string): Promise<string[]> => {
   const files: string[] = [];
-  for await (const entry of await readdir(dir, { withFileTypes: true })) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(`${dir}/${entry.name}`);
   }
   return files.sort((left, right) => left.localeCompare(right));
