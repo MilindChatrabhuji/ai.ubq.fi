@@ -18,19 +18,23 @@
  *
  * Run (fake Jev, credential-free; local/VPS Linux; the script sets the existing
  * fixture dummy `DEEPSEEK_API_KEY` in-process for its mocked ordinary provider):
- *   deno run --unstable-kv --allow-run=codex --allow-read --allow-write \
- *     --allow-net=127.0.0.1 --allow-env=PATH,TMPDIR,DEEPSEEK_API_KEY lib/jev_compaction/jev-codex-smoke.ts
+ *   bun --no-env-file run lib/jev_compaction/jev-codex-smoke.ts
+ * Run with a scrubbed environment and absent OPENROUTER_API_KEY; --no-env-file
+ * prevents dotenv loading but does not remove inherited provider credentials.
  *
  * Run (real Jev, SAME official-client/gateway path; only when the existing key is
  * present, and the only paid calls are the authorized synthetic compactions):
- *   deno run --unstable-kv --allow-run=codex --allow-read --allow-write \
- *     --allow-net=127.0.0.1,api.typesafe.ai \
- *     --allow-env=PATH,TMPDIR,DEEPSEEK_API_KEY,OPENROUTER_API_KEY lib/jev_compaction/jev-codex-smoke.ts
+ *   bun run lib/jev_compaction/jev-codex-smoke.ts
  *
  * It exercises: ordinary turns with no Jev, one manual compaction whose summary
  * the next request adopts, one isolated small auto-compaction threshold, and (in
  * fake mode) a Jev outage that must leave the original history intact.
  */
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { serveHttp, type HttpServer } from "#http";
+import { openKv } from "#kv";
 import { PAID_FALLBACK_NO_LIMIT } from "../../src/api-keys.ts";
 import { apiKeyPolicyFromHashRecord, resetApiKeyPolicyCacheForTest } from "../../src/api-key-policy.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../../src/deepseek/index.ts";
@@ -123,7 +127,7 @@ function adoptedSummary(body: string): string {
 /** Jev availability, read as a presence boolean only; never logged or echoed. */
 function openRouterKeyPresent(): boolean {
   try {
-    const key = Deno.env.get("OPENROUTER_API_KEY");
+    const key = process.env["OPENROUTER_API_KEY"];
     return key !== undefined && key.length > 0;
   } catch {
     return false;
@@ -280,7 +284,7 @@ class FakeChatUpstream {
    * assertions inspect.
    */
   private chainServed = false;
-  private server: Deno.HttpServer | null = null;
+  private server: HttpServer | null = null;
   private shellTool: ChatTool | null = null;
   url = "";
 
@@ -296,12 +300,8 @@ class FakeChatUpstream {
 
   static async start(): Promise<FakeChatUpstream> {
     const fake = new FakeChatUpstream();
-    let resolveAddr: (addr: Deno.NetAddr) => void = () => {};
-    const listening = new Promise<Deno.NetAddr>((resolve) => {
-      resolveAddr = resolve;
-    });
-    fake.server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: (addr) => resolveAddr(addr as Deno.NetAddr) }, (request) => fake.handle(request));
-    const addr = await listening;
+    fake.server = serveHttp({ hostname: "127.0.0.1", port: 0 }, (request) => fake.handle(request));
+    const addr = await fake.server.ready;
     fake.url = `http://127.0.0.1:${addr.port}`;
     return fake;
   }
@@ -473,30 +473,32 @@ class AppServer {
   exited = false;
   private nextId = 1;
   private readonly pending = new Map<number, PendingWaiter>();
-  private readonly writer: WritableStreamDefaultWriter<Uint8Array>;
-  private readonly child: Deno.ChildProcess;
+  private readonly child: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  private readonly pumps: readonly Promise<void>[];
 
-  private constructor(child: Deno.ChildProcess) {
+  private constructor(child: Bun.Subprocess<"pipe", "pipe", "pipe">) {
     this.child = child;
-    this.writer = child.stdin.getWriter();
-    void this.pumpStdout();
-    void this.pumpStderr();
+    this.pumps = [this.pumpStdout(), this.pumpStderr()];
   }
 
   static async start(cwd: string, env: Record<string, string>): Promise<AppServer> {
-    const child = new Deno.Command(CODEX_BIN, {
-      args: ["app-server"],
+    const child = Bun.spawn([CODEX_BIN, "app-server"], {
       cwd,
       env,
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-    const server = new AppServer(child);
-    await server.request("initialize", {
-      clientInfo: { name: "ai-ubq-fi-jev-smoke", title: "jev-smoke", version: "0.1.0" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    server.notify("initialized", {});
+    const server = new AppServer(child);
+    try {
+      await server.request("initialize", {
+        clientInfo: { name: "ai-ubq-fi-jev-smoke", title: "jev-smoke", version: "0.1.0" },
+      });
+      server.notify("initialized", {});
+    } catch (error) {
+      await server.stop();
+      throw error;
+    }
     return server;
   }
 
@@ -565,7 +567,8 @@ class AppServer {
   }
 
   private write(payload: unknown): void {
-    void this.writer.write(new TextEncoder().encode(`${JSON.stringify(payload)}\n`));
+    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    void this.child.stdin.flush();
   }
 
   notify(method: string, params: Record<string, unknown>): void {
@@ -607,7 +610,7 @@ class AppServer {
     } catch {
       // Already gone.
     }
-    const exited = await Promise.race([this.child.status.then(() => true), delay(2000).then(() => false)]);
+    const exited = await Promise.race([this.child.exited.then(() => true), delay(2000).then(() => false)]);
     if (!exited) {
       try {
         this.child.kill("SIGKILL");
@@ -615,6 +618,8 @@ class AppServer {
         // Already gone.
       }
     }
+    await this.child.exited;
+    await Promise.allSettled(this.pumps);
     this.exited = true;
   }
 }
@@ -751,7 +756,7 @@ type GatewayHandle = {
 
 /** The real gateway handler over loopback HTTP with a real in-memory KV. */
 async function startGateway(): Promise<GatewayHandle> {
-  const kv = await Deno.openKv(":memory:");
+  const kv = await openKv(":memory:");
   const keyId = "jev-codex-smoke-key";
   const tokenHash = await sha256Base64Url(GATEWAY_TOKEN);
   const now = Date.now();
@@ -791,8 +796,8 @@ async function startGateway(): Promise<GatewayHandle> {
   setInferenceAdmissionControllerForTest(createInferenceAdmissionController({ maxActive: 8, maxWaiting: 8, maxQueueWaitMs: 500 }));
   const { default: handler } = await import("../../src/handler/index.ts");
   const { createServeHandler } = await import("../../src/handler/serve-handler.ts");
-  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));
-  const port = (server.addr as Deno.NetAddr).port;
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, createServeHandler(handler));
+  const { port } = await server.ready;
   return {
     url: `http://127.0.0.1:${port}`,
     port,
@@ -864,26 +869,26 @@ async function main(): Promise<void> {
   require_(!BETA_COMMAND.includes(BETA_TAIL), "the beta command must not embed the dropped tail literal");
   require_(BETA_COMMAND.includes(BETA_HEAD), "the beta command must still name the call for the Jev decision");
 
-  const tmp = await Deno.makeTempDir({ prefix: "jev-codex-smoke-" });
+  const tmp = await mkdtemp(join(tmpdir(), "jev-codex-smoke-"));
   const manualHome = `${tmp}/codex-home-manual`;
   const autoHome = `${tmp}/codex-home-auto`;
   const workDir = `${tmp}/work`;
-  await Deno.mkdir(manualHome, { recursive: true });
-  await Deno.mkdir(autoHome, { recursive: true });
-  await Deno.mkdir(workDir, { recursive: true });
+  await mkdir(manualHome, { recursive: true });
+  await mkdir(autoHome, { recursive: true });
+  await mkdir(workDir, { recursive: true });
 
   const fakeJev = new FakeJev();
   const upstream = await FakeChatUpstream.start();
   // Existing test-fixture mechanism: the mocked ordinary provider needs a
   // DeepSeek key present, so set the synthetic value and restore it afterwards.
   // The value is never logged, and no inherited real key is used or forwarded.
-  const inheritedDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
-  Deno.env.set("DEEPSEEK_API_KEY", DUMMY_DEEPSEEK_KEY);
+  const inheritedDeepSeekKey = process.env["DEEPSEEK_API_KEY"];
+  process.env["DEEPSEEK_API_KEY"] = DUMMY_DEEPSEEK_KEY;
   // Live-mode instrumentation: count the real Jev API hop itself, so live runs
   // never report the fake asker's counter as if it were real call evidence.
   let jevApiRequests = 0;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const fixtureFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     let url: string;
     if (typeof input === "string") url = input;
     else if (input instanceof URL) url = input.toString();
@@ -892,13 +897,14 @@ async function main(): Promise<void> {
     if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return originalFetch(`${upstream.url}/chat/completions`, init);
     return originalFetch(input, init);
   };
+  globalThis.fetch = Object.assign(fixtureFetch, { preconnect: originalFetch.preconnect });
   const gateway = await startGateway();
   if (report.mode === "fake") setJevCompactionAskerForTest(fakeJev);
 
   const childEnv = {
     CODEX_HOME: manualHome,
     HOME: manualHome,
-    PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+    PATH: process.env["PATH"] ?? "/usr/bin:/bin",
     TMPDIR: tmp,
     TERM: "dumb",
     LANG: "C.UTF-8",
@@ -913,7 +919,7 @@ async function main(): Promise<void> {
   try {
     // 1. Ordinary turns: real tool-call history through the official client,
     //    with no Jev invocation and no compaction marker forwarded upstream.
-    await Deno.writeTextFile(`${manualHome}/config.toml`, configToml(gateway.port, workDir, false));
+    await writeFile(`${manualHome}/config.toml`, configToml(gateway.port, workDir, false));
     rpc = await AppServer.start(workDir, childEnv);
     require_(rpc.serverRequests.length === 0, `unexpected server requests during startup: ${rpc.serverRequests.join(", ")}`);
     console.log("PASS app-server: initialize handshake accepted");
@@ -1041,7 +1047,7 @@ async function main(): Promise<void> {
     upstream.mode = "chain";
     upstream.reportedPromptTokens = 80;
     const autoEnv = { ...childEnv, CODEX_HOME: autoHome, HOME: autoHome };
-    await Deno.writeTextFile(`${autoHome}/config.toml`, configToml(gateway.port, workDir, true));
+    await writeFile(`${autoHome}/config.toml`, configToml(gateway.port, workDir, true));
     autoRpc = await AppServer.start(workDir, autoEnv);
     const autoThread = await openThread(autoRpc, workDir);
     const autoJevBefore = fakeJev.calls;
@@ -1096,12 +1102,12 @@ async function main(): Promise<void> {
     await rpc?.stop();
     setJevCompactionAskerForTest(null);
     globalThis.fetch = originalFetch;
-    if (inheritedDeepSeekKey === undefined) Deno.env.delete("DEEPSEEK_API_KEY");
-    else Deno.env.set("DEEPSEEK_API_KEY", inheritedDeepSeekKey);
+    if (inheritedDeepSeekKey === undefined) delete process.env["DEEPSEEK_API_KEY"];
+    else process.env["DEEPSEEK_API_KEY"] = inheritedDeepSeekKey;
     await gateway.stop();
     await upstream.close();
     try {
-      await Deno.remove(tmp, { recursive: true });
+      await rm(tmp, { recursive: true });
     } catch {
       // Best effort; the temp directory is outside the repository.
     }
@@ -1116,4 +1122,4 @@ try {
   report.failure_class = error instanceof Error ? `${error.name}: ${error.message.slice(0, 240)}` : "unknown";
 }
 console.log(JSON.stringify(report));
-Deno.exit(report.status === "PASS" ? 0 : 1);
+process.exit(report.status === "PASS" ? 0 : 1);

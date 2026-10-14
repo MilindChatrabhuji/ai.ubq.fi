@@ -1,11 +1,10 @@
-#!/usr/bin/env -S deno run --env --allow-env --allow-read --allow-write --allow-net --allow-run
+#!/usr/bin/env bun
 /**
  * Repairs this host's Codex auth pool from another host's working credential.
  *
  * Run it from the repository root:
  *
- *   deno run --env-file=.env --unstable-kv --allow-env --allow-read --allow-write=.data \
- *     --allow-net=chatgpt.com --allow-run=ssh scripts/codex-auth-repair.ts
+ *   bun run scripts/codex-auth-repair.ts
  *
  * Without `--apply` the run is a report: it proves which accounts authenticate
  * and prints the plan it would execute. With `--apply` it writes the planned
@@ -26,9 +25,11 @@
  * reads or candidate probes on its own.
  *
  * `ssh` is the only transport for remote credentials, and the remote program
- * is streamed over stdin so nothing has to be installed on the other host.
+ * is streamed over stdin and imports the other host's deployed Bun storage module.
  * Nothing on the remote host is ever written.
  */
+import { readFile, stat } from "node:fs/promises";
+import { BUN_KV_DATABASE_PATH, openKv, type Kv } from "#kv";
 import {
   applyCodexAuthPlan,
   type AssessedCodexAuthCandidate,
@@ -47,8 +48,8 @@ import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const CODEX_AUTH_POOL_KEY = ["ubq_ai", "codex_auth"] as const;
 const DEFAULT_REMOTE = "codex@vps.pavlovcik.com";
-const DEFAULT_KV_PATH = ".data/kv.sqlite3";
-const DEFAULT_REMOTE_KV_PATH = "/home/codex/repos/ubiquity/ai.ubq.fi/.data/kv.sqlite3";
+const DEFAULT_KV_PATH = BUN_KV_DATABASE_PATH;
+const DEFAULT_REMOTE_KV_PATH = "/home/codex/repos/ubiquity/ai.ubq.fi/.data/kv-bun.sqlite3";
 const PROBE_TIMEOUT_MS = 10_000;
 const SSH_TIMEOUT_MS = 30_000;
 const CODEX_USAGE_PATH = "/backend-api/wham/usage";
@@ -94,9 +95,9 @@ const readFlagString = (flags: Record<string, string | boolean>, key: string, fa
 };
 
 const expandTilde = (path: string): string => {
-  if (path === "~") return Deno.env.get("HOME") ?? path;
+  if (path === "~") return process.env["HOME"] ?? path;
   if (path.startsWith("~/")) {
-    const home = Deno.env.get("HOME");
+    const home = process.env["HOME"];
     if (home) return `${home}${path.slice(1)}`;
   }
   return path;
@@ -127,8 +128,8 @@ adopts a working credential from another host.
   --diff               Read the remote host even when nothing here is broken, to report divergence.
   --json               Emit the plan as JSON instead of text.
   --remote <target>    SSH target holding the other host's pool (default ${DEFAULT_REMOTE}).
-  --kv <path>          Local Deno KV path (default ${DEFAULT_KV_PATH}).
-  --remote-kv <path>   Remote Deno KV path (default ${DEFAULT_REMOTE_KV_PATH}).
+  --kv <path>          Local Bun KV path (default ${DEFAULT_KV_PATH}).
+  --remote-kv <path>   Remote Bun KV path under the deployed tree's .data directory (default ${DEFAULT_REMOTE_KV_PATH}).
   --auth-json <path>   Local auth.json candidate source (default ~/.codex/auth.json).
   --codex-base-url <url>
   --ssh <path>         ssh binary (default ssh).
@@ -149,9 +150,9 @@ const formatTime = (ms: number | null): string => (ms === null ? "n/a" : new Dat
 
 /** Reads a local KV pool entry with the versionstamp the write must still match. */
 const readLocalPool = async (kvPath: string): Promise<{ pool: CodexAuthPoolState; versionstamp: string } | { error: string }> => {
-  let kv: Deno.Kv;
+  let kv: Kv;
   try {
-    kv = await Deno.openKv(kvPath);
+    kv = await openKv(kvPath);
   } catch (error) {
     return { error: `could not open ${kvPath}: ${error instanceof Error ? error.message : String(error)}` };
   }
@@ -175,7 +176,7 @@ const readLocalPool = async (kvPath: string): Promise<{ pool: CodexAuthPoolState
  * disappeared, so no separate read is needed.
  */
 const writeLocalPool = async (kvPath: string, versionstamp: string, pool: CodexAuthPoolState): Promise<{ ok: true } | { ok: false; error: string }> => {
-  const kv = await Deno.openKv(kvPath);
+  const kv = await openKv(kvPath);
   try {
     const committed = await kv.atomic().check({ key: CODEX_AUTH_POOL_KEY, versionstamp }).set(CODEX_AUTH_POOL_KEY, pool).commit();
     if (!committed.ok) return { ok: false, error: "auth pool changed while planning; nothing was written" };
@@ -230,59 +231,63 @@ const runCommand = async (
   stdin: string | null,
   timeoutMs: number
 ): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> => {
-  let process: Deno.ChildProcess;
+  let child: Bun.Subprocess<"pipe", "pipe", "pipe">;
   try {
-    process = new Deno.Command(command, {
-      args: [...args],
-      stdin: stdin === null ? "null" : "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
+    child = Bun.spawn([command, ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   } catch (error) {
     return { ok: false, error: `${command} could not start: ${error instanceof Error ? error.message : String(error)}` };
   }
   const timer = setTimeout(() => {
     try {
-      process.kill("SIGKILL");
+      child.kill("SIGKILL");
     } catch {
       // The process already exited.
     }
   }, timeoutMs);
   try {
-    // `process.stdin` is non-nullable on Deno's ChildProcess, and this branch
-    // only runs for a process spawned with `stdin: "piped"`.
-    if (stdin !== null) {
-      const writer = process.stdin.getWriter();
-      await writer.write(new TextEncoder().encode(stdin));
-      await writer.close();
-    }
-    const output = await process.output();
-    if (!output.success) {
-      const detail = new TextDecoder().decode(output.stderr).trim().split("\n").slice(-2).join(" ").slice(0, 300);
+    const stdout = new Response(child.stdout).text();
+    const stderr = new Response(child.stderr).text();
+    if (stdin !== null) child.stdin.write(stdin);
+    await child.stdin.end();
+    const [code, stdoutText, stderrText] = await Promise.all([child.exited, stdout, stderr]);
+    if (code !== 0) {
+      const detail = stderrText.trim().split("\n").slice(-2).join(" ").slice(0, 300);
       const suffix = detail ? `: ${detail}` : "";
-      return { ok: false, error: `${command} exited ${output.code}${suffix}` };
+      return { ok: false, error: `${command} exited ${code}${suffix}` };
     }
-    return { ok: true, stdout: new TextDecoder().decode(output.stdout) };
+    return { ok: true, stdout: stdoutText };
   } catch (error) {
     return { ok: false, error: `${command} failed: ${error instanceof Error ? error.message : String(error)}` };
   } finally {
     clearTimeout(timer);
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await child.exited;
   }
 };
 
 /**
- * The remote program. It opens the other host's Deno KV read-only in effect —
+ * The remote program imports the Bun storage seam from the deployed repository
+ * beside the remote .data directory, then opens a marked database read-only in effect —
  * it reads one key and closes — and prints the stored pool so the caller can
- * rank credentials. It is streamed over stdin so the other host needs no
- * installed copy of this repository.
+ * rank credentials. Missing files, incompatible codecs, or an absent deployed
+ * module fail closed; there is no legacy runtime or dependency-install fallback.
  */
 const buildRemotePoolProgram = (remoteKvPath: string): string =>
-  `const kvPath = ${JSON.stringify(remoteKvPath)};
+  `import { lstat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+const kvPath = ${JSON.stringify(remoteKvPath)};
 try {
-  const kv = await Deno.openKv(kvPath);
-  const entry = await kv.get(["ubq_ai", "codex_auth"], { consistency: "strong" });
-  await kv.close();
-  console.log(JSON.stringify({ ok: true, pool: entry.value ?? null }));
+  if (basename(dirname(kvPath)) !== ".data") throw new Error("remote KV must be inside the deployed repository's .data directory");
+  if (!(await lstat(kvPath)).isFile()) throw new Error("remote KV must be an existing regular database");
+  const { openKv } = await import(pathToFileURL(join(dirname(kvPath), "..", "src", "storage", "kv.ts")).href);
+  const kv = await openKv(kvPath);
+  try {
+    const entry = await kv.get(["ubq_ai", "codex_auth"], { consistency: "strong" });
+    console.log(JSON.stringify({ ok: true, pool: entry.value ?? null }));
+  } finally {
+    kv.close();
+  }
 } catch (error) {
   console.log(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
 }
@@ -291,7 +296,7 @@ try {
 const fetchRemotePool = async (flags: Flags, warn: (message: string) => void): Promise<{ candidates: readonly CodexAuthCandidate[]; error: string | null }> => {
   const result = await runCommand(
     flags.ssh,
-    ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", flags.remote, "deno", "run", "--unstable-kv", "--allow-read", "--allow-write", "--allow-env", "-"],
+    ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", flags.remote, "bun", "--no-env-file", "run", "-"],
     buildRemotePoolProgram(flags.remoteKv),
     SSH_TIMEOUT_MS
   );
@@ -338,10 +343,10 @@ const fetchRemoteAuthJson = async (flags: Flags, warn: (message: string) => void
 
 const readLocalAuthJsonCandidate = async (flags: Flags): Promise<CodexAuthCandidate | null> => {
   try {
-    const text = await Deno.readTextFile(flags.authJson);
+    const text = await readFile(flags.authJson, "utf8");
     let mtimeMs: number | null = null;
     try {
-      mtimeMs = (await Deno.stat(flags.authJson)).mtime?.getTime() ?? null;
+      mtimeMs = (await stat(flags.authJson)).mtime?.getTime() ?? null;
     } catch {
       mtimeMs = null;
     }
@@ -600,7 +605,7 @@ const applyPlannedRepair = async (
 };
 
 const main = async (): Promise<number> => {
-  const args = Deno.args;
+  const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h")) {
     usage();
     return 0;
@@ -653,9 +658,9 @@ const main = async (): Promise<number> => {
 
 if (import.meta.main) {
   try {
-    Deno.exit(await main());
+    process.exit(await main());
   } catch (error) {
     console.error(`codex-auth-repair: ${error instanceof Error ? error.message : String(error)}`);
-    Deno.exit(2);
+    process.exit(2);
   }
 }

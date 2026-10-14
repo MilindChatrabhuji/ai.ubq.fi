@@ -28,7 +28,7 @@ export const analyzeStage0CacheTelemetryLines = (lines: Iterable<string>): Stage
 
 async function* readStdinLines(): AsyncGenerator<string> {
   let remaining = "";
-  for await (const chunk of Deno.stdin.readable.pipeThrough(new TextDecoderStream())) {
+  for await (const chunk of Bun.stdin.stream().pipeThrough(new TextDecoderStream())) {
     const lines = `${remaining}${chunk}`.split("\n");
     remaining = lines.pop() ?? "";
     for (const line of lines) yield line.endsWith("\r") ? line.slice(0, -1) : line;
@@ -47,9 +47,9 @@ const analyzeStdin = async (): Promise<Stage0CacheTelemetryReport> => {
 };
 
 if (import.meta.main) {
-  if (Deno.args.length > 0) {
+  if (process.argv.length > 2) {
     console.error("stage0-cache-telemetry-gate accepts stdin only and does not support arguments");
-    Deno.exit(2);
+    process.exit(2);
   }
 
   try {
@@ -62,6 +62,6 @@ if (import.meta.main) {
       // in parser diagnostics, and request-level data must never be echoed.
       console.error("stage0-cache-telemetry-gate: analysis failed");
     }
-    Deno.exit(2);
+    process.exitCode = 2;
   }
 }
