@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { connect } from "node:net";
-import { serveHttp } from "#http";
+import { serveHttp, trackRequestTask } from "#http";
+import WebSocket from "ws";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => {};
@@ -148,3 +149,196 @@ test("HTTP gracefully drains an active stream before finished resolves", async (
     await server.shutdown();
   }
 });
+
+test("HTTP shutdown waits for delivery-triggered durable application writes", async () => {
+  const writeStarted = deferred<void>();
+  const releaseWrite = deferred<void>();
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, (_request, info) => {
+    trackRequestTask(
+      info.completed,
+      info.completed.then(async () => {
+        writeStarted.resolve();
+        await releaseWrite.promise;
+      })
+    );
+    return new Response("delivered");
+  });
+  try {
+    const address = await server.ready;
+    expect(await (await fetch(`http://127.0.0.1:${address.port}`)).text()).toBe("delivered");
+    await writeStarted.promise;
+    let stopped = false;
+    const shutdown = server.shutdown().then(() => {
+      stopped = true;
+    });
+    await Bun.sleep(25);
+    expect(stopped).toBe(false);
+    releaseWrite.resolve();
+    await shutdown;
+    expect(stopped).toBe(true);
+  } finally {
+    releaseWrite.resolve();
+    await server.shutdown();
+  }
+});
+
+test("HTTP quiet streams survive Bun's native ten-second default idle timeout", async () => {
+  const server = serveHttp(
+    { hostname: "127.0.0.1", port: 0 },
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode("first"));
+            await Bun.sleep(10_500);
+            controller.enqueue(new TextEncoder().encode("last"));
+            controller.close();
+          },
+        })
+      )
+  );
+  try {
+    const address = await server.ready;
+    expect(await (await fetch(`http://127.0.0.1:${address.port}`)).text()).toBe("firstlast");
+  } finally {
+    await server.shutdown();
+  }
+}, 15_000);
+
+test("WebSocket authorization refuses before upgrade and preserves real bidirectional frames", async () => {
+  const accepted = deferred<void>();
+  const server = serveHttp(
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      upgrade(request, info) {
+        expect(info.remoteAddr.hostname).toBe("127.0.0.1");
+        if (request.headers.get("authorization") !== "Bearer fixture-token") return new Response("unauthorized", { status: 401 });
+        return {
+          maxPayloadBytes: 1024,
+          accept(socket) {
+            socket.on("message", (bytes) => socket.send(bytes));
+            accepted.resolve();
+          },
+        };
+      },
+    },
+    () => new Response("ordinary HTTP")
+  );
+  const clients: WebSocket[] = [];
+  try {
+    const address = await server.ready;
+    const origin = `ws://127.0.0.1:${address.port}/upgrade`;
+    const refusal = deferred<number>();
+    const denied = new WebSocket(origin);
+    clients.push(denied);
+    denied.on("error", () => {});
+    denied.on("unexpected-response", (_request, response) => {
+      refusal.resolve(response.statusCode ?? 0);
+      response.resume();
+      denied.terminate();
+    });
+    expect(await refusal.promise).toBe(401);
+    const echoed = deferred<string>();
+    const client = new WebSocket(origin, { headers: { authorization: "Bearer fixture-token" } });
+    clients.push(client);
+    client.once("open", () => client.send("fixture frame"));
+    client.once("message", (bytes) => echoed.resolve(String(bytes)));
+    client.once("error", (error) => echoed.reject(error));
+    await accepted.promise;
+    expect(await echoed.promise).toBe("fixture frame");
+    const closed = deferred<number>();
+    client.once("close", (code) => closed.resolve(code));
+    await server.shutdown();
+    expect(await closed.promise).toBe(1001);
+  } finally {
+    for (const client of clients) client.terminate();
+    await server.shutdown();
+  }
+}, 5000);
+
+test("WebSocket hard payload limit preserves the route's failure close contract", async () => {
+  let messages = 0;
+  const server = serveHttp(
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      upgrade() {
+        return {
+          maxPayloadBytes: 1024,
+          payloadLimitClose: { code: 1011, reason: "fixture payload limit" },
+          accept(socket) {
+            socket.on("message", () => {
+              messages++;
+            });
+            socket.on("error", () => {});
+          },
+        };
+      },
+    },
+    () => new Response("ordinary HTTP")
+  );
+  let client: WebSocket | null = null;
+  try {
+    const address = await server.ready;
+    const closed = deferred<{ code: number; reason: string }>();
+    const timeout = setTimeout(() => closed.reject(new Error(`Payload fixture did not close: messages=${messages}, readyState=${client?.readyState}`)), 1000);
+    void closed.promise.finally(() => clearTimeout(timeout)).catch(() => {});
+    client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    client.once("open", () => client?.send(new Uint8Array(1025)));
+    client.once("close", (code, reason) => closed.resolve({ code, reason: String(reason) }));
+    client.once("error", (error) => closed.reject(error));
+    expect(await closed.promise).toEqual({ code: 1011, reason: "fixture payload limit" });
+    expect(messages).toBe(0);
+  } finally {
+    client?.terminate();
+    await server.shutdown();
+  }
+}, 5000);
+
+test("HTTP bounds producer reads when a real socket applies backpressure", async () => {
+  const observed = deferred<{ completed: Promise<void> }>();
+  const chunk = new Uint8Array(64 * 1024);
+  let pulls = 0;
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, (_request, info) => {
+    observed.resolve({ completed: info.completed });
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulls === 512) controller.close();
+          else {
+            pulls++;
+            controller.enqueue(chunk);
+          }
+        },
+      })
+    );
+  });
+  const address = await server.ready;
+  const socket = connect({ host: "127.0.0.1", port: address.port });
+  socket.on("error", () => {});
+  try {
+    socket.pause();
+    socket.once("connect", () => socket.write("GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
+    const receipt = await observed.promise;
+    let settled = false;
+    void receipt.completed.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+    await Bun.sleep(50);
+    expect(pulls).toBeGreaterThan(0);
+    expect(pulls).toBeLessThan(512);
+    expect(settled).toBe(false);
+    socket.on("data", () => {});
+    socket.resume();
+    await receipt.completed;
+  } finally {
+    socket.destroy();
+    await server.shutdown();
+  }
+}, 5000);

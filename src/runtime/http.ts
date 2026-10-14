@@ -1,16 +1,23 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
+import { createRequestTaskDrain } from "./http-tasks.ts";
+import { createWebSocketUpgrades, type ServeUpgradeHandler } from "./http-upgrade.ts";
+
+export { trackRequestTask } from "./http-tasks.ts";
+export { loadWebSocketModule } from "./websocket.ts";
+export type { ServeUpgradeHandler, WebSocketUpgrade } from "./http-upgrade.ts";
 
 export type NetAddr = Readonly<{ transport: "tcp" | "udp"; hostname: string; port: number }>;
 export type Addr = NetAddr | Readonly<{ transport: "unix"; path: string }>;
 export type ServeHandlerInfo<Address extends Addr = Addr> = Readonly<{ remoteAddr: Address; completed: Promise<void> }>;
 export type ServeHandler<Address extends Addr = Addr> = (request: Request, info: ServeHandlerInfo<Address>) => Response | Promise<Response>;
-export type ServeDefaultExport = Readonly<{ fetch: ServeHandler; onListen?: (address: NetAddr) => void }>;
+export type ServeDefaultExport = Readonly<{ fetch: ServeHandler; onListen?: (address: NetAddr) => void; upgrade?: ServeUpgradeHandler }>;
 export type ServeHttpOptions = Readonly<{
   hostname?: string;
   port?: number;
   onListen?: (address: NetAddr) => void;
   signal?: AbortSignal;
+  upgrade?: ServeUpgradeHandler;
 }>;
 export type HttpServer = Readonly<{
   addr: NetAddr;
@@ -123,6 +130,7 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
   const handler = typeof optionsOrHandler === "function" ? optionsOrHandler : suppliedHandler;
   if (!handler) throw new TypeError("An HTTP request handler is required");
   const active = new Set<Promise<void>>();
+  const upgrades = createWebSocketUpgrades(options.upgrade, incomingRequest);
   let stopPromise: Promise<void> | null = null;
   let resolveReady: (address: NetAddr) => void = () => {};
   let rejectReady: (error: Error) => void = () => {};
@@ -150,6 +158,7 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
       rejectCompleted = reject;
     });
     void completed.catch(() => {});
+    const drainTasks = createRequestTaskDrain(completed);
     const fail = (error: Error): void => {
       if (settled) return;
       settled = true;
@@ -187,6 +196,7 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
         }
       }
       await completed.catch(() => {});
+      await drainTasks();
       incoming.removeListener("aborted", aborted);
       incoming.removeListener("error", fail);
     })();
@@ -197,6 +207,11 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
   // must not inherit Bun.serve's ten-second idle timeout through node:http.
   server.timeout = 0;
   server.requestTimeout = 0;
+  server.on("upgrade", (incoming, socket, head) => {
+    const task = upgrades.upgrade(incoming, socket, head);
+    active.add(task);
+    void task.finally(() => active.delete(task)).catch(() => {});
+  });
   server.once("error", (error: Error) => {
     rejectReady(error);
     rejectFinished(error);
@@ -230,6 +245,7 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
       await ready;
       server.close();
       server.closeIdleConnections();
+      await upgrades.shutdown();
       await finished;
     })();
     return stopPromise;
