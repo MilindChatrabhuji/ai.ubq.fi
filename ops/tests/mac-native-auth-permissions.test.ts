@@ -32,6 +32,7 @@ type FixtureInput = {
   absent: boolean;
   runtime: string;
   runtimeHash: string;
+  namedFile?: string;
 };
 type FixtureCase = {
   name: string;
@@ -86,6 +87,11 @@ const childFixture = async (api: ChildApi, input: FixtureInput): Promise<void> =
   assert.equal(Deno.execPath(), input.runtime, "the child must execute the managed fixture artifact");
   await assert.rejects(Deno.writeTextFile(input.runtime, "forbidden"), Deno.errors.NotCapable);
   await assert.rejects(Deno.writeTextFile(input.root + "/.data/runtimes/other.txt", "forbidden"), Deno.errors.NotCapable);
+  if (input.namedFile) {
+    assert.equal(await Deno.readTextFile(input.namedFile), "synthetic-external-native-leaf");
+    await assert.rejects(Deno.writeTextFile(input.namedFile, "forbidden"), Deno.errors.NotCapable);
+    await assert.rejects(Deno.writeTextFile(input.namedFile.replace("auth.json", "other.txt"), "forbidden"), Deno.errors.NotCapable);
+  }
   api.setNativeCodexAuthHooksForTest({
     os: "darwin",
     refresh: async (home, email, accountId) => {
@@ -260,7 +266,20 @@ const prepare = async (testCase: FixtureCase): Promise<{ base: string; input: Fi
     base + "/injected",
   ]);
   const { runtime, runtimeHash } = await prepareRuntime(root, testCase);
-  const input = { root, home, deniedReads, first: auth(1), sibling: auth(1, "uos-uploaded-sibling"), absent: Boolean(testCase.absent), runtime, runtimeHash };
+  const namedFile = base + "/owner-home/.codex-ubiquity/auth.json";
+  await Deno.mkdir(base + "/owner-home/.codex-ubiquity", { recursive: true });
+  await Deno.writeTextFile(namedFile, "synthetic-external-native-leaf");
+  const input = {
+    root,
+    home,
+    deniedReads,
+    first: auth(1),
+    sibling: auth(1, "uos-uploaded-sibling"),
+    absent: Boolean(testCase.absent),
+    runtime,
+    runtimeHash,
+    namedFile: testCase.noHome || testCase.missing ? undefined : namedFile,
+  };
   if (!testCase.absent) await Deno.mkdir(home + "/app-server-control", { recursive: true });
   await Deno.mkdir(release + "/scripts", { recursive: true });
   if (!testCase.absent) await Deno.writeTextFile(home + "/auth.json", authDocument(input.first));
@@ -389,6 +408,26 @@ const cases: FixtureCase[] = [
   { name: "missing managed runtime fails closed", runtimeFailure: "missing" },
   { name: "corrupt managed runtime fails closed", runtimeFailure: "corrupt" },
 ];
+
+Deno.test("Mac named native leaf read grant has a matched negative control", async () => {
+  const args = await launcherArguments();
+  const anchor = "uos_permissions_read=$uos_permissions_read,${uos_consumer_file%_};";
+  assert.equal(args[2].split(anchor).length, 2, "the negative control must remove the actual composed named-file grant");
+  args[2] = args[2].replace(anchor, "uos_permissions_read=$uos_permissions_read;");
+  const { base, input, env } = await prepare({ name: "named read negative control" });
+  let run: FixtureRun | undefined;
+  try {
+    run = await start(args, input, env);
+    const status = await bounded(run.child.status, "negative read grant exit");
+    assert.notEqual(status.code, 0);
+    assert.match(await bounded(run.stderr, "negative read grant stderr"), /read access|NotCapable/);
+    assert(input.namedFile);
+    assert.equal(await Deno.readTextFile(input.namedFile), "synthetic-external-native-leaf");
+  } finally {
+    if (run) await stop(run);
+    await Deno.remove(base, { recursive: true });
+  }
+});
 
 for (const testCase of cases) {
   Deno.test("Mac plist native permissions: " + testCase.name, async () => {
