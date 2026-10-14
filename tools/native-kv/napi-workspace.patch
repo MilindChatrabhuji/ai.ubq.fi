@@ -1,0 +1,27 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,9 @@
+ [workspace]
+-members = ["denokv", "proto", "remote", "sqlite", "timemachine"]
++members = ["denokv", "proto", "remote", "sqlite", "timemachine", "npm/napi"]
+ resolver = "2"
++
++[profile.release]
++lto = true
+ 
+ [workspace.package]
+ license = "MIT"
+--- a/npm/napi/Cargo.toml
++++ b/npm/napi/Cargo.toml
+@@ -1,5 +1,3 @@
+-[workspace]
+-
+ [package]
+ authors = []
+ edition = "2021"
+@@ -27,5 +25,3 @@
+ [build-dependencies]
+ napi-build = "2"
+ 
+-[profile.release]
+-lto = true
