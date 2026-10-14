@@ -1,6 +1,6 @@
 import { statSync, realpathSync, mkdirSync } from "node:fs";
-import { openKv, type Kv } from "#kv";
-import { serveHttp, type ServeDefaultExport } from "#http";
+import type { Kv } from "#kv";
+import type { ServeDefaultExport } from "#http";
 // Benchmark-only gateway instance.
 //
 // Runs the immutable release selected by the main checkout's `.data/current`
@@ -47,6 +47,11 @@ delete process.env.DENO_DEPLOYMENT_ID;
 delete process.env.DENO_DEPLOY_BUILD_ID;
 delete process.env.DENO_REGION;
 delete process.env.DENO_TIMELINE;
+
+// Share the selected application's runtime graph, including durable-request
+// tracking and native KV value identities, instead of the invoking checkout's.
+const { openKv } = (await import(`file://${releasePath}/src/storage/kv.ts`)) as Readonly<{ openKv: typeof import("#kv").openKv }>;
+const { serveHttp } = (await import(`file://${releasePath}/src/runtime/http.ts`)) as Readonly<{ serveHttp: typeof import("#http").serveHttp }>;
 
 const kvDir = `${rootPath}/.data/benchmark`;
 mkdirSync(kvDir, { recursive: true });
