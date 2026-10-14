@@ -2,10 +2,11 @@ import { chmod, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm,
 import { resolve, join, isAbsolute, dirname, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BUN_RUNTIMES, selectedRuntime, type RuntimeArtifact } from "./bun-runtime.ts";
-import { command, digest, treeDigest } from "./io.ts";
+import { command, digest, treeDigest, exists } from "./io.ts";
+import type { NativeKvArtifactBinding } from "../src/storage/native-addon.ts";
+import { readNativeKvReleaseManifest, stageNativeKvReleasePayload, verifyNativeKvReleasePayload, type NativeKvReleaseManifest } from "./native-kv-release.ts";
 
-export type BunReleaseManifest = Readonly<{
-  schema: 2;
+type BunReleaseBase = Readonly<{
   git_sha: string;
   source_archive_sha256: string;
   source_tree_sha256: string;
@@ -16,7 +17,9 @@ export type BunReleaseManifest = Readonly<{
   architecture: string;
   runtime: RuntimeArtifact;
 }>;
-const excluded = new Set(["node_modules", ".uos-permissions", ".uos-release.json"]);
+export type BunReleaseManifest = BunReleaseBase & (Readonly<{ schema: 2 }> | Readonly<{ schema: 3; native_kv: NativeKvReleaseManifest }>);
+const historicalExcluded = new Set(["node_modules", ".uos-permissions", ".uos-release.json"]);
+const excluded = new Set([...historicalExcluded, ".native"]);
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const readManifest = async (root: string): Promise<BunReleaseManifest> => {
   const file = join(root, ".uos-release.json");
@@ -25,7 +28,7 @@ const readManifest = async (root: string): Promise<BunReleaseManifest> => {
   const value: unknown = JSON.parse(await readFile(file, "utf8"));
   if (!isRecord(value)) throw new Error("Immutable Bun release manifest is malformed");
   if (
-    value.schema !== 2 ||
+    (value.schema !== 2 && value.schema !== 3) ||
     typeof value.git_sha !== "string" ||
     !/^[0-9a-f]{40}$/.test(value.git_sha) ||
     ![value.source_archive_sha256, value.source_tree_sha256, value.dependency_lock_sha256, value.dependency_tree_sha256, value.permissions_tree_sha256].every(
@@ -36,6 +39,7 @@ const readManifest = async (root: string): Promise<BunReleaseManifest> => {
   if (value.platform !== "linux" && value.platform !== "darwin") throw new Error("Unsupported immutable Bun release platform");
   if (value.architecture !== "arm64" || JSON.stringify(value.runtime) !== JSON.stringify(BUN_RUNTIMES[value.platform]))
     throw new Error("Immutable Bun release runtime does not match the approved pin");
+  if (value.schema === 3) readNativeKvReleaseManifest(value.native_kv, value.platform);
   return value as unknown as BunReleaseManifest;
 };
 type DependencyLink = { path: string; target: string; resolved: string; device: number; inode: number };
@@ -84,11 +88,17 @@ export const normalizeDependencyLinks = async (directory: string): Promise<void>
 const validateLinks = async (directory: string): Promise<void> => {
   for (const link of await dependencyLinks(directory)) if (isAbsolute(link.target)) throw new Error("Dependency symlink escapes the immutable release");
 };
-export const prepareReleasePayload = async (root: string, sha: string, archiveDigest: string, headerDirectory?: string): Promise<BunReleaseManifest> => {
+export const prepareReleasePayload = async (
+  root: string,
+  sha: string,
+  archiveDigest: string,
+  headerDirectory?: string,
+  nativeArtifact?: NativeKvArtifactBinding
+): Promise<BunReleaseManifest> => {
   if (Bun.version !== "1.4.0" || !/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{64}$/.test(archiveDigest))
     throw new Error("Release preparation requires pinned Bun and exact source identity");
   const runtime = selectedRuntime();
-  for (const name of ["node_modules", ".uos-permissions", ".bun-cache"]) {
+  for (const name of ["node_modules", ".uos-permissions", ".native", ".bun-cache"]) {
     try {
       await lstat(join(root, name));
       throw new Error("Source archive contains a generated dependency/native/cache path");
@@ -114,8 +124,10 @@ export const prepareReleasePayload = async (root: string, sha: string, archiveDi
     };
     await builder.buildPermissionsNative(join(root, ".uos-permissions"), headerDirectory);
   }
+  const native = await stageNativeKvReleasePayload(root, nativeArtifact);
   const manifest: BunReleaseManifest = {
-    schema: 2,
+    schema: 3,
+    native_kv: native,
     git_sha: sha,
     source_archive_sha256: archiveDigest,
     source_tree_sha256: await treeDigest(root, excluded),
@@ -137,11 +149,23 @@ export const verifyReleasePayload = async (root: string, sha?: string, expectedS
   await validateLinks(join(root, "node_modules"));
   if (
     manifest.dependency_lock_sha256 !== digest(await readFile(join(root, "bun.lock"))) ||
-    manifest.source_tree_sha256 !== (await treeDigest(root, excluded)) ||
+    manifest.source_tree_sha256 !== (await treeDigest(root, manifest.schema === 3 ? excluded : historicalExcluded)) ||
     manifest.dependency_tree_sha256 !== (await treeDigest(join(root, "node_modules"))) ||
     manifest.permissions_tree_sha256 !== (await treeDigest(join(root, ".uos-permissions")))
   )
     throw new Error("Immutable Bun release source, dependency or native payload integrity check failed");
+  if (manifest.schema === 3) await verifyNativeKvReleasePayload(root, manifest.platform, manifest.native_kv);
+  else {
+    if ((await exists(join(root, ".native"))) || (await exists(join(root, "src/storage/native-addon.ts"))))
+      throw new Error("Historical Bun schema 2 cannot carry the custom native SDK");
+    const entry = manifest.platform === "linux" ? "serve-vps.ts" : "serve-mac.ts";
+    const profile = digest((await readFile(join(root, "scripts", entry), "utf8")).replace(/port: \d+/, "port: 0"));
+    const expected =
+      manifest.platform === "linux"
+        ? "8a74f51324e59bc00612bd22ae68bc3dc60a55dcb113a66bef0a5c3fc719c1e4"
+        : "e2fb9b164fdce739cfde27ca227188961c256f2111e67a7bffa64ec091fc70c3";
+    if (profile !== expected) throw new Error("Unsupported historical Bun launcher profile");
+  }
   return manifest;
 };
 export const releaseSourceTree = (root: string): Promise<string> => treeDigest(root, excluded);

@@ -4,7 +4,8 @@ uos_root=$(pwd -P)
 uos_release=$(cd -P .data/current && pwd)
 case "$uos_release" in "$uos_root"/.data/releases/*) ;; *) echo "Invalid immutable release selector" >&2; exit 1 ;; esac
 uos_schema=$(/usr/bin/jq -r '.schema // 1' "$uos_release/.uos-release.json")
-if test "$uos_schema" = 2; then
+case "$uos_schema" in 1|2|3) ;; *) echo "Unsupported immutable release schema" >&2; exit 1 ;; esac
+if test "$uos_schema" = 2 || test "$uos_schema" = 3; then
   uos_runtime="$uos_root/.data/runtimes/bun/linux-arm64/1.4.0-086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9/bun"
   if ! test -f "$uos_runtime" || test -L "$uos_runtime"; then echo "Managed VPS runtime unavailable or invalid" >&2; exit 1; fi
   uos_hash=$(/usr/bin/sha256sum "$uos_runtime") || { echo "Managed VPS runtime unavailable or invalid" >&2; exit 1; }
