@@ -1,48 +1,25 @@
 #!/bin/sh
-# Full verification gate: type generation, formatting, linting, type checking, tests.
-# Runs every gate even if an earlier one fails, then exits non-zero if any failed.
+# Run every quality and isolated test segment; aggregate all failures.
 set -u
 . "$(dirname -- "$0")/_bootstrap.sh"
 ensure_deps
-
 fail=0
-
 run() {
   label="$1"
   shift
   printf '\n==> %s\n' "$label"
-  if ! "$@"; then
-    printf '!!! FAILED: %s\n' "$label"
-    fail=1
-  fi
+  if ! "$@"; then printf '!!! FAILED: %s\n' "$label"; fail=1; fi
 }
-
-# Regenerate Deno's ambient types first: without .deno-types.d.ts the type-aware
-# rules silently lose findings rather than erroring.
-run "deno types" deno task types
-run "prettier (format check)" "$TOOLS/node_modules/.bin/prettier" --check .
-run "eslint (template ruleset)" "$TOOLS/node_modules/.bin/eslint" --config "$TOOLS/eslint.config.mjs" .
-run "knip (unused files/exports/deps)" "$TOOLS/node_modules/.bin/knip"
-run "file size ratchet" deno task size:check
-run "deno fmt" deno fmt --check
-run "deno lint" deno lint
-run "deno check" deno task build
-# The disposable deployment-guard fixtures need scoped filesystem and subprocess
-# capabilities, so they run in their own invocation; the main suite stays
-# restricted and reports them ignored.
-run "deno test (vps deploy guards)" deno test --frozen --allow-run=deno,git,/bin/sh,/bin/ln \
-  --allow-net=127.0.0.1 \
-  --allow-read=ops,.cleanup-evidence/vps-deploy-guards-fixtures \
-  --allow-write=.cleanup-evidence/vps-deploy-guards-fixtures \
-  --allow-env=PATH tests/vps-deploy-guards.test.ts
-run "deno test (immutable release retention)" deno task test:vps
-run "deno test" deno task test
-# Mirrors CI's remaining gate, so a green verify cannot still fail the pipeline.
-run "deno test (sentinel local)" deno task sentinel:test-local
-
+run "strict Bun TypeScript (all entry points)" bun --no-env-file run check
+run "prettier (all supported first-party formats)" bun --no-env-file "$TOOLS/node_modules/.bin/prettier" --check .
+run "eslint (template ruleset)" bun --no-env-file "$TOOLS/node_modules/.bin/eslint" --config "$TOOLS/eslint.config.mjs" .
+run "knip (unused files/exports/deps)" bun --no-env-file "$TOOLS/node_modules/.bin/knip"
+run "file size ratchet" bun --no-env-file scripts/file-size-ratchet.ts
+run "Bun test (vps deploy guards)" bun --no-env-file scripts/test-runner.ts deploy-guards
+run "Bun test (immutable releases and retention)" bun --no-env-file scripts/test-runner.ts vps
+run "Bun test (main and isolated measurement/hook/Mac fixtures)" bun --no-env-file scripts/test-runner.ts main
+run "Bun test (sentinel local)" bun --no-env-file scripts/test-runner.ts sentinel
+run "Bun test (quality contracts)" bun --no-env-file scripts/test-runner.ts quality
 printf '\n'
-if [ "$fail" -ne 0 ]; then
-  echo "verify: FAILED"
-  exit 1
-fi
+if [ "$fail" -ne 0 ]; then echo "verify: FAILED"; exit 1; fi
 echo "verify: OK"

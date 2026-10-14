@@ -6,6 +6,7 @@ import eslint from "@eslint/js";
 import tsEslint from "typescript-eslint";
 import sonarjs from "eslint-plugin-sonarjs";
 import checkFile from "eslint-plugin-check-file";
+import globals from "globals";
 import path from "node:path";
 
 // DIVERGENCE: the stock template's boolean-variable naming rule is disabled in
@@ -24,6 +25,8 @@ export default tsEslint.config(
     // thousands of duplicate files.
     ignores: [
       "node_modules/**",
+      ".bun-cache/**",
+      ".tmp/**",
       "**/*.d.ts", // Trap 2.4: .deno-types.d.ts is generated and ~23k lines
       "eslint.config.mjs",
       "lib/**",
@@ -39,6 +42,17 @@ export default tsEslint.config(
       "logs/**",
       "benchmark-runs/**",
     ],
+  },
+  {
+    // Preserve first-party browser JavaScript checks after removing deno lint.
+    files: ["static/**/*.js"],
+    extends: [eslint.configs.recommended],
+    languageOptions: {
+      globals: globals.browser,
+    },
+    rules: {
+      "no-empty": ["error", { allowEmptyCatch: true }],
+    },
   },
   {
     files: ["**/*.ts"],

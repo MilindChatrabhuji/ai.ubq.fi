@@ -9,48 +9,18 @@
     "tests/**/*.e2e.ts",
     "tests/helpers/codex-native-auth-acceptance.ts"
   ],
-  "project": [
-    "src/**/*.ts",
-    "tests/**/*.ts",
-    "scripts/**/*.ts",
-    "ops/**/*.ts",
-    "benchmarks/**/*.ts"
-  ],
+  "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "ops/**/*.ts", "benchmarks/**/*.ts"],
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": [
-    "@std/yaml",
-    "@deno/kv-utils",
-    "@simplewebauthn/server",
-    "ws"
-  ],
   "ignoreIssues": {
-    "serve.ts": [
-      "exports"
-    ],
-    "src/config.ts": [
-      "exports"
-    ],
-    "src/kv.ts": [
-      "exports"
-    ],
-    "src/auth/local-admin.ts": [
-      "exports"
-    ],
-    "src/provider/capacity.ts": [
-      "duplicates"
-    ],
-    "src/inference-deadline.ts": [
-      "duplicates"
-    ],
-    "src/kernel/quota-v2.ts": [
-      "duplicates"
-    ],
-    "src/provider/metered.ts": [
-      "duplicates"
-    ],
-    "src/models/codex-models-whitelist.ts": [
-      "files"
-    ]
+    "serve.ts": ["exports"],
+    "src/config.ts": ["exports"],
+    "src/kv.ts": ["exports"],
+    "src/auth/local-admin.ts": ["exports"],
+    "src/provider/capacity.ts": ["duplicates"],
+    "src/inference-deadline.ts": ["duplicates"],
+    "src/kernel/quota-v2.ts": ["duplicates"],
+    "src/provider/metered.ts": ["duplicates"],
+    "src/models/codex-models-whitelist.ts": ["files"]
   }
 }
