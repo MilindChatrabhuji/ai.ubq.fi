@@ -513,7 +513,7 @@ try {
 } finally { kv.close(); }
 `
   );
-  const children = [0, 1].map(() => Bun.spawn([process.execPath, "--no-env-file", worker, path], { stdout: "pipe", stderr: "pipe" }));
+  const children = [0, 1].map(() => Bun.spawn([process.execPath, "--no-env-file", "--no-install", worker, path], { stdout: "pipe", stderr: "pipe" }));
   try {
     const results = await Promise.all(children.map(async (child) => ({ code: await child.exited, stderr: await new Response(child.stderr).text() })));
     expect(results).toEqual([
@@ -543,7 +543,7 @@ console.log("committed");
 await Bun.sleep(60_000);
 `
   );
-  const child = Bun.spawn([process.execPath, "--no-env-file", worker, path], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, "--no-env-file", "--no-install", worker, path], { stdout: "pipe", stderr: "pipe" });
   try {
     const reader = child.stdout.getReader();
     expect(new TextDecoder().decode((await reader.read()).value)).toContain("committed");
