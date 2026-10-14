@@ -9,8 +9,8 @@ export type { ServeUpgradeHandler, WebSocketUpgrade } from "./http-upgrade.ts";
 
 export type NetAddr = Readonly<{ transport: "tcp" | "udp"; hostname: string; port: number }>;
 export type Addr = NetAddr | Readonly<{ transport: "unix"; path: string }>;
-export type ServeHandlerInfo<Address extends Addr = Addr> = Readonly<{ remoteAddr: Address; completed: Promise<void> }>;
-export type ServeHandler<Address extends Addr = Addr> = (request: Request, info: ServeHandlerInfo<Address>) => Response | Promise<Response>;
+export type ServeHandlerInfo<TAddress extends Addr = Addr> = Readonly<{ remoteAddr: TAddress; completed: Promise<void> }>;
+export type ServeHandler<TAddress extends Addr = Addr> = (request: Request, info: ServeHandlerInfo<TAddress>) => Response | Promise<Response>;
 export type ServeDefaultExport = Readonly<{ fetch: ServeHandler; onListen?: (address: NetAddr) => void; upgrade?: ServeUpgradeHandler }>;
 export type ServeHttpOptions = Readonly<{
   hostname?: string;
@@ -29,6 +29,8 @@ export type HttpServer = Readonly<{
 }>;
 
 const interrupted = (): Error => new Error("The client disconnected before its response was sent");
+// These external states can change during an awaited stream read.
+const responseInterrupted = (outgoing: ServerResponse, signal: AbortSignal): boolean => signal.aborted || outgoing.destroyed;
 const requestBodies = new WeakMap<Request, IncomingBody>();
 
 const incomingHeaders = (incoming: IncomingMessage): Headers => {
@@ -88,7 +90,9 @@ const waitForDrain = (outgoing: ServerResponse, signal: AbortSignal): Promise<vo
       cleanup();
       reject(error);
     };
-    const closed = (): void => failed(interrupted());
+    const closed = (): void => {
+      failed(interrupted());
+    };
     outgoing.once("drain", drain);
     outgoing.once("error", failed);
     outgoing.once("close", closed);
@@ -98,7 +102,7 @@ const waitForDrain = (outgoing: ServerResponse, signal: AbortSignal): Promise<vo
 
 /** EOF only ends the producer. The separate response finish event owns delivery. */
 const sendResponse = async (request: Request, response: Response, outgoing: ServerResponse, signal: AbortSignal): Promise<void> => {
-  if (signal.aborted || outgoing.destroyed) {
+  if (responseInterrupted(outgoing, signal)) {
     void response.body?.cancel(signal.reason).catch(() => {});
     return;
   }
@@ -124,9 +128,9 @@ const sendResponse = async (request: Request, response: Response, outgoing: Serv
   };
   signal.addEventListener("abort", cancel, { once: true });
   try {
-    while (!signal.aborted && !outgoing.destroyed) {
+    while (!responseInterrupted(outgoing, signal)) {
       const chunk = await reader.read();
-      if (signal.aborted || outgoing.destroyed) break;
+      if (responseInterrupted(outgoing, signal)) break;
       if (chunk.done) {
         outgoing.end();
         return;
@@ -135,7 +139,7 @@ const sendResponse = async (request: Request, response: Response, outgoing: Serv
     }
   } finally {
     signal.removeEventListener("abort", cancel);
-    if (signal.aborted || outgoing.destroyed) cancel();
+    if (responseInterrupted(outgoing, signal)) cancel();
     reader.releaseLock();
   }
 };
@@ -182,7 +186,9 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
       controller.abort(error);
       rejectCompleted(error);
     };
-    const aborted = (): void => fail(interrupted());
+    const aborted = (): void => {
+      fail(interrupted());
+    };
     incoming.once("aborted", aborted);
     incoming.once("error", fail);
     outgoing.once("error", fail);
@@ -239,7 +245,9 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
     rejectFinished(error);
   });
   server.once("close", () => {
-    void Promise.allSettled([...active]).then(() => resolveFinished());
+    void Promise.allSettled([...active]).then(() => {
+      resolveFinished();
+    });
   });
   server.listen(address.port, address.hostname, () => {
     const actual = server.address();
