@@ -1,10 +1,26 @@
 # ai.ubq.fi Decisions
 
-Read before changing model routing, cache-read telemetry, VPS acceptance, lint configuration, or Deno app inventory.
+Read before changing the runtime, storage codecs, model routing, cache-read telemetry, VPS acceptance, lint configuration, or Deno app inventory.
 These are scoped decisions, not general policy; they narrow global defaults only for this repository and never weaken
 higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
+
+## Bun executes first-party TypeScript; live cutover remains separate - 2026-10-14
+
+The owner authorized migration of this gateway, its first-party libraries, scripts, tests, quality tooling, CI, and deployment artifacts to Bun. Run TypeScript directly with the pinned Bun runtime and resolve runtime and development dependencies from the root `package.json` with the frozen `bun.lock`. TypeScript checking remains an explicit, separate gate: executing or testing TypeScript with Bun does not establish type correctness. The normal command contract is `bun run verify`, `bun run build`, and `bun run test`.
+
+This repository-scoped decision supersedes the Deno-only runtime default, the root-dependency prohibition, Deno import-map resolution, generated `.deno-types.d.ts`, and Deno gate commands for the migrated first-party program. Earlier dated Deno decisions and their receipts remain historical evidence; they do not authorize a Bun service rollout. Vendored native Codex and other repositories remain outside this migration.
+
+The Bun HTTP entry point uses `node:http` so actual transport `finish`, `error`, and `close` events remain the delivery receipt for terminal settlement. Retain one inference admission lifetime and settle quota and paid accounting exactly once after the semantic terminal and transport outcome are known; consuming a response body alone is not delivery proof. Retain `ws@8.18.3` for upstream custom headers and native-daemon Unix-domain sockets. Preserve cancellation, progressive SSE, WebSocket principal binding, routing eligibility, paid-hop identities, and all existing credential and quota fences.
+
+The SQLite storage foundation targets pinned `@deno/kv@0.14.0`, subject to proof of the existing atomic compare-and-set, heterogeneous key ordering, versionstamp, expiry, serialization, billing, quota, and restart-persistence contracts. Bun's `node:v8` value serialization uses JavaScriptCore and is not the legacy Deno V8 value codec. A shared SQLite backend therefore does not make the old value bytes directly compatible. New Bun databases require an explicit codec marker, and an absent or incompatible marker must fail closed rather than silently reinterpret legacy data.
+
+Legacy database conversion is an explicit offline operation into a new database. Before any separately authorized live cutover, stop and drain all source writers, retain a verified consistent source backup, convert with the matching legacy decoder, validate exact values and retained state, and prove the previous immutable release and untouched source database can be restored. Startup, deployment, and the PR delivery loop must never rewrite a live database automatically. Disposable conversion and rollback evidence is required; a fresh empty database test does not prove legacy compatibility.
+
+This task authorizes source delivery through the normal PR and local Codex review workflow, not a production or Mac service restart, live database conversion, credential mutation, or provider-credit spend. Required deterministic CI and branch protections remain the merge gates; review findings retain their asynchronous official backlog policy. A later authorized deployment still requires the immutable release, deploy lock, exact release identity, requested authenticated client inference, public-route verification, and existing recovery and retention safeguards.
+
+Reason: the owner explicitly selected Bun for the complete first-party program. Reversal risk: treating Bun execution as a type check, treating JavaScriptCore bytes as Deno V8 values, settling quota before transport delivery, or converting storage during ordinary startup would each discard a correctness or custody boundary that this migration must preserve. This decision records the target and acceptance obligations, not completed production acceptance.
 
 ## External reasoning tiers use ascending Codex picker order - 2026-10-10
 

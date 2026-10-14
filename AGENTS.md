@@ -1,5 +1,12 @@
 # Project Guidance
 
+## Runtime and Migration Scope
+
+- Run first-party TypeScript with the pinned Bun runtime, using root `package.json` dependencies and frozen `bun.lock` installs. TypeScript checking is a separate required gate; Bun execution alone does not type-check the program. The 2026-10-14 decision in `docs/DECISIONS.md` supersedes Deno-only runtime, dependency-location, and gate commands only for this repository.
+- Preserve the `node:http` transport delivery receipt and the `ws@8.18.3` custom-header and Unix-domain-socket contracts. Quota and paid-accounting settlement require the existing semantic terminal and actual delivery outcome, with one admission lifetime and exactly one settlement.
+- Treat legacy Deno V8 and Bun JavaScriptCore storage value codecs as incompatible. Open only a correctly codec-marked Bun database; conversion requires a consistent backup, an explicit offline new-database operation, exact-value validation, and a proven rollback path. Never rewrite a live database during startup or deployment.
+- The Bun migration PR does not authorize production or Mac service activation, live database conversion, credential changes, or provider-credit spend. Retain every credential, routing, accounting, review, ownership, immutable-release, and client-acceptance rule below.
+
 ## Local Credential Recovery Safety
 
 - A request to repair one invalid local provider account does not authorize invalidating, revoking, rotating, or
@@ -48,7 +55,7 @@
   retired; do not deploy this service there.
 - Keep the service configuration in `ops/` and link its systemd files from `/etc/systemd/system/`. Keep secrets in the
   repository-root `.env`, KV in `.data/kv.sqlite3`, and immutable releases in `.data/releases/<full-git-sha>`.
-- Serialize VPS deployment writers with `.data/deploy.lock`. Run `deno task deploy:vps` from the clean VPS checkout
+- Serialize VPS deployment writers with `.data/deploy.lock`. Run `bun run deploy:vps` from the clean VPS checkout
   after required CI passes. The launcher resolves `.data/current` once so live code and assets stay on the selected
   release.
 - A deployment is accepted only when a direct Mac-to-VPS authenticated inference request succeeds and `/health` returns
@@ -115,22 +122,13 @@
 
 ## Lint, Format and Type Gates
 
-- Run `sh scripts/verify.sh` (or `deno task verify`) before declaring any change ready. It runs every gate and reports
-  all failures rather than stopping at the first: `deno types`, Prettier, ESLint, knip, the file-size ratchet
-  (`deno task size:check`), `deno fmt --check`, `deno lint`, `deno check` and the full test suite.
-- Prettier owns `*.ts` and `*.mjs` (`printWidth: 160`); `deno fmt` owns JSON, Markdown, CSS, HTML and `static/*.js`.
-  Never let both format a file; `deno.json`'s `fmt.exclude` and `.prettierignore` enforce the split.
-- Run `deno task build` and `deno task test` after any `--fix` run. This lint project's type environment is close to,
-  but not identical with, Deno's checker, so a type-aware autofix can disagree with `deno check`; Deno is the authority.
-- `deno check` and the test suite are the only gates that decide whether a lint fix is correct. Never add
-  `eslint-disable`, `@ts-ignore` or `as any` to silence a finding: if a finding is deliberate-by-design, narrow it in
-  `tools/lint/eslint.config.mjs` with the measurement recorded in a comment, the way the existing DIVERGENCE entries do.
+- Run `bun run verify` (or `sh scripts/verify.sh`) before declaring any change ready. It runs every gate and reports all failures rather than stopping at the first: explicit TypeScript checking, format checks, ESLint, Knip, the file-size ratchet (`bun run size:check`), and the full deterministic test program. Require the committed `bun.lock` to exist before `bun install --frozen-lockfile`; do not regenerate the lockfile to make verification pass.
+- Give every tracked file one formatter, using the committed formatting configuration and `scripts/format.sh`. Preserve Prettier's `printWidth: 160` for TypeScript and `.mjs`; use the migrated format gate rather than a Deno formatter fallback.
+- Run `bun run build` and `bun run test` after any `--fix` run. The explicit TypeScript checker is the type authority; Bun's successful execution or transpilation cannot replace it.
+- The TypeScript check and test suite decide whether a lint fix is correct. Never add `eslint-disable`, `@ts-ignore` or `as any` to silence a finding: if a finding is deliberate-by-design, narrow it in `tools/lint/eslint.config.mjs` with the measurement recorded in a comment, the way the existing DIVERGENCE entries do.
 - File-size no-growth is enforced by `scripts/file-size-ratchet.ts`: source files cap at 1000 lines and tests at 1500,
   and `file-size-baseline.json` records a per-file ceiling for every grandfathered oversized file. Never raise a
-  recorded ceiling or hand-add an entry; after shrinking a recorded file run `deno task size:update`, which only lowers
+  recorded ceiling or hand-add an entry; after shrinking a recorded file run `bun run size:update`, which only lowers
   or drops ceilings and refuses to record new debt.
-- Do not add a `package.json` dependency to the repository root. Deno resolves its JSR/npm graph from the global cache
-  only while the root manifest declares no dependencies; adding one breaks `deno task build` on a fresh checkout. Put
-  dev tooling in `tools/lint/`. See `tools/lint/README.md` for the measurements.
-- Keep `.deno-types.d.ts` generated rather than committed: `deno task types` writes it, and without it the type-aware
-  rules silently lose findings instead of failing.
+- Declare first-party runtime and development dependencies in the root `package.json` and pin the install graph in `bun.lock`. Preserve the selected dependency versions and repository import/type contracts; a runtime migration is not permission for unrelated upgrades.
+- Use the committed TypeScript configuration with explicit Bun and Node types for the application and typed lint environment. Do not restore a blanket Deno global shim or the retired `.deno-types.d.ts` generation step.
