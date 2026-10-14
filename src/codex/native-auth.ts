@@ -117,7 +117,7 @@ const nativeRefreshTime = (value: string | null | undefined): bigint | null => {
   return BigInt(milliseconds) * 1_000_000n + BigInt(fractional.padEnd(9, "0").slice(3, 9));
 };
 
-const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument): void => {
+const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument, requireUsableAccessToken = true): void => {
   const next = document.auth;
   const previousExpiry = getJwtExpMs(previous.access_token);
   const nextExpiry = getJwtExpMs(next.access_token);
@@ -127,7 +127,8 @@ const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument
   if (
     next.account_id !== previous.account_id ||
     !nextExpiry ||
-    nextExpiry <= Date.now() + 120_000 ||
+    (!requireUsableAccessToken && previousExpiry === null && !advancedNativeTime) ||
+    (requireUsableAccessToken && nextExpiry <= Date.now() + 120_000) ||
     (previousExpiry !== null && (nextExpiry < previousExpiry || (nextExpiry === previousExpiry && !advancedNativeTime)))
   ) {
     throw new CodexError("Native Codex credential generation did not advance; no stale credentials were adopted.", "codex_auth_refresh_failed", 503);
@@ -228,7 +229,12 @@ export const refreshNativeCodexAuthIfOwned = async (input: CodexAuthState, rejec
     }
     throw new CodexError("A stale native Codex credential replacement was refused.", "codex_auth_owner_conflict", 409);
   }
-  if (!sameCredentials(auth, document.auth)) return await persistNativeGeneration(current, document, home);
+  if (!sameCredentials(auth, document.auth)) {
+    if ((getJwtExpMs(document.auth.access_token) ?? 0) > Date.now() + 120_000) return await persistNativeGeneration(current, document, home);
+    // Prove generation order before asking its owner to repair an expired token.
+    // The expired generation is never adopted; persistence still requires usability.
+    verifyNativeProgress(auth, document, false);
+  }
   if (!document.email) throw new CodexError("Native Codex account identity could not be verified.", "codex_auth_owner_unavailable", 503);
   try {
     await (hooks?.refresh ?? requestNativeCodexRefresh)(home, document.email, auth.account_id);
