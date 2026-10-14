@@ -1,4 +1,8 @@
-import { exportEntries } from "@deno/kv-utils/import-export";
+import { openKv as openBunKv, type Kv, type KvKey } from "#kv";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { Writable } from "node:stream";
+import { exportEntries } from "../src/kv-conversion/profile-json.ts";
 import {
   classifyKvMigrationKey,
   defaultIncludeLegacyForProfile,
@@ -82,10 +86,11 @@ const getIncludeLegacy = (flags: Args, profile: KvMigrationProfile): boolean => 
 };
 
 async function* readLines(path: string): AsyncGenerator<string> {
-  const file = await Deno.open(path, { read: true });
+  const file = createReadStream(path, { encoding: "utf8" });
   try {
     let buffer = "";
-    for await (const chunk of file.readable.pipeThrough(new TextDecoderStream())) {
+    for await (const chunk of file) {
+      if (typeof chunk !== "string") throw new TypeError("Expected decoded profile NDJSON text");
       buffer += chunk;
       let index = buffer.indexOf("\n");
       while (index !== -1) {
@@ -98,7 +103,7 @@ async function* readLines(path: string): AsyncGenerator<string> {
     if (buffer.trim()) yield buffer;
   } finally {
     try {
-      file.close();
+      file.destroy();
     } catch {
       // FsFile.readable may already have closed the file.
     }
@@ -108,11 +113,11 @@ async function* readLines(path: string): AsyncGenerator<string> {
 const ensureParentDir = async (path: string): Promise<void> => {
   const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   if (index <= 0) return;
-  await Deno.mkdir(path.slice(0, index), { recursive: true });
+  await mkdir(path.slice(0, index), { recursive: true });
 };
 
-const openKv = async (target: string): Promise<Deno.Kv> => {
-  return target ? await Deno.openKv(target) : await Deno.openKv();
+const openKv = async (target: string): Promise<Kv> => {
+  return await openBunKv(target || undefined);
 };
 
 const exportCommand = async (flags: Args): Promise<void> => {
@@ -120,10 +125,10 @@ const exportCommand = async (flags: Args): Promise<void> => {
   const out = getFlagString(flags, "out", DEFAULT_EXPORT_PATH);
   await ensureParentDir(out);
   const kv = await openKv(source);
-  const file = await Deno.open(out, { create: true, truncate: true, write: true });
+  const file = createWriteStream(out);
   try {
     const stream = exportEntries(kv, { prefix: [] });
-    await stream.pipeTo(file.writable);
+    await stream.pipeTo(Writable.toWeb(file));
   } finally {
     kv.close();
   }
@@ -134,11 +139,11 @@ const probeCommand = async (flags: Args): Promise<void> => {
   const source = getRequiredFlagString(flags, "source");
   const kv = await openKv(source);
   try {
-    const prefixes = [[], ["ubq_ai"], ["uos_ai"], ["default"], ["embeddings"], ["agent_messages"]] as Deno.KvKey[];
+    const prefixes = [[], ["ubq_ai"], ["uos_ai"], ["default"], ["embeddings"], ["agent_messages"]] as KvKey[];
     const result = [];
     for (const prefix of prefixes) {
       let count = 0;
-      const samples: Deno.KvKey[] = [];
+      const samples: KvKey[] = [];
       for await (const entry of kv.list({ prefix }, { limit: 20 })) {
         count += 1;
         if (samples.length < 5) samples.push(entry.key);
@@ -263,7 +268,7 @@ const importCommand = async (flags: Args, options: ImportOptions): Promise<void>
         2
       )
     );
-    if (result.errors > 0) Deno.exit(1);
+    if (result.errors > 0) process.exitCode = 1;
   } finally {
     kv?.close();
   }
@@ -300,7 +305,7 @@ const validateCommand = async (flags: Args): Promise<void> => {
     const result = { target, ...(await validateKvMigrationTarget(kv)) };
 
     console.log(JSON.stringify(result, null, 2));
-    if (strict && result.errors.length) Deno.exit(1);
+    if (strict && result.errors.length) process.exitCode = 1;
   } finally {
     kv.close();
   }
@@ -313,7 +318,7 @@ const incidentV2Command = async (flags: Args): Promise<void> => {
     const migration = await migrateKvReadIncidentV2(kv);
     const validation = await validateKvMigrationTarget(kv);
     console.log(JSON.stringify({ target, migration, validation }, null, 2));
-    if (validation.errors.length) Deno.exit(1);
+    if (validation.errors.length) process.exitCode = 1;
   } finally {
     kv.close();
   }
@@ -323,7 +328,7 @@ const getAuthToken = (flags: Args): string => {
   // Candidates are tried in order and an empty value means "not provided", exactly
   // as the previous `||` chain treated it: `??` would accept an empty `--token=`
   // and reject a run that DENO_DEPLOY_TOKEN could have served.
-  const candidates = [getFlagString(flags, "token"), Deno.env.get("DENO_DEPLOY_TOKEN")?.trim(), Deno.env.get("UOS_AI_TOKEN")?.trim()];
+  const candidates = [getFlagString(flags, "token"), process.env.DENO_DEPLOY_TOKEN?.trim(), process.env.UOS_AI_TOKEN?.trim()];
   const token = candidates.find((value) => value !== undefined && value !== "") ?? "";
   if (!token) throw new Error("--token or DENO_DEPLOY_TOKEN is required for HTTP migration commands");
   return token;
@@ -360,7 +365,7 @@ const importHttpCommand = async (flags: Args): Promise<void> => {
   const includeLegacy = getIncludeLegacy(flags, profile);
   const overwrite = hasFlag(flags, "overwrite");
   const dryRun = getDryRun(flags, true);
-  const body = await Deno.readTextFile(input);
+  const body = await Bun.file(input).text();
   const url = new URL("/admin/kv-migration/import", baseUrl);
   url.searchParams.set("profile", profile);
   appendBooleanParam(url, "include_cache", includeCache);
@@ -392,7 +397,7 @@ const importHttpCommand = async (flags: Args): Promise<void> => {
       2
     )
   );
-  if (!response.ok || importSummaryHasErrors(parsed)) Deno.exit(1);
+  if (!response.ok || importSummaryHasErrors(parsed)) process.exitCode = 1;
 };
 
 const validateHttpCommand = async (flags: Args): Promise<void> => {
@@ -416,9 +421,9 @@ const validateHttpCommand = async (flags: Args): Promise<void> => {
       2
     )
   );
-  if (!response.ok) Deno.exit(1);
+  if (!response.ok) process.exitCode = 1;
   if (strict && typeof body === "object" && body && Array.isArray((body as { errors?: unknown }).errors)) {
-    if ((body as { errors: unknown[] }).errors.length) Deno.exit(1);
+    if ((body as { errors: unknown[] }).errors.length) process.exitCode = 1;
   }
 };
 
@@ -426,20 +431,20 @@ const usage = (): void => {
   console.log(`kv-migrate.ts
 
 Usage:
-  deno task kv:probe --source <remote-kv-url>
-  deno task kv:export --source <remote-kv-url> --out .kv-migration/deno1.ndjson
-  deno task kv:analyze --in .kv-migration/deno1.ndjson --profile local
-  deno task kv:import-local --in .kv-migration/deno1.ndjson --db .kv-migration/deno1.sqlite3 --profile local --overwrite
-  deno task kv:import-remote --in .kv-migration/deno1.ndjson --dest <remote-kv-url> --profile prod
-  deno task kv:import-remote --in .kv-migration/deno1.ndjson --dest <remote-kv-url> --profile prod --overwrite --write
-  deno task kv:import-http --in .kv-migration/deno1.ndjson --base-url https://ai.ubq.fi --profile prod --overwrite
-  deno task kv:import-http --in .kv-migration/deno1.ndjson --base-url https://ai.ubq.fi --profile prod --overwrite --write
-  deno task kv:validate --target <remote-kv-url>
-  deno task kv:incident-v2 --target <remote-kv-url>
-  deno task kv:validate-http --base-url https://ai.ubq.fi --strict
+  bun run kv:probe --source <remote-kv-url>
+  bun run kv:export --source <remote-kv-url> --out .kv-migration/deno1.ndjson
+  bun run kv:analyze --in .kv-migration/deno1.ndjson --profile local
+  bun run kv:import-local --in .kv-migration/deno1.ndjson --db .kv-migration/deno1.sqlite3 --profile local --overwrite
+  bun run kv:import-remote --in .kv-migration/deno1.ndjson --dest <remote-kv-url> --profile prod
+  bun run kv:import-remote --in .kv-migration/deno1.ndjson --dest <remote-kv-url> --profile prod --overwrite --write
+  bun run kv:import-http --in .kv-migration/deno1.ndjson --base-url https://ai.ubq.fi --profile prod --overwrite
+  bun run kv:import-http --in .kv-migration/deno1.ndjson --base-url https://ai.ubq.fi --profile prod --overwrite --write
+  bun run kv:validate --target <remote-kv-url>
+  bun run kv:incident-v2 --target <remote-kv-url>
+  bun run kv:validate-http --base-url https://ai.ubq.fi --strict
 
-Remote Deno KV exports require DENO_KV_ACCESS_TOKEN in the environment.
-HTTP imports require a super admin bearer token; DENO_DEPLOY_TOKEN is used by default.
+Direct remote Deno/V8 KV access is retired. Use the source Deno release to export profile NDJSON before conversion, or use the HTTP import API.
+HTTP imports require an admin bearer token; DENO_DEPLOY_TOKEN is used by default.
 
 Profiles:
   local  Imports durable keys, codex_auth/codex_models, and legacy rows for replay.
@@ -455,7 +460,7 @@ Use --include-cache to migrate embedding cache rows and --include-legacy to migr
 };
 
 const main = async (): Promise<void> => {
-  const { command, flags } = parseArgs(Deno.args);
+  const { command, flags } = parseArgs(Bun.argv.slice(2));
   if (command === "help" || command === "--help" || command === "-h") {
     usage();
     return;
