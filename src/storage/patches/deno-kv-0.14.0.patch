@@ -1,0 +1,70 @@
+--- a/esm/kv_key.js
++++ b/esm/kv_key.js
+@@ -50,9 +50,16 @@
+     }
+     if (typeof kvKeyPart === "number") {
+         const sub = new Uint8Array(8);
+-        new DataView(sub.buffer).setFloat64(0, -Math.abs(kvKeyPart), false);
+-        if (kvKeyPart < 0)
++        const view = new DataView(sub.buffer);
++        view.setFloat64(0, kvKeyPart, false);
++        if (Number.isNaN(kvKeyPart)) {
++            view.setUint32(0, (sub[0] & 0x80) ? 0xfff80000 : 0x7ff80000, false);
++            view.setUint32(4, 0, false);
++        }
++        if (sub[0] & 0x80)
+             flipBytes(sub);
++        else
++            sub[0] ^= 0x80;
+         return new Uint8Array([Typecode.FloatingPointDouble, ...sub]);
+     }
+     throw new Error(`Unsupported keyPart: ${typeof kvKeyPart} ${kvKeyPart}`);
+@@ -102,9 +109,11 @@
+             const neg = sub[0] < 128;
+             if (neg)
+                 flipBytes(sub);
+-            const num = -new DataView(sub.buffer).getFloat64(0, false);
++            else
++                sub[0] ^= 0x80;
++            const num = new DataView(sub.buffer).getFloat64(0, false);
+             pos += 8;
+-            rt.push(neg ? -num : num);
++            rt.push(num);
+         }
+         else if (typecode === Typecode.False) {
+             // boolean false
+--- a/script/kv_key.js
++++ b/script/kv_key.js
+@@ -54,9 +54,16 @@
+     }
+     if (typeof kvKeyPart === "number") {
+         const sub = new Uint8Array(8);
+-        new DataView(sub.buffer).setFloat64(0, -Math.abs(kvKeyPart), false);
+-        if (kvKeyPart < 0)
++        const view = new DataView(sub.buffer);
++        view.setFloat64(0, kvKeyPart, false);
++        if (Number.isNaN(kvKeyPart)) {
++            view.setUint32(0, (sub[0] & 0x80) ? 0xfff80000 : 0x7ff80000, false);
++            view.setUint32(4, 0, false);
++        }
++        if (sub[0] & 0x80)
+             (0, bytes_js_1.flipBytes)(sub);
++        else
++            sub[0] ^= 0x80;
+         return new Uint8Array([Typecode.FloatingPointDouble, ...sub]);
+     }
+     throw new Error(`Unsupported keyPart: ${typeof kvKeyPart} ${kvKeyPart}`);
+@@ -107,9 +114,11 @@
+             const neg = sub[0] < 128;
+             if (neg)
+                 (0, bytes_js_1.flipBytes)(sub);
+-            const num = -new DataView(sub.buffer).getFloat64(0, false);
++            else
++                sub[0] ^= 0x80;
++            const num = new DataView(sub.buffer).getFloat64(0, false);
+             pos += 8;
+-            rt.push(neg ? -num : num);
++            rt.push(num);
+         }
+         else if (typecode === Typecode.False) {
+             // boolean false
