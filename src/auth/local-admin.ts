@@ -1,3 +1,4 @@
+import type { Addr } from "#http";
 export type ServeRuntimeOptions = Readonly<{
   disableAdminAuth: boolean;
 }>;
@@ -47,7 +48,7 @@ const isNumericLoopbackHostname = (value: string): boolean => {
   return hostname === "::1" || hostname === "0:0:0:0:0:0:0:1" || isIpv4Loopback(hostname);
 };
 
-const formatListenerAddress = (address: Deno.Addr): string => {
+const formatListenerAddress = (address: Addr): string => {
   if (address.transport === "tcp" || address.transport === "udp") {
     const hostname = address.hostname.includes(":") ? `[${address.hostname}]` : address.hostname;
     return `${address.transport}://${hostname}:${address.port}`;
@@ -56,7 +57,7 @@ const formatListenerAddress = (address: Deno.Addr): string => {
   return address.transport;
 };
 
-export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, address: Deno.Addr): boolean => {
+export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, address: Addr): boolean => {
   if (!options.disableAdminAuth) return false;
   if (address.transport !== "tcp" || !isNumericLoopbackHostname(address.hostname)) {
     throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} requires a loopback TCP listener; got ${formatListenerAddress(address)}.`);
@@ -65,7 +66,7 @@ export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, 
 };
 
 let adminAuthDisabled = false;
-let adminAuthPeer: Deno.Addr | null = null;
+let adminAuthPeer: Addr | null = null;
 /**
  * Request-scoped peers for a LAN-facing listener. Routing awaits before it
  * authenticates, so a single process-wide slot can be overwritten by a
@@ -73,9 +74,9 @@ let adminAuthPeer: Deno.Addr | null = null;
  * belongs to someone else's connection. A peer bound to the request object
  * itself cannot be moved to another request.
  */
-const adminAuthRequestPeers = new WeakMap<Request, Deno.Addr>();
+const adminAuthRequestPeers = new WeakMap<Request, Addr>();
 
-export const configureAdminAuthForListener = (options: ServeRuntimeOptions, address: Deno.Addr): boolean => {
+export const configureAdminAuthForListener = (options: ServeRuntimeOptions, address: Addr): boolean => {
   const disabled = shouldDisableAdminAuthForListener(options, address);
   adminAuthDisabled = disabled;
   adminAuthPeer = null;
@@ -88,7 +89,7 @@ export const configureAdminAuthForListener = (options: ServeRuntimeOptions, addr
  * Mac listener); without it the peer is the process-wide binding the loopback
  * development server has always used.
  */
-export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null, request?: Request): void => {
+export const configureAdminAuthPeerForRequest = (peer: Addr | null, request?: Request): void => {
   if (request) {
     if (peer === null) adminAuthRequestPeers.delete(request);
     else adminAuthRequestPeers.set(request, peer);
@@ -107,7 +108,7 @@ export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null, request
  */
 const MAC_LAN_LISTENER_HOSTNAME = "0.0.0.0";
 
-export const configureMacLocalAdminAuthBypassForListener = (address: Deno.Addr): boolean => {
+export const configureMacLocalAdminAuthBypassForListener = (address: Addr): boolean => {
   if (address.transport !== "tcp" || address.hostname !== MAC_LAN_LISTENER_HOSTNAME) {
     throw new Error(`[ai.ubq.fi] the Mac local admin bypass requires the ${MAC_LAN_LISTENER_HOSTNAME} TCP listener; got ${formatListenerAddress(address)}.`);
   }
@@ -116,7 +117,7 @@ export const configureMacLocalAdminAuthBypassForListener = (address: Deno.Addr):
   return true;
 };
 
-const isLoopbackPeer = (peer: Deno.Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
+const isLoopbackPeer = (peer: Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
 
 export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
   if (!adminAuthDisabled) return false;

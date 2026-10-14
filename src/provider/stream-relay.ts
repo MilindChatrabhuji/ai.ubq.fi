@@ -5,9 +5,9 @@ import { type ChatOnlyResponsesProfile, type OriginalToolName } from "../deepsee
 import { type DeepSeekResponsesEcho } from "../deepseek/responses-payload.ts";
 import { createDeepSeekResponsesStreamTranslator, encodeResponsesEvent } from "../deepseek/responses-stream.ts";
 import {
-  ResponseStreamTerminalType,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type UsageContext,
+  type UsageTokens,
   extractChatUsageTokens,
   recordCompletionUsage,
   recordErrorUsage,

@@ -1,24 +1,25 @@
+import type { AtomicOperation, Kv } from "#kv";
 // Codex capacity-routing observations, windows and persistence, split out of src/codex_account_routing.ts.
 
 import { getKv } from "../kv.ts";
 import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../provider/capacity-contract.ts";
 import { isRecord, sha256Hex } from "../utils.ts";
-import { CodexAuthPoolState, CodexAuthState } from "../types.ts";
+import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_CAPACITY_ROUTING_MAX_AGE_MS,
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
-  CodexAccountRoutingState,
-  CodexCapacityRoutingAdditionalRateLimit,
-  CodexCapacityRoutingObservation,
-  CodexCapacityRoutingObservationInput,
-  CodexCapacityRoutingWindow,
-  CodexProbeCircuit,
-  CodexQuotaClass,
-  CodexQuotaClassBlock,
-  CodexRoutingSlot,
+  type CodexAccountRoutingState,
+  type CodexCapacityRoutingAdditionalRateLimit,
+  type CodexCapacityRoutingObservation,
+  type CodexCapacityRoutingObservationInput,
+  type CodexCapacityRoutingWindow,
+  type CodexProbeCircuit,
+  type CodexQuotaClass,
+  type CodexQuotaClassBlock,
+  type CodexRoutingSlot,
   ROUTING_CACHE_REVALIDATE_MS,
-  RoutingAccount,
+  type RoutingAccount,
   isLegacyStableResetIdentity,
   isSafeMs,
   parseCodexAccountRoutingState,
@@ -253,7 +254,7 @@ type CodexRoutingTransform = (state: CodexAccountRoutingState) => CodexAccountRo
  * compare-and-set lost the race, so the caller must re-read the durable record
  * before retrying.
  */
-const commitRoutingCandidate = async (operation: Deno.AtomicOperation, next: CodexAccountRoutingState): Promise<CodexAccountRoutingState | null> => {
+const commitRoutingCandidate = async (operation: AtomicOperation, next: CodexAccountRoutingState): Promise<CodexAccountRoutingState | null> => {
   const committed = await operation.set(CODEX_ACCOUNT_ROUTING_KV_KEY, next).commit();
   if (!committed.ok) return null;
   routingStateCache.state = next;
@@ -263,7 +264,7 @@ const commitRoutingCandidate = async (operation: Deno.AtomicOperation, next: Cod
 };
 
 /** Every attempt re-reads the committed row before its compare-and-set. */
-const commitRoutingTransitionWithStrongRead = async (kv: Deno.Kv, transform: CodexRoutingTransform): Promise<CodexAccountRoutingState | null> => {
+const commitRoutingTransitionWithStrongRead = async (kv: Kv, transform: CodexRoutingTransform): Promise<CodexAccountRoutingState | null> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" });
     const durable = parseCodexAccountRoutingState(entry.value);
@@ -308,7 +309,7 @@ export const updateRoutingState = async (transform: CodexRoutingTransform): Prom
     return next ?? routingStateCache.state;
   };
 
-  let kv: Deno.Kv | null;
+  let kv: Kv | null;
   try {
     kv = await getKv();
   } catch {
@@ -344,7 +345,7 @@ export const updateRoutingState = async (transform: CodexRoutingTransform): Prom
 };
 
 /** Routing state reads and writes fail closed when the KV binding itself is unavailable. */
-export const openRoutingKv = async (): Promise<Deno.Kv | null> => {
+export const openRoutingKv = async (): Promise<Kv | null> => {
   try {
     return await getKv();
   } catch {
@@ -774,7 +775,7 @@ const legacyCapacityObservationForSlot = async (
   };
 };
 
-const readLegacyProviderCapacityObservations = async (pool: CodexAuthPoolState, kv: Deno.Kv): Promise<readonly CodexCapacityRoutingObservation[]> => {
+const readLegacyProviderCapacityObservations = async (pool: CodexAuthPoolState, kv: Kv): Promise<readonly CodexCapacityRoutingObservation[]> => {
   try {
     const entry = await kv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY, { consistency: "strong" });
     const value = entry.value;
@@ -919,7 +920,7 @@ export const reconcileCapacityRoutingState = async (
  * caller must not treat this isolate's view as durable.
  */
 const persistCapacityObservations = async (
-  kv: Deno.Kv,
+  kv: Kv,
   observations: readonly CodexCapacityRoutingObservation[],
   observationNow: number
 ): Promise<readonly CodexCapacityRoutingObservation[] | null> => {
@@ -954,7 +955,7 @@ export const recordCodexCapacityRoutingObservations = async (inputs: readonly Co
   if (!observations.length) return;
   const observationNow = isSafeMs(now) ? now : Date.now();
   let merged = retainRecentCapacityObservations(mergeCapacityObservations(cachedCapacityObservations, observations), observationNow);
-  let kv: Deno.Kv | null;
+  let kv: Kv | null;
   try {
     kv = await getKv();
   } catch {

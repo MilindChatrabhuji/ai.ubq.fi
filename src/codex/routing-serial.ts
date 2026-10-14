@@ -1,19 +1,20 @@
+import type { Kv } from "#kv";
 // Codex serial admission selection, split out of src/codex_account_routing.ts.
 
 import { getKv } from "../kv.ts";
 import { codexAccountEligibility, codexSubscriptionHash, loadProviderSelectionCached } from "../provider/selection.ts";
-import { CodexAuthPoolState, CodexAuthState } from "../types.ts";
+import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
   CODEX_AUTH_POOL_KV_KEY,
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
-  CodexAccountRoutingState,
-  CodexActiveAccountSelection,
-  CodexActiveAccountTransitionReason,
-  CodexCapacityRoutingObservation,
-  RouteSelection,
-  RoutingAccount,
+  type CodexAccountRoutingState,
+  type CodexActiveAccountSelection,
+  type CodexActiveAccountTransitionReason,
+  type CodexCapacityRoutingObservation,
+  type RouteSelection,
+  type RoutingAccount,
   isVersionstamp,
   parseCodexAccountRoutingState,
   parseCodexActiveAccountSelection,
@@ -252,7 +253,7 @@ const serialSelectionDecision = (
 };
 
 /** One coherent strong snapshot of the four rows every admission decision linearizes on, in a fixed order. */
-const readStrongCodexRoutingRows = async (kv: Deno.Kv) => {
+const readStrongCodexRoutingRows = async (kv: Kv) => {
   const [activeEntry, authEntry, routingEntry, capacityEntry] = await kv.getMany<[unknown, unknown, CodexAccountRoutingState, unknown]>(
     [CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, CODEX_AUTH_POOL_KV_KEY, CODEX_ACCOUNT_ROUTING_KV_KEY, CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY],
     { consistency: "strong" }
@@ -336,7 +337,7 @@ const prepareCodexSerialAdmissionRows = async (
  * refreshed only after a successful commit. A conflict reloads every row.
  */
 const commitCodexSerialAdmission = async (
-  kv: Deno.Kv,
+  kv: Kv,
   rows: Awaited<ReturnType<typeof readStrongCodexRoutingRows>>,
   prepared: CodexSerialAdmissionRows,
   decision: SerialSelectionDecision
@@ -368,14 +369,14 @@ const commitCodexSerialAdmission = async (
  * inference, and streams stay concurrent. Stored promises are release-only and
  * never reject.
  */
-const admissionTails = new WeakMap<Deno.Kv, Promise<void>>();
+const admissionTails = new WeakMap<Kv, Promise<void>>();
 
 /**
  * Run one short routing-admission action under the per-KV FIFO tail. This
  * caller's release-only promise is installed before it waits, and is always
  * released, so a failure can never poison later callers.
  */
-const withCodexAdmission = async <T>(kv: Deno.Kv, action: () => Promise<T>): Promise<T> => {
+const withCodexAdmission = async <T>(kv: Kv, action: () => Promise<T>): Promise<T> => {
   const priorAdmission = admissionTails.get(kv) ?? Promise.resolve();
   let releaseAdmission = (): void => {};
   const admissionRelease = new Promise<void>((resolve) => {

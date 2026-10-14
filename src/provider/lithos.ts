@@ -221,7 +221,7 @@ const optionalField = <T>(value: unknown, normalize: (input: unknown) => T | nul
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }
@@ -894,7 +894,7 @@ const createLithosFrameReader = (
 const raceLithosReaderRead = async (
   reader: ReadableStreamDefaultReader<Uint8Array>,
   signal: AbortSignal | undefined
-): Promise<ReadableStreamReadResult<Uint8Array>> => {
+): Promise<Awaited<ReturnType<typeof reader.read>>> => {
   if (!signal) return await reader.read();
   let onAbort = (): void => {};
   const aborted = new Promise<never>((_, reject) => {

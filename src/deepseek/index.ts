@@ -260,7 +260,7 @@ const nonNegativeInteger = (value: unknown): number | null => {
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }

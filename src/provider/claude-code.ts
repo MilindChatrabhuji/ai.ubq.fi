@@ -54,7 +54,7 @@ export type ClaudeCodeEnvLookup = (name: string) => string | null | undefined;
 
 const defaultEnvLookup: ClaudeCodeEnvLookup = (name) => {
   try {
-    return Deno.env.get(name);
+    return process.env[name];
   } catch {
     return null;
   }

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { config } from "../config.ts";
 import { getKv } from "../kv.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../types.ts";
@@ -16,7 +17,7 @@ import { requestNativeCodexRefresh } from "./native-auth-transport.ts";
 
 type NativeAuthHooks = {
   codexHome?: string;
-  os?: typeof Deno.build.os;
+  os?: typeof process.platform;
   getEnv?: (name: string) => string | undefined;
   readAuth?: () => Promise<unknown>;
   refresh?: (home: string, email: string, accountId?: string) => Promise<void>;
@@ -30,13 +31,13 @@ export const setNativeCodexAuthHooksForTest = (value: NativeAuthHooks | null): v
 
 const nativeHome = (): string | null => {
   if (hooks?.codexHome) return hooks.codexHome;
-  const os = hooks?.os ?? Deno.build.os;
+  const os = hooks?.os ?? process.platform;
   // Darwin keeps its original single-home behavior. Linux uses the same single home so the
   // VPS gateway can delegate refresh to the local daemon; multiple homes stay out of scope,
   // and a credential-home path is never trusted from a remote upload.
   if ((os !== "darwin" && os !== "linux") || config.isDeploy) return null;
   try {
-    const getEnv = hooks?.getEnv ?? ((name: string) => Deno.env.get(name));
+    const getEnv = hooks?.getEnv ?? ((name: string) => process.env[name]);
     const codexHome = getEnv("CODEX_HOME");
     if (codexHome) return codexHome;
     const home = getEnv("HOME");
@@ -56,7 +57,7 @@ const sameCredentials = (
 
 type NativeDocument = { auth: CodexAuthState; email: string | null; refreshedAt: string | null };
 const readNativeDocument = async (home: string): Promise<NativeDocument> => {
-  const raw: unknown = hooks?.readAuth ? await hooks.readAuth() : JSON.parse(await Deno.readTextFile(`${home}/auth.json`));
+  const raw: unknown = hooks?.readAuth ? await hooks.readAuth() : JSON.parse(await readFile(`${home}/auth.json`, "utf8"));
   const auth = parseCodexAuthFromAuthJson(raw);
   if (!auth || !isRecord(raw) || (raw.auth_mode !== undefined && raw.auth_mode !== "chatgpt")) {
     throw new CodexError("Native Codex credentials are not managed ChatGPT auth.", "codex_auth_owner_unavailable", 503);

@@ -1,6 +1,7 @@
+import type { Kv, KvCommitResult, KvEntry, KvEntryMaybe, KvKey, KvListSelector } from "#kv";
 // Paid-fallback ledger v3: backfill layer, split out of src/paid_fallback_ledger.ts.
 
-import { MeteredTokenLogEntry, fetchMeteredTokenLogs } from "../provider/metered.ts";
+import { type MeteredTokenLogEntry, fetchMeteredTokenLogs } from "../provider/metered.ts";
 import { updatePaidFallbackRequestV3 } from "./ledger-admission.ts";
 import {
   _expeditePaidFallbackReconciliationV3,
@@ -13,12 +14,12 @@ import {
   MAX_CAS_ATTEMPTS,
   PAID_FALLBACK_AUTOMATIC_BACKFILL_LIMIT,
   PAID_FALLBACK_BACKFILL_LEASE_MS,
-  PaidFallbackAdmissionV3,
-  PaidFallbackBackfillLeaseV3,
-  PaidFallbackBackfillStateV3,
-  PaidFallbackPendingV3,
-  PaidFallbackReconciliationGateV3,
-  PendingMarkerScan,
+  type PaidFallbackAdmissionV3,
+  type PaidFallbackBackfillLeaseV3,
+  type PaidFallbackBackfillStateV3,
+  type PaidFallbackPendingV3,
+  type PaidFallbackReconciliationGateV3,
+  type PendingMarkerScan,
   enqueuePaidFallbackReconciliationJob,
   isPaidFallbackReconciliationGate,
   isPaidFallbackWindowV3,
@@ -42,13 +43,13 @@ import {
 import {
   PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
   PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
-  PaidFallbackUsageRollup,
+  type PaidFallbackUsageRollup,
   isPaidFallbackUsageRollup,
   mergePaidFallbackUsageRollup,
   paidFallbackUsageRollupKey,
   paidFallbackUsageRollupShard,
 } from "./rollups.ts";
-import { PaidFallbackProvider, PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../types.ts";
+import { type PaidFallbackProvider, type PaidFallbackRequestV3, type PaidFallbackWindowV3 } from "../types.ts";
 import { isRecord } from "../utils.ts";
 
 export type PaidFallbackRollupBackfillResult = Readonly<{
@@ -86,16 +87,16 @@ export type PaidFallbackRollupBackfillResult = Readonly<{
  * its deadline without persisting forward progress.
  */
 /** Persists the last committed row so the next run resumes before the stalled one. */
-const persistResumeBeforeRowV3 = async (kv: Deno.Kv, cursorKey: Deno.KvKey, lastVisitedKey: Deno.KvKey | null, resumeKey: Deno.KvKey | null): Promise<void> => {
+const persistResumeBeforeRowV3 = async (kv: Kv, cursorKey: KvKey, lastVisitedKey: KvKey | null, resumeKey: KvKey | null): Promise<void> => {
   const cursorKeyValue = lastVisitedKey ?? resumeKey;
   if (cursorKeyValue !== null) await persistBackfillCursorV3(kv, cursorKey, cursorKeyValue);
 };
 
 /** Re-applies the anchored retention TTL to a row that was already folded. */
 const rewriteMarkedRequestRowTtlV3 = async (
-  kv: Deno.Kv,
-  requestKey: Deno.KvKey,
-  requestEntry: Deno.KvEntryMaybe<PaidFallbackRequestV3>,
+  kv: Kv,
+  requestKey: KvKey,
+  requestEntry: KvEntryMaybe<PaidFallbackRequestV3>,
   request: PaidFallbackRequestV3,
   nowMs: number
 ): Promise<boolean> => {
@@ -119,9 +120,9 @@ type RollupFoldOutcome = "processed" | "rollup_written" | "failed";
  * folds its usage into the matching hourly rollup.
  */
 const foldRequestRowIntoRollupV3 = async (
-  kv: Deno.Kv,
-  requestKey: Deno.KvKey,
-  requestEntry: Deno.KvEntryMaybe<PaidFallbackRequestV3>,
+  kv: Kv,
+  requestKey: KvKey,
+  requestEntry: KvEntryMaybe<PaidFallbackRequestV3>,
   request: PaidFallbackRequestV3,
   nowMs: number
 ): Promise<RollupFoldOutcome> => {
@@ -180,7 +181,7 @@ type RollupBackfillSweep = Readonly<{
   processed: number;
   rollupsWritten: number;
   failed: number;
-  lastVisitedKey: Deno.KvKey | null;
+  lastVisitedKey: KvKey | null;
   truncatedWith: RollupBackfillTruncation;
 }>;
 
@@ -192,19 +193,14 @@ type BackfillProgress = {
   failed: number;
   budget: number;
   scanRemaining: number;
-  lastVisitedKey: Deno.KvKey | null;
+  lastVisitedKey: KvKey | null;
 };
 
 /**
  * Applies one row of the sweep to the progress counters. Returns where the
  * sweep must stop, or `"continue"` when the walk may go on.
  */
-const advanceBackfillSweepV3 = async (
-  kv: Deno.Kv,
-  requestKey: Deno.KvKey,
-  progress: BackfillProgress,
-  nowMs: number
-): Promise<"continue" | RollupBackfillTruncation> => {
+const advanceBackfillSweepV3 = async (kv: Kv, requestKey: KvKey, progress: BackfillProgress, nowMs: number): Promise<"continue" | RollupBackfillTruncation> => {
   const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
   const request = requestEntry.value;
   if (!request) return "continue";
@@ -236,14 +232,14 @@ const advanceBackfillSweepV3 = async (
 
 /** One bounded sweep of the request-row prefix. */
 const sweepPaidFallbackUsageRollupsV3 = async (
-  kv: Deno.Kv,
-  resumeKey: Deno.KvKey | null,
+  kv: Kv,
+  resumeKey: KvKey | null,
   limit: number,
   scanBudget: number,
   nowMs: number
 ): Promise<RollupBackfillSweep> => {
   const progress: BackfillProgress = { scanned: 0, processed: 0, rollupsWritten: 0, failed: 0, budget: limit, scanRemaining: scanBudget, lastVisitedKey: null };
-  const selector: Deno.KvListSelector =
+  const selector: KvListSelector =
     resumeKey === null ? { prefix: paidFallbackRequestV3GlobalPrefix } : { prefix: paidFallbackRequestV3GlobalPrefix, start: resumeKey };
   for await (const entry of kv.list<PaidFallbackRequestV3>(selector)) {
     progress.scanned += 1;
@@ -286,7 +282,7 @@ const toRollupBackfillSweepV3 = (progress: BackfillProgress, truncatedWith: Roll
  * its deadline without persisting forward progress.
  */
 export const backfillPaidFallbackUsageRollups = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ limit?: number; nowMs?: number }> = {}
 ): Promise<PaidFallbackRollupBackfillResult> => {
   const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 5_000)));
@@ -333,17 +329,17 @@ export type PaidFallbackWindowTtlBackfillResult = Readonly<{
 }>;
 
 /** True when both KV keys hold the same parts, in order. */
-const isSameKvKey = (left: Deno.KvKey, right: Deno.KvKey): boolean => left.length === right.length && left.every((part, index) => part === right[index]);
+const isSameKvKey = (left: KvKey, right: KvKey): boolean => left.length === right.length && left.every((part, index) => part === right[index]);
 
 /** Reads a persisted resume cursor; `null` when absent or malformed. */
-const loadBackfillCursorV3 = async (kv: Deno.Kv, cursorKey: Deno.KvKey): Promise<Deno.KvKey | null> => {
+const loadBackfillCursorV3 = async (kv: Kv, cursorKey: KvKey): Promise<KvKey | null> => {
   const cursorEntry = await kv.get<{ request_key: unknown }>(cursorKey).catch(() => null);
   const requestKey = cursorEntry?.value?.request_key;
-  return Array.isArray(requestKey) ? (requestKey as Deno.KvKey) : null;
+  return Array.isArray(requestKey) ? (requestKey as KvKey) : null;
 };
 
 /** Persists a resume cursor; a KV outage just leaves the sweep to restart. */
-const persistBackfillCursorV3 = async (kv: Deno.Kv, cursorKey: Deno.KvKey, requestKey: Deno.KvKey): Promise<void> => {
+const persistBackfillCursorV3 = async (kv: Kv, cursorKey: KvKey, requestKey: KvKey): Promise<void> => {
   await kv
     .atomic()
     .set(cursorKey, { request_key: requestKey })
@@ -355,7 +351,7 @@ const persistBackfillCursorV3 = async (kv: Deno.Kv, cursorKey: Deno.KvKey, reque
 type WindowTtlRewrite = "skipped" | "rewritten" | "failed";
 
 /** Rewrites one window row with its anchored TTL. */
-const rewriteWindowTtlV3 = async (kv: Deno.Kv, key: Deno.KvKey, nowMs: number): Promise<WindowTtlRewrite> => {
+const rewriteWindowTtlV3 = async (kv: Kv, key: KvKey, nowMs: number): Promise<WindowTtlRewrite> => {
   const windowEntry = await kv.get<PaidFallbackWindowV3>(key, { consistency: "strong" });
   if (!isPaidFallbackWindowV3(windowEntry.value)) return "skipped";
   try {
@@ -371,7 +367,7 @@ const rewriteWindowTtlV3 = async (kv: Deno.Kv, key: Deno.KvKey, nowMs: number): 
 };
 
 /** Reads at most one entry matching a selector; `null` when nothing matches. */
-const readFirstKvEntry = async <TValue>(kv: Deno.Kv, selector: Deno.KvListSelector): Promise<Deno.KvEntry<TValue> | null> => {
+const readFirstKvEntry = async <TValue>(kv: Kv, selector: KvListSelector): Promise<KvEntry<TValue> | null> => {
   for await (const entry of kv.list<TValue>(selector, { consistency: "strong" })) {
     return entry;
   }
@@ -379,8 +375,8 @@ const readFirstKvEntry = async <TValue>(kv: Deno.Kv, selector: Deno.KvListSelect
 };
 
 /** True when the window prefix still holds rows after `startKey` itself. */
-const hasWindowRowsAfterV3 = async (kv: Deno.Kv, startKey: Deno.KvKey): Promise<boolean> => {
-  const seenKeys: Deno.KvKey[] = [];
+const hasWindowRowsAfterV3 = async (kv: Kv, startKey: KvKey): Promise<boolean> => {
+  const seenKeys: KvKey[] = [];
   for await (const entry of kv.list({ prefix: paidFallbackWindowV3GlobalPrefix, start: startKey })) {
     seenKeys.push(entry.key);
     if (seenKeys.length > 1) return true;
@@ -391,7 +387,7 @@ const hasWindowRowsAfterV3 = async (kv: Deno.Kv, startKey: Deno.KvKey): Promise<
 type WindowTtlSweep = Readonly<{
   scanned: number;
   rewritten: number;
-  lastRewrittenKey: Deno.KvKey | null;
+  lastRewrittenKey: KvKey | null;
   /** A row lost its CAS or threw; the caller keeps the cursor before it. */
   failed: boolean;
   /** The batch limit was reached and more rows remain; the cursor is persisted. */
@@ -399,11 +395,11 @@ type WindowTtlSweep = Readonly<{
 }>;
 
 /** One bounded window-TTL sweep. */
-const sweepWindowTtlsV3 = async (kv: Deno.Kv, cursorKey: Deno.KvKey, resumeKey: Deno.KvKey | null, limit: number, nowMs: number): Promise<WindowTtlSweep> => {
+const sweepWindowTtlsV3 = async (kv: Kv, cursorKey: KvKey, resumeKey: KvKey | null, limit: number, nowMs: number): Promise<WindowTtlSweep> => {
   let scanned = 0;
   let rewritten = 0;
-  let lastRewrittenKey: Deno.KvKey | null = null;
-  const selector: Deno.KvListSelector =
+  let lastRewrittenKey: KvKey | null = null;
+  const selector: KvListSelector =
     resumeKey === null ? { prefix: paidFallbackWindowV3GlobalPrefix } : { prefix: paidFallbackWindowV3GlobalPrefix, start: resumeKey };
   let skippingResumeRow = resumeKey !== null;
   for await (const entry of kv.list<PaidFallbackWindowV3>(selector)) {
@@ -440,7 +436,7 @@ const sweepWindowTtlsV3 = async (kv: Deno.Kv, cursorKey: Deno.KvKey, resumeKey: 
  * prefix.
  */
 export const backfillPaidFallbackWindowTtls = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ limit?: number; nowMs?: number }> = {}
 ): Promise<PaidFallbackWindowTtlBackfillResult> => {
   const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 5_000)));
@@ -492,19 +488,19 @@ const isBackfillableSettledPaidFallbackRequest = (value: unknown): boolean => {
   );
 };
 
-const hasPaidFallbackUsageRollups = async (kv: Deno.Kv): Promise<boolean> => {
+const hasPaidFallbackUsageRollups = async (kv: Kv): Promise<boolean> => {
   const firstRollup = await readFirstKvEntry(kv, { prefix: PAID_FALLBACK_USAGE_ROLLUP_PREFIX });
   return firstRollup !== null;
 };
 
-const hasBackfillableSettledPaidFallbackRequest = async (kv: Deno.Kv): Promise<boolean> => {
+const hasBackfillableSettledPaidFallbackRequest = async (kv: Kv): Promise<boolean> => {
   for await (const entry of kv.list<PaidFallbackRequestV3>({ prefix: paidFallbackRequestV3GlobalPrefix }, { consistency: "strong" })) {
     if (isBackfillableSettledPaidFallbackRequest(entry.value)) return true;
   }
   return false;
 };
 
-const paidFallbackBackfillNeedsRun = async (kv: Deno.Kv): Promise<boolean> => {
+const paidFallbackBackfillNeedsRun = async (kv: Kv): Promise<boolean> => {
   const [stateEntry, requestCursorEntry, windowCursorEntry] = await Promise.all([
     kv.get<PaidFallbackBackfillStateV3>(paidFallbackBackfillStateV3Key(), { consistency: "strong" }),
     kv.get(paidFallbackBackfillCursorV3Key(), { consistency: "strong" }),
@@ -517,7 +513,7 @@ const paidFallbackBackfillNeedsRun = async (kv: Deno.Kv): Promise<boolean> => {
   return await hasBackfillableSettledPaidFallbackRequest(kv);
 };
 
-const acquirePaidFallbackBackfillLease = async (kv: Deno.Kv, nowMs: number): Promise<PaidFallbackBackfillLeaseV3 | null> => {
+const acquirePaidFallbackBackfillLease = async (kv: Kv, nowMs: number): Promise<PaidFallbackBackfillLeaseV3 | null> => {
   const leaseKey = paidFallbackBackfillLeaseV3Key();
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const entry = await kv.get<PaidFallbackBackfillLeaseV3>(leaseKey, { consistency: "strong" });
@@ -538,7 +534,7 @@ const acquirePaidFallbackBackfillLease = async (kv: Deno.Kv, nowMs: number): Pro
   return null;
 };
 
-const releasePaidFallbackBackfillLease = async (kv: Deno.Kv, lease: PaidFallbackBackfillLeaseV3): Promise<void> => {
+const releasePaidFallbackBackfillLease = async (kv: Kv, lease: PaidFallbackBackfillLeaseV3): Promise<void> => {
   try {
     const entry = await kv.get<PaidFallbackBackfillLeaseV3>(paidFallbackBackfillLeaseV3Key(), { consistency: "strong" });
     if (entry.value?.token !== lease.token) return;
@@ -560,7 +556,7 @@ const releasePaidFallbackBackfillLease = async (kv: Deno.Kv, lease: PaidFallback
  */
 /**
  * Surfaces a failed state write. A bare `set` has no CAS precondition, so
- * `Deno.KvCommitResult.ok` is typed as the literal `true`; the check is kept
+ * `KvCommitResult.ok` is typed as the literal `true`; the check is kept
  * because the completion marker must be durable before it is reported.
  */
 const throwIfCommitFailed = (result: { readonly ok: boolean }, message: string): void => {
@@ -568,7 +564,7 @@ const throwIfCommitFailed = (result: { readonly ok: boolean }, message: string):
 };
 
 export const runPaidFallbackBackfillV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ force?: boolean; limit?: number; nowMs?: number }> = {}
 ): Promise<PaidFallbackAutomaticBackfillResult> => {
   const requestedLimit = Math.trunc(options.limit ?? PAID_FALLBACK_AUTOMATIC_BACKFILL_LIMIT);
@@ -609,7 +605,7 @@ let scheduledPaidFallbackBackfill: Promise<void> | null = null;
 let paidFallbackBackfillAttempted = false;
 let paidFallbackBackfillRetryPending = false;
 
-const schedulePaidFallbackBackfill = (kvOverride?: Deno.Kv): void => {
+const schedulePaidFallbackBackfill = (kvOverride?: Kv): void => {
   if (scheduledPaidFallbackBackfill) return;
   paidFallbackBackfillAttempted = true;
   scheduledPaidFallbackBackfill = (kvOverride ? Promise.resolve(kvOverride) : resolveKv(undefined))
@@ -631,12 +627,12 @@ const schedulePaidFallbackBackfill = (kvOverride?: Deno.Kv): void => {
 
 /** Clears due pending markers whose request row is gone or no longer billable. */
 const collectReconcileCandidatesV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   keyId: string,
-  due: readonly Deno.KvEntry<PaidFallbackPendingV3>[],
+  due: readonly KvEntry<PaidFallbackPendingV3>[],
   now: number
-): Promise<Deno.KvEntry<PaidFallbackRequestV3>[]> => {
-  const candidates: Deno.KvEntry<PaidFallbackRequestV3>[] = [];
+): Promise<KvEntry<PaidFallbackRequestV3>[]> => {
+  const candidates: KvEntry<PaidFallbackRequestV3>[] = [];
   for (const pending of due) {
     const requestId = String(pending.key.at(-1));
     const requestKey = paidFallbackRequestV3Key(keyId, requestId);
@@ -648,14 +644,14 @@ const collectReconcileCandidatesV3 = async (
       await kv.atomic().check(pending).check(gateEntry).delete(pending.key).set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now)).commit();
       continue;
     }
-    candidates.push(requestEntry as Deno.KvEntry<PaidFallbackRequestV3>);
+    candidates.push(requestEntry as KvEntry<PaidFallbackRequestV3>);
   }
   return candidates;
 };
 
 /** Fetches the Metered token log for these candidates; `null` when the fetch failed. */
 const loadMeteredLogsForCandidatesV3 = async (
-  candidates: readonly Deno.KvEntry<PaidFallbackRequestV3>[],
+  candidates: readonly KvEntry<PaidFallbackRequestV3>[],
   now: number
 ): Promise<readonly MeteredTokenLogEntry[] | null> => {
   const providerRequestIds = candidates
@@ -675,9 +671,9 @@ const loadMeteredLogsForCandidatesV3 = async (
 
 /** Settles every candidate that has an authoritative Metered log entry. */
 const settleMeteredCandidatesV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   keyId: string,
-  candidates: readonly Deno.KvEntry<PaidFallbackRequestV3>[],
+  candidates: readonly KvEntry<PaidFallbackRequestV3>[],
   byId: ReadonlyMap<string, MeteredTokenLogEntry>,
   now: number
 ): Promise<number> => {
@@ -698,7 +694,7 @@ const settleMeteredCandidatesV3 = async (
 export const reconcilePaidFallbackV3 = async (
   keyId: string,
   now = Date.now(),
-  kvOverride?: Deno.Kv | null,
+  kvOverride?: Kv | null,
   options?: Readonly<{ skipGateRecompute?: boolean }>
 ): Promise<number> => {
   const kv = await resolveKv(kvOverride);
@@ -706,7 +702,7 @@ export const reconcilePaidFallbackV3 = async (
   const lease = await acquireReconciliationLease(kv, keyId, now);
   if (!lease) return 0;
   try {
-    const due: Deno.KvEntry<PaidFallbackPendingV3>[] = [];
+    const due: KvEntry<PaidFallbackPendingV3>[] = [];
     for await (const pending of kv.list<PaidFallbackPendingV3>({ prefix: paidFallbackPendingV3Prefix(keyId) })) {
       if (pending.value.next_reconciliation_at_ms <= now) due.push(pending);
     }
@@ -737,11 +733,11 @@ export const reconcilePaidFallbackV3 = async (
   }
 };
 
-export const reconcileDuePaidFallbacksV3 = async (now = Date.now(), kvOverride?: Deno.Kv | null): Promise<number> => {
+export const reconcileDuePaidFallbacksV3 = async (now = Date.now(), kvOverride?: Kv | null): Promise<number> => {
   const kv = await resolveKv(kvOverride);
   if (!kv) return 0;
   const gateKey = paidFallbackReconciliationGateV3Key();
-  let gateEntry: Deno.KvEntryMaybe<PaidFallbackReconciliationGateV3> | null = null;
+  let gateEntry: KvEntryMaybe<PaidFallbackReconciliationGateV3> | null = null;
   let bootstrapScan: PendingMarkerScan | null = null;
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     gateEntry = await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" });
@@ -817,7 +813,7 @@ export const recordPaidFallbackTerminalV3 = async (
   return await reconcilePaidFallbackV3(reservation.key_id, Date.now());
 };
 
-export const handlePaidFallbackReconciliationJobV3 = async (message: unknown, kvOverride?: Deno.Kv | null): Promise<number> => {
+export const handlePaidFallbackReconciliationJobV3 = async (message: unknown, kvOverride?: Kv | null): Promise<number> => {
   if (!message || typeof message !== "object") return 0;
   const keyId = "key_id" in message && typeof message.key_id === "string" ? message.key_id : null;
   if (!keyId) return 0;
@@ -826,7 +822,7 @@ export const handlePaidFallbackReconciliationJobV3 = async (message: unknown, kv
   return await reconcilePaidFallbackV3(keyId, Date.now(), kv);
 };
 
-export const enqueueDuePaidFallbackReconciliationJobsV3 = async (now = Date.now(), kvOverride?: Deno.Kv | null): Promise<number> => {
+export const enqueueDuePaidFallbackReconciliationJobsV3 = async (now = Date.now(), kvOverride?: Kv | null): Promise<number> => {
   const kv = await resolveKv(kvOverride);
   if (!kv) return 0;
   const keyIds = new Set<string>();

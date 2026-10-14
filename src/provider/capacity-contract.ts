@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 /**
  * Shared provider-capacity storage keys. Keeping the key outside the sampler
  * avoids a routing-to-sampler import cycle while allowing routing to reconcile
@@ -115,7 +116,7 @@ export type ProviderCapacityView = Readonly<
 export type ProviderCapacityFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type ProviderCapacitySnapshotOptions = Readonly<{
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   fetcher?: ProviderCapacityFetch;
   now?: () => number;
   signal?: AbortSignal;

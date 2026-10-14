@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvKey } from "#kv";
 // Durable key-change audit: one compact event per actual API-key lifecycle
 // state change, appended in the same KV atomic commit as the key state change,
 // with a 90-day TTL and a bounded newest-first admin read surface that also
@@ -130,19 +131,19 @@ export const buildApiKeyChangeEvent = (input: ApiKeyChangeEventInput): ApiKeyCha
   };
 };
 
-export const apiKeyChangeEventKey = (event: Pick<ApiKeyChangeEvent, "at_ms" | "id">): Deno.KvKey => [
+export const apiKeyChangeEventKey = (event: Pick<ApiKeyChangeEvent, "at_ms" | "id">): KvKey => [
   ...API_KEY_CHANGE_PREFIX,
   Number.MAX_SAFE_INTEGER - event.at_ms,
   event.id,
 ];
 
 /** Appends the audit event to an existing `kv.atomic()` chain. */
-export const appendApiKeyChangeEvent = (atomic: Deno.AtomicOperation, event: ApiKeyChangeEvent): Deno.AtomicOperation =>
+export const appendApiKeyChangeEvent = (atomic: AtomicOperation, event: ApiKeyChangeEvent): AtomicOperation =>
   atomic.set(apiKeyChangeEventKey(event), event, { expireIn: API_KEY_CHANGE_RETENTION_MS });
 
 export type ApiKeyChangePage = Readonly<{ events: ApiKeyChangeEvent[]; next_cursor: string | null }>;
 
-export const listApiKeyChangeEvents = async (kv: Deno.Kv, input: Readonly<{ limit: number; cursor?: string }>): Promise<ApiKeyChangePage> => {
+export const listApiKeyChangeEvents = async (kv: Kv, input: Readonly<{ limit: number; cursor?: string }>): Promise<ApiKeyChangePage> => {
   const oldestRetainedAtMs = Date.now() - API_KEY_CHANGE_RETENTION_MS;
   const iterator = kv.list<ApiKeyChangeEvent>({ prefix: API_KEY_CHANGE_PREFIX }, { limit: input.limit, ...(input.cursor ? { cursor: input.cursor } : {}) });
   const events: ApiKeyChangeEvent[] = [];
@@ -168,7 +169,7 @@ const parseApiKeyChangeLimit = (raw: string | null): number | null => {
   return Math.min(requested, API_KEY_CHANGE_MAX_LIMIT);
 };
 
-export const handleAdminApiKeyChanges = async (req: Request, kvOverride?: Deno.Kv | null): Promise<Response> => {
+export const handleAdminApiKeyChanges = async (req: Request, kvOverride?: Kv | null): Promise<Response> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot load key change history", "server_error");

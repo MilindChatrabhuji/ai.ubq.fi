@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Per-account Codex model availability: the catalog each subscription account
 // advertised and the account+model pairs upstream has rejected as unsupported.
 // The store is a non-secret routing hint; raw tokens never enter it.
@@ -165,14 +166,14 @@ const cache: CodexAccountModelsCache = { store: null, loadedAtMs: 0 };
 const learnedDetails = new Map<string, Map<string, string>>();
 let refreshInFlight: Promise<void> | null = null;
 
-const loadCodexAccountModelsFromKv = async (kvOverride?: Deno.Kv | null): Promise<CodexAccountModelsStore | null> => {
+const loadCodexAccountModelsFromKv = async (kvOverride?: Kv | null): Promise<CodexAccountModelsStore | null> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return null;
   const entry = await kv.get(CODEX_ACCOUNT_MODELS_KV_KEY, { consistency: "strong" });
   return entry.value === null ? emptyCodexAccountModelsStore() : parseCodexAccountModelsStore(entry.value);
 };
 
-export const loadCodexAccountModels = async (kvOverride?: Deno.Kv | null): Promise<CodexAccountModelsStore | null> => {
+export const loadCodexAccountModels = async (kvOverride?: Kv | null): Promise<CodexAccountModelsStore | null> => {
   let store: CodexAccountModelsStore | null;
   try {
     store = await loadCodexAccountModelsFromKv(kvOverride);
@@ -213,10 +214,7 @@ const CODEX_ACCOUNT_MODELS_COMMIT_ATTEMPTS = 3;
  * strongly, merges on the value it just read, and commits only while that exact
  * version is still current; the in-memory cache follows the committed value.
  */
-const mergeAndStoreCodexAccountModels = async (
-  merge: (current: CodexAccountModelsStore) => CodexAccountModelsStore,
-  kvOverride?: Deno.Kv | null
-): Promise<void> => {
+const mergeAndStoreCodexAccountModels = async (merge: (current: CodexAccountModelsStore) => CodexAccountModelsStore, kvOverride?: Kv | null): Promise<void> => {
   try {
     const kv = kvOverride === undefined ? await getKv() : kvOverride;
     if (!kv) {
@@ -244,7 +242,7 @@ const mergeAndStoreCodexAccountModels = async (
 };
 
 /** Record the catalogs every pool account advertised for one client version. */
-export const recordCodexAccountCatalogs = async (entries: readonly CodexAccountCatalogInput[], kvOverride?: Deno.Kv | null): Promise<void> => {
+export const recordCodexAccountCatalogs = async (entries: readonly CodexAccountCatalogInput[], kvOverride?: Kv | null): Promise<void> => {
   if (!entries.length) return;
   const nowMs = Date.now();
   await mergeAndStoreCodexAccountModels((current) => mergeCodexAccountCatalogs(current, entries, nowMs), kvOverride);
@@ -254,7 +252,7 @@ export const recordCodexAccountCatalogs = async (entries: readonly CodexAccountC
 export const recordCodexModelUnsupported = async (
   accountId: string,
   model: string,
-  options: Readonly<{ detail?: string | null; nowMs?: number; kv?: Deno.Kv | null }> = {}
+  options: Readonly<{ detail?: string | null; nowMs?: number; kv?: Kv | null }> = {}
 ): Promise<void> => {
   const target = model.trim();
   if (!accountId || !target) return;

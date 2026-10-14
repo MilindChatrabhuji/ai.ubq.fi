@@ -1,3 +1,4 @@
+import type { KvKey } from "#kv";
 import { getKv } from "../kv.ts";
 import { isRecord } from "../utils.ts";
 
@@ -68,7 +69,7 @@ const normalizedProviderRequestId = (value: unknown): string | null => {
   return requestId;
 };
 
-const providerHealthKey = (provider: RecordProvider, identity: string, record: (typeof PROVIDER_RECORDS)[number]): Deno.KvKey => [
+const providerHealthKey = (provider: RecordProvider, identity: string, record: (typeof PROVIDER_RECORDS)[number]): KvKey => [
   ...PROVIDER_HEALTH_KEY_PREFIX,
   provider,
   identity,

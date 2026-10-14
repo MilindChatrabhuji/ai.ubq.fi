@@ -1,10 +1,11 @@
+import type { Kv } from "#kv";
 // Codex dispatch primitives and request preparation, split out of src/codex.ts.
 
 import { config } from "../config.ts";
 import { getKv } from "../kv.ts";
 import { readBoundedResponseBody } from "../bounded-response-body.ts";
-import { RoutingAccount } from "./routing-state.ts";
-import { RouteSelection } from "./routing-state.ts";
+import { type RoutingAccount } from "./routing-state.ts";
+import { type RouteSelection } from "./routing-state.ts";
 import { CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, parseCodexActiveAccountSelection } from "./routing-state.ts";
 import { routingAccountIdentity } from "./capacity-routing.ts";
 import { type CodexBankedResetConfig, type CodexBankedResetTelemetry } from "./banked-reset.ts";
@@ -443,7 +444,7 @@ type CodexBankedResetOptions = Readonly<{
   /** Test seam for proving a live configuration change stops a pending submission. */
   reloadConfig?: () => CodexBankedResetConfig;
   provider?: CodexUsageResetProvider;
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   now?: () => number;
   newOwnerToken?: () => string;
   hash?: (value: string) => Promise<string>;

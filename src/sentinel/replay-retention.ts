@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 /**
  * Durable, concurrency-safe retention accounting for capture-owned data.
  *
@@ -97,8 +98,8 @@ import {
  * oldest capture-owned status/tombstone rows are pruned first.
  */
 export const admitSentinelReplayStatusMetadata = async (
-  kv: Deno.Kv,
-  input: Readonly<{ key: Deno.KvKey; row: unknown; now_ms: number; ttl_ms: number; budget_bytes?: number }>
+  kv: Kv,
+  input: Readonly<{ key: KvKey; row: unknown; now_ms: number; ttl_ms: number; budget_bytes?: number }>
 ): Promise<boolean> => {
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(input.budget_bytes ?? sentinelReplayBudgetBytes()));
   const reserve = sentinelReplayMetadataReserve(budgetBytes);
@@ -135,9 +136,9 @@ export const admitSentinelReplayStatusMetadata = async (
   return false;
 };
 
-type StatusCandidate = Readonly<{ key: Deno.KvKey; versionstamp: string; bytes: number; captured_at_ms: number }>;
+type StatusCandidate = Readonly<{ key: KvKey; versionstamp: string; bytes: number; captured_at_ms: number }>;
 
-const statusCandidates = async (kv: Deno.Kv): Promise<StatusCandidate[] | null> => {
+const statusCandidates = async (kv: Kv): Promise<StatusCandidate[] | null> => {
   const candidates: StatusCandidate[] = [];
   for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_REQUEST_PREFIX })) {
     if (!isSentinelReplayCaptureStatusRow(entry.value) || !metadataEntryMatches(entry, SENTINEL_REPLAY_REQUEST_PREFIX)) return null;
@@ -163,7 +164,7 @@ const statusCandidates = async (kv: Deno.Kv): Promise<StatusCandidate[] | null> 
 
 /** Prune the oldest capture-owned status/tombstone rows until `extra` fits the bound. */
 export const pruneCaptureOwnedStatusMetadata = async (
-  kv: Deno.Kv,
+  kv: Kv,
   nowMs: number,
   extraRecords: number,
   extraBytes: number,
@@ -205,8 +206,8 @@ export const pruneCaptureOwnedStatusMetadata = async (
 
 /** Fenced staging: advance `stage` before a batch of chunks may be written. */
 export const advanceSentinelReplayStagingFence = async (
-  kv: Deno.Kv,
-  input: Readonly<{ accounting_key: Deno.KvKey; fence: number; now_ms: number; budget_bytes?: number }>
+  kv: Kv,
+  input: Readonly<{ accounting_key: KvKey; fence: number; now_ms: number; budget_bytes?: number }>
 ): Promise<Readonly<{ ok: true; stage: number; versionstamp: string }> | Readonly<{ ok: false; reason: "revoked" | "expired" | "missing" }>> => {
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(input.budget_bytes ?? sentinelReplayBudgetBytes()));
   for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt += 1) {
@@ -235,7 +236,7 @@ export const advanceSentinelReplayStagingFence = async (
 
 /** Everything one publish attempt must re-verify before it may write anything. */
 type PublishAttemptContext = Readonly<{
-  accountingKey: Deno.KvKey;
+  accountingKey: KvKey;
   accounting: SentinelReplayAccountingRow;
   actualCharge: number;
   payloadBudget: number;
@@ -251,7 +252,7 @@ type PublishAttemptContext = Readonly<{
  * exceeded, prune the oldest capture-owned status rows first. Returns the metadata
  * reserve, or null when the ledger is corrupt and cannot be trusted.
  */
-const prepareStatusMetadataRoom = async (kv: Deno.Kv, budgetBytes: number, statusBytes: number, nowMs: number): Promise<number | null> => {
+const prepareStatusMetadataRoom = async (kv: Kv, budgetBytes: number, statusBytes: number, nowMs: number): Promise<number | null> => {
   const state = await readLedger(kv, budgetBytes);
   if (state.kind === "corrupt") return null;
   const ledger = withBudget(state.ledger, budgetBytes);
@@ -270,7 +271,7 @@ const prepareStatusMetadataRoom = async (kv: Deno.Kv, budgetBytes: number, statu
  * metadata reserve. Returns null when the reservation may no longer publish.
  */
 const publishAttemptRow = (
-  entry: Deno.KvEntryMaybe<SentinelReplayAccountingRow>,
+  entry: KvEntryMaybe<SentinelReplayAccountingRow>,
   ledger: SentinelReplayBudgetLedger,
   context: PublishAttemptContext
 ): SentinelReplayAccountingRow | null => {
@@ -298,16 +299,16 @@ const publishAttemptRow = (
  * actual charge fits both the row's own bound and the payload budget.
  */
 export const prepareSentinelReplayPublication = async (
-  kv: Deno.Kv,
+  kv: Kv,
   accounting: SentinelReplayAccountingRow,
-  accountingKey: Deno.KvKey,
+  accountingKey: KvKey,
   actualCharge: number,
   options: Readonly<{
     /** Frozen capture time used to keep published expiry aligned with the manifest. */
     now_ms: number;
     /** Fresh wall-clock time used only to validate the reservation lease. */
     lease_now_ms: number;
-    status_key: Deno.KvKey;
+    status_key: KvKey;
     status_bytes?: number;
     budget_bytes?: number;
   }>
@@ -380,9 +381,9 @@ export const prepareSentinelReplayPublication = async (
  * the ordinary eviction/TTL path's job, never this cleanup's.
  */
 const revokeReservedAccounting = async (
-  kv: Deno.Kv,
+  kv: Kv,
   accounting: SentinelReplayAccountingRow,
-  accountingKey: Deno.KvKey
+  accountingKey: KvKey
 ): Promise<Readonly<{ row: SentinelReplayAccountingRow; revoked: boolean }>> => {
   if (accounting.state === "revoked") return { row: accounting, revoked: true };
   if (accounting.state !== "reserved") return { row: accounting, revoked: false };
@@ -406,9 +407,9 @@ const revokeReservedAccounting = async (
  * revoked/evicting with its charge held for a later pass.
  */
 export const abandonSentinelReplayAccounting = async (
-  kv: Deno.Kv,
+  kv: Kv,
   accounting: SentinelReplayAccountingRow,
-  accountingKey: Deno.KvKey,
+  accountingKey: KvKey,
   options: Readonly<{ now_ms: number; max_chunk_deletes?: number; budget_bytes?: number }>
 ): Promise<Readonly<{ revoked: boolean; deleted_chunks: number; released: boolean; remaining: number }>> => {
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(options.budget_bytes ?? sentinelReplayBudgetBytes()));
@@ -443,11 +444,11 @@ export const abandonSentinelReplayAccounting = async (
 /** Find fenced/abandoned rows with bounded work and a durable prefix cursor. */
 // Keep the cursor outside the accounting prefix so discovery never counts it as a row.
 const SENTINEL_REPLAY_REAP_CURSOR_KEY = ["uos_ai", "sentinel_replay", "v1", "reap_cursor"] as const;
-const reapCandidates = async (kv: Deno.Kv, nowMs: number, limit: number): Promise<Readonly<{ key: Deno.KvKey; row: SentinelReplayAccountingRow }>[]> => {
+const reapCandidates = async (kv: Kv, nowMs: number, limit: number): Promise<Readonly<{ key: KvKey; row: SentinelReplayAccountingRow }>[]> => {
   const cursorEntry = await kv.get<string>(SENTINEL_REPLAY_REAP_CURSOR_KEY);
   const cursor = typeof cursorEntry.value === "string" && cursorEntry.value.length > 0 ? cursorEntry.value : undefined;
   const iterator = kv.list<SentinelReplayAccountingRow>({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX }, { cursor, limit: limit * 4 });
-  const found: { key: Deno.KvKey; row: SentinelReplayAccountingRow }[] = [];
+  const found: { key: KvKey; row: SentinelReplayAccountingRow }[] = [];
   const isCandidate = (row: SentinelReplayAccountingRow): boolean => row.state === "revoked" || (row.state === "reserved" && row.expires_at_ms <= nowMs);
   for await (const entry of iterator) {
     if (isAccountingRow(entry.value) && accountingKeyMatches(entry.key, entry.value) && isCandidate(entry.value)) {
@@ -462,7 +463,7 @@ const reapCandidates = async (kv: Deno.Kv, nowMs: number, limit: number): Promis
   return found;
 };
 
-const reapAccountingRows = async (kv: Deno.Kv, nowMs: number, budgetBytes: number): Promise<number> => {
+const reapAccountingRows = async (kv: Kv, nowMs: number, budgetBytes: number): Promise<number> => {
   const candidates = await reapCandidates(kv, nowMs, RESERVATION_REAP_LIMIT);
   let reaped = 0;
   for (const candidate of candidates) {
@@ -474,7 +475,7 @@ const reapAccountingRows = async (kv: Deno.Kv, nowMs: number, budgetBytes: numbe
   return reaped;
 };
 
-const reapLegacyReservations = async (kv: Deno.Kv, budgetBytes: number): Promise<number> => {
+const reapLegacyReservations = async (kv: Kv, budgetBytes: number): Promise<number> => {
   let reaped = 0;
   for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_RESERVATION_PREFIX }, { limit: RESERVATION_REAP_LIMIT })) {
     if (!isLegacyReservation(entry.value)) continue;
@@ -484,7 +485,7 @@ const reapLegacyReservations = async (kv: Deno.Kv, budgetBytes: number): Promise
   return reaped;
 };
 
-const recordSkipReason = async (kv: Deno.Kv, reason: string | null, nowMs: number, budgetBytes: number): Promise<void> => {
+const recordSkipReason = async (kv: Kv, reason: string | null, nowMs: number, budgetBytes: number): Promise<void> => {
   for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt += 1) {
     const state = await readLedger(kv, budgetBytes);
     if (state.kind === "corrupt") return;
@@ -510,7 +511,7 @@ const recordSkipReason = async (kv: Deno.Kv, reason: string | null, nowMs: numbe
  * old capture's eviction from deleting a newer capture that shares the
  * fingerprint, and a manifest that no longer matches the claim is left alone.
  */
-const deleteClaimedVictimPayload = async (kv: Deno.Kv, row: SentinelReplayAccountingRow, manifestKey: Deno.KvKey): Promise<void> => {
+const deleteClaimedVictimPayload = async (kv: Kv, row: SentinelReplayAccountingRow, manifestKey: KvKey): Promise<void> => {
   const manifestEntry = await kv.get(manifestKey);
   if (manifestEntry.value !== null || manifestEntry.versionstamp !== null) {
     if (!isSentinelReplayManifest(manifestEntry.value)) return;
@@ -558,13 +559,13 @@ const finalizedLedger = (
 
 /** Ownerless legacy victims retain a tombstone without inventing a request-status row. */
 const applyClaimedVictimMetadata = (
-  operation: Deno.AtomicOperation,
-  existingStatus: Deno.KvEntryMaybe<unknown> | null,
+  operation: AtomicOperation,
+  existingStatus: KvEntryMaybe<unknown> | null,
   statusRow: SentinelReplayCaptureStatusRow,
-  tombstoneKey: Deno.KvKey,
+  tombstoneKey: KvKey,
   tombstone: Readonly<Record<string, unknown>>,
   statusFits: boolean
-): Deno.AtomicOperation => {
+): AtomicOperation => {
   let applied = operation;
   if (existingStatus !== null) {
     applied = applied.check({ key: existingStatus.key, versionstamp: existingStatus.versionstamp }).delete(existingStatus.key);
@@ -580,8 +581,8 @@ const applyClaimedVictimMetadata = (
  * chunk prefix is empty, so a partial deletion never frees capacity.
  */
 const finalizeClaimedVictim = async (
-  kv: Deno.Kv,
-  key: Deno.KvKey,
+  kv: Kv,
+  key: KvKey,
   row: SentinelReplayAccountingRow,
   nowMs: number,
   budgetBytes: number,
@@ -682,8 +683,8 @@ const finalizeClaimedVictim = async (
  * touching the victim.
  */
 const claimVictim = async (
-  kv: Deno.Kv,
-  key: Deno.KvKey,
+  kv: Kv,
+  key: KvKey,
   row: SentinelReplayAccountingRow,
   kind: SentinelReplayClaimKind,
   budgetBytes: number
@@ -725,7 +726,7 @@ const claimVictim = async (
  * removed. The claim kind is persisted on the row because the current clock
  * may have passed the payload TTL before this continuation runs.
  */
-const resumeEvictingRows = async (kv: Deno.Kv, nowMs: number, budgetBytes: number, limit: number): Promise<number> => {
+const resumeEvictingRows = async (kv: Kv, nowMs: number, budgetBytes: number, limit: number): Promise<number> => {
   const victims = await selectVictims(kv, limit, (row) => row.state === "evicting", nowMs);
   let resumed = 0;
   for (const victim of victims) {
@@ -736,12 +737,12 @@ const resumeEvictingRows = async (kv: Deno.Kv, nowMs: number, budgetBytes: numbe
 };
 
 const selectVictims = async (
-  kv: Deno.Kv,
+  kv: Kv,
   limit: number,
   predicate: (row: SentinelReplayAccountingRow, nowMs: number) => boolean,
   nowMs: number
-): Promise<Readonly<{ key: Deno.KvKey; row: SentinelReplayAccountingRow }>[]> => {
-  const victims: Readonly<{ key: Deno.KvKey; row: SentinelReplayAccountingRow }>[] = [];
+): Promise<Readonly<{ key: KvKey; row: SentinelReplayAccountingRow }>[]> => {
+  const victims: Readonly<{ key: KvKey; row: SentinelReplayAccountingRow }>[] = [];
   // Accounting keys are timestamp-first, so listing this prefix IS the
   // oldest-first index; no second index namespace is needed.
   for await (const entry of kv.list<SentinelReplayAccountingRow>({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX }, { limit: limit * 8 })) {
@@ -759,7 +760,7 @@ const selectVictims = async (
  * deleted, and its charge is released only when its chunk prefix is proven empty.
  */
 export const evictSentinelReplays = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{
     target_bytes: number;
     target_records?: number;
@@ -803,7 +804,7 @@ export const evictSentinelReplays = async (
  * records-1 and NO evicted_* increment, reporting `expired`/`payload_expired`.
  */
 export const reclaimExpiredSentinelReplays = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ now_ms: number; max_records?: number; budget_bytes?: number }>
 ): Promise<Readonly<{ records: number; bytes: number }>> => {
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(options.budget_bytes ?? sentinelReplayBudgetBytes()));
@@ -827,7 +828,7 @@ export const reclaimExpiredSentinelReplays = async (
  * expiry first, then evict oldest-first toward both clean targets. Returns whether
  * any capacity was actually reclaimed, so a refusal is only reported when nothing moved.
  */
-const reclaimAdmissionCapacity = async (kv: Deno.Kv, budgetBytes: number, payloadBudget: number, charge: number, nowMs: number): Promise<boolean> => {
+const reclaimAdmissionCapacity = async (kv: Kv, budgetBytes: number, payloadBudget: number, charge: number, nowMs: number): Promise<boolean> => {
   const target = Math.floor(payloadBudget * SENTINEL_REPLAY_CLEAN_TARGET_RATIO) - charge;
   const expired = await reclaimExpiredSentinelReplays(kv, { now_ms: nowMs, budget_bytes: budgetBytes });
   const evicted = await evictSentinelReplays(kv, {
@@ -845,7 +846,7 @@ const reclaimAdmissionCapacity = async (kv: Deno.Kv, budgetBytes: number, payloa
  * together. Refuses with storage_full when bounded cleanup cannot admit it.
  */
 export const reserveSentinelReplayCapacity = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{
     capture_id: string;
     request_id: string;
@@ -920,7 +921,7 @@ export const reserveSentinelReplayCapacity = async (
 
 /** Bounded maintenance: reap, bootstrap, reclaim expired payloads and metadata charges, evict if needed. */
 export const runSentinelReplayRetentionMaintenance = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ now_ms: number; budget_bytes?: number }>
 ): Promise<SentinelReplayRetentionStatus> => {
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(options.budget_bytes ?? sentinelReplayBudgetBytes()));

@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 /**
  * Upstream-observed Claude Code subscription windows. The provider's unified
  * rate-limit headers are the only authoritative statement of remaining
@@ -159,7 +160,7 @@ export const parseClaudeCodeQuotaState = (value: unknown): ClaudeCodeQuotaState 
   };
 };
 
-export const loadClaudeCodeQuotaState = async (kv: Deno.Kv | null): Promise<ClaudeCodeQuotaState | null> => {
+export const loadClaudeCodeQuotaState = async (kv: Kv | null): Promise<ClaudeCodeQuotaState | null> => {
   if (!kv) return null;
   const entry = await kv.get(CLAUDE_CODE_QUOTA_KV_KEY, { consistency: "strong" });
   return parseClaudeCodeQuotaState(entry.value);
@@ -209,7 +210,7 @@ export const mergeClaudeCodeQuotaState = (
   };
 };
 
-export const storeClaudeCodeQuotaState = async (kv: Deno.Kv | null, state: ClaudeCodeQuotaState): Promise<boolean> => {
+export const storeClaudeCodeQuotaState = async (kv: Kv | null, state: ClaudeCodeQuotaState): Promise<boolean> => {
   if (!kv) return false;
   try {
     await kv.set(CLAUDE_CODE_QUOTA_KV_KEY, state);
@@ -234,7 +235,7 @@ export const claudeCodeQuotaCoolingDown = (state: ClaudeCodeQuotaState | null, n
  * can never be persisted as durable exhaustion.
  */
 export const recordClaudeCodeQuotaOutcome = async (
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   input: Readonly<{
     observation: ClaudeCodeQuotaObservation | null;
     /** Durable exhaustion claimed by the caller's classification. */

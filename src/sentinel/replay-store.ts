@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvCommitError, KvCommitResult, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 // Sentinel replay persistence, split out of src/sentinel_replay_capture.ts.
 
 import { getKv } from "../kv.ts";
@@ -95,11 +96,11 @@ import {
 } from "./replay-retention-schema.ts";
 
 const bindWinnerIndexEvidence = async (
-  kv: Deno.Kv,
+  kv: Kv,
   indexFingerprint: string,
   observedAtMs: number,
   referenceFingerprint: string,
-  manifestKey: Deno.KvKey,
+  manifestKey: KvKey,
   keyBytes: Uint8Array<ArrayBuffer>
 ): Promise<void> => {
   const manifestEntry = await kv.get<SentinelReplayManifest>(manifestKey);
@@ -133,10 +134,10 @@ const bindWinnerIndexEvidence = async (
 };
 
 const completeReplayIncidentEvent = async (
-  kv: Deno.Kv,
-  event: Deno.KvEntry<SentinelIncidentFailureEvent> | undefined,
+  kv: Kv,
+  event: KvEntry<SentinelIncidentFailureEvent> | undefined,
   readyAtMs: number,
-  capture: Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: Deno.KvKey }> | Readonly<{ status: "unavailable" }>
+  capture: Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: KvKey }> | Readonly<{ status: "unavailable" }>
 ): Promise<void> => {
   if (!event) return;
   if (!(await completeSentinelIncidentFailureEvent(kv, event, readyAtMs, capture))) {
@@ -167,8 +168,8 @@ const completeDuplicateCapture = async (
   dependencies: PersistDependencies,
   duplicate: Readonly<{
     fingerprint: string;
-    manifestKey: Deno.KvKey;
-    indexKey: Deno.KvKey | null;
+    manifestKey: KvKey;
+    indexKey: KvKey | null;
     indexFingerprint: string | null;
     requestId: string;
     captureStatus: "ready" | "incomplete";
@@ -242,7 +243,7 @@ const captureStatusRow = (
     status: SentinelReplayCaptureStatus;
     reason: string | null;
     capturedAtMs: number;
-    manifestKey: Deno.KvKey | null;
+    manifestKey: KvKey | null;
     fingerprint: string | null;
     expiresAtMs: number | null;
   }>
@@ -268,7 +269,7 @@ const captureStatusRow = (
  * status/tombstone metadata can never grow without bound. A refusal to admit
  * drops this best-effort row instead of exceeding the bound.
  */
-export const writeSentinelReplayCaptureStatus = async (kv: Deno.Kv, row: SentinelReplayCaptureStatusRow): Promise<void> => {
+export const writeSentinelReplayCaptureStatus = async (kv: Kv, row: SentinelReplayCaptureStatusRow): Promise<void> => {
   if (!isSentinelReplayCaptureStatusRow(row)) throw new Error("Sentinel replay capture status is invalid");
   // The row outlives its payload so `expired` stays reportable; this is bounded
   // non-sensitive status metadata, never captured request or response content.
@@ -315,14 +316,14 @@ export const recordSentinelReplayOmissionFromEnvironment = async (
 /** The dedupe/manifest/incident-event writes every store attempt starts from. */
 const replayStoreOperation = (
   dependencies: PersistDependencies,
-  dedupeKey: Deno.KvKey,
-  manifestKey: Deno.KvKey,
+  dedupeKey: KvKey,
+  manifestKey: KvKey,
   manifest: SentinelReplayManifest,
   fingerprint: string,
   now: number,
   status: Readonly<{ requestId: string; captureStatus: "ready" | "incomplete" }>,
   publication: SentinelReplayPublication
-): Deno.AtomicOperation => {
+): AtomicOperation => {
   let operation = dependencies.kv
     .atomic()
     .check({ key: dedupeKey, versionstamp: null })
@@ -367,19 +368,19 @@ const replayStoreOperation = (
 
 /** Adds the evidence row and capture reference for an existing index observation. */
 const withIncidentIndexEvidence = (
-  operation: Deno.AtomicOperation,
-  indexRow: Readonly<{ key: Deno.KvKey; entry: Deno.KvEntry<SentinelIncidentIndexRow> }>,
+  operation: AtomicOperation,
+  indexRow: Readonly<{ key: KvKey; entry: KvEntry<SentinelIncidentIndexRow> }>,
   context: Readonly<{
     gitSha: string;
     captureId: string;
     evidenceDigest: string;
-    manifestKey: Deno.KvKey;
+    manifestKey: KvKey;
     capturedAtMs: number;
     expiresAtMs: number;
     now: number;
     fingerprint: string;
   }>
-): Deno.AtomicOperation => {
+): AtomicOperation => {
   if (!isSentinelIncidentIndexRow(indexRow.entry.value)) {
     throw new Error("Sentinel incident index record is invalid");
   }
@@ -399,10 +400,7 @@ const withIncidentIndexEvidence = (
 };
 
 /** Reads the durable index observation once, when one exists. */
-const readIncidentIndexEntry = async (
-  kv: Deno.Kv,
-  indexKey: Deno.KvKey | null
-): Promise<Readonly<{ key: Deno.KvKey; entry: Deno.KvEntry<SentinelIncidentIndexRow> }> | null> => {
+const readIncidentIndexEntry = async (kv: Kv, indexKey: KvKey | null): Promise<Readonly<{ key: KvKey; entry: KvEntry<SentinelIncidentIndexRow> }> | null> => {
   if (indexKey === null) return null;
   const entry = await kv.get<SentinelIncidentIndexRow>(indexKey);
   return entry.value === null ? null : { key: indexKey, entry };
@@ -425,10 +423,10 @@ const storeReplayEnvelope = async (
     dependencies: PersistDependencies;
     gitSha: string;
     chunks: readonly Uint8Array<ArrayBuffer>[];
-    dedupeKey: Deno.KvKey;
-    manifestKey: Deno.KvKey;
+    dedupeKey: KvKey;
+    manifestKey: KvKey;
     manifest: SentinelReplayManifest;
-    indexKey: Deno.KvKey | null;
+    indexKey: KvKey | null;
     indexFingerprint: string | null;
     captureId: string;
     evidenceDigest: string;
@@ -437,7 +435,7 @@ const storeReplayEnvelope = async (
     requestId: string;
     captureStatus: "ready" | "incomplete";
     accounting: SentinelReplayAccountingRow;
-    accountingKey: Deno.KvKey;
+    accountingKey: KvKey;
     actualCharge: number;
   }>
 ): Promise<SentinelReplayPersistResult> => {
@@ -475,7 +473,7 @@ const storeReplayEnvelope = async (
         return { status: "incomplete", reason: SENTINEL_REPLAY_STORAGE_FULL_REASON };
       }
     }
-    let committed: Deno.KvCommitResult | Deno.KvCommitError | null = null;
+    let committed: KvCommitResult | KvCommitError | null = null;
     for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
       // Fresh ledger and accounting row on every attempt: a revoked, expired or
       // already-published row can never publish unaccounted bytes.
@@ -561,9 +559,9 @@ const storeReplayEnvelope = async (
 
 /** Everything the duplicate/stale branch needs that is not already in the dedupe record. */
 type ExistingDedupeContext = Readonly<{
-  dedupeKey: Deno.KvKey;
+  dedupeKey: KvKey;
   fingerprint: string;
-  indexKey: Deno.KvKey | null;
+  indexKey: KvKey | null;
   indexFingerprint: string | null;
   requestId: string;
   captureStatus: "ready" | "incomplete";
@@ -585,7 +583,7 @@ type ExistingDedupeContext = Readonly<{
  */
 const resolveExistingDedupe = async (
   dependencies: PersistDependencies,
-  existingDedupe: Deno.KvEntryMaybe<unknown>,
+  existingDedupe: KvEntryMaybe<unknown>,
   context: ExistingDedupeContext
 ): Promise<SentinelReplayPersistResult | null> => {
   if (existingDedupe.value === null) return null;
@@ -649,7 +647,7 @@ export const persistEncryptedSentinelReplay = async (
     const unavailable = replayUnavailableReasons(upstreamTrace, clientObservation);
     const dedupeKey = [...SENTINEL_REPLAY_DEDUPE_PREFIX, fingerprint] as const;
     const indexFingerprint = await resolveIndexFingerprint(input, clientObservation);
-    const indexKey: Deno.KvKey | null = indexFingerprint === null ? null : [...SENTINEL_INCIDENT_INDEX_PREFIX, indexFingerprint];
+    const indexKey: KvKey | null = indexFingerprint === null ? null : [...SENTINEL_INCIDENT_INDEX_PREFIX, indexFingerprint];
     const duplicate = await resolveExistingDedupe(dependencies, await dependencies.kv.get(dedupeKey), {
       dedupeKey,
       fingerprint,
@@ -763,7 +761,7 @@ export const persistEncryptedSentinelReplay = async (
 
 const readReplayKeyFromEnvironment = (): Uint8Array<ArrayBuffer> | null => {
   try {
-    const raw = Deno.env.get("SENTINEL_REPLAY_KEY")?.trim();
+    const raw = process.env["SENTINEL_REPLAY_KEY"]?.trim();
     return raw ? decodeSentinelReplayKey(raw) : null;
   } catch {
     return null;
@@ -776,8 +774,8 @@ export const persistSentinelReplayFromEnvironment = async (
   clientObservation?: SentinelClientFailureObservation
 ): Promise<SentinelReplayPersistResult> => {
   let keyBytes: Uint8Array<ArrayBuffer> | null = null;
-  let kv: Deno.Kv | null;
-  let incidentEvent: Deno.KvEntry<SentinelIncidentFailureEvent> | undefined;
+  let kv: Kv | null;
+  let incidentEvent: KvEntry<SentinelIncidentFailureEvent> | undefined;
   const resolvedClientObservation = clientObservation ?? resolveSentinelClientFailureObservation(observation);
   const now = Date.now();
   const recordStatus = async (status: "disabled" | "failed", reason: string, capturedAtMs: number): Promise<void> => {

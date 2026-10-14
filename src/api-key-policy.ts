@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, apiKeyHashKey, normalizeApiKeyWindowMs } from "./api-keys.ts";
 import { openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import { getKv } from "./kv.ts";
@@ -261,7 +262,7 @@ const quotaExceededResponse = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy
   };
 };
 
-const livePolicyFromEntry = (tokenHash: string, entry: Deno.KvEntryMaybe<ApiKeyHashRecord>, nowMs: number): ApiKeyPolicy | null => {
+const livePolicyFromEntry = (tokenHash: string, entry: KvEntryMaybe<ApiKeyHashRecord>, nowMs: number): ApiKeyPolicy | null => {
   if (entry.value?.revoked_at_ms !== null) return null;
   const policy = apiKeyPolicyFromHashRecord(tokenHash, entry.value, nowMs);
   if (!policy) return null;
@@ -312,7 +313,7 @@ const withApiKeyUsageWindowLock = async <T>(policy: Pick<ApiKeyPolicy, ApiKeyUsa
 };
 
 const releaseReservedRequest = async (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   requestId: string,
   reason: string,
@@ -354,7 +355,7 @@ const releaseReservedRequest = async (
 };
 
 const releaseDispatchedRequest = async (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
@@ -397,13 +398,7 @@ const releaseDispatchedRequest = async (
   return committed.ok ? "released" : "conflict";
 };
 
-const providerDispatchContext = (
-  kv: Deno.Kv,
-  policy: ApiKeyPolicy,
-  requestId: string,
-  route: string,
-  provider: ApiKeyUsageProvider
-): ApiKeyProviderDispatch => {
+const providerDispatchContext = (kv: Kv, policy: ApiKeyPolicy, requestId: string, route: string, provider: ApiKeyUsageProvider): ApiKeyProviderDispatch => {
   let transportStarted = false;
   let cancellation: Promise<void> | null = null;
   return {
@@ -436,7 +431,7 @@ const providerDispatchContext = (
 };
 
 /** Request ids in this window whose reservation lease has already expired. */
-const expiredApiKeyUsageRequestIds = async (kv: Deno.Kv, policy: ApiKeyPolicy, nowMs: number): Promise<string[]> => {
+const expiredApiKeyUsageRequestIds = async (kv: Kv, policy: ApiKeyPolicy, nowMs: number): Promise<string[]> => {
   const prefix = [...API_KEY_USAGE_V3_REQUEST_PREFIX, policy.key_id, policy.policy_version, policy.window_start_ms];
   const expired: string[] = [];
   for await (const entry of kv.list<ApiKeyUsageRequestV3>({ prefix })) {
@@ -451,7 +446,7 @@ const expiredApiKeyUsageRequestIds = async (kv: Deno.Kv, policy: ApiKeyPolicy, n
 };
 
 /** Releases one expired reservation, retrying KV conflicts up to MAX_KV_RETRIES times. */
-const releaseExpiredApiKeyUsageReservation = async (kv: Deno.Kv, policy: ApiKeyPolicy, requestId: string, nowMs: number): Promise<void> => {
+const releaseExpiredApiKeyUsageReservation = async (kv: Kv, policy: ApiKeyPolicy, requestId: string, nowMs: number): Promise<void> => {
   for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
     const outcome = await releaseReservedRequest(kv, policy, requestId, "lease_expired", nowMs);
     if (outcome === "conflict") continue;
@@ -466,17 +461,17 @@ const releaseExpiredApiKeyUsageReservation = async (kv: Deno.Kv, policy: ApiKeyP
  * separate, retryable pass: Deno KV cannot list a dynamic set of request keys
  * inside the aggregate's atomic check.
  */
-const reclaimExpiredApiKeyUsageReservationsV3Unlocked = async (kv: Deno.Kv, policy: ApiKeyPolicy, nowMs = Date.now()): Promise<void> => {
+const reclaimExpiredApiKeyUsageReservationsV3Unlocked = async (kv: Kv, policy: ApiKeyPolicy, nowMs = Date.now()): Promise<void> => {
   for (const requestId of await expiredApiKeyUsageRequestIds(kv, policy, nowMs)) {
     await releaseExpiredApiKeyUsageReservation(kv, policy, requestId, nowMs);
   }
 };
 
-export const reclaimExpiredApiKeyUsageReservationsV3 = async (kv: Deno.Kv, policy: ApiKeyPolicy, nowMs = Date.now()): Promise<void> => {
+export const reclaimExpiredApiKeyUsageReservationsV3 = async (kv: Kv, policy: ApiKeyPolicy, nowMs = Date.now()): Promise<void> => {
   await withApiKeyUsageWindowLock(policy, () => reclaimExpiredApiKeyUsageReservationsV3Unlocked(kv, policy, nowMs));
 };
 
-const reservationContext = (kv: Deno.Kv, policy: ApiKeyPolicy, requestId: string, route: string): ApiKeyUsageReservation => {
+const reservationContext = (kv: Kv, policy: ApiKeyPolicy, requestId: string, route: string): ApiKeyUsageReservation => {
   // `release()` runs after every route. Once this exact reservation has
   // durably moved from reserved to dispatched, it cannot release a
   // reservation: the request row is no longer reserved. Remembering that
@@ -586,7 +581,7 @@ const quotaDispatchErrorFromResponse = async (response: Response): Promise<ApiKe
   });
 };
 
-const deferredReservationContext = (kv: Deno.Kv, policy: ApiKeyPolicy, requestId: string, route: string): ApiKeyUsageReservation => {
+const deferredReservationContext = (kv: Kv, policy: ApiKeyPolicy, requestId: string, route: string): ApiKeyUsageReservation => {
   let active: ApiKeyUsageReservation | null = null;
   let admission: Promise<ApiKeyUsageReservation> | null = null;
   const requireAdmission = async (): Promise<ApiKeyUsageReservation> => {
@@ -630,7 +625,7 @@ const unavailablePolicyResponse = (record: unknown, nowMs: number): ApiKeyUsageR
 
 /** Decision for a request row that already exists: either an identity conflict, or this reservation reused. */
 const existingRequestReservation = (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
@@ -652,7 +647,7 @@ const existingRequestReservation = (
 
 /** Handles an apparently full window; null means expired leases were reclaimed and the caller must retry. */
 const fullWindowReservation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
@@ -683,7 +678,7 @@ const fullWindowReservation = async (
  * capacity, then the compare-and-set commit.
  */
 const attemptApiKeyUsageReservation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
@@ -757,7 +752,7 @@ export const reserveApiKeyUsageV3 = async (
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; deferWhenFull?: boolean }> = {}
+  options: Readonly<{ kv?: Kv | null; nowMs?: number; deferWhenFull?: boolean }> = {}
 ): Promise<ApiKeyUsageReservationDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -789,14 +784,14 @@ export const reserveApiKeyUsageV3 = async (
   }
 };
 
-export const getApiKeyUsageV3 = async (policy: ApiKeyPolicy, kvOverride?: Deno.Kv | null): Promise<number> => {
+export const getApiKeyUsageV3 = async (policy: ApiKeyPolicy, kvOverride?: Kv | null): Promise<number> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return 0;
   const entry = await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy), { consistency: "strong" });
   return matchingWindow(entry.value, policy)?.committed_requests ?? 0;
 };
 
-export const hasLiveApiKeyUsageReservationsV3 = async (kv: Deno.Kv, keyId: string, nowMs = Date.now()): Promise<boolean> => {
+export const hasLiveApiKeyUsageReservationsV3 = async (kv: Kv, keyId: string, nowMs = Date.now()): Promise<boolean> => {
   for await (const entry of kv.list<ApiKeyUsageRequestV3>({ prefix: [...API_KEY_USAGE_V3_REQUEST_PREFIX, keyId] })) {
     const request = normalizeApiKeyUsageRequestV3(entry.value);
     if (request?.state === "reserved" && request.lease_expires_at_ms > nowMs) return true;
@@ -804,7 +799,7 @@ export const hasLiveApiKeyUsageReservationsV3 = async (kv: Deno.Kv, keyId: strin
   return false;
 };
 
-export const reclaimApiKeyUsageReservationsForKeyV3 = async (kv: Deno.Kv, keyId: string, nowMs = Date.now()): Promise<void> => {
+export const reclaimApiKeyUsageReservationsForKeyV3 = async (kv: Kv, keyId: string, nowMs = Date.now()): Promise<void> => {
   const policies = new Map<string, ApiKeyPolicy>();
   for await (const entry of kv.list<ApiKeyUsageRequestV3>({ prefix: [...API_KEY_USAGE_V3_REQUEST_PREFIX, keyId] })) {
     const request = normalizeApiKeyUsageRequestV3(entry.value);
@@ -840,17 +835,14 @@ export const reclaimApiKeyUsageReservationsForKeyV3 = async (kv: Deno.Kv, keyId:
   for (const policy of policies.values()) await reclaimExpiredApiKeyUsageReservationsV3(kv, policy, nowMs);
 };
 
-export const deleteApiKeyUsageV3 = async (kv: Deno.Kv, keyId: string): Promise<void> => {
-  const keys: Deno.KvKey[] = [];
+export const deleteApiKeyUsageV3 = async (kv: Kv, keyId: string): Promise<void> => {
+  const keys: KvKey[] = [];
   for await (const entry of kv.list({ prefix: [...API_KEY_USAGE_V3_WINDOW_PREFIX, keyId] })) keys.push(entry.key);
   for await (const entry of kv.list({ prefix: [...API_KEY_USAGE_V3_REQUEST_PREFIX, keyId] })) keys.push(entry.key);
   for (const key of keys) await kv.delete(key);
 };
 
-export const authenticateApiKeyToken = async (
-  token: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number }> = {}
-): Promise<ApiKeyPolicyDecision> => {
+export const authenticateApiKeyToken = async (token: string, options: Readonly<{ kv?: Kv | null; nowMs?: number }> = {}): Promise<ApiKeyPolicyDecision> => {
   if (!looksLikeUosApiKey(token)) {
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
