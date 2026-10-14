@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { nativeKvDevelopmentPaths, readNativeKvDevelopmentBinding, verifyNativeKvDevelopmentDirectory } from "../src/runtime/native-kv-bootstrap.ts";
 import { verifyNativeKvArtifact, type NativeKvArtifactBinding } from "../src/storage/native-addon.ts";
 import { buildNativeKv } from "./build-native-kv.ts";
+import { buildNativeKvDarwin } from "./build-native-kv-darwin.ts";
 
 const missing = (error: unknown): boolean => error instanceof Error && "code" in error && error.code === "ENOENT";
 
@@ -31,7 +32,6 @@ const syncFile = async (path: string): Promise<void> => {
 /** Explicit operator preparation, never an application-startup operation. */
 export const prepareNativeKvDevelopmentArtifact = async (repositoryRoot?: string): Promise<NativeKvArtifactBinding> => {
   const paths = nativeKvDevelopmentPaths(repositoryRoot);
-  if (process.platform !== "linux") throw new Error("Explicit native KV preparation currently requires the accepted Linux ARM64 builder");
   try {
     await mkdir(paths.data, { mode: 0o700 });
   } catch (error) {
@@ -45,7 +45,7 @@ export const prepareNativeKvDevelopmentArtifact = async (repositoryRoot?: string
     if ((await previousBinding(paths.root, paths.receipt)) !== previous) throw new Error("Native KV development binding changed before preparation");
     // Unique staging is not referenced by startup until the durable binding is published.
     const output = await mkdtemp(join(paths.data, "native-kv-"));
-    const receipt = await buildNativeKv(output);
+    const receipt = await (process.platform === "darwin" ? buildNativeKvDarwin(output) : buildNativeKv(output));
     if (dirname(receipt.path) !== output || dirname(receipt.provenancePath) !== output) throw new Error("Native KV builder returned an unexpected output path");
     const binding = {
       artifactDirectory: output,

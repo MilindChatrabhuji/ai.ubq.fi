@@ -288,7 +288,7 @@ test("published guidance documents endpoint-specific output caps and repository-
   assert.doesNotMatch(readmeText, /cd lib\/ai\.ubq\.fi/);
   assert.match(readmeText, /git rev-parse --show-toplevel/);
   assert.match(llmsFullText, /scripts\/upload-codex-auth\.ts/);
-  assert.match(llmsFullText, /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/);
+  assert.match(llmsFullText, /bun run upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/);
 });
 
 test("admin console every rendered tab declares an access requirement", () => {

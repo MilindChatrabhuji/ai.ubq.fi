@@ -22,6 +22,8 @@
 import assert from "node:assert/strict";
 import { serveHttp } from "#http";
 import { openKv, type Kv } from "#kv";
+import { nativeKvDevelopmentPaths, prepareNativeKvForDevelopment } from "../../src/runtime/native-kv-bootstrap.ts";
+import { preparedNativeKvArtifactBinding, verifyNativeKvArtifact, type NativeKvArtifactBinding } from "../../src/storage/native-addon.ts";
 import { PAID_FALLBACK_NO_LIMIT } from "../../src/api-keys.ts";
 import { apiKeyPolicyFromHashRecord, apiKeyUsageV3RequestKey, apiKeyUsageV3WindowKey, resetApiKeyPolicyCacheForTest } from "../../src/api-key-policy.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../../src/deepseek/index.ts";
@@ -241,7 +243,19 @@ const startUpstream = async (calls: string[]): Promise<{ url: string; stop: () =
   };
 };
 
+const prepareSmokeKv = async (): Promise<void> => {
+  let binding: NativeKvArtifactBinding | undefined;
+  try {
+    binding = preparedNativeKvArtifactBinding();
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "Prepare the verified native KV artifact before starting a child") throw error;
+  }
+  if (binding) verifyNativeKvArtifact({ ...binding, inputsManifest: nativeKvDevelopmentPaths().inputs });
+  else await prepareNativeKvForDevelopment();
+};
+
 const main = async (): Promise<void> => {
+  await prepareSmokeKv();
   const started = performance.now();
   // Existing test-fixture mechanism: the mocked ordinary provider needs a
   // DeepSeek key present, so set the synthetic value and restore it afterwards.

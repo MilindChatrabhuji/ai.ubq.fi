@@ -2,6 +2,7 @@ import { serveHttp, type ServeDefaultExport } from "#http";
 import type { Kv } from "#kv";
 import { config } from "./src/config.ts";
 import { getKv } from "./src/kv.ts";
+import { prepareNativeKvForDevelopment } from "./src/runtime/native-kv-bootstrap.ts";
 import { migrateLegacyCodexResetOptOut } from "./src/codex/reset-settings.ts";
 import { configureAdminAuthForListener, configureAdminAuthPeerForRequest, parseServeRuntimeOptions } from "./src/auth/local-admin.ts";
 import { ensureLocalDevelopmentApiKey } from "./src/auth/local-development-key.ts";
@@ -135,6 +136,7 @@ const serveHandler = createServeHandler();
 const serveUpgradeHandler = createServeUpgradeHandler();
 
 const runtimeOptions = parseServeRuntimeOptions(import.meta.main ? process.argv.slice(2) : [], { isDeploy: config.isDeploy });
+if (import.meta.main) await prepareNativeKvForDevelopment();
 
 // `--disable-admin-auth` is loopback-only (a non-loopback listener fails at
 // startup), so provisioning here can never reach a hosted deployment. The local

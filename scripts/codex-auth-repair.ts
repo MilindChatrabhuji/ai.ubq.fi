@@ -30,6 +30,7 @@
  */
 import { readFile, stat } from "node:fs/promises";
 import { BUN_KV_DATABASE_PATH, openKv, type Kv } from "#kv";
+import { prepareNativeKvForDevelopment } from "../src/runtime/native-kv-bootstrap.ts";
 import {
   applyCodexAuthPlan,
   type AssessedCodexAuthCandidate,
@@ -95,9 +96,9 @@ const readFlagString = (flags: Record<string, string | boolean>, key: string, fa
 };
 
 const expandTilde = (path: string): string => {
-  if (path === "~") return process.env["HOME"] ?? path;
+  if (path === "~") return process.env.HOME ?? path;
   if (path.startsWith("~/")) {
-    const home = process.env["HOME"];
+    const home = process.env.HOME;
     if (home) return `${home}${path.slice(1)}`;
   }
   return path;
@@ -247,7 +248,7 @@ const runCommand = async (
   try {
     const stdout = new Response(child.stdout).text();
     const stderr = new Response(child.stderr).text();
-    if (stdin !== null) child.stdin.write(stdin);
+    if (stdin !== null) await child.stdin.write(stdin);
     await child.stdin.end();
     const [code, stdoutText, stderrText] = await Promise.all([child.exited, stdout, stderr]);
     if (code !== 0) {
@@ -273,14 +274,23 @@ const runCommand = async (
  * module fail closed; there is no legacy runtime or dependency-install fallback.
  */
 const buildRemotePoolProgram = (remoteKvPath: string): string =>
-  `import { lstat } from "node:fs/promises";
+  `import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 const kvPath = ${JSON.stringify(remoteKvPath)};
 try {
   if (basename(dirname(kvPath)) !== ".data") throw new Error("remote KV must be inside the deployed repository's .data directory");
   if (!(await lstat(kvPath)).isFile()) throw new Error("remote KV must be an existing regular database");
-  const { openKv } = await import(pathToFileURL(join(dirname(kvPath), "..", "src", "storage", "kv.ts")).href);
+  const releaseRoot = await realpath(join(dirname(kvPath), "current"));
+  const sha = basename(releaseRoot);
+  if (basename(dirname(releaseRoot)) !== "releases" || !/^[0-9a-f]{40}$/.test(sha)) throw new Error("remote KV requires an immutable release identity");
+  const { verifyReleasePayload } = await import(pathToFileURL(join(releaseRoot, "ops", "release-artifact.ts")).href);
+  const manifest = await verifyReleasePayload(releaseRoot, sha);
+  if (manifest.schema !== 3) throw new Error("remote KV requires a verified native release binding");
+  const { nativeKvReleaseBinding } = await import(pathToFileURL(join(releaseRoot, "ops", "native-kv-release.ts")).href);
+  const { prepareNativeKvBackend } = await import(pathToFileURL(join(releaseRoot, "src", "storage", "native-addon.ts")).href);
+  prepareNativeKvBackend(nativeKvReleaseBinding(releaseRoot, manifest.native_kv));
+  const { openKv } = await import(pathToFileURL(join(releaseRoot, "src", "storage", "kv.ts")).href);
   const kv = await openKv(kvPath);
   try {
     const entry = await kv.get(["ubq_ai", "codex_auth"], { consistency: "strong" });
@@ -346,7 +356,7 @@ const readLocalAuthJsonCandidate = async (flags: Flags): Promise<CodexAuthCandid
     const text = await readFile(flags.authJson, "utf8");
     let mtimeMs: number | null = null;
     try {
-      mtimeMs = (await stat(flags.authJson)).mtime?.getTime() ?? null;
+      mtimeMs = (await stat(flags.authJson)).mtime.getTime();
     } catch {
       mtimeMs = null;
     }
@@ -618,6 +628,7 @@ const main = async (): Promise<number> => {
     notes.push(message);
   };
 
+  await prepareNativeKvForDevelopment();
   const local = await readLocalPool(flags.kv);
   if ("error" in local) {
     console.error(`codex-auth-repair: ${local.error}`);

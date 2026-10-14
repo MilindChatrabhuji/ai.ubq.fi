@@ -1,4 +1,5 @@
 import { openKv as openBunKv, type Kv, type KvKey } from "#kv";
+import { prepareNativeKvForDevelopment } from "../src/runtime/native-kv-bootstrap.ts";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { Writable } from "node:stream";
@@ -117,6 +118,7 @@ const ensureParentDir = async (path: string): Promise<void> => {
 };
 
 const openKv = async (target: string): Promise<Kv> => {
+  if (import.meta.main && !/^https?:\/\//i.test(target)) await prepareNativeKvForDevelopment();
   return await openBunKv(target || undefined);
 };
 
