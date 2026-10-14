@@ -263,7 +263,7 @@ const main = async (): Promise<void> => {
   const upstreamCalls: string[] = [];
   const upstream = await startUpstream(upstreamCalls);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const fixtureFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     let url: string;
     if (typeof input === "string") url = input;
     else if (input instanceof URL) url = input.toString();
@@ -271,6 +271,7 @@ const main = async (): Promise<void> => {
     if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return originalFetch(`${upstream.url}/chat/completions`, init);
     return originalFetch(input, init);
   };
+  globalThis.fetch = Object.assign(fixtureFetch, { preconnect: originalFetch.preconnect });
   const gateway = await startGateway();
   setJevCompactionAskerForTest(dropEverythingAsker());
   try {

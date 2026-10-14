@@ -888,7 +888,7 @@ async function main(): Promise<void> {
   // never report the fake asker's counter as if it were real call evidence.
   let jevApiRequests = 0;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const fixtureFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     let url: string;
     if (typeof input === "string") url = input;
     else if (input instanceof URL) url = input.toString();
@@ -897,6 +897,7 @@ async function main(): Promise<void> {
     if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return originalFetch(`${upstream.url}/chat/completions`, init);
     return originalFetch(input, init);
   };
+  globalThis.fetch = Object.assign(fixtureFetch, { preconnect: originalFetch.preconnect });
   const gateway = await startGateway();
   if (report.mode === "fake") setJevCompactionAskerForTest(fakeJev);
 

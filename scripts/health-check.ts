@@ -31,7 +31,7 @@ Usage:
 `;
 
 type HealthCheckOptions = Readonly<{
-  fetcher?: typeof fetch;
+  fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   log?: (message: string) => void;
   error?: (message: string) => void;
 }>;

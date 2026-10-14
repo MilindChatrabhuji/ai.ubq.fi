@@ -9,7 +9,7 @@ type SetupLogger = Readonly<{
 
 export type SetupInstanceDependencies = Readonly<{
   env?: SetupEnvironment;
-  fetch?: typeof globalThis.fetch;
+  fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   log?: SetupLogger;
 }>;
 
