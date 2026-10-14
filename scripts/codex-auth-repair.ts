@@ -105,7 +105,7 @@ const expandTilde = (path: string): string => {
   return path;
 };
 
-const resolveFlags = (args: readonly string[]): Flags => {
+export const resolveFlags = (args: readonly string[]): Flags => {
   const flags = parseArgs(args);
   return Object.freeze({
     apply: flags.apply === true,
@@ -151,7 +151,7 @@ const sha256Prefix = async (value: string): Promise<string> => {
 const formatTime = (ms: number | null): string => (ms === null ? "n/a" : new Date(ms).toISOString());
 
 /** Reads a local KV pool entry with the versionstamp the write must still match. */
-const readLocalPool = async (kvPath: string): Promise<{ pool: CodexAuthPoolState; versionstamp: string } | { error: string }> => {
+export const readLocalPool = async (kvPath: string): Promise<{ pool: CodexAuthPoolState; versionstamp: string } | { error: string }> => {
   let kv: Deno.Kv;
   try {
     kv = await Deno.openKv(kvPath);
