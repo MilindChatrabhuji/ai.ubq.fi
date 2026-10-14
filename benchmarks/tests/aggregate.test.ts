@@ -1,6 +1,9 @@
+import { test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { aggregateResults, deriveMetrics, formatSummary } from "../metrics.ts";
 import { loadResults } from "../summarize.ts";
-import { BenchmarkResult, TrajectoryEvent } from "../schemas.ts";
+import { type BenchmarkResult, type TrajectoryEvent } from "../schemas.ts";
 
 function fakeResult(overrides: Partial<BenchmarkResult> = {}): BenchmarkResult {
   return {
@@ -38,7 +41,7 @@ function fakeResult(overrides: Partial<BenchmarkResult> = {}): BenchmarkResult {
   };
 }
 
-Deno.test("metrics: derives invalid, wrong, repeated, recovery, and tokens", () => {
+test("metrics: derives invalid, wrong, repeated, recovery, and tokens", () => {
   const at = "2026-01-01T00:00:00.000Z";
   const events: TrajectoryEvent[] = [
     {
@@ -102,7 +105,7 @@ Deno.test("metrics: derives invalid, wrong, repeated, recovery, and tokens", () 
   }
 });
 
-Deno.test("metrics: aggregates results into config and task groups", () => {
+test("metrics: aggregates results into config and task groups", () => {
   const runsRoot = "benchmark-runs";
   const results = [
     fakeResult({ run_id: "a", wall_time_ms: 10, task_id: "t-001" }),
@@ -139,19 +142,19 @@ Deno.test("metrics: aggregates results into config and task groups", () => {
   if (!formatSummary(summary).includes("runs: 3")) throw new Error("summary formatting broken");
 });
 
-Deno.test("summary: loads result.jsonl from a runs root and parses deno-task '--'", async () => {
+test("summary: loads result.jsonl from a runs root and parses task '--'", async () => {
   const { parseSummarizeArgs } = await import("../summarize.ts");
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const root = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const root = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   try {
-    Deno.mkdirSync(`${root}/runs/r1`, { recursive: true });
-    Deno.writeTextFileSync(`${root}/runs/r1/result.jsonl`, JSON.stringify(fakeResult()) + "\n");
+    mkdirSync(`${root}/runs/r1`, { recursive: true });
+    writeFileSync(`${root}/runs/r1/result.jsonl`, JSON.stringify(fakeResult()) + "\n");
     const loaded = loadResults(root);
     if (loaded.length !== 1 || loaded[0].run_id !== "r1") throw new Error("loadResults failed");
     const options = parseSummarizeArgs(["--", "--runs=.", "--json"]);
     if ("help" in options) throw new Error("unexpected help");
     if (!options.jsonOnly || options.runsRoot !== ".") throw new Error("summary arg parse failed");
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true });
   }
 });

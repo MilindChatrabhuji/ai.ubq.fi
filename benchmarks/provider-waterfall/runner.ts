@@ -1,9 +1,10 @@
+import { appendFile, readFile, mkdir, writeFile } from "node:fs/promises";
 // Benchmark runner: executes one provider batch over the frozen corpus
 // through the benchmark gateway instance, pins the provider selection for the
 // batch, records every attempt as one AttemptRecord line, and applies the
 // production-intent retry policy without hiding the first-attempt outcome.
 //
-//   deno run --allow-env --allow-net --allow-read=<root> --allow-write=<root>/benchmarks/provider-waterfall/results \
+//   bun \
 //     benchmarks/provider-waterfall/runner.ts --provider=surplus --period=w1-eve --batch=1 --limit=30
 
 import { runAttempt } from "./client.ts";
@@ -78,7 +79,7 @@ const pilotEntry = (id: string, inputText: string, tools: readonly Record<string
 });
 
 const appendLine = async (path: string, line: string): Promise<void> => {
-  await Deno.writeTextFile(path, `${line}\n`, { append: true, create: true });
+  await appendFile(path, `${line}\n`);
 };
 
 type RunOptions = Readonly<{
@@ -127,7 +128,10 @@ const parseRunOptions = (args: ReadonlyMap<string, string>, root: string): RunOp
 
 const main = async (): Promise<void> => {
   const root = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
-  const { provider, gateway, period, batch, offset, limit, ids, concurrency, retryBudget, pilot, reverse, out } = parseRunOptions(parseArgs(Deno.args), root);
+  const { provider, gateway, period, batch, offset, limit, ids, concurrency, retryBudget, pilot, reverse, out } = parseRunOptions(
+    parseArgs(process.argv.slice(2)),
+    root
+  );
 
   const health = await gatewayHealth(gateway);
   const releaseRecord = (health.release ?? {}) as Record<string, unknown>;
@@ -137,7 +141,7 @@ const main = async (): Promise<void> => {
   let entries: readonly CorpusEntry[];
   let corpusSha: string | null = null;
   if (pilot) {
-    const toolsRaw = JSON.parse(await Deno.readTextFile(`${root}/fixtures/codex-tools-0.160.1.json`)) as Record<string, unknown>[];
+    const toolsRaw = JSON.parse(await readFile(`${root}/fixtures/codex-tools-0.160.1.json`, "utf8")) as Record<string, unknown>[];
     entries = [pilotEntry("pilot-1", "Reply with exactly: pilot-ok", toolsRaw, "high")];
   } else {
     const corpus = await loadCorpus(root);
@@ -154,7 +158,7 @@ const main = async (): Promise<void> => {
   await sleep(6500);
 
   const runId = `${provider.id}-${period}-b${batch}-${Date.now()}`;
-  await Deno.mkdir(out.slice(0, out.lastIndexOf("/")), { recursive: true });
+  await mkdir(out.slice(0, out.lastIndexOf("/")), { recursive: true });
   const meta = {
     run_id: runId,
     provider: provider.id,
@@ -171,7 +175,7 @@ const main = async (): Promise<void> => {
     pilot,
     started_at: new Date().toISOString(),
   };
-  await Deno.writeTextFile(`${out}.meta.json`, JSON.stringify(meta, null, 1));
+  await writeFile(`${out}.meta.json`, JSON.stringify(meta, null, 1));
 
   let successFirst = 0;
   let successRetry = 0;
