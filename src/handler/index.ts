@@ -308,10 +308,8 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   const uosResponse = await handleUosRoute(req, path);
   if (uosResponse) return withCors(uosResponse);
 
-  // The realtime voice relay owns its own decorations: a sideband upgrade must
-  // be returned exactly as `Deno.upgradeWebSocket` produced it, and `withCors`
-  // above would rebuild the response and drop its socket. The JSON arms apply
-  // both decorations themselves.
+  // The realtime voice relay decorates its own JSON responses. Actual WebSocket
+  // switching is handled by the separate authenticated transport entry point.
   const liveResponse = await handleLiveRoute(req, requestId);
   if (liveResponse) return liveResponse;
 
@@ -322,3 +320,5 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
 
   return await handleTerminalRoute(req, path, delivery, requestId, requestStartedAtMs, requestStartedAtMonotonicMs);
 }
+
+export { handleLiveUpgrade as upgradeHandler } from "../live/handler.ts";
