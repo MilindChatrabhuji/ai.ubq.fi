@@ -12,6 +12,8 @@ The owner authorized migration of this gateway, its first-party libraries, scrip
 
 This repository-scoped decision supersedes the Deno-only runtime default, the root-dependency prohibition, Deno import-map resolution, generated `.deno-types.d.ts`, and Deno gate commands for the migrated first-party program. Earlier dated Deno decisions and their receipts remain historical evidence; they do not authorize a Bun service rollout. Vendored native Codex and other repositories remain outside this migration.
 
+The current source tree retires root `deno.json` and `deno.lock`; Bun scripts and frozen Bun graphs own application tasks and dependencies. Original immutable legacy rollback releases retain their Deno configurations, lockfiles, runtime artifacts, and supported launcher profiles unchanged. The explicit offline V8 codec and latest-state reverse-conversion helper exception remains in force.
+
 The named `application` export and explicit direct entry point use Bun's `node:http` implementation so actual transport `finish`, `error`, and `close` events remain the delivery receipt for terminal settlement; no automatic default-export Bun server may bypass that seam. Retain one inference admission lifetime and settle quota and paid accounting exactly once after the semantic terminal and transport outcome are known; consuming a response body alone is not delivery proof. Drain delivery-triggered durable request writes before optional telemetry and KV closure. Preserve cancellation, progressive SSE, WebSocket principal binding, routing eligibility, paid-hop identities, and all existing credential and quota fences. The `#http` loader resolves the installed `ws@8.18.3` package's declared ESM entry rather than Bun's bare-specifier substitute, retaining upstream headers, Unix-domain sockets, and payload/handshake limits.
 
 The SQLite storage foundation targets pinned `@deno/kv@0.14.0`, subject to proof of the existing atomic compare-and-set, heterogeneous key ordering, versionstamp, expiry, serialization, billing, quota, and restart-persistence contracts. The native correctness fix and its exact immutable artifact remain pending final acceptance and require attested source/build provenance; valid caller budgets and all-or-nothing mutation failure must not be weakened. Bun's `node:v8` value serialization uses JavaScriptCore and is not the legacy Deno V8 value codec. The Bun target `.data/kv-bun.sqlite3` requires an explicit codec marker, and an absent or incompatible marker must fail closed rather than reinterpret the retained legacy `.data/kv.sqlite3`.
@@ -1160,18 +1162,18 @@ was taken at a context size far below the real sessions, which is why it came ba
 only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
 effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
 
-| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
-| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
-| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
-| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
-| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
-| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
-| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
-| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
+| Model                           | Actual input tokens |   n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | --: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 |  10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 |  10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 |  10 |                 9 |                    1 |     10% |
+| `deepseek-flash` (effort `max`) |              18,787 |  10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              66,533 |  10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 |  10 |                10 |                    0 |      0% |
 
 Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
 
