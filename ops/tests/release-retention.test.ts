@@ -122,3 +122,19 @@ test("a dry run reports the same candidates without deleting them", async () => 
   assert.deepEqual(report.removed, [expired], "the dry run reports the expired release");
   assert.equal(await exists(`${fixture.releasesDir}/${expired}`), true, "nothing is deleted by a dry run");
 });
+
+test("retention preserves a pending VPS operation's exact older prior", async () => {
+  const fixture = await makeFixture("vps-prior-pin");
+  const prior = revision("1");
+  const candidate = revision("2");
+  await addRelease(fixture, prior, 600);
+  await addRelease(fixture, candidate, 1);
+  await pointCurrentAt(fixture, candidate);
+  await writeFile(
+    `${fixture.root}/vps-release-pins.json`,
+    JSON.stringify({ schema: 1, pins: [{ operationId: "a".repeat(64), requestDigest: "b".repeat(64), candidate, prior }] }),
+    { mode: 0o600 }
+  );
+  await pruneReleases({ releasesDir: fixture.releasesDir, currentLink: fixture.currentLink, keep: 0 });
+  assert.equal(await exists(`${fixture.releasesDir}/${prior}`), true, "a pending operation must retain its exact rollback prior");
+});

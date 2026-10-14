@@ -113,7 +113,7 @@ export function isJevCompactionRequest(req: Request): boolean {
   // request take the ordinary provider route. Unset by default; a denied
   // environment read keeps the interception enabled.
   try {
-    if (process.env["JEV_COMPACTION_DISABLED"] === "1") return false;
+    if (process.env.JEV_COMPACTION_DISABLED === "1") return false;
   } catch {
     // keep interception enabled
   }
@@ -610,6 +610,12 @@ function resolveResidue(deps: JevCompactionDeps): CompactionResidue | undefined 
   return hybridResidueEnabled() ? runHybridResiduePass : undefined;
 }
 
+function unavailableAskerResponse(error: unknown): Response {
+  const kind = error instanceof CompactionUnavailable ? error.kind : "jev-failed";
+  logCompaction({ outcome: "failed", kind, detail: failureLogDetail(kind, error instanceof Error ? error.message : "") });
+  return failureResponse(kind);
+}
+
 /**
  * Handles one recognized compaction request end to end. The body is read only
  * here (the normal route is never parsed), Jev work is bounded by the caller
@@ -629,9 +635,7 @@ export async function handleJevResponsesCompaction(req: Request, deps: JevCompac
   try {
     asker = deps.asker ?? askerForTest ?? defaultAsker(deps);
   } catch (error) {
-    const kind = error instanceof CompactionUnavailable ? error.kind : "jev-failed";
-    logCompaction({ outcome: "failed", kind, detail: failureLogDetail(kind, error instanceof Error ? error.message : "") });
-    return failureResponse(kind);
+    return unavailableAskerResponse(error);
   }
   let outcome: CompactionOutcome;
   try {

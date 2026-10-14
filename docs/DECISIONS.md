@@ -365,6 +365,10 @@ configuration.
 Status: focused synthetic ownership, existing auth regressions and concurrent native CLI/gateway loopback acceptance
 passed. The native proof used strict HTTPS and a task-owned test CA; no real credentials were refreshed by this work.
 
+2026-10-14: A newer expired generation may request one native-owner refresh. Adoption still requires usable tokens.
+
+Rollback and missing order proof still refuse refresh. A revoked native chain still requires native sign-in.
+
 ## `/v1/live` calls are bound to the authenticated gateway principal that created them - 2026-10-02
 
 Call creation resolves the authenticated principal (`resolveIdempotencyPrincipal`, e.g. `api-key:<key_id>`) and persists

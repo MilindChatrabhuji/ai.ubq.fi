@@ -87,6 +87,8 @@ const relocateDeployScript = async (root: string): Promise<string> => {
  */
 const relocateRetentionModule = async (root: string): Promise<void> => {
   await copyOps(root);
+  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts"])
+    await writeFile(`${root}/${name}`, await readFile(new URL("../ops/" + name, import.meta.url)));
 };
 
 const createFixture = async (options: { branch: string; tracking: "match" | "mismatch" | "missing"; relocate: boolean }): Promise<Fixture> => {
@@ -546,7 +548,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       'printf "git %s\\n" "$*" >> "$fixture_log"\nif [ "$1" = "archive" ] && [ -f "$fixture_root/archive-refused" ]; then printf "fixture archive refused\\n" >&2; exit 76; fi\nexec /usr/bin/git "$@"\n',
     tar:
       prefix +
-      'printf "tar %s\\n" "$*" >> "$fixture_log"\n[ "$#" -eq 4 ] && [ "$1" = "-xf" ] && [ "$3" = "-C" ] && [ "$2" = "$4.tar" ]\ncase "$4" in .data/releases/.staging-*) ;; *) exit 75 ;; esac\nif [ -f "$fixture_root/preparation-refused" ]; then printf "fixture preparation refused\\n" >&2; exit 78; fi\nexec /usr/bin/tar "$@"\n',
+      'printf "tar %s\\n" "$*" >> "$fixture_log"\n[ "$#" -eq 4 ] && [ "$1" = "-xf" ] && [ "$3" = "-C" ] && [ "$2" = "$4.tar" ]\ncase "$4" in .data/releases/.staging-*|"$fixture_root"/.data/releases/.staging-*) ;; *) exit 75 ;; esac\nif [ -f "$fixture_root/preparation-refused" ]; then printf "fixture preparation refused\\n" >&2; exit 78; fi\nexec /usr/bin/tar "$@"\n',
     sudo:
       prefix +
       [

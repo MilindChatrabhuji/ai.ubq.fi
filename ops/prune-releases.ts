@@ -1,9 +1,9 @@
 // Retention writers share the deployment's POSIX lock. Never prune runtime stores.
 import { pruneReleases, RELEASE_RETENTION_KEEP } from "./release-retention.ts";
-import { acquireDeployLock } from "./deploy-lock.ts";
-const releaseLock = await acquireDeployLock();
-try {
-  const report = await pruneReleases();
+import { withVpsDeployLock } from "./vps-release-journal.ts";
+import { realpath } from "node:fs/promises";
+const report = await withVpsDeployLock(await realpath("."), () => pruneReleases());
+{
   console.log(
     JSON.stringify(
       {
@@ -18,6 +18,4 @@ try {
       2
     )
   );
-} finally {
-  releaseLock();
 }

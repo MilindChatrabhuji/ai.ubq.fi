@@ -1,13 +1,14 @@
 import { acquireDeployLock } from "./deploy-lock.ts";
 import { assertBunConvertedStore } from "./assert-bun-store.ts";
 import { prepareBunRuntime } from "./bun-runtime.ts";
-import { prepareReleasePayload, verifyReleasePayload, releaseSourceTree } from "./release-artifact.ts";
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { missing, command as runCommand } from "./io.ts";
+import { command as runCommand } from "./io.ts";
+import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { missing } from "./io.ts";
 const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
-const command = runCommand;
 // Run from the VPS repository root after the candidate's required CI has passed.
 import { pruneReleases } from "./release-retention.ts";
+import { ImmutableVpsReleaseStore } from "./vps-release-store.ts";
+import { readVpsPins } from "./vps-release-journal.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
 
 /**
@@ -18,6 +19,8 @@ const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
  */
 export const PUBLIC_HEALTH_URL = "https://ai.ubq.fi/health";
 
+const command = runCommand;
+
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
@@ -25,7 +28,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
  * route: HTTP 200, the full Git revision and its `vps-<revision>` deployment id
  * in the body, and the same two values in the identity headers.
  */
-function healthServesRelease(response: Response, health: unknown, sha: string): boolean {
+export function healthServesRelease(response: Response, health: unknown, sha: string): boolean {
   const release = isRecord(health) && isRecord(health.release) ? health.release : undefined;
   const deploymentId = `vps-${sha}`;
   return (
@@ -100,8 +103,8 @@ async function assertDeployableCheckout(): Promise<string> {
  * after the restarted candidate passes loopback readiness. Fail closed otherwise; never
  * repair the checkout mode, which would hide the real permission fault.
  */
-async function ensureCaddyIngressReady(): Promise<void> {
-  const mode = (await stat("ops/Caddyfile")).mode;
+export async function ensureCaddyIngressReady(run: (program: string, args: string[]) => Promise<string> = command, root = canonicalRoot): Promise<void> {
+  const mode = (await stat(`${root}/ops/Caddyfile`)).mode;
   // Caddy shares no group with this checkout, so only other-read exposes the
   // bind-mounted file to it.
   if ((mode & 0o004) === 0) {
@@ -109,9 +112,9 @@ async function ensureCaddyIngressReady(): Promise<void> {
   }
   // Validate inside Caddy's own unit namespace so the bind mount and the
   // unprivileged user are both exercised, exactly as the service start is.
-  const mainPid = await command("sudo", ["-n", "systemctl", "show", "caddy", "-p", "MainPID", "--value"]);
+  const mainPid = await run("sudo", ["-n", "systemctl", "show", "caddy", "-p", "MainPID", "--value"]);
   if (!/^\d+$/.test(mainPid) || mainPid === "0") throw new Error("Caddy is not running; start it before deploying");
-  await command("sudo", [
+  await run("sudo", [
     "-n",
     "nsenter",
     "-t",
@@ -132,17 +135,11 @@ async function ensureCaddyIngressReady(): Promise<void> {
 }
 
 const recoveryPath = ".data/deploy-recovery.json";
-const unitFingerprint = "6563f11090766cc784361bc71a0c9c244bfa41c0f0e2163355a1f558000d3d44";
 const launcherFingerprint = "50435a214d34cb7fbae3735a0a0502f8d96aaa3257dc502edc01bd64a8429ca7";
 type Release = { sha: string; path: string; archive: string; tree: string };
 type Previous = Release & { selector: string; port: number; profile: string };
 type Phase = "prepared" | "selected" | "candidate_ready" | "ingress_applied" | "rolled_back";
 type Recovery = { schema: 1; candidate: Release; previous: Previous | null; phase: Phase };
-const digest = async (bytes: Uint8Array): Promise<string> =>
-  Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-const textDigest = (value: string): Promise<string> => digest(new TextEncoder().encode(value));
 const notFound = (error: unknown): boolean => missing(error);
 
 async function exists(path: string): Promise<boolean> {
@@ -157,124 +154,11 @@ async function exists(path: string): Promise<boolean> {
 
 // Compare every entry without following symlinks. Generated files have explicit
 // modes, so verification does not depend on a later deployment's umask.
-async function treeDigest(root: string): Promise<string> {
-  const entries: string[] = [];
-  async function walk(path: string): Promise<void> {
-    const names: string[] = [];
-    for (const entry of await readdir(`${root}/${path}`)) names.push(entry);
-    names.sort((left, right) => left.localeCompare(right));
-    for (const name of names) {
-      const relative = path ? `${path}/${name}` : name;
-      const absolute = `${root}/${relative}`;
-      const stat = await lstat(absolute);
-      const mode = stat.mode & 0o777;
-      if (stat.isSymbolicLink()) entries.push(JSON.stringify([relative, "link", mode, await readlink(absolute)]));
-      else if (stat.isFile()) entries.push(JSON.stringify([relative, "file", mode, await digest(await readFile(absolute))]));
-      else if (stat.isDirectory()) {
-        entries.push(JSON.stringify([relative, "directory", mode]));
-        await walk(relative);
-      } else throw new Error(`Unsupported immutable release entry: ${relative}`);
-    }
-  }
-  await walk("");
-  return textDigest(entries.join("\n"));
-}
-
-async function expectedRelease(sha: string, payload = false): Promise<Release> {
-  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("A full immutable release revision is required");
-  const staging = await mkdtemp(".data/releases/.staging-");
-  const archivePath = `${staging}.tar`;
-  try {
-    await command("git", ["archive", "--format=tar", `--output=${archivePath}`, sha]);
-    const archive = await digest(await readFile(archivePath));
-    await command("tar", ["-xf", archivePath, "-C", staging]);
-    const sourceDirectory = await lstat(`${staging}/src`);
-    if (!sourceDirectory.isDirectory() || sourceDirectory.isSymbolicLink()) throw new Error("Unsafe generated release directory in source archive");
-    for (const generated of ["src/release.ts", ".uos-release.json"]) {
-      if (await exists(`${staging}/${generated}`)) {
-        const stat = await lstat(`${staging}/${generated}`);
-        if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Unsafe generated release file in source archive");
-      }
-    }
-    await writeFile(`${staging}/src/release.ts`, `// Generated for this immutable VPS release.\nexport const RELEASE_GIT_SHA = "${sha}";\n`, {
-      mode: 0o600,
-    });
-    await chmod(`${staging}/src/release.ts`, 0o600);
-    await writeFile(`${staging}/.uos-release.json`, JSON.stringify({ git_sha: sha, source_archive_sha256: archive }) + "\n", { mode: 0o600 });
-    await chmod(`${staging}/.uos-release.json`, 0o600);
-    if (payload) await prepareReleasePayload(staging, sha, archive);
-    return { sha, path: staging, archive, tree: await treeDigest(staging) };
-  } catch (error) {
-    await rm(staging, { recursive: true });
-    throw error;
-  } finally {
-    if (await exists(archivePath)) await rm(archivePath);
-  }
-}
-
-async function verifyPublishedRelease(path: string, expected: Release, bun: boolean): Promise<void> {
-  if (bun) {
-    const manifest = await verifyReleasePayload(path, expected.sha, await releaseSourceTree(expected.path));
-    if (manifest.source_archive_sha256 !== expected.archive) throw new Error("Immutable source archive digest changed");
-    expected.tree = await treeDigest(path);
-    return;
-  }
-  if ((await treeDigest(path)) !== expected.tree) throw new Error("Immutable release bytes, manifest or complete tree do not match the source archive");
-}
-
-async function checkedRelease(sha: string, create = false): Promise<Release> {
-  const path = `.data/releases/${sha}`;
-  const present = await exists(path);
-  if (present) {
-    const stat = await lstat(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || (await realpath(path)) !== `${canonicalRoot}/${path}`)
-      throw new Error("Immutable release root is unsafe");
-    const manifest = await lstat(`${path}/.uos-release.json`);
-    if (!manifest.isFile() || manifest.isSymbolicLink()) throw new Error("Immutable release manifest is unsafe");
-  } else if (!create) throw new Error("Previous immutable release is missing");
-  const manifestValue = present ? (JSON.parse(await readTextFile(`${path}/.uos-release.json`)) as { schema?: number }) : null;
-  const bun = !present || manifestValue?.schema === 2;
-  const expected = await expectedRelease(sha, bun && !present);
-  try {
-    if (present) await verifyPublishedRelease(path, expected, bun);
-    else await rename(expected.path, path);
-    return { ...expected, path };
-  } finally {
-    if (await exists(expected.path)) await rm(expected.path, { recursive: true });
-  }
-}
-
-async function selector(): Promise<string | null> {
-  if (!(await exists(".data/current"))) return null;
-  if (!(await lstat(".data/current")).isSymbolicLink()) throw new Error("The current release selector must be a symlink");
-  return readlink(".data/current");
-}
-
-async function checkedPrevious(selected: string): Promise<Previous> {
-  const physical = await realpath(".data/current");
-  const sha = physical.slice(physical.lastIndexOf("/") + 1);
-  if (physical !== `${canonicalRoot}/.data/releases/${sha}` || !/^[0-9a-f]{40}$/.test(sha))
-    throw new Error("Previous selector is outside the immutable release store");
-  return checkedPreviousRelease(sha, selected);
-}
-
-async function checkedPreviousRelease(sha: string, selected: string): Promise<Previous> {
-  const selectedPath = selected.startsWith("/") ? selected : `.data/${selected}`;
-  if ((await realpath(selectedPath)) !== `${canonicalRoot}/.data/releases/${sha}`)
-    throw new Error("Previous recovery selector is outside its verified release");
-  const previous = await checkedRelease(sha);
-  const launcher = await readTextFile(`${previous.path}/scripts/serve-vps.ts`);
-  const matches = [...launcher.matchAll(/port: (\d+)/g)];
-  const port = Number(matches[0]?.[1]);
-  const profile = await textDigest(launcher.replace(/port: \d+/, "port: 0"));
-  const bunProfile = await textDigest((await readTextFile("scripts/serve-vps.ts")).replace(/port: \d+/, "port: 0"));
-  const previousUnit = await digest(await readFile(`${previous.path}/ops/ai-ubq-fi.service`));
-  const currentUnit = await digest(await readFile("ops/ai-ubq-fi.service"));
-  const supported = profile === launcherFingerprint ? previousUnit === unitFingerprint : profile === bunProfile && previousUnit === currentUnit;
-  if (matches.length !== 1 || port < 1 || port > 65535 || !supported)
-    throw new Error("Unsupported previous launcher or service layout; preserve the existing listener and use a separately approved recovery");
-  return { ...previous, selector: selected, port, profile };
-}
+const releaseStore = new ImmutableVpsReleaseStore(canonicalRoot, (program, args) => command(program, args));
+const checkedRelease = (sha: string, create = false): Promise<Release> => releaseStore.checkedRelease(sha, create);
+const selector = (): Promise<string | null> => releaseStore.selector();
+const checkedPrevious = (selected: string): Promise<Previous> => releaseStore.checkedPrevious(selected);
+const checkedPreviousRelease = (sha: string, selected: string): Promise<Previous> => releaseStore.checkedPreviousRelease(sha, selected);
 
 async function readRecovery(): Promise<Recovery | null> {
   if (!(await exists(recoveryPath))) return null;
@@ -301,8 +185,7 @@ async function readRecovery(): Promise<Recovery | null> {
         isRecord(value.previous) &&
         typeof value.previous.selector === "string" &&
         Number.isInteger(value.previous.port) &&
-        (value.previous.profile === launcherFingerprint ||
-          value.previous.profile === (await textDigest((await readTextFile("scripts/serve-vps.ts")).replace(/port: \d+/, "port: 0")))))
+        (value.previous.profile === launcherFingerprint || value.previous.profile === (await releaseStore.currentLauncherProfile())))
     )
   )
     throw new Error("Malformed deployment recovery receipt");
@@ -319,19 +202,7 @@ async function saveRecovery(receipt: Recovery): Promise<void> {
   }
 }
 
-async function selectRelease(target: string | null): Promise<void> {
-  if (target === null) {
-    await rm(".data/current");
-    return;
-  }
-  const next = `.data/current-${crypto.randomUUID()}`;
-  try {
-    await symlink(target, next);
-    await rename(next, ".data/current");
-  } finally {
-    if (await exists(next)) await rm(next);
-  }
-}
+const selectRelease = (target: string | null): Promise<void> => releaseStore.selectRelease(target);
 
 async function ready(sha: string, port: number, attempts = 30): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -394,9 +265,7 @@ async function startCandidate(candidate: Release, receipt: Recovery, state: Acti
 async function restorePrevious(receipt: Recovery, restartAttempted: boolean): Promise<void> {
   const previous = receipt.previous;
   if (restartAttempted && previous?.profile === launcherFingerprint)
-    throw new Error(
-      "Cross-codec rollback requires a stopped Bun store and a verified latest-state bun-to-deno conversion receipt; refusing stale legacy state"
-    );
+    throw new Error("Cross-codec rollback requires stopped latest-state Bun-to-Deno conversion; refusing stale legacy state");
   await selectRelease(previous?.selector ?? null);
   // A refused daemon-reload leaves the prior listener running. Do not restart
   // either release through a definition systemd refused to load.
@@ -503,6 +372,8 @@ async function deploy(): Promise<void> {
     // must not release a revision from before the wait.
     const sha = await assertDeployableCheckout();
     await assertDataDirectories();
+    if ((await readVpsPins(`${canonicalRoot}/.data/vps-release-pins.json`)).length > 0)
+      throw new Error("A bound VPS release operation owns promotion; reconcile its receipt before another deploy");
     // Refuse ingress faults before publishing or selecting an immutable release,
     // so correcting the fault can retry this same revision.
     await ensureCaddyIngressReady();

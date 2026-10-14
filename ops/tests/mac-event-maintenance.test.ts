@@ -307,7 +307,7 @@ test("Mac entry preserves event maintenance and defers missing settlement logs w
       args: ["--no-env-file", "--no-install", `${fixture}/bootstrap.ts`],
       cwd: fixture,
       clearEnv: true,
-      env: { METERED_API_KEY: "synthetic-mac-fixture" },
+      env: { HOME: fixture, METERED_API_KEY: "synthetic-mac-fixture" },
       stdout: "piped",
       stderr: "piped",
     });
