@@ -65,7 +65,6 @@
   },
   "dependencies": {
     "@deno/kv": "0.14.0",
-    "@deno/kv-utils": "npm:@jsr/deno__kv-utils@0.1.4",
     "@simplewebauthn/server": "13.2.2",
     "@std/yaml": "npm:@jsr/std__yaml@1.0.9",
     "ws": "8.18.3"
