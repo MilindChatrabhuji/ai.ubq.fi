@@ -35,6 +35,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serveHttp, type HttpServer } from "#http";
 import { openKv } from "#kv";
+import { nativeKvDevelopmentPaths, prepareNativeKvForDevelopment } from "../../src/runtime/native-kv-bootstrap.ts";
+import { preparedNativeKvArtifactBinding, verifyNativeKvArtifact, type NativeKvArtifactBinding } from "../../src/storage/native-addon.ts";
 import { PAID_FALLBACK_NO_LIMIT } from "../../src/api-keys.ts";
 import { apiKeyPolicyFromHashRecord, resetApiKeyPolicyCacheForTest } from "../../src/api-key-policy.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../../src/deepseek/index.ts";
@@ -863,7 +865,19 @@ const report: Report = {
   total_ms: 0,
 };
 
+const prepareSmokeKv = async (): Promise<void> => {
+  let binding: NativeKvArtifactBinding | undefined;
+  try {
+    binding = preparedNativeKvArtifactBinding();
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "Prepare the verified native KV artifact before starting a child") throw error;
+  }
+  if (binding) verifyNativeKvArtifact({ ...binding, inputsManifest: nativeKvDevelopmentPaths().inputs });
+  else await prepareNativeKvForDevelopment();
+};
+
 async function main(): Promise<void> {
+  await prepareSmokeKv();
   // Fixture invariant: the dropped beta tail must not be spelled out in the
   // command that produces it, or the retained call input would keep it alive.
   require_(!BETA_COMMAND.includes(BETA_TAIL), "the beta command must not embed the dropped tail literal");
