@@ -3,6 +3,8 @@ import { Database } from "bun:sqlite";
 import { closeSync, lstatSync, mkdirSync, openSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { deserialize, serialize } from "node:v8";
+import { guardNativeKv, retrySqliteBusy } from "./native-kv.ts";
+import { assertPortableKvValue } from "./value-compatibility.ts";
 
 export type {
   AtomicCheck,
@@ -21,6 +23,8 @@ export type {
   KvMutation,
 } from "@deno/kv";
 export { KvU64 } from "@deno/kv";
+export { assertPortableKvKeyBytes } from "./key-compatibility.ts";
+export { assertPortableKvValue } from "./value-compatibility.ts";
 
 export const BUN_KV_DATABASE_PATH = ".data/kv-bun.sqlite3";
 export const BUN_KV_CODEC = "bun-jsc-v1";
@@ -72,6 +76,17 @@ const prepareDatabase = (path: string): void => {
 export const openKv = async (path = BUN_KV_DATABASE_PATH): Promise<Kv> => {
   if (!path || /^https?:\/\//i.test(path)) throw new Error("Bun KV requires an explicit local SQLite path or :memory:");
   const target = path === ":memory:" ? path : resolve(path);
-  if (target !== ":memory:") prepareDatabase(target);
-  return await openNativeKv(target, { implementation: "sqlite", encodeV8: serialize, decodeV8: deserialize });
+  return await retrySqliteBusy(async () => {
+    if (target !== ":memory:") prepareDatabase(target);
+    return guardNativeKv(
+      await openNativeKv(target, {
+        implementation: "sqlite",
+        encodeV8: (value: unknown) => {
+          assertPortableKvValue(value);
+          return serialize(value);
+        },
+        decodeV8: deserialize,
+      })
+    );
+  });
 };
