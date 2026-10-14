@@ -295,6 +295,62 @@ Deno.test("an unusable native owner result is not adopted or retried", async () 
   });
 });
 
+for (const order of ["older", "missing"] as const) {
+  Deno.test(`native repair requires order proof when stored access expiry is unknown: ${order}`, async () => {
+    await fixture(async ({ kv, first, sibling, setDocument, refreshes, directOauthCalls }) => {
+      const previous = { ...first, access_token: "synthetic-opaque-access-token" };
+      kv.auth = { ...kv.auth, accounts: [previous, sibling] };
+      setDocument({ ...document(previous), last_refresh: new Date(Date.now() - 3600_000).toISOString() });
+      const entry = await getAuthPoolEntry(true);
+      const snapshot = structuredClone(kv.auth);
+      const expired = {
+        ...previous,
+        access_token: jwt({ exp: Math.floor(Date.now() / 1000) - 60, generation: 2 }),
+        refresh_token: "synthetic-older-native-refresh",
+      };
+      setDocument({ ...document(expired), ...(order === "older" ? { last_refresh: new Date(Date.now() - 7200_000).toISOString() } : {}) });
+      await assert.rejects(refreshAuthCoordinated({ ...entry, auth: entry.pool.accounts[0] }), /did not advance/);
+      assert.equal(refreshes(), 0);
+      assert.equal(directOauthCalls(), 0);
+      assert.deepEqual(kv.auth, snapshot);
+    });
+  });
+}
+
+Deno.test("native repair can use a newer owner timestamp when stored access expiry is unknown", async () => {
+  await fixture(async ({ kv, first, sibling, setDocument, refreshes }) => {
+    const previous = { ...first, access_token: "synthetic-opaque-access-token" };
+    kv.auth = { ...kv.auth, accounts: [previous, sibling] };
+    setDocument({ ...document(previous), last_refresh: new Date(Date.now() - 7200_000).toISOString() });
+    const entry = await getAuthPoolEntry(true);
+    const expired = {
+      ...previous,
+      access_token: jwt({ exp: Math.floor(Date.now() / 1000) - 60, generation: 2 }),
+      refresh_token: "synthetic-newer-native-refresh",
+    };
+    setDocument({ ...document(expired), last_refresh: new Date(Date.now() - 3600_000).toISOString() });
+    const next = await refreshAuthCoordinated({ ...entry, auth: entry.pool.accounts[0] });
+    assert.equal(next.refresh_token, auth("shared", 3).refresh_token);
+    assert.equal(refreshes(), 1);
+    assert.deepEqual(kv.auth.accounts[1], sibling);
+  });
+});
+
+Deno.test("a usable native generation retains adoption when stored access expiry is unknown", async () => {
+  await fixture(async ({ kv, first, sibling, setDocument, refreshes }) => {
+    const previous = { ...first, access_token: "synthetic-opaque-access-token" };
+    kv.auth = { ...kv.auth, accounts: [previous, sibling] };
+    setDocument(document(previous));
+    const entry = await getAuthPoolEntry(true);
+    const usable = auth("shared", 4);
+    setDocument(document(usable));
+    const next = await refreshAuthCoordinated({ ...entry, auth: entry.pool.accounts[0] });
+    assert.equal(next.refresh_token, usable.refresh_token);
+    assert.equal(refreshes(), 0);
+    assert.deepEqual(kv.auth.accounts[1], sibling);
+  });
+});
+
 Deno.test("same-expiry native rotations use owner generation metadata and reject a rollback", async () => {
   await fixture(async ({ first, setDocument, refreshes }) => {
     const observed = new Date().toISOString();

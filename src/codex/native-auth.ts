@@ -127,6 +127,7 @@ const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument
   if (
     next.account_id !== previous.account_id ||
     !nextExpiry ||
+    (!requireUsableAccessToken && previousExpiry === null && !advancedNativeTime) ||
     (requireUsableAccessToken && nextExpiry <= Date.now() + 120_000) ||
     (previousExpiry !== null && (nextExpiry < previousExpiry || (nextExpiry === previousExpiry && !advancedNativeTime)))
   ) {
@@ -229,10 +230,10 @@ export const refreshNativeCodexAuthIfOwned = async (input: CodexAuthState, rejec
     throw new CodexError("A stale native Codex credential replacement was refused.", "codex_auth_owner_conflict", 409);
   }
   if (!sameCredentials(auth, document.auth)) {
+    if ((getJwtExpMs(document.auth.access_token) ?? 0) > Date.now() + 120_000) return await persistNativeGeneration(current, document, home);
     // Prove generation order before asking its owner to repair an expired token.
     // The expired generation is never adopted; persistence still requires usability.
     verifyNativeProgress(auth, document, false);
-    if ((getJwtExpMs(document.auth.access_token) ?? 0) > Date.now() + 120_000) return await persistNativeGeneration(current, document, home);
   }
   if (!document.email) throw new CodexError("Native Codex account identity could not be verified.", "codex_auth_owner_unavailable", 503);
   try {
