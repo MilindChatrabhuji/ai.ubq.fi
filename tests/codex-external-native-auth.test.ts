@@ -7,6 +7,7 @@ import { parseExternalNativeCodexDocument } from "../src/codex/external-auth.ts"
 import { nativeCodexConsumerHomes, planExternalNativeCodexAdoption, setNativeCodexAuthHooksForTest } from "../src/codex/native-auth.ts";
 import { parseCodexAuthPoolSnapshot } from "../src/codex/routing-evaluation.ts";
 import { repairExternalNativePool } from "../scripts/codex-auth-repair.ts";
+import { runExternalNativeRepair } from "../scripts/codex-external-auth-repair.ts";
 import { AuthKv, setKvForTest } from "./helpers/codex-auth-cache-harness.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
@@ -147,6 +148,53 @@ Deno.test("external native renewal adopts a new leaf with CAS and never calls re
     }
   });
 });
+
+for (const source of ["missing", "managed"] as const) {
+  Deno.test(`fixed external-only entrypoint refuses initial unregistered ${source} file without provider calls or writes`, async () => {
+    await fixture(async () => {
+      const pool = initialPool();
+      const before = structuredClone(pool);
+      let forbidden = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () => {
+        forbidden += 1;
+        return Promise.reject(new Error("Provider calls and OAuth forbidden"));
+      };
+      try {
+        await assert.rejects(
+          runExternalNativeRepair(["--apply", "--json", "--auth-json", `${PRIMARY}/auth.json`, "--kv=/synthetic/explicit-kv"], {
+            readPool: (path) => {
+              assert.equal(path, "/synthetic/explicit-kv");
+              return Promise.resolve({ pool, versionstamp: "initial-version" });
+            },
+            output: () => {
+              forbidden += 1;
+            },
+            external: {
+              readText: () =>
+                source === "missing"
+                  ? Promise.reject(new Error("Synthetic missing leaf"))
+                  : Promise.resolve(JSON.stringify({ auth_mode: "chatgpt", tokens: managed() })),
+              probe: () => {
+                forbidden += 1;
+                return Promise.reject(new Error("Provider probe forbidden"));
+              },
+              write: () => {
+                forbidden += 1;
+                return Promise.reject(new Error("Pool write forbidden"));
+              },
+            },
+          }),
+          /managed repair and peer collection are forbidden/
+        );
+        assert.equal(forbidden, 0);
+        assert.deepEqual(pool, before);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+}
 
 Deno.test("registered external repair refuses missing or managed files before peer collection", async () => {
   await fixture(async () => {
