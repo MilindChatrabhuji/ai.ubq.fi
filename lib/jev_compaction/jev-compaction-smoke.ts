@@ -12,14 +12,16 @@
  * Run from the worktree root (the script sets the existing fixture dummy
  * `DEEPSEEK_API_KEY` in-process for its mocked ordinary provider; it never reads,
  * prints or forwards a real DeepSeek credential):
- *   deno run --unstable-kv --allow-net=127.0.0.1 \
- *     --allow-env=GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID,DEEPSEEK_API_KEY \
- *     lib/jev_compaction/jev-compaction-smoke.ts
+ *   bun --no-env-file run lib/jev_compaction/jev-compaction-smoke.ts
+ * Run with a scrubbed environment; --no-env-file prevents dotenv loading but
+ * does not remove inherited provider credentials.
  *
  * One JSON object is printed: PASS/failure class plus structural counts only,
  * never a credential, transcript, or provider payload.
  */
 import assert from "node:assert/strict";
+import { serveHttp } from "#http";
+import { openKv, type Kv } from "#kv";
 import { PAID_FALLBACK_NO_LIMIT } from "../../src/api-keys.ts";
 import { apiKeyPolicyFromHashRecord, apiKeyUsageV3RequestKey, apiKeyUsageV3WindowKey, resetApiKeyPolicyCacheForTest } from "../../src/api-key-policy.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../../src/deepseek/index.ts";
@@ -158,11 +160,11 @@ const waitFor = async (predicate: () => boolean, label: string, timeoutMs = 4_00
 const startGateway = async (): Promise<{
   url: string;
   token: string;
-  kv: Deno.Kv;
+  kv: Kv;
   policy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>>;
   stop: () => Promise<void>;
 }> => {
-  const kv = await Deno.openKv(":memory:");
+  const kv = await openKv(":memory:");
   const keyId = "jev-compaction-smoke-key";
   const token = `u_${"c".repeat(64)}`;
   const tokenHash = await sha256Base64Url(token);
@@ -204,9 +206,10 @@ const startGateway = async (): Promise<{
   setInferenceAdmissionControllerForTest(createInferenceAdmissionController({ maxActive: 8, maxWaiting: 8, maxQueueWaitMs: 500 }));
   const { default: handler } = await import("../../src/handler/index.ts");
   const { createServeHandler } = await import("../../src/handler/serve-handler.ts");
-  const gateway = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));
+  const gateway = serveHttp({ hostname: "127.0.0.1", port: 0 }, createServeHandler(handler));
+  const address = await gateway.ready;
   return {
-    url: `http://127.0.0.1:${(gateway.addr as Deno.NetAddr).port}`,
+    url: `http://127.0.0.1:${address.port}`,
     token,
     kv,
     policy,
@@ -220,8 +223,8 @@ const startGateway = async (): Promise<{
 };
 
 /** One fake DeepSeek chat upstream; every ordinary responses request lands here. */
-const startUpstream = (calls: string[]): { url: string; stop: () => Promise<void> } => {
-  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
+const startUpstream = async (calls: string[]): Promise<{ url: string; stop: () => Promise<void> }> => {
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, async (request) => {
     calls.push(await request.text());
     return new Response(
       sseBody([
@@ -231,8 +234,9 @@ const startUpstream = (calls: string[]): { url: string; stop: () => Promise<void
       { headers: { "Content-Type": "text/event-stream" } }
     );
   });
+  const address = await server.ready;
   return {
-    url: `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`,
+    url: `http://127.0.0.1:${address.port}`,
     stop: () => server.shutdown(),
   };
 };
@@ -242,8 +246,8 @@ const main = async (): Promise<void> => {
   // Existing test-fixture mechanism: the mocked ordinary provider needs a
   // DeepSeek key present, so set the synthetic value and restore it afterwards.
   // The value is never logged, and no inherited real key is used or forwarded.
-  const inheritedDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
-  Deno.env.set("DEEPSEEK_API_KEY", DUMMY_DEEPSEEK_KEY);
+  const inheritedDeepSeekKey = process.env["DEEPSEEK_API_KEY"];
+  process.env["DEEPSEEK_API_KEY"] = DUMMY_DEEPSEEK_KEY;
   const terminalRecords: Array<Record<string, unknown>> = [];
   const originalConsoleInfo = console.info;
   console.info = (...args: unknown[]): void => {
@@ -257,7 +261,7 @@ const main = async (): Promise<void> => {
     originalConsoleInfo(...args);
   };
   const upstreamCalls: string[] = [];
-  const upstream = startUpstream(upstreamCalls);
+  const upstream = await startUpstream(upstreamCalls);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     let url: string;
@@ -375,8 +379,8 @@ const main = async (): Promise<void> => {
     report.total_ms = Math.round(performance.now() - started);
     setJevCompactionAskerForTest(null);
     console.info = originalConsoleInfo;
-    if (inheritedDeepSeekKey === undefined) Deno.env.delete("DEEPSEEK_API_KEY");
-    else Deno.env.set("DEEPSEEK_API_KEY", inheritedDeepSeekKey);
+    if (inheritedDeepSeekKey === undefined) delete process.env["DEEPSEEK_API_KEY"];
+    else process.env["DEEPSEEK_API_KEY"] = inheritedDeepSeekKey;
     globalThis.fetch = originalFetch;
     await gateway.stop();
     await upstream.stop();
@@ -391,4 +395,4 @@ try {
 }
 
 console.log(JSON.stringify(report));
-Deno.exit(report.status === "PASS" ? 0 : 1);
+process.exit(report.status === "PASS" ? 0 : 1);

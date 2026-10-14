@@ -3,7 +3,7 @@
  *
  * This script is dispatched by trusted host code and executed exactly as:
  *
- *   deno run --no-prompt --no-config --no-remote --allow-read=. scripts/replay.ts
+ *   bun --no-env-file run scripts/replay.ts
  *
  * It reads only the trusted dispatch metadata at the checkout root
  * (`.sentinel-replay-input.json`), the two exact relative fixture paths that
@@ -33,6 +33,7 @@
  * whose fields are enumerated classifications and counts, never captured bytes.
  */
 
+import { lstatSync, readFileSync, writeSync, type Stats } from "node:fs";
 import { consumeDeepSeekBufferedChat, consumeDeepSeekChatStream } from "./replay-chat-stream.ts";
 import { config } from "../src/config.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL, DeepSeekError, fetchDeepSeekChatCompletions } from "../src/deepseek/index.ts";
@@ -202,36 +203,36 @@ const absoluteUnder = (cwd: string, segments: readonly string[]): string => {
 const requireRegularFile = (cwd: string, segments: readonly string[]): string => {
   for (let index = 0; index < segments.length - 1; index += 1) {
     const ancestor = absoluteUnder(cwd, segments.slice(0, index + 1));
-    let info: Deno.FileInfo;
+    let info: Stats;
     try {
-      info = Deno.lstatSync(ancestor);
+      info = lstatSync(ancestor);
     } catch {
       return unavailable();
     }
-    if (!info.isDirectory || info.isSymlink) unavailable();
+    if (!info.isDirectory() || info.isSymbolicLink()) unavailable();
   }
   const absolute = absoluteUnder(cwd, segments);
-  let info: Deno.FileInfo;
+  let info: Stats;
   try {
-    info = Deno.lstatSync(absolute);
+    info = lstatSync(absolute);
   } catch {
     return unavailable();
   }
-  if (!info.isFile || info.isSymlink) unavailable();
+  if (!info.isFile() || info.isSymbolicLink()) unavailable();
   return absolute;
 };
 
 const readBoundedFile = (absolute: string, maxBytes: number): Uint8Array => {
-  let info: Deno.FileInfo;
+  let info: Stats;
   try {
-    info = Deno.lstatSync(absolute);
+    info = lstatSync(absolute);
   } catch {
     return unavailable();
   }
-  if (!info.isFile || info.isSymlink || info.size > maxBytes) unavailable();
+  if (!info.isFile() || info.isSymbolicLink() || info.size > maxBytes) unavailable();
   let bytes: Uint8Array;
   try {
-    bytes = Deno.readFileSync(absolute);
+    bytes = readFileSync(absolute);
   } catch {
     return unavailable();
   }
@@ -782,7 +783,7 @@ type ReplayResult = Readonly<{
 }>;
 
 const runReplay = async (input: DispatchInput): Promise<ReplayResult> => {
-  const cwd = Deno.cwd();
+  const cwd = process.cwd();
   const request = readRequestEnvelope(cwd, input.requestPath);
   const trace = readUpstreamTrace(cwd, input.upstreamPath);
   const plan = planAttempts(trace);
@@ -892,16 +893,16 @@ const attemptIsComplete = (attempt: PlannedAttempt): boolean =>
   (attempt.terminal === "eof" || attempt.terminal === "cancelled") && attempt.status !== null && attempt.status < 400;
 
 const writeStdout = (text: string): void => {
-  Deno.stdout.writeSync(encoder.encode(text));
+  writeSync(process.stdout.fd, encoder.encode(text));
 };
 
 const emitUnavailable = (): never => {
   writeStdout(UNAVAILABLE_LINE);
-  Deno.exit(2);
+  process.exit(2);
 };
 
 try {
-  const input = readDispatchInput(Deno.cwd());
+  const input = readDispatchInput(process.cwd());
   let result: ReplayResult;
   try {
     result = await runReplay(input);
@@ -933,9 +934,9 @@ try {
   writeStdout(input.testIds.map((id) => `${TEST_MARKER_PREFIX}${id}\n`).join(""));
   if (result.outcome === "causal") {
     writeStdout(CAUSAL_FAILURE_LINE);
-    Deno.exit(1);
+    process.exit(1);
   }
-  Deno.exit(0);
+  process.exit(0);
 } catch {
   emitUnavailable();
 }

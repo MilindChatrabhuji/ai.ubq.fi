@@ -32,7 +32,7 @@ const usage = () => {
 Manage ai.ubq.fi client API keys (admin-only).
 
 Usage:
-  deno run --allow-env --allow-net scripts/api-keys.ts <command> [options]
+  bun run scripts/api-keys.ts <command> [options]
 
 Commands:
   create --name "<label>" [--token "<exact token>"] [--expires <preset>|--expires-at-ms <ms>] [--token-only]
@@ -47,28 +47,28 @@ Options:
 `);
 };
 
-if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
+if (process.argv.slice(2).includes("--help") || process.argv.slice(2).includes("-h")) {
   usage();
-  Deno.exit(0);
+  process.exit(0);
 }
 
-// Deno.args is empty when the script is invoked without arguments, so the
+// process.argv.slice(2) is empty when the script is invoked without arguments, so the
 // first element is annotated as possibly absent.
-const commandRaw: string | undefined = Deno.args.at(0);
-const rest = Deno.args.slice(1);
+const commandRaw: string | undefined = process.argv.slice(2).at(0);
+const rest = process.argv.slice(2).slice(1);
 const command = commandRaw?.trim() ?? "";
 if (!command || command.startsWith("--")) {
   usage();
-  Deno.exit(2);
+  process.exit(2);
 }
 
 const parsed = parseArgs(rest);
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
-const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
+const adminToken = (parsed["admin-token"] as string | undefined) ?? process.env["DENO_DEPLOY_TOKEN"] ?? "";
 
 if (!adminToken) {
   console.error("Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.");
-  Deno.exit(2);
+  process.exit(2);
 }
 
 const doFetch = async (req: Request): Promise<{ ok: true; json: unknown } | { ok: false; status: number; body: string }> => {
@@ -127,14 +127,14 @@ if (command === "create") {
   const name = (parsed.name as string | undefined) ?? "";
   if (!name.trim()) {
     console.error("Missing --name");
-    Deno.exit(2);
+    process.exit(2);
   }
 
   const rawExpiresAtMs = parsed["expires-at-ms"];
   const rawPreset = parsed.expires;
   if (typeof rawExpiresAtMs === "string" && typeof rawPreset === "string") {
     console.error("Pass only one of --expires-at-ms or --expires.");
-    Deno.exit(2);
+    process.exit(2);
   }
 
   let expiresAtMsValue: number | undefined;
@@ -142,16 +142,16 @@ if (command === "create") {
     const parsedNumber = Number(rawExpiresAtMs.trim());
     if (!Number.isFinite(parsedNumber)) {
       console.error("--expires-at-ms must be a finite number (Unix epoch ms) or -1.");
-      Deno.exit(2);
+      process.exit(2);
     }
     const expiresAtMs = Math.trunc(parsedNumber);
     if (expiresAtMs === -1) expiresAtMsValue = -1;
     else if (expiresAtMs <= Date.now()) {
       console.error("--expires-at-ms must be in the future (or -1).");
-      Deno.exit(2);
+      process.exit(2);
     } else if (expiresAtMs < 0) {
       console.error("--expires-at-ms must be -1 or a future timestamp.");
-      Deno.exit(2);
+      process.exit(2);
     } else {
       expiresAtMsValue = expiresAtMs;
     }
@@ -159,7 +159,7 @@ if (command === "create") {
     const preset = normalizeApiKeyExpiryPreset(rawPreset);
     if (!preset) {
       console.error("--expires must be one of: day, week, month, quarter, year, forever.");
-      Deno.exit(2);
+      process.exit(2);
     }
     expiresAtMsValue = apiKeyExpiresAtMsFromPreset(preset, Date.now());
   }
@@ -181,7 +181,7 @@ if (command === "create") {
   if (!result.ok) {
     console.error(`Request failed (${result.status}).`);
     console.error(result.body);
-    Deno.exit(1);
+    process.exit(1);
   }
 
   const tokenOnly = parsed["token-only"] === true;
@@ -191,7 +191,7 @@ if (command === "create") {
   } else {
     console.log(JSON.stringify(result.json, null, 2));
   }
-  Deno.exit(0);
+  process.exit(0);
 }
 
 if (command === "list") {
@@ -206,17 +206,17 @@ if (command === "list") {
   if (!result.ok) {
     console.error(`Request failed (${result.status}).`);
     console.error(result.body);
-    Deno.exit(1);
+    process.exit(1);
   }
   console.log(JSON.stringify(result.json, null, 2));
-  Deno.exit(0);
+  process.exit(0);
 }
 
 if (command === "revoke") {
   const id = (parsed.id as string | undefined) ?? "";
   if (!id.trim()) {
     console.error("Missing --id");
-    Deno.exit(2);
+    process.exit(2);
   }
   const req = new Request(endpoint("/admin/api-keys/revoke"), {
     method: "POST",
@@ -231,12 +231,12 @@ if (command === "revoke") {
   if (!result.ok) {
     console.error(`Request failed (${result.status}).`);
     console.error(result.body);
-    Deno.exit(1);
+    process.exit(1);
   }
   console.log(JSON.stringify(result.json, null, 2));
-  Deno.exit(0);
+  process.exit(0);
 }
 
 console.error(`Unknown command: ${command}`);
 usage();
-Deno.exit(2);
+process.exit(2);

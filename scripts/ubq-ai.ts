@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { UbqAiAdminContext, UbqAiCommandContext, UbqAiRuntime } from "./ubq-ai-core.ts";
 import {
   classifyToken,
@@ -113,20 +114,20 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
 const getDefaultRuntime = (): UbqAiRuntime => ({
   fetch,
-  envGet: (key: string) => Deno.env.get(key),
-  readTextFile: (path: string) => Deno.readTextFile(path),
-  stdinIsTerminal: Deno.stdin.isTerminal(),
+  envGet: (key: string) => process.env[key],
+  readTextFile: (path: string) => readFile(path, "utf8"),
+  stdinIsTerminal: process.stdin.isTTY === true,
   readStdin,
   out: async (chunk: Uint8Array) => {
-    await Deno.stdout.write(chunk);
+    await new Promise<void>((resolve, reject) => process.stdout.write(chunk, (error) => (error ? reject(error) : resolve())));
   },
   err: async (chunk: Uint8Array) => {
-    await Deno.stderr.write(chunk);
+    await new Promise<void>((resolve, reject) => process.stderr.write(chunk, (error) => (error ? reject(error) : resolve())));
   },
 });
 
 if (import.meta.main) {
-  const code = await runUbqAi(Deno.args, getDefaultRuntime());
-  Deno.exit(code);
+  const code = await runUbqAi(process.argv.slice(2), getDefaultRuntime());
+  process.exitCode = code;
 }
 export type { UbqAiRuntime };

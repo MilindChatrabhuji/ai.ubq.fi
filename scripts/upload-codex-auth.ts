@@ -1,3 +1,4 @@
+import { readFile, realpath } from "node:fs/promises";
 const parseArgs = (args: string[]): Record<string, string | boolean | undefined> => {
   const out: Record<string, string | boolean | undefined> = {};
   for (let i = 0; i < args.length; i++) {
@@ -21,9 +22,9 @@ const parseArgs = (args: string[]): Record<string, string | boolean | undefined>
 };
 
 const expandTilde = (path: string): string => {
-  if (path === "~") return Deno.env.get("HOME") ?? path;
+  if (path === "~") return process.env["HOME"] ?? path;
   if (path.startsWith("~/")) {
-    const home = Deno.env.get("HOME");
+    const home = process.env["HOME"];
     if (home) return `${home}${path.slice(1)}`;
   }
   return path;
@@ -36,10 +37,10 @@ const normalizeVersion = (value: unknown): string | null => {
 };
 
 const readCodexModelsCacheVersion = async (): Promise<string | null> => {
-  const home = Deno.env.get("HOME");
+  const home = process.env["HOME"];
   if (!home) return null;
   try {
-    const text = await Deno.readTextFile(`${home}/.codex/models_cache.json`);
+    const text = await readFile(`${home}/.codex/models_cache.json`, "utf8");
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return normalizeVersion(parsed.client_version);
   } catch {
@@ -48,10 +49,10 @@ const readCodexModelsCacheVersion = async (): Promise<string | null> => {
 };
 
 const readCodexVersionFile = async (): Promise<string | null> => {
-  const home = Deno.env.get("HOME");
+  const home = process.env["HOME"];
   if (!home) return null;
   try {
-    const text = await Deno.readTextFile(`${home}/.codex/version.json`);
+    const text = await readFile(`${home}/.codex/version.json`, "utf8");
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return normalizeVersion(parsed.latest_version ?? parsed.version ?? parsed.current_version);
   } catch {
@@ -63,7 +64,7 @@ const readCodexPackageVersion = async (codexPath: string): Promise<string | null
   if (!codexPath) return null;
   let realPath: string;
   try {
-    realPath = await Deno.realPath(codexPath);
+    realPath = await realpath(codexPath);
   } catch {
     realPath = codexPath;
   }
@@ -73,7 +74,7 @@ const readCodexPackageVersion = async (codexPath: string): Promise<string | null
   if (index === -1) return null;
   const pkgPath = `${normalized.slice(0, index + marker.length)}package.json`;
   try {
-    const text = await Deno.readTextFile(pkgPath);
+    const text = await readFile(pkgPath, "utf8");
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return normalizeVersion(parsed.version);
   } catch {
@@ -96,8 +97,8 @@ const resolveCodexClientVersion = async (paths: string[]): Promise<string | null
 const listCodexBinaryCandidates = (codexBinFlag?: string): string[] => {
   const candidates: string[] = [];
   if (codexBinFlag) candidates.push(expandTilde(codexBinFlag));
-  const pathValue = Deno.env.get("PATH") ?? "";
-  const separator = Deno.build.os === "windows" ? ";" : ":";
+  const pathValue = process.env["PATH"] ?? "";
+  const separator = process.platform === "win32" ? ";" : ":";
   for (const segment of pathValue.split(separator).filter(Boolean)) {
     candidates.push(`${segment.replace(/\/$/, "")}/codex`);
   }
@@ -107,42 +108,42 @@ const listCodexBinaryCandidates = (codexBinFlag?: string): string[] => {
 const usage = () => {
   console.log(`upload-codex-auth.ts
 
-Uploads your local Codex ~/.codex/auth.json to ai.ubq.fi for validation + storage in Deno KV.
+Uploads your local Codex ~/.codex/auth.json to ai.ubq.fi for validation + storage in Bun KV.
 Stores the live Codex model catalog returned by upstream auth validation.
 
 Usage:
-  deno run --allow-env --allow-net --allow-read scripts/upload-codex-auth.ts [--url https://ai.ubq.fi] [--auth-json ~/.codex/auth.json] [--codex-bin /path/to/codex]
+  bun run scripts/upload-codex-auth.ts [--url https://ai.ubq.fi] [--auth-json ~/.codex/auth.json] [--codex-bin /path/to/codex]
 
 Auth:
   Set DENO_DEPLOY_TOKEN in env, or pass --admin-token.
 `);
 };
 
-if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
+if (process.argv.slice(2).includes("--help") || process.argv.slice(2).includes("-h")) {
   usage();
-  Deno.exit(0);
+  process.exit(0);
 }
 
-const parsed = parseArgs(Deno.args);
+const parsed = parseArgs(process.argv.slice(2));
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
 const authJsonPath = expandTilde((parsed["auth-json"] as string | undefined) ?? "~/.codex/auth.json");
-const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
+const adminToken = (parsed["admin-token"] as string | undefined) ?? process.env["DENO_DEPLOY_TOKEN"] ?? "";
 if (Object.hasOwn(parsed, "skip-models") || Object.hasOwn(parsed, "no-models")) {
   console.error("--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.");
-  Deno.exit(2);
+  process.exit(2);
 }
 
 if (!adminToken) {
   console.error("Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.");
-  Deno.exit(2);
+  process.exit(2);
 }
 
 let authJsonText: string;
 try {
-  authJsonText = await Deno.readTextFile(authJsonPath);
+  authJsonText = await readFile(authJsonPath, "utf8");
 } catch (error) {
   console.error(`Failed to read auth.json at ${authJsonPath}:`, error);
-  Deno.exit(2);
+  process.exit(2);
 }
 
 let authJson: unknown;
@@ -150,7 +151,7 @@ try {
   authJson = JSON.parse(authJsonText) as unknown;
 } catch (error) {
   console.error(`auth.json at ${authJsonPath} is not valid JSON:`, error);
-  Deno.exit(2);
+  process.exit(2);
 }
 const codexBinFlag = parsed["codex-bin"] as string | undefined;
 const clientVersion = (await resolveCodexClientVersion(listCodexBinaryCandidates(codexBinFlag))) ?? undefined;
@@ -180,7 +181,7 @@ const payload = isJson ? await res.json().catch(() => null) : await res.text().c
 if (!res.ok) {
   console.error(`Request failed (${res.status}).`);
   if (payload) console.error(isJson ? JSON.stringify(payload, null, 2) : payload);
-  Deno.exit(1);
+  process.exit(1);
 }
 
 if (payload) {
