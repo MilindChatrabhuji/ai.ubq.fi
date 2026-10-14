@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -33,7 +34,7 @@ const holdEventLoopForMs = (ms: number): void => {
   assert.ok(spins > 0, "the fixture must actually block the event loop");
 };
 
-Deno.test("admission bounds active permits and reports the queue wait to the integration", async () => {
+test("admission bounds active permits and reports the queue wait to the integration", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 2, maxWaiting: 4, maxQueueWaitMs: 1_000 });
   const first = admittedOrThrow(await controller.acquire(), "expected the first attempt to be admitted");
   const second = admittedOrThrow(await controller.acquire(), "expected the second attempt to be admitted");
@@ -56,7 +57,7 @@ Deno.test("admission bounds active permits and reports the queue wait to the int
   assert.equal(controller.snapshot().active, 0);
 });
 
-Deno.test("admission rejects a new request once the waiting bound is full", async () => {
+test("admission rejects a new request once the waiting bound is full", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 1, maxQueueWaitMs: 1_000 });
   const active = admittedOrThrow(await controller.acquire(), "expected the first attempt to be admitted");
   const queued = controller.acquire();
@@ -74,7 +75,7 @@ Deno.test("admission rejects a new request once the waiting bound is full", asyn
   assert.equal(controller.snapshot().active, 0);
 });
 
-Deno.test("admission enforces finite waiting and recovers after overload", async () => {
+test("admission enforces finite waiting and recovers after overload", async () => {
   const maxQueueWaitMs = 25;
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 1, maxQueueWaitMs });
   const active = admittedOrThrow(await controller.acquire(), "expected the first attempt to be admitted");
@@ -100,7 +101,7 @@ Deno.test("admission enforces finite waiting and recovers after overload", async
   assert.equal(controller.snapshot().active, 0);
 });
 
-Deno.test("admission removes an aborted waiter promptly and never gives it a permit", async () => {
+test("admission removes an aborted waiter promptly and never gives it a permit", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 2, maxQueueWaitMs: 1_000 });
   const active = admittedOrThrow(await controller.acquire(), "expected the first attempt to be admitted");
 
@@ -128,7 +129,7 @@ Deno.test("admission removes an aborted waiter promptly and never gives it a per
   assert.equal(controller.snapshot().active, 0);
 });
 
-Deno.test("admission gives a freed permit to a live waiter, not to one that aborted first", async () => {
+test("admission gives a freed permit to a live waiter, not to one that aborted first", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 3, maxQueueWaitMs: 1_000 });
   const active = admittedOrThrow(await controller.acquire(), "expected the first attempt to be admitted");
   const abortController = new AbortController();
@@ -147,7 +148,7 @@ Deno.test("admission gives a freed permit to a live waiter, not to one that abor
   assert.equal(controller.snapshot().active, 0);
 });
 
-Deno.test("admission returns a permit exactly once", async () => {
+test("admission returns a permit exactly once", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 2, maxQueueWaitMs: 1_000 });
   const active = admittedOrThrow(await controller.acquire(), "expected the first attempt to be admitted");
   const queued = controller.acquire();
@@ -162,7 +163,7 @@ Deno.test("admission returns a permit exactly once", async () => {
   assert.equal(controller.snapshot().active, 0, "the active count returns to zero and never below it");
 });
 
-Deno.test("fixture: an unrelated principal is served promptly despite a sustained backlog", async () => {
+test("fixture: an unrelated principal is served promptly despite a sustained backlog", async () => {
   // The noisy principal holds the only permit and sustains a backlog behind it.
   // The first turn belongs to the principal that arrived first; the second turn
   // must then go to the unrelated principal, so the quiet request is admitted
@@ -191,7 +192,7 @@ Deno.test("fixture: an unrelated principal is served promptly despite a sustaine
   assert.equal(controller.snapshot().principals, 0);
 });
 
-Deno.test("fixture: a delayed event loop cannot grant a permit past the queue wait", async () => {
+test("fixture: a delayed event loop cannot grant a permit past the queue wait", async () => {
   const maxQueueWaitMs = 25;
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 4, maxQueueWaitMs });
   const holder = admittedOrThrow(await controller.acquire({ principal: "holder" }), "expected the holder to be admitted");
@@ -211,7 +212,7 @@ Deno.test("fixture: a delayed event loop cannot grant a permit past the queue wa
   assert.equal(controller.snapshot().principals, 0);
 });
 
-Deno.test("admission restores an expiring principal's turn to its next waiter", async () => {
+test("admission restores an expiring principal's turn to its next waiter", async () => {
   const maxQueueWaitMs = 25;
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 6, maxQueueWaitMs });
   const holder = admittedOrThrow(await controller.acquire({ principal: "holder" }), "expected the holder to be admitted");
@@ -235,7 +236,7 @@ Deno.test("admission restores an expiring principal's turn to its next waiter", 
   assert.equal(controller.snapshot().principals, 0);
 });
 
-Deno.test("admission rotates waiting turns across three principals during a sustained burst", async () => {
+test("admission rotates waiting turns across three principals during a sustained burst", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 12, maxQueueWaitMs: 500 });
   const holder = admittedOrThrow(await controller.acquire({ principal: "a" }), "expected the burst principal to hold the permit");
   const burst = [
@@ -266,7 +267,7 @@ Deno.test("admission rotates waiting turns across three principals during a sust
   assert.equal(controller.snapshot().active, 0);
 });
 
-Deno.test("admission keeps principal-less waiting requests in arrival order", async () => {
+test("admission keeps principal-less waiting requests in arrival order", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 4, maxQueueWaitMs: 500 });
   const holder = admittedOrThrow(await controller.acquire(), "expected the principal-less holder to be admitted");
   const first = controller.acquire();
@@ -284,7 +285,7 @@ Deno.test("admission keeps principal-less waiting requests in arrival order", as
   assert.equal(controller.snapshot().principals, 0);
 });
 
-Deno.test("admission removes a cancelled principal's empty waiting state", async () => {
+test("admission removes a cancelled principal's empty waiting state", async () => {
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 4, maxQueueWaitMs: 1_000 });
   const holder = admittedOrThrow(await controller.acquire({ principal: "holder" }), "expected the holder to be admitted");
   const abortController = new AbortController();
@@ -307,7 +308,7 @@ Deno.test("admission removes a cancelled principal's empty waiting state", async
   assert.equal(controller.snapshot().principals, 0);
 });
 
-Deno.test("admission removes expired principals' empty waiting state", async () => {
+test("admission removes expired principals' empty waiting state", async () => {
   const maxQueueWaitMs = 25;
   const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 4, maxQueueWaitMs });
   const holder = admittedOrThrow(await controller.acquire({ principal: "holder" }), "expected the holder to be admitted");
@@ -330,7 +331,7 @@ Deno.test("admission removes expired principals' empty waiting state", async () 
   assert.equal(controller.snapshot().active, 0);
 });
 
-Deno.test("the shared guard exposes the fixed internal limits to the integration", async () => {
+test("the shared guard exposes the fixed internal limits to the integration", async () => {
   assert.deepEqual(DEFAULT_INFERENCE_ADMISSION_LIMITS, { maxActive: 64, maxWaiting: 128, maxQueueWaitMs: 5_000 });
   const before = inferenceAdmissionSnapshot();
   assert.equal(before.maxActive, DEFAULT_INFERENCE_ADMISSION_LIMITS.maxActive);
@@ -343,7 +344,7 @@ Deno.test("the shared guard exposes the fixed internal limits to the integration
   assert.equal(inferenceAdmissionSnapshot().active, before.active);
 });
 
-Deno.test("internal construction rejects limits that cannot bound anything", () => {
+test("internal construction rejects limits that cannot bound anything", () => {
   assert.throws(() => createInferenceAdmissionController({ maxActive: 0 }), RangeError);
   assert.throws(() => createInferenceAdmissionController({ maxWaiting: -1 }), RangeError);
   assert.throws(() => createInferenceAdmissionController({ maxQueueWaitMs: 1.5 }), RangeError);

@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
@@ -44,7 +45,7 @@ const bodyRejectionOf = (rawRecord: Record<string, unknown>, stream = false) => 
   return { ok: false as const, param: result.param, message: result.message };
 };
 
-Deno.test("chat projection: instructions and string inputs produce the plain user/system turn", () => {
+test("chat projection: instructions and string inputs produce the plain user/system turn", () => {
   assert.deepEqual(messagesOf("hi"), [{ role: "user", content: "hi" }]);
   assert.deepEqual(messagesOf("hi", "be brief"), [
     { role: "system", content: "be brief" },
@@ -56,7 +57,7 @@ Deno.test("chat projection: instructions and string inputs produce the plain use
   assert.deepEqual(rejectionOf(42), { ok: false, param: "input", message: "input must be a string or an array" });
 });
 
-Deno.test("chat projection: a message item normalizes its role and content shapes", () => {
+test("chat projection: a message item normalizes its role and content shapes", () => {
   assert.deepEqual(messagesOf([{ type: "message", role: "user", content: "hello" }]), [{ role: "user", content: "hello" }]);
   // A missing role defaults to user, and the developer role becomes system.
   assert.deepEqual(messagesOf([{ content: "hello" }]), [{ role: "user", content: "hello" }]);
@@ -105,7 +106,7 @@ Deno.test("chat projection: a message item normalizes its role and content shape
   assert.deepEqual(messagesOf([{ type: "message", role: "assistant", content: [{ type: "refusal", refusal: "no" }] }]), [{ role: "assistant", content: "no" }]);
 });
 
-Deno.test("chat projection: every malformed content shape is rejected with its param", () => {
+test("chat projection: every malformed content shape is rejected with its param", () => {
   assert.deepEqual(rejectionOf([42]), { ok: false, param: "input", message: "input items must be objects" });
   assert.deepEqual(rejectionOf([{ type: "message", role: "system", content: "x" }]), {
     ok: false,
@@ -161,7 +162,7 @@ Deno.test("chat projection: every malformed content shape is rejected with its p
   });
 });
 
-Deno.test("chat projection: tool call and tool result items round-trip", () => {
+test("chat projection: tool call and tool result items round-trip", () => {
   assert.deepEqual(messagesOf([{ type: "function_call", call_id: "call-1", name: "lookup", arguments: "{}" }]), [
     { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "lookup", arguments: "{}" } }] },
   ]);
@@ -211,7 +212,7 @@ Deno.test("chat projection: tool call and tool result items round-trip", () => {
   assert.deepEqual(messagesOf([{ type: "function_call_output", output: "42" }]), []);
 });
 
-Deno.test("chat projection: replayed reasoning is carried onto the following assistant turn", () => {
+test("chat projection: replayed reasoning is carried onto the following assistant turn", () => {
   // Both the summary and the content parts are read, and a direct text is appended.
   const carried = messagesOf([
     { type: "reasoning", summary: [{ text: "sum-" }], content: [{ type: "text", text: "content-" }], text: "direct" },
@@ -246,7 +247,7 @@ Deno.test("chat projection: replayed reasoning is carried onto the following ass
   assert.deepEqual(messagesOf([{ type: "reasoning", summary: [{ text: "orphan" }] }]), []);
 });
 
-Deno.test("chat projection: the request body carries the official model and the optional fields", () => {
+test("chat projection: the request body carries the official model and the optional fields", () => {
   const minimal = bodyOf({ input: "hi" });
   assert.deepEqual(minimal.body, { model: "deepseek-flash", messages: [{ role: "user", content: "hi" }], stream: false });
   assert.deepEqual([...minimal.toolNames.entries()], []);
@@ -297,7 +298,7 @@ Deno.test("chat projection: the request body carries the official model and the 
   assert.deepEqual(unknownModel, { ok: false, param: "model", message: "model 'gpt-6' is not a DeepSeek official model" });
 });
 
-Deno.test("chat projection: tools are flattened, renamed on collision and filtered by type", () => {
+test("chat projection: tools are flattened, renamed on collision and filtered by type", () => {
   const named = bodyOf({
     input: "hi",
     tools: [
@@ -385,7 +386,7 @@ Deno.test("chat projection: tools are flattened, renamed on collision and filter
   assert.equal(bodyOf({ input: "hi", tools: [] }).body.tools, undefined);
 });
 
-Deno.test("chat projection: tool choice and response format are translated or rejected", () => {
+test("chat projection: tool choice and response format are translated or rejected", () => {
   // Thinking mode is active by default, so `required` and named choices conflict
   // unless the caller asks for no reasoning.
   assert.equal(bodyOf({ input: "hi", tool_choice: "auto" }).body.tool_choice, "auto");
@@ -441,7 +442,7 @@ Deno.test("chat projection: tool choice and response format are translated or re
   });
 });
 
-Deno.test("chat projection: a tool-bearing request gets the continuation instruction and replayed reasoning", () => {
+test("chat projection: a tool-bearing request gets the continuation instruction and replayed reasoning", () => {
   const instructionExtended = bodyOf({
     input: [{ type: "message", role: "user", content: "do it" }],
     instructions: "be terse",
@@ -492,7 +493,7 @@ Deno.test("chat projection: a tool-bearing request gets the continuation instruc
   assert.equal(projected.at(-1)?.role, "tool");
 });
 
-Deno.test("chat projection: the caller's own reasoning survives the trailing fill", () => {
+test("chat projection: the caller's own reasoning survives the trailing fill", () => {
   const body = bodyOf({
     input: [
       { type: "message", role: "user", content: "continue" },
@@ -525,7 +526,7 @@ import {
   projectDeepSeekRequest,
 } from "../src/deepseek/index.ts";
 
-Deno.test("DeepSeek model lookup preserves canonical models, the legacy alias and normalized ids", () => {
+test("DeepSeek model lookup preserves canonical models, the legacy alias and normalized ids", () => {
   for (const [requested, upstream] of [
     [MODEL, MODEL],
     [DEEPSEEK_PRO_MODEL, DEEPSEEK_PRO_MODEL],
@@ -543,7 +544,7 @@ Deno.test("DeepSeek model lookup preserves canonical models, the legacy alias an
 });
 
 for (const model of ["constructor", "__proto__", "toString"]) {
-  Deno.test(`DeepSeek model lookup rejects prototype name ${model} in both request projections`, () => {
+  test(`DeepSeek model lookup rejects prototype name ${model} in both request projections`, () => {
     assert.equal(deepSeekUpstreamModelFor(model), null);
     assert.throws(
       () => projectDeepSeekRequest({ messages: [{ role: "user", content: "hi" }] }, model),
@@ -587,7 +588,7 @@ const chunkRejection = (value: unknown): string => {
   return result.message;
 };
 
-Deno.test("deepseek normalizer: the completion envelope rejects each malformed field", () => {
+test("deepseek normalizer: the completion envelope rejects each malformed field", () => {
   assert.equal(completionRejection(null), "Upstream did not return a Chat Completions object.");
   assert.equal(completionRejection([]), "Upstream did not return a Chat Completions object.");
   assert.equal(completionRejection(completionPayload({}, { id: "" })), "Upstream Chat Completion is missing an id.");
@@ -607,7 +608,7 @@ Deno.test("deepseek normalizer: the completion envelope rejects each malformed f
   assert.equal(accepted.ok, true);
 });
 
-Deno.test("deepseek normalizer: every malformed choice and tool call is rejected with its message", () => {
+test("deepseek normalizer: every malformed choice and tool call is rejected with its message", () => {
   assert.equal(completionRejection(completionPayload({}, { choices: [42] })), "Upstream choice 0 is not an object.");
   assert.equal(completionRejection(completionPayload({}, { choices: [{ message: {} }] })), "Upstream choice 0 has an invalid index.");
   assert.equal(completionRejection(completionPayload({}, { choices: [{ index: 0 }] })), "Upstream choice 0 is missing an assistant message.");
@@ -684,7 +685,7 @@ Deno.test("deepseek normalizer: every malformed choice and tool call is rejected
   assert.equal(acceptedToolTurn.object, "chat.completion");
 });
 
-Deno.test("deepseek normalizer: the chunk envelope and delta reject each malformed field", () => {
+test("deepseek normalizer: the chunk envelope and delta reject each malformed field", () => {
   assert.equal(chunkRejection(null), "Upstream did not return a Chat Completions chunk.");
   assert.equal(chunkRejection(chunkPayload({}, { id: "" })), "Upstream Chat Completion chunk is missing an id.");
   assert.equal(chunkRejection(chunkPayload({}, { created: "now" })), "Upstream Chat Completion chunk has an invalid creation time.");
@@ -760,7 +761,7 @@ Deno.test("deepseek normalizer: the chunk envelope and delta reject each malform
   ]);
 });
 
-Deno.test("deepseek wire: finish dispositions cover the documented vocabulary", () => {
+test("deepseek wire: finish dispositions cover the documented vocabulary", () => {
   assert.deepEqual(deepSeekFinishDisposition(""), { kind: "completed" });
   assert.deepEqual(deepSeekFinishDisposition("stop"), { kind: "completed" });
   assert.deepEqual(deepSeekFinishDisposition("tool_calls"), { kind: "completed" });
@@ -774,7 +775,7 @@ Deno.test("deepseek wire: finish dispositions cover the documented vocabulary", 
   assert.deepEqual(deepSeekFinishDisposition(42), { kind: "completed" });
 });
 
-Deno.test("deepseek wire: thinking-mode tool-choice conflicts name the offending field", () => {
+test("deepseek wire: thinking-mode tool-choice conflicts name the offending field", () => {
   assert.equal(deepSeekThinkingModeForbiddenToolChoice(undefined), null);
   assert.equal(deepSeekThinkingModeForbiddenToolChoice("auto"), null);
   assert.equal(deepSeekThinkingModeForbiddenToolChoice("required"), "required");
@@ -789,7 +790,7 @@ Deno.test("deepseek wire: thinking-mode tool-choice conflicts name the offending
   assert.match(deepSeekToolChoiceThinkingConflictMessage("required", "reasoning.effort"), /reasoning\.effort/);
 });
 
-Deno.test("deepseek wire: provider request ids and dispatch failures keep their identity", async () => {
+test("deepseek wire: provider request ids and dispatch failures keep their identity", async () => {
   assert.equal(normalizeDeepSeekProviderRequestId("req-1"), "req-1");
   assert.equal(normalizeDeepSeekProviderRequestId(undefined), null);
   assert.equal(normalizeDeepSeekProviderRequestId(""), null);

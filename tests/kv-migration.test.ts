@@ -1,5 +1,8 @@
+import { test } from "bun:test";
+import { KvU64 } from "#kv";
+import type { Kv, KvEntry, KvEntryMaybe, KvKey, KvListOptions, KvListSelector } from "#kv";
 import assert from "node:assert/strict";
-import { keyToJSON } from "@deno/kv-utils/json";
+import { keyToJson } from "../src/kv-conversion/profile-json.ts";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
 import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/api-key-policy.ts";
 import { codexResetUsageKey, readCodexResetUsage } from "../src/codex/reset-settings.ts";
@@ -12,13 +15,7 @@ import {
 } from "../src/cache/kv-migration.ts";
 import { paidFallbackReconciliationGateV3Key } from "../src/paid-fallback/ledger-state.ts";
 
-if (typeof Deno.KvU64 !== "function") {
-  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
-    constructor(readonly value: bigint) {}
-  } as typeof Deno.KvU64;
-}
-
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyToString = (key: KvKey): string => JSON.stringify(key);
 
 const simpleValueToJson = (value: unknown): unknown => {
   if (value === null) return { type: "null", value: null };
@@ -30,9 +27,9 @@ const simpleValueToJson = (value: unknown): unknown => {
   return { type: typeof value, value };
 };
 
-const entryLine = (key: Deno.KvKey, value: unknown): string =>
+const entryLine = (key: KvKey, value: unknown): string =>
   JSON.stringify({
-    key: keyToJSON(key),
+    key: keyToJson(key),
     value: simpleValueToJson(value),
     versionstamp: "00000000000000000000",
   });
@@ -46,27 +43,27 @@ const paidFallbackGateDueAtMs = (store: Map<string, unknown>): number => {
 
 type KvSetOptions = Readonly<{ expireIn?: number }>;
 
-const makeKvStub = (store: Map<string, unknown>, options: Readonly<{ onAtomicSet?: (key: Deno.KvKey, options?: KvSetOptions) => void }> = {}): Deno.Kv =>
+const makeKvStub = (store: Map<string, unknown>, options: Readonly<{ onAtomicSet?: (key: KvKey, options?: KvSetOptions) => void }> = {}): Kv =>
   ({
-    get: (key: Deno.KvKey) => Promise.resolve({ key, value: store.get(keyToString(key)) ?? null } as Deno.KvEntryMaybe<unknown>),
-    set: (key: Deno.KvKey, value: unknown) => {
+    get: (key: KvKey) => Promise.resolve({ key, value: store.get(keyToString(key)) ?? null } as KvEntryMaybe<unknown>),
+    set: (key: KvKey, value: unknown) => {
       store.set(keyToString(key), value);
       return Promise.resolve({ ok: true } as const);
     },
-    delete: (key: Deno.KvKey) => {
+    delete: (key: KvKey) => {
       store.delete(keyToString(key));
       return Promise.resolve();
     },
     atomic: () => {
-      const writes: { key: Deno.KvKey; value: unknown; options?: KvSetOptions }[] = [];
-      const sums: { key: Deno.KvKey; value: bigint }[] = [];
+      const writes: { key: KvKey; value: unknown; options?: KvSetOptions }[] = [];
+      const sums: { key: KvKey; value: bigint }[] = [];
       const operation = {
-        check: (_entry: Deno.KvEntryMaybe<unknown>) => operation,
-        set: (key: Deno.KvKey, value: unknown, setOptions?: KvSetOptions) => {
+        check: (_entry: KvEntryMaybe<unknown>) => operation,
+        set: (key: KvKey, value: unknown, setOptions?: KvSetOptions) => {
           writes.push({ key, value, options: setOptions });
           return operation;
         },
-        sum: (key: Deno.KvKey, value: bigint) => {
+        sum: (key: KvKey, value: bigint) => {
           sums.push({ key, value });
           return operation;
         },
@@ -76,27 +73,27 @@ const makeKvStub = (store: Map<string, unknown>, options: Readonly<{ onAtomicSet
             options.onAtomicSet?.(write.key, write.options);
           }
           for (const sum of sums) {
-            const existing = store.get(keyToString(sum.key)) as Deno.KvU64 | undefined;
-            store.set(keyToString(sum.key), new Deno.KvU64((existing?.value ?? 0n) + sum.value));
+            const existing = store.get(keyToString(sum.key)) as KvU64 | undefined;
+            store.set(keyToString(sum.key), new KvU64((existing?.value ?? 0n) + sum.value));
           }
           return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
         },
       };
       return operation;
     },
-    list: function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+    list: function* (selector: KvListSelector, options?: KvListOptions) {
       const prefix = "prefix" in selector ? selector.prefix : [];
       const limit = typeof options?.limit === "number" ? options.limit : Infinity;
       let yielded = 0;
       for (const [rawKey, value] of store.entries()) {
-        const key = JSON.parse(rawKey) as Deno.KvKey;
+        const key = JSON.parse(rawKey) as KvKey;
         if (!prefix.every((part, index) => key[index] === part)) continue;
-        yield { key, value, versionstamp: "00000000000000000000" } as Deno.KvEntry<unknown>;
+        yield { key, value, versionstamp: "00000000000000000000" } as KvEntry<unknown>;
         yielded += 1;
         if (yielded >= limit) break;
       }
     },
-  }) as unknown as Deno.Kv;
+  }) as unknown as Kv;
 
 const seedUnlimitedIncidentApiKey = (
   store: Map<string, unknown>,
@@ -148,7 +145,7 @@ const seedUnlimitedIncidentApiKey = (
   return { id, hash, now, record, shared };
 };
 
-Deno.test("KV migration HTTP CLI serializes explicit false flags", () => {
+test("KV migration HTTP CLI serializes explicit false flags", () => {
   const url = new URL("https://ai.ubq.fi/admin/kv-migration/import");
   appendBooleanParam(url, "include_legacy", false);
   appendBooleanParam(url, "overwrite", true);
@@ -157,7 +154,7 @@ Deno.test("KV migration HTTP CLI serializes explicit false flags", () => {
   assert.equal(url.searchParams.get("overwrite"), "1");
 });
 
-Deno.test("KV migration classifies v2 incident state and skips the transient circuit", () => {
+test("KV migration classifies v2 incident state and skips the transient circuit", () => {
   const options = { profile: "prod", includeCache: false, includeLegacy: false } as const;
   assert.equal(classifyKvMigrationKey(["uos_ai", "api_key_usage", "v2", "id"], options).action, "import");
   assert.equal(classifyKvMigrationKey(["uos_ai", "paid_fallback", "ledger", "id"], options).action, "import");
@@ -183,7 +180,7 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
 });
 
-Deno.test("KV migration validates Kernel quota reservation aggregates", async () => {
+test("KV migration validates Kernel quota reservation aggregates", async () => {
   const store = new Map<string, unknown>();
   const now = Date.now();
   const owner = "migration-reservation-org";
@@ -260,7 +257,7 @@ Deno.test("KV migration validates Kernel quota reservation aggregates", async ()
   assert.match(missingReservation.errors.join("\n"), /kernel quota V2 reserved aggregate is inconsistent/);
 });
 
-Deno.test("prod KV migration imports only modern durable rows by default", async () => {
+test("prod KV migration imports only modern durable rows by default", async () => {
   const store = new Map<string, unknown>();
   const result = await importKvMigrationLines(
     makeKvStub(store),
@@ -289,7 +286,7 @@ Deno.test("prod KV migration imports only modern durable rows by default", async
   assert.equal(store.has(keyToString(["uos_ai", "auth", "sessions", "session-id"])), false);
 });
 
-Deno.test("KV migration imports and validates the complete paid fallback V3 state", async () => {
+test("KV migration imports and validates the complete paid fallback V3 state", async () => {
   const store = new Map<string, unknown>();
   const now = Date.now();
   const keyId = "paid-fallback-v3-migration";
@@ -430,7 +427,7 @@ Deno.test("KV migration imports and validates the complete paid fallback V3 stat
   assert.match(missingPending.errors.join("\n"), /request is missing its pending marker/);
 });
 
-Deno.test("local KV migration keeps legacy and Codex bootstrap rows for replay", async () => {
+test("local KV migration keeps legacy and Codex bootstrap rows for replay", async () => {
   const store = new Map<string, unknown>();
   const result = await importKvMigrationLines(
     makeKvStub(store),
@@ -449,11 +446,11 @@ Deno.test("local KV migration keeps legacy and Codex bootstrap rows for replay",
   assert.equal(store.has(keyToString(["key", "health", "1"])), true);
 });
 
-Deno.test("KV migration preserves embeddings idempotency ledgers and response chunks", async () => {
+test("KV migration preserves embeddings idempotency ledgers and response chunks", async () => {
   const store = new Map<string, unknown>();
-  const ledgerKey: Deno.KvKey = ["embeddings", "idempotency", "v1", "principal-hash", "idempotency-key-hash"];
-  const responseChunkKey: Deno.KvKey = ["embeddings", "idempotency", "v1", "response", "principal-hash", "idempotency-key-hash", "response-generation", 0];
-  const transientJobKey: Deno.KvKey = ["embeddings", "jobs", "v2", "token-hash", "profile", "job-id"];
+  const ledgerKey: KvKey = ["embeddings", "idempotency", "v1", "principal-hash", "idempotency-key-hash"];
+  const responseChunkKey: KvKey = ["embeddings", "idempotency", "v1", "response", "principal-hash", "idempotency-key-hash", "response-generation", 0];
+  const transientJobKey: KvKey = ["embeddings", "jobs", "v2", "token-hash", "profile", "job-id"];
   const ledger = { v: 1, state: "succeeded", response_chunk_count: 1 };
   const result = await importKvMigrationLines(
     makeKvStub(store),
@@ -477,10 +474,10 @@ Deno.test("KV migration preserves embeddings idempotency ledgers and response ch
   assert.equal(store.has(keyToString(transientJobKey)), false);
 });
 
-Deno.test("KV migration imports only the option-aware v2 embedding cache when requested", async () => {
+test("KV migration imports only the option-aware v2 embedding cache when requested", async () => {
   const store = new Map<string, unknown>();
-  const v1Key: Deno.KvKey = ["embeddings", "v1", "legacy-model", "text-hash"];
-  const v2Key: Deno.KvKey = ["embeddings", "v2", "voyage-4-large|document|1024|float|float|false", "text-hash"];
+  const v1Key: KvKey = ["embeddings", "v1", "legacy-model", "text-hash"];
+  const v2Key: KvKey = ["embeddings", "v2", "voyage-4-large|document|1024|float|float|false", "text-hash"];
   const result = await importKvMigrationLines(makeKvStub(store), [entryLine(v1Key, { embedding: [1] }), entryLine(v2Key, { embedding: [2] })], {
     profile: "prod",
     includeCache: true,
@@ -495,7 +492,7 @@ Deno.test("KV migration imports only the option-aware v2 embedding cache when re
   assert.deepEqual(store.get(keyToString(v2Key)), { embedding: [2] });
 });
 
-Deno.test("KV migration dry-run reports destination collisions like writes", async () => {
+test("KV migration dry-run reports destination collisions like writes", async () => {
   const store = new Map<string, unknown>();
   store.set(keyToString(["default", "model"]), "existing-model");
 
@@ -512,7 +509,7 @@ Deno.test("KV migration dry-run reports destination collisions like writes", asy
   assert.equal(store.get(keyToString(["default", "model"])), "existing-model");
 });
 
-Deno.test("KV migration imports a missing row with an atomic destination check", async () => {
+test("KV migration imports a missing row with an atomic destination check", async () => {
   const store = new Map<string, unknown>();
   const result = await importKvMigrationLines(makeKvStub(store), [entryLine(["default", "model"], "gpt-5.6"), entryLine(["default", "model"], "gpt-5.7")], {
     profile: "prod",
@@ -527,7 +524,7 @@ Deno.test("KV migration imports a missing row with an atomic destination check",
   assert.equal(store.get(keyToString(["default", "model"])), "gpt-5.6");
 });
 
-Deno.test("KV migration validation rejects unusable codex model snapshots for configured defaults", async () => {
+test("KV migration validation rejects unusable codex model snapshots for configured defaults", async () => {
   const store = new Map<string, unknown>();
   store.set(keyToString(["default", "model"]), "gpt-5.5");
   store.set(keyToString(["ubq_ai", "codex_models"]), { models: [] });
@@ -537,7 +534,7 @@ Deno.test("KV migration validation rejects unusable codex model snapshots for co
   assert.match(result.errors.join("\n"), /codex model snapshot is empty or malformed/);
 });
 
-Deno.test("KV incident migration rejects an active reservation without a pending ledger before mutation", async () => {
+test("KV incident migration rejects an active reservation without a pending ledger before mutation", async () => {
   const store = new Map<string, unknown>();
   const { id } = seedUnlimitedIncidentApiKey(store);
   const before = structuredClone([...store.entries()]);
@@ -554,7 +551,7 @@ Deno.test("KV incident migration rejects an active reservation without a pending
   assert.equal(store.has(keyToString(KV_READ_INCIDENT_V2_MIGRATION_KEY)), false);
 });
 
-Deno.test("KV incident migration preserves a valid unlimited reservation and requires its ledger to stay pending", async () => {
+test("KV incident migration preserves a valid unlimited reservation and requires its ledger to stay pending", async () => {
   const store = new Map<string, unknown>();
   const { id, now } = seedUnlimitedIncidentApiKey(store);
   const requestId = "pending-unlimited-request";
@@ -580,7 +577,7 @@ Deno.test("KV incident migration preserves a valid unlimited reservation and req
   assert.match(terminalLedger.errors.join("\n"), /reservation has no pending ledger record/);
 });
 
-Deno.test("KV incident migration permits matching terminal ledgers but rejects destination identity collisions", async () => {
+test("KV incident migration permits matching terminal ledgers but rejects destination identity collisions", async () => {
   const store = new Map<string, unknown>();
   const { id, now } = seedUnlimitedIncidentApiKey(store, {
     sharedOverrides: { paid_fallback_reservation_request_id: null },
@@ -615,7 +612,7 @@ Deno.test("KV incident migration permits matching terminal ledgers but rejects d
   assert.deepEqual(store.get(keyToString(ledgerKey)), reconciledLedger);
 });
 
-Deno.test("KV incident migration projects settled spend and unresolved exposure exactly once", async () => {
+test("KV incident migration projects settled spend and unresolved exposure exactly once", async () => {
   const store = new Map<string, unknown>();
   const keyId = "bounded-paid-fallback-key";
   const requestId = "unresolved-paid-fallback-request";
@@ -713,7 +710,7 @@ Deno.test("KV incident migration projects settled spend and unresolved exposure 
   assert.match(aggregateMismatch.errors.join("\n"), /window aggregate is inconsistent/);
 });
 
-Deno.test("KV incident migration resumes concurrent phase one and retains postdeploy counter versions", async () => {
+test("KV incident migration resumes concurrent phase one and retains postdeploy counter versions", async () => {
   const store = new Map<string, unknown>();
   const now = Date.now();
   const id = "bounded-key";
@@ -763,9 +760,9 @@ Deno.test("KV incident migration resumes concurrent phase one and retains postde
   const expiredCounterKey = ["uos_ai", "api_key_usage", "v2", id, `10:60000:${now}`, now - 60_000] as const;
   const unsafeCurrentCounterKey = ["uos_ai", "api_key_usage", "v2", id, "60000", now] as const;
   const currentBaselineKey = [...KV_READ_INCIDENT_V2_MIGRATION_KEY, "api_key_usage_baseline", id, "v3:60000", now] as const;
-  store.set(keyToString(staleCounterKey), new Deno.KvU64(7n));
-  store.set(keyToString(expiredCounterKey), new Deno.KvU64(99n));
-  store.set(keyToString(unsafeCurrentCounterKey), new Deno.KvU64(8n));
+  store.set(keyToString(staleCounterKey), new KvU64(7n));
+  store.set(keyToString(expiredCounterKey), new KvU64(99n));
+  store.set(keyToString(unsafeCurrentCounterKey), new KvU64(8n));
   store.set(keyToString(KV_READ_INCIDENT_V2_MIGRATION_KEY), { version: 2, completed_at_ms: now - 1 });
   for (const [requestId, billingStatus] of [
     ["pending", "pending"],
@@ -796,7 +793,7 @@ Deno.test("KV incident migration resumes concurrent phase one and retains postde
   assert.equal(store.has(keyToString(["uos_ai", "runtime_config", "v2"])), true);
   assert.equal(store.has(keyToString(staleCounterKey)), true);
   assert.equal(store.has(keyToString(expiredCounterKey)), true);
-  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as Deno.KvU64).value, 8n);
+  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as KvU64).value, 8n);
   const v3WindowKey = ["uos_ai", "api_key_usage", "v3", "window", id, "v3:60000", now] as const;
   assert.equal((store.get(keyToString(v3WindowKey)) as { committed_requests?: number }).committed_requests, 8);
   const ledgerKey = ["uos_ai", "paid_fallback", "ledger", id, now, "pending"] as const;
@@ -817,14 +814,14 @@ Deno.test("KV incident migration resumes concurrent phase one and retains postde
   const phaseOneHashPolicy = store.get(phaseOneHashPolicyKey) as Record<string, unknown>;
   store.set(phaseOneIdPolicyKey, { ...phaseOneIdPolicy, usage_requests: 5 });
   store.set(phaseOneHashPolicyKey, { ...phaseOneHashPolicy, usage_requests: 5 });
-  store.set(keyToString(unsafeCurrentCounterKey), new Deno.KvU64(9n));
+  store.set(keyToString(unsafeCurrentCounterKey), new KvU64(9n));
 
   const concurrentPhaseOne = await migrateKvReadIncidentV2(makeKvStub(store));
   assert.equal(concurrentPhaseOne.handoff_phase, "predeploy_seed");
   assert.equal(concurrentPhaseOne.bounded_baselines_created, 0);
   assert.equal(concurrentPhaseOne.bounded_baselines_reconciled, 0);
   assert.equal(concurrentPhaseOne.legacy_usage_delta_applied, 1);
-  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as Deno.KvU64).value, 9n);
+  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as KvU64).value, 9n);
   const caughtUpBaseline = store.get(keyToString(currentBaselineKey)) as Record<string, unknown>;
   assert.equal(caughtUpBaseline.last_legacy_usage_requests, 9);
   assert.equal(caughtUpBaseline.reconciled_at_ms, null);
@@ -844,13 +841,13 @@ Deno.test("KV incident migration resumes concurrent phase one and retains postde
   const initialHashPolicy = store.get(hashPolicyKey) as Record<string, unknown>;
   store.set(idPolicyKey, { ...initialIdPolicy, usage_requests: 7 });
   store.set(hashPolicyKey, { ...initialHashPolicy, usage_requests: 7 });
-  store.set(keyToString(unsafeCurrentCounterKey), new Deno.KvU64(11n));
+  store.set(keyToString(unsafeCurrentCounterKey), new KvU64(11n));
 
   // Once phase one has installed the durable marker, a post-deploy migration
   // must not delete a counter created for a newer window or an older baseline.
   const concurrentlyCreatedNextWindowCounterKey = ["uos_ai", "api_key_usage", "v2", id, "60000", now + 60_000] as const;
   const retainedPriorBaselineKey = [...KV_READ_INCIDENT_V2_MIGRATION_KEY, "api_key_usage_baseline", id, "legacy-policy", now - 60_000] as const;
-  store.set(keyToString(concurrentlyCreatedNextWindowCounterKey), new Deno.KvU64(2n));
+  store.set(keyToString(concurrentlyCreatedNextWindowCounterKey), new KvU64(2n));
   store.set(keyToString(retainedPriorBaselineKey), {
     version: 1,
     key_id: id,
@@ -869,15 +866,15 @@ Deno.test("KV incident migration resumes concurrent phase one and retains postde
   assert.equal(rerun.legacy_usage_delta_applied, 2);
   assert.equal(rerun.paid_fallback_records, 1);
   assert.deepEqual(store.get(keyToString(ledgerKey)), reconciledLedger);
-  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as Deno.KvU64).value, 11n);
+  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as KvU64).value, 11n);
   assert.equal((store.get(keyToString(v3WindowKey)) as { committed_requests?: number }).committed_requests, 11);
-  assert.equal((store.get(keyToString(concurrentlyCreatedNextWindowCounterKey)) as Deno.KvU64).value, 2n);
+  assert.equal((store.get(keyToString(concurrentlyCreatedNextWindowCounterKey)) as KvU64).value, 2n);
   assert.equal(store.has(keyToString(retainedPriorBaselineKey)), true);
 
   const repeated = await migrateKvReadIncidentV2(makeKvStub(store));
   assert.equal(repeated.handoff_phase, "postdeploy_reconcile");
   assert.equal(repeated.legacy_usage_delta_applied, 0);
-  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as Deno.KvU64).value, 11n);
+  assert.equal((store.get(keyToString(unsafeCurrentCounterKey)) as KvU64).value, 11n);
   const reconciledValidation = await validateKvMigrationTarget(makeKvStub(store));
   assert.deepEqual(reconciledValidation.errors, []);
   assert.equal(reconciledValidation.counts.api_key_bounded_counters_v2, 4);
@@ -909,7 +906,7 @@ Deno.test("KV incident migration resumes concurrent phase one and retains postde
   assert.match(drifted.errors.join("\n"), /hash policy is missing or inconsistent/);
 });
 
-Deno.test("KV incident migration starts a fresh counter after an expired legacy window and rejects malformed policy", async () => {
+test("KV incident migration starts a fresh counter after an expired legacy window and rejects malformed policy", async () => {
   const store = new Map<string, unknown>();
   const now = Date.now();
   const id = "expired-bounded-key";
@@ -949,7 +946,7 @@ Deno.test("KV incident migration starts a fresh counter after an expired legacy 
   });
   store.set(keyToString(["ubq_ai", "api_keys", "hash", hash]), sharedPolicy);
   const expiredCounterKey = ["uos_ai", "api_key_usage", "v2", id, `10:${windowMs}:${resetAtMs}`, resetAtMs - windowMs] as const;
-  store.set(keyToString(expiredCounterKey), new Deno.KvU64(99n));
+  store.set(keyToString(expiredCounterKey), new KvU64(99n));
 
   await migrateKvReadIncidentV2(makeKvStub(store));
 
@@ -969,7 +966,7 @@ Deno.test("KV incident migration starts a fresh counter after an expired legacy 
   store.set(idPolicyKey, { ...migratedIdPolicy, usage_requests: 2, usage_reset_at_ms: changedResetAtMs });
   store.set(hashPolicyKey, { ...migratedHashPolicy, usage_requests: 2, usage_reset_at_ms: changedResetAtMs });
   const rolledCounterKey = ["uos_ai", "api_key_usage", "v2", id, String(windowMs), now] as const;
-  store.set(keyToString(rolledCounterKey), new Deno.KvU64(3n));
+  store.set(keyToString(rolledCounterKey), new KvU64(3n));
   const staleBaseline = await validateKvMigrationTarget(makeKvStub(store));
   assert.match(staleBaseline.errors.join("\n"), /baseline is missing, stale, or invalid/);
   const rolled = await migrateKvReadIncidentV2(makeKvStub(store));
@@ -977,12 +974,12 @@ Deno.test("KV incident migration starts a fresh counter after an expired legacy 
   assert.equal(rolled.bounded_baselines_created, 1);
   assert.equal(rolled.bounded_baselines_reconciled, 1);
   assert.equal(rolled.legacy_usage_delta_applied, 3);
-  assert.equal((store.get(keyToString(rolledCounterKey)) as Deno.KvU64).value, 3n);
+  assert.equal((store.get(keyToString(rolledCounterKey)) as KvU64).value, 3n);
   const rolledValidation = await validateKvMigrationTarget(makeKvStub(store));
   assert.deepEqual(rolledValidation.errors, []);
   const repeatedRoll = await migrateKvReadIncidentV2(makeKvStub(store));
   assert.equal(repeatedRoll.legacy_usage_delta_applied, 0);
-  assert.equal((store.get(keyToString(rolledCounterKey)) as Deno.KvU64).value, 3n);
+  assert.equal((store.get(keyToString(rolledCounterKey)) as KvU64).value, 3n);
 
   store.set(idPolicyKey, { ...(store.get(idPolicyKey) as Record<string, unknown>), usage_limit_requests: "bad" });
   store.set(hashPolicyKey, {
@@ -995,7 +992,7 @@ Deno.test("KV incident migration starts a fresh counter after an expired legacy 
   await assert.rejects(() => migrateKvReadIncidentV2(makeKvStub(store)), /API key policy validation failed/);
 });
 
-Deno.test("KV incident validation retains historical revoked V3 windows", async () => {
+test("KV incident validation retains historical revoked V3 windows", async () => {
   const store = new Map<string, unknown>();
   const now = Date.now();
   const id = "revoked-bounded-key";
@@ -1049,7 +1046,7 @@ Deno.test("KV incident validation retains historical revoked V3 windows", async 
   assert.deepEqual(validation.errors, []);
 });
 
-Deno.test("KV migration preserves Codex reset usage fences and agrees with validation counts", async () => {
+test("KV migration preserves Codex reset usage fences and agrees with validation counts", async () => {
   const store = new Map<string, unknown>();
   const disabledHash = "reset-disabled-account-hash";
   const enabledHash = "reset-enabled-account-hash";
@@ -1093,7 +1090,7 @@ Deno.test("KV migration preserves Codex reset usage fences and agrees with valid
   assert.equal(validation.counts.codex_reset_usage, 2);
 });
 
-Deno.test("KV migration validation rejects malformed Codex reset usage rows", async () => {
+test("KV migration validation rejects malformed Codex reset usage rows", async () => {
   const store = new Map<string, unknown>();
   store.set(keyToString(["uos_ai", "codex_reset_usage", "bad_key"]), { enabled: false });
   store.set(keyToString(["uos_ai", "codex_reset_usage", "account", "v1", "bad_value"]), { enabled: "not_a_boolean" });

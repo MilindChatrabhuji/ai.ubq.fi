@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
+import { runSequence } from "./helpers/sequence.ts";
 import assert from "node:assert/strict";
 
 import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/provider/lithos.ts";
@@ -19,8 +23,8 @@ import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps this suite on the credential-gated providers it owns, and keeps the
 // discovery fetches from reaching a network the test task does not allow.
-Deno.env.delete("METERED_API_KEY");
-Deno.env.delete("SURPLUS_API_KEY");
+Reflect.deleteProperty(process.env, "METERED_API_KEY");
+Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
 
 const LITHOS_API_KEY_ENV = "LITHOSAI_API_KEY";
 const LITHOS_API_KEY = "lith_sk_fixture";
@@ -31,7 +35,7 @@ const LITHOS_BASE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
 /** The Ultra tier's sibling: same weights, its own rate-limit bucket, and the long-context-safe target. */
 const LITHOS_SIBLING_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-fast";
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 /**
  * Minimal Deno.Kv stand-in. Every path these handlers read (the provider
@@ -40,15 +44,15 @@ const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
  * opened.
  */
 const kvStore = new Map<string, unknown>();
-type KvOp = { type: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+type KvOp = { type: "set" | "delete"; key: KvKey; value?: unknown };
 const kvStub = {
-  get: (key: Deno.KvKey) =>
+  get: (key: KvKey) =>
     Promise.resolve({
       key,
       value: kvStore.get(keyOf(key)) ?? null,
       versionstamp: kvStore.has(keyOf(key)) ? "00000000000000000001" : null,
-    } as Deno.KvEntryMaybe<unknown>),
-  getMany: (keys: readonly Deno.KvKey[]) =>
+    } as KvEntryMaybe<unknown>),
+  getMany: (keys: readonly KvKey[]) =>
     Promise.resolve(
       keys.map((key) => ({
         key,
@@ -56,11 +60,11 @@ const kvStub = {
         versionstamp: kvStore.has(keyOf(key)) ? "00000000000000000001" : null,
       }))
     ),
-  set: (key: Deno.KvKey, value: unknown) => {
+  set: (key: KvKey, value: unknown) => {
     kvStore.set(keyOf(key), value);
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyOf(key));
     return Promise.resolve();
   },
@@ -72,11 +76,11 @@ const kvStub = {
     const ops: KvOp[] = [];
     const chain = {
       check: () => chain,
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         ops.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ type: "delete", key });
         return chain;
       },
@@ -91,7 +95,7 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
+} as unknown as Kv;
 
 setKvForTest(kvStub);
 
@@ -116,7 +120,7 @@ const withUpstream = async <T>(
 ): Promise<UpstreamResult<T>> => {
   const calls: UpstreamCall[] = [];
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);
     const call: UpstreamCall = {
       url,
@@ -125,7 +129,7 @@ const withUpstream = async <T>(
     };
     calls.push(call);
     return Promise.resolve(handler(call, calls));
-  };
+  });
   try {
     return { result: await run(), calls };
   } finally {
@@ -221,40 +225,27 @@ const lithosCompletion = (message: Record<string, unknown>, model: string = LITH
 });
 
 const withLithosKey = async (run: () => Promise<void>): Promise<void> => {
-  // The credential gate can only be exercised through the environment. A test
-  // task whose `--allow-env` allowlist omits this variable gets an explicit
-  // remediation instead of a bare NotCapable from the first `Deno.env` call.
-  try {
-    Deno.env.get(LITHOS_API_KEY_ENV);
-  } catch {
-    throw new Error(`the test task's --allow-env allowlist must include ${LITHOS_API_KEY_ENV} for the LithosAI credential-gate assertions`);
-  }
-  const previous = Deno.env.get(LITHOS_API_KEY_ENV);
-  Deno.env.set(LITHOS_API_KEY_ENV, LITHOS_API_KEY);
+  const previous = process.env[LITHOS_API_KEY_ENV];
+  process.env[LITHOS_API_KEY_ENV] = LITHOS_API_KEY;
   try {
     await run();
   } finally {
-    if (previous === undefined) Deno.env.delete(LITHOS_API_KEY_ENV);
-    else Deno.env.set(LITHOS_API_KEY_ENV, previous);
+    if (previous === undefined) Reflect.deleteProperty(process.env, LITHOS_API_KEY_ENV);
+    else process.env[LITHOS_API_KEY_ENV] = previous;
   }
 };
 
 const withoutLithosKey = async (run: () => Promise<void>): Promise<void> => {
-  try {
-    Deno.env.get(LITHOS_API_KEY_ENV);
-  } catch {
-    throw new Error(`the test task's --allow-env allowlist must include ${LITHOS_API_KEY_ENV} for the LithosAI credential-gate assertions`);
-  }
-  const previous = Deno.env.get(LITHOS_API_KEY_ENV);
-  Deno.env.delete(LITHOS_API_KEY_ENV);
+  const previous = process.env[LITHOS_API_KEY_ENV];
+  Reflect.deleteProperty(process.env, LITHOS_API_KEY_ENV);
   try {
     await run();
   } finally {
-    if (previous !== undefined) Deno.env.set(LITHOS_API_KEY_ENV, previous);
+    if (previous !== undefined) process.env[LITHOS_API_KEY_ENV] = previous;
   }
 };
 
-Deno.test("lithos wiring: dispatches Chat Completions to the vendor with the bearer key and a verbatim reasoning_effort", async () => {
+test("lithos wiring: dispatches Chat Completions to the vendor with the bearer key and a verbatim reasoning_effort", async () => {
   await withLithosKey(async () => {
     const messages = [{ role: "user", content: "Say OK." }];
     const { result: response, calls } = await withUpstream(
@@ -307,7 +298,7 @@ Deno.test("lithos wiring: dispatches Chat Completions to the vendor with the bea
   });
 });
 
-Deno.test("lithos wiring: relays the vendor's Chat stream frames and its unconditional usage", async () => {
+test("lithos wiring: relays the vendor's Chat stream frames and its unconditional usage", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const chunk = (delta: Record<string, unknown>, choices?: Record<string, unknown>[]) => ({
@@ -379,7 +370,7 @@ Deno.test("lithos wiring: relays the vendor's Chat stream frames and its uncondi
   });
 });
 
-Deno.test("lithos wiring: streams the translated Responses event sequence", async () => {
+test("lithos wiring: streams the translated Responses event sequence", async () => {
   await withLithosKey(async () => {
     const frames = [
       {
@@ -475,7 +466,7 @@ Deno.test("lithos wiring: streams the translated Responses event sequence", asyn
   });
 });
 
-Deno.test("lithos wiring: serves /v1/responses through the shared profile translation", async () => {
+test("lithos wiring: serves /v1/responses through the shared profile translation", async () => {
   await withLithosKey(async () => {
     const { result: response, calls } = await withUpstream(
       () => Response.json(lithosCompletion({ role: "assistant", content: "Paris", reasoning_content: "Considered it.", tool_calls: null })),
@@ -548,7 +539,7 @@ Deno.test("lithos wiring: serves /v1/responses through the shared profile transl
   });
 });
 
-Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async () => {
+test("lithos wiring: maps the vendor's refusal semantics distinctly", async () => {
   await withLithosKey(async () => {
     const message = [{ role: "user", content: "hi" }];
 
@@ -660,7 +651,7 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
   });
 });
 
-Deno.test("lithos wiring: the catalog advertises eight addressable ids only while the key is configured", async () => {
+test("lithos wiring: the catalog advertises eight addressable ids only while the key is configured", async () => {
   await withLithosKey(async () => {
     const snapshot = await withUpstream(
       () => new Response("{}", { status: 503 }),
@@ -738,7 +729,7 @@ Deno.test("lithos wiring: the catalog advertises eight addressable ids only whil
   });
 });
 
-Deno.test("lithos rate-limit waits follow the vendor's own header precedence", () => {
+test("lithos rate-limit waits follow the vendor's own header precedence", () => {
   const wait = (headers: Record<string, string>, nowMs = 1_000) => lithosRateLimitWait(new Headers(headers), nowMs);
   // `retry-after-ms` wins over every other hint, then `retry-after`, then the
   // later of the two per-minute refill deltas.
@@ -757,7 +748,7 @@ Deno.test("lithos rate-limit waits follow the vendor's own header precedence", (
   assert.equal(wait({}), null);
 });
 
-Deno.test("lithos rate-limit numeric headers reject nonfinite waits and retain finite precedence", () => {
+test("lithos rate-limit numeric headers reject nonfinite waits and retain finite precedence", () => {
   const oversizedDigits = "9".repeat(309);
   const overflowSeconds = "9".repeat(308);
   const wait = (headers: Record<string, string>) => lithosRateLimitWait(new Headers(headers), 1_000);
@@ -779,7 +770,7 @@ Deno.test("lithos rate-limit numeric headers reject nonfinite waits and retain f
   assert.deepEqual(wait({ "retry-after-ms": "90000", "retry-after": "120" }), { waitMs: 90_000, source: "retry-after-ms" });
 });
 
-Deno.test("lithos rate-limit numeric windows reject nonfinite deadlines and keep finite expiry", () => {
+test("lithos rate-limit numeric windows reject nonfinite deadlines and keep finite expiry", () => {
   clearLithosFailoverWindows();
   try {
     for (const waitMs of [Infinity, -Infinity, NaN]) {
@@ -799,7 +790,7 @@ Deno.test("lithos rate-limit numeric windows reject nonfinite deadlines and keep
   }
 });
 
-Deno.test("lithos refusal windows select the highest recovered rung at its own deadline", () => {
+test("lithos refusal windows select the highest recovered rung at its own deadline", () => {
   clearLithosFailoverWindows();
   try {
     lithosOpenFailoverWindow(LITHOS_MODEL, 1_000, 60_000, LITHOS_SIBLING_MODEL);
@@ -823,72 +814,73 @@ Deno.test("lithos refusal windows select the highest recovered rung at its own d
   }
 });
 
-Deno.test("lithos refusal windows preserve each rung's own reset in handler routing", async (t) => {
-  await withLithosKey(async () => {
-    const originalNow = Date.now;
-    try {
-      for (const waitMs of [1_000, 120_000]) {
-        await t.step(`60s then ${waitMs}ms refusal`, async () => {
-          clearLithosFailoverWindows();
-          const initialNowMs = originalNow();
-          let nowMs = initialNowMs;
-          Date.now = () => nowMs;
-          const message = [{ role: "user", content: "hi" }];
-          const first = await withUpstream(
-            (_call, calls) => {
-              if (calls.length === 1) return lithosRateLimitRefusal("60000");
-              if (calls.length === 2) {
-                nowMs = initialNowMs + 1_000;
-                return lithosRateLimitRefusal(String(waitMs));
-              }
-              return Response.json(lithosCompletion({ role: "assistant", content: "base-served" }, LITHOS_BASE_MODEL));
-            },
-            () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-overlap"))
-          );
-          assert.deepEqual(
-            first.calls.map((call) => call.body.model),
-            [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_BASE_MODEL]
-          );
-          assert.equal(first.result.status, 200);
-          await first.result.json();
+test("lithos refusal windows preserve each rung's own reset in handler routing", async () =>
+  runSequence(async (step) => {
+    await withLithosKey(async () => {
+      const originalNow = Date.now;
+      try {
+        for (const waitMs of [1_000, 120_000]) {
+          await step(`60s then ${waitMs}ms refusal`, async () => {
+            clearLithosFailoverWindows();
+            const initialNowMs = originalNow();
+            let nowMs = initialNowMs;
+            Date.now = () => nowMs;
+            const message = [{ role: "user", content: "hi" }];
+            const first = await withUpstream(
+              (_call, calls) => {
+                if (calls.length === 1) return lithosRateLimitRefusal("60000");
+                if (calls.length === 2) {
+                  nowMs = initialNowMs + 1_000;
+                  return lithosRateLimitRefusal(String(waitMs));
+                }
+                return Response.json(lithosCompletion({ role: "assistant", content: "base-served" }, LITHOS_BASE_MODEL));
+              },
+              () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-overlap"))
+            );
+            assert.deepEqual(
+              first.calls.map((call) => call.body.model),
+              [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_BASE_MODEL]
+            );
+            assert.equal(first.result.status, 200);
+            await first.result.json();
 
-          nowMs = initialNowMs + 2_001;
-          const second = await withUpstream(
-            (call) => Response.json(lithosCompletion({ role: "assistant", content: "served" }, String(call.body.model))),
-            () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-retained"))
-          );
-          assert.deepEqual(
-            second.calls.map((call) => call.body.model),
-            [waitMs === 1_000 ? LITHOS_SIBLING_MODEL : LITHOS_BASE_MODEL],
-            "the highest recovered rung is selected"
-          );
-          assert.equal(second.result.status, 200);
-          await second.result.json();
+            nowMs = initialNowMs + 2_001;
+            const second = await withUpstream(
+              (call) => Response.json(lithosCompletion({ role: "assistant", content: "served" }, String(call.body.model))),
+              () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-retained"))
+            );
+            assert.deepEqual(
+              second.calls.map((call) => call.body.model),
+              [waitMs === 1_000 ? LITHOS_SIBLING_MODEL : LITHOS_BASE_MODEL],
+              "the highest recovered rung is selected"
+            );
+            assert.equal(second.result.status, 200);
+            await second.result.json();
 
-          const resetAtMs = initialNowMs + 60_000;
-          assert.equal(lithosFailoverTargetAt(LITHOS_MODEL, resetAtMs - 1), second.calls[0].body.model);
-          nowMs = resetAtMs;
-          const third = await withUpstream(
-            () => Response.json(lithosCompletion({ role: "assistant", content: "ultra-after-reset" })),
-            () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-expired"))
-          );
-          assert.deepEqual(
-            third.calls.map((call) => call.body.model),
-            [LITHOS_MODEL],
-            "the requested tier resumes at its own reset"
-          );
-          assert.equal(third.result.status, 200);
-          await third.result.json();
-        });
+            const resetAtMs = initialNowMs + 60_000;
+            assert.equal(lithosFailoverTargetAt(LITHOS_MODEL, resetAtMs - 1), second.calls[0].body.model);
+            nowMs = resetAtMs;
+            const third = await withUpstream(
+              () => Response.json(lithosCompletion({ role: "assistant", content: "ultra-after-reset" })),
+              () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-expired"))
+            );
+            assert.deepEqual(
+              third.calls.map((call) => call.body.model),
+              [LITHOS_MODEL],
+              "the requested tier resumes at its own reset"
+            );
+            assert.equal(third.result.status, 200);
+            await third.result.json();
+          });
+        }
+      } finally {
+        Date.now = originalNow;
+        clearLithosFailoverWindows();
       }
-    } finally {
-      Date.now = originalNow;
-      clearLithosFailoverWindows();
-    }
-  });
-});
+    });
+  }));
 
-Deno.test("lithos rate-limit snapshots capture the vendor's own budgets, bounded", () => {
+test("lithos rate-limit snapshots capture the vendor's own budgets, bounded", () => {
   const snapshot = lithosRateLimitSnapshot(
     new Headers({
       "x-ratelimit-limit-tokens": "4000000",
@@ -914,7 +906,7 @@ Deno.test("lithos rate-limit snapshots capture the vendor's own budgets, bounded
   assert.equal(bare.retry_after, null);
 });
 
-Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's own bucket", async () => {
+test("lithos wiring: an Ultra refusal fails over once to the sibling tier's own bucket", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
@@ -945,7 +937,7 @@ Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's
   });
 });
 
-Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", async () => {
+test("lithos wiring: a refusal on both tiers is relayed without waiting", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
@@ -980,7 +972,7 @@ Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", a
   });
 });
 
-Deno.test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own window, then the requested tier answers", async () => {
+test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own window, then the requested tier answers", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1009,60 +1001,61 @@ Deno.test("lithos wiring: a refusal on both tiers is absorbed by the vendor's ow
   });
 });
 
-Deno.test("lithos wiring: retry waits preserve deadline and caller cancellation without dispatching again", async (t) => {
-  await withLithosKey(async () => {
-    for (const route of ["chat", "responses"]) {
-      for (const timing of ["already", "during"]) {
-        for (const kind of ["deadline", "cancellation"]) {
-          await t.step(`${route} ${timing} ${kind}`, async () => {
-            const controller = new AbortController();
-            const reason = new DOMException("Retry wait fixture", kind === "deadline" ? "TimeoutError" : "AbortError");
-            const originalTimeout = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
-            const abort = () => {
-              controller.abort(reason);
-            };
-            // Inject the gateway deadline independently of the caller's signal.
-            if (kind === "deadline") AbortSignal.timeout = () => controller.signal;
-            try {
-              const request = new Request(
-                route === "chat"
-                  ? chatRequest({ model: LITHOS_BASE_MODEL, messages: [{ role: "user", content: "hi" }], stream: false })
-                  : responsesRequest({ model: LITHOS_BASE_MODEL, input: "hi", stream: false }),
-                { signal: kind === "cancellation" ? controller.signal : null }
-              );
-              const { result, calls } = await withUpstream(
-                () => {
-                  if (timing === "already") abort();
-                  else setTimeout(abort, 0);
-                  return lithosRateLimitRefusal("10000");
-                },
-                () =>
+test("lithos wiring: retry waits preserve deadline and caller cancellation without dispatching again", async () =>
+  runSequence(async (step) => {
+    await withLithosKey(async () => {
+      for (const route of ["chat", "responses"]) {
+        for (const timing of ["already", "during"]) {
+          for (const kind of ["deadline", "cancellation"]) {
+            await step(`${route} ${timing} ${kind}`, async () => {
+              const controller = new AbortController();
+              const reason = new DOMException("Retry wait fixture", kind === "deadline" ? "TimeoutError" : "AbortError");
+              const originalTimeout = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
+              const abort = () => {
+                controller.abort(reason);
+              };
+              // Inject the gateway deadline independently of the caller's signal.
+              if (kind === "deadline") AbortSignal.timeout = () => controller.signal;
+              try {
+                const request = new Request(
                   route === "chat"
-                    ? handleChatCompletions(request, usageContext(`lithos-wait-${route}-${timing}-${kind}`))
-                    : handleResponses(request, usageContext(`lithos-wait-${route}-${timing}-${kind}`))
-              );
-              assert.equal(result.status, kind === "deadline" ? 504 : 499);
-              const body = (await result.json()) as { error?: { code?: string } };
-              assert.equal(body.error?.code, kind === "deadline" ? "gateway_timeout" : "request_cancelled");
-              assert.equal(calls.length, 1, "the refused request is never retried after abort");
-              assert.equal(calls[0].url, LITHOS_CHAT_COMPLETIONS_URL);
-              const telemetry = getResponseTelemetry(result);
-              if (telemetry === null) throw new Error("The retry-wait terminal carries no telemetry.");
-              assert.equal(telemetry.failureKind, kind);
-              assert.equal(telemetry.streamTerminalType, kind === "deadline" ? "deadline" : "cancelled");
-              assert.equal(telemetry.rateLimitWaitMs, 10_000, "the handler reached the vendor retry wait");
-              await assert.rejects(waitForLithosRetry(10_000, controller.signal), (error) => error === reason);
-            } finally {
-              if (originalTimeout !== undefined) Object.defineProperty(AbortSignal, "timeout", originalTimeout);
-            }
-          });
+                    ? chatRequest({ model: LITHOS_BASE_MODEL, messages: [{ role: "user", content: "hi" }], stream: false })
+                    : responsesRequest({ model: LITHOS_BASE_MODEL, input: "hi", stream: false }),
+                  { signal: kind === "cancellation" ? controller.signal : null }
+                );
+                const { result, calls } = await withUpstream(
+                  () => {
+                    if (timing === "already") abort();
+                    else setTimeout(abort, 0);
+                    return lithosRateLimitRefusal("10000");
+                  },
+                  () =>
+                    route === "chat"
+                      ? handleChatCompletions(request, usageContext(`lithos-wait-${route}-${timing}-${kind}`))
+                      : handleResponses(request, usageContext(`lithos-wait-${route}-${timing}-${kind}`))
+                );
+                assert.equal(result.status, kind === "deadline" ? 504 : 499);
+                const body = (await result.json()) as { error?: { code?: string } };
+                assert.equal(body.error?.code, kind === "deadline" ? "gateway_timeout" : "request_cancelled");
+                assert.equal(calls.length, 1, "the refused request is never retried after abort");
+                assert.equal(calls[0].url, LITHOS_CHAT_COMPLETIONS_URL);
+                const telemetry = getResponseTelemetry(result);
+                if (telemetry === null) throw new Error("The retry-wait terminal carries no telemetry.");
+                assert.equal(telemetry.failureKind, kind);
+                assert.equal(telemetry.streamTerminalType, kind === "deadline" ? "deadline" : "cancelled");
+                assert.equal(telemetry.rateLimitWaitMs, 10_000, "the handler reached the vendor retry wait");
+                await assert.rejects(waitForLithosRetry(10_000, controller.signal), (error) => error === reason);
+              } finally {
+                if (originalTimeout !== undefined) Object.defineProperty(AbortSignal, "timeout", originalTimeout);
+              }
+            });
+          }
         }
       }
-    }
-  });
-});
+    });
+  }));
 
-Deno.test("lithos wiring: a window beyond the wait cap is relayed instead of absorbed", async () => {
+test("lithos wiring: a window beyond the wait cap is relayed instead of absorbed", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1086,7 +1079,7 @@ Deno.test("lithos wiring: a window beyond the wait cap is relayed instead of abs
   });
 });
 
-Deno.test("lithos wiring: a streamed absorb spends the wider stream budget beyond two waits", async () => {
+test("lithos wiring: a streamed absorb spends the wider stream budget beyond two waits", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1138,7 +1131,7 @@ Deno.test("lithos wiring: a streamed absorb spends the wider stream budget beyon
   });
 });
 
-Deno.test("lithos wiring: a streamed absorb that outlives the stream budget reports the refusal in-band", async () => {
+test("lithos wiring: a streamed absorb that outlives the stream budget reports the refusal in-band", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1171,7 +1164,7 @@ Deno.test("lithos wiring: a streamed absorb that outlives the stream budget repo
   });
 });
 
-Deno.test("lithos wiring: a streamed Chat absorb spends the wider stream budget beyond two waits", async () => {
+test("lithos wiring: a streamed Chat absorb spends the wider stream budget beyond two waits", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1220,7 +1213,7 @@ Deno.test("lithos wiring: a streamed Chat absorb spends the wider stream budget 
   });
 });
 
-Deno.test("lithos wiring: a streamed Chat absorb that outlives the stream budget reports the refusal in-band", async () => {
+test("lithos wiring: a streamed Chat absorb that outlives the stream budget reports the refusal in-band", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1249,7 +1242,7 @@ Deno.test("lithos wiring: a streamed Chat absorb that outlives the stream budget
   });
 });
 
-Deno.test("lithos wiring: an Ultra refusal walks the whole ladder to the family's normal tier", async () => {
+test("lithos wiring: an Ultra refusal walks the whole ladder to the family's normal tier", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1282,7 +1275,7 @@ Deno.test("lithos wiring: an Ultra refusal walks the whole ladder to the family'
   });
 });
 
-Deno.test("lithos wiring: a fast refusal deepens the open window to the normal tier for later requests", async () => {
+test("lithos wiring: a fast refusal deepens the open window to the normal tier for later requests", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1315,7 +1308,7 @@ Deno.test("lithos wiring: a fast refusal deepens the open window to the normal t
   });
 });
 
-Deno.test("lithos wiring: a streamed refusal reports in-band instead of an HTTP 429 status", async () => {
+test("lithos wiring: a streamed refusal reports in-band instead of an HTTP 429 status", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const refusal = () =>
@@ -1342,7 +1335,7 @@ Deno.test("lithos wiring: a streamed refusal reports in-band instead of an HTTP 
   });
 });
 
-Deno.test("lithos wiring: a streamed refusal on both tiers is absorbed by the vendor's own window, then the requested tier streams", async () => {
+test("lithos wiring: a streamed refusal on both tiers is absorbed by the vendor's own window, then the requested tier streams", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1412,7 +1405,7 @@ Deno.test("lithos wiring: a streamed refusal on both tiers is absorbed by the ve
   });
 });
 
-Deno.test("lithos wiring: only the mapped sibling may answer an Ultra request with a different model", async () => {
+test("lithos wiring: only the mapped sibling may answer an Ultra request with a different model", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
@@ -1429,7 +1422,7 @@ Deno.test("lithos wiring: only the mapped sibling may answer an Ultra request wi
   });
 });
 
-Deno.test("lithos wiring: a refused Ultra tier serves from the sibling until the vendor's reset instant passes", async () => {
+test("lithos wiring: a refused Ultra tier serves from the sibling until the vendor's reset instant passes", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1477,7 +1470,7 @@ Deno.test("lithos wiring: a refused Ultra tier serves from the sibling until the
   });
 });
 
-Deno.test("lithos wiring: a refusal on a tier with no configured sibling opens no window", async () => {
+test("lithos wiring: a refusal on a tier with no configured sibling opens no window", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
