@@ -6,7 +6,7 @@
  * and one fake upstream that must never see a marked compaction request. Jev is
  * injected, so this run is credential-free and makes no external call: it proves
  * the gateway wiring, the local answer, the ordinary-route passthrough and the
- * fail-closed paths. Real Jev and the stock Codex client are a separate
+ * ordinary provider fallback when no local decision is possible. Real Jev and the stock Codex client are a separate
  * acceptance run against a served candidate.
  *
  * Run from the worktree root (the script sets the existing fixture dummy
@@ -61,9 +61,13 @@ type Report = {
   upstream_calls: number;
   jev_calls: number;
   jev_questions: number;
-  refused_status: number;
-  refusal_upstream_calls: number;
-  refusal_settled_incomplete: boolean;
+  fallback_status: number;
+  fallback_upstream_calls: number;
+  fallback_terminal_records: number;
+  fallback_completed: boolean;
+  fallback_committed_requests: number;
+  fallback_reserved_requests: number;
+  fallback_reservation_state: string;
   total_ms: number;
 };
 
@@ -85,9 +89,13 @@ const report: Report = {
   upstream_calls: 0,
   jev_calls: 0,
   jev_questions: 0,
-  refused_status: 0,
-  refusal_upstream_calls: 0,
-  refusal_settled_incomplete: false,
+  fallback_status: 0,
+  fallback_upstream_calls: 0,
+  fallback_terminal_records: 0,
+  fallback_completed: false,
+  fallback_committed_requests: 0,
+  fallback_reserved_requests: 0,
+  fallback_reservation_state: "",
   total_ms: 0,
 };
 
@@ -208,7 +216,15 @@ const startGateway = async (): Promise<{
   setInferenceAdmissionControllerForTest(createInferenceAdmissionController({ maxActive: 8, maxWaiting: 8, maxQueueWaitMs: 500 }));
   const { default: handler } = await import("../../src/handler/index.ts");
   const { createServeHandler } = await import("../../src/handler/serve-handler.ts");
-  const gateway = serveHttp({ hostname: "127.0.0.1", port: 0 }, createServeHandler(handler));
+  const gateway = serveHttp(
+    { hostname: "127.0.0.1", port: 0 },
+    createServeHandler((request, delivery) => {
+      // Keep real loopback transport while exercising the seeded API key, never the development bypass.
+      const routedUrl = new URL(request.url);
+      routedUrl.hostname = "jev-smoke.example.invalid";
+      return handler(new Request(routedUrl, request), delivery);
+    })
+  );
   const address = await gateway.ready;
   return {
     url: `http://127.0.0.1:${address.port}`,
@@ -368,25 +384,61 @@ const main = async (): Promise<void> => {
     assert.ok(report.ordinary_upstream_saw_new_message, "the follow-up message must reach the upstream untouched");
     assert.equal(report.jev_calls, 1, "an ordinary message must not invoke Jev");
 
-    // 3. A marked compaction with nothing to decide fails closed and stays local.
-    const refused = await post(
+    // 3. No local decision is invented: the original input falls back once to the provider.
+    const jevCallsBeforeFallback = report.jev_calls;
+    const jevQuestionsBeforeFallback = report.jev_questions;
+    const beforeFallbackWindow = await gateway.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(gateway.policy), { consistency: "strong" });
+    assert.ok(beforeFallbackWindow.value, "the preceding ordinary request must have a durable usage window");
+    assert.equal(beforeFallbackWindow.value.committed_requests, 1, "only the preceding ordinary request was charged");
+    assert.equal(beforeFallbackWindow.value.reserved_requests, 0, "no reservation may precede the fallback request");
+    const fallback = await post(
       gateway.url,
       gateway.token,
       { model: "deepseek-flash", stream: true, input: [text("user", "short"), text("assistant", "short answer")] },
       METADATA
     );
-    report.refused_status = refused.status;
-    await refused.text();
-    report.refusal_upstream_calls = upstreamCalls.length;
-    assert.ok(refused.status >= 400, "a compaction with no candidates must fail closed");
-    assert.equal(upstreamCalls.length, 1, "a failed compaction must not fall back to the upstream");
-    assert.equal(report.jev_calls, 1, "a compaction with no candidates must not invoke Jev");
-    const refusedRequestId = refused.headers.get("x-uos-request-id");
-    assert.ok(refusedRequestId, "the refused compaction must carry the gateway request id");
-    await waitFor(() => terminalRecords.some((entry) => entry.request_id === refusedRequestId), "the refused compaction terminal record");
-    const refusedTerminal: Record<string, unknown> = terminalRecords.find((entry) => entry.request_id === refusedRequestId) ?? {};
-    report.refusal_settled_incomplete = refusedTerminal.semantic_output_observed !== true;
-    assert.ok(report.refusal_settled_incomplete, "a failed compaction must not settle as completed");
+    report.fallback_status = fallback.status;
+    const fallbackText = await fallback.text();
+    report.fallback_upstream_calls = upstreamCalls.length;
+    assert.equal(fallback.status, 200, "the ordinary provider must answer when no Jev candidates exist");
+    assert.equal(upstreamCalls.length, 2, "exactly one additional provider request must serve the fallback");
+    assert.equal(report.jev_calls, jevCallsBeforeFallback, "no-candidate fallback must not invoke Jev");
+    assert.equal(report.jev_questions, jevQuestionsBeforeFallback, "fallback must not invent a local decision question");
+    assert.equal(fallback.headers.get("x-jev-compaction"), null, "a failed local decision must not claim a Jev summary");
+    const fallbackUpstreamBody = upstreamCalls[1];
+    assert.ok(fallbackUpstreamBody, "the exact fallback provider request must be recorded");
+    const fallbackBody: Record<string, unknown> = JSON.parse(fallbackUpstreamBody);
+    assert.equal(fallbackBody.stream, true, "the original streaming intent must survive fallback");
+    assert.deepEqual(fallbackBody.messages, [{ role: "user", content: "short" }, { role: "assistant", content: "short answer" }], "both original input messages must survive provider conversion");
+    assert.ok(!fallbackUpstreamBody.includes(SUMMARY_MARKER), "a failed local decision must not invent or adopt a summary");
+    assert.equal((fallbackText.match(/event: response.completed\n/g) ?? []).length, 1, "one provider completion must be delivered");
+    assert.ok(fallbackText.includes("smoke ordinary answer"), "the real fake-provider answer must reach the client");
+    const fallbackRequestId = fallback.headers.get("x-uos-request-id");
+    assert.ok(fallbackRequestId, "the fallback must retain one gateway request identity");
+    await waitFor(() => terminalRecords.some((entry) => entry.request_id === fallbackRequestId), "the fallback terminal record");
+    await delay(250);
+    const fallbackTerminals = terminalRecords.filter((entry) => entry.request_id === fallbackRequestId);
+    report.fallback_terminal_records = fallbackTerminals.length;
+    assert.equal(fallbackTerminals.length, 1, "the local attempt and provider fallback must settle exactly once");
+    const fallbackTerminal: Record<string, unknown> = fallbackTerminals[0] ?? {};
+    report.fallback_completed = fallbackTerminal.semantic_output_observed === true && fallbackTerminal.stream_terminal_type === "response.completed" && fallbackTerminal.failure_kind === null;
+    assert.ok(report.fallback_completed, "the provider answer must settle as completed");
+    assert.equal(fallbackTerminal.delivery_outcome, "delivered");
+    assert.equal(fallbackTerminal.provider, "deepseek", "fallback provenance must name the actual provider");
+    assert.equal(fallbackTerminal.usage_observed, true, "provider usage must be retained");
+    assert.equal(fallbackTerminal.input_tokens, 7);
+    assert.equal(fallbackTerminal.output_tokens, 3);
+    assert.equal(fallbackTerminal.total_tokens, 10);
+    const fallbackWindow = await gateway.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(gateway.policy), { consistency: "strong" });
+    assert.ok(fallbackWindow.value, "the fallback must retain its durable usage window");
+    report.fallback_committed_requests = fallbackWindow.value.committed_requests;
+    report.fallback_reserved_requests = fallbackWindow.value.reserved_requests;
+    assert.equal(fallbackWindow.value.committed_requests, beforeFallbackWindow.value.committed_requests + 1, "fallback consumes exactly one additional request");
+    assert.equal(fallbackWindow.value.reserved_requests, 0, "fallback must leave no reserved request");
+    const fallbackUsage = await gateway.kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(gateway.policy, fallbackRequestId), { consistency: "strong" });
+    report.fallback_reservation_state = fallbackUsage.value?.state ?? "absent";
+    assert.equal(report.fallback_reservation_state, "dispatched", "the single request reservation must be consumed by provider dispatch");
+    assert.equal(fallbackUsage.value?.provider, "deepseek");
 
     report.status = "PASS";
     report.failure_class = "none";
