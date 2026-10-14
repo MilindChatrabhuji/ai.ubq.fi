@@ -1,8 +1,6 @@
 #!/bin/sh
-# Report unused files, exports, types and dependencies.
-#   scripts/knip.sh          -> report
-#   scripts/knip.sh --fix    -> apply the fixes knip can make safely
+# Preserve the configured first-party entry points and measured exceptions.
 set -eu
 . "$(dirname -- "$0")/_bootstrap.sh"
 ensure_deps
-exec "$TOOLS/node_modules/.bin/knip" "$@"
+exec bun --no-env-file "$TOOLS/node_modules/.bin/knip" "$@"

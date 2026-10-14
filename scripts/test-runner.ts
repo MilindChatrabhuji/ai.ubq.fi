@@ -1,0 +1,191 @@
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+let interrupted = false;
+const PROVIDER_ENV = [
+  "CEREBRAS_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "LITHOSAI_API_KEY",
+  "VOYAGEAI_API_KEY",
+  "METERED_API_KEY",
+  "SURPLUS_API_KEY",
+  "OPENROUTER_API_KEY",
+  "IMAGE_BASE_MODEL",
+  "GIT_REVISION",
+  "GITHUB_SHA",
+  "DENO_DEPLOYMENT_ID",
+  "DENO_DEPLOY_BUILD_ID",
+];
+const SPECIAL_MAIN_FILES = new Set([
+  "failover-stress-http.test.ts",
+  "usage-optimization-measurement.test.ts",
+  "sentinel-replay-consumer.test.ts",
+  "precommit-formatter-availability.test.ts",
+  "oss-gateway-http.test.ts",
+  "vps-deploy-guards.test.ts",
+]);
+const SENTINEL_FILES = [
+  "sentinel-replay-export",
+  "sentinel-request-capture",
+  "sentinel-incident-index",
+  "sentinel-retirement",
+  "handler-replay-background",
+  "sentinel-upstream-capture",
+  "sentinel-replay-limits",
+  "sentinel-replay-retention",
+  "sentinel-replay-retention-metadata",
+  "sentinel-replay-bootstrap-retry",
+  "sentinel-replay-staging",
+  "sentinel-replay-deletion-budget",
+];
+type Group = Readonly<{ profile: string; files: readonly string[]; environment: readonly string[] }>;
+const filesBelow = (directory: string): string[] => {
+  const found: string[] = [];
+  for (const entry of readdirSync(join(ROOT, directory), { withFileTypes: true })) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) found.push(...filesBelow(path));
+    else if (entry.isFile() && /(?:\.test|_test)\.tsx?$/.test(entry.name)) found.push(path);
+  }
+  return found.sort((left, right) => left.localeCompare(right));
+};
+const group = (profile: string, files: readonly string[], environment: readonly string[] = []): Group => ({ profile, files, environment });
+const measurement = (): Group => group("measurement", ["tests/usage-optimization-measurement.test.ts"], ["UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"]);
+const quality = (): Group => group("quality", ["scripts/quality-contract.test.ts"], ["PATH"]);
+const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
+  switch (segment) {
+    case "main":
+      return [
+        group(
+          "main",
+          filesBelow("tests").filter((path) => !SPECIAL_MAIN_FILES.has(path.split("/").at(-1) ?? "")),
+          PROVIDER_ENV
+        ),
+        group(
+          "oss",
+          ["tests/oss-gateway-http.test.ts"],
+          PROVIDER_ENV.filter((name) => !["SURPLUS_API_KEY", "METERED_API_KEY"].includes(name))
+        ),
+        measurement(),
+        group("precommit", ["tests/precommit-formatter-availability.test.ts"]),
+        group("mac-runtime", ["ops/tests/mac-runtime.test.ts"]),
+        group("mac-native-auth", ["ops/tests/mac-native-auth-permissions.test.ts"]),
+        group("mac-maintenance", ["ops/tests/mac-event-maintenance.test.ts"], ["PATH"]),
+      ];
+    case "vps":
+      return [group("vps", ["ops/tests/vps-release.test.ts", "ops/tests/release-retention.test.ts"])];
+    case "deploy-guards":
+      return [group("deploy-guards", ["tests/vps-deploy-guards.test.ts"], ["PATH"])];
+    case "measurement":
+      return [measurement()];
+    case "stress":
+      return [group("stress", ["tests/failover-stress-http.test.ts"], ["METERED_API_KEY", "SURPLUS_API_KEY"])];
+    case "e2e":
+      return [group("e2e", ["tests/live-default-model.e2e.ts"], ["BASE_URL", "UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"])];
+    case "sentinel":
+      return [
+        group(
+          "sentinel",
+          SENTINEL_FILES.map((name) => `tests/${name}.test.ts`),
+          ["SENTINEL_REPLAY_KEY"]
+        ),
+        group("sentinel-upstream", ["tests/sentinel-upstream-providers.test.ts"], ["SENTINEL_REPLAY_KEY"]),
+        group("sentinel-consumer", ["tests/sentinel-replay-consumer.test.ts"], ["DENO_DIR", "DENO_NO_UPDATE_CHECK", "PATH", "HOME"]),
+      ];
+    case "benchmark":
+      return [group("benchmark", filesBelow("benchmarks/tests"))];
+    case "quality":
+      return [quality()];
+    case "files":
+      if (explicitFiles.length === 0) throw new Error("The files segment requires explicit test paths");
+      return [group("focused", explicitFiles)];
+    default:
+      throw new Error(`Unknown test segment: ${segment}`);
+  }
+};
+const checkedPath = (path: string): string => {
+  const absolute = realpathSync(resolve(ROOT, path));
+  const local = relative(ROOT, absolute);
+  if (local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local)) throw new Error("Test paths must stay inside this checkout");
+  return absolute;
+};
+const childEnvironment = (selected: Group): Record<string, string> => {
+  const environment: Record<string, string> = { UOS_TEST_PROFILE: selected.profile };
+  // Keep only transport necessities and this segment's existing named inputs.
+  for (const name of new Set(["PATH", "TMPDIR", "SYSTEMROOT", ...selected.environment])) {
+    const value = process.env[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
+};
+const runFile = async (path: string, selected: Group): Promise<number> => {
+  if (interrupted) throw new Error("Test runner interrupted; no further files were started");
+  const child = Bun.spawn([process.execPath, "--no-env-file", "test", "--no-orphans", "--max-concurrency=1", "--timeout=300000", path], {
+    cwd: ROOT,
+    env: childEnvironment(selected),
+    stdin: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  let forceTimer: ReturnType<typeof setTimeout> | undefined;
+  const terminate = () => {
+    if (child.exitCode !== null) return;
+    child.kill("SIGTERM");
+    forceTimer = setTimeout(() => {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }, 3000);
+  };
+  const interrupt = () => {
+    interrupted = true;
+    terminate();
+  };
+  const timer = setTimeout(terminate, 600_000);
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  try {
+    return await child.exited;
+  } finally {
+    clearTimeout(timer);
+    if (forceTimer !== undefined) clearTimeout(forceTimer);
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
+  }
+};
+const main = async (): Promise<void> => {
+  if (Bun.version !== "1.4.0") throw new Error("The test runner requires Bun 1.4.0");
+  if (!existsSync(join(ROOT, "bun.lock"))) throw new Error("Restore bun.lock before running tests");
+  const [segment = "main", ...args] = process.argv.slice(2);
+  const selected = groupsFor(
+    segment,
+    args.filter((arg) => arg !== "--list")
+  );
+  if (args.includes("--list")) {
+    console.log(JSON.stringify(selected, null, 2));
+    return;
+  }
+  let files = 0;
+  let failures = 0;
+  for (const item of selected) {
+    if (item.files.length === 0) throw new Error(`Test segment ${item.profile} contains no files`);
+    for (const file of item.files) {
+      console.log(`\n==> ${item.profile}: ${file}`);
+      const code = await runFile(checkedPath(file), item);
+      files++;
+      if (code !== 0) {
+        failures++;
+        console.error(`FAILED ${file} (exit ${code})`);
+      }
+    }
+  }
+  console.log(`test:${segment}: ${files} files, ${failures} failures`);
+  process.exitCode = failures === 0 && !interrupted ? 0 : 1;
+};
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}

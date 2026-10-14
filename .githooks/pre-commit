@@ -1,53 +1,27 @@
 #!/bin/sh
-
 set -eu
-
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
-
-format_files=""
-lint_files=""
 prettier_files=""
+lint_files=""
 for file in $(git diff --cached --name-only --diff-filter=ACMR); do
   case "$file" in
-    # TypeScript and .mjs belong to Prettier now (see .prettierignore). deno fmt
-    # would rewrite them at lineWidth 120 and fight the committed style.
-    *.ts|*.tsx|*.mjs) prettier_files="$prettier_files $file" ;;
-    *.js|*.jsx|*.json|*.jsonc|*.md) format_files="$format_files $file" ;;
+    *.ts|*.tsx|*.mjs|*.js|*.jsx|*.json|*.jsonc|*.md|*.css|*.html|*.yml|*.yaml) prettier_files="$prettier_files $file" ;;
   esac
-  case "$file" in
-    *.ts|*.tsx|*.js|*.jsx) lint_files="$lint_files $file" ;;
-  esac
+  case "$file" in *.ts|*.tsx|*.js|*.jsx) lint_files="$lint_files $file" ;; esac
 done
-if [ -n "$format_files" ]; then
-  # Repair staged formatting before the remaining commit checks run.
-  deno fmt $format_files
-  git add -- $format_files
-fi
 if [ -n "$prettier_files" ]; then
-  if [ -x tools/lint/node_modules/.bin/prettier ]; then
-    # Repair staged TypeScript formatting with the owning formatter.
-    tools/lint/node_modules/.bin/prettier --write $prettier_files
-    git add -- $prettier_files
-  else
-    echo "pre-commit: Prettier is not installed; run 'cd tools/lint && bun install' (or 'npm install'), then 'sh scripts/format.sh'." >&2
-    # Fail instead of falling through: without the formatter the staged TypeScript
-    # cannot be repaired, so continuing would commit unformatted source while the
-    # hook still reported success.
+  if [ ! -x tools/lint/node_modules/.bin/prettier ]; then
+    echo "pre-commit: Prettier is not installed; run 'cd tools/lint && bun install --frozen-lockfile'." >&2
     exit 1
   fi
+  bun --no-env-file tools/lint/node_modules/.bin/prettier --write $prettier_files
+  git add -- $prettier_files
 fi
 if [ -n "$lint_files" ]; then
-  # Apply Deno's safe lint repairs to staged source before validation.
-  deno lint --fix $lint_files
-  git add -- $lint_files
-  deno lint $lint_files
+  # Validate staged source without an unbounded automatic lint rewrite.
+  sh scripts/lint.sh $lint_files
 fi
-# Check only the gateway-owned source tree. lib/codex is a pinned upstream
-# checkout and may contain formatting differences that this repository does
-# not own or need to rewrite.
-deno fmt --check serve.ts src tests scripts docs
-deno task build
-# Keep commits fast while checking the same test TypeScript program that CI
-# compiles before running. The full runtime suite remains a CI responsibility.
-deno check tests
+# Root checking includes the tests as well as every runtime and CLI entry point.
+sh scripts/format.sh --check serve.ts src tests scripts docs
+bun --no-env-file run check
