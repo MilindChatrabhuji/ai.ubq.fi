@@ -104,9 +104,12 @@ export class VpsDeploymentDriver {
       });
     });
   }
-  async sampleHealth(expected: VpsIdentity, surface: "loopback" | "public", port = 7999): Promise<VpsHealthProof> {
+  sampleHealth(expected: VpsIdentity, surface: "loopback" | "public", port = 7999): Promise<VpsHealthProof> {
+    return this._sampleHealth(expected, surface, port, 5000);
+  }
+  private async _sampleHealth(expected: VpsIdentity, surface: "loopback" | "public", port: number, timeout: number): Promise<VpsHealthProof> {
     const url = surface === "public" ? "https://ai.ubq.fi/health" : `http://127.0.0.1:${port}/health`;
-    const response = await this._deps.fetch(url, { signal: AbortSignal.timeout(5000), redirect: "error" });
+    const response = await this._deps.fetch(url, { signal: AbortSignal.timeout(timeout), redirect: "error" });
     const body: unknown = await response.json().catch(() => null);
     const exact = healthServesRelease(response, body, expected.gitSha);
     return parseVpsHealth({
@@ -119,8 +122,20 @@ export class VpsDeploymentDriver {
       originMatches: surface === "loopback" || response.headers.get("x-uos-router-origin") === "vps",
     });
   }
-  private async _proof(expected: VpsIdentity, port = 7999): Promise<{ loopback: VpsHealthProof; public: VpsHealthProof }> {
-    const loopback = await this.sampleHealth(expected, "loopback", port),
+  private async _ready(expected: VpsIdentity, port = 7999): Promise<VpsHealthProof> {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try {
+        const proof = await this._sampleHealth(expected, "loopback", port, 2000);
+        if (isHealthyVps(proof)) return proof;
+      } catch {
+        // Type=simple returns before the immutable release opens its listener.
+      }
+      if (attempt + 1 < 30) await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return refusal("identity_unavailable");
+  }
+  private async _proof(expected: VpsIdentity, port = 7999, ready?: VpsHealthProof): Promise<{ loopback: VpsHealthProof; public: VpsHealthProof }> {
+    const loopback = ready ?? (await this.sampleHealth(expected, "loopback", port)),
       publicHealth = await this.sampleHealth(expected, "public");
     if (!isHealthyVps(loopback) || !isHealthyVps(publicHealth)) return refusal("identity_unavailable");
     return { loopback, public: publicHealth };
@@ -232,8 +247,7 @@ export class VpsDeploymentDriver {
           await this._command("sudo", ["-n", "systemctl", "daemon-reload"]);
           restartAttempted = true;
           await this._command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
-          const loopback = await this.sampleHealth(receipt.candidate, "loopback");
-          if (!isHealthyVps(loopback)) return refusal("candidate_not_ready");
+          const loopback = await this._ready(receipt.candidate);
           receipt = await this._write(receipt, { phase: "candidate_ready", loopback });
         }
         if (receipt.phase === "candidate_ready") {
@@ -256,11 +270,13 @@ export class VpsDeploymentDriver {
     const selected = await this._store.selector();
     if (selected !== receipt.prior.target && selected !== `releases/${receipt.candidate.gitSha}`) return refusal("unrelated_current");
     await this._store.checkedPreviousRelease(receipt.prior.identity.gitSha, receipt.prior.target);
-    if (selected !== receipt.prior.target) {
-      await this._store.selectRelease(receipt.prior.target);
-      if (restart) await this._command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
-    }
-    const restoration = await this._proof(receipt.prior.identity, receipt.prior.listenerPort);
+    if (selected !== receipt.prior.target) await this._store.selectRelease(receipt.prior.target);
+    const priorReady = await this.sampleHealth(receipt.prior.identity, "loopback", receipt.prior.listenerPort)
+      .then(isHealthyVps)
+      .catch(() => false);
+    if (restart && !priorReady) await this._command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
+    const loopback = await this._ready(receipt.prior.identity, receipt.prior.listenerPort);
+    const restoration = await this._proof(receipt.prior.identity, receipt.prior.listenerPort, loopback);
     return this._write(receipt, { phase: "rolled_back", restoration });
   }
   restore(operation: VpsMutation): Promise<VpsReceipt> {
@@ -276,7 +292,28 @@ export class VpsDeploymentDriver {
   settle(input: VpsSettlement): Promise<VpsReceipt> {
     return this._lock(async () => {
       const receipt = await this._mutation(input);
+      if (receipt.settlement !== null) {
+        if (
+          receipt.phase !== input.disposition ||
+          canonicalVps(receipt.settlement) !== canonicalVps({ stateRevision: input.stateRevision, disposition: input.disposition, digest: input.digest })
+        )
+          return refusal("settlement_unavailable");
+        if (!(await this._deps.verifySettlement(receipt, input))) return refusal("settlement_unavailable");
+        await this._journal.releasePin(receipt);
+        return receipt;
+      }
       if (!(await this._deps.verifySettlement(receipt, input))) return refusal("settlement_unavailable");
+      if (
+        input.disposition === "failed" &&
+        receipt.intent === null &&
+        (receipt.phase !== "prepared" ||
+          receipt.sequence !== 1 ||
+          receipt.loopback !== null ||
+          receipt.public !== null ||
+          receipt.restoration !== null ||
+          receipt.error !== null)
+      )
+        return refusal("deployment_not_verified");
       if (input.disposition === "rolled_back" && receipt.phase !== "rolled_back") return refusal("restoration_missing");
       if (input.disposition === "accepted") {
         if (receipt.phase !== "ingress_applied" || !receipt.loopback || !receipt.public || !isHealthyVps(receipt.loopback) || !isHealthyVps(receipt.public))

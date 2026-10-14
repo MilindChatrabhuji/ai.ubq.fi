@@ -79,6 +79,28 @@ export async function withVpsDeployLock<T>(root: string, work: () => Promise<T>)
   }
 }
 
+function isValidReceiptSuccessor(previous: VpsReceipt, receipt: VpsReceipt): boolean {
+  if (receipt.sequence !== previous.sequence + 1 || receipt.updatedAt < previous.updatedAt) return false;
+  for (const key of ["binding", "controllerSha", "driverSha256", "candidate", "prior", "createdAt"] as const)
+    if (canonicalVps(receipt[key]) !== canonicalVps(previous[key])) return false;
+  if (terminalReceipt(previous)) return false;
+  if (previous.intent !== null && receipt.intent === null) return false;
+  if (
+    receipt.phase === "failed" &&
+    receipt.intent === null &&
+    (previous.phase !== "prepared" ||
+      previous.sequence !== 1 ||
+      previous.intent !== null ||
+      previous.loopback !== null ||
+      previous.public !== null ||
+      previous.restoration !== null ||
+      previous.settlement !== null ||
+      previous.error !== null)
+  )
+    return false;
+  return true;
+}
+
 /** All mutations are called only inside withVpsDeployLock. */
 export class VpsOperationJournal {
   constructor(readonly root: string) {}
@@ -114,10 +136,7 @@ export class VpsOperationJournal {
     if (!stat.isDirectory || stat.isSymlink || (await Deno.realPath(directory)) !== directory) return unavailable();
     const previous = await this.read(receipt.operationId);
     if (previous) {
-      if (receipt.sequence !== previous.sequence + 1 || receipt.updatedAt < previous.updatedAt) return unavailable();
-      for (const key of ["binding", "controllerSha", "driverSha256", "candidate", "prior", "createdAt"] as const)
-        if (canonicalVps(receipt[key]) !== canonicalVps(previous[key])) return unavailable();
-      if (terminalReceipt(previous)) return unavailable();
+      if (!isValidReceiptSuccessor(previous, receipt)) return unavailable();
     } else if (receipt.sequence !== 1 || receipt.phase !== "prepared") return unavailable();
     // Publish the conservative retention hold first; a crash can only retain too much.
     const pins = await readVpsPins(this.pinsPath);
