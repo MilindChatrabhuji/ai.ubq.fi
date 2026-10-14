@@ -180,6 +180,23 @@ function classifyRunFailure(
   return null;
 }
 
+const verifyWorkspace = async (task: TaskManifest, workspace: FixtureWorkspace, prepared: boolean): Promise<VerificationOutcome> => {
+  if (!prepared) return { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  try {
+    return await runVerification(task, workspace);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      ran: true,
+      passed: false,
+      command: task.verify?.command ?? null,
+      exit_code: null,
+      timed_out: false,
+      output: `verification failed: ${message}`.slice(0, 4000),
+    };
+  }
+};
+
 /** Execute one task against one adapter configuration. */
 export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts: RunOptions, runIdHint = ""): Promise<RunOneOutcome> {
   const runId = runIdHint || uniqueRunId(opts.runsRoot, adapter.configId, task.id);
@@ -260,24 +277,7 @@ export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts
   }
 
   // Verification and oracle evaluation against the final workspace state.
-  let verification: VerificationOutcome;
-  if (!prepared) {
-    verification = { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
-  } else {
-    try {
-      verification = await runVerification(task, workspace);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      verification = {
-        ran: true,
-        passed: false,
-        command: task.verify?.command ?? null,
-        exit_code: null,
-        timed_out: false,
-        output: `verification failed: ${message}`.slice(0, 4000),
-      };
-    }
-  }
+  const verification = await verifyWorkspace(task, workspace, prepared);
   record({
     type: "verify",
     at: isoNow(),

@@ -3,7 +3,6 @@ import { readdirSync } from "node:fs";
 import {
   BENCHMARK_SCHEMA_VERSION,
   SchemaError,
-  type TaskManifest,
   type TrajectoryEvent,
   validateBenchmarkResult,
   validateTaskManifest,
@@ -185,23 +184,21 @@ test("manifests: 25 tasks across all required categories", () => {
   }
 });
 
-const assertFixtureContract = (task: TaskManifest): void => {
-  if (task.fixture_revision === "") throw new Error(`${task.id}: missing fixture_revision`);
-  if (!task.verify?.command) throw new Error(`${task.id}: missing verify command`);
-  if (!task.scripted_trail?.length) throw new Error(`${task.id}: missing scripted_trail`);
-  if (task.allowed_write_scope.length === 0) throw new Error(`${task.id}: empty write scope`);
-  const head = `${FIXTURES_DIR}/${task.fixture}`;
-  const entries = [...readdirSync(head, { withFileTypes: true })];
-  if (entries.length === 0) throw new Error(`${task.id}: fixture dir ${task.fixture} is empty`);
-  // Reference adapter records exactly one tool_call event per trail step.
-  if (task.scripted_trail.length < task.min_tool_calls) {
-    throw new Error(`${task.id}: trail length ${task.scripted_trail.length} < min_tool_calls ${task.min_tool_calls}`);
-  }
-};
-
 test("manifests: every task declares fixture revision, verify command, trail, and write scope", () => {
   const tasks = loadTasks(TASKS_DIR);
-  for (const task of tasks) assertFixtureContract(task);
+  for (const task of tasks) {
+    if (task.fixture_revision === "") throw new Error(`${task.id}: missing fixture_revision`);
+    if (!task.verify?.command) throw new Error(`${task.id}: missing verify command`);
+    if (!task.scripted_trail?.length) throw new Error(`${task.id}: missing scripted_trail`);
+    if (task.allowed_write_scope.length === 0) throw new Error(`${task.id}: empty write scope`);
+    const head = `${FIXTURES_DIR}/${task.fixture}`;
+    const entries = [...readdirSync(head, { withFileTypes: true })];
+    if (entries.length === 0) throw new Error(`${task.id}: fixture dir ${task.fixture} is empty`);
+    // Reference adapter records exactly one tool_call event per trail step.
+    if (task.scripted_trail.length < task.min_tool_calls) {
+      throw new Error(`${task.id}: trail length ${task.scripted_trail.length} < min_tool_calls ${task.min_tool_calls}`);
+    }
+  }
 });
 
 test("manifests: fixture revisions match the checked-in snapshots", async () => {
