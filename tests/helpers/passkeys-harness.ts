@@ -1,3 +1,5 @@
+import { setKvForTest } from "../../src/kv.ts";
+import type { Kv, KvEntry, KvEntryMaybe, KvKey, KvListOptions, KvListSelector } from "#kv";
 // Shared harness for this suite, moved out of the original test file.
 
 // Removes every trailing `=`, equivalent to `value.replace(/=+$/g, "")` with an
@@ -12,7 +14,7 @@ const stripBase64Padding = (value: string): string => {
 // Base64url encoding of `value`.
 const encodeBase64Url = (value: string): string => stripBase64Padding(btoa(value)).replace(/\+/g, "-").replace(/\//g, "_");
 
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyToString = (key: KvKey): string => JSON.stringify(key);
 // `String(input)` cannot render every accepted `RequestInfo` shape as a request URL:
 // a `Request` stringifies to "[object Request]". The fetch stubs below assert on
 // exact request URLs, so each accepted form is normalised to its URL string.
@@ -61,49 +63,49 @@ const kvStore = new KvTestStore();
 const versionstampFor = (rawKey: string): string | null => (kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 0).padStart(20, "0") : null);
 
 const kvStub = {
-  get: async (key: Deno.KvKey) => {
+  get: async (key: KvKey) => {
     if (kvGetDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, kvGetDelayMs));
     const rawKey = keyToString(key);
     return {
       key,
       value: kvStore.has(rawKey) ? kvStore.get(rawKey) : null,
       versionstamp: versionstampFor(rawKey),
-    } as Deno.KvEntryMaybe<unknown>;
+    } as KvEntryMaybe<unknown>;
   },
-  set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+  set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+  list: function* (selector: KvListSelector, options?: KvListOptions) {
     const prefix = "prefix" in selector ? selector.prefix : [];
     let yielded = 0;
     const limit = typeof options?.limit === "number" ? options.limit : Infinity;
     for (const [rawKey, value] of kvStore.entries()) {
-      const key = JSON.parse(rawKey) as Deno.KvKey;
+      const key = JSON.parse(rawKey) as KvKey;
       const matchesPrefix = prefix.every((part, index) => key[index] === part);
       if (!matchesPrefix) continue;
-      yield { key, value, versionstamp: "00000000000000010000" } as Deno.KvEntry<unknown>;
+      yield { key, value, versionstamp: "00000000000000010000" } as KvEntry<unknown>;
       yielded += 1;
       if (yielded >= limit) break;
     }
   },
   atomic: () => {
-    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+    const ops: { type: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const chain = {
-      check: (check: { key: Deno.KvKey; versionstamp: string | null }) => {
+      check: (check: { key: KvKey; versionstamp: string | null }) => {
         checks.push(check);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ type: "delete", key });
         return chain;
       },
@@ -125,9 +127,7 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
-
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
+} as unknown as Kv;
 
 const {
   PASSKEY_MAX_REQUEST_BODY_BYTES,
@@ -159,15 +159,18 @@ const { config } = await import("../../src/config.ts");
 const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../../src/metered-quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
-  const originalGet = Deno.env.get.bind(Deno.env);
-  Deno.env.get = (key: string): string | undefined => {
-    if (Object.prototype.hasOwnProperty.call(updates, key)) return updates[key] ?? undefined;
-    return originalGet.call(Deno.env, key);
-  };
+  const previous = new Map(Object.keys(updates).map((name) => [name, process.env[name]]));
+  for (const [name, value] of Object.entries(updates)) {
+    if (value === null) delete process.env[name];
+    else process.env[name] = value;
+  }
   try {
     await fn();
   } finally {
-    Deno.env.get = originalGet;
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 };
 
@@ -238,4 +241,16 @@ export {
   updatePasskeyCredentialSignCount,
   versionstampFor,
   withEnv,
+};
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  setKvForTest(kvStub);
+};
+export const resetHarness = (): void => {
+  kvStore.clear();
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  setKvForTest(null);
 };

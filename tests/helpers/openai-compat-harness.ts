@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey, KvListOptions, KvListSelector } from "#kv";
 // Shared harness for the openai-compat suites: module imports, the KV stub,
 // fixtures and the SSE/fetch helpers that every part imports.
 
@@ -7,28 +8,20 @@ import assert from "node:assert/strict";
 // hooks must not run in the background while it measures them.
 export const { setProviderCapacitySampleTriggerForTest } = await import("../../src/provider/capacity-events.ts");
 export const { setPaidFallbackTerminalSweepForTest } = await import("../../src/paid-fallback/index.ts");
-setProviderCapacitySampleTriggerForTest(() => {});
-setPaidFallbackTerminalSweepForTest(() => {});
 import type { CodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
 import type { CodexUsageResetProvider } from "../../src/codex/banked-reset-provider.ts";
 import type { CodexAuthPoolState } from "../../src/types.ts";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../../src/defaults.ts";
 import { setKvForTest } from "../../src/kv.ts";
 
-if (typeof Deno.KvU64 !== "function") {
-  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
-    constructor(readonly value: bigint) {}
-  } as typeof Deno.KvU64;
-}
-
-export const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+export const keyToString = (key: KvKey): string => JSON.stringify(key);
 export const DEFAULT_TEST_MODEL = "gpt-5-fixture-default";
 export const TERRA_TEST_MODEL = "gpt-5.6-terra";
 export const TEMPORARY_FREE_SURPLUS_TEST_MODEL = "glm-5.2";
 export const TEST_CODEX_MODELS_KEY = ["ubq_ai", "codex_models"] as const;
 
 export const kvStore = new Map<string, unknown>();
-export type OpenAiAtomicOp = { type: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+export type OpenAiAtomicOp = { type: "set" | "delete"; key: KvKey; value?: unknown };
 export let atomicCommitFailure: ((ops: readonly OpenAiAtomicOp[]) => Error | null) | null = null;
 export const atomicCommitObservation: {
   observer: ((ops: readonly OpenAiAtomicOp[]) => void) | null;
@@ -84,13 +77,13 @@ kvStore.set(keyToString(TEST_CODEX_MODELS_KEY), {
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
 export const kvStub = {
-  get: (key: Deno.KvKey) =>
+  get: (key: KvKey) =>
     Promise.resolve({
       key,
       value: kvStore.get(keyToString(key)) ?? null,
       versionstamp: kvStore.has(keyToString(key)) ? "00000000000000000001" : null,
-    } as Deno.KvEntryMaybe<unknown>),
-  getMany: (keys: readonly Deno.KvKey[]) =>
+    } as KvEntryMaybe<unknown>),
+  getMany: (keys: readonly KvKey[]) =>
     Promise.resolve(
       keys.map((key) => ({
         key,
@@ -98,31 +91,31 @@ export const kvStub = {
         versionstamp: kvStore.has(keyToString(key)) ? "00000000000000000001" : null,
       }))
     ),
-  set: (key: Deno.KvKey, value: unknown) => {
+  set: (key: KvKey, value: unknown) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: function* (selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
+  list: function* (selector: KvListSelector, _options?: KvListOptions) {
     if (!exposePaidFallbackLedgerEntries || !("prefix" in selector)) return;
     for (const [encoded, value] of kvStore) {
-      const key = JSON.parse(encoded) as Deno.KvKey;
+      const key = JSON.parse(encoded) as KvKey;
       if (!selector.prefix.every((part, index) => key[index] === part)) continue;
-      yield { key, value, versionstamp: "00000000000000000001" } as Deno.KvEntry<unknown>;
+      yield { key, value, versionstamp: "00000000000000000001" } as KvEntry<unknown>;
     }
   },
   atomic: () => {
     const ops: OpenAiAtomicOp[] = [];
     const chain = {
       check: () => chain,
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ type: "delete", key });
         return chain;
       },
@@ -140,9 +133,7 @@ export const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
-
-setKvForTest(kvStub);
+} as unknown as Kv;
 
 export const { extractUsageTokens, getResponseTelemetry } = await import("../../src/openai-telemetry.ts");
 export const { isAnswerBearingCompletion } = await import("../../src/upstream-wire.ts");
@@ -337,7 +328,7 @@ export const rejectOnAbort = (signal: AbortSignal, onAbort?: () => void): Promis
   });
 
 /** Slices the recorded atomic commits that wrote one key. */
-export const atomicWritesForKey = (commits: readonly OpenAiAtomicOp[][], key: Deno.KvKey): OpenAiAtomicOp[] =>
+export const atomicWritesForKey = (commits: readonly OpenAiAtomicOp[][], key: KvKey): OpenAiAtomicOp[] =>
   commits.flatMap((operations) => operations.filter((operation) => operation.type === "set" && keyToString(operation.key) === keyToString(key)));
 
 /** Deletes every provider-health record this fixture wrote for `accountId`. */
@@ -519,14 +510,17 @@ export const withFetchMock = async <T>(
   resetCodexAuthCacheForTest();
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    let url: string;
-    if (typeof input === "string") url = input;
-    else if (input instanceof URL) url = input.toString();
-    else url = input.url;
-    const bodyText = typeof init?.body === "string" ? init.body : null;
-    return await handler(url, bodyText, init);
-  };
+  globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      let url: string;
+      if (typeof input === "string") url = input;
+      else if (input instanceof URL) url = input.toString();
+      else url = input.url;
+      const bodyText = typeof init?.body === "string" ? init.body : null;
+      return await handler(url, bodyText, init);
+    },
+    { preconnect: originalFetch.preconnect }
+  );
   try {
     return await fn();
   } finally {
@@ -746,8 +740,8 @@ export const seedPaidReasoningProvider = async (provider: "surplus" | "metered")
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   if (provider === "surplus") {
-    Deno.env.delete("METERED_API_KEY");
-    Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+    delete process.env["METERED_API_KEY"];
+    process.env["SURPLUS_API_KEY"] = "surplus-test-key";
     await fetchSurplusModels({
       apiKey: "surplus-test-key",
       force: true,
@@ -764,8 +758,8 @@ export const seedPaidReasoningProvider = async (provider: "surplus" | "metered")
         ),
     });
   } else {
-    Deno.env.set("METERED_API_KEY", "metered-test-key");
-    Deno.env.delete("SURPLUS_API_KEY");
+    process.env["METERED_API_KEY"] = "metered-test-key";
+    delete process.env["SURPLUS_API_KEY"];
     await fetchMeteredModels({
       force: true,
       fetcher: () =>
@@ -1036,18 +1030,18 @@ export const withProviderSelection = async <T>(providerIds: readonly string[] | 
 };
 
 export const withDiscoveryKeys = async <T>(meteredKey: string | null, run: () => Promise<T>): Promise<T> => {
-  const previousMetered = Deno.env.get("METERED_API_KEY");
-  const previousSurplus = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.delete("SURPLUS_API_KEY");
-  if (meteredKey === null) Deno.env.delete("METERED_API_KEY");
-  else Deno.env.set("METERED_API_KEY", meteredKey);
+  const previousMetered = process.env["METERED_API_KEY"];
+  const previousSurplus = process.env["SURPLUS_API_KEY"];
+  delete process.env["SURPLUS_API_KEY"];
+  if (meteredKey === null) delete process.env["METERED_API_KEY"];
+  else process.env["METERED_API_KEY"] = meteredKey;
   try {
     return await run();
   } finally {
-    if (previousMetered === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", previousMetered);
-    if (previousSurplus === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", previousSurplus);
+    if (previousMetered === undefined) delete process.env["METERED_API_KEY"];
+    else process.env["METERED_API_KEY"] = previousMetered;
+    if (previousSurplus === undefined) delete process.env["SURPLUS_API_KEY"];
+    else process.env["SURPLUS_API_KEY"] = previousSurplus;
   }
 };
 
@@ -1089,4 +1083,32 @@ export const seedPaidFallthroughProviders = async (): Promise<void> => {
         })
       ),
   });
+};
+
+let harnessEnvironment: Map<string, string | undefined> | null = null;
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  harnessEnvironment ??= new Map(["METERED_API_KEY", "SURPLUS_API_KEY"].map((name) => [name, process.env[name]]));
+  setProviderCapacitySampleTriggerForTest(() => {});
+  setPaidFallbackTerminalSweepForTest(() => {});
+  setKvForTest(kvStub);
+};
+export const resetHarness = (): void => {
+  setAtomicCommitFailure(null);
+  atomicCommitObservation.observer = null;
+  setExposePaidFallbackLedgerEntries(false);
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  for (const [name, value] of harnessEnvironment ?? []) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  harnessEnvironment = null;
+  setProviderCapacitySampleTriggerForTest(null);
+  setPaidFallbackTerminalSweepForTest(null);
+  setKvForTest(null);
 };
