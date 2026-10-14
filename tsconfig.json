@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["bun", "node"],
+    "resolveJsonModule": true,
+    "paths": {
+      "#http": ["./src/runtime/http.ts"],
+      "#kv": ["./src/storage/kv.ts"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", "**/*.mts"],
+  "exclude": ["node_modules", "**/node_modules", "lib/codex", ".git", ".data", ".release", ".codex-worktrees", ".cleanup-evidence", ".tmp", ".deno-types.d.ts"]
+}
