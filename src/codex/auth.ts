@@ -18,6 +18,7 @@ const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
+export const CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE = "codex_subscriptions_unavailable";
 export const CODEX_UPSTREAM_DEGRADED_ERROR_CODE = "codex_upstream_degraded";
 export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
 export const CODEX_AUTH_REAUTH_MESSAGE = "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";

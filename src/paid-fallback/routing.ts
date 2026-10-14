@@ -3,6 +3,7 @@
 import {
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
+  CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE,
   CODEX_UPSTREAM_DEGRADED_ERROR_CODE,
   CodexError,
   fetchCodexResponses,
@@ -145,6 +146,7 @@ const paidFallbackReasonFor = (
 ): InferenceFallbackReason | null => {
   if (directPaidProvider) return "dynamic_paid_model";
   if (primaryStatus === 429 && routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE) return "primary_quota_blocked";
+  if (primaryStatus === 503 && routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE) return "primary_subscriptions_unavailable";
   return null;
 };
 
@@ -171,8 +173,8 @@ const resolvePaidFallbackAdmission = (
   const keyId = usageContext?.keyId;
   const requestId = usageContext?.requestId;
   const createdAtMs = usageContext?.startedAtMs;
-  // Only a complete, authoritative Codex quota/capacity classification may
-  // admit paid fallback. Generic 429 responses remain request-local.
+  // Only a complete, authoritative Codex pool classification may admit paid
+  // fallback. Generic 429s and transient failures remain request-local.
   const fallbackReason = paidFallbackReasonFor(directPaidProvider, primaryStatus, routingError);
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (directPaidProvider && usageContext?.paidFallbackEnabled === false) {
@@ -716,7 +718,11 @@ export const fetchResponsesWithPaidFallback = async (
   const authReauthenticationPrimary = primaryStatus === 401 && responseWarnings(primary).includes(CODEX_AUTH_REAUTH_WARNING);
   await recordCodexPrimaryTelemetry(primary, telemetry);
   const routingError = getCodexRoutingError(primary);
-  const gatewayResponse = directPaidProvider !== null || routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE || routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
+  const gatewayResponse =
+    directPaidProvider !== null ||
+    routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
+    routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE ||
+    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
       status: 503,
