@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 import { isRecord } from "../utils.ts";
 
 /**
@@ -82,7 +83,7 @@ export const emptyPaidFallbackLedgerDailyStats = (dayStartAtMs: number): PaidFal
 export const paidFallbackLedgerStatsDayStart = (ms: number): number =>
   Math.floor(Math.max(0, Math.trunc(ms)) / PAID_FALLBACK_LEDGER_STATS_DAY_MS) * PAID_FALLBACK_LEDGER_STATS_DAY_MS;
 
-export const paidFallbackLedgerStatsDayKey = (dayStartAtMs: number): Deno.KvKey => [...PAID_FALLBACK_LEDGER_STATS_PREFIX, dayStartAtMs];
+export const paidFallbackLedgerStatsDayKey = (dayStartAtMs: number): KvKey => [...PAID_FALLBACK_LEDGER_STATS_PREFIX, dayStartAtMs];
 
 const isNonNegativeSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
@@ -126,7 +127,7 @@ const projectionCountersKey = (windowDays: PaidFallbackLedgerProjectionWindowDay
 
 /** One CAS retry loop; drops the sample instead of delaying settlement or the admin view. */
 const mergePaidFallbackLedgerDailyStats = async (
-  kv: Deno.Kv,
+  kv: Kv,
   dayStartAtMs: number,
   nowMs: number,
   merge: (existing: PaidFallbackLedgerDailyStats) => PaidFallbackLedgerDailyStats
@@ -147,7 +148,7 @@ const mergePaidFallbackLedgerDailyStats = async (
  * and swallows every failure so measurement can never break settlement.
  */
 export const recordPaidFallbackLedgerSettlementStats = async (
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   input: Readonly<{
     settledRowBytes: number;
     /** Serialized merged rollup record, or null when no rollup was written. */
@@ -179,7 +180,7 @@ export const recordPaidFallbackLedgerSettlementStats = async (
  * (one per KV operation plus one per returned entry) for its requested window.
  */
 export const recordPaidFallbackLedgerProjectionStats = async (
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   input: Readonly<{
     windowDays: PaidFallbackLedgerProjectionWindowDays;
     readUnits: number;
@@ -329,7 +330,7 @@ const summarizeWindow = (
  * samples make it a lower bound on actual writes.
  */
 export const readPaidFallbackLedgerGrowth = async (
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   options: Readonly<{ nowMs: number; retentionMs: number; leaderboardDays?: number }>
 ): Promise<PaidFallbackLedgerGrowthView> => {
   const nowMs = Math.max(0, Math.trunc(options.nowMs));
@@ -337,8 +338,8 @@ export const readPaidFallbackLedgerGrowth = async (
   const retentionDays = Math.max(1, Math.round(retentionMs / PAID_FALLBACK_LEDGER_STATS_DAY_MS));
   const leaderboardDays = Math.max(1, Math.trunc(options.leaderboardDays ?? PAID_FALLBACK_LEDGER_STATS_LEADERBOARD_DAYS));
   if (!kv) return emptyGrowthView(nowMs, retentionDays, leaderboardDays, "unavailable", 0);
-  const start: Deno.KvKey = [...PAID_FALLBACK_LEDGER_STATS_PREFIX, paidFallbackLedgerStatsDayStart(nowMs - retentionMs)];
-  const end: Deno.KvKey = [...PAID_FALLBACK_LEDGER_STATS_PREFIX, nowMs + PAID_FALLBACK_LEDGER_STATS_DAY_MS];
+  const start: KvKey = [...PAID_FALLBACK_LEDGER_STATS_PREFIX, paidFallbackLedgerStatsDayStart(nowMs - retentionMs)];
+  const end: KvKey = [...PAID_FALLBACK_LEDGER_STATS_PREFIX, nowMs + PAID_FALLBACK_LEDGER_STATS_DAY_MS];
   const rows: PaidFallbackLedgerDailyStats[] = [];
   try {
     for await (const entry of kv.list<PaidFallbackLedgerDailyStats>({ start, end })) {

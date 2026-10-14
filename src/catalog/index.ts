@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { fetchCodexModels, loadFullCodexModelsSnapshot } from "../codex/index.ts";
 import { type CodexModelsWhitelist, filterWhitelistedCatalogModels, loadCodexModelsWhitelist } from "../models/codex-models-whitelist.ts";
 import { parseCodexClientVersion } from "../models/codex-models.ts";
@@ -231,7 +232,7 @@ const recordCatalogDegradation = async (version: string, dependencies: CodexCata
 
 /** State shared by the helpers of one lease-holding catalog refresh. */
 type CodexCatalogRefreshContext = Readonly<{
-  kv: Deno.Kv;
+  kv: Kv;
   req: Request;
   version: string;
   authGeneration: string;
@@ -258,7 +259,7 @@ const meteredCatalogOrError = async (message: string): Promise<Response> =>
   (await meteredCatalogResponse(await loadProviderSelectionCached())) ?? openaiError(502, message, "codex_catalog_unavailable");
 
 /** Serve the catalog of the current authentication generation after a rotation. */
-const rotatedCatalogResponse = async (kv: Deno.Kv, req: Request, version: string): Promise<Response> => {
+const rotatedCatalogResponse = async (kv: Kv, req: Request, version: string): Promise<Response> => {
   const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
   if (replacement) return catalogResponse(replacement, req, "rotated");
   return openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");

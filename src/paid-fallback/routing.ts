@@ -28,11 +28,11 @@ import { fetchMeteredModels, fetchMeteredResponses, METERED_MODELS_CACHE_TTL_MS,
 import { fetchSurplusModels, fetchSurplusResponses, SURPLUS_MODELS_CACHE_TTL_MS, SurplusError } from "../provider/surplus.ts";
 import { loadDebugRoutingConfig } from "../debug-routing.ts";
 import {
-  InferenceFallbackReason,
-  PaidProviderHealthClassification,
-  ResponseTelemetryState,
-  RoutedResponsesUpstream,
-  UsageContext,
+  type InferenceFallbackReason,
+  type PaidProviderHealthClassification,
+  type ResponseTelemetryState,
+  type RoutedResponsesUpstream,
+  type UsageContext,
   recordAttemptedProvider,
   recordFirstCodexDispatch,
   recordFirstCodexHeaders,

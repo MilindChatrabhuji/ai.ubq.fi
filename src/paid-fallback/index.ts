@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 import { apiKeyIdKey, MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "../api-keys.ts";
 import {
   admitPaidFallbackV3,
@@ -207,10 +208,10 @@ export const initializePaidFallbackPolicy = async (
 
 type PaidFallbackPolicyEntry = Readonly<{
   record: ApiKeyRecord;
-  check: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>;
+  check: Readonly<{ key: KvKey; versionstamp: string | null }>;
 }>;
 
-const loadStrictKeyRecord = async (kv: Deno.Kv, keyId: string): Promise<PaidFallbackPolicyEntry | null> => {
+const loadStrictKeyRecord = async (kv: Kv, keyId: string): Promise<PaidFallbackPolicyEntry | null> => {
   const idEntry = await kv.get<ApiKeyRecord>(apiKeyIdKey(keyId), { consistency: "strong" });
   if (!idEntry.value || !hasStrictPaidFallbackKeyPolicy(idEntry.value)) return null;
   return {

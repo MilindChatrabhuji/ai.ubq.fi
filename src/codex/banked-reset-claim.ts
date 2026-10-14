@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 // Codex banked reset claim and submission preparation, split out of src/codex_banked_reset.ts.
 
 import {
@@ -94,7 +95,7 @@ type ClaimResult =
   | Readonly<{ kind: "failure"; code: string }>;
 
 type FenceRead =
-  Readonly<{ kind: "valid"; entries: readonly Deno.KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "stale" }> | Readonly<{ kind: "failure"; code: string }>;
+  Readonly<{ kind: "valid"; entries: readonly KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "stale" }> | Readonly<{ kind: "failure"; code: string }>;
 
 type SubmissionPreparation = Readonly<{ kind: "submitted"; record: CodexResetRedemptionRecord }> | Readonly<{ kind: "failure"; code: string }>;
 
@@ -148,11 +149,11 @@ const hasUsableFences = (candidate: CodexBankedResetCandidate): boolean =>
   candidate.fences.length > 0 &&
   candidate.fences.every((fence) => isRecord(fence) && Array.isArray(fence.key) && typeof fence.isCurrent === "function");
 
-const readCurrentFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandidate): Promise<FenceRead> => {
+const readCurrentFences = async (kv: Kv, candidate: CodexBankedResetCandidate): Promise<FenceRead> => {
   if (!hasUsableFences(candidate)) return { kind: "failure", code: "routing_fence_missing" };
-  const entries: Deno.KvEntryMaybe<unknown>[] = [];
+  const entries: KvEntryMaybe<unknown>[] = [];
   for (const fence of candidate.fences) {
-    let entry: Deno.KvEntryMaybe<unknown>;
+    let entry: KvEntryMaybe<unknown>;
     try {
       entry = await kv.get(fence.key, { consistency: "strong" });
     } catch {
@@ -168,7 +169,7 @@ const readCurrentFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandida
   return { kind: "valid", entries };
 };
 
-const withFenceChecks = (operation: Deno.AtomicOperation, entries: readonly Deno.KvEntryMaybe<unknown>[]): Deno.AtomicOperation => {
+const withFenceChecks = (operation: AtomicOperation, entries: readonly KvEntryMaybe<unknown>[]): AtomicOperation => {
   let next = operation;
   for (const entry of entries) next = next.check(entry);
   return next;
@@ -178,19 +179,16 @@ const withFenceChecks = (operation: Deno.AtomicOperation, entries: readonly Deno
  * A fence read that a caller may act on. An unavailable read and a stale fence
  * are both stops, but only the stale fence reports a routing fence problem.
  */
-type RequiredFences = Readonly<{ kind: "valid"; entries: readonly Deno.KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "failure"; code: string }>;
+type RequiredFences = Readonly<{ kind: "valid"; entries: readonly KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "failure"; code: string }>;
 
-const readRequiredFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandidate): Promise<RequiredFences> => {
+const readRequiredFences = async (kv: Kv, candidate: CodexBankedResetCandidate): Promise<RequiredFences> => {
   const fences = await readCurrentFences(kv, candidate);
   if (fences.kind === "failure") return { kind: "failure", code: fences.code };
   if (fences.kind === "stale") return { kind: "failure", code: "routing_fence_stale" };
   return { kind: "valid", entries: fences.entries };
 };
 
-const readExistingRecord = async (
-  kv: Deno.Kv,
-  context: ResetContext
-): Promise<Readonly<{ record: CodexResetRedemptionRecord | null; code: string | null }>> => {
+const readExistingRecord = async (kv: Kv, context: ResetContext): Promise<Readonly<{ record: CodexResetRedemptionRecord | null; code: string | null }>> => {
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   try {
     const entry = await kv.get<CodexResetRedemptionRecord>(key, { consistency: "strong" });
@@ -207,7 +205,7 @@ const readExistingRecord = async (
  * write lost a race and the caller must re-read the record and try again.
  */
 const createClaimRecord = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   nowMs: number,
@@ -215,8 +213,8 @@ const createClaimRecord = async (
   ownerToken: string,
   allowNewSubmission: boolean,
   expiresAtMs: number,
-  entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>,
-  key: Deno.KvKey
+  entry: KvEntryMaybe<CodexResetRedemptionRecord>,
+  key: KvKey
 ): Promise<ClaimResult | null> => {
   if (!allowNewSubmission) return { kind: "no_transaction" };
   // Do not claim a quota window that has already recovered. In particular, this
@@ -284,7 +282,7 @@ const existingRecordDisposition = (
 };
 
 /** Only a `claimed` record is fenced on takeover; reconciliation reads none. */
-const takeOverFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandidate, record: CodexResetRedemptionRecord): Promise<RequiredFences> => {
+const takeOverFences = async (kv: Kv, candidate: CodexBankedResetCandidate, record: CodexResetRedemptionRecord): Promise<RequiredFences> => {
   if (record.state !== "claimed") return { kind: "valid", entries: [] };
   if (record.routing_generation !== candidate.routingGeneration) {
     return { kind: "failure", code: "routing_fence_stale" };
@@ -294,16 +292,16 @@ const takeOverFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandidate,
 
 /** Commit the takeover. `null` means the CAS lost and the caller must retry. */
 const commitTakeOver = async (
-  kv: Deno.Kv,
+  kv: Kv,
   candidate: CodexBankedResetCandidate,
   record: CodexResetRedemptionRecord,
   nowMs: number,
   clock: () => number,
   ownerToken: string,
   expiresAtMs: number,
-  fenceEntries: readonly Deno.KvEntryMaybe<unknown>[],
-  entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>,
-  key: Deno.KvKey
+  fenceEntries: readonly KvEntryMaybe<unknown>[],
+  entry: KvEntryMaybe<CodexResetRedemptionRecord>,
+  key: KvKey
 ): Promise<ClaimResult | null> => {
   // A stale claimant may have spent time reading its routing/auth fences.
   // Recheck here before it can become the new owner of an expired quota
@@ -336,7 +334,7 @@ const commitTakeOver = async (
  * record between the read and the write, so the caller must try again.
  */
 const claimAttempt = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   nowMs: number,
@@ -344,9 +342,9 @@ const claimAttempt = async (
   ownerToken: string,
   allowNewSubmission: boolean,
   expiresAtMs: number,
-  key: Deno.KvKey
+  key: KvKey
 ): Promise<ClaimResult | null> => {
-  let entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>;
+  let entry: KvEntryMaybe<CodexResetRedemptionRecord>;
   try {
     entry = await kv.get<CodexResetRedemptionRecord>(key, { consistency: "strong" });
   } catch {
@@ -366,7 +364,7 @@ const claimAttempt = async (
 };
 
 const claimTransaction = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   nowMs: number,
@@ -386,14 +384,14 @@ const claimTransaction = async (
 };
 
 const updateOwnedRecord = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   expected: CodexResetRedemptionRecord,
   mutate: (record: CodexResetRedemptionRecord) => CodexResetRedemptionRecord
 ): Promise<CodexResetRedemptionRecord | null> => {
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-    let entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>;
+    let entry: KvEntryMaybe<CodexResetRedemptionRecord>;
     try {
       entry = await kv.get<CodexResetRedemptionRecord>(key, { consistency: "strong" });
     } catch {
@@ -424,14 +422,14 @@ const updateOwnedRecord = async (
  * record fails closed rather than resetting the cap to zero.
  */
 const readDailySubmissionBudget = async (
-  kv: Deno.Kv,
-  dailyKey: Deno.KvKey,
+  kv: Kv,
+  dailyKey: KvKey,
   day: string,
   maxPerAccountPerDay: number
 ): Promise<
-  Readonly<{ kind: "ok"; entry: Deno.KvEntryMaybe<CodexResetGlobalDailyRecord>; submissionCount: number }> | Readonly<{ kind: "failure"; code: string }>
+  Readonly<{ kind: "ok"; entry: KvEntryMaybe<CodexResetGlobalDailyRecord>; submissionCount: number }> | Readonly<{ kind: "failure"; code: string }>
 > => {
-  let dailyEntry: Deno.KvEntryMaybe<CodexResetGlobalDailyRecord>;
+  let dailyEntry: KvEntryMaybe<CodexResetGlobalDailyRecord>;
   try {
     dailyEntry = await kv.get<CodexResetGlobalDailyRecord>(dailyKey, { consistency: "strong" });
   } catch {
@@ -449,7 +447,7 @@ const readDailySubmissionBudget = async (
  * `null` means the CAS lost and the caller must try again.
  */
 const prepareSubmissionAttempt = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
@@ -458,10 +456,10 @@ const prepareSubmissionAttempt = async (
   maxPerAccountPerDay: number,
   expiresAtMs: number,
   day: string,
-  key: Deno.KvKey,
-  dailyKey: Deno.KvKey
+  key: KvKey,
+  dailyKey: KvKey
 ): Promise<SubmissionPreparation | null> => {
-  let entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>;
+  let entry: KvEntryMaybe<CodexResetRedemptionRecord>;
   try {
     entry = await kv.get<CodexResetRedemptionRecord>(key, { consistency: "strong" });
   } catch {
@@ -511,7 +509,7 @@ const prepareSubmissionAttempt = async (
 };
 
 const prepareSubmission = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
@@ -575,18 +573,18 @@ const renewedLeaseRecord = (
  * CAS lost and the caller must try again.
  */
 const renewSubmittedAttempt = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
   clock: () => number,
-  key: Deno.KvKey
+  key: KvKey
 ): Promise<SubmissionRenewal | null> => {
   const nowBeforeRead = readClock(clock);
   if (nowBeforeRead === null) return { kind: "failure", code: "invalid_clock" };
   if (!quotaWindowIsOpen(candidate, nowBeforeRead)) return { kind: "failure", code: "quota_window_expired" };
 
-  let entry: Deno.KvEntryMaybe<CodexResetRedemptionRecord>;
+  let entry: KvEntryMaybe<CodexResetRedemptionRecord>;
   try {
     entry = await kv.get<CodexResetRedemptionRecord>(key, { consistency: "strong" });
   } catch {
@@ -629,7 +627,7 @@ const renewSubmittedAttempt = async (
  * There must be no await between a successful return and invoking `redeem`.
  */
 const renewSubmittedForRedeem = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
@@ -731,7 +729,7 @@ const stateWith = (
 });
 
 const rejectOwned = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   nowMs: number,
@@ -740,7 +738,7 @@ const rejectOwned = async (
   await updateOwnedRecord(kv, context, record, (current) => stateWith(current, "rejected", nowMs, { last_error_code: code }));
 
 const unknownOwned = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   nowMs: number,
@@ -755,7 +753,7 @@ const unknownOwned = async (
   );
 
 const preserveReceipt = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   nowMs: number,

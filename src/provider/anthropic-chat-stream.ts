@@ -52,7 +52,7 @@ const frames = () => {
 };
 const abortedError = (signal: AbortSignal): Error =>
   signal.reason instanceof Error ? signal.reason : new DOMException("Claude Chat was aborted.", "AbortError");
-const read = async (reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): Promise<ReadableStreamReadResult<Uint8Array>> => {
+const read = async (reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): Promise<Awaited<ReturnType<typeof reader.read>>> => {
   let abort = (): void => {};
   const rejected = new Promise<never>((_, reject) => {
     abort = () => {

@@ -13,7 +13,7 @@ import {
 } from "./account-routing.ts";
 import {
   CODEX_AUTH_REAUTH_WARNING,
-  CodexDispatchAccountEntry,
+  type CodexDispatchAccountEntry,
   CodexError,
   accessTokenExpired,
   codexProbeByResponse,
@@ -26,7 +26,7 @@ import { delay } from "./auth-refresh.ts";
 import { reportCodexBankedResetMetric } from "./banked-reset.ts";
 import {
   CodexActiveAccountFenceError,
-  CodexBankedResetCandidate,
+  type CodexBankedResetCandidate,
   CodexBankedResetRetryFenceError,
   cancelResponseBody,
   dispatchFailureAsError,
@@ -37,8 +37,8 @@ import {
   upstreamTimeoutCircuitResponse,
   waitForCodexRetry,
 } from "./dispatch.ts";
-import { RoutingAccount } from "./routing-state.ts";
-import { CodexAuthState } from "../types.ts";
+import { type RoutingAccount } from "./routing-state.ts";
+import { type CodexAuthState } from "../types.ts";
 import type {
   CodexAccountAttemptOutcome,
   CodexCredentialAttempt,

@@ -285,7 +285,7 @@ export async function runHybridResiduePass(summary: string, deps: HybridResidueD
  */
 export function hybridResidueEnabled(): boolean {
   try {
-    return Deno.env.get(HYBRID_ENV) !== "0";
+    return process.env[HYBRID_ENV] !== "0";
   } catch {
     return false;
   }

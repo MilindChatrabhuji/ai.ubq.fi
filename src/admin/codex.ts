@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 // Admin Codex auth, model and provider handlers, split out of src/admin.ts.
 
 import {
@@ -282,11 +283,11 @@ const buildCodexAuthRuntimeConfig = (
 
 /** Commits the account pool, and — only for a full snapshot — the catalog keys. */
 const commitCodexAuthState = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{
-    poolEntry: Deno.KvEntryMaybe<CodexAuthPoolState>;
-    snapshotEntry: Deno.KvEntryMaybe<CodexModelsSnapshot>;
-    runtimeEntry: Deno.KvEntryMaybe<unknown>;
+    poolEntry: KvEntryMaybe<CodexAuthPoolState>;
+    snapshotEntry: KvEntryMaybe<CodexModelsSnapshot>;
+    runtimeEntry: KvEntryMaybe<unknown>;
     pool: CodexAuthPoolState;
     snapshot: CodexModelsSnapshot;
     runtime: ReturnType<typeof buildRuntimeConfig> | null;
@@ -311,7 +312,7 @@ type CodexAuthPersistAttempt =
   | { kind: "response"; response: Response };
 
 const persistCodexAuthStateAttempt = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{ validatedAuth: CodexAuthState; snapshot: CodexModelsSnapshot | null; authGeneration: string | null }>
 ): Promise<CodexAuthPersistAttempt> => {
   const [existingPoolEntry, existingSnapshot, existingRuntimeEntry] = await Promise.all([
@@ -352,7 +353,7 @@ const persistCodexAuthStateAttempt = async (
 };
 
 const persistCodexAuthState = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{ validatedAuth: CodexAuthState; snapshot: CodexModelsSnapshot | null; authGeneration: string | null }>
 ): Promise<
   | { ok: true; pool: CodexAuthPoolState; snapshot: CodexModelsSnapshot; runtimeConfig: ReturnType<typeof buildRuntimeConfig> | null }
@@ -377,7 +378,7 @@ const persistCodexAuthState = async (
  * Seeds the versioned upstream catalog. A seed failure is reported as `false`
  * and never fails the upload itself.
  */
-const seedCodexAuthCatalog = async (kv: Deno.Kv, validated: CodexAuthValidation, authGeneration: string | null): Promise<boolean> => {
+const seedCodexAuthCatalog = async (kv: Kv, validated: CodexAuthValidation, authGeneration: string | null): Promise<boolean> => {
   if (!validated.ok || !authGeneration) return false;
   return await storeCodexCatalog(kv, {
     clientVersion: validated.clientVersion,

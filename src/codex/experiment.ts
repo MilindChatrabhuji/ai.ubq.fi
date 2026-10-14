@@ -1,8 +1,9 @@
+import type { Kv, KvEntry } from "#kv";
 // Codex capacity and cache scope experiment, split out of src/codex.ts.
 
 import { config } from "../config.ts";
 import { claimCodexRoutingProbe, reconcileCodexRoutingAccount, releaseCodexRoutingProbe, selectCodexRoutingAccounts } from "./account-routing.ts";
-import { RoutingAccount } from "./routing-state.ts";
+import { type RoutingAccount } from "./routing-state.ts";
 import { markCodexQuotaBlocked } from "./rate-limit-429.ts";
 import { getKv } from "../kv.ts";
 import { getString, isRecord } from "../utils.ts";
@@ -80,7 +81,7 @@ type CodexCacheScopeExperimentRefreshResult =
     }>
   | Readonly<{ status: "auth_pool_drift" }>;
 
-const getStrongAuthPoolEntryForCacheScopeExperiment = async (): Promise<CodexAuthPoolEntry & { kv: Deno.Kv; entry: Deno.KvEntry<CodexAuthPoolState> }> => {
+const getStrongAuthPoolEntryForCacheScopeExperiment = async (): Promise<CodexAuthPoolEntry & { kv: Kv; entry: KvEntry<CodexAuthPoolState> }> => {
   const kv = await getKv();
   if (!kv) {
     throw new CodexCacheScopeExperimentError("Prompt-cache scope experiments require Deno KV-backed Codex auth.");
@@ -91,12 +92,12 @@ const getStrongAuthPoolEntryForCacheScopeExperiment = async (): Promise<CodexAut
     throw new CodexCacheScopeExperimentError("Codex auth pool is unavailable for the prompt-cache scope experiment.");
   }
   cacheCodexAuthPool(pool);
-  return { kv, entry: entry as Deno.KvEntry<CodexAuthPoolState>, pool };
+  return { kv, entry: entry as KvEntry<CodexAuthPoolState>, pool };
 };
 
 const cacheScopeExperimentAccount = (
   session: CodexCacheScopeExperimentSession,
-  poolEntry: CodexAuthPoolEntry & { entry: Deno.KvEntry<CodexAuthPoolState> },
+  poolEntry: CodexAuthPoolEntry & { entry: KvEntry<CodexAuthPoolState> },
   slot: number
 ): CodexAuthState => {
   if (!Number.isInteger(slot) || slot < 1 || slot > CODEX_AUTH_POOL_MAX_ACCOUNTS) {

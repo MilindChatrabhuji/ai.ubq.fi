@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Admin API key mutation handlers, split out of src/admin.ts.
 
 import { json, openaiError } from "../http.ts";
@@ -46,13 +47,13 @@ import {
 type ApiKeyUpdateTarget = Readonly<{
   ok: true;
   id: string;
-  idKey: Deno.KvKey;
-  entry: Deno.KvEntryMaybe<ApiKeyRecord>;
+  idKey: KvKey;
+  entry: KvEntryMaybe<ApiKeyRecord>;
   record: ApiKeyRecord;
 }>;
 
 /** Reads the target key and enforces the paid-fallback migration policy. */
-const resolveApiKeyUpdateTarget = async (kv: Deno.Kv, raw: Record<string, unknown>): Promise<ApiKeyUpdateTarget | { ok: false; response: Response }> => {
+const resolveApiKeyUpdateTarget = async (kv: Kv, raw: Record<string, unknown>): Promise<ApiKeyUpdateTarget | { ok: false; response: Response }> => {
   const id = getString(raw.id);
   if (!id) return { ok: false, response: openaiError(400, "id is required", "invalid_request_error") };
 
@@ -333,7 +334,7 @@ const apiKeyUpdateAuditChanges = (
 
 /** The no-op response, which reports the live usage counter of the stored policy. */
 const apiKeyUpdateUnchangedResponse = async (
-  kv: Deno.Kv,
+  kv: Kv,
   record: ApiKeyRecord,
   currentExpiresAtMs: number,
   currentWindowMs: number,
@@ -379,9 +380,9 @@ const apiKeyUpdateUnchangedResponse = async (
  * this checked entry and makes the reset conflict atomically.
  */
 const inspectApiKeyQuotaResetReservations = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{ keyId: string; currentQuotaPolicy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>>; nowMs: number }>
-): Promise<{ ok: true; windowEntry: Deno.KvEntryMaybe<ApiKeyUsageWindowV3> } | { ok: false; response: Response }> => {
+): Promise<{ ok: true; windowEntry: KvEntryMaybe<ApiKeyUsageWindowV3> } | { ok: false; response: Response }> => {
   try {
     await reclaimApiKeyUsageReservationsForKeyV3(kv, input.keyId, input.nowMs);
     const windowEntry = await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(input.currentQuotaPolicy), { consistency: "strong" });
@@ -403,10 +404,7 @@ const inspectApiKeyQuotaResetReservations = async (
 };
 
 /** Rechecks reservations after a lost commit race, then reports the conflict. */
-const resolveApiKeyUpdateCommitConflict = async (
-  kv: Deno.Kv,
-  input: Readonly<{ keyId: string; nowMs: number; replaceQuotaWindow: boolean }>
-): Promise<Response> => {
+const resolveApiKeyUpdateCommitConflict = async (kv: Kv, input: Readonly<{ keyId: string; nowMs: number; replaceQuotaWindow: boolean }>): Promise<Response> => {
   if (!input.replaceQuotaWindow) return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   try {
     await reclaimApiKeyUsageReservationsForKeyV3(kv, input.keyId, input.nowMs);
@@ -422,10 +420,10 @@ const resolveApiKeyUpdateCommitConflict = async (
 
 /** Writes the record, hash record, and (when the window is replaced) quota windows atomically. */
 const persistApiKeyUpdate = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{
-    idKey: Deno.KvKey;
-    entry: Deno.KvEntryMaybe<ApiKeyRecord>;
+    idKey: KvKey;
+    entry: KvEntryMaybe<ApiKeyRecord>;
     record: ApiKeyRecord;
     updated: ApiKeyRecord;
     replaceQuotaWindow: boolean;
@@ -457,7 +455,7 @@ const persistApiKeyUpdate = async (
     return { ok: false, response: openaiError(503, "API key quota migration is incomplete", "server_error", { type: "server_error" }) };
   }
 
-  let currentQuotaWindowEntry: Deno.KvEntryMaybe<ApiKeyUsageWindowV3> | null = null;
+  let currentQuotaWindowEntry: KvEntryMaybe<ApiKeyUsageWindowV3> | null = null;
   if (input.replaceQuotaWindow) {
     // The guard lives here so control-flow narrowing proves `currentQuotaPolicy`
     // is non-null for `apiKeyUsageV3WindowKey` below.
@@ -715,7 +713,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request, context?: ApiKeyA
 
 type LocalApiKeyDeletionClaim = Readonly<{
   guard: LocalDevelopmentDeletionGuard;
-  check: Readonly<{ key: Deno.KvKey; versionstamp: string }>;
+  check: Readonly<{ key: KvKey; versionstamp: string }>;
 }>;
 
 const retryableLocalDeletionGuard = (value: unknown): LocalDevelopmentDeletionGuard | null => {
@@ -726,9 +724,9 @@ const retryableLocalDeletionGuard = (value: unknown): LocalDevelopmentDeletionGu
 };
 
 const claimLocalDeletion = async (
-  kv: Deno.Kv,
-  entry: Deno.KvEntryMaybe<ApiKeyRecord>,
-  deletionGuard: Deno.KvEntryMaybe<unknown>
+  kv: Kv,
+  entry: KvEntryMaybe<ApiKeyRecord>,
+  deletionGuard: KvEntryMaybe<unknown>
 ): Promise<LocalApiKeyDeletionClaim | Response> => {
   const retryable = retryableLocalDeletionGuard(deletionGuard.value);
   if (deletionGuard.value && !retryable) return openaiError(409, "Local API key deletion already has an owner", "paid_fallback_deletion_in_progress");
@@ -743,10 +741,10 @@ const claimLocalDeletion = async (
 };
 
 const prepareDeletionGuard = async (
-  kv: Deno.Kv,
+  kv: Kv,
   id: string,
-  entry: Deno.KvEntryMaybe<ApiKeyRecord>,
-  deletionGuard: Deno.KvEntryMaybe<unknown>
+  entry: KvEntryMaybe<ApiKeyRecord>,
+  deletionGuard: KvEntryMaybe<unknown>
 ): Promise<LocalApiKeyDeletionClaim | Response | null> => {
   if (id === LOCAL_DEVELOPMENT_KEY_ID) return await claimLocalDeletion(kv, entry, deletionGuard);
   if (deletionGuard.value) return null;
@@ -755,7 +753,7 @@ const prepareDeletionGuard = async (
 };
 
 /** Only a known refusal before ID deletion releases ownership for explicit retry. */
-const releaseLocalDeletionClaim = async (kv: Deno.Kv, entry: Deno.KvEntryMaybe<ApiKeyRecord>, claim: LocalApiKeyDeletionClaim | null): Promise<void> => {
+const releaseLocalDeletionClaim = async (kv: Kv, entry: KvEntryMaybe<ApiKeyRecord>, claim: LocalApiKeyDeletionClaim | null): Promise<void> => {
   if (!claim) return;
   await kv
     .atomic()
@@ -769,14 +767,14 @@ const releaseLocalDeletionClaim = async (kv: Deno.Kv, entry: Deno.KvEntryMaybe<A
 };
 
 /** A failed ID deletion can release only after a fresh read still proves the key is revoked. */
-const releaseLocalDeletionClaimAfterConflict = async (kv: Deno.Kv, idKey: Deno.KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<void> => {
+const releaseLocalDeletionClaimAfterConflict = async (kv: Kv, idKey: KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<void> => {
   if (!claim) return;
   const entry = await kv.get<ApiKeyRecord>(idKey, { consistency: "strong" });
   if (!entry.value?.revoked_at_ms) return;
   await releaseLocalDeletionClaim(kv, entry, claim);
 };
 
-const completeLocalDeletion = async (kv: Deno.Kv, idKey: Deno.KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<Response | null> => {
+const completeLocalDeletion = async (kv: Kv, idKey: KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<Response | null> => {
   if (!claim) return null;
   const absentId = await kv.get(idKey, { consistency: "strong" });
   if (absentId.value) return openaiError(409, "Local API key deletion ownership changed", "paid_fallback_deletion_in_progress");

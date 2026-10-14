@@ -1,30 +1,31 @@
+import type { KvKey } from "#kv";
 // Codex Responses execution state and operations interface, split out of src/codex.ts.
 
 import { selectCodexRoutingAccountsStrong } from "./account-routing.ts";
 import { loadOverageUsageSettings } from "./overage-settings.ts";
-import { CODEX_ORIGINATOR, CodexAuthAccountEntry, CodexDispatchAccountEntry, CodexError, codexUserAgent, getAuthPoolEntry } from "./auth.ts";
+import { CODEX_ORIGINATOR, type CodexAuthAccountEntry, type CodexDispatchAccountEntry, CodexError, codexUserAgent, getAuthPoolEntry } from "./auth.ts";
 import {
-  CodexBankedResetConfig,
-  CodexBankedResetDependencies,
-  CodexBankedResetEvent,
-  CodexBankedResetTelemetryFields,
+  type CodexBankedResetConfig,
+  type CodexBankedResetDependencies,
+  type CodexBankedResetEvent,
+  type CodexBankedResetTelemetryFields,
   loadCodexBankedResetConfig,
 } from "./banked-reset.ts";
 import { evaluateCodexBankedResetPool } from "./banked-reset-pool.ts";
 import { unavailableCodexUsageResetProvider } from "./banked-reset-provider.ts";
 import { reconcileCodexBankedReset } from "./banked-reset-submission.ts";
 import {
-  CodexAttemptPhase,
-  CodexBankedResetCandidate,
+  type CodexAttemptPhase,
+  type CodexBankedResetCandidate,
   applyNativeSessionHeaders,
   awaitPendingCodexProbeTransitions,
   initialCodexSelectionResponse,
   requestedCodexModel,
 } from "./dispatch.ts";
 import type { CodexProviderDispatchCoordinator, FetchCodexResponsesOptions, PreparedCodexSubscriptionRequest } from "./dispatch.ts";
-import { CodexActiveAccountSnapshot, CodexProbeCircuit, RoutingAccount } from "./routing-state.ts";
+import { type CodexActiveAccountSnapshot, type CodexProbeCircuit, type RoutingAccount } from "./routing-state.ts";
 import { config } from "../config.ts";
-import { CodexAuthState } from "../types.ts";
+import { type CodexAuthState } from "../types.ts";
 
 export type CodexCredentialAttempt = { auth: CodexAuthState; routing: RoutingAccount };
 export type CodexAccountAttemptOutcome =
@@ -55,7 +56,7 @@ export type EvaluatedBlockedReset = Readonly<{
 }>;
 export type PreexistingBankedReset = Readonly<{ kind: "evaluated"; evaluated: EvaluatedBlockedReset } | { kind: "none" } | { kind: "blocked" }>;
 
-type BankedResetFence = { key: Deno.KvKey; isCurrent: (value: unknown) => boolean };
+type BankedResetFence = { key: KvKey; isCurrent: (value: unknown) => boolean };
 type BankedResetInput = {
   accountId: string;
   credentialVersion: string;
@@ -81,7 +82,7 @@ export type CodexResponseOperations = {
   activeSelectionFence: (candidate: CodexBankedResetCandidate) => BankedResetFence;
   activeSnapshotFence: (snapshot: CodexActiveAccountSnapshot) => BankedResetFence;
   ensurePostResetRetryAuthCurrent: (candidate: CodexBankedResetCandidate) => Promise<void>;
-  exactValueFence: (key: Deno.KvKey, expectedJson: string) => BankedResetFence;
+  exactValueFence: (key: KvKey, expectedJson: string) => BankedResetFence;
   resetFences: (
     candidate: CodexBankedResetCandidate,
     routingGeneration: number,

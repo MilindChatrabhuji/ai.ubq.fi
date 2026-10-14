@@ -228,7 +228,7 @@ let surplusModelsRetryAfterMs = 0;
 
 export const readSurplusApiKey = (): string | null => {
   try {
-    return nonEmptyString(Deno.env.get(SURPLUS_API_KEY_ENV));
+    return nonEmptyString(process.env[SURPLUS_API_KEY_ENV]);
   } catch {
     return null;
   }

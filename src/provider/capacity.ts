@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 import { type CodexCapacityAccount, getCodexCapacityAccounts } from "../codex/index.ts";
 import { json } from "../http.ts";
 import { getKv } from "../kv.ts";
@@ -250,7 +251,7 @@ const meteredCapacitySource = (snapshot: MeteredQuotaSnapshot | null, snapshotAt
 const captureProviderCapacitySnapshot = async (
   options: ProviderCapacitySnapshotOptions,
   snapshotAtMs: number,
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   forceMeteredRefresh = true
 ): Promise<ProviderCapacitySnapshot> => {
   let accounts: readonly CodexCapacityAccount[] = [];
@@ -376,7 +377,7 @@ const unavailableView = (
   downtime_events: downtimeEvents,
 });
 
-const acquireCapacityLease = async (kv: Deno.Kv, owner: string, nowMs: number): Promise<{ acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }> => {
+const acquireCapacityLease = async (kv: Kv, owner: string, nowMs: number): Promise<{ acquired: boolean; entry: KvEntryMaybe<CapacityLease> }> => {
   const entry = await kv.get<CapacityLease>(PROVIDER_CAPACITY_LEASE_KEY);
   if (entry.value && entry.value.lease_until_ms > nowMs) return { acquired: false, entry };
   const lease: CapacityLease = { owner, lease_until_ms: nowMs + PROVIDER_CAPACITY_LEASE_MS };
@@ -395,7 +396,7 @@ const acquireCapacityLease = async (kv: Deno.Kv, owner: string, nowMs: number): 
       };
 };
 
-const releaseCapacityLease = async (kv: Deno.Kv, owner: string): Promise<void> => {
+const releaseCapacityLease = async (kv: Kv, owner: string): Promise<void> => {
   try {
     const entry = await kv.get<CapacityLease>(PROVIDER_CAPACITY_LEASE_KEY);
     if (entry.value?.owner !== owner) return;
@@ -422,7 +423,7 @@ const capacityRollupInputForHistoryPoint = (history: ProviderCapacityHistoryPoin
   };
 };
 
-const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMaybe<CapacityLease>, snapshot: ProviderCapacitySnapshot): Promise<boolean> => {
+const persistCapacitySnapshot = async (kv: Kv, leaseEntry: KvEntryMaybe<CapacityLease>, snapshot: ProviderCapacitySnapshot): Promise<boolean> => {
   const history = historyPointForSnapshot(snapshot);
   const rollupInput = capacityRollupInputForHistoryPoint(history);
   const rollupKey = providerCapacityRollupKey(rollupInput.bucket_start_at_ms);
@@ -432,7 +433,7 @@ const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMayb
     ...([1, 2] as const).map((slot) => kv.get(providerCapacityLastAvailableKey(slot), { consistency: "strong" })),
     kv.get(rollupKey, { consistency: "strong" }),
   ]);
-  const storedEntries: Deno.KvEntryMaybe<unknown>[] = [];
+  const storedEntries: KvEntryMaybe<unknown>[] = [];
   for (const result of comparisonReads.slice(0, 4)) {
     if (result.status === "rejected") return false;
     storedEntries.push(result.value);
@@ -480,7 +481,7 @@ const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMayb
   return committed.ok;
 };
 
-const waitForCapacitySnapshot = async (kv: Deno.Kv, previousSnapshotAtMs: number | null): Promise<ProviderCapacitySnapshot | null> => {
+const waitForCapacitySnapshot = async (kv: Kv, previousSnapshotAtMs: number | null): Promise<ProviderCapacitySnapshot | null> => {
   const deadline = Date.now() + PROVIDER_CAPACITY_COLD_WAIT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -535,7 +536,7 @@ const refreshProviderCapacityInternal = async (options: ProviderCapacitySnapshot
       ({
         acquired: false,
         entry: { key: PROVIDER_CAPACITY_LEASE_KEY, value: null, versionstamp: null },
-      }) as { acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }
+      }) as { acquired: boolean; entry: KvEntryMaybe<CapacityLease> }
   );
   if (!lease.acquired) {
     const coalesced = await waitForCapacitySnapshot(kv, cached?.snapshot_at_ms ?? null).catch(() => null);
@@ -605,7 +606,7 @@ export const sampleProviderCapacityOnEvent = async (options: ProviderCapacitySna
       ({
         acquired: false,
         entry: { key: PROVIDER_CAPACITY_LEASE_KEY, value: null, versionstamp: null },
-      }) as { acquired: boolean; entry: Deno.KvEntryMaybe<CapacityLease> }
+      }) as { acquired: boolean; entry: KvEntryMaybe<CapacityLease> }
   );
   // The event caller has no view to return. A competing live refresh owns the
   // only probe, so avoid both a duplicate probe and the old coalesced-view

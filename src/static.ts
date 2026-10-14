@@ -1,18 +1,19 @@
+import { readFile } from "node:fs/promises";
 import { config } from "./config.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
-import aboutHtmlText from "../static/about.html" with { type: "text" };
-import contactHtmlText from "../static/contact.html" with { type: "text" };
-import developersHtmlText from "../static/developers.html" with { type: "text" };
-import homeMarkdownText from "../static/home.md" with { type: "text" };
-import indexHtmlText from "../static/index.html" with { type: "text" };
-import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
-import llmsText from "../static/llms.txt" with { type: "text" };
-import modelsHtmlText from "../static/models.html" with { type: "text" };
-import openApiText from "../static/openapi.json" with { type: "text" };
-import privacyHtmlText from "../static/privacy.html" with { type: "text" };
-import robotsText from "../static/robots.txt" with { type: "text" };
-import sitemapText from "../static/sitemap.xml" with { type: "text" };
+const aboutHtmlText = await readFile(new URL("../static/about.html", import.meta.url), "utf8");
+const contactHtmlText = await readFile(new URL("../static/contact.html", import.meta.url), "utf8");
+const developersHtmlText = await readFile(new URL("../static/developers.html", import.meta.url), "utf8");
+const homeMarkdownText = await readFile(new URL("../static/home.md", import.meta.url), "utf8");
+const indexHtmlText = await readFile(new URL("../static/index.html", import.meta.url), "utf8");
+const llmsFullText = await readFile(new URL("../static/docs/llms-agents.md", import.meta.url), "utf8");
+const llmsText = await readFile(new URL("../static/llms.txt", import.meta.url), "utf8");
+const modelsHtmlText = await readFile(new URL("../static/models.html", import.meta.url), "utf8");
+const openApiText = await readFile(new URL("../static/openapi.json", import.meta.url), "utf8");
+const privacyHtmlText = await readFile(new URL("../static/privacy.html", import.meta.url), "utf8");
+const robotsText = await readFile(new URL("../static/robots.txt", import.meta.url), "utf8");
+const sitemapText = await readFile(new URL("../static/sitemap.xml", import.meta.url), "utf8");
 
 type StaticBody = string | Uint8Array<ArrayBuffer>;
 
@@ -115,10 +116,10 @@ const readAsset = async (asset: StaticAsset): Promise<StaticBody | null> => {
   try {
     if (asset.body !== undefined) return asset.body;
     if (asset.readAs === "text") {
-      return await Deno.readTextFile(asset.url);
+      return await readFile(asset.url, "utf8");
     }
 
-    const bytes = await Deno.readFile(asset.url);
+    const bytes = await readFile(asset.url);
     const copy: Uint8Array<ArrayBuffer> = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
     return copy;
