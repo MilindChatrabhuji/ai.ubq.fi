@@ -19,5 +19,16 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx", "**/*.mts"],
-  "exclude": ["node_modules", "**/node_modules", "lib/codex", ".git", ".data", ".release", ".codex-worktrees", ".cleanup-evidence", ".tmp", ".deno-types.d.ts"]
+  "exclude": [
+    "node_modules",
+    "**/node_modules",
+    "lib/codex",
+    ".git",
+    ".data",
+    ".release",
+    ".codex-worktrees",
+    ".cleanup-evidence",
+    ".tmp",
+    ".deno-types.d.ts"
+  ]
 }
