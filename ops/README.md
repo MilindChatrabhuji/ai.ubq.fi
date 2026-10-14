@@ -22,7 +22,7 @@ sudo systemctl restart ai-ubq-fi.service
 curl --fail http://127.0.0.1:7999/health
 ```
 
-Systemd loads the repository-root `.env` through Deno's dotenv parser. Keep `DENO_TIMELINE=production` in the service
+The verified Bun launcher explicitly loads the repository-root `.env`; automatic dotenv discovery is disabled. Keep `DENO_TIMELINE=production` in the service
 unit so paid billing reconciliation, capacity sampling, and telemetry pruning run on the VPS. Do not add Deno Deploy
 identity variables to `.env`; they cause the VPS launcher to reject startup.
 
@@ -33,7 +33,7 @@ Required GitHub CI checks must pass first. GitHub no longer deploys to Deno Depl
 ```sh
 git fetch origin development
 git merge --ff-only origin/development
-deno task deploy:vps
+bun run deploy:vps
 ```
 
 The command validates the canonical VPS repository root before anything else, then requires a clean tracked checkout on
@@ -50,8 +50,7 @@ the existing `git fetch origin development` step above. It refuses to overwrite 
 Verify authenticated inference and the public health route after deployment. A health response alone does not prove
 provider inference. The startup message, health body, and response headers identify the same immutable Git revision.
 
-To roll back code, atomically point `.data/current` to a previously accepted release and restart `ai-ubq-fi.service`.
-Preserve `.env` and `.data/kv.sqlite3`.
+To roll back Bun code, atomically select a previously accepted Bun release and restart the service, preserving `.env` and the latest `.data/kv-bun.sqlite3`. Returning to Deno requires the stopped-store codec procedure below; never restore a stale legacy database.
 
 After any repository change that touches `ops/ai-ubq-fi.service`, run `sudo systemctl daemon-reload` before the next
 restart: systemd keeps the previously loaded unit until it reloads. Releases created before the release-root launcher
@@ -78,3 +77,15 @@ Cloudflare proxies the explicit `ai.ubq.fi` A record to 129.158.58.222. A Worker
 excludes this hostname from `*.ubq.fi/*`; both are required. Leave other hostnames and the wildcard Worker unchanged.
 The origin uses a Cloudflare Origin CA certificate, so direct Mac tests must explicitly trust the Cloudflare Origin CA
 root and use `curl --resolve ai.ubq.fi:443:129.158.58.222`. Public clients use the normal Cloudflare edge certificate.
+
+## Bun runtime and offline cutover
+
+Application TypeScript executes directly in checksum-pinned Bun 1.4.0. Runtime archives, extracted binaries, frozen dependency trees and the Linux native containment payload are verified before immutable publication and service interruption. Launchers use `--no-env-file --no-install`; they load only the selected repository-root dotenv file. Missing or corrupt runtime, dependency or native payloads fail closed without downloading, installing or compiling at startup. The previous Deno runtime store and immutable releases remain untouched.
+
+Both deployment and manual release retention share the POSIX `.data/deploy.lock`, interoperating with the retained Deno deployment lock. CI runs complete Bun gates, verifies the materialized Linux ARM64 artifact, and requires a real macOS Seatbelt acceptance job. CI contains no automatic deployment. Linux uses the packaged Landlock/seccomp helper before application imports; systemd also mounts `.data/releases` and `.data/runtimes` read-only. Missing native homes/control directories receive no Landlock grant; restart after the native daemon creates them. macOS starts the Bun application under Seatbelt, restricting reads, writes and subprocess creation.
+
+Deploy and service startup require an existing regular `.data/kv-bun.sqlite3` with the explicit Bun/JSC codec marker. They never open, rewrite or convert the legacy `.data/kv.sqlite3`. Plan an authorized downtime separately: drain and stop the old service, preserve consistent database backups, convert the stopped legacy source into a NEW Bun target with `bun --no-env-file src/kv-conversion/cli.ts --direction deno-to-bun --source <legacy> --destination <new-bun-db> --receipt <new-receipt> --deno <pinned-deno> --deno-sha256 <pin>`, verify its complete row/revision/expiry receipt, and only then deploy the accepted Bun release. The Deno helper is an offline codec tool, separate from application/build/test runtime.
+
+Automatic recovery to a legacy Deno release is refused after a Bun startup attempt. For an explicitly authorized codec rollback, stop and drain Bun, preserve its latest durable database and retained Deno source, move the original Deno destination aside, then convert the latest stopped Bun state to the NEW `.data/kv.sqlite3` target with `--direction bun-to-deno` and a private mode-600 `.data/bun-rollback-receipt.json`. The receipt schema is `uos-kv-runtime-conversion-v1`; source hash, codec, path and absent/empty WAL must prove the latest stopped state, and the newly converted destination hash must match. The supported VPS legacy launcher checks that receipt before adopting it and records its identity for later Deno restarts; starting Bun invalidates that adoption. On Mac, restore the archived Deno launch-agent profile and managed Deno runtime only after the same verified latest-state conversion. Repointing code to an old DB or restoring the original migration backup discards subsequent writes and is never a rollback procedure.
+
+Health must retain the full SHA and `vps-<sha>` or `mac-<sha>` in its body and both identity headers. VPS acceptance also requires the public ingress identity and the separately authorized authenticated Mac-to-VPS inference proof; these checks are not supplied by artifact verification alone.

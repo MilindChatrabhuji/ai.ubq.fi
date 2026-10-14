@@ -5,12 +5,12 @@ The Mac companion listens on `http://0.0.0.0:7999` (LAN address, for example `ht
 the user logs in or keep a sleeping Mac awake.
 
 Configuration lives in `ops/com.ubiquity.ai.local.plist`, linked from `~/Library/LaunchAgents/`. The repository-root
-`.env` contains the existing upstream credentials. Local KV is `.data/kv.sqlite3`. Code runs from the immutable release
-selected by `.data/current`, including that release's Deno configuration. Runtime identity is `mac-<full-git-sha>`.
+`.env` contains the existing upstream credentials. Local Bun KV is `.data/kv-bun.sqlite3`, with the explicit `bun-jsc-v1` marker. Code runs from the immutable release
+selected by `.data/current`, including its frozen dependencies, package imports and verified artifact manifest. Runtime identity is `mac-<full-git-sha>`.
 
 ## Loopback trust boundary
 
-`scripts/serve-mac.ts` enables the keyless path for this listener and binds the TCP peer Deno reports for each request
+`scripts/serve-mac.ts` enables the keyless path for this listener and binds the actual TCP peer the Bun node:http adapter reports for each request
 (`info.remoteAddr`). `src/auth/local-admin.ts` then decides that request:
 
 - The bypass needs a numeric loopback TCP peer (`127.0.0.0/8`, `::1`) **and** a loopback request URL hostname
@@ -88,7 +88,7 @@ the existing sign-in and cross-machine sync. This uses the gateway's existing KV
 loading; it does not change the synced auth file. Production scheduled billing remains on the VPS. Local capped paid
 billing maintenance is tracked in [#266](https://github.com/ubiquity/ai.ubq.fi/issues/266).
 
-From the clean Mac repository root, `deno task deploy:mac` installs the committed release and loads the launch agent.
+From the clean Mac repository root, `bun run deploy:mac` installs the committed release and loads the launch agent.
 Verify authenticated local inference after deployment before changing Codex routing. The task's health check alone does
 not establish provider readiness.
 
@@ -106,3 +106,15 @@ Use a custom Codex provider with base URL `http://127.0.0.1:7999/v1` and the Res
 no credential, and an existing `UOS_AI_TOKEN` in that profile keeps working unchanged. Keep the remote `uos` provider
 available for an explicit remote profile. Local inference avoids the VPS round trip; traffic between the Mac and
 upstream model providers still uses the internet. The two gateways have independent usage and routing state.
+
+## Bun runtime and offline cutover
+
+Application TypeScript executes directly in checksum-pinned Bun 1.4.0. Runtime archives, extracted binaries, frozen dependency trees and the Linux native containment payload are verified before immutable publication and service interruption. Launchers use `--no-env-file --no-install`; they load only the selected repository-root dotenv file. Missing or corrupt runtime, dependency or native payloads fail closed without downloading, installing or compiling at startup. The previous Deno runtime store and immutable releases remain untouched.
+
+Both deployment and manual release retention share the POSIX `.data/deploy.lock`, interoperating with the retained Deno deployment lock. CI runs complete Bun gates, verifies the materialized Linux ARM64 artifact, and requires a real macOS Seatbelt acceptance job. CI contains no automatic deployment. Linux uses the packaged Landlock/seccomp helper before application imports; systemd also mounts `.data/releases` and `.data/runtimes` read-only. Missing native homes/control directories receive no Landlock grant; restart after the native daemon creates them. macOS starts the Bun application under Seatbelt, restricting reads, writes and subprocess creation.
+
+Deploy and service startup require an existing regular `.data/kv-bun.sqlite3` with the explicit Bun/JSC codec marker. They never open, rewrite or convert the legacy `.data/kv.sqlite3`. Plan an authorized downtime separately: drain and stop the old service, preserve consistent database backups, convert the stopped legacy source into a NEW Bun target with `bun --no-env-file src/kv-conversion/cli.ts --direction deno-to-bun --source <legacy> --destination <new-bun-db> --receipt <new-receipt> --deno <pinned-deno> --deno-sha256 <pin>`, verify its complete row/revision/expiry receipt, and only then deploy the accepted Bun release. The Deno helper is an offline codec tool, separate from application/build/test runtime.
+
+Automatic recovery to a legacy Deno release is refused after a Bun startup attempt. For an explicitly authorized codec rollback, stop and drain Bun, preserve its latest durable database and retained Deno source, move the original Deno destination aside, then convert the latest stopped Bun state to the NEW `.data/kv.sqlite3` target with `--direction bun-to-deno` and a private mode-600 `.data/bun-rollback-receipt.json`. The receipt schema is `uos-kv-runtime-conversion-v1`; source hash, codec, path and absent/empty WAL must prove the latest stopped state, and the newly converted destination hash must match. The supported VPS legacy launcher checks that receipt before adopting it and records its identity for later Deno restarts; starting Bun invalidates that adoption. On Mac, restore the archived Deno launch-agent profile and managed Deno runtime only after the same verified latest-state conversion. Repointing code to an old DB or restoring the original migration backup discards subsequent writes and is never a rollback procedure.
+
+Health must retain the full SHA and `vps-<sha>` or `mac-<sha>` in its body and both identity headers. VPS acceptance also requires the public ingress identity and the separately authorized authenticated Mac-to-VPS inference proof; these checks are not supplied by artifact verification alone.

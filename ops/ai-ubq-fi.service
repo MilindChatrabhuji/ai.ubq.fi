@@ -9,23 +9,24 @@ Type=simple
 User=codex
 Group=codex
 WorkingDirectory=/home/codex/repos/ubiquity/ai.ubq.fi
+# Retained only for the exact supported legacy Deno recovery command.
 Environment=DENO_DIR=/home/codex/repos/ubiquity/ai.ubq.fi/.data/deno
 Environment=DENO_TIMELINE=production
-ExecStart=/bin/sh -c 'set -eu; release=$$(cd -P .data/current && pwd); exec /usr/local/bin/deno run --config="$$release/deno.json" --lock="$$release/deno.lock" --frozen --no-prompt --env-file=.env --unstable-kv --allow-env --allow-net --allow-sys=hostname --allow-read=/home/codex/repos/ubiquity/ai.ubq.fi,/home/codex/.codex --allow-write=/home/codex/repos/ubiquity/ai.ubq.fi/.data,/home/codex/.codex/app-server-control "$$release/scripts/serve-vps.ts"'
+ExecStart=/bin/sh /home/codex/repos/ubiquity/ai.ubq.fi/ops/launch-vps.sh
 Restart=always
 RestartSec=5
 TimeoutStopSec=180
 UMask=0077
 NoNewPrivileges=true
-# The supervisor dials the Codex app-server control socket at
-# ~/.codex/app-server-control/app-server-control.sock, whose real socket lives in a
-# hashed directory under /tmp. A private /tmp hides that target (and a bind of the
-# directory cannot survive boot ordering), so this unit shares the host /tmp namespace;
-# ProtectSystem, ProtectHome and ReadWritePaths still fence its writes.
+# The native control socket's physical target is in shared /tmp.
 PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/codex/repos/ubiquity/ai.ubq.fi/.data
+ReadWritePaths=-/home/codex/.codex/app-server-control
+# Landlock's .data write grant needs read-only mounts for nested immutable stores.
+ReadOnlyPaths=/home/codex/repos/ubiquity/ai.ubq.fi/.data/releases
+ReadOnlyPaths=/home/codex/repos/ubiquity/ai.ubq.fi/.data/runtimes
 
 [Install]
 WantedBy=multi-user.target
