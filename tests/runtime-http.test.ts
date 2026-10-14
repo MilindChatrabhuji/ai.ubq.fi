@@ -342,3 +342,61 @@ test("HTTP bounds producer reads when a real socket applies backpressure", async
     await server.shutdown();
   }
 }, 5000);
+
+test("HTTP cancelled request body sends an early 413 while the upload is unfinished", async () => {
+  const observed = deferred<{ completed: Promise<void>; signal: AbortSignal }>();
+  const body = JSON.stringify({ error: "payload_too_large" });
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, async (request, info) => {
+    observed.resolve({ completed: info.completed, signal: request.signal });
+    if (Number(request.headers.get("content-length")) > 1024) {
+      await request.body?.cancel();
+      return new Response(body, { status: 413, headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) } });
+    }
+    return new Response(await request.text());
+  });
+  const address = await server.ready;
+  const socket = connect({ host: "127.0.0.1", port: address.port });
+  const response = deferred<string>();
+  const timer = setTimeout(() => response.reject(new Error("The cancelled upload did not receive its early response")), 1500);
+  let wire = "";
+  socket.once("connect", () => socket.write("POST /oversize HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1025\r\nConnection: close\r\n\r\nx"));
+  socket.on("data", (chunk: Buffer) => {
+    wire += chunk.toString();
+    if (wire.includes(body)) response.resolve(wire);
+  });
+  socket.once("error", (error) => response.reject(error));
+  try {
+    const received = await response.promise;
+    const receipt = await observed.promise;
+    expect(received.startsWith("HTTP/1.1 413")).toBe(true);
+    expect(received).toContain("application/json");
+    expect(received).toContain(body);
+    await receipt.completed;
+    expect(receipt.signal.aborted).toBe(false);
+  } finally {
+    clearTimeout(timer);
+    socket.destroy();
+    await server.shutdown();
+  }
+}, 4000);
+
+test("HTTP unfinished POST disconnect interrupts input and rejects delivery", async () => {
+  const observed = deferred<{ completed: Promise<void>; signal: AbortSignal }>();
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, async (request, info) => {
+    observed.resolve({ completed: info.completed, signal: request.signal });
+    return new Response(await request.text());
+  });
+  const address = await server.ready;
+  const socket = connect({ host: "127.0.0.1", port: address.port });
+  socket.on("error", () => {});
+  socket.once("connect", () => socket.write("POST /disconnect HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1024\r\n\r\nx"));
+  try {
+    const receipt = await observed.promise;
+    socket.destroy();
+    await expect(receipt.completed).rejects.toThrow();
+    expect(receipt.signal.aborted).toBe(true);
+  } finally {
+    socket.destroy();
+    await server.shutdown();
+  }
+}, 4000);
