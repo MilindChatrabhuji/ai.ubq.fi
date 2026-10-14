@@ -609,6 +609,28 @@ type ExternalRepairHooks = {
   write?: typeof writeLocalPool;
 };
 
+const readExternalRepairFile = async (
+  path: string,
+  pool: CodexAuthPoolState,
+  readText: (path: string) => Promise<string>
+): Promise<{ text: string; raw: unknown } | null> => {
+  const registered = pool.accounts.some((auth) => auth.native_owner?.auth_mode === "chatgptAuthTokens" && `${auth.native_owner.codex_home}/auth.json` === path);
+  let text: string;
+  let raw: unknown;
+  try {
+    text = await readText(path);
+    raw = JSON.parse(text);
+  } catch {
+    if (registered) throw new Error("Registered external native leaf is unavailable; peer collection was refused");
+    return null;
+  }
+  if (!isRecord(raw) || raw.auth_mode !== "chatgptAuthTokens") {
+    if (registered) throw new Error("Registered external native leaf changed mode; peer collection was refused");
+    return null;
+  }
+  return { text, raw };
+};
+
 /** A recognized external file never reaches SSH collection or a managed refresh path. */
 export const repairExternalNativePool = async (
   flags: Pick<Flags, "apply" | "authJson" | "kv" | "codexBaseUrl">,
@@ -616,15 +638,9 @@ export const repairExternalNativePool = async (
   hooks: ExternalRepairHooks = {}
 ): Promise<{ status: "healthy" | "repaired" | "repair_available"; applied: boolean } | null> => {
   const readText = hooks.readText ?? ((path: string) => Deno.readTextFile(path));
-  let text: string;
-  let raw: unknown;
-  try {
-    text = await readText(flags.authJson);
-    raw = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!isRecord(raw) || raw.auth_mode !== "chatgptAuthTokens") return null;
+  const source = await readExternalRepairFile(flags.authJson, local.pool, readText);
+  if (!source) return null;
+  const { text, raw } = source;
   const home = nativeCodexConsumerHomes().find((candidate) => flags.authJson === `${candidate}/auth.json`);
   const regular =
     hooks.isRegularFile ??

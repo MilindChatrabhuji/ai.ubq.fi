@@ -148,6 +148,26 @@ Deno.test("external native renewal adopts a new leaf with CAS and never calls re
   });
 });
 
+Deno.test("registered external repair refuses missing or managed files before peer collection", async () => {
+  await fixture(async () => {
+    const pool = await planExternalNativeCodexAdoption(initialPool(), leaf(), PRIMARY, Date.now(), false);
+    const flags = { apply: true, authJson: `${PRIMARY}/auth.json`, kv: "/synthetic/kv", codexBaseUrl: "https://synthetic.invalid" };
+    const local = { pool, versionstamp: "external-version" };
+    await assert.rejects(
+      repairExternalNativePool(flags, local, {
+        readText: () => Promise.reject(new Error("Synthetic missing file")),
+      }),
+      /peer collection was refused/
+    );
+    await assert.rejects(
+      repairExternalNativePool(flags, local, {
+        readText: () => Promise.resolve(JSON.stringify({ auth_mode: "chatgpt", tokens: managed() })),
+      }),
+      /peer collection was refused/
+    );
+  });
+});
+
 Deno.test("external repair rechecks leaf bytes and honors pool CAS without peers", async () => {
   await fixture(async () => {
     const text = JSON.stringify(leaf());
