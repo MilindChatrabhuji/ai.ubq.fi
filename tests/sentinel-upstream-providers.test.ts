@@ -1,3 +1,11 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { buildPermissionsNative } from "../scripts/build-permissions.ts";
+import { test } from "bun:test";
+import { openKv, type Kv } from "#kv";
 import assert from "node:assert/strict";
 import { apiKeyHashKey, apiKeyIdKey } from "../src/api-keys.ts";
 import { ApiKeyQuotaDispatchError } from "../src/api-key-policy.ts";
@@ -43,8 +51,6 @@ import { base64UrlDecode, base64UrlEncode, encodeHex, sha256Base64Url } from "..
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const { default: handler } = await import("../src/handler/index.ts");
-
-const kvAvailable = typeof Deno.openKv === "function";
 
 const encoder = new TextEncoder();
 
@@ -111,75 +117,72 @@ const replayTrace = (
   ...flags,
 });
 
-Deno.test({
-  name: "actual Surplus fetch captures pre-normalization SSE bytes and stays lazy until the consumer reads",
-  async fn() {
-    const recorder = createSentinelUpstreamRecorder();
-    const rawChunks: string[] = [
-      `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_raw", created_at: 0 } })}\n\n`,
-      `data: ${JSON.stringify({ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "hello" })}\n\n`,
-      `data: ${JSON.stringify({
-        type: "response.completed",
-        response: { id: "resp_raw", model: "surplus-fixture", output: [] },
-      })}\n\n`,
-    ];
-    const rawText = rawChunks.join("");
-    let pulls = 0;
-    const pending = [...rawChunks];
-    const fetcher = (_url: string | URL | Request, _init?: RequestInit): Promise<Response> =>
-      Promise.resolve(
-        new Response(
-          new ReadableStream<Uint8Array>(
-            {
-              pull(controller) {
-                pulls += 1;
-                const next = pending.shift() ?? null;
-                if (next === null) {
-                  controller.close();
-                  return;
-                }
-                controller.enqueue(encoder.encode(next));
-              },
+test("actual Surplus fetch captures pre-normalization SSE bytes and stays lazy until the consumer reads", async () => {
+  const recorder = createSentinelUpstreamRecorder();
+  const rawChunks: string[] = [
+    `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_raw", created_at: 0 } })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "hello" })}\n\n`,
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: { id: "resp_raw", model: "surplus-fixture", output: [] },
+    })}\n\n`,
+  ];
+  const rawText = rawChunks.join("");
+  let pulls = 0;
+  const pending = [...rawChunks];
+  const fetcher = (_url: string | URL | Request, _init?: RequestInit): Promise<Response> =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              pulls += 1;
+              const next = pending.shift() ?? null;
+              if (next === null) {
+                controller.close();
+                return;
+              }
+              controller.enqueue(encoder.encode(next));
             },
-            { highWaterMark: 0 }
-          ),
-          { status: 200, headers: { "Content-Type": "text/event-stream", "X-Request-Id": "surplus-raw-1" } }
-        )
-      );
-    const result = await fetchSurplusResponses(
-      { model: "surplus-fixture", input: "hello" },
-      { apiKey: "surplus-fixture-key", fetcher, sentinelUpstreamRecorder: recorder }
+          },
+          { highWaterMark: 0 }
+        ),
+        { status: 200, headers: { "Content-Type": "text/event-stream", "X-Request-Id": "surplus-raw-1" } }
+      )
     );
-    assert.equal(result.request_id, "surplus-raw-1");
-    assert.equal(result.response.status, 200);
-    // The normalizer's existing ReadableStream may prefetch exactly one chunk
-    // (its own default high-water-mark); the recorder itself never reads
-    // ahead, which the recorder-level lazy test proves directly. No drain may
-    // occur here.
-    assert.equal(pulls <= 1, true, "the provider must not drain the raw upstream bytes");
-    const normalizedText = await result.response.text();
-    assert.equal(pulls, rawChunks.length, "each raw chunk is read exactly once");
-    const trace = recorder.snapshotAndSeal();
-    assert.equal(trace.attempts.length, 1);
-    const attempt = trace.attempts[0];
-    assert.equal(attempt.provider, "surplus");
-    assert.equal(attempt.status, 200);
-    assert.equal(attempt.content_type, "text/event-stream");
-    // The normalizer returns after the parsed terminal event and cancels the
-    // source, so this is a consumed prefix: cancelled is the truthful
-    // terminal, never a claim of complete raw network EOF.
-    assert.equal(attempt.terminal, "cancelled");
-    // The captured bytes are the raw pre-normalization SSE framing, while the
-    // returned body is the normalizer's re-encoded event stream.
-    assert.equal(decodeChunks(trace), rawText, "captured bytes must be the exact raw upstream SSE");
-    assert.equal(decodeChunks(trace).startsWith("data: "), true);
-    assert.equal(normalizedText.startsWith("event: response.created"), true);
-    assert.equal(normalizedText.includes("output_text.done"), true);
-    recorder.dispose();
-  },
+  const result = await fetchSurplusResponses(
+    { model: "surplus-fixture", input: "hello" },
+    { apiKey: "surplus-fixture-key", fetcher, sentinelUpstreamRecorder: recorder }
+  );
+  assert.equal(result.request_id, "surplus-raw-1");
+  assert.equal(result.response.status, 200);
+  // The normalizer's existing ReadableStream may prefetch exactly one chunk
+  // (its own default high-water-mark); the recorder itself never reads
+  // ahead, which the recorder-level lazy test proves directly. No drain may
+  // occur here.
+  assert.equal(pulls <= 1, true, "the provider must not drain the raw upstream bytes");
+  const normalizedText = await result.response.text();
+  assert.equal(pulls, rawChunks.length, "each raw chunk is read exactly once");
+  const trace = recorder.snapshotAndSeal();
+  assert.equal(trace.attempts.length, 1);
+  const attempt = trace.attempts[0];
+  assert.equal(attempt.provider, "surplus");
+  assert.equal(attempt.status, 200);
+  assert.equal(attempt.content_type, "text/event-stream");
+  // The normalizer returns after the parsed terminal event and cancels the
+  // source, so this is a consumed prefix: cancelled is the truthful
+  // terminal, never a claim of complete raw network EOF.
+  assert.equal(attempt.terminal, "cancelled");
+  // The captured bytes are the raw pre-normalization SSE framing, while the
+  // returned body is the normalizer's re-encoded event stream.
+  assert.equal(decodeChunks(trace), rawText, "captured bytes must be the exact raw upstream SSE");
+  assert.equal(decodeChunks(trace).startsWith("data: "), true);
+  assert.equal(normalizedText.startsWith("event: response.created"), true);
+  assert.equal(normalizedText.includes("output_text.done"), true);
+  recorder.dispose();
 });
 
-Deno.test("actual Surplus no-header fetch failure records fetch_error without inventing headers", async () => {
+test("actual Surplus no-header fetch failure records fetch_error without inventing headers", async () => {
   const recorder = createSentinelUpstreamRecorder();
   await assert.rejects(
     fetchSurplusResponses(
@@ -206,7 +209,7 @@ Deno.test("actual Surplus no-header fetch failure records fetch_error without in
   recorder.dispose();
 });
 
-Deno.test("quota denial never opens a dispatch slot on any paid provider", async () => {
+test("quota denial never opens a dispatch slot on any paid provider", async () => {
   const quota = new ApiKeyQuotaDispatchError("quota denied", {
     status: 429,
     code: "quota_denied",
@@ -265,7 +268,7 @@ Deno.test("quota denial never opens a dispatch slot on any paid provider", async
   assert.equal(dispatchAttempts, 0, "no provider fetch may run after admission denial");
 });
 
-Deno.test("actual Metered dispatch returns the exact upstream body and bounded headers", async () => {
+test("actual Metered dispatch returns the exact upstream body and bounded headers", async () => {
   const recorder = createSentinelUpstreamRecorder();
   const rawSse =
     `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_metered", created_at: 0 } })}\n\n` +
@@ -308,7 +311,7 @@ Deno.test("actual Metered dispatch returns the exact upstream body and bounded h
   noHeaderRecorder.dispose();
 });
 
-Deno.test("actual Cerebras dispatch returns the exact upstream body and records the attempt", async () => {
+test("actual Cerebras dispatch returns the exact upstream body and records the attempt", async () => {
   const recorder = createSentinelUpstreamRecorder();
   const rawJson = JSON.stringify({ id: "cerebras-1", object: "chat.completion", choices: [{ index: 0 }] });
   const fetcher = (): Promise<Response> => Promise.resolve(new Response(rawJson, { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -342,7 +345,7 @@ Deno.test("actual Cerebras dispatch returns the exact upstream body and records 
   noHeaderRecorder.dispose();
 });
 
-Deno.test("actual DeepSeek dispatch returns the exact upstream body and records the attempt", async () => {
+test("actual DeepSeek dispatch returns the exact upstream body and records the attempt", async () => {
   const recorder = createSentinelUpstreamRecorder();
   const rawJson = JSON.stringify({ id: "deepseek-1", object: "chat.completion", choices: [{ index: 0 }] });
   let dispatchedBody: Record<string, unknown> | null = null;
@@ -385,90 +388,84 @@ Deno.test("actual DeepSeek dispatch returns the exact upstream body and records 
   noHeaderRecorder.dispose();
 });
 
-Deno.test({
-  name: "actual Codex intermediate retries each count as an attempt and the wrapper is the WeakMap identity",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const originalFetch = globalThis.fetch;
-    const originalNow = Date.now;
-    const nowMs = 1_700_000_000_000;
-    Date.now = () => nowMs;
-    const auth = (label: string): CodexAuthState => ({
-      access_token: `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.${label}`,
-      refresh_token: `refresh-${label}`,
-      account_id: `account-${label}`,
-      updated_at_ms: nowMs,
+test("actual Codex intermediate retries each count as an attempt and the wrapper is the WeakMap identity", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const nowMs = 1_700_000_000_000;
+  Date.now = () => nowMs;
+  const auth = (label: string): CodexAuthState => ({
+    access_token: `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.${label}`,
+    refresh_token: `refresh-${label}`,
+    account_id: `account-${label}`,
+    updated_at_ms: nowMs,
+  });
+  const pool = (...accounts: CodexAuthState[]): CodexAuthPoolState => ({ accounts, updated_at_ms: nowMs });
+  await kv.set(CODEX_AUTH_POOL_KV_KEY, pool(auth("one"), auth("two")));
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  resetProviderHealthThrottleForTest();
+  let shouldQuotaFailOne = false;
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const request = new Request(input, init);
+    if (request.url === CODEX_REFRESH_URL) {
+      return Promise.resolve(new Response(JSON.stringify({ access_token: "refreshed-one" }), { status: 200 }));
+    }
+    const accountId = request.headers.get("ChatGPT-Account-ID") ?? "";
+    if (shouldQuotaFailOne && accountId === "account-one") {
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 60_000).toUTCString() },
+        })
+      );
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  });
+  const body = () => ({ model: "gpt-5.6-luna", prompt_cache_key: "cache-recorder-weakmap", input: "fixture" });
+  try {
+    const recorder = createSentinelUpstreamRecorder();
+    const first = await fetchCodexResponses(body(), {
+      cacheScope: "api-key:recorder-weakmap",
+      sentinelUpstreamRecorder: recorder,
     });
-    const pool = (...accounts: CodexAuthState[]): CodexAuthPoolState => ({ accounts, updated_at_ms: nowMs });
-    await kv.set(CODEX_AUTH_POOL_KV_KEY, pool(auth("one"), auth("two")));
+    assert.equal(getCodexResponseSlot(first), 1, "the wrapper must be the registered WeakMap identity");
+    await markCodexResponseCompleted(first);
+    recorder.dispose();
+    assert.equal(recorder.snapshotAndSeal().attempts.length, 1);
+
+    shouldQuotaFailOne = true;
+    const remapRecorder = createSentinelUpstreamRecorder();
+    const remapped = await fetchCodexResponses(body(), {
+      cacheScope: "api-key:recorder-weakmap",
+      sentinelUpstreamRecorder: remapRecorder,
+    });
+    shouldQuotaFailOne = false;
+    assert.equal(remapped.status, 200);
+    assert.equal(getCodexResponseSlot(remapped), 2, "account two is the canonical wrapper identity");
+    assert.deepEqual(getCodexResponseActiveTelemetry(remapped), { activeGeneration: 2, activeTransitionReason: "quota_exhausted" });
+    await remapped.text();
+    const trace = remapRecorder.snapshotAndSeal();
+    assert.deepEqual(
+      trace.attempts.map(({ provider, status, terminal }) => ({ provider, status, terminal })),
+      [
+        { provider: "chatgpt_codex", status: 429, terminal: "eof" },
+        { provider: "chatgpt_codex", status: 200, terminal: "eof" },
+      ],
+      "each intermediate retry counts as its own attempt in dispatch order"
+    );
+    assert.equal(trace.attempts[0].chunks_base64.length > 0, true, "the 429 body read for classification is raw evidence");
+    remapRecorder.dispose();
+  } finally {
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
     resetProviderHealthThrottleForTest();
-    let shouldQuotaFailOne = false;
-    globalThis.fetch = (input, init) => {
-      const request = new Request(input, init);
-      if (request.url === CODEX_REFRESH_URL) {
-        return Promise.resolve(new Response(JSON.stringify({ access_token: "refreshed-one" }), { status: 200 }));
-      }
-      const accountId = request.headers.get("ChatGPT-Account-ID") ?? "";
-      if (shouldQuotaFailOne && accountId === "account-one") {
-        return Promise.resolve(
-          new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 60_000).toUTCString() },
-          })
-        );
-      }
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    };
-    const body = () => ({ model: "gpt-5.6-luna", prompt_cache_key: "cache-recorder-weakmap", input: "fixture" });
-    try {
-      const recorder = createSentinelUpstreamRecorder();
-      const first = await fetchCodexResponses(body(), {
-        cacheScope: "api-key:recorder-weakmap",
-        sentinelUpstreamRecorder: recorder,
-      });
-      assert.equal(getCodexResponseSlot(first), 1, "the wrapper must be the registered WeakMap identity");
-      await markCodexResponseCompleted(first);
-      recorder.dispose();
-      assert.equal(recorder.snapshotAndSeal().attempts.length, 1);
-
-      shouldQuotaFailOne = true;
-      const remapRecorder = createSentinelUpstreamRecorder();
-      const remapped = await fetchCodexResponses(body(), {
-        cacheScope: "api-key:recorder-weakmap",
-        sentinelUpstreamRecorder: remapRecorder,
-      });
-      shouldQuotaFailOne = false;
-      assert.equal(remapped.status, 200);
-      assert.equal(getCodexResponseSlot(remapped), 2, "account two is the canonical wrapper identity");
-      assert.deepEqual(getCodexResponseActiveTelemetry(remapped), { activeGeneration: 2, activeTransitionReason: "quota_exhausted" });
-      await remapped.text();
-      const trace = remapRecorder.snapshotAndSeal();
-      assert.deepEqual(
-        trace.attempts.map(({ provider, status, terminal }) => ({ provider, status, terminal })),
-        [
-          { provider: "chatgpt_codex", status: 429, terminal: "eof" },
-          { provider: "chatgpt_codex", status: 200, terminal: "eof" },
-        ],
-        "each intermediate retry counts as its own attempt in dispatch order"
-      );
-      assert.equal(trace.attempts[0].chunks_base64.length > 0, true, "the 429 body read for classification is raw evidence");
-      remapRecorder.dispose();
-    } finally {
-      globalThis.fetch = originalFetch;
-      Date.now = originalNow;
-      resetCodexAuthCacheForTest();
-      resetCodexAccountRoutingForTest();
-      resetProviderHealthThrottleForTest();
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
 const SUPER_ADMIN_TOKEN = "sentinel-upstream-provider-super-admin";
@@ -486,7 +483,7 @@ const CAPTURE_BODY = new TextEncoder().encode(
 
 const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params).toString()}`;
 
-const seedAuthenticatedKey = async (kv: Deno.Kv, token: string): Promise<void> => {
+const seedAuthenticatedKey = async (kv: Kv, token: string): Promise<void> => {
   const now = Date.now();
   const hash = await sha256Base64Url(token);
   const id = `upstream-provider-${hash.slice(0, 12)}`;
@@ -519,133 +516,127 @@ const seedAuthenticatedKey = async (kv: Deno.Kv, token: string): Promise<void> =
   });
 };
 
-Deno.test({
-  name: "real handler failure captures exact raw Codex upstream bytes through encrypted export and decrypt",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const adminTokens = config.adminTokens as Set<string>;
-    adminTokens.add(SUPER_ADMIN_TOKEN);
-    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-    Deno.env.set("SENTINEL_REPLAY_KEY", base64UrlEncode(keyBytes));
-    const token = `u_${encodeHex(crypto.getRandomValues(new Uint8Array(32)))}`;
-    const originalFetch = globalThis.fetch;
-    const originalNow = Date.now;
-    const nowMs = 1_700_000_000_000;
-    Date.now = () => nowMs;
-    const accessToken = `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.handler-fixture`;
-    const authState: CodexAuthState = {
-      access_token: accessToken,
-      refresh_token: "refresh-handler-fixture",
-      account_id: "account-handler-fixture",
+test("real handler failure captures exact raw Codex upstream bytes through encrypted export and decrypt", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+  process.env.SENTINEL_REPLAY_KEY = base64UrlEncode(keyBytes);
+  const token = `u_${encodeHex(crypto.getRandomValues(new Uint8Array(32)))}`;
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const nowMs = 1_700_000_000_000;
+  Date.now = () => nowMs;
+  const accessToken = `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.handler-fixture`;
+  const authState: CodexAuthState = {
+    access_token: accessToken,
+    refresh_token: "refresh-handler-fixture",
+    account_id: "account-handler-fixture",
+    updated_at_ms: nowMs,
+  };
+  const authPool: CodexAuthPoolState = { accounts: [authState], updated_at_ms: nowMs };
+  const runtimeConfig = {
+    version: 2,
+    default_model: "gpt-5.6-sol",
+    default_reasoning_effort: "low",
+    codex_models: {
+      source: "chatgpt_codex",
+      client_version: "0.100.0",
       updated_at_ms: nowMs,
-    };
-    const authPool: CodexAuthPoolState = { accounts: [authState], updated_at_ms: nowMs };
-    const runtimeConfig = {
-      version: 2,
-      default_model: "gpt-5.6-sol",
-      default_reasoning_effort: "low",
-      codex_models: {
-        source: "chatgpt_codex",
-        client_version: "0.100.0",
-        updated_at_ms: nowMs,
-        models: [
-          {
-            slug: "gpt-5.6-sol",
-            default_reasoning_level: "low",
-            supported_reasoning_levels: ["none", "low", "medium", "high"],
-          },
-        ],
-      },
-      updated_at_ms: nowMs,
-    };
-    await Promise.all([kv.set(CODEX_AUTH_POOL_KV_KEY, authPool), kv.set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)]);
+      models: [
+        {
+          slug: "gpt-5.6-sol",
+          default_reasoning_level: "low",
+          supported_reasoning_levels: ["none", "low", "medium", "high"],
+        },
+      ],
+    },
+    updated_at_ms: nowMs,
+  };
+  await Promise.all([kv.set(CODEX_AUTH_POOL_KV_KEY, authPool), kv.set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)]);
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  resetRuntimeConfigCacheForTest();
+  resetProviderHealthThrottleForTest();
+  let upstreamDispatches = 0;
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const request = new Request(input, init);
+    if (request.url === CODEX_REFRESH_URL) {
+      return Promise.resolve(new Response(JSON.stringify({ access_token: accessToken }), { status: 200 }));
+    }
+    if (request.url === CODEX_RESPONSES_URL) {
+      upstreamDispatches += 1;
+      return Promise.resolve(
+        new Response(RAW_UPSTREAM_BODY, {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+    }
+    if (request.url.includes("openai.com")) {
+      return Promise.resolve(new Response(JSON.stringify({ error: "fixture" }), { status: 400 }));
+    }
+    throw new Error(`Unexpected handler test fetch: ${request.url}`);
+  });
+  try {
+    await seedAuthenticatedKey(kv, token);
+    const response = await handler(
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: CAPTURE_BODY,
+      })
+    );
+    assert.equal(response.status, 500);
+    assert.equal(upstreamDispatches, 1, "one real Codex dispatch must drive the handler failure");
+    const responseText = await response.text();
+    assert.equal(responseText.includes(MARKER), false, "failure response leaks request plaintext");
+
+    const page = await handler(
+      new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 2_000) }), {
+        headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
+      })
+    );
+    assert.equal(page.status, 200);
+    const exported = (await page.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
+    assert.equal(exported.data.length, 1);
+    const capture = exported.data[0];
+    const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
+    assert.equal(plaintext.version, 3);
+    assert.equal(plaintext.endpoint, "/v1/responses");
+    assert.equal(plaintext.method, "POST");
+    assert.deepEqual([...plaintext.body], [...CAPTURE_BODY]);
+    assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(CAPTURE_BODY));
+    assert.equal(plaintext.observation.status, 500);
+    assert.equal(plaintext.upstream.attempts.length, 1);
+    const attempt = plaintext.upstream.attempts[0];
+    assert.equal(attempt.provider, "chatgpt_codex");
+    assert.equal(attempt.status, 500);
+    assert.equal(attempt.content_type, "application/json");
+    assert.equal(attempt.terminal, "eof");
+    assert.deepEqual(
+      attempt.chunks_base64.map((chunk) => new TextDecoder().decode(base64UrlDecode(chunk))).join(""),
+      RAW_UPSTREAM_BODY,
+      "the decrypted private plaintext must carry the exact raw upstream bytes"
+    );
+    assert.equal(JSON.stringify(exported).includes("account-handler-fixture"), false);
+    assert.equal(JSON.stringify(exported).includes(RAW_UPSTREAM_BODY), false, "export never carries plaintext");
+  } finally {
+    delete process.env.SENTINEL_REPLAY_KEY;
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
     resetRuntimeConfigCacheForTest();
     resetProviderHealthThrottleForTest();
-    let upstreamDispatches = 0;
-    globalThis.fetch = (input, init) => {
-      const request = new Request(input, init);
-      if (request.url === CODEX_REFRESH_URL) {
-        return Promise.resolve(new Response(JSON.stringify({ access_token: accessToken }), { status: 200 }));
-      }
-      if (request.url === CODEX_RESPONSES_URL) {
-        upstreamDispatches += 1;
-        return Promise.resolve(
-          new Response(RAW_UPSTREAM_BODY, {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          })
-        );
-      }
-      if (request.url.includes("openai.com")) {
-        return Promise.resolve(new Response(JSON.stringify({ error: "fixture" }), { status: 400 }));
-      }
-      throw new Error(`Unexpected handler test fetch: ${request.url}`);
-    };
-    try {
-      await seedAuthenticatedKey(kv, token);
-      const response = await handler(
-        new Request("https://ai.ubq.fi/v1/responses", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: CAPTURE_BODY,
-        })
-      );
-      assert.equal(response.status, 500);
-      assert.equal(upstreamDispatches, 1, "one real Codex dispatch must drive the handler failure");
-      const responseText = await response.text();
-      assert.equal(responseText.includes(MARKER), false, "failure response leaks request plaintext");
-
-      const page = await handler(
-        new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 2_000) }), {
-          headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
-        })
-      );
-      assert.equal(page.status, 200);
-      const exported = (await page.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
-      assert.equal(exported.data.length, 1);
-      const capture = exported.data[0];
-      const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
-      assert.equal(plaintext.version, 3);
-      assert.equal(plaintext.endpoint, "/v1/responses");
-      assert.equal(plaintext.method, "POST");
-      assert.deepEqual([...plaintext.body], [...CAPTURE_BODY]);
-      assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(CAPTURE_BODY));
-      assert.equal(plaintext.observation.status, 500);
-      assert.equal(plaintext.upstream.attempts.length, 1);
-      const attempt = plaintext.upstream.attempts[0];
-      assert.equal(attempt.provider, "chatgpt_codex");
-      assert.equal(attempt.status, 500);
-      assert.equal(attempt.content_type, "application/json");
-      assert.equal(attempt.terminal, "eof");
-      assert.deepEqual(
-        attempt.chunks_base64.map((chunk) => new TextDecoder().decode(base64UrlDecode(chunk))).join(""),
-        RAW_UPSTREAM_BODY,
-        "the decrypted private plaintext must carry the exact raw upstream bytes"
-      );
-      assert.equal(JSON.stringify(exported).includes("account-handler-fixture"), false);
-      assert.equal(JSON.stringify(exported).includes(RAW_UPSTREAM_BODY), false, "export never carries plaintext");
-    } finally {
-      Deno.env.delete("SENTINEL_REPLAY_KEY");
-      adminTokens.delete(SUPER_ADMIN_TOKEN);
-      globalThis.fetch = originalFetch;
-      Date.now = originalNow;
-      resetCodexAuthCacheForTest();
-      resetCodexAccountRoutingForTest();
-      resetRuntimeConfigCacheForTest();
-      resetProviderHealthThrottleForTest();
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test("recorded upstream replay preserves exact chunk order and boundaries at EOF", async () => {
+test("recorded upstream replay preserves exact chunk order and boundaries at EOF", async () => {
   const originalFetch = globalThis.fetch;
   const inputTrace = replayTrace([replayAttempt("metered", 200, "application/json", "eof", ["abc", "def", "ghi"])]);
   const inputBefore = JSON.stringify(inputTrace);
@@ -668,7 +659,7 @@ Deno.test("recorded upstream replay preserves exact chunk order and boundaries a
   assert.equal(globalThis.fetch, originalFetch, "the helper must never replace or invoke global fetch");
 });
 
-Deno.test("recorded upstream read_error delivers the prefix then errors on the next pull", async () => {
+test("recorded upstream read_error delivers the prefix then errors on the next pull", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "read_error", ["x"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
   assert.equal(response.headers.get("content-type"), "text/event-stream");
@@ -682,14 +673,14 @@ Deno.test("recorded upstream read_error delivers the prefix then errors on the n
   assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 1, chunksTotal: 1, failed: false });
 });
 
-Deno.test("recorded upstream fetch_error rejects with no headers or chunks and completes the attempt", async () => {
+test("recorded upstream fetch_error rejects with no headers or chunks and completes the attempt", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("cerebras", null, null, "fetch_error")]), REPLAY_ROUTES);
   await assert.rejects(replay.fetch(REPLAY_ROUTES.cerebras), (error: unknown) => error instanceof TypeError);
   replay.assertComplete();
   assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 0, chunksTotal: 0, failed: false });
 });
 
-Deno.test("recorded upstream cancelled completes only when the consumer cancels after the full prefix", async () => {
+test("recorded upstream cancelled completes only when the consumer cancels after the full prefix", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "cancelled", ["data:", "x\n"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
   const reader = response.body?.getReader();
@@ -702,7 +693,7 @@ Deno.test("recorded upstream cancelled completes only when the consumer cancels 
   assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 2, chunksTotal: 2, failed: false });
 });
 
-Deno.test("recorded upstream cancelled prefix rejects when read beyond it, never inventing EOF", async () => {
+test("recorded upstream cancelled prefix rejects when read beyond it, never inventing EOF", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "cancelled", ["data:"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
   const reader = response.body?.getReader();
@@ -716,7 +707,7 @@ Deno.test("recorded upstream cancelled prefix rejects when read beyond it, never
   await assert.rejects(replay.fetch(REPLAY_ROUTES.surplus), (error: unknown) => error instanceof TypeError);
 });
 
-Deno.test("recorded upstream cancelled prefix refuses early consumer cancellation", async () => {
+test("recorded upstream cancelled prefix refuses early consumer cancellation", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "cancelled", ["data:", "x\n"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
   const reader = response.body?.getReader();
@@ -729,7 +720,7 @@ Deno.test("recorded upstream cancelled prefix refuses early consumer cancellatio
   assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, chunksConsumed: 1, chunksTotal: 2, failed: true });
 });
 
-Deno.test("recorded upstream enforces exact ordered provider routes and permanent failure", async () => {
+test("recorded upstream enforces exact ordered provider routes and permanent failure", async () => {
   // Two attempts, each recording exactly one chunk: every total below is two.
   const twoAttempts = replayTrace([
     replayAttempt("chatgpt_codex", 200, "application/json", "eof", ["{}"]),
@@ -775,7 +766,7 @@ Deno.test("recorded upstream enforces exact ordered provider routes and permanen
   assert.deepEqual(extra.snapshot(), { attemptsDispatched: 2, attemptsCompleted: 2, chunksConsumed: 2, chunksTotal: 2, failed: true });
 });
 
-Deno.test("recorded upstream refuses unavailable or non-reproducible replay evidence at creation", () => {
+test("recorded upstream refuses unavailable or non-reproducible replay evidence at creation", () => {
   const usable = replayAttempt("metered", 200, "application/json", "eof", ["{}"]);
   assert.throws(() => createRecordedUpstreamReplay(replayTrace([]), REPLAY_ROUTES), /trace has no attempts/);
   assert.throws(() => createRecordedUpstreamReplay(replayTrace([usable], { attempts_truncated: true }), REPLAY_ROUTES), /trace is truncated/);
@@ -798,7 +789,7 @@ Deno.test("recorded upstream refuses unavailable or non-reproducible replay evid
   assert.throws(() => createRecordedUpstreamReplay(replayTrace([usable]), credential), /exact HTTPS endpoint/);
 });
 
-Deno.test("recorded upstream bodyless 204/205/304 replay as null body completed at dispatch", async () => {
+test("recorded upstream bodyless 204/205/304 replay as null body completed at dispatch", async () => {
   for (const status of [204, 205, 304] as const) {
     const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("metered", status, "other", "eof")]), REPLAY_ROUTES);
     const response = await replay.fetch(REPLAY_ROUTES.metered);
@@ -816,176 +807,170 @@ Deno.test("recorded upstream bodyless 204/205/304 replay as null body completed 
   }
 });
 
-Deno.test({
-  name: "real handler replays the decrypted recorded Codex raw failure through the trusted replay transport",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const adminTokens = config.adminTokens as Set<string>;
-    adminTokens.add(SUPER_ADMIN_TOKEN);
-    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-    const priorReplayKey = Deno.env.get("SENTINEL_REPLAY_KEY");
-    Deno.env.set("SENTINEL_REPLAY_KEY", base64UrlEncode(keyBytes));
-    const token = `u_${encodeHex(crypto.getRandomValues(new Uint8Array(32)))}`;
-    const originalFetch = globalThis.fetch;
-    const originalNow = Date.now;
-    const nowMs = 1_700_000_000_000;
-    Date.now = () => nowMs;
-    const accessToken = `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.handler-fixture`;
-    const authState: CodexAuthState = {
-      access_token: accessToken,
-      refresh_token: "refresh-handler-fixture",
-      account_id: "account-handler-fixture",
+test("real handler replays the decrypted recorded Codex raw failure through the trusted replay transport", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+  const priorReplayKey = process.env.SENTINEL_REPLAY_KEY;
+  process.env.SENTINEL_REPLAY_KEY = base64UrlEncode(keyBytes);
+  const token = `u_${encodeHex(crypto.getRandomValues(new Uint8Array(32)))}`;
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const nowMs = 1_700_000_000_000;
+  Date.now = () => nowMs;
+  const accessToken = `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.handler-fixture`;
+  const authState: CodexAuthState = {
+    access_token: accessToken,
+    refresh_token: "refresh-handler-fixture",
+    account_id: "account-handler-fixture",
+    updated_at_ms: nowMs,
+  };
+  const authPool: CodexAuthPoolState = { accounts: [authState], updated_at_ms: nowMs };
+  const runtimeConfig = {
+    version: 2,
+    default_model: "gpt-5.6-sol",
+    default_reasoning_effort: "low",
+    codex_models: {
+      source: "chatgpt_codex",
+      client_version: "0.100.0",
       updated_at_ms: nowMs,
-    };
-    const authPool: CodexAuthPoolState = { accounts: [authState], updated_at_ms: nowMs };
-    const runtimeConfig = {
-      version: 2,
-      default_model: "gpt-5.6-sol",
-      default_reasoning_effort: "low",
-      codex_models: {
-        source: "chatgpt_codex",
-        client_version: "0.100.0",
-        updated_at_ms: nowMs,
-        models: [
-          {
-            slug: "gpt-5.6-sol",
-            default_reasoning_level: "low",
-            supported_reasoning_levels: ["none", "low", "medium", "high"],
-          },
-        ],
-      },
-      updated_at_ms: nowMs,
-    };
-    await Promise.all([kv.set(CODEX_AUTH_POOL_KV_KEY, authPool), kv.set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)]);
+      models: [
+        {
+          slug: "gpt-5.6-sol",
+          default_reasoning_level: "low",
+          supported_reasoning_levels: ["none", "low", "medium", "high"],
+        },
+      ],
+    },
+    updated_at_ms: nowMs,
+  };
+  await Promise.all([kv.set(CODEX_AUTH_POOL_KV_KEY, authPool), kv.set(RUNTIME_CONFIG_V2_KEY, runtimeConfig)]);
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  resetRuntimeConfigCacheForTest();
+  resetProviderHealthThrottleForTest();
+  let rawDispatches = 0;
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const request = new Request(input, init);
+    if (request.url === CODEX_REFRESH_URL) {
+      return Promise.resolve(new Response(JSON.stringify({ access_token: accessToken }), { status: 200 }));
+    }
+    if (request.url === CODEX_RESPONSES_URL) {
+      rawDispatches += 1;
+      return Promise.resolve(
+        new Response(RAW_UPSTREAM_BODY, {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+    }
+    if (request.url.includes("openai.com")) {
+      return Promise.resolve(new Response(JSON.stringify({ error: "fixture" }), { status: 400 }));
+    }
+    throw new Error(`Unexpected handler test fetch: ${request.url}`);
+  });
+  try {
+    await seedAuthenticatedKey(kv, token);
+    const gatewayRequest = (): Request =>
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: CAPTURE_BODY,
+      });
+    const originalResponse = await handler(gatewayRequest());
+    assert.equal(originalResponse.status, 500);
+    assert.equal(rawDispatches, 1, "one real Codex dispatch must drive the original failure");
+    const originalText = await originalResponse.text();
+    assert.equal(originalText.includes(MARKER), false, "failure response leaks request plaintext");
+
+    const page = await handler(
+      new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 2_000) }), {
+        headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
+      })
+    );
+    assert.equal(page.status, 200);
+    const exported = (await page.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
+    assert.equal(exported.data.length, 1);
+    const capture = exported.data[0];
+    const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
+    assert.equal(plaintext.endpoint, "/v1/responses");
+    assert.equal(plaintext.method, "POST");
+    assert.deepEqual([...plaintext.body], [...CAPTURE_BODY]);
+    const replay = createRecordedUpstreamReplay(plaintext.upstream, REPLAY_ROUTES);
+    const upstreamBefore = JSON.stringify(plaintext.upstream);
+
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
     resetRuntimeConfigCacheForTest();
     resetProviderHealthThrottleForTest();
-    let rawDispatches = 0;
-    globalThis.fetch = (input, init) => {
-      const request = new Request(input, init);
-      if (request.url === CODEX_REFRESH_URL) {
+    let replayedDispatches = 0;
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = input instanceof Request ? input.url : new URL(String(input)).href;
+      if (url === CODEX_REFRESH_URL) {
         return Promise.resolve(new Response(JSON.stringify({ access_token: accessToken }), { status: 200 }));
       }
-      if (request.url === CODEX_RESPONSES_URL) {
-        rawDispatches += 1;
-        return Promise.resolve(
-          new Response(RAW_UPSTREAM_BODY, {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          })
-        );
-      }
-      if (request.url.includes("openai.com")) {
-        return Promise.resolve(new Response(JSON.stringify({ error: "fixture" }), { status: 400 }));
-      }
-      throw new Error(`Unexpected handler test fetch: ${request.url}`);
-    };
-    try {
-      await seedAuthenticatedKey(kv, token);
-      const gatewayRequest = (): Request =>
-        new Request("https://ai.ubq.fi/v1/responses", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: CAPTURE_BODY,
-        });
-      const originalResponse = await handler(gatewayRequest());
-      assert.equal(originalResponse.status, 500);
-      assert.equal(rawDispatches, 1, "one real Codex dispatch must drive the original failure");
-      const originalText = await originalResponse.text();
-      assert.equal(originalText.includes(MARKER), false, "failure response leaks request plaintext");
+      replayedDispatches += 1;
+      return replay.fetch(input, init);
+    });
+    const replayedResponse = await handler(
+      new Request(`https://ai.ubq.fi${plaintext.endpoint}`, {
+        method: plaintext.method,
+        headers: {
+          ...plaintext.compatibility_headers,
+          Authorization: `Bearer ${token}`,
+          ...(plaintext.content_type ? { "Content-Type": plaintext.content_type } : {}),
+        },
+        body: plaintext.body,
+      })
+    );
+    assert.equal(replayedResponse.status, originalResponse.status);
+    assert.equal(
+      replayedResponse.headers.get("x-uos-upstream"),
+      originalResponse.headers.get("x-uos-upstream"),
+      "the replayed failure must be attributed to the same upstream provider"
+    );
+    const replayedText = await replayedResponse.text();
+    assert.equal(replayedText.includes(MARKER), false, "replayed failure response leaks request plaintext");
+    assert.deepEqual(
+      JSON.parse(replayedText) as unknown,
+      JSON.parse(originalText) as unknown,
+      "the real handler must reconstruct the exact original raw-failure semantics"
+    );
+    assert.equal(replayedDispatches, 1, "exactly one replayed upstream attempt must dispatch");
+    replay.assertComplete();
+    assert.deepEqual(replay.snapshot(), {
+      attemptsDispatched: 1,
+      attemptsCompleted: 1,
+      // The recorded 500 JSON body is delivered as one chunk and replayed to
+      // its recorded EOF, so one chunk is pulled out of one stored chunk.
+      chunksConsumed: 1,
+      chunksTotal: 1,
+      failed: false,
+    });
+    assert.equal(JSON.stringify(plaintext.upstream), upstreamBefore, "decrypted input trace must stay unchanged");
 
-      const page = await handler(
-        new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 2_000) }), {
-          headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
-        })
-      );
-      assert.equal(page.status, 200);
-      const exported = (await page.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
-      assert.equal(exported.data.length, 1);
-      const capture = exported.data[0];
-      const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
-      assert.equal(plaintext.endpoint, "/v1/responses");
-      assert.equal(plaintext.method, "POST");
-      assert.deepEqual([...plaintext.body], [...CAPTURE_BODY]);
-      const replay = createRecordedUpstreamReplay(plaintext.upstream, REPLAY_ROUTES);
-      const upstreamBefore = JSON.stringify(plaintext.upstream);
-
-      resetCodexAuthCacheForTest();
-      resetCodexAccountRoutingForTest();
-      resetRuntimeConfigCacheForTest();
-      resetProviderHealthThrottleForTest();
-      let replayedDispatches = 0;
-      globalThis.fetch = (input, init) => {
-        const url = input instanceof Request ? input.url : new URL(String(input)).href;
-        if (url === CODEX_REFRESH_URL) {
-          return Promise.resolve(new Response(JSON.stringify({ access_token: accessToken }), { status: 200 }));
-        }
-        replayedDispatches += 1;
-        return replay.fetch(input, init);
-      };
-      const replayedResponse = await handler(
-        new Request(`https://ai.ubq.fi${plaintext.endpoint}`, {
-          method: plaintext.method,
-          headers: {
-            ...plaintext.compatibility_headers,
-            Authorization: `Bearer ${token}`,
-            ...(plaintext.content_type ? { "Content-Type": plaintext.content_type } : {}),
-          },
-          body: plaintext.body,
-        })
-      );
-      assert.equal(replayedResponse.status, originalResponse.status);
-      assert.equal(
-        replayedResponse.headers.get("x-uos-upstream"),
-        originalResponse.headers.get("x-uos-upstream"),
-        "the replayed failure must be attributed to the same upstream provider"
-      );
-      const replayedText = await replayedResponse.text();
-      assert.equal(replayedText.includes(MARKER), false, "replayed failure response leaks request plaintext");
-      assert.deepEqual(
-        JSON.parse(replayedText) as unknown,
-        JSON.parse(originalText) as unknown,
-        "the real handler must reconstruct the exact original raw-failure semantics"
-      );
-      assert.equal(replayedDispatches, 1, "exactly one replayed upstream attempt must dispatch");
-      replay.assertComplete();
-      assert.deepEqual(replay.snapshot(), {
-        attemptsDispatched: 1,
-        attemptsCompleted: 1,
-        // The recorded 500 JSON body is delivered as one chunk and replayed to
-        // its recorded EOF, so one chunk is pulled out of one stored chunk.
-        chunksConsumed: 1,
-        chunksTotal: 1,
-        failed: false,
-      });
-      assert.equal(JSON.stringify(plaintext.upstream), upstreamBefore, "decrypted input trace must stay unchanged");
-
-      const rePage = await handler(
-        new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 2_000) }), {
-          headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
-        })
-      );
-      const reExported = (await rePage.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
-      assert.deepEqual(reExported.data[0], exported.data[0], "identical replayed raw evidence must deduplicate and leave the original capture unchanged");
-    } finally {
-      if (priorReplayKey === undefined) Deno.env.delete("SENTINEL_REPLAY_KEY");
-      else Deno.env.set("SENTINEL_REPLAY_KEY", priorReplayKey);
-      adminTokens.delete(SUPER_ADMIN_TOKEN);
-      globalThis.fetch = originalFetch;
-      Date.now = originalNow;
-      resetCodexAuthCacheForTest();
-      resetCodexAccountRoutingForTest();
-      resetRuntimeConfigCacheForTest();
-      resetProviderHealthThrottleForTest();
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+    const rePage = await handler(
+      new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 2_000) }), {
+        headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
+      })
+    );
+    const reExported = (await rePage.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
+    assert.deepEqual(reExported.data[0], exported.data[0], "identical replayed raw evidence must deduplicate and leave the original capture unchanged");
+  } finally {
+    if (priorReplayKey === undefined) delete process.env.SENTINEL_REPLAY_KEY;
+    else process.env.SENTINEL_REPLAY_KEY = priorReplayKey;
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    resetRuntimeConfigCacheForTest();
+    resetProviderHealthThrottleForTest();
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
 /**
@@ -1011,7 +996,7 @@ const FIXTURE_FILE_SHA256 = "33938442d369c52213bdde02ea5e51b9848050400302f5e9dde
 const sha256Hex = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> => encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 
 const isPermissionBlocked = (error: unknown): boolean =>
-  error instanceof Deno.errors.PermissionDenied ||
+  (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM")) ||
   (error instanceof Error && error.name === "PermissionDenied") ||
   (error instanceof Error && /Requires (read|run|write) access/.test(error.message));
 
@@ -1064,12 +1049,54 @@ const assertClientStreamSemantics = (text: string): { event: string; value: Reco
  * Responses endpoint built from the historical module's own SURPLUS_BASE_URL
  * constant, binding endpoint identity to the exercised revision.
  */
+/** Commands are fixed fixture inputs; children inherit no application credentials. */
+const runFixtureCommand = async (
+  command: readonly string[],
+  cwd?: string
+): Promise<{ code: number; stdout: Uint8Array<ArrayBuffer>; stderr: Uint8Array<ArrayBuffer> }> => {
+  const child = Bun.spawn([...command], {
+    cwd,
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+  });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).arrayBuffer(), new Response(child.stderr).arrayBuffer()]);
+  return { code, stdout: new Uint8Array(stdout), stderr: new Uint8Array(stderr) };
+};
+
+/** Preserve originals beside a recorded adapter limited to env reads and unavailable KV. */
+const adaptHistoricalTree = async (tree: string): Promise<void> => {
+  const records: { path: string; original_sha256: string; bun_sha256: string }[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        const original = await readFile(path, "utf8");
+        const adapted = original
+          .replace(/Deno\.env\.get\(([^()\n]+)\)/g, "process.env[$1]")
+          .replaceAll("const denoOpenKv = (Deno as DenoWithKv).openKv;", "const denoOpenKv = undefined;");
+        if (adapted === original) continue;
+        const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
+        records.push({ path: path.slice(tree.length + 1), original_sha256: digest(original), bun_sha256: digest(adapted) });
+        await writeFile(path + ".deno-original", original);
+        await writeFile(path, adapted);
+      }
+    }
+  };
+  await visit(join(tree, "src"));
+  await writeFile(join(tree, "bun-adapter.json"), JSON.stringify({ runtime: "bun", adaptations: records }, null, 2));
+};
+
 const HISTORICAL_SOURCE_HARNESS = [
-  'import { fetchSurplusResponses, SURPLUS_BASE_URL } from "./src/surplus.ts";',
+  'const { fetchSurplusResponses, SURPLUS_BASE_URL } = await import("./src/surplus.ts");',
   "",
   'const root = new URL(".", import.meta.url);',
-  'const upstreamRaw = await Deno.readFile(new URL("./upstream.raw", root));',
-  'const request = JSON.parse(await Deno.readTextFile(new URL("./request.json", root))) as Record<string, unknown>;',
+  'import { readFile } from "node:fs/promises";',
+  'const upstreamRaw = await readFile(new URL("./upstream.raw", root));',
+  'const request = JSON.parse(await readFile(new URL("./request.json", root), "utf8")) as Record<string, unknown>;',
   'const expectedEndpoint = SURPLUS_BASE_URL + "/v1/responses";',
   "",
   "let liveFetchCalls = 0;",
@@ -1090,14 +1117,14 @@ const HISTORICAL_SOURCE_HARNESS = [
   "});",
   'if (liveFetchCalls !== 0) throw new Error("live network fetch was invoked");',
   "const clientText = await result.response.text();",
-  "await Deno.stdout.write(new TextEncoder().encode(clientText));",
+  "process.stdout.write(clientText);",
   "",
 ].join("\n");
 
 /**
  * Reproduces both recorded historical revisions from disposable exact source
  * archives (git archive of the exact src tree at each SHA) in a temporary
- * directory under the checkout, runs a child Deno process that imports the
+ * directory under the checkout, runs a confined Bun process through the recorded narrow adapter that imports the
  * historical src/surplus.ts and replays the recorded upstream through the
  * historical fetch path, and returns the exact client-visible stream bytes
  * each revision produced together with the verified source identities.
@@ -1121,7 +1148,7 @@ const exerciseHistoricalFramingSources = async (options: {
 }> => {
   let fixtureBytes: Uint8Array<ArrayBuffer>;
   try {
-    fixtureBytes = await Deno.readFile(new URL("./fixtures/sentinel-historical-framing.json", import.meta.url));
+    fixtureBytes = await readFile(new URL("./fixtures/sentinel-historical-framing.json", import.meta.url));
   } catch (error) {
     if (isPermissionBlocked(error)) return null;
     throw new Error(`historical framing regression cannot read the committed fixture: ${String(error)}`, {
@@ -1130,11 +1157,7 @@ const exerciseHistoricalFramingSources = async (options: {
   }
 
   const readBlob = async (sha: string): Promise<string> => {
-    const result = await new Deno.Command("git", {
-      args: ["rev-parse", `${sha}:src/surplus.ts`],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    const result = await runFixtureCommand(["git", "rev-parse", `${sha}:src/surplus.ts`]);
     if (result.code !== 0) {
       throw new Error(
         `historical framing regression cannot prove the causal boundary: Git object ${sha}:src/surplus.ts is not available in this checkout (${new TextDecoder()
@@ -1146,11 +1169,7 @@ const exerciseHistoricalFramingSources = async (options: {
   };
   const originalBlobSha = await readBlob(HISTORICAL_UNDERMINATED_SHA);
   const fixedBlobSha = await readBlob(HISTORICAL_FIXED_SHA);
-  const ordering = await new Deno.Command("git", {
-    args: ["merge-base", "--is-ancestor", HISTORICAL_UNDERMINATED_SHA, HISTORICAL_FIXED_SHA],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  const ordering = await runFixtureCommand(["git", "merge-base", "--is-ancestor", HISTORICAL_UNDERMINATED_SHA, HISTORICAL_FIXED_SHA]);
   if (ordering.code !== 0) {
     throw new Error(
       `historical framing regression cannot prove the causal boundary: ${HISTORICAL_UNDERMINATED_SHA} is not an ancestor of ${HISTORICAL_FIXED_SHA} in this checkout (${new TextDecoder()
@@ -1159,41 +1178,34 @@ const exerciseHistoricalFramingSources = async (options: {
     );
   }
 
-  const tempDir = await Deno.makeTempDir({ dir: Deno.cwd(), prefix: "m06-historical-framing-" });
+  const tempDir = await mkdtemp(join(tmpdir(), "m09-historical-framing-"));
   try {
+    const artifact = await buildPermissionsNative(join(tempDir, "permissions"));
     const runHistorical = async (sha: string): Promise<string> => {
       const archiveDir = `${tempDir}/${sha.slice(0, 8)}`;
       const treeDir = `${archiveDir}/tree`;
-      await Deno.mkdir(treeDir, { recursive: true });
-      const archive = await new Deno.Command("git", {
-        args: ["archive", "--format=tar", sha, "src"],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      await mkdir(treeDir, { recursive: true });
+      const archive = await runFixtureCommand(["git", "archive", "--format=tar", sha, "src"]);
       if (archive.code !== 0) {
         throw new Error(`historical framing regression cannot prove the ${sha} cell: git archive failed (${new TextDecoder().decode(archive.stderr).trim()})`);
       }
       const archivePath = `${archiveDir}/src.tar`;
-      await Deno.writeFile(archivePath, archive.stdout);
-      const extracted = await new Deno.Command("tar", {
-        args: ["-xf", archivePath, "-C", treeDir],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      await writeFile(archivePath, archive.stdout);
+      const extracted = await runFixtureCommand(["tar", "-xf", archivePath, "-C", treeDir]);
       if (extracted.code !== 0) {
         throw new Error(
           `historical framing regression cannot prove the ${sha} cell: source archive extraction failed (${new TextDecoder().decode(extracted.stderr).trim()})`
         );
       }
-      await Deno.writeTextFile(`${treeDir}/harness.ts`, HISTORICAL_SOURCE_HARNESS);
-      await Deno.writeTextFile(`${treeDir}/request.json`, options.requestBody);
-      await Deno.writeFile(`${treeDir}/upstream.raw`, options.rawUpstream);
-      const child = await new Deno.Command(Deno.execPath(), {
-        args: ["run", "--no-config", "--no-prompt", "--allow-read=.", "harness.ts"],
-        cwd: treeDir,
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      await adaptHistoricalTree(treeDir);
+      const confinement = [
+        "import { applyLinuxPermissions } from " + JSON.stringify(new URL("../src/runtime/permissions-linux.ts", import.meta.url).href) + ";",
+        "applyLinuxPermissions(" + JSON.stringify({ read: [treeDir], write: [] }) + ", " + JSON.stringify(artifact) + ");",
+      ].join("\n");
+      await writeFile(join(treeDir, "harness.ts"), confinement + "\n" + HISTORICAL_SOURCE_HARNESS);
+      await writeFile(`${treeDir}/request.json`, options.requestBody);
+      await writeFile(`${treeDir}/upstream.raw`, options.rawUpstream);
+      const child = await runFixtureCommand([process.execPath, "--no-env-file", "--no-install", "run", "harness.ts"], treeDir);
       if (child.code !== 0) {
         throw new Error(
           `historical framing regression cannot prove the ${sha} cell: harness exited ${child.code} (${new TextDecoder().decode(child.stderr).trim()})`
@@ -1212,7 +1224,7 @@ const exerciseHistoricalFramingSources = async (options: {
       orderingAncestor: true,
     };
   } finally {
-    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+    await rm(tempDir, { recursive: true }).catch(() => {});
   }
 };
 
@@ -1225,7 +1237,7 @@ const exerciseHistoricalFramingSources = async (options: {
  * boundary is exercised below from the exact historical sources whenever the
  * runtime can run Git and child processes.
  */
-Deno.test("historical framing fixture replays through the real Surplus fetch without the unterminated suffix", async () => {
+test("historical framing fixture replays through the real Surplus fetch without the unterminated suffix", async () => {
   const framingFixture = sentinelHistoricalFraming as unknown as Readonly<{
     version: number;
     request: { endpoint: string; method: string; body: string };

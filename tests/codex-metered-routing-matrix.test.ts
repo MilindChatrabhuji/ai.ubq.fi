@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type AtomicOperation, type Kv, type KvCommitError, type KvCommitResult, type KvConsistencyLevel, type KvEntryMaybe, type KvKey } from "#kv";
+import { runSequence } from "./helpers/sequence.ts";
 import assert from "node:assert/strict";
 import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api-keys.ts";
 import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
@@ -9,15 +13,15 @@ import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/ru
 import { METERED_BASE_URL } from "../src/provider/metered.ts";
 
 type StoredEntry = {
-  key: Deno.KvKey;
+  key: KvKey;
   value: unknown;
   versionstamp: string;
   expiresAtMs: number | null;
 };
 
-type AtomicMutation = { type: "set"; key: Deno.KvKey; value: unknown; options?: { expireIn?: number } } | { type: "delete"; key: Deno.KvKey };
+type AtomicMutation = { type: "set"; key: KvKey; value: unknown; options?: { expireIn?: number } } | { type: "delete"; key: KvKey };
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 const clone = <T>(value: T): T => structuredClone(value);
 
 class MemoryKv {
@@ -43,7 +47,7 @@ class MemoryKv {
     }
   }
 
-  #write(key: Deno.KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
+  #write(key: KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
     this.entries.set(encodeKey(key), {
       key: clone(key),
       value: clone(value),
@@ -52,20 +56,20 @@ class MemoryKv {
     });
   }
 
-  get<T = unknown>(key: Deno.KvKey, _options?: { consistency?: Deno.KvConsistencyLevel }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvKey, _options?: { consistency?: KvConsistencyLevel }): Promise<KvEntryMaybe<T>> {
     this.#purgeExpired();
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
       value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
   getMany<T extends readonly unknown[]>(
-    keys: readonly Deno.KvKey[],
-    _options?: { consistency?: Deno.KvConsistencyLevel }
-  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+    keys: readonly KvKey[],
+    _options?: { consistency?: KvConsistencyLevel }
+  ): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     // Snapshot every value and versionstamp synchronously so one resolved tuple
     // cannot mix rows from different write generations.
     this.#purgeExpired();
@@ -77,39 +81,39 @@ class MemoryKv {
         versionstamp: entry?.versionstamp ?? null,
       };
     });
-    return Promise.resolve(snapshot as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
+    return Promise.resolve(snapshot as { [K in keyof T]: KvEntryMaybe<T[K]> });
   }
 
-  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, options?: { expireIn?: number }): Promise<KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.#write(key, value, options, versionstamp);
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.#purgeExpired();
     this.entries.delete(encodeKey(key));
     this.#nextVersionstamp();
     return Promise.resolve();
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const mutations: AtomicMutation[] = [];
     const operation = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries.map((entry) => ({ key: clone(entry.key), versionstamp: entry.versionstamp })));
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => {
         mutations.push({ type: "set", key: clone(key), value: clone(value), options });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ type: "delete", key: clone(key) });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         this.#purgeExpired();
         for (const check of checks) {
           const current = this.entries.get(encodeKey(check.key));
@@ -129,7 +133,7 @@ class MemoryKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   close(): void {}
@@ -243,7 +247,7 @@ type ActiveRun = {
 };
 
 const memoryKv = new MemoryKv();
-const kv = memoryKv as unknown as Deno.Kv;
+const kv = memoryKv as unknown as Kv;
 let activeRun: ActiveRun | null = null;
 
 const seedFixture = async (): Promise<void> => {
@@ -448,60 +452,61 @@ const runCase = async (first: Outcome, second: Outcome, sequence: number): Promi
 };
 
 const restoreEnv = (name: string, value: string | undefined): void => {
-  if (value === undefined) Deno.env.delete(name);
-  else Deno.env.set(name, value);
+  if (value === undefined) Reflect.deleteProperty(process.env, name);
+  else process.env[name] = value;
 };
 
-Deno.test("two-account Codex-to-Metered /v1/responses routing matrix", async (t) => {
-  const originalFetch = globalThis.fetch;
-  const originalInfo = console.info;
-  const originalWarn = console.warn;
-  const originalError = console.error;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
-  setKvForTest(kv);
-  globalThis.fetch = mockedFetch;
-  console.info = (...args: unknown[]) => activeRun?.infoLogs.push(args);
-  console.warn = () => {};
-  console.error = () => {};
-  Deno.env.set("METERED_API_KEY", "metered-routing-matrix-key");
+test("two-account Codex-to-Metered /v1/responses routing matrix", () =>
+  runSequence(async (step) => {
+    const originalFetch = globalThis.fetch;
+    const originalInfo = console.info;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const originalMeteredApiKey = process.env.METERED_API_KEY;
+    setKvForTest(kv);
+    globalThis.fetch = createFetchMock(mockedFetch);
+    console.info = (...args: unknown[]) => activeRun?.infoLogs.push(args);
+    console.warn = () => {};
+    console.error = () => {};
+    process.env.METERED_API_KEY = "metered-routing-matrix-key";
 
-  try {
-    await t.step("Cartesian outcome matrix", async () => {
-      let sequence = 0;
-      for (const first of OUTCOMES) {
-        for (const second of OUTCOMES) {
-          sequence += 1;
-          await runCase(first, second, sequence);
+    try {
+      await step("Cartesian outcome matrix", async () => {
+        let sequence = 0;
+        for (const first of OUTCOMES) {
+          for (const second of OUTCOMES) {
+            sequence += 1;
+            await runCase(first, second, sequence);
+          }
         }
-      }
-    });
+      });
 
-    await t.step("every first-account 5xx returns directly", async () => {
-      const second = OUTCOMES.find((outcome) => outcome.name === "429");
-      assert.ok(second);
-      for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
-        await runCase({ name: String(status), kind: "http", status }, second, 10_000 + index);
-      }
-    });
+      await step("every first-account 5xx returns directly", async () => {
+        const second = OUTCOMES.find((outcome) => outcome.name === "429");
+        assert.ok(second);
+        for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
+          await runCase({ name: String(status), kind: "http", status }, second, 10_000 + index);
+        }
+      });
 
-    await t.step("every reached second-account 5xx returns directly", async () => {
-      const first = OUTCOMES.find((outcome) => outcome.name === "401");
-      assert.ok(first);
-      for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
-        await runCase(first, { name: String(status), kind: "http", status }, 20_000 + index);
-      }
-    });
-  } finally {
-    await drainBackgroundTasks();
-    activeRun = null;
-    globalThis.fetch = originalFetch;
-    console.info = originalInfo;
-    console.warn = originalWarn;
-    console.error = originalError;
-    restoreEnv("METERED_API_KEY", originalMeteredApiKey);
-    resetCodexAuthCacheForTest();
-    resetRuntimeConfigCacheForTest();
-    resetProviderHealthThrottleForTest();
-    setKvForTest(null);
-  }
-});
+      await step("every reached second-account 5xx returns directly", async () => {
+        const first = OUTCOMES.find((outcome) => outcome.name === "401");
+        assert.ok(first);
+        for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
+          await runCase(first, { name: String(status), kind: "http", status }, 20_000 + index);
+        }
+      });
+    } finally {
+      await drainBackgroundTasks();
+      activeRun = null;
+      globalThis.fetch = originalFetch;
+      console.info = originalInfo;
+      console.warn = originalWarn;
+      console.error = originalError;
+      restoreEnv("METERED_API_KEY", originalMeteredApiKey);
+      resetCodexAuthCacheForTest();
+      resetRuntimeConfigCacheForTest();
+      resetProviderHealthThrottleForTest();
+      setKvForTest(null);
+    }
+  }));

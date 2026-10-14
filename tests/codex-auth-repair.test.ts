@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   applyCodexAuthPlan,
@@ -82,7 +83,7 @@ const localAccount = (slot: number, value: CodexAuthState, probe: AssessedCodexA
   refresh_diverged: refreshDiverged,
 });
 
-Deno.test("isCodexAuthCandidateUsable requires an accepted token that has not expired", () => {
+test("isCodexAuthCandidateUsable requires an accepted token that has not expired", () => {
   const live = candidate("vps-pool", "acct-a", NOW_MS + 3_600_000);
   assert.equal(isCodexAuthCandidateUsable(assessed(live, valid()), NOW_MS), true);
   assert.equal(isCodexAuthCandidateUsable(assessed(live, valid(429)), NOW_MS), true);
@@ -95,7 +96,7 @@ Deno.test("isCodexAuthCandidateUsable requires an accepted token that has not ex
   assert.equal(isCodexAuthCandidateUsable(assessed(expired, valid()), NOW_MS), false);
 });
 
-Deno.test("rankCodexAuthCandidates prefers the longest-lived credential and drops unusable ones", () => {
+test("rankCodexAuthCandidates prefers the longest-lived credential and drops unusable ones", () => {
   const shortLived = assessed(candidate("vps-pool", "acct-a", NOW_MS + 60_000), valid());
   const longLived = assessed(candidate("local-auth-json", "acct-a", NOW_MS + 86_400_000), valid());
   const rejected = assessed(candidate("vps-auth-json", "acct-a", NOW_MS + 172_800_000), invalid());
@@ -107,7 +108,7 @@ Deno.test("rankCodexAuthCandidates prefers the longest-lived credential and drop
   );
 });
 
-Deno.test("rankCodexAuthCandidates breaks expiry ties by freshness and then by source order", () => {
+test("rankCodexAuthCandidates breaks expiry ties by freshness and then by source order", () => {
   const expMs = NOW_MS + 3_600_000;
   const stale = candidate("vps-auth-json", "acct-a", expMs, { updated_at_ms: NOW_MS - 90_000 });
   const fresh = candidate("vps-pool", "acct-a", expMs, { updated_at_ms: NOW_MS - 1_000 });
@@ -129,7 +130,7 @@ Deno.test("rankCodexAuthCandidates breaks expiry ties by freshness and then by s
   );
 });
 
-Deno.test("planCodexAuthRepair leaves an authenticating account untouched", () => {
+test("planCodexAuthRepair leaves an authenticating account untouched", () => {
   const local = account("acct-a", NOW_MS + 3_600_000);
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, local, valid())],
@@ -142,7 +143,7 @@ Deno.test("planCodexAuthRepair leaves an authenticating account untouched", () =
   assert.deepEqual(plan.healthy, [{ slot: 1, account_id: "acct-a", refresh_diverged: null }]);
 });
 
-Deno.test("planCodexAuthRepair treats a probe-valid but already expired local token as broken", () => {
+test("planCodexAuthRepair treats a probe-valid but already expired local token as broken", () => {
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, account("acct-a", NOW_MS - 1_000), valid())],
     candidates: [assessed(candidate("vps-pool", "acct-a", NOW_MS + 3_600_000), valid())],
@@ -154,7 +155,7 @@ Deno.test("planCodexAuthRepair treats a probe-valid but already expired local to
   assert.equal(plan.selections[0].candidate.source, "vps-pool");
 });
 
-Deno.test("planCodexAuthRepair preserves an unexpired slot whose probe was inconclusive", () => {
+test("planCodexAuthRepair preserves an unexpired slot whose probe was inconclusive", () => {
   // A timeout and a 403/5xx are all undecidable: none of them is evidence that
   // the credential is unusable, so a valid candidate must not be adopted.
   const undecidableProbes: AssessedCodexAuthCandidate["probe"][] = [inconclusive(null), inconclusive(403), inconclusive(503)];
@@ -178,7 +179,7 @@ Deno.test("planCodexAuthRepair preserves an unexpired slot whose probe was incon
   }
 });
 
-Deno.test("planCodexAuthRepair repairs a slot whose access token has verifiably expired even when the probe was inconclusive", () => {
+test("planCodexAuthRepair repairs a slot whose access token has verifiably expired even when the probe was inconclusive", () => {
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, account("acct-a", NOW_MS - 1_000), inconclusive(503))],
     candidates: [assessed(candidate("vps-pool", "acct-a", NOW_MS + 3_600_000), valid())],
@@ -190,7 +191,7 @@ Deno.test("planCodexAuthRepair repairs a slot whose access token has verifiably 
   assert.equal(plan.selections[0].candidate.source, "vps-pool");
 });
 
-Deno.test("the repair CLI renders an inconclusive slot as inconclusive and never probes sources for it", () => {
+test("the repair CLI renders an inconclusive slot as inconclusive and never probes sources for it", () => {
   const pool = poolOf([account("acct-a", NOW_MS + 3_600_000)]);
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, pool.accounts[0], inconclusive(403))],
@@ -216,7 +217,7 @@ Deno.test("the repair CLI renders an inconclusive slot as inconclusive and never
   assert.equal(anyCodexAuthSlotNeedsRepair([{ account: account("acct-b", NOW_MS - 1_000), probe: inconclusive(null) }], NOW_MS), true);
 });
 
-Deno.test("planCodexAuthRepair repairs a rejected slot from the best candidate for that account", () => {
+test("planCodexAuthRepair repairs a rejected slot from the best candidate for that account", () => {
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, account("acct-a", NOW_MS + 3_600_000), invalid())],
     candidates: [
@@ -237,7 +238,7 @@ Deno.test("planCodexAuthRepair repairs a rejected slot from the best candidate f
   );
 });
 
-Deno.test("planCodexAuthRepair never adopts another account's credential", () => {
+test("planCodexAuthRepair never adopts another account's credential", () => {
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, account("acct-a", NOW_MS + 3_600_000), invalid())],
     candidates: [assessed(candidate("vps-pool", "acct-b", NOW_MS + 86_400_000), valid())],
@@ -249,7 +250,7 @@ Deno.test("planCodexAuthRepair never adopts another account's credential", () =>
   assert.equal(plan.unrepairable[0].reason, "no_candidates");
 });
 
-Deno.test("planCodexAuthRepair reports a blocked account when no candidate authenticates", () => {
+test("planCodexAuthRepair reports a blocked account when no candidate authenticates", () => {
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, account("acct-a", NOW_MS + 3_600_000), invalid())],
     candidates: [
@@ -267,7 +268,7 @@ Deno.test("planCodexAuthRepair reports a blocked account when no candidate authe
   );
 });
 
-Deno.test("planCodexAuthRepair decides each slot independently", () => {
+test("planCodexAuthRepair decides each slot independently", () => {
   const plan = planCodexAuthRepair({
     accounts: [localAccount(1, account("acct-a", NOW_MS + 3_600_000), valid(), true), localAccount(2, account("acct-b", NOW_MS + 3_600_000), invalid())],
     candidates: [
@@ -284,7 +285,7 @@ Deno.test("planCodexAuthRepair decides each slot independently", () => {
   assert.deepEqual(plan.healthy, [{ slot: 1, account_id: "acct-a", refresh_diverged: true }]);
 });
 
-Deno.test("applyCodexAuthPlan replaces only the affected account and preserves the rest", () => {
+test("applyCodexAuthPlan replaces only the affected account and preserves the rest", () => {
   const untouched = account("acct-a", NOW_MS + 3_600_000);
   const broken = account("acct-b", NOW_MS + 3_600_000);
   const pool = poolOf([untouched, broken]);
@@ -313,7 +314,7 @@ Deno.test("applyCodexAuthPlan replaces only the affected account and preserves t
   assert.equal(pool.accounts[1].access_token, broken.access_token);
 });
 
-Deno.test("applyCodexAuthPlan with an empty plan returns an equivalent pool", () => {
+test("applyCodexAuthPlan with an empty plan returns an equivalent pool", () => {
   const pool = poolOf([account("acct-a", NOW_MS + 3_600_000)]);
   const plan = planCodexAuthRepair({ accounts: [localAccount(1, pool.accounts[0], valid())], candidates: [], nowMs: NOW_MS });
   const applied = applyCodexAuthPlan(pool, plan, NOW_MS);
@@ -321,7 +322,7 @@ Deno.test("applyCodexAuthPlan with an empty plan returns an equivalent pool", ()
   assert.deepEqual(applied.accounts, pool.accounts);
 });
 
-Deno.test("codexAuthCandidateFromAuthJson accepts a real auth.json shape and rejects junk", () => {
+test("codexAuthCandidateFromAuthJson accepts a real auth.json shape and rejects junk", () => {
   const parsed = codexAuthCandidateFromAuthJson(
     {
       auth_mode: "chatgpt",
@@ -345,7 +346,7 @@ Deno.test("codexAuthCandidateFromAuthJson accepts a real auth.json shape and rej
   assert.equal(codexAuthCandidateFromAuthJson({ tokens: { access_token: "a", refresh_token: "b" } }, "vps-auth-json", null), null);
 });
 
-Deno.test("codexAuthCandidatesFromPool reads every stored account and rejects malformed pools", () => {
+test("codexAuthCandidatesFromPool reads every stored account and rejects malformed pools", () => {
   const pool = poolOf([account("acct-a", NOW_MS + 3_600_000), account("acct-b", NOW_MS + 7_200_000)]);
   const candidates = codexAuthCandidatesFromPool(pool, "vps-pool");
   assert.deepEqual(
@@ -358,7 +359,7 @@ Deno.test("codexAuthCandidatesFromPool reads every stored account and rejects ma
   assert.deepEqual(codexAuthCandidatesFromPool({ accounts: [{ account_id: "only-an-id" }], updated_at_ms: NOW_MS }, "vps-pool"), []);
 });
 
-Deno.test("codexAuthCandidateKey deduplicates the same credential seen from two sources", () => {
+test("codexAuthCandidateKey deduplicates the same credential seen from two sources", () => {
   const first = candidate("local-auth-json", "acct-a", NOW_MS + 3_600_000);
   const second = { ...first, source: "vps-pool" as const };
   const other = candidate("vps-pool", "acct-a", NOW_MS + 7_200_000);

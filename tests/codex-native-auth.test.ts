@@ -1,5 +1,8 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import { type Kv } from "#kv";
 import assert from "node:assert/strict";
-import { AuthKv, resetCodexAuthCacheForTest, setKvForTest } from "./helpers/codex-auth-cache-harness.ts";
+import { installHarness, cleanupHarness, AuthKv, resetCodexAuthCacheForTest, setKvForTest } from "./helpers/codex-auth-cache-harness.ts";
 import { CODEX_AUTH_POOL_MAX_ACCOUNTS, CodexError, getAuthPoolEntry, parseCodexAuthPool, upsertCodexAuthAccount } from "../src/codex/auth.ts";
 import { refreshAuthCoordinated, refreshAuthStateless } from "../src/codex/auth-refresh.ts";
 import { nativeCodexCredentialGeneration, setNativeCodexAuthHooksForTest } from "../src/codex/native-auth.ts";
@@ -34,7 +37,7 @@ const fixture = async (
     directOauthCalls: () => number;
     refreshHomes: () => string[];
     setEnvironment: (value: Record<string, string | undefined>) => void;
-    setOs: (value: typeof Deno.build.os) => void;
+    setOs: (value: typeof process.platform) => void;
   }) => Promise<void>,
   environment: Record<string, string | undefined> = { CODEX_HOME: HOME, HOME: DEFAULT_HOME }
 ): Promise<void> => {
@@ -45,15 +48,15 @@ const fixture = async (
   let refreshes = 0;
   let directOauthCalls = 0;
   const refreshHomes: string[] = [];
-  let os: typeof Deno.build.os = "darwin";
+  let os: typeof process.platform = "darwin";
   const priorDeploy = config.isDeploy;
   (config as { isDeploy: boolean }).isDeploy = false;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     directOauthCalls += 1;
     return Promise.reject(new Error("Direct OAuth was forbidden by this fixture"));
-  };
-  setKvForTest(kv as unknown as Deno.Kv);
+  });
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   setNativeCodexAuthHooksForTest({
     get os() {
@@ -98,7 +101,7 @@ const fixture = async (
   }
 };
 
-Deno.test("native ownership binds only the equal CLI account and survives cache restart", async () => {
+test("native ownership binds only the equal CLI account and survives cache restart", async () => {
   await fixture(async ({ kv, first, sibling }) => {
     await getAuthPoolEntry(true);
     const stored = kv.auth.accounts[0];
@@ -115,7 +118,7 @@ for (const [name, environment, expectedHome] of [
   ["HOME default", { HOME: DEFAULT_HOME }, `${DEFAULT_HOME}/.codex`],
   ["empty CODEX_HOME", { CODEX_HOME: "", HOME: DEFAULT_HOME }, `${DEFAULT_HOME}/.codex`],
 ] as const) {
-  Deno.test(`native resolver ${name} binds and refreshes the same credential owner`, async () => {
+  test(`native resolver ${name} binds and refreshes the same credential owner`, async () => {
     await fixture(async ({ kv, first, sibling, refreshHomes, directOauthCalls }) => {
       const entry = await getAuthPoolEntry(true);
       const owner = entry.pool.accounts[0].native_owner;
@@ -136,7 +139,7 @@ for (const [name, environment, expectedHome] of [
   ["CODEX_HOME override", { CODEX_HOME: HOME, HOME: DEFAULT_HOME }, HOME],
   ["HOME default", { HOME: DEFAULT_HOME }, `${DEFAULT_HOME}/.codex`],
 ] as const) {
-  Deno.test(`native resolver on Linux ${name} binds and refreshes the same credential owner`, async () => {
+  test(`native resolver on Linux ${name} binds and refreshes the same credential owner`, async () => {
     await fixture(async ({ kv, first, sibling, refreshHomes, directOauthCalls, setOs }) => {
       setOs("linux");
       const entry = await getAuthPoolEntry(true);
@@ -154,9 +157,9 @@ for (const [name, environment, expectedHome] of [
 }
 
 for (const guard of ["platform", "deployment"] as const) {
-  Deno.test(`native resolver preserves its ${guard} guard despite CODEX_HOME`, async () => {
+  test(`native resolver preserves its ${guard} guard despite CODEX_HOME`, async () => {
     await fixture(async ({ first, kv, refreshes, directOauthCalls, setOs }) => {
-      if (guard === "platform") setOs("windows");
+      if (guard === "platform") setOs("win32");
       else (config as { isDeploy: boolean }).isDeploy = true;
       const entry = await getAuthPoolEntry(true);
       assert.equal(entry.pool.accounts[0].native_owner, undefined);
@@ -175,7 +178,7 @@ for (const [name, environment] of [
   ["removed custom home", { HOME: DEFAULT_HOME }],
   ["missing environment", {}],
 ] as const) {
-  Deno.test(`an established custom native owner refuses ${name} without direct OAuth`, async () => {
+  test(`an established custom native owner refuses ${name} without direct OAuth`, async () => {
     await fixture(async ({ kv, setEnvironment, refreshes, directOauthCalls }) => {
       const entry = await getAuthPoolEntry(true);
       const snapshot = structuredClone(kv.auth);
@@ -188,7 +191,7 @@ for (const [name, environment] of [
   });
 }
 
-Deno.test("native refresh adopts its persisted generation while preserving an uploaded sibling", async () => {
+test("native refresh adopts its persisted generation while preserving an uploaded sibling", async () => {
   await fixture(async ({ kv, first, sibling, refreshes }) => {
     const entry = await getAuthPoolEntry(true);
     const next = await refreshAuthCoordinated({ ...entry, auth: entry.pool.accounts[0] });
@@ -199,7 +202,7 @@ Deno.test("native refresh adopts its persisted generation while preserving an up
   });
 });
 
-Deno.test("routed native auth adopts an intervening persisted rotation without another refresh", async () => {
+test("routed native auth adopts an intervening persisted rotation without another refresh", async () => {
   await fixture(async ({ kv, first, sibling, setDocument, refreshes, directOauthCalls }) => {
     const nativeRefreshedAt = new Date().toISOString();
     setDocument({ ...document(first), last_refresh: nativeRefreshedAt });
@@ -225,7 +228,7 @@ Deno.test("routed native auth adopts an intervening persisted rotation without a
   });
 });
 
-Deno.test("routed snapshots preserve unbound accounts and refuse malformed native ownership", () => {
+test("routed snapshots preserve unbound accounts and refuse malformed native ownership", () => {
   const unbound = auth("uploaded", 1);
   const pool = { accounts: [unbound], updated_at_ms: unbound.updated_at_ms };
   assert.deepEqual(parseCodexAuthPoolSnapshot(pool), pool);
@@ -239,7 +242,7 @@ Deno.test("routed snapshots preserve unbound accounts and refuse malformed nativ
   assert.equal(parseCodexAuthPoolSnapshot({ ...pool, accounts: [unbound, unbound] }), null);
 });
 
-Deno.test("an established native owner adopts a newer synced generation without another rotation", async () => {
+test("an established native owner adopts a newer synced generation without another rotation", async () => {
   await fixture(async ({ setDocument, refreshes }) => {
     const entry = await getAuthPoolEntry(true);
     const updated = auth("shared", 4);
@@ -250,7 +253,7 @@ Deno.test("an established native owner adopts a newer synced generation without 
   });
 });
 
-Deno.test("same-expiry native rotations use owner generation metadata and reject a rollback", async () => {
+test("same-expiry native rotations use owner generation metadata and reject a rollback", async () => {
   await fixture(async ({ first, setDocument, refreshes }) => {
     const observed = new Date().toISOString();
     const prior = observed.replace("Z", "001Z");
@@ -269,7 +272,7 @@ Deno.test("same-expiry native rotations use owner generation metadata and reject
 });
 
 for (const failure of ["missing", "account-mismatch", "rollback"] as const) {
-  Deno.test(`bound native ${failure} refuses direct OAuth and credential replacement`, async () => {
+  test(`bound native ${failure} refuses direct OAuth and credential replacement`, async () => {
     await fixture(async ({ kv, setDocument, refreshes }) => {
       const entry = await getAuthPoolEntry(true);
       const snapshot = structuredClone(kv.auth);
@@ -283,7 +286,7 @@ for (const failure of ["missing", "account-mismatch", "rollback"] as const) {
   });
 }
 
-Deno.test("successful native RPC without persisted progress remains a failed refresh", async () => {
+test("successful native RPC without persisted progress remains a failed refresh", async () => {
   await fixture(async ({ first }) => {
     const entry = await getAuthPoolEntry(true);
     setNativeCodexAuthHooksForTest({ ...nativeEnvironment, readAuth: () => Promise.resolve(document(first)), refresh: () => Promise.resolve() });
@@ -291,7 +294,7 @@ Deno.test("successful native RPC without persisted progress remains a failed ref
   });
 });
 
-Deno.test("native daemon failure never activates a direct refresh fallback", async () => {
+test("native daemon failure never activates a direct refresh fallback", async () => {
   await fixture(async ({ first }) => {
     const entry = await getAuthPoolEntry(true);
     setNativeCodexAuthHooksForTest({
@@ -303,7 +306,7 @@ Deno.test("native daemon failure never activates a direct refresh fallback", asy
   });
 });
 
-Deno.test("stateless upload refresh rejects an obsolete bound credential before dispatch", async () => {
+test("stateless upload refresh rejects an obsolete bound credential before dispatch", async () => {
   await fixture(async ({ first, setDocument, refreshes }) => {
     const entry = await getAuthPoolEntry(true);
     setDocument(document(auth("shared", 4)));
@@ -313,7 +316,7 @@ Deno.test("stateless upload refresh rejects an obsolete bound credential before 
   });
 });
 
-Deno.test("same-account upload and repair preserve native binding and reject a stale replacement", async () => {
+test("same-account upload and repair preserve native binding and reject a stale replacement", async () => {
   await fixture(async ({ first }) => {
     const entry = await getAuthPoolEntry(true);
     const unchanged = upsertCodexAuthAccount(entry.pool, first);
@@ -322,7 +325,7 @@ Deno.test("same-account upload and repair preserve native binding and reject a s
   });
 });
 
-Deno.test("native generation CAS retries preserve a concurrent unrelated-account upload", async () => {
+test("native generation CAS retries preserve a concurrent unrelated-account upload", async () => {
   await fixture(async ({ kv, first }) => {
     const entry = await getAuthPoolEntry(true);
     const replacement = auth("uploaded", 5);
@@ -340,3 +343,6 @@ Deno.test("native generation CAS retries preserve a concurrent unrelated-account
     assert.deepEqual(kv.auth.accounts[1], replacement);
   });
 });
+
+beforeEach(installHarness);
+afterEach(cleanupHarness);

@@ -1,11 +1,13 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import serverSource from "../serve.ts" with { type: "text" };
-import handlerSource from "../src/handler/index.ts" with { type: "text" };
-import terminalRouteSource from "../src/handler/terminal-route.ts" with { type: "text" };
-import catalogSource from "../src/catalog/index.ts" with { type: "text" };
-import deploymentWorkflow from "../.github/workflows/deno-deploy.yml" with { type: "text" };
+const serverSource = await Bun.file(new URL("../serve.ts", import.meta.url)).text();
+const handlerSource = await Bun.file(new URL("../src/handler/index.ts", import.meta.url)).text();
+const terminalRouteSource = await Bun.file(new URL("../src/handler/terminal-route.ts", import.meta.url)).text();
+const catalogSource = await Bun.file(new URL("../src/catalog/index.ts", import.meta.url)).text();
+const deploymentWorkflow = await Bun.file(new URL("../.github/workflows/deno-deploy.yml", import.meta.url)).text();
+const verificationScript = await Bun.file(new URL("../scripts/verify.sh", import.meta.url)).text();
 
-Deno.test("gateway entry points start no Sentinel automation but keep the authorized capture/export", () => {
+test("gateway entry points start no Sentinel automation but keep the authorized capture/export", () => {
   assert.doesNotMatch(serverSource, /sentinel/i);
   // m06 adds only the passive, read-only incident index GET: no automation,
   // dispatch, control or claim/ack/defer wiring may return. The route is now a
@@ -16,7 +18,8 @@ Deno.test("gateway entry points start no Sentinel automation but keep the author
   assert.doesNotMatch(handlerSource, /coalesceSentinelIncidentFailureEvents/u);
   assert.doesNotMatch(handlerSource, /\?\? recordSentinelProviderDegradationFromEnvironment/u);
   assert.doesNotMatch(catalogSource, /\?\? recordSentinelProviderDegradationFromEnvironment/u);
-  assert.match(deploymentWorkflow, /sentinel:test-local/u);
+  assert.match(deploymentWorkflow, /sh scripts\/verify\.sh/u);
+  assert.match(verificationScript, /test-runner\.ts sentinel/u);
   assert.doesNotMatch(deploymentWorkflow, /provider-sentinel|sentinel-revision-control|scripts\/sentinel/u);
   assert.match(terminalRouteSource, /captureAcceptedSentinelReplayInput/u);
   assert.match(handlerSource, /\/admin\/sentinel\/replay-captures/u);
