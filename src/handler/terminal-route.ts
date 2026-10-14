@@ -78,7 +78,16 @@ const reserveUsageAdmission = async (
   const admission = await reserveApiKeyUsageV3(policy, requestId, route, { deferWhenFull: true });
   if (admission.ok) return { reservation: admission.reservation };
   const response = withCorsHeaders(withRequestId(admission.response, requestId), req);
-  return { rejection: await withRejectionTerminalLog(response, route, { requestId, startedAtMonotonicMs, delivery, onSettled, admissionWaitMs }) };
+  return {
+    rejection: await withRejectionTerminalLog(response, route, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs,
+      delivery,
+      onSettled,
+      admissionWaitMs,
+    }),
+  };
 };
 
 /** Reserves kernel usage for a repository-scoped route; a refusal is returned as a response. */
@@ -105,6 +114,7 @@ const reserveKernelAdmission = async (
   const response = withCorsHeaders(withRequestId(admission.response, input.requestId), input.req);
   const rejection = await withRejectionTerminalLog(response, input.route, {
     requestId: input.requestId,
+    admissionStage: "pre_admission",
     startedAtMonotonicMs: input.startedAtMonotonicMs,
     delivery: input.delivery,
     onSettled: input.onSettled,
@@ -178,7 +188,12 @@ const handleTerminalRoute = async (
   const authResult = await authenticateClient(req);
   if (!authResult.ok) {
     const response = withCors(withRequestId(authResult.response, requestId));
-    return await withRejectionTerminalLog(response, terminalRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+    return await withRejectionTerminalLog(response, terminalRoute, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+    });
   }
   // Authenticated state, not a client header or session id: a caller cannot
   // rename itself to escape the waiting turn its principal was served in.
@@ -224,7 +239,12 @@ const handleTerminalRoute = async (
         ? openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null })
         : localOverloadResponse(admitted.cause);
     const response = withCors(withRequestId(refusal, requestId));
-    return await withRejectionTerminalLog(response, admissionRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+    return await withRejectionTerminalLog(response, admissionRoute, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+    });
   };
   const admissionRefusal = await acquireProcessPermit();
   if (admissionRefusal) return admissionRefusal;
@@ -398,6 +418,7 @@ const handleTerminalRoute = async (
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestStartedAtMs,
         requestId,
+        admissionStage: "accepted",
         onTerminal: trackKernelTerminal ? settleKernelQuota : undefined,
         onSettled: releaseProcessPermit,
         deliveryCompleted: delivery?.completed,
@@ -571,6 +592,7 @@ const handleTerminalRoute = async (
     const response = withCors(withRequestId(refusal, requestId));
     return await withRejectionTerminalLog(response, terminalRoute, {
       requestId,
+      admissionStage: "accepted",
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
       delivery,
       onSettled: releaseProcessPermit,
