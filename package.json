@@ -2,5 +2,31 @@
   "name": "ai-ubq-fi",
   "version": "0.0.0",
   "private": true,
-  "description": "Root manifest for tooling discovery only; the lint toolchain lives in tools/lint/."
+  "description": "Bun TypeScript gateway for OpenAI-compatible and Codex-native APIs.",
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": "1.4.0"
+  },
+  "imports": {
+    "#http": "./src/runtime/http.ts",
+    "#kv": "./src/storage/kv.ts"
+  },
+  "scripts": {
+    "build": "bun --no-env-file run check",
+    "check": "bun --no-env-file node_modules/typescript/bin/tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "@deno/kv": "0.14.0",
+    "@deno/kv-utils": "npm:@jsr/deno__kv-utils@0.1.4",
+    "@simplewebauthn/server": "13.2.2",
+    "@std/yaml": "npm:@jsr/std__yaml@1.0.9",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/node": "25.6.0",
+    "@types/ws": "8.18.1",
+    "typescript": "6.0.3"
+  }
 }
