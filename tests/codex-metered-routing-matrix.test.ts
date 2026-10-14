@@ -435,7 +435,9 @@ const runCase = async (first: Outcome, second: Outcome, sequence: number): Promi
     const secondGenericRetry = reachesSecond && is429(second) ? 1 : 0;
     const terminalCodexOutcome = reachesSecond ? second : first;
     const allCredentialsInvalid = is401(first) && is401(second);
-    const expectedStatus = allCredentialsInvalid ? 200 : is401(terminalCodexOutcome) ? 503 : directStatus(terminalCodexOutcome);
+    let expectedStatus = directStatus(terminalCodexOutcome);
+    if (is401(terminalCodexOutcome)) expectedStatus = 503;
+    if (allCredentialsInvalid) expectedStatus = 200;
     assert.equal(response.status, expectedStatus, `${label}: final status`);
     assert.equal(response.headers.get("x-uos-upstream"), allCredentialsInvalid ? "metered" : "chatgpt_codex", `${label}: selected upstream`);
     assert.equal(run.meteredCalls, allCredentialsInvalid ? 1 : 0, `${label}: paid fallback requires complete authoritative unavailability`);
@@ -533,7 +535,6 @@ Deno.test("mixed exhausted and current-invalid Codex subscriptions fail over to 
         assert.ok(pool);
         const selected = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
         assert.equal(selected.kind, "eligible");
-        if (selected.kind !== "eligible") throw new Error("fixture must admit the first subscription");
         if (scenario !== "all-invalid") {
           const resetAt = Math.floor(Date.now() / 1000) + 453_376;
           await markCodexQuotaBlocked(
@@ -556,14 +557,17 @@ Deno.test("mixed exhausted and current-invalid Codex subscriptions fail over to 
           const url = requestUrl(input);
           calls.push(url);
           if (url === CODEX_RESPONSES_URL) {
-            return Promise.resolve(scenario === "stale-fingerprint" ? meteredSuccessResponse() : jsonErrorResponse(scenario === "generic-429" ? 429 : 401));
+            if (scenario === "stale-fingerprint") return Promise.resolve(meteredSuccessResponse());
+            return Promise.resolve(jsonErrorResponse(scenario === "generic-429" ? 429 : 401));
           }
           if (url === CODEX_REFRESH_URL) return Promise.resolve(jsonErrorResponse(401));
           if (url === `${METERED_BASE_URL}/v1/models`) {
             return Promise.resolve(Response.json({ data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }] }));
           }
           if (url === METERED_RESPONSES_URL) {
-            paidModel = JSON.parse(String(init?.body)).model;
+            const body = init?.body;
+            if (typeof body !== "string") throw new Error("paid fixture requires a serialized JSON request");
+            paidModel = JSON.parse(body).model;
             return Promise.resolve(scenario === "paid-failure" ? jsonErrorResponse(503) : meteredSuccessResponse());
           }
           throw new Error(`Unexpected mixed-unavailable fixture URL: ${url}`);
@@ -582,7 +586,10 @@ Deno.test("mixed exhausted and current-invalid Codex subscriptions fail over to 
         const payload = await response.json();
         const paidExpected = ["mixed", "all-invalid", "paid-failure"].includes(scenario);
         const completedExpected = scenario === "mixed" || scenario === "all-invalid" || scenario === "stale-fingerprint";
-        assert.equal(response.status, completedExpected ? 200 : scenario === "generic-429" ? 429 : 503, JSON.stringify(payload));
+        let expectedStatus = 503;
+        if (scenario === "generic-429") expectedStatus = 429;
+        if (completedExpected) expectedStatus = 200;
+        assert.equal(response.status, expectedStatus, JSON.stringify(payload));
         assert.equal(response.headers.get("retry-after"), null);
         assert.equal(calls.filter((url) => url === METERED_RESPONSES_URL).length, paidExpected ? 1 : 0);
         if (completedExpected) assert.equal(payload.status, "completed");
@@ -594,7 +601,7 @@ Deno.test("mixed exhausted and current-invalid Codex subscriptions fail over to 
           assert.equal(calls.filter((url) => url === CODEX_REFRESH_URL).length, 1);
           const current = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
           assert.equal(current.kind, "quota_blocked");
-          if (current.kind === "quota_blocked") assert.equal(current.fullCohortExhausted, false);
+          assert.equal(current.fullCohortExhausted, false);
         }
       });
     }
