@@ -1,8 +1,19 @@
+import { afterEach, test } from "bun:test";
+import { mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { runFixture, fsError } from "./fixture-process.ts";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { pruneReleases } from "../release-retention.ts";
 
 const FIXTURE_PARENT = fileURLToPath(new URL("../../.cleanup-evidence/release-retention-fixtures", import.meta.url));
+
+const liveFixtures = new Set<string>();
+afterEach(async () => {
+  for (const root of liveFixtures) {
+    await rm(root, { recursive: true, force: true });
+    liveFixtures.delete(root);
+  }
+});
 
 type Fixture = { root: string; releasesDir: string; currentLink: string };
 
@@ -10,27 +21,24 @@ const revision = (digit: string): string => digit.repeat(40);
 
 const makeFixture = async (name: string): Promise<Fixture> => {
   const root = `${FIXTURE_PARENT}/${name}-${crypto.randomUUID()}`;
-  await Deno.mkdir(`${root}/releases`, { recursive: true });
+  await mkdir(`${root}/releases`, { recursive: true });
+  liveFixtures.add(root);
   return { root, releasesDir: `${root}/releases`, currentLink: `${root}/current` };
 };
 
 /** Create a release directory whose mtime is `ageSeconds` in the past. */
 const addRelease = async (fixture: Fixture, sha: string, ageSeconds: number): Promise<string> => {
   const path = `${fixture.releasesDir}/${sha}`;
-  await Deno.mkdir(path, { recursive: true });
-  await Deno.writeTextFile(`${path}/src.ts`, `// ${sha}\n`);
+  await mkdir(path, { recursive: true });
+  await writeFile(`${path}/src.ts`, `// ${sha}\n`);
   const timestamp = new Date(Date.now() - ageSeconds * 1000);
-  await Deno.utime(path, timestamp, timestamp);
+  await utimes(path, timestamp, timestamp);
   return path;
 };
 
-/**
- * Create a symlink through `ln`. `Deno.symlink` demands unscoped read and write
- * grants because the target is resolved lazily, which would widen this suite's
- * sandbox well past its disposable fixtures.
- */
+/** Native links remain confined to task-owned fixture paths. */
 const link = async (target: string, path: string): Promise<void> => {
-  const result = await new Deno.Command("/bin/ln", { args: ["-s", target, path] }).output();
+  const result = await runFixture("/bin/ln", { args: ["-s", target, path] });
   if (!result.success) throw new Error(`ln -s failed: ${new TextDecoder().decode(result.stderr)}`);
 };
 
@@ -43,15 +51,15 @@ const sorted = (values: readonly string[]): string[] => [...values].sort((left, 
 
 const exists = async (path: string): Promise<boolean> => {
   try {
-    await Deno.stat(path);
+    await stat(path);
     return true;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
+    if (fsError("ENOENT")(error)) return false;
     throw error;
   }
 };
 
-Deno.test("retention keeps the newest releases and the running one", async () => {
+test("retention keeps the newest releases and the running one", async () => {
   const fixture = await makeFixture("window");
   const shas = ["1", "2", "3", "4", "5", "6"].map(revision);
   // Oldest first, so the running release is also the oldest directory here.
@@ -67,13 +75,13 @@ Deno.test("retention keeps the newest releases and the running one", async () =>
   assert.equal(await exists(`${fixture.releasesDir}/${shas[1]}`), false, "an expired release is gone");
 });
 
-Deno.test("retention ignores entries that are not full revisions", async () => {
+test("retention ignores entries that are not full revisions", async () => {
   const fixture = await makeFixture("skips");
   const kept = revision("a");
   await addRelease(fixture, kept, 10);
   await addRelease(fixture, revision("b"), 20);
-  await Deno.mkdir(`${fixture.releasesDir}/.staging-crashed`, { recursive: true });
-  await Deno.writeTextFile(`${fixture.releasesDir}/notes.txt`, "scratch");
+  await mkdir(`${fixture.releasesDir}/.staging-crashed`, { recursive: true });
+  await writeFile(`${fixture.releasesDir}/notes.txt`, "scratch");
   await pointCurrentAt(fixture, kept);
 
   const report = await pruneReleases({ releasesDir: fixture.releasesDir, currentLink: fixture.currentLink, keep: 0 });
@@ -83,11 +91,11 @@ Deno.test("retention ignores entries that are not full revisions", async () => {
   assert.equal(await exists(`${fixture.releasesDir}/notes.txt`), true, "a plain file is never a candidate");
 });
 
-Deno.test("retention refuses to follow a revision-shaped symlink out of the store", async () => {
+test("retention refuses to follow a revision-shaped symlink out of the store", async () => {
   const fixture = await makeFixture("symlink");
   const outside = `${fixture.root}/outside`;
-  await Deno.mkdir(outside, { recursive: true });
-  await Deno.writeTextFile(`${outside}/keep.txt`, "outside the store");
+  await mkdir(outside, { recursive: true });
+  await writeFile(`${outside}/keep.txt`, "outside the store");
   const planted = revision("c");
   await link(outside, `${fixture.releasesDir}/${planted}`);
   const current = revision("d");
@@ -101,7 +109,7 @@ Deno.test("retention refuses to follow a revision-shaped symlink out of the stor
   assert.equal(await exists(`${fixture.releasesDir}/${planted}`), true, "the planted link itself is left in place");
 });
 
-Deno.test("a dry run reports the same candidates without deleting them", async () => {
+test("a dry run reports the same candidates without deleting them", async () => {
   const fixture = await makeFixture("dry-run");
   const current = revision("e");
   const expired = revision("f");
