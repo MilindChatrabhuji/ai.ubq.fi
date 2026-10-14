@@ -4,6 +4,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
+import { currentTestNativeKvBinding } from "./test-native-kv.ts";
+
+const bindingArgument = (): string => "--native-kv-binding=" + JSON.stringify(currentTestNativeKvBinding());
 
 const fixturesRoot = resolve(".cleanup-evidence/quality-fixtures");
 const fixture = (): string => {
@@ -11,7 +14,7 @@ const fixture = (): string => {
   return mkdtempSync(join(fixturesRoot, "run-"));
 };
 const run = async (files: readonly string[]): Promise<{ code: number; output: string }> => {
-  const child = Bun.spawn([process.execPath, "--no-env-file", "scripts/test-runner.ts", "files", ...files], {
+  const child = Bun.spawn([process.execPath, "--no-env-file", "--no-install", "scripts/test-runner.ts", "files", ...files, bindingArgument()], {
     env: { PATH: process.env.PATH ?? "", UNLISTED_CREDENTIAL_PROBE: "fixture-only" },
     stdout: "pipe",
     stderr: "pipe",
@@ -125,10 +128,11 @@ const runnerFixture = (directory: string): void => {
   mkdirSync(join(directory, "tests"));
   writeFileSync(join(directory, "scripts/test-runner.ts"), readFileSync("scripts/test-runner.ts", "utf8"));
   symlinkSync(resolve("scripts/test-network.ts"), join(directory, "scripts/test-network.ts"));
+  symlinkSync(resolve("scripts/test-native-kv.ts"), join(directory, "scripts/test-native-kv.ts"));
   writeFileSync(join(directory, "bun.lock"), "{}\n");
 };
 const runFixture = async (directory: string, args: readonly string[]): Promise<{ code: number; output: string }> => {
-  const child = Bun.spawn([process.execPath, "--no-env-file", join(directory, "scripts/test-runner.ts"), ...args], {
+  const child = Bun.spawn([process.execPath, "--no-env-file", "--no-install", join(directory, "scripts/test-runner.ts"), ...args, bindingArgument()], {
     cwd: directory,
     env: {
       PATH: process.env.PATH ?? "",
@@ -271,26 +275,27 @@ test("parent watchdog stops a synchronous loop and its descendant before continu
     const completed = join(directory, "completed.txt");
     const beatProgram = `import { appendFileSync } from "node:fs"; setInterval(() => appendFileSync(${JSON.stringify(heartbeat)}, "beat\\n"), 25);`;
     writeFileSync(
-      join(directory, "tests/loop.test.ts"),
+      join(directory, "tests/00-loop.test.ts"),
       `import { test } from "bun:test";\ntest("synchronous loop", () => { Bun.spawn([process.execPath, "--no-env-file", "--no-install", "-e", ${JSON.stringify(beatProgram)}], { stdout: "ignore", stderr: "ignore" }); while (true) {} });\n`
     );
     writeFileSync(
-      join(directory, "tests/continuation.test.ts"),
+      join(directory, "tests/01-continuation.test.ts"),
       `import { test } from "bun:test";\nimport { writeFileSync } from "node:fs";\ntest("continuation", () => writeFileSync(${JSON.stringify(completed)}, "completed"));\n`
     );
     const started = Date.now();
-    const result = await runFixture(directory, ["main", "--file-timeout-ms=2000", "tests/loop.test.ts", "tests/continuation.test.ts"]);
+    const result = await runFixture(directory, ["main", "--file-timeout-ms=2000", "tests/00-loop.test.ts", "tests/01-continuation.test.ts"]);
     assert.equal(result.code, 1, result.output);
     assert.match(result.output, /Wall-time limit exceeded/);
     assert.match(result.output, /exit 124/);
     assert.match(result.output, /2 files, 1 failures/);
+    assert.ok(result.output.indexOf("main: tests/00-loop.test.ts") < result.output.indexOf("main: tests/01-continuation.test.ts"), result.output);
     assert.ok(Date.now() - started < 10_000, result.output);
     assert.equal(readFileSync(completed, "utf8"), "completed");
     assert.ok(existsSync(heartbeat), "The descendant negative control must have run");
     const stopped = readFileSync(heartbeat, "utf8");
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
     assert.equal(readFileSync(heartbeat, "utf8"), stopped, "The deadline must settle the descendant too");
-    const invalid = await runFixture(directory, ["main", "--file-timeout-ms=0", "tests/continuation.test.ts"]);
+    const invalid = await runFixture(directory, ["main", "--file-timeout-ms=0", "tests/01-continuation.test.ts"]);
     assert.equal(invalid.code, 1, invalid.output);
     assert.match(invalid.output, /must be an integer/);
   } finally {
@@ -398,7 +403,7 @@ test("combined verify includes the benchmark stage after an earlier failed gate"
       writeFileSync(join(directory, "scripts", name), readFileSync(join("scripts", name), "utf8"));
     }
     const receipt = join(directory, "gates.txt");
-    const child = Bun.spawn(["/bin/sh", "scripts/verify.sh"], {
+    const child = Bun.spawn(["/bin/sh", "scripts/verify.sh", bindingArgument()], {
       cwd: directory,
       env: { PATH: binaryDirectory + ":/usr/bin:/bin", UOS_GATE_RECEIPT: receipt },
       stdout: "pipe",
@@ -407,9 +412,10 @@ test("combined verify includes the benchmark stage after an earlier failed gate"
     const [code, output, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     assert.equal(code, 1, output + error);
     const invoked = readFileSync(receipt, "utf8").trim().split("\n");
-    assert.equal(invoked.filter((line) => line.endsWith("scripts/test-runner.ts benchmark")).length, 1);
-    assert.ok(invoked.some((line) => line.endsWith("scripts/test-runner.ts main")));
-    assert.ok(invoked.some((line) => line.endsWith("scripts/test-runner.ts sentinel")));
+    assert.equal(invoked.filter((line) => line.includes("scripts/test-runner.ts benchmark --native-kv-binding=")).length, 1);
+    assert.equal(invoked.filter((line) => line.includes("scripts/test-runner.ts vps --native-kv-binding=")).length, 1);
+    assert.ok(invoked.some((line) => line.includes("scripts/test-runner.ts main --native-kv-binding=")));
+    assert.ok(invoked.some((line) => line.includes("scripts/test-runner.ts sentinel --native-kv-binding=")));
     assert.match(output, /benchmark harness and baselines/);
     assert.match(output, /verify: FAILED/);
   } finally {
