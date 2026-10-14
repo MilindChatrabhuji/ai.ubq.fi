@@ -5,6 +5,8 @@ const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 /** Shared immutable-release primitives for the existing CLI and bound controller. */
 export const VPS_UNIT_SHA256 = "6563f11090766cc784361bc71a0c9c244bfa41c0f0e2163355a1f558000d3d44";
 export const VPS_LAUNCHER_PROFILE_SHA256 = "50435a214d34cb7fbae3735a0a0502f8d96aaa3257dc502edc01bd64a8429ca7";
+export const HISTORICAL_BUN_VPS_PROFILE_SHA256 = "8a74f51324e59bc00612bd22ae68bc3dc60a55dcb113a66bef0a5c3fc719c1e4";
+const HISTORICAL_BUN_VPS_UNIT_SHA256 = "d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3";
 export type StoredVpsRelease = { sha: string; path: string; archive: string; tree: string };
 export type StoredVpsPrior = StoredVpsRelease & { selector: string; port: number; profile: string };
 export type VpsCommand = (program: string, args: string[], cwd: string) => Promise<string>;
@@ -131,7 +133,9 @@ export class ImmutableVpsReleaseStore {
         throw new Error("Immutable release root or manifest is unsafe");
     } else if (!create) throw new Error("Previous immutable release is missing");
     const metadata: unknown = present ? JSON.parse(await readTextFile(`${absolute}/.uos-release.json`)) : null;
-    const bun = metadata !== null && typeof metadata === "object" && "schema" in metadata && metadata.schema === 2;
+    const bun = metadata !== null && typeof metadata === "object" && "schema" in metadata && (metadata.schema === 2 || metadata.schema === 3);
+    if (metadata !== null && typeof metadata === "object" && "schema" in metadata && metadata.schema !== 1 && metadata.schema !== 2 && metadata.schema !== 3)
+      throw new Error("Unsupported immutable release schema");
     const expected = await this.expectedRelease(sha, !present);
     try {
       if (present) await this._verifyPublished(absolute, expected, bun);
@@ -162,10 +166,11 @@ export class ImmutableVpsReleaseStore {
       port = Number(matches[0]?.[1]);
     const profile = await vpsTextDigest(launcher.replace(/port: \d+/, "port: 0"));
     const unit = await this.unitDigest(sha);
-    const supported =
-      profile === VPS_LAUNCHER_PROFILE_SHA256
-        ? unit === VPS_UNIT_SHA256
-        : profile === (await this.currentLauncherProfile()) && unit === (await vpsBytesDigest(await readFile(this.absolute("ops/ai-ubq-fi.service"))));
+    let supported: boolean;
+    if (profile === VPS_LAUNCHER_PROFILE_SHA256) supported = unit === VPS_UNIT_SHA256;
+    else if (profile === HISTORICAL_BUN_VPS_PROFILE_SHA256) supported = unit === HISTORICAL_BUN_VPS_UNIT_SHA256;
+    else
+      supported = profile === (await this.currentLauncherProfile()) && unit === (await vpsBytesDigest(await readFile(this.absolute("ops/ai-ubq-fi.service"))));
     if (matches.length !== 1 || port < 1 || port > 65535 || !supported) throw new Error("Unsupported previous launcher or service layout");
     return { ...previous, selector: selected, port, profile };
   }
@@ -177,7 +182,13 @@ export class ImmutableVpsReleaseStore {
   }
   async assertRollbackAllowed(prior: StoredVpsPrior, candidateSha: string): Promise<void> {
     const metadata: unknown = JSON.parse(await readTextFile(this.absolute(`.data/releases/${candidateSha}/.uos-release.json`)));
-    if (prior.profile === VPS_LAUNCHER_PROFILE_SHA256 && metadata && typeof metadata === "object" && "schema" in metadata && metadata.schema === 2)
+    if (
+      prior.profile === VPS_LAUNCHER_PROFILE_SHA256 &&
+      metadata &&
+      typeof metadata === "object" &&
+      "schema" in metadata &&
+      (metadata.schema === 2 || metadata.schema === 3)
+    )
       throw new Error("Cross-codec rollback requires stopped latest-state Bun-to-Deno conversion; refusing stale legacy state");
   }
   async selectRelease(target: string | null): Promise<void> {

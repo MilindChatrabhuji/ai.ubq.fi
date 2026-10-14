@@ -1,12 +1,18 @@
 import { realpath, lstat } from "node:fs/promises";
-import { openKv } from "#kv";
-import { serveHttp } from "#http";
+import { verifyReleasePayload } from "../ops/release-artifact.ts";
+import { nativeKvReleaseBinding } from "../ops/native-kv-release.ts";
+import { prepareNativeKvBackend } from "../src/storage/native-addon.ts";
 if (process.platform !== "darwin") throw new Error("The Mac service requires macOS");
 const release = new URL("../", import.meta.url);
 const root = new URL("../../../", release);
 const releasePath = await realpath(release);
-for (const name of ["DENO_DEPLOY", "DENO_DEPLOYMENT_ID", "DENO_DEPLOY_BUILD_ID", "DENO_REGION", "DENO_TIMELINE"]) delete process.env[name];
-const { runtimeGitSha } = await import(new URL("src/config.ts", release).href);
+const manifest = await verifyReleasePayload(releasePath, releasePath.slice(-40));
+if (manifest.schema !== 3) throw new Error("The custom native SDK requires immutable release schema 3");
+prepareNativeKvBackend(nativeKvReleaseBinding(releasePath, manifest.native_kv));
+const { openKv } = await import("#kv");
+const { serveHttp } = await import("#http");
+for (const name of ["DENO_DEPLOY", "DENO_DEPLOYMENT_ID", "DENO_DEPLOY_BUILD_ID", "DENO_REGION", "DENO_TIMELINE"]) Reflect.deleteProperty(process.env, name);
+const { runtimeGitSha } = (await import(new URL("src/config.ts", release).href)) as typeof import("../src/config.ts");
 const gitSha = runtimeGitSha();
 if (!/^[0-9a-f]{40}$/.test(gitSha) || !releasePath.endsWith("/releases/" + gitSha))
   throw new Error("The immutable Mac release does not match its Git identity");
@@ -18,6 +24,8 @@ const kv = await openKv(database.pathname);
 const { initializeKv } = await import(new URL("src/kv.ts", release).href);
 initializeKv(kv);
 const { application, shutdownOptionalTelemetry, startMacMaintenance } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
+const upgrade = application.upgrade;
+if (!upgrade) throw new Error("The Mac service requires the application WebSocket upgrade handler");
 const { configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } = await import(new URL("src/auth/local-admin.ts", release).href);
 const { ensureLocalDevelopmentApiKey } = await import(new URL("src/auth/local-development-key.ts", release).href);
 try {
@@ -35,7 +43,7 @@ const server = serveHttp(
     onListen: configureMacLocalAdminAuthBypassForListener,
     upgrade: (request, info) => {
       configureAdminAuthPeerForRequest(info.remoteAddr, request);
-      return application.upgrade(request, info);
+      return upgrade(request, info);
     },
   },
   (request, info) => {
