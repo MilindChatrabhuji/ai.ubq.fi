@@ -43,7 +43,6 @@ const SKIP_DIRECTORIES = new Set([
   "node_modules",
   ".bun-cache",
   ".tmp",
-  "lib",
   ".codex-worktrees",
   ".data",
   ".release",
@@ -59,6 +58,10 @@ const SKIP_DIRECTORIES = new Set([
 // and the benchmark harness.
 const TEST_DIRECTORY = /(?:^|\/)(?:tests?|__tests__)(?:\/|$)/;
 const TEST_FILENAME = /\.(?:test|spec)\.ts$/;
+// This executable is an asserted official-Codex acceptance harness, not app source.
+// Keep its test ceiling explicit; every other first-party library file stays covered.
+const ACCEPTANCE_TEST_FILES = new Set(["lib/jev_compaction/jev-codex-smoke.ts"]);
+const VENDORED_PATHS = new Set(["lib/codex"]);
 
 type CountedFile = Readonly<{ path: string; lines: number; cap: number }>;
 
@@ -73,7 +76,8 @@ const listFiles = (): CountedFile[] => {
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const full = join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (!SKIP_DIRECTORIES.has(entry.name)) walk(full);
+        const path = relative(ROOT, full).split(sep).join("/");
+        if (!SKIP_DIRECTORIES.has(entry.name) && !VENDORED_PATHS.has(path)) walk(full);
       } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
         paths.push(relative(ROOT, full).split(sep).join("/"));
       }
@@ -81,7 +85,8 @@ const listFiles = (): CountedFile[] => {
   };
   walk(ROOT);
   return paths.map((path) => {
-    const cap = TEST_DIRECTORY.test(path) || TEST_FILENAME.test(path) || path.startsWith("benchmarks/") ? TEST_CAP : SOURCE_CAP;
+    const cap =
+      TEST_DIRECTORY.test(path) || TEST_FILENAME.test(path) || path.startsWith("benchmarks/") || ACCEPTANCE_TEST_FILES.has(path) ? TEST_CAP : SOURCE_CAP;
     return { path, lines: countLines(readFileSync(join(ROOT, path), "utf8")), cap };
   });
 };

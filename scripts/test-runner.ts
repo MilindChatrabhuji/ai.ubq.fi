@@ -53,7 +53,7 @@ const filesBelow = (directory: string): string[] => {
 const group = (profile: string, files: readonly string[], environment: readonly string[] = []): Group => ({ profile, files, environment });
 const measurement = (): Group => group("measurement", ["tests/usage-optimization-measurement.test.ts"], ["UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"]);
 const quality = (): Group => group("quality", ["scripts/quality-contract.test.ts"], ["PATH"]);
-const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
+const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
   switch (segment) {
     case "main":
       return [
@@ -103,6 +103,26 @@ const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] =
     default:
       throw new Error(`Unknown test segment: ${segment}`);
   }
+};
+const segmentHints = new Map([
+  ["tests/sentinel-replay-consumer.test.ts", "sentinel"],
+  ["tests/failover-stress-http.test.ts", "stress"],
+  ["tests/live-default-model.e2e.ts", "e2e"],
+  ["tests/vps-deploy-guards.test.ts", "deploy-guards"],
+]);
+const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
+  const groups = allGroupsFor(segment, explicitFiles);
+  if (explicitFiles.length === 0 || segment === "files") return groups;
+  const requested = new Set(explicitFiles.map((path) => relative(ROOT, resolve(ROOT, path)).split(sep).join("/")));
+  const available = new Set(groups.flatMap((item) => item.files));
+  for (const path of requested) {
+    if (!available.has(path)) {
+      const hint = segmentHints.get(path);
+      const suffix = hint === undefined ? "" : "; use segment " + hint;
+      throw new Error(`Test file ${path} is excluded or unknown in segment ${segment}${suffix}`);
+    }
+  }
+  return groups.map((item) => ({ ...item, files: item.files.filter((path) => requested.has(path)) })).filter((item) => item.files.length !== 0);
 };
 const checkedPath = (path: string): string => {
   const absolute = realpathSync(resolve(ROOT, path));
