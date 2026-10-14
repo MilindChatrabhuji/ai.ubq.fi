@@ -1,5 +1,6 @@
 import { parseVpsIdentity, parseVpsSample, sha256, vpsDigest, type VpsIdentity, type VpsMetricsSample } from "./vps-release-contract.ts";
 import type { VpsCommand } from "./vps-release-store.ts";
+import type { TerminalAdmissionStage } from "../src/handler/terminal-log.ts";
 
 export type VpsJournalRequest = { identity: VpsIdentity; windowStart: number; windowEnd: number };
 export type VpsJournalCoverage = {
@@ -23,7 +24,15 @@ export function createVpsJournalReader(run: VpsCommand, root: string, coverage: 
 }
 const MAX_JOURNAL_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 8192;
-type Event = { id: string; at: number; accepted: boolean; status: number; stream: boolean; failure: string | null };
+type Event = {
+  id: string;
+  at: number;
+  accepted: boolean;
+  status: number;
+  stream: boolean;
+  failure: string | null;
+  admissionStage: TerminalAdmissionStage | null;
+};
 const incomplete = (): never => {
   throw new Error("VPS journal coverage is incomplete");
 };
@@ -52,7 +61,13 @@ function parseEvent(message: string, at: number, identity: VpsIdentity): Event |
     status,
     stream: value.stream === true,
     failure: typeof value.failure_kind === "string" ? value.failure_kind : null,
+    admissionStage: accepted ? "accepted" : parseAdmissionStage(value.admission_stage),
   };
+}
+function parseAdmissionStage(value: unknown): TerminalAdmissionStage | null {
+  if (value === undefined || value === null) return null;
+  if (value === "pre_admission" || value === "accepted") return value;
+  return incomplete();
 }
 function validateTerminal(value: Record<string, unknown>, status: number): void {
   if (!Number.isInteger(status) || status < 100 || status > 599) return incomplete();
@@ -74,7 +89,7 @@ function journalEvents(raw: string, proof: VpsJournalCoverage, identity: VpsIden
       typeof row.MESSAGE !== "string"
     )
       return incomplete();
-    if (/suppressed|rate.limit|dropped/i.test(row.MESSAGE)) return incomplete();
+    if (/^(?:Suppressed \d+ messages from .+|Missed \d+ kernel messages)$/.test(row.MESSAGE)) return incomplete();
     const at = Number(row.__REALTIME_TIMESTAMP) / 1000;
     if (!Number.isFinite(at) || at < start || at >= end) return incomplete();
     const event = parseEvent(row.MESSAGE, at, identity);
@@ -88,9 +103,11 @@ function cohortResults(events: readonly Event[], start: number, end: number): Ev
   for (const event of events) {
     const target = event.accepted ? accepted : terminals,
       existing = target.get(event.id);
-    if (existing && (existing.status !== event.status || existing.failure !== event.failure)) return incomplete();
+    if (existing && (existing.status !== event.status || existing.failure !== event.failure || existing.admissionStage !== event.admissionStage))
+      return incomplete();
     target.set(event.id, event);
   }
+  for (const terminal of terminals.values()) if (terminal.admissionStage === "pre_admission" && accepted.has(terminal.id)) return incomplete();
   const cohort = [...accepted.values()].filter((event) => event.at >= start && event.at < end);
   const results = cohort.map((event) => {
     const terminal = terminals.get(event.id);
@@ -99,7 +116,8 @@ function cohortResults(events: readonly Event[], start: number, end: number): Ev
     }
     return terminal;
   });
-  if ([...terminals.values()].some((event) => event.at >= start && event.at < end && !accepted.has(event.id))) return incomplete();
+  if ([...terminals.values()].some((event) => event.at >= start && event.at < end && !accepted.has(event.id) && event.admissionStage !== "pre_admission"))
+    return incomplete();
   return results;
 }
 export class VpsJournalMetrics {

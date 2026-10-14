@@ -243,6 +243,17 @@ function parseReceiptHealth(value: unknown, surface: "loopback" | "public", iden
   if (proof.surface !== surface || !sameVps(proof.identity, identity)) return invalidVps();
   return proof;
 }
+function isFailedBeforePromotion(receipt: Pick<VpsReceipt, "phase" | "sequence" | "settlement" | "error" | "loopback" | "public" | "restoration">): boolean {
+  return (
+    receipt.phase === "failed" &&
+    receipt.sequence === 2 &&
+    receipt.settlement?.disposition === "failed" &&
+    receipt.error === "acceptance_insufficient" &&
+    receipt.loopback === null &&
+    receipt.public === null &&
+    receipt.restoration === null
+  );
+}
 export function parseVpsReceipt(value: unknown): VpsReceipt {
   const object = exactObject(value, [
     "schema",
@@ -288,12 +299,14 @@ export function parseVpsReceipt(value: unknown): VpsReceipt {
       digest: sha256(item.digest),
     };
   }
-  const phase = object.phase as VpsPhase;
-  if (phase !== "prepared" && intent === null) return invalidVps();
+  const phase = object.phase as VpsPhase,
+    sequence = count(object.sequence, 1),
+    error = object.error === null ? null : boundedText(object.error, 128);
+  const failedBeforePromotion = isFailedBeforePromotion({ phase, sequence, settlement, error, loopback, public: publicHealth, restoration });
+  if (phase !== "prepared" && intent === null && !failedBeforePromotion) return invalidVps();
   if (phase === "accepted" && (!loopback || !publicHealth || !isHealthyVps(loopback) || !isHealthyVps(publicHealth) || settlement?.disposition !== "accepted"))
     return invalidVps();
   if (phase === "rolled_back" && restoration === null) return invalidVps();
-  const error = object.error === null ? null : boundedText(object.error, 128);
   if (phase === "failed" && error === null) return invalidVps();
   return {
     schema: 1,
@@ -306,7 +319,7 @@ export function parseVpsReceipt(value: unknown): VpsReceipt {
     candidate,
     prior,
     phase,
-    sequence: count(object.sequence, 1),
+    sequence,
     createdAt,
     updatedAt,
     intent,
