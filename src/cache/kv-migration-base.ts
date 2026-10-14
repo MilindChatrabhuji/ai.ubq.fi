@@ -1,6 +1,7 @@
 // KV migration types, prefix tables and validators, split out of src/kv_migration.ts.
 
-import { type KvEntryJSON, toKey, toValue } from "@deno/kv-utils/json";
+import type { Kv, KvKey } from "#kv";
+import { type KvEntryJson, toKey, toValue } from "../kv-conversion/profile-json.ts";
 import { CODEX_RESET_USAGE_PREFIX } from "../codex/reset-settings.ts";
 
 export type KvMigrationProfile = "local" | "prod";
@@ -81,7 +82,7 @@ export type KvMigrationValidationResult = {
   errors: string[];
 };
 
-const DURABLE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
+const DURABLE_PREFIXES: { group: string; prefix: KvKey }[] = [
   { group: "api_keys_id", prefix: ["ubq_ai", "api_keys", "id"] },
   { group: "api_keys_hash", prefix: ["ubq_ai", "api_keys", "hash"] },
   { group: "api_keys_usage", prefix: ["ubq_ai", "api_keys", "usage"] },
@@ -158,17 +159,17 @@ const DURABLE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
   { group: "agent_messages", prefix: ["agent_messages"] },
 ];
 
-const CODEX_BOOTSTRAP_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
+const CODEX_BOOTSTRAP_PREFIXES: { group: string; prefix: KvKey }[] = [
   { group: "codex_auth", prefix: ["ubq_ai", "codex_auth"] },
   { group: "codex_models", prefix: ["ubq_ai", "codex_models"] },
 ];
 
-const LEGACY_DURABLE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
+const LEGACY_DURABLE_PREFIXES: { group: string; prefix: KvKey }[] = [
   { group: "legacy_model_key_config", prefix: ["key", "config"] },
   { group: "legacy_model_key_health", prefix: ["key", "health"] },
 ];
 
-const TRANSIENT_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
+const TRANSIENT_PREFIXES: { group: string; prefix: KvKey }[] = [
   { group: "passkey_challenges", prefix: ["uos_ai", "auth", "challenges"] },
   { group: "passkey_sessions", prefix: ["uos_ai", "auth", "sessions"] },
   { group: "embeddings_rate", prefix: ["embeddings", "v1", "rate"] },
@@ -183,22 +184,22 @@ const TRANSIENT_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
   },
 ];
 
-const EMBEDDINGS_CACHE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
+const EMBEDDINGS_CACHE_PREFIXES: { group: string; prefix: KvKey }[] = [
   { group: "embeddings_cache_index", prefix: ["embeddings", "v2", "cache_index"] },
   { group: "embeddings_cache_index_by_hash", prefix: ["embeddings", "v2", "cache_index_by_hash"] },
   { group: "embeddings_cache_values", prefix: ["embeddings", "v2"] },
 ];
 
-const keyStartsWith = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => {
+const keyStartsWith = (key: KvKey, prefix: KvKey): boolean => {
   if (key.length < prefix.length) return false;
   return prefix.every((part, index) => key[index] === part);
 };
 
-const findPrefix = (key: Deno.KvKey, prefixes: { group: string; prefix: Deno.KvKey }[]) => prefixes.find((entry) => keyStartsWith(key, entry.prefix)) ?? null;
+const findPrefix = (key: KvKey, prefixes: { group: string; prefix: KvKey }[]) => prefixes.find((entry) => keyStartsWith(key, entry.prefix)) ?? null;
 
 export const defaultIncludeLegacyForProfile = (profile: KvMigrationProfile): boolean => profile === "local";
 
-export const classifyKvMigrationKey = (key: Deno.KvKey, options: KvMigrationClassifyOptions): KvMigrationDecision => {
+export const classifyKvMigrationKey = (key: KvKey, options: KvMigrationClassifyOptions): KvMigrationDecision => {
   const transient = findPrefix(key, TRANSIENT_PREFIXES);
   if (transient) return { action: "skip", group: transient.group, reason: "transient_runtime_state" };
 
@@ -236,8 +237,8 @@ export const safeKvMigrationValueType = (valueJson: unknown): string => {
   return typeof type === "string" ? type : "object";
 };
 
-export const parseKvMigrationEntryLine = (line: string): { key: Deno.KvKey; value: unknown; raw: KvEntryJSON } => {
-  const raw = JSON.parse(line) as KvEntryJSON;
+export const parseKvMigrationEntryLine = (line: string): { key: KvKey; value: unknown; raw: KvEntryJson } => {
+  const raw = JSON.parse(line) as KvEntryJson;
   return {
     key: toKey(raw.key),
     value: toValue(raw.value),
@@ -245,14 +246,10 @@ export const parseKvMigrationEntryLine = (line: string): { key: Deno.KvKey; valu
   };
 };
 
-type KvMigrationImportEntry = Readonly<{ key: Deno.KvKey; value: unknown; raw: KvEntryJSON }>;
+type KvMigrationImportEntry = Readonly<{ key: KvKey; value: unknown; raw: KvEntryJson }>;
 
 /** Imports one parsed migration entry, or reports that it must be skipped. */
-const importKvMigrationEntry = async (
-  kv: Deno.Kv | null,
-  entry: KvMigrationImportEntry,
-  options: KvMigrationImportOptions
-): Promise<"imported" | "skipped"> => {
+const importKvMigrationEntry = async (kv: Kv | null, entry: KvMigrationImportEntry, options: KvMigrationImportOptions): Promise<"imported" | "skipped"> => {
   if (kv && !options.overwrite) {
     const existing = await kv.get(entry.key);
     if (existing.value !== null) return "skipped";
@@ -272,7 +269,7 @@ const importKvMigrationEntry = async (
 };
 
 export async function importKvMigrationLines(
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   lines: AsyncIterable<string> | Iterable<string>,
   options: KvMigrationImportOptions
 ): Promise<KvMigrationImportResult> {
@@ -307,7 +304,7 @@ export async function importKvMigrationLines(
   };
 }
 
-export const listKvMigrationCount = async (kv: Deno.Kv, prefix: Deno.KvKey, limit = Number.POSITIVE_INFINITY): Promise<number> => {
+export const listKvMigrationCount = async (kv: Kv, prefix: KvKey, limit = Number.POSITIVE_INFINITY): Promise<number> => {
   let count = 0;
   const iterator = kv.list({ prefix });
   for (;;) {
