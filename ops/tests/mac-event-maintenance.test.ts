@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -293,6 +294,41 @@ Deno.test("Mac entry preserves event maintenance and defers missing settlement l
     assert.equal(await sha256(await Deno.readTextFile(`${release}/maintenance.ts`)), await sha256(maintenance));
     hashes["scripts/serve-mac.ts"] = await sha256(launcher);
     hashes["maintenance.ts"] = await sha256(maintenance);
+    const cacheProbe = await new Deno.Command(Deno.execPath(), {
+      args: ["info", "--json"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert.equal(cacheProbe.code, 0, decoder.decode(cacheProbe.stderr));
+    const cacheMetadata = JSON.parse(decoder.decode(cacheProbe.stdout)) as { denoDir?: string };
+    const denoDir = cacheMetadata.denoDir;
+    assert.ok(denoDir, "the current runtime must report its dependency cache");
+    const tempProbe = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "import { tmpdir } from 'node:os'; console.log(JSON.stringify(tmpdir()));"],
+      cwd: fixture,
+      clearEnv: true,
+      env: { HOME: fixture, DENO_DIR: `${fixture}/metadata-cache` },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert.equal(tempProbe.code, 0, decoder.decode(tempProbe.stderr));
+    const temporaryDirectory = JSON.parse(decoder.decode(tempProbe.stdout)) as string;
+    assert.equal(typeof temporaryDirectory, "string");
+    // The protected namespace provides this private cache. Other callers seed
+    // an owned public cache rather than write to a host-home cache.
+    let dependencyCache = denoDir;
+    if (dependencyCache !== join(temporaryDirectory, "deno")) {
+      dependencyCache = `${fixture}/deno-cache`;
+      const prepared = await new Deno.Command(Deno.execPath(), {
+        args: ["cache", "--frozen", `--config=${root}deno.json`, `--lock=${root}deno.lock`, `${fixture}/bootstrap.ts`],
+        cwd: fixture,
+        clearEnv: true,
+        env: { HOME: fixture, DENO_DIR: dependencyCache },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert.equal(prepared.code, 0, decoder.decode(prepared.stderr));
+    }
     const child = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
@@ -308,7 +344,7 @@ Deno.test("Mac entry preserves event maintenance and defers missing settlement l
       ],
       cwd: fixture,
       clearEnv: true,
-      env: { METERED_API_KEY: "synthetic-mac-fixture" },
+      env: { HOME: fixture, DENO_DIR: dependencyCache, METERED_API_KEY: "synthetic-mac-fixture" },
       stdout: "piped",
       stderr: "piped",
     }).spawn();

@@ -160,13 +160,15 @@ const getCodexAuthContext = async (): Promise<CodexAuthContext> => {
     const entry = await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY);
     const pool = parseCodexAuthPool(entry.value);
     if (pool) {
-      const accounts = await Promise.all(pool.accounts.map(async (account, index) => ({
-        slot: index + 1,
-        updated_at_ms: account.updated_at_ms,
-        access_token_exp_ms: getJwtExpMs(account.access_token),
-        refresh_sha256: await sha256Hex(account.refresh_token),
-        native_owner_codex_home: account.native_owner?.codex_home ?? null,
-      })));
+      const accounts = await Promise.all(
+        pool.accounts.map(async (account, index) => ({
+          slot: index + 1,
+          updated_at_ms: account.updated_at_ms,
+          access_token_exp_ms: getJwtExpMs(account.access_token),
+          refresh_sha256: await sha256Hex(account.refresh_token),
+          native_owner_codex_home: account.native_owner?.codex_home ?? null,
+        }))
+      );
       const expirations = accounts.map((account) => account.access_token_exp_ms).filter((value): value is number => typeof value === "number");
       return {
         meta: {

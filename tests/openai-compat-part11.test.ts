@@ -625,18 +625,14 @@ Deno.test("openai: the DeepSeek route accepts the provider's own `thinking` fiel
       const tools = [{ type: "function", function: { name: "exec", parameters: { type: "object" } } }];
 
       seen.length = 0;
-      const disabled = await withFetchMock(ok, () =>
-        post({ thinking: { type: "enabled" }, reasoning_effort: "none", tools, tool_choice: "required" })
-      );
+      const disabled = await withFetchMock(ok, () => post({ thinking: { type: "enabled" }, reasoning_effort: "none", tools, tool_choice: "required" }));
       await disabled.json();
       assert.equal(disabled.status, 200);
       assert.equal(seen[0]?.reasoning_effort, "none");
       assert.equal("thinking" in (seen[0] ?? {}), false);
 
       seen.length = 0;
-      const enabled = await withFetchMock(ok, () =>
-        post({ thinking: { type: "disabled" }, reasoning_effort: "max", tools, tool_choice: "required" })
-      );
+      const enabled = await withFetchMock(ok, () => post({ thinking: { type: "disabled" }, reasoning_effort: "max", tools, tool_choice: "required" }));
       assert.equal(enabled.status, 400);
       const error = (await enabled.json()) as { error: { message: string; param: string } };
       assert.equal(error.error.param, "tool_choice");

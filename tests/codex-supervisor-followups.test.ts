@@ -229,57 +229,64 @@ const briefConnection = (pages: BriefPages): { connection: SupervisorConnection;
 type FollowSocketReply = { result?: unknown; error?: string };
 
 class ScriptedFollowSocket {
-  private static scripts: FollowSocketReply[][] = [];
-  private readonly script: FollowSocketReply[];
-  private readonly listeners = new Map<string, Array<{ listener: FakeListener; once: boolean }>>();
+  private static _scripts: FollowSocketReply[][] = [];
+  private readonly _script: FollowSocketReply[];
+  private readonly _listeners = new Map<string, { listener: FakeListener; once: boolean }[]>();
   readyState = 1;
 
   constructor(_url: string) {
-    this.script = ScriptedFollowSocket.scripts.shift() ?? [];
-    queueMicrotask(() => this.emit("open"));
+    this._script = ScriptedFollowSocket._scripts.shift() ?? [];
+    queueMicrotask(() => {
+      this._emit("open");
+    });
   }
 
   static setScripts(scripts: FollowSocketReply[][]): void {
-    ScriptedFollowSocket.scripts = scripts.map((script) => [...script]);
+    ScriptedFollowSocket._scripts = scripts.map((script) => [...script]);
   }
 
   on(event: string, listener: FakeListener): this {
-    this.add(event, listener, false);
+    this._add(event, listener, false);
     return this;
   }
 
   once(event: string, listener: FakeListener): this {
-    this.add(event, listener, true);
+    this._add(event, listener, true);
     return this;
   }
 
   send(data: string): void {
     const request = JSON.parse(data) as { id?: unknown };
     if (typeof request.id !== "number") return;
-    const reply = this.script.shift();
+    const reply = this._script.shift();
     if (!reply) throw new Error("missing scripted supervisor reply");
     const frame = typeof reply.error === "string" ? { id: request.id, error: { message: reply.error } } : { id: request.id, result: reply.result };
-    queueMicrotask(() => this.emit("message", JSON.stringify(frame)));
+    queueMicrotask(() => {
+      this._emit("message", JSON.stringify(frame));
+    });
   }
 
   close(): void {
     this.readyState = 3;
-    this.emit("close");
+    this._emit("close");
   }
 
   terminate(): void {
     this.readyState = 3;
   }
 
-  private add(event: string, listener: FakeListener, once: boolean): void {
-    const list = this.listeners.get(event) ?? [];
+  private _add(event: string, listener: FakeListener, once: boolean): void {
+    const list = this._listeners.get(event) ?? [];
     list.push({ listener, once });
-    this.listeners.set(event, list);
+    this._listeners.set(event, list);
   }
 
-  private emit(event: string, ...args: unknown[]): void {
-    const list = this.listeners.get(event) ?? [];
-    this.listeners.set(event, list.filter((entry) => !entry.once));
+  private _emit(event: string, ...args: unknown[]): void {
+    const list = this._listeners.get(event) ?? [];
+    this._listeners.set(
+      event,
+      list.filter((entry) => !entry.once)
+    );
     for (const entry of list) entry.listener(...args);
   }
 }
@@ -288,18 +295,24 @@ const turnRead = { thread: { id: "thread-1", name: "Ordering", status: { type: "
 
 Deno.test("a failed follow enrichment does not replace an already-rendered command output", async () => {
   const summary = {
-    data: [{
-      id: "turn-follow",
-      status: "inProgress",
-      items: [{ type: "commandExecution", id: "command-1", command: "printf output", status: "in_progress", exitCode: null, aggregatedOutput: "" }],
-    }],
+    data: [
+      {
+        id: "turn-follow",
+        status: "inProgress",
+        items: [{ type: "commandExecution", id: "command-1", command: "printf output", status: "in_progress", exitCode: null, aggregatedOutput: "" }],
+      },
+    ],
   };
   const full = {
-    data: [{
-      id: "turn-follow",
-      status: "inProgress",
-      items: [{ type: "commandExecution", id: "command-1", command: "printf output", status: "in_progress", exitCode: null, aggregatedOutput: "known output" }],
-    }],
+    data: [
+      {
+        id: "turn-follow",
+        status: "inProgress",
+        items: [
+          { type: "commandExecution", id: "command-1", command: "printf output", status: "in_progress", exitCode: null, aggregatedOutput: "known output" },
+        ],
+      },
+    ],
   };
   ScriptedFollowSocket.setScripts([
     [{ result: {} }, { result: summary }, { result: full }],
@@ -310,7 +323,7 @@ Deno.test("a failed follow enrichment does not replace an already-rendered comma
     const revisions = new Map<string, string>();
     const signal = new AbortController().signal;
     const first = await readFollowUpdate(SOURCE, "thread-follow", "", signal, revisions);
-    const firstEntry = first.entries[0];
+    const firstEntry = first.entries.at(0);
     if (!firstEntry) throw new Error("the successful enrichment must emit the command");
     assert.equal(first.enriched, true);
     assert.equal(firstEntry.text, "known output");

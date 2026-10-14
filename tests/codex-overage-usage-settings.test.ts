@@ -135,7 +135,10 @@ Deno.test("the admin overage surface exposes the upstream balance and limit, or 
   kv.seed(CODEX_AUTH_POOL_KEY, codexPoolEntry(["overage-account-one"]));
   const stubUsage = (response: () => Response | Promise<Response>) => {
     globalThis.fetch = (input) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      let url: string;
+      if (typeof input === "string") url = input;
+      else if (input instanceof URL) url = input.toString();
+      else url = input.url;
       if (!url.endsWith("/backend-api/wham/usage")) throw new Error(`unexpected request ${url}`);
       return Promise.resolve(response());
     };
@@ -148,7 +151,7 @@ Deno.test("the admin overage surface exposes the upstream balance and limit, or 
     assert.equal(listed.status, 200);
     const row = ((await readBody(listed)).data as { overage: Record<string, unknown> | null }[])[0];
     assert.deepEqual(row.overage, { balance: "12.50", overage_limit_reached: false });
-    assert.deepEqual(Object.keys(row.overage ?? {}), ["balance", "overage_limit_reached"]);
+    assert.deepEqual(Object.keys(row.overage), ["balance", "overage_limit_reached"]);
 
     stubUsage(() => Response.json({ credits: { balance: "3.00", overage_limit_reached: true } }));
     const reached = await handleAdminCodexOverageUsage(new Request(OVERAGE_URL));

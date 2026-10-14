@@ -83,7 +83,7 @@ const seedAuthPool = async (kv: RoutingKv, auth: RoutingAuth, now: number): Prom
 };
 
 /** Persist one capacity sample exactly as the dashboard sampler would. */
-const seedCapacityObservation = async (fixture: { snapshotAtMs: number; resetAtMs: number | null; usedPercent: number }): Promise<void> =>
+const seedCapacityObservation = async (fixture: { snapshotAtMs: number; resetAtMs: number | null; usedPercent: number }): Promise<void> => {
   await recordCodexCapacityRoutingObservations(
     [
       {
@@ -101,6 +101,7 @@ const seedCapacityObservation = async (fixture: { snapshotAtMs: number; resetAtM
     ],
     fixture.snapshotAtMs
   );
+};
 
 /**
  * The seed shared by cases A and B: a slot that capacity-only exhaustion left

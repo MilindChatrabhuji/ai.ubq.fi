@@ -232,7 +232,7 @@ export async function runHybridResiduePass(summary: string, deps: HybridResidueD
     let failed = 0;
     let cursor = 0;
     const worker = async (): Promise<void> => {
-      while (true) {
+      for (;;) {
         const index = cursor;
         cursor += 1;
         if (index >= chunks.length) return;

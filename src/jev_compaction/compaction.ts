@@ -608,6 +608,12 @@ function resolveResidue(deps: JevCompactionDeps): CompactionResidue | undefined 
   return hybridResidueEnabled() ? runHybridResiduePass : undefined;
 }
 
+function unavailableAskerResponse(error: unknown): Response {
+  const kind = error instanceof CompactionUnavailable ? error.kind : "jev-failed";
+  logCompaction({ outcome: "failed", kind, detail: failureLogDetail(kind, error instanceof Error ? error.message : "") });
+  return failureResponse(kind);
+}
+
 /**
  * Handles one recognized compaction request end to end. The body is read only
  * here (the normal route is never parsed), Jev work is bounded by the caller
@@ -627,9 +633,7 @@ export async function handleJevResponsesCompaction(req: Request, deps: JevCompac
   try {
     asker = deps.asker ?? askerForTest ?? defaultAsker(deps);
   } catch (error) {
-    const kind = error instanceof CompactionUnavailable ? error.kind : "jev-failed";
-    logCompaction({ outcome: "failed", kind, detail: failureLogDetail(kind, error instanceof Error ? error.message : "") });
-    return failureResponse(kind);
+    return unavailableAskerResponse(error);
   }
   let outcome: CompactionOutcome;
   try {
