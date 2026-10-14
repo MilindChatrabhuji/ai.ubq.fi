@@ -250,6 +250,51 @@ Deno.test("an established native owner adopts a newer synced generation without 
   });
 });
 
+Deno.test("an expired newer native generation is refreshed by its owner before adoption", async () => {
+  await fixture(async ({ kv, first, sibling, setDocument, refreshes, directOauthCalls }) => {
+    const now = Math.floor(Date.now() / 1000);
+    const previous = { ...first, access_token: jwt({ exp: now - 60, generation: 1 }) };
+    kv.auth = { ...kv.auth, accounts: [previous, sibling] };
+    setDocument({ ...document(previous), last_refresh: new Date(Date.now() - 7200_000).toISOString() });
+    const entry = await getAuthPoolEntry(true);
+    const expired = { ...previous, access_token: jwt({ exp: now - 60, generation: 2 }), refresh_token: "synthetic-expired-newer-generation" };
+    setDocument({ ...document(expired), last_refresh: new Date(Date.now() - 3600_000).toISOString() });
+    const next = await refreshAuthCoordinated({ ...entry, auth: entry.pool.accounts[0] });
+    assert.equal(next.refresh_token, auth("shared", 3).refresh_token);
+    assert.equal(refreshes(), 1);
+    assert.equal(directOauthCalls(), 0);
+    assert.deepEqual(kv.auth.accounts[1], sibling);
+    assert.equal(kv.auth.accounts[0].refresh_token, next.refresh_token);
+  });
+});
+
+Deno.test("an unusable native owner result is not adopted or retried", async () => {
+  await fixture(async ({ kv, first, sibling, setDocument, directOauthCalls }) => {
+    const now = Math.floor(Date.now() / 1000);
+    const previous = { ...first, access_token: jwt({ exp: now - 60, generation: 1 }) };
+    kv.auth = { ...kv.auth, accounts: [previous, sibling] };
+    setDocument({ ...document(previous), last_refresh: new Date(Date.now() - 7200_000).toISOString() });
+    const entry = await getAuthPoolEntry(true);
+    const snapshot = structuredClone(kv.auth);
+    const expired = { ...previous, access_token: jwt({ exp: now - 60, generation: 2 }), refresh_token: "synthetic-expired-newer-generation" };
+    const expiredDocument = { ...document(expired), last_refresh: new Date(Date.now() - 3600_000).toISOString() };
+    let ownerRequests = 0;
+    setNativeCodexAuthHooksForTest({
+      ...nativeEnvironment,
+      readAuth: () => Promise.resolve(expiredDocument),
+      refresh: () => {
+        ownerRequests += 1;
+        assert.deepEqual(kv.auth, snapshot, "the unusable intermediate generation must not be persisted");
+        return Promise.resolve();
+      },
+    });
+    await assert.rejects(refreshAuthCoordinated({ ...entry, auth: entry.pool.accounts[0] }), /did not advance/);
+    assert.equal(ownerRequests, 1);
+    assert.equal(directOauthCalls(), 0);
+    assert.deepEqual(kv.auth, snapshot);
+  });
+});
+
 Deno.test("same-expiry native rotations use owner generation metadata and reject a rollback", async () => {
   await fixture(async ({ first, setDocument, refreshes }) => {
     const observed = new Date().toISOString();
