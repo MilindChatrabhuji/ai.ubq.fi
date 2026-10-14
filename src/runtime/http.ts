@@ -103,9 +103,12 @@ const sendResponse = async (request: Request, response: Response, outgoing: Serv
     return;
   }
   responseHeaders(response, outgoing);
-  if (requestBodies.get(request)?.cancelled) {
-    // The rejected upload must not hold its response or be reused as a new
-    // keep-alive request. Close only after the response has been written.
+  const inputBody = requestBodies.get(request);
+  if (inputBody && (inputBody.cancelled || !inputBody.consumed)) {
+    // Refusals can return without reading input, including after asynchronous
+    // authentication/admission. Discard it before handoff and close only after
+    // the response is written; an unread paused input otherwise holds shutdown.
+    inputBody.dispose();
     outgoing.shouldKeepAlive = false;
     outgoing.setHeader("connection", "close");
   }

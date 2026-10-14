@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 export type IncomingBody = Readonly<{
   stream: ReadableStream<Uint8Array>;
   cancelled: boolean;
+  consumed: boolean;
   dispose: () => void;
 }>;
 
@@ -10,6 +11,7 @@ export type IncomingBody = Readonly<{
 export const createIncomingBody = (incoming: IncomingMessage, signal: AbortSignal): IncomingBody => {
   let closed = false;
   let cancelled = false;
+  let consumed = false;
   let cleanup: () => void = () => {};
   let dispose: () => void = () => {};
   const stream = new ReadableStream<Uint8Array>(
@@ -31,6 +33,7 @@ export const createIncomingBody = (incoming: IncomingMessage, signal: AbortSigna
         };
         const end = (): void => {
           if (closed) return;
+          consumed = true;
           stop();
           controller.close();
         };
@@ -71,6 +74,9 @@ export const createIncomingBody = (incoming: IncomingMessage, signal: AbortSigna
     stream,
     get cancelled() {
       return cancelled;
+    },
+    get consumed() {
+      return consumed;
     },
     dispose: () => dispose(),
   };
