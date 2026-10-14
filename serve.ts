@@ -1,12 +1,12 @@
-/// <reference lib="deno.ns" />
-
+import { serveHttp, type ServeDefaultExport } from "#http";
+import type { Kv } from "#kv";
 import { config } from "./src/config.ts";
 import { getKv } from "./src/kv.ts";
 import { migrateLegacyCodexResetOptOut } from "./src/codex/reset-settings.ts";
 import { configureAdminAuthForListener, configureAdminAuthPeerForRequest, parseServeRuntimeOptions } from "./src/auth/local-admin.ts";
 import { ensureLocalDevelopmentApiKey } from "./src/auth/local-development-key.ts";
 import { closeOptionalPromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot, prunePromptCacheAnalytics } from "./src/cache/prompt-analytics.ts";
-import { createServeHandler } from "./src/handler/serve-handler.ts";
+import { createServeHandler, createServeUpgradeHandler } from "./src/handler/serve-handler.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid-fallback/ledger-backfill.ts";
 
 /**
@@ -64,7 +64,7 @@ export const shutdownOptionalTelemetry = async (): Promise<void> => {
  * provider log, its durable retry marker therefore waits for a later authorized
  * event instead of waking an otherwise idle Mac. The VPS launcher never calls this.
  */
-export const startMacMaintenance = (kv: Deno.Kv): (() => Promise<void>) => {
+export const startMacMaintenance = (kv: Kv): (() => Promise<void>) => {
   let stopped = false;
   let reconciliation: Promise<void> | null = null;
   let pruning: Promise<void> | null = null;
@@ -127,14 +127,14 @@ export const startMacMaintenance = (kv: Deno.Kv): (() => Promise<void>) => {
  *
  * Consequences are intentional for the shared handler: with no traffic and no operator, nothing runs.
  * Durable state (pending reconciliation markers, capacity buckets, retained
- * analytics) waits for the next event instead of a timer, and `deno.json` no
- * longer enables the `cron` unstable feature, so `Deno.cron` does not exist here.
+ * analytics) waits for the next event instead of a timer.
  * The Mac launcher also checks due billing and analytics once on startup
  * against its own KV, then the same event hooks handle subsequent work.
  */
 const serveHandler = createServeHandler();
+const serveUpgradeHandler = createServeUpgradeHandler();
 
-const runtimeOptions = parseServeRuntimeOptions(Deno.args, { isDeploy: config.isDeploy });
+const runtimeOptions = parseServeRuntimeOptions(import.meta.main ? process.argv.slice(2) : [], { isDeploy: config.isDeploy });
 
 // `--disable-admin-auth` is loopback-only (a non-loopback listener fails at
 // startup), so provisioning here can never reach a hosted deployment. The local
@@ -179,20 +179,41 @@ const migrateCodexResetSettings = async (): Promise<void> => {
 
 void migrateCodexResetSettings();
 
-const server: Deno.ServeDefaultExport = runtimeOptions.disableAdminAuth
-  ? {
-      fetch(request, info) {
-        configureAdminAuthPeerForRequest(info.remoteAddr);
-        return serveHandler(request, info);
-      },
-      onListen(address) {
-        configureAdminAuthForListener(runtimeOptions, address);
-        const netAddress = address as Deno.NetAddr;
-        const hostname = netAddress.hostname.includes(":") ? `[${netAddress.hostname}]` : netAddress.hostname;
-        console.log(`Listening on http://${hostname}:${netAddress.port}/`);
-        console.warn("[ai.ubq.fi] WARNING: admin authentication is disabled for this loopback development server.");
-      },
-    }
-  : { fetch: serveHandler };
+/** Named so Bun cannot auto-start a native server and bypass delivery receipts. */
+export const application: ServeDefaultExport = {
+  fetch(request, info) {
+    if (runtimeOptions.disableAdminAuth) configureAdminAuthPeerForRequest(info.remoteAddr, request);
+    return serveHandler(request, info);
+  },
+  upgrade(request, info) {
+    if (runtimeOptions.disableAdminAuth) configureAdminAuthPeerForRequest(info.remoteAddr, request);
+    return serveUpgradeHandler(request, info);
+  },
+  onListen(address) {
+    if (runtimeOptions.disableAdminAuth) configureAdminAuthForListener(runtimeOptions, address);
+    const hostname = address.hostname.includes(":") ? `[${address.hostname}]` : address.hostname;
+    console.log(`Listening on http://${hostname}:${address.port}/`);
+    if (runtimeOptions.disableAdminAuth) console.warn("[ai.ubq.fi] WARNING: admin authentication is disabled for this loopback development server.");
+  },
+};
 
-export default server;
+if (import.meta.main) {
+  const server = serveHttp({ hostname: "127.0.0.1", port: 8000, onListen: application.onListen, upgrade: application.upgrade }, application.fetch);
+  const shutdown = (): void => {
+    void server.shutdown().catch(() => {
+      console.error("[ai.ubq.fi] Development HTTP shutdown failed");
+    });
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+  try {
+    await server.ready;
+    await server.finished;
+    await shutdownOptionalTelemetry();
+    (await getKv())?.close();
+  } finally {
+    process.removeListener("SIGINT", shutdown);
+    process.removeListener("SIGTERM", shutdown);
+  }
+  process.exit(0);
+}

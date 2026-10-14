@@ -1,4 +1,5 @@
-import handler from "./index.ts";
+import type { ServeHandler, ServeUpgradeHandler } from "#http";
+import handler, { upgradeHandler } from "./index.ts";
 
 export const createRequestDeliveryLifecycle = (
   requestSignal: AbortSignal,
@@ -28,7 +29,7 @@ export const createRequestDeliveryLifecycle = (
 type DeliveryAwareHandler = (request: Request, delivery: Readonly<{ completed: Promise<void>; downstreamSignal: AbortSignal }>) => Promise<Response>;
 
 export const createServeHandler =
-  (requestHandler: DeliveryAwareHandler = handler): Deno.ServeHandler =>
+  (requestHandler: DeliveryAwareHandler = handler): ServeHandler =>
   async (request, info) => {
     const delivery = createRequestDeliveryLifecycle(request.signal, info.completed);
     try {
@@ -40,3 +41,5 @@ export const createServeHandler =
       delivery.handoff();
     }
   };
+
+export const createServeUpgradeHandler = (): ServeUpgradeHandler => upgradeHandler;
