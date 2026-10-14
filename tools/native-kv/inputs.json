@@ -18,7 +18,7 @@
     },
     {
       "file": "napi-workspace.patch",
-      "sha256": "c7513fe06ecb1de1ec8c18f6fdf7177601221568281a1bc1c9e2b5e0497e0994"
+      "sha256": "1e4232e144be4e08630e17e537737b054935830d1cff36e2f876b53ddffbcec8"
     }
   ],
   "lock": {
