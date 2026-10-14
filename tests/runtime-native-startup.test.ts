@@ -273,7 +273,7 @@ test("explicit preparation preserves an invalid pre-existing receipt without sta
 test("explicit preparation refuses a FIFO receipt before opening or building", async () => {
   const paths = fixture();
   rmSync(paths.receipt);
-  const fifo = Bun.spawnSync(["/usr/bin/mkfifo", "--mode=600", paths.receipt], { env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
+  const fifo = Bun.spawnSync(["/usr/bin/mkfifo", "-m", "600", paths.receipt], { env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
   expect(fifo.exitCode).toBe(0);
   const before = readdirSync(paths.data).sort((left, right) => left.localeCompare(right));
   let failure: unknown;
