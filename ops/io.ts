@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdtemp, readdir, readFile, readlink, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const digest = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
 export const missing = (error: unknown): boolean => error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -14,7 +14,8 @@ export const exists = async (path: string): Promise<boolean> => {
   }
 };
 export const runOutput = async (program: string, args: readonly string[], options: { cwd?: string; sparse?: boolean } = {}): Promise<Uint8Array> => {
-  const temporary = options.sparse ? await mkdtemp(join(options.cwd ?? process.cwd(), ".uos-command-")) : undefined;
+  // TMPDIR must remain absolute when the child also changes to a relative cwd.
+  const temporary = options.sparse ? await mkdtemp(join(resolve(options.cwd ?? process.cwd()), ".uos-command-")) : undefined;
   try {
     const child = Bun.spawn([program, ...args], {
       cwd: options.cwd,

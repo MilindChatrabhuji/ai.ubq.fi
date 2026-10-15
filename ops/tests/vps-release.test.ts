@@ -2,10 +2,12 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { relative } from "node:path";
 import { openKv } from "#kv";
 import { normalizeDependencyLinks } from "../release-artifact.ts";
 import { bindPreparedVpsPayload, vpsBytesDigest } from "../vps-release-store.ts";
 import { currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
+import { runOutput } from "../io.ts";
 import { copyOps, copyRuntime, copyRuntimeModules, packageFixture, repository, writePackage } from "./fixture-release.ts";
 import { outputFixture, spawnFixture } from "./fixture-process.ts";
 
@@ -17,6 +19,27 @@ const ENV_MARKER = "repository-root";
 const TELEMETRY_ORDER = ["shutdownOptionalTelemetry", "kv.close"];
 const sha = (digit: string): string => digit.repeat(40);
 const quote = (value: string): string => "'" + value.replaceAll("'", "'\\''") + "'";
+test("sparse preparation commands clean an absolute temporary directory with a relative cwd", async () => {
+  await mkdir(FIXTURE_PARENT, { recursive: true });
+  const root = await mkdtemp(FIXTURE_PARENT + "/temporary-");
+  try {
+    const source = [
+      'import { writeFile } from "node:fs/promises";',
+      'import { isAbsolute, join } from "node:path";',
+      "const temporary = process.env.TMPDIR;",
+      'if (!temporary || !isAbsolute(temporary)) throw new Error("Sparse temporary directory must be absolute");',
+      'await writeFile(join(temporary, "proof"), "owned");',
+      "console.log(JSON.stringify({ temporary, cwd: process.cwd() }));",
+    ].join("\n");
+    const bytes = await runOutput(process.execPath, ["--no-env-file", "--no-install", "-e", source], { cwd: relative(process.cwd(), root), sparse: true });
+    const proof = JSON.parse(new TextDecoder().decode(bytes)) as { temporary: string; cwd: string };
+    assert.equal(proof.cwd, root);
+    assert.ok(proof.temporary.startsWith(root + "/.uos-command-"));
+    assert.deepEqual(await readdir(root), [], "command scratch must not become immutable source");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test("prepared release inputs reject graph and candidate lock drift before packaging writes", async () => {
   await mkdir(FIXTURE_PARENT, { recursive: true });
   const root = await mkdtemp(FIXTURE_PARENT + "/lock-");
