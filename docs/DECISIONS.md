@@ -6,6 +6,25 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Authoritative unavailable subscriptions permit paid failover - 2026-10-14
+
+The owner authorized same-model paid failover after the Mac gateway stalled on 2026-10-14.
+
+Each selected subscription must prove exhausted applicable quota or invalid current credentials.
+
+Only matching credential fingerprints count. Generic 429s, timeouts, probe leases and unknown state never count.
+
+Exhaustion proof and banked-reset eligibility remain separate. Existing paid caps and provider selection still apply.
+
+A mixed pool returns `codex_subscriptions_unavailable` with no multi-day retry delay when paid routing cannot serve.
+
+Current-invalid credentials retain the original actionable authentication body and re-auth warning. Fresh proof is
+internal.
+
+Reason: an exhausted account and failed sibling refresh returned a five-day 429 without attempting any paid provider.
+
+Reversal risk: treating credential failure as quota exhaustion could redeem a reset or spend against unproved capacity.
+
 ## Native external consumers share access authorization without refresh credentials - 2026-10-14
 
 The owner authorized recovery of the Mac primary and Ubiquity profiles from working same-user/workspace peers. The

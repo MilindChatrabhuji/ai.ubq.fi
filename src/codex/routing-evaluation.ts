@@ -312,7 +312,8 @@ const classifyCodexRouteSelection = (
   fullCohortExhausted = false,
   activeSnapshot: CodexActiveAccountSnapshot = { selection: null },
   poolSnapshotJson: string | null = null,
-  capacitySnapshotJson: string | null = null
+  capacitySnapshotJson: string | null = null,
+  fullCohortUnavailable = false
 ): RouteSelection => {
   const { available, blockedAccounts, skipped, retryAt, hasQuotaBlock, hasUpstreamTimeoutBlock, modelUnavailable } = accumulated;
   if (available.length) return { kind: "eligible", accounts: available, skippedSlots: skipped, blockedAccounts };
@@ -326,6 +327,7 @@ const classifyCodexRouteSelection = (
       retryAtMs: retryAt,
       blockedAccounts,
       fullCohortExhausted,
+      ...(fullCohortUnavailable ? { fullCohortUnavailable } : {}),
       activeSnapshot,
       poolSnapshotJson,
       capacitySnapshotJson,
@@ -336,7 +338,7 @@ const classifyCodexRouteSelection = (
   if (modelUnavailable !== null) {
     return { kind: "model_unavailable", model: modelUnavailable.model, detail: modelUnavailable.detail, skippedSlots: skipped };
   }
-  return { kind: "credentials_invalid", skippedSlots: skipped };
+  return { kind: "credentials_invalid", skippedSlots: skipped, ...(fullCohortUnavailable ? { fullCohortUnavailable } : {}) };
 };
 
 const parseCodexAuthPoolSnapshot = (value: unknown): CodexAuthPoolState | null => {

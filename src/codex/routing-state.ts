@@ -253,9 +253,11 @@ export type RouteSelection =
       blockedAccounts: readonly CodexBlockedRoutingAccount[];
       /**
        * Every current pool account proved authoritative applicable quota or
-       * capacity exhaustion. Only this proof may authorize paid fallback.
+       * capacity exhaustion. Credential failures never authorize quota resets.
        */
       fullCohortExhausted: boolean;
+      /** Every current subscription is quota-exhausted or has invalid current credentials. */
+      fullCohortUnavailable?: boolean;
       /** The active-selection row exactly as this strong read observed it. */
       activeSnapshot: CodexActiveAccountSnapshot;
       /**
@@ -285,7 +287,7 @@ export type RouteSelection =
       detail: string | null;
       skippedSlots: readonly number[];
     }>
-  | Readonly<{ kind: "credentials_invalid"; skippedSlots: readonly number[] }>
+  | Readonly<{ kind: "credentials_invalid"; skippedSlots: readonly number[]; fullCohortUnavailable?: boolean }>
   | Readonly<{ kind: "routing_unavailable" }>;
 
 export const isSafeMs = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;

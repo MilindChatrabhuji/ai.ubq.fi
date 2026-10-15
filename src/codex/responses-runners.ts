@@ -166,7 +166,7 @@ export const installCodexResponseRunners = (ctx: CodexResponseContext): void => 
       routing_generation: resetRecord.routing_generation,
       status: retried.status,
     });
-    return ctx.decorateAuthWarning(await ctx.authorizePaidFallbackForCompleteQuotaEvidence(retried));
+    return ctx.decorateAuthWarning(await ctx.authorizePaidFallbackForCompleteCapacityEvidence(retried));
   });
 
   const redeemAndRetryOnce = (ctx.redeemAndRetryOnce = async (normalResponse: Response): Promise<Response> => {
@@ -463,7 +463,7 @@ export const installCodexResponseRunners = (ctx: CodexResponseContext): void => 
     // inference request. A captured exhaustion observation from before that
     // retry is no longer a reason to spend a reset or issue another request.
     if (current.ok) return ctx.decorateAuthWarning(current);
-    return ctx.decorateAuthWarning(await ctx.authorizePaidFallbackForCompleteQuotaEvidence(await ctx.redeemAndRetryOnce(current)));
+    return ctx.decorateAuthWarning(await ctx.authorizePaidFallbackForCompleteCapacityEvidence(await ctx.redeemAndRetryOnce(current)));
   });
 
   const runTwoSecondRetryCandidate = (ctx.runTwoSecondRetryCandidate = async (candidate: CodexRetryCandidate): Promise<Response> => {
@@ -494,10 +494,15 @@ export const installCodexResponseRunners = (ctx: CodexResponseContext): void => 
 
   const exhaustedCodexDispatchResponse = (ctx.exhaustedCodexDispatchResponse = async (): Promise<Response> => {
     if (ctx.lastResponse) {
-      return ctx.decorateAuthWarning(await ctx.authorizePaidFallbackForCompleteQuotaEvidence(await ctx.redeemAndRetryOnce(ctx.lastResponse)));
+      return ctx.decorateAuthWarning(await ctx.authorizePaidFallbackForCompleteCapacityEvidence(await ctx.redeemAndRetryOnce(ctx.lastResponse)));
     }
-    if (ctx.authFailureState.error) return ctx.authFailureResponse(ctx.authFailureState.error);
-    if (ctx.lastError instanceof CodexError && ctx.lastError.status === 401) return ctx.authFailureResponse(ctx.lastError);
+    if (ctx.authFailureState.error) return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(ctx.authFailureState.error));
+    if (ctx.lastError instanceof CodexError && ctx.lastError.status === 401)
+      return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(ctx.lastError));
+    if (ctx.selected.kind === "credentials_invalid") {
+      ctx.authWarning ??= CODEX_AUTH_REAUTH_WARNING;
+      return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(null));
+    }
     if (ctx.probeUnavailable) {
       // A held recovery lease is retryable, not proof of quota exhaustion.
       return await ctx.quotaBlockedOrRetryableResponse();
@@ -556,11 +561,11 @@ export const installCodexResponseRunners = (ctx: CodexResponseContext): void => 
     } catch {
       return routingErrorResponse(503, "Codex routing state is temporarily unavailable; retry the request.", "codex_auth_missing");
     }
-    if (ctx.selected.kind === "credentials_invalid" && ctx.authFailureState.error) {
+    if (ctx.selected.kind === "credentials_invalid") {
       // Preserve the request-local actionable credential error (for example a
       // reused refresh token) instead of replacing it with the generic
       // all-credentials-invalid response.
-      return ctx.authFailureResponse(ctx.authFailureState.error);
+      return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(ctx.authFailureState.error));
     }
     const reselectedTerminal = initialCodexSelectionResponse(ctx.selected);
     if (reselectedTerminal) return reselectedTerminal;
