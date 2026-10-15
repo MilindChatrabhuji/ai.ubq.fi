@@ -175,6 +175,20 @@ test("Surplus Claude reasoning preserves requested effort and the Codex ultra tr
   }
 });
 
+test("native none requires independent disabled-thinking proof, never an effort or model-name guess", () => {
+  const body = { ...base(), reasoning: { effort: "none", summary: "none" } };
+  const before = JSON.stringify(body);
+  assert.equal(buildSurplusClaudeRequest(body), null);
+  assert.equal(buildSurplusClaudeRequest(body, undefined, { supportsNativeReasoningEffort: true }), null);
+  assert.equal(buildSurplusClaudeRequest(body, undefined, { supportsNativeDisabledThinking: false }), null);
+  const result = buildSurplusClaudeRequest(body, undefined, { supportsNativeDisabledThinking: true, supportsNativeReasoningEffort: false });
+  assert.ok(result);
+  assert.deepEqual(result.body.thinking, { type: "disabled" });
+  assert.equal(result.body.output_config, undefined);
+  assert.equal(JSON.stringify(body), before);
+  assert.equal(buildSurplusClaudeRequest({ ...base(), reasoning: { effort: "high" } }, undefined, { supportsNativeDisabledThinking: true }), null);
+});
+
 test("Surplus Claude has no invented output cap when the caller omitted one", () => {
   const body = { ...base(), max_output_tokens: null };
   assert.equal(buildSurplusClaudeRequest(body), null);
