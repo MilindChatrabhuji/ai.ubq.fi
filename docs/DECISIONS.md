@@ -6,6 +6,16 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## First Bun cutover uses a stopped-state operator capability - 2026-10-15
+
+The first cross-codec deployment uses `ops/first-bun-cutover.ts` through a private pinned operator invocation. Ordinary CLI and bound-driver tracked-clean guards remain unchanged. The new operator executes from the complete accepted CI artifact and proves current shipping push CI, every required job, hosted ZIP digest, exact Git source archive/materialized source, dependency/native/permissions trees and matching service bootstrap bytes. The mutable checkout is a data/runtime anchor and immutable Git-object store; unrelated working-tree or submodule state never supplies executable source or a fabricated clean predicate.
+
+The operator captures actual prior health and loaded-unit identity before stop, holds the existing deployment lock and release pins, verifies the kernel's finite supervisor memory limit, and journals intent before each service transition. Conversion requires a stopped, checkpointed source, private consistent backup, exclusive NEW Bun target, complete metadata/typed-value proof and full reverse proof. Starting is authorized by this verified stopped boundary instead of requiring the old writable service to restart. The separately owned Sentinel acceptance receipt is pinned and strictly compared against the final gateway artifact/runtime and all required denial evidence.
+
+After any possible Bun startup, recovery converts the latest stopped Bun state into a NEW Deno destination. Once legacy adoption is published, later Deno writes are authoritative and recovery never overwrites them from an older Bun snapshot. A pinned offline capture and recovery entry support the supervisor's `ExecStopPost` without model, GitHub, download, install or compiler dependency during outage. Failed recovery retains every copy and reports unproved service state. Runtime hashing streams database files. Health success keeps client acceptance pending and retains release pins until the coordinator proves direct authenticated Mac-to-VPS inference and settles ownership.
+
+This change does not authorize live activation itself; the user's explicit deployment instruction and the coordinator's exact reviewed operation remain necessary. Source CI, external-reader acceptance, stopped-store rehearsal, runtime custody and live client acceptance are separate evidence surfaces.
+
 ## Prepared VPS artifacts use trusted constructor capabilities - 2026-10-15
 
 Deployment fixtures bind their frozen JavaScript graph, matching native headers and independently attested native KV artifact through an internal store preparation capability. Both the graph's lock and the candidate's lock must match the bound digest before packaging. The fixture imports the exact relocated deployment entry and supplies this capability to its actual candidate preparation; service environment variables do not select packaging inputs.

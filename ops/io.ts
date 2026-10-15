@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { lstat, mkdtemp, readdir, readFile, readlink, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 export const digest = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
+export const fileDigest = async (path: string): Promise<string> => {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
+};
 export const missing = (error: unknown): boolean => error instanceof Error && "code" in error && error.code === "ENOENT";
 export const exists = async (path: string): Promise<boolean> => {
   try {
