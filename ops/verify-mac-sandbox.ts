@@ -20,8 +20,6 @@ try {
   await writeFile(join(sibling, "auth.json"), "synthetic-unrelated-auth");
   await writeFile(join(release, "immutable.txt"), "immutable-source");
   const before = digest(await readFile(runtime));
-  const spawnProbe = join(release, "spawn-probe.ts");
-  await writeFile(spawnProbe, 'Bun.spawnSync(["/bin/sh", "-c", "exit 0"]);\n');
   const probe = join(release, "probe.ts");
   await writeFile(
     probe,
@@ -34,13 +32,17 @@ try {
       'writeFileSync(paths.control + "/state", "accepted");',
       'for (const path of [paths.nativeHome + "/auth.json", paths.sibling + "/auth.json", paths.release + "/immutable.txt", paths.runtime]) assert.throws(() => writeFileSync(path, "must-be-denied"));',
       'assert.throws(() => readFileSync(paths.sibling + "/auth.json"));',
-      'const deniedSpawn = Bun.spawnSync([paths.runtime, "--no-env-file", "--no-install", paths.spawnProbe], { stdout: "pipe", stderr: "pipe" }); assert.notEqual(deniedSpawn.exitCode, 0);',
       'const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("seatbelt-network") });',
       'assert.equal(await (await fetch(server.url)).text(), "seatbelt-network"); await server.stop();',
       "console.log(JSON.stringify({ selected_auth_read: true, data_write: true, control_write: true, sibling_read_denied: true, native_write_denied: true, release_runtime_write_denied: true, process_spawn_denied: true, real_http: true }));",
     ].join("\n")
   );
   const profile = macSandboxProfile({ root, release, runtime, nativeHome, control });
+  const deniedSpawn = Bun.spawnSync(["/usr/bin/sandbox-exec", "-p", profile, "/bin/sh", "-c", "exit 0"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  assert.notEqual(deniedSpawn.exitCode, 0);
   const child = Bun.spawn(
     [
       "/usr/bin/sandbox-exec",
@@ -50,7 +52,7 @@ try {
       "--no-env-file",
       "--no-install",
       probe,
-      JSON.stringify({ root, release, runtime, nativeHome, control, sibling, spawnProbe }),
+      JSON.stringify({ root, release, runtime, nativeHome, control, sibling }),
     ],
     { env: { PATH: "/usr/bin:/bin" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" }
   );
