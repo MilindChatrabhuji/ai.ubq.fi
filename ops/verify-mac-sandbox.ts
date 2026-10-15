@@ -36,15 +36,13 @@ try {
   await writeFile(
     probe,
     [
-      'import { strict as assert } from "node:assert";',
       'import { readFileSync, writeFileSync } from "node:fs";',
       "const paths = JSON.parse(process.argv[2]);",
-      'assert.equal(readFileSync(paths.nativeHome + "/auth.json", "utf8"), "synthetic-selected-auth");',
-      'writeFileSync(paths.root + "/.data/mutable.txt", "accepted");',
-      'writeFileSync(paths.control + "/state", "accepted");',
-      'const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("seatbelt-network") });',
-      'assert.equal(await (await fetch(server.url)).text(), "seatbelt-network"); await server.stop();',
-      "console.log(JSON.stringify({ selected_auth_read: true, data_write: true, control_write: true, sibling_read_denied: true, native_write_denied: true, release_runtime_write_denied: true, process_spawn_denied: true, real_http: true }));",
+      "const operation = Number(process.argv[3]);",
+      'if (operation === 0 && readFileSync(paths.nativeHome + "/auth.json", "utf8") !== "synthetic-selected-auth") throw new Error("selected auth mismatch");',
+      'else if (operation === 1) writeFileSync(paths.root + "/.data/mutable.txt", "accepted");',
+      'else if (operation === 2) writeFileSync(paths.control + "/state", "accepted");',
+      'else if (operation === 3) { const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("seatbelt-network") }); if (await (await fetch(server.url)).text() !== "seatbelt-network") throw new Error("network mismatch"); await server.stop(); }',
     ].join("\n")
   );
   const profile = macSandboxProfile({ root, release, runtime, nativeHome, control });
@@ -56,25 +54,28 @@ try {
     });
     assert.notEqual(denied.exitCode, 0, `denial probe ${operation} unexpectedly succeeded`);
   }
-  const child = Bun.spawn(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", probe, paths], {
-    env: { PATH: "/usr/bin:/bin" },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const timer = setTimeout(() => {
-    child.kill("SIGKILL");
-  }, 30_000);
-  try {
-    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    assert.equal(code, 0, stderr);
-    assert.equal(digest(await readFile(runtime)), before);
-    assert.equal(await readFile(join(nativeHome, "auth.json"), "utf8"), "synthetic-selected-auth");
-    assert.equal(await readFile(join(release, "immutable.txt"), "utf8"), "immutable-source");
-    console.log(stdout.trim());
-  } finally {
-    clearTimeout(timer);
+  for (let operation = 0; operation < 4; operation += 1) {
+    const allowed = Bun.spawnSync(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", probe, paths, String(operation)], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    assert.equal(allowed.exitCode, 0, `allowed probe ${operation} failed: ${allowed.stderr.toString()}`);
   }
+  assert.equal(digest(await readFile(runtime)), before);
+  assert.equal(await readFile(join(nativeHome, "auth.json"), "utf8"), "synthetic-selected-auth");
+  assert.equal(await readFile(join(release, "immutable.txt"), "utf8"), "immutable-source");
+  console.log(
+    JSON.stringify({
+      selected_auth_read: true,
+      data_write: true,
+      control_write: true,
+      sibling_read_denied: true,
+      native_write_denied: true,
+      release_runtime_write_denied: true,
+      process_spawn_denied: true,
+      real_http: true,
+    })
+  );
 } finally {
   await rm(root, { recursive: true, force: true });
 }
