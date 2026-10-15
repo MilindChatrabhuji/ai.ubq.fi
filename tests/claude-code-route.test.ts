@@ -187,7 +187,7 @@ test("a durable subscription rejection falls through and blocks the tier until t
   });
 });
 
-test("a local request-build failure falls through without recording an upstream health event", async () => {
+test("a local lossless-build refusal cannot authorize paid continuation or an upstream health event", async () => {
   await withRouteKv(async (kv) => {
     captured.length = 0;
     const rejected = await attemptClaudeCodeSubscription(
@@ -196,7 +196,9 @@ test("a local request-build failure falls through without recording an upstream 
       { model, input: "hello", previous_response_id: "resp_123" },
       { model, usageContext, env: envLookup(env), fetcher }
     );
-    assert.equal(rejected, null);
+    assert(rejected);
+    assert.equal(rejected.response.status, 400);
+    assert.equal((await rejected.response.json()).error.code, "claude_code_request_invalid");
     assert.equal(captured.length, 0, "the transport must not run for a local build failure");
     assert.deepEqual(
       [...kv.values.keys()].filter((key) => key.includes("provider_health")),
@@ -206,7 +208,7 @@ test("a local request-build failure falls through without recording an upstream 
   });
 });
 
-test("a transient rate limit falls through with a short cooldown and no durable block", async () => {
+test("a transient rate limit retains its original failure without authorizing paid continuation", async () => {
   await withRouteKv(async (kv) => {
     const transient = (): Promise<Response> =>
       Promise.resolve(
@@ -216,7 +218,9 @@ test("a transient rate limit falls through with a short cooldown and no durable 
         })
       );
     const rejected = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher: transient });
-    assert.equal(rejected, null);
+    assert(rejected);
+    assert.equal(rejected.response.status, 429);
+    assert.deepEqual(await rejected.response.json(), { type: "error", error: { type: "rate_limit_error" } });
     const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
     assert(account);
     const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
@@ -387,7 +391,7 @@ test("a billing rejection becomes an operator-visible configuration state and sk
       { model, input: "hello" },
       { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
     );
-    assert.equal(rejected, null, "a billing rejection never serves the request itself");
+    assert.equal(rejected?.response.status, 400, "billing failure is preserved, not paid-fallback authority");
     const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
     assert(account);
     const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
@@ -399,7 +403,7 @@ test("a billing rejection becomes an operator-visible configuration state and sk
 
     const callsAfterFirst = captured.length;
     const second = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher });
-    assert.equal(second, null);
+    assert.equal(second?.response.status, 400);
     assert.equal(captured.length, callsAfterFirst, "the configuration cooldown keeps the tier from hammering the upstream");
 
     await clearClaudeCodeQuotaGuards(kv as unknown as Kv, account);
@@ -407,7 +411,7 @@ test("a billing rejection becomes an operator-visible configuration state and sk
       { model, input: "hello" },
       { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
     );
-    assert.equal(afterClear, null, "the rejection still cannot serve, but the tier was retried");
+    assert.equal(afterClear?.response.status, 400, "the original failure remains, but the tier was retried");
     assert.equal(captured.length, callsAfterFirst + 1, "clearing the guards retries the tier immediately");
   });
 });

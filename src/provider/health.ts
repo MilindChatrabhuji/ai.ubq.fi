@@ -164,9 +164,9 @@ const persistProviderHealth = async (
       observed_at_ms: observedAtMs,
       provider_request_id: providerRequestId,
     } satisfies ProviderHealthObservation;
-    const commit = await kv
-      .atomic()
-      .check(...(accountEntry ? [accountEntry] : []))
+    const operation = kv.atomic();
+    if (accountEntry) operation.check(accountEntry);
+    const commit = await operation
       .set(providerHealthKey(provider, identity, "current"), observation)
       .set(providerHealthKey(provider, identity, historyRecordFor(event)), observation)
       .commit();
@@ -364,8 +364,15 @@ export const getDeepSeekProviderHealth = (now: () => number = Date.now): Promise
 
 export const getLithosProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("lithos", "default", now);
 
-export const getClaudeCodeProviderHealth = (now: () => number = Date.now, binding?: ClaudeCodeAccountBinding): Promise<ProviderHealthView> =>
-  readProviderHealth("claude_code", binding ? `${binding.account_id}:${binding.account_cohort_id}:${binding.evidence_generation}` : "default", now);
+export const getClaudeCodeProviderHealth = async (now: () => number = Date.now, binding?: ClaudeCodeAccountBinding): Promise<ProviderHealthView> => {
+  const view = await readProviderHealth(
+    "claude_code",
+    binding ? `${binding.account_id}:${binding.account_cohort_id}:${binding.evidence_generation}` : "default",
+    now
+  );
+  const kv = await getKv();
+  return binding && (!kv || !(await currentClaudeCodeAccountEntry(kv, binding))) ? unknownView() : view;
+};
 
 export const resetProviderHealthThrottleForTest = (): void => {
   lastHeartbeatWriteAtMs.clear();

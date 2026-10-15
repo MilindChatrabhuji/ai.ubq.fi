@@ -6,6 +6,8 @@ import {
   handleAdminClaudeCodeAuthGet,
   handleAdminClaudeCodeAuthSet,
   handleAdminClaudeCodeQuotaClear,
+  handleAdminClaudeCodeAccess,
+  handleAdminClaudeCodeAccountActive,
 } from "../src/admin/claude-code.ts";
 import { setKvForTest } from "../src/kv.ts";
 import {
@@ -18,7 +20,8 @@ import {
 import { CLAUDE_CODE_CONFIG_COOLDOWN_MS, loadClaudeCodeQuotaState, recordClaudeCodeQuotaOutcome } from "../src/provider/claude-code-quota.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
-import { CLAUDE_CODE_ACCOUNTS_KEY, resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
+import { CLAUDE_CODE_ACCOUNTS_KEY, loadClaudeCodeAccountStore, resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
+import { loadClaudeCodeAccessPolicy } from "../src/provider/claude-code-access.ts";
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
 
@@ -222,6 +225,9 @@ test("the admin routes stay behind admin auth and expose the documented paths", 
     ["POST", "/admin/providers/claude-code/auth"],
     ["DELETE", "/admin/providers/claude-code/auth"],
     ["POST", "/admin/providers/claude-code/quota/clear"],
+    ["GET", "/admin/providers/claude-code/access"],
+    ["POST", "/admin/providers/claude-code/access"],
+    ["POST", "/admin/providers/claude-code/accounts/active"],
   ];
   for (const [method, path] of paths) {
     const response = await handler(new Request(`http://localhost${path}`, { method }));
@@ -260,5 +266,87 @@ test("configuration cooldown recorded by the tier is visible to the admin readba
     assert.equal(payload.data.quota.last_error.kind, "workspace_not_found");
     assert.equal(CLAUDE_CODE_CONFIG_COOLDOWN_MS > 0, true);
     assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_WORKSPACE_KV_KEY])), false, "no workspace is pinned by these fixtures");
+  });
+});
+
+test("account roster preserves singleton requests and explicit active selection without granting principals", async () => {
+  await withAdminKv(async (kv) => {
+    await withStubbedAnthropic(modelsOk, async () => {
+      const firstResponse = await handleAdminClaudeCodeAuthSet(
+        jsonRequest({ credential: "sk-ant-oat-fixture-first-admin", label: "local label, not provider identity" })
+      );
+      const first = await firstResponse.json();
+      const secondResponse = await handleAdminClaudeCodeAuthSet(
+        jsonRequest({ credential: "sk-ant-oat-fixture-second-admin", create_new: true, label: "secondary" })
+      );
+      const second = await secondResponse.json();
+      assert.equal(secondResponse.status, 200);
+      assert.equal(second.data.accounts.length, 2);
+      assert.equal(second.data.active_account_id, first.account_id);
+      assert.deepEqual((await loadClaudeCodeAccessPolicy(kv as unknown as Kv)).allowed_key_ids, []);
+      const selection = await handleAdminClaudeCodeAccountActive(jsonRequest({ account_id: second.account_id }));
+      const selected = await selection.json();
+      assert.equal(selected.data.active_account_id, second.account_id);
+      assert.equal(selected.data.active_reason, "admin_selection");
+      assert.equal(selected.data.credential.label, "secondary");
+      assert.equal(selected.data.credential.expires_at_ms, null);
+      assert.equal(selected.data.accounts[0].capabilities.identity_verified, false);
+      assert.equal(selected.data.accounts[0].capabilities.can_refresh, false, "this imported credential has no owned refresh material");
+      assert.equal(JSON.stringify(selected).includes("credential_fingerprint"), false);
+      assert.equal(JSON.stringify(selected).includes("sk-ant-oat-fixture-second-admin"), false);
+      const targeted = await handleAdminClaudeCodeAuthSet(jsonRequest({ account_id: first.account_id, credential: "sk-ant-oat-fixture-first-replacement" }));
+      assert.equal(targeted.status, 200);
+      assert.equal((await loadClaudeCodeAccountStore(kv as unknown as Kv)).active_account_id, second.account_id);
+    });
+  });
+});
+
+test("targeted guard clear refuses a replaced cohort and never clears another account", async () => {
+  await withAdminKv(async (kv) => {
+    await withStubbedAnthropic(modelsOk, async () => {
+      const first = await (await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-first-guards" }))).json();
+      const second = await (await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-second-guards", create_new: true }))).json();
+      const firstBinding = await resolveClaudeCodeAccount(kv as unknown as Kv, undefined, { accountId: first.account_id });
+      const secondBinding = await resolveClaudeCodeAccount(kv as unknown as Kv, undefined, { accountId: second.account_id });
+      assert(firstBinding && secondBinding);
+      for (const account of [firstBinding, secondBinding])
+        await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
+          binding: account,
+          observation: null,
+          config_error: { kind: "workspace_required", status: 400, message: "fixture workspace required" },
+        });
+      const missing = await handleAdminClaudeCodeQuotaClear(jsonRequest({ account_id: first.account_id }));
+      assert.equal(missing.status, 400);
+      const wrong = await handleAdminClaudeCodeQuotaClear(jsonRequest({ account_id: first.account_id, account_cohort_id: "retired" }));
+      assert.equal(wrong.status, 409);
+      assert.equal(
+        (await handleAdminClaudeCodeQuotaClear(jsonRequest({ account_id: first.account_id, account_cohort_id: firstBinding.account_cohort_id }))).status,
+        200
+      );
+      assert.equal((await loadClaudeCodeQuotaState(kv as unknown as Kv, secondBinding))?.last_error?.kind, "workspace_required");
+      const deleted = await handleAdminClaudeCodeAuthDelete(
+        new Request(`https://ai.ubq.fi/admin/providers/claude-code/auth?account_id=${second.account_id}`, { method: "DELETE" })
+      );
+      assert.equal(deleted.status, 200);
+      assert.equal((await loadClaudeCodeAccountStore(kv as unknown as Kv)).active_account_id, first.account_id);
+    });
+  });
+});
+
+test("explicit persisted principal controls are independent of credential import and deny by default", async () => {
+  await withAdminKv(async (kv) => {
+    assert.equal((await handleAdminClaudeCodeAccess(jsonRequest({ allowed_key_ids: ["fixture-principal"] }))).status, 200);
+    await withStubbedAnthropic(modelsOk, async () => {
+      await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-policy" }));
+    });
+    assert.deepEqual((await loadClaudeCodeAccessPolicy(kv as unknown as Kv)).allowed_key_ids, ["fixture-principal"]);
+    const deny = await handleAdminClaudeCodeAccess(jsonRequest({ allowed_key_ids: [] }));
+    assert.equal(deny.status, 200);
+    const readback = await (await handleAdminClaudeCodeAccess(new Request("https://ai.ubq.fi/admin/providers/claude-code/access"))).json();
+    assert.deepEqual(readback.data.allowed_key_ids, []);
+    assert.equal(readback.data.source, "kv");
+    const malformed = await handleAdminClaudeCodeAccess(jsonRequest({ allowed_key_ids: ["a,b"] }));
+    assert.equal(malformed.status, 400);
+    assert.deepEqual((await loadClaudeCodeAccessPolicy(kv as unknown as Kv)).allowed_key_ids, []);
   });
 });

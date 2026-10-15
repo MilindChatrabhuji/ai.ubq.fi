@@ -203,6 +203,8 @@ const changedAccountStore = async (store: ClaudeCodeAccountStore, input: Account
   if (!previous && store.accounts.length >= MAX_ACCOUNTS) throw new Error("Claude account storage limit reached");
   const workspace = input.workspace === undefined ? (previous?.workspace ?? null) : input.workspace;
   const account = await makeAccount(credential, workspace, previous);
+  if (!previous && store.accounts.some((configured) => configured.credential_fingerprint === account.credential_fingerprint))
+    throw new Error("This credential/workspace binding is already configured");
   const accounts = previous ? store.accounts.map((item) => (item.account_id === account.account_id ? account : item)) : [...store.accounts, account];
   const activate = input.activate === true || store.active_account_id === null;
   const newActiveReason = input.activate ? "admin_selection" : "first_configured";
