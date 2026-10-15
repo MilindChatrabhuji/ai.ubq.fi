@@ -7,12 +7,32 @@ const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url),
 class TestElement {
   dataset: Record<string, string> = {};
   textContent = "";
+  value = "";
+  hidden = false;
+  open = false;
+  parentElement: TestElement | null = null;
   children: TestElement[] = [];
+  listeners = new Map<string, (() => void)[]>();
   append(...children: TestElement[]) {
-    this.children.push(...children);
+    for (const child of children) {
+      if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((entry) => entry !== child);
+      child.parentElement = this;
+      this.children.push(child);
+    }
   }
   appendChild(child: TestElement) {
-    this.children.push(child);
+    this.append(child);
+  }
+  replaceChildren(...children: TestElement[]) {
+    for (const child of this.children) child.parentElement = null;
+    this.children = [];
+    this.append(...children);
+  }
+  addEventListener(event: string, listener: () => void) {
+    this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
+  }
+  click() {
+    for (const listener of this.listeners.get("click") ?? []) listener();
   }
 }
 
@@ -51,6 +71,97 @@ const presenters = context as typeof context & {
   present: (source: unknown, provider: unknown) => { label: string; badgeState: string; quotaReachable: boolean };
   renderMeta: (row: TestElement, source: unknown, provider: unknown) => void;
 };
+
+test("Claude credential actions stay within the existing provider entry and survive roster renders", () => {
+  const html = readFileSync(new URL("../static/admin.html", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /card-claude-subscription/);
+  const providersStart = html.indexOf('<article data-card aria-labelledby="card-providers">');
+  const controlsStart = html.indexOf('id="claude-subscription-controls"', providersStart);
+  assert.ok(controlsStart > providersStart && controlsStart < html.indexOf("</article>", providersStart));
+
+  const controls = new TestElement();
+  controls.hidden = true;
+  const credential = new TestElement();
+  credential.value = "unsaved-credential";
+  const workspace = new TestElement();
+  workspace.value = "wrkspc_unsaved";
+  const disclosure = new TestElement();
+  disclosure.open = true;
+  const buttons = Array.from({ length: 4 }, () => new TestElement());
+  disclosure.append(credential, workspace, ...buttons);
+  controls.append(disclosure);
+  const calls = [0, 0, 0, 0];
+  const fixture = {
+    document: { createElement: () => new TestElement() },
+    buildProviderOption: () => new TestElement(),
+    providersSubscriptionsFor: () => [],
+    claudeSubscriptionControls: controls,
+    claudeCredentialSave: buttons[0],
+    claudeWorkspaceSave: buttons[1],
+    claudeCredentialClear: buttons[2],
+    claudeQuotaClear: buttons[3],
+    saveClaudeCredential: () => calls[0]++,
+    saveClaudeWorkspace: () => calls[1]++,
+    clearClaudeCredential: () => calls[2]++,
+    clearClaudeQuotaGuards: () => calls[3]++,
+  };
+  runInNewContext(
+    [
+      sourceText.slice(sourceText.indexOf("claudeCredentialSave.addEventListener"), sourceText.indexOf("const loadProviders =")),
+      sourceText.slice(sourceText.indexOf("const buildProviderEntry ="), sourceText.indexOf("const renderProvidersMessage =")),
+      "globalThis.build = buildProviderEntry;",
+    ].join("\n"),
+    fixture
+  );
+  const build = (fixture as typeof fixture & { build: (entry: { id: string }) => TestElement }).build;
+  const list = new TestElement();
+  list.replaceChildren(build({ id: "codex" }), build({ id: "claude_code" }));
+  const refreshed = build({ id: "claude_code" });
+  list.replaceChildren(build({ id: "codex" }), refreshed);
+  assert.equal(refreshed.children[1], controls);
+  assert.equal(controls.hidden, false);
+  assert.equal(credential.value, "unsaved-credential");
+  assert.equal(workspace.value, "wrkspc_unsaved");
+  assert.equal(disclosure.open, true);
+  for (const button of buttons) button.click();
+  assert.deepEqual(calls, [1, 1, 1, 1], "each preserved action retains exactly one listener");
+});
+
+test("shared Claude analytics diagnostics retain credential, workspace and routing facts", () => {
+  const fixture = { ...context };
+  runInNewContext(
+    [
+      sourceText.slice(sourceText.indexOf("const providerBadgeState"), sourceText.indexOf("const formatCapacityPercent")),
+      sourceText.slice(sourceText.indexOf("const capacityProviderStatus"), sourceText.indexOf("let codexResetSettings")),
+      sourceText.slice(sourceText.indexOf("const claudeCapacityCredentialLabel"), sourceText.indexOf("const claudeCapacityWindowForDisplay")),
+      sourceText.slice(sourceText.indexOf("const claudeCredentialSourceLabel"), sourceText.indexOf("const renderClaudeSubscriptionControls")),
+      "globalThis.render = appendCapacitySourceMeta;",
+    ].join("\n"),
+    fixture
+  );
+  const row = new TestElement();
+  (fixture as typeof fixture & { render: (row: TestElement, source: unknown, provider: unknown) => void }).render(
+    row,
+    { source: "claude_code", credential_kind: "oauth", workspace_id: "wrkspc_current", standard: [] },
+    {
+      enabled: true,
+      principal_allowlist_configured: true,
+      credential: { source: "kv", hint: "masked", updated_at_ms: now },
+      workspace: { source: "kv", name: "Current", verified_at_ms: now },
+      health: { state: "healthy", last_event: "success", last_observed_at_ms: now },
+    }
+  );
+  const facts = Object.fromEntries(row.children[0].children[1].children.map((fact) => [fact.children[0].textContent, fact.children[1].textContent]));
+  assert.equal(facts.Credential, "OAuth / setup token");
+  assert.equal(facts["Credential source"], "Stored in KV");
+  assert.equal(facts["Credential hint"], "masked");
+  assert.equal(facts.Workspace, "wrkspc_current");
+  assert.equal(facts["Workspace name"], "Current");
+  assert.equal(facts["Provider switch"], "On");
+  assert.equal(facts["Principal allowlist"], "Configured");
+  assert.equal(facts.Inference, "healthy");
+  assert.equal(facts["Last event"], "success");
+});
 
 test("current accepted quota access is reachable while its failed refresh attempt stays visible", () => {
   const status = presenters.present(source, provider);
