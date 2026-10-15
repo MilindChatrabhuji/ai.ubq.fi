@@ -60,10 +60,18 @@ export const packageFixture = async (release: string, sha: string, archive: stri
   await prepareReleasePayload(release, sha, archive, join(repository, "node_modules/node-api-headers/include"));
 };
 export const writePackage = async (root: string, imports: Record<string, string>): Promise<void> => {
-  const manifest = JSON.parse(await readFile(join(repository, "package.json"), "utf8")) as { imports: Record<string, string> };
+  const manifest = JSON.parse(await readFile(join(repository, "package.json"), "utf8")) as {
+    imports: Record<string, string>;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    patchedDependencies?: Record<string, string>;
+  };
   manifest.imports = imports;
+  manifest.dependencies = {};
+  manifest.devDependencies = {};
+  delete manifest.patchedDependencies;
   await writeFile(join(root, "package.json"), JSON.stringify(manifest));
-  await copyFile(join(repository, "bun.lock"), join(root, "bun.lock"));
+  await writeFile(join(root, "bun.lock"), "{}\n");
 };
 export const copyRuntimeModules = async (root: string): Promise<void> => {
   await mkdir(join(root, "src"), { recursive: true });

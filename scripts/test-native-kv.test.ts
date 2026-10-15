@@ -113,7 +113,7 @@ test("invalid native bindings fail before a child can write a database", async (
 });
 
 test("VPS discovery includes both upstream additions exactly once without preparing again", async () => {
-  const builds = join(ROOT, ".cleanup-evidence", "native-kv-builds");
+  const builds = join(ROOT, ".tmp", "native-kv-builds");
   const before = readdirSync(builds).sort((left, right) => left.localeCompare(right));
   const result = await run([process.execPath, "--no-env-file", "--no-install", join(ROOT, "scripts/test-runner.ts"), "vps", "--list"]);
   assert.equal(result.code, 0, result.output);
@@ -139,7 +139,7 @@ test("VPS discovery includes both upstream additions exactly once without prepar
 test("one real parent build is reused across files and separate original profile processes", async () => {
   const binding = currentTestNativeKvBinding();
   const directory = scratch();
-  const builds = join(ROOT, ".cleanup-evidence", "native-kv-builds");
+  const builds = join(ROOT, ".tmp", "native-kv-builds");
   const before = readdirSync(builds).sort((left, right) => left.localeCompare(right));
   try {
     mkdirSync(join(directory, "scripts"));

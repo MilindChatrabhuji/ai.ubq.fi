@@ -62,7 +62,7 @@ const nativeLibrary = (artifact?: LinuxPermissionsArtifact): NativePermissions =
 /** Query only: this does not restrict the caller or change host configuration. */
 export const getLinuxPermissionsSupport = (artifact?: LinuxPermissionsArtifact): LinuxPermissionsSupport => {
   const support = nativeLibrary(artifact).support();
-  return { architecture: process.arch, kernel: release(), ...support, landlockThreadSync: support.landlockAbi >= 8 && support.landlockAbi <= 10 };
+  return { architecture: process.arch, kernel: release(), ...support, landlockThreadSync: support.landlockAbi >= 8 };
 };
 
 const beneath = (parent: string, child: string): boolean => {
@@ -72,14 +72,14 @@ const beneath = (parent: string, child: string): boolean => {
 
 const requireConfinementSupport = (support: LinuxPermissionsSupport): void => {
   if (!support.landlockThreadSync || !support.seccomp) {
-    throw new Error("Linux confinement requires supported Landlock ABI8..10 and seccomp thread synchronization");
+    throw new Error("Linux confinement requires Landlock ABI8+ and seccomp thread synchronization");
   }
 };
 
 /**
  * Irreversible, Linux ARM64 application-child boundary. Invoke before product imports or
  * unrelated file opens; Landlock cannot revoke descriptors opened before enforcement or
- * hide file metadata. ABI8..10 are accepted; actual ARM64/JSC/native-KV proof uses ABI10.
+ * hide file metadata. ABI8 and newer are accepted; actual ARM64/JSC/native-KV proof records the runner ABI.
  * The native artifact must already be built, hashed and packaged in the immutable release.
  * No compiler, dependency installation, FFI fallback, host configuration, or service change
  * runs here. Enforcement failure after an irreversible transition terminates this child.

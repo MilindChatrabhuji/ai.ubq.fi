@@ -146,7 +146,7 @@ static napi_value enforce(napi_env env, napi_callback_info info) {
     return NULL;
   }
   int abi = landlock_abi();
-  if (abi < 8 || abi > 10) { errno = ENOTSUP; return failure(env, "Supported Landlock ABI8..10"); }
+  if (abi < 8) { errno = ENOTSUP; return failure(env, "Supported Landlock ABI8+"); }
   struct landlock_ruleset_attr attributes = { .handled_access_fs = 0x7fffULL | (abi >= 9 ? (1ULL << 16) : 0) };
   int ruleset = (int)syscall(__NR_landlock_create_ruleset, &attributes, sizeof(uint64_t), 0);
   if (ruleset < 0) return failure(env, "Landlock ruleset creation");

@@ -39,7 +39,10 @@ export const SENTINEL_REPLAY_CLEAN_TARGET_RATIO = 0.9;
 export const SENTINEL_REPLAY_STAGING_BATCH_CHUNKS = 12;
 export const EVICTION_BATCH_RECORDS = 16;
 export const EVICTION_MAX_CHUNK_DELETES = 512;
-export const BOOTSTRAP_BATCH_ENTRIES = 32;
+// One legacy materialization adds two CAS checks plus the ledger fence. Bun's
+// native atomic backend accepts at most ten checks, so four rows (nine checks)
+// is the largest portable batch.
+export const BOOTSTRAP_BATCH_ENTRIES = 4;
 export const RESERVATION_REAP_LIMIT = 8;
 export const STATUS_PRUNE_BATCH = 16;
 export const CAS_ATTEMPTS = 5;
