@@ -40,6 +40,7 @@ import {
 } from "../admin/index.ts";
 import { handleAdminErrors } from "../admin/error-log.ts";
 import { proxyAdminChartSource } from "../admin/chart-source-proxy.ts";
+import { handleCapacityObservationIngest } from "../admin/capacity-observation-sync.ts";
 import type { ApiKeyAuditContext } from "../admin/api-key-audit.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "../agent-messages.ts";
 import { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth, type AdminAuthResult } from "../auth/index.ts";
@@ -154,6 +155,7 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET"], path: "/admin/providers/selection", run: () => handleAdminProviderSelectionGet() },
   { methods: ["POST"], path: "/admin/providers/selection", run: (req) => handleAdminProviderSelectionSet(req) },
   { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => proxyAdminChartSource(req, handleProviderCapacity(req)) },
+  { methods: ["POST"], path: "/admin/providers/capacity/observations", run: (req) => handleCapacityObservationIngest(req) },
   { methods: ["GET"], path: "/admin/providers/capacity/rollups", run: (req) => handleProviderCapacityRollups(req) },
   { methods: ["GET"], path: "/admin/providers/quota-projection", run: (req) => handleAdminProvidersQuotaProjection(req) },
   { methods: ["POST"], path: "/admin/providers/quota-projection/backfill", run: (req) => handleAdminProvidersQuotaProjectionBackfill(req) },
