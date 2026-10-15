@@ -499,7 +499,10 @@ export const installCodexResponseRunners = (ctx: CodexResponseContext): void => 
     if (ctx.authFailureState.error) return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(ctx.authFailureState.error));
     if (ctx.lastError instanceof CodexError && ctx.lastError.status === 401)
       return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(ctx.lastError));
-    if (ctx.selected.kind === "credentials_invalid") return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(null));
+    if (ctx.selected.kind === "credentials_invalid") {
+      ctx.authWarning ??= CODEX_AUTH_REAUTH_WARNING;
+      return await ctx.authorizePaidFallbackForCompleteCapacityEvidence(ctx.authFailureResponse(null));
+    }
     if (ctx.probeUnavailable) {
       // A held recovery lease is retryable, not proof of quota exhaustion.
       return await ctx.quotaBlockedOrRetryableResponse();

@@ -146,7 +146,8 @@ const paidFallbackReasonFor = (
 ): InferenceFallbackReason | null => {
   if (directPaidProvider) return "dynamic_paid_model";
   if (primaryStatus === 429 && routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE) return "primary_quota_blocked";
-  if (primaryStatus === 503 && routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE) return "primary_subscriptions_unavailable";
+  if ((primaryStatus === 401 || primaryStatus === 503) && routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE)
+    return "primary_subscriptions_unavailable";
   return null;
 };
 
@@ -721,7 +722,7 @@ export const fetchResponsesWithPaidFallback = async (
   const gatewayResponse =
     directPaidProvider !== null ||
     routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
-    routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE ||
+    (routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE && primaryStatus !== 401) ||
     routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {

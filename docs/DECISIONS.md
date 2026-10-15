@@ -16,8 +16,10 @@ Only matching credential fingerprints count. Generic 429s, timeouts, probe lease
 
 Exhaustion proof and banked-reset eligibility remain separate. Existing paid caps and provider selection still apply.
 
-A mixed or invalid pool returns `codex_subscriptions_unavailable` with no multi-day retry delay when paid routing cannot
-serve.
+A mixed pool returns `codex_subscriptions_unavailable` with no multi-day retry delay when paid routing cannot serve.
+
+Current-invalid credentials retain the original actionable authentication body and re-auth warning. Fresh proof is
+internal.
 
 Reason: an exhausted account and failed sibling refresh returned a five-day 429 without attempting any paid provider.
 

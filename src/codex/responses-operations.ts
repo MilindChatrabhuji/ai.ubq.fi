@@ -852,6 +852,10 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     if (response.status === 429 && (await ctx.freshFullCohortExhaustedProof())) {
       codexRoutingErrors.set(response, CODEX_QUOTA_BLOCKED_ERROR_CODE);
     } else if ((response.status === 401 || response.status === 429) && (await ctx.freshFullCohortUnavailableProof())) {
+      if (response.status === 401) {
+        codexRoutingErrors.set(response, CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE);
+        return response;
+      }
       cancelResponseBody(response);
       return ctx.decorateAuthWarning(subscriptionsUnavailableResponse());
     }
