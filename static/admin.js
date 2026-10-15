@@ -346,6 +346,9 @@ const accessGithubQueue = mustGet("access-github-queue");
 const accessKernelPubkeys = mustGet("access-kernel-pubkeys");
 const accessUpstreamSource = mustGet("access-upstream-source");
 const accessUpstreamExpiry = mustGet("access-upstream-expiry");
+const accessClaudeSource = mustGet("access-claude-source");
+const accessClaudeHealth = mustGet("access-claude-health");
+const accessClaudeWorkspace = mustGet("access-claude-workspace");
 
 const defaultsModelSelect = mustGet("defaults-model");
 const defaultsReasoningSelect = mustGet("defaults-reasoning");
@@ -3740,12 +3743,18 @@ const refreshAccessUpstreamSummary = async () => {
   if (!token && !hasAdminCredential()) {
     setAccessValue(accessUpstreamSource, "Missing token");
     setAccessValue(accessUpstreamExpiry, "Missing token");
+    setAccessValue(accessClaudeSource, "Missing token");
+    setAccessValue(accessClaudeHealth, "Missing token");
+    setAccessValue(accessClaudeWorkspace, "Missing token");
     return;
   }
   accessUpstreamLoading = true;
   if (!accessUpstreamLoadedAt) {
     setAccessValue(accessUpstreamSource, "Loading...");
     setAccessValue(accessUpstreamExpiry, "Loading...");
+    setAccessValue(accessClaudeSource, "Loading...");
+    setAccessValue(accessClaudeHealth, "Loading...");
+    setAccessValue(accessClaudeWorkspace, "Loading...");
   }
   try {
     const res = await fetch(apiUrl("/health/providers"), {
@@ -3760,6 +3769,15 @@ const refreshAccessUpstreamSummary = async () => {
         .filter((value) => typeof value === "number")
       : [];
     const expMs = expirations.length ? Math.min(...expirations) : null;
+    // The Claude subscription tile mirrors the Codex tile from the same passive
+    // snapshot: where the credential came from, the tier's health, and the
+    // workspace it names.
+    const claude = data?.claude_code && typeof data.claude_code === "object" ? data.claude_code : null;
+    const claudeSource = claude?.credential?.source ?? (claude?.configured ? "configured" : "none");
+    const claudeHealth = typeof claude?.health?.state === "string" ? claude.health.state : "unknown";
+    setAccessValue(accessClaudeSource, claudeSource === "none" ? "None" : String(claudeSource));
+    setAccessValue(accessClaudeHealth, claudeHealth);
+    setAccessValue(accessClaudeWorkspace, claude?.workspace?.id ?? "Not selected");
     if (!res.ok) {
       if (accessUpstreamLoadedAt) return;
       setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
@@ -3773,6 +3791,9 @@ const refreshAccessUpstreamSummary = async () => {
     if (accessUpstreamLoadedAt) return;
     setAccessValue(accessUpstreamSource, "Offline");
     setAccessValue(accessUpstreamExpiry, "Offline");
+    setAccessValue(accessClaudeSource, "Offline");
+    setAccessValue(accessClaudeHealth, "Offline");
+    setAccessValue(accessClaudeWorkspace, "Offline");
   } finally {
     accessUpstreamLoading = false;
   }
