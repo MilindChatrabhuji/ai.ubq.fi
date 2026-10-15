@@ -1,7 +1,8 @@
 import { test } from "bun:test";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { spawnFixture, runFixture, outputFixture, fsError, type FixtureChild, type FixtureOutput } from "../ops/tests/fixture-process.ts";
-import { copyOps, copyRuntime, copyRuntimeModules, seedStore, writePackage } from "../ops/tests/fixture-release.ts";
+import { copyOps, copyRuntime, copyRuntimeModules, repository, seedStore, writePackage } from "../ops/tests/fixture-release.ts";
+import { currentTestNativeKvBinding } from "../scripts/test-native-kv.ts";
 import { acquireDeployLock } from "../ops/deploy-lock.ts";
 import { prepareReleasePayload } from "../ops/release-artifact.ts";
 import { serveHttp, type HttpServer } from "#http";
@@ -251,7 +252,14 @@ const archivePrevious = async (f: Fixture, sha: string): Promise<void> => {
     mode: 0o600,
   });
   await chmod(release + "/src/release.ts", 0o600);
-  await prepareReleasePayload(release, sha, await hash(await readFile(archive)));
+  await prepareReleasePayload(
+    release,
+    sha,
+    await hash(await readFile(archive)),
+    repository + "/node_modules/node-api-headers/include",
+    currentTestNativeKvBinding(),
+    repository + "/node_modules"
+  );
   await rm(archive);
 };
 
