@@ -60,7 +60,14 @@ export const packageFixture = async (release: string, sha: string, archive: stri
   }
   await mkdir(join(release, "tools"), { recursive: true });
   await cp(join(repository, "tools/native-kv"), join(release, "tools/native-kv"), { recursive: true });
-  await prepareReleasePayload(release, sha, archive, join(repository, "node_modules/node-api-headers/include"), currentTestNativeKvBinding());
+  await prepareReleasePayload(
+    release,
+    sha,
+    archive,
+    join(repository, "node_modules/node-api-headers/include"),
+    currentTestNativeKvBinding(),
+    join(repository, "node_modules")
+  );
 };
 export const writePackage = async (root: string, imports: Record<string, string>): Promise<void> => {
   const manifest = JSON.parse(await readFile(join(repository, "package.json"), "utf8")) as {
