@@ -1,25 +1,32 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Database } from "bun:sqlite";
 import {
   assertHostedCutoverProof,
+  captureCutoverArtifact,
   recheckCutoverArtifact,
   reuseCutoverPayload,
+  verifyCutoverCandidate,
   type CapturedCutoverArtifact,
   type CutoverArtifactInput,
 } from "../cutover-artifact.ts";
 import { assertCutoverReaderAcceptance, verifyCutoverReaderAcceptance } from "../cutover-reader-gate.ts";
-import { assertCutoverMemoryLimit } from "../cutover-host.ts";
+import { assertCutoverMemoryLimit, boundedCutoverHolderCheck } from "../cutover-host.ts";
+import { assertCutoverDropin, assertCutoverExecStart, cutoverDropinDigest, cutoverSupervisorUnit } from "../cutover-unit.ts";
 import { executeCutoverTransition, type CutoverPhase, type CutoverTransition } from "../cutover-transition.ts";
-import { checkpointCutoverStore, retainedCutoverCopy } from "../cutover-storage.ts";
+import { checkedCutoverBudgets, checkpointCutoverStore, cutoverSourceBytes, retainedCutoverCopy } from "../cutover-storage.ts";
+import { preserveUnstartedCutover } from "../cutover-recovery.ts";
 import { NATIVE_DDL } from "../../src/kv-conversion/native-schema.ts";
 import { packStringKey } from "../../src/kv-conversion/cursors.ts";
 import { BUN_RUNTIMES } from "../bun-runtime.ts";
-import { fileDigest } from "../io.ts";
+import { fileDigest, treeDigest } from "../io.ts";
+import { verifyReleasePayload } from "../release-artifact.ts";
+import { packageFixture, repository, writePackage } from "./fixture-release.ts";
+import { fixtureCommand } from "./vps-release-driver-fixture.ts";
 
 const parent = fileURLToPath(new URL("../../.cleanup-evidence/first-bun-cutover/", import.meta.url));
 async function fixture(work: (root: string) => Promise<void>) {
@@ -405,4 +412,177 @@ test("database-scale hashing streams under a small measured RSS increase", async
     const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     assert.equal(code, 0, errors);
     assert.equal((JSON.parse(output) as { sha256: string }).sha256, hash.digest("hex"));
+  }));
+
+test("effective typed unit command rejects a legacy override or extra startup command", () => {
+  const expected = ["/bin/sh", "/fixture/ops/launch-vps.sh"];
+  const row = [expected[0], expected, false, 0, 0, 0, 0, 0, 0, 0];
+  assertCutoverExecStart({ type: "a(sasbttttuii)", data: [row] }, expected);
+  const legacy = ["/bin/sh", "-c", "set -eu; release=$$(cd -P .data/current && pwd); exec deno $$release/serve.ts"];
+  const legacyRow = [legacy[0], legacy, false, 0, 0, 0, 0, 0, 0, 0];
+  assertCutoverExecStart({ type: "a(sasbttttuii)", data: [legacyRow] }, legacy);
+  assert.throws(() => {
+    assertCutoverExecStart(
+      { type: "a(sasbttttuii)", data: [legacyRow] },
+      legacy.map((part) => part.replaceAll("$$", "$"))
+    );
+  });
+  for (const data of [
+    [row, row],
+    [["/usr/local/bin/deno", ["/usr/local/bin/deno", "run", "old.ts"], false, 0, 0, 0, 0, 0, 0, 0]],
+    [[expected[0], [...expected, "unexpected"], false, 0, 0, 0, 0, 0, 0, 0]],
+  ])
+    assert.throws(() => {
+      assertCutoverExecStart({ type: "a(sasbttttuii)", data }, expected);
+    });
+});
+
+test("effective drop-in bytes are pinned and execution/environment changes fail before startup", async () =>
+  fixture(async (root) => {
+    const directory = join(root, "service.d");
+    await mkdir(directory);
+    const path = join(directory, "99-resources.conf");
+    await writeFile(path, "[Service]\nMemoryMax=infinity\nCPUWeight=10\n", { mode: 0o644 });
+    const run = () => Promise.resolve(JSON.stringify({ type: "as", data: [root] }));
+    const before = await cutoverDropinDigest(root, run);
+    await writeFile(path, "[Service]\nMemoryMax=infinity\nCPUWeight=20\n");
+    assert.notEqual(await cutoverDropinDigest(root, run), before);
+    for (const line of [
+      "ExecStart=/usr/local/bin/deno run stale.ts",
+      "Environment=FIXTURE=changed",
+      "WorkingDirectory=/outside",
+      "ExecStartPre=/bin/sh",
+      "User=root",
+    ])
+      assert.throws(() => {
+        assertCutoverDropin("[Service]\n" + line + "\n");
+      });
+    await writeFile(path, "[Service]\nExecStart=/usr/local/bin/deno run stale.ts\n");
+    await assert.rejects(cutoverDropinDigest(root, run));
+  }));
+
+test("supervisor runtime resource updates can target only the exact reviewed task unit", () => {
+  assert.equal(cutoverSupervisorUnit("/system.slice/uos-first-bun-cutover-20261015.service"), "uos-first-bun-cutover-20261015.service");
+  for (const group of ["/hosting.slice/ai-ubq-fi.service", "/system.slice/caddy.service", "/user.slice/codex.service"])
+    assert.throws(() => cutoverSupervisorUnit(group));
+  assert.deepEqual(checkedCutoverBudgets({ conversionAndProofMs: 2_700_000, recoveryConversionMs: 2_700_000, recoveryProofMs: 2_700_000 }), {
+    conversionAndProofMs: 2_700_000,
+    recoveryConversionMs: 2_700_000,
+    recoveryProofMs: 2_700_000,
+  });
+  assert.throws(() => checkedCutoverBudgets({ conversionAndProofMs: Infinity, recoveryConversionMs: 1000, recoveryProofMs: 0 }));
+});
+
+test("stalled holder inspection is killed and reaped within its own deadline", async () => {
+  const child = Bun.spawn([process.execPath, "--no-env-file", "--no-install", "-e", "await Bun.sleep(60000)"], { env: {}, stdout: "pipe", stderr: "pipe" });
+  const start = Date.now();
+  await assert.rejects(boundedCutoverHolderCheck(child, 50), /exceeded its deadline/);
+  await child.exited;
+  assert.ok(Date.now() - start < 3000);
+  assert.throws(() => process.kill(child.pid, 0));
+});
+
+test("forward link-before-receipt interruption preserves both copies and only trusts the unchanged stopped legacy source", async () =>
+  fixture(async (root) => {
+    const legacy = join(root, "legacy.sqlite3"),
+      bun = join(root, "kv-bun.sqlite3");
+    await writeFile(legacy, "authoritative stopped legacy fixture", { mode: 0o600 });
+    await writeFile(bun, "unreceipted completed conversion fixture", { mode: 0o600 });
+    const source = await fileDigest(legacy),
+      output = await fileDigest(bun);
+    const retained = await preserveUnstartedCutover(legacy, bun, root, source);
+    assert.equal(await fileDigest(legacy), source);
+    assert.equal(await fileDigest(retained), output);
+    await assert.rejects(lstat(bun));
+    await writeFile(bun, "another partial fixture", { mode: 0o600 });
+    await writeFile(legacy, "newer Deno state must not be overwritten");
+    await assert.rejects(preserveUnstartedCutover(legacy, bun, root, source), /Authoritative stopped legacy source changed/);
+    assert.equal(await readFile(bun, "utf8"), "another partial fixture");
+  }));
+
+test("capacity accounts for WAL bytes and checkpoint refuses a sidecar symlink before touching its target", async () =>
+  fixture(async (root) => {
+    const source = join(root, "source"),
+      other = join(root, "unrelated");
+    await writeFile(source, "1234");
+    await writeFile(source + "-wal", "1234567890");
+    assert.equal(await cutoverSourceBytes(source), 14);
+    await rm(source + "-wal");
+    await writeFile(other, "must remain unchanged");
+    await symlink(other, source + "-wal");
+    await assert.rejects(checkpointCutoverStore(source, "deno-v8"), /Unsafe SQLite sidecar/);
+    assert.equal(await readFile(other, "utf8"), "must remain unchanged");
+  }));
+
+test("a self-consistent existing candidate for the same Git SHA must still equal its exact accepted CI manifest", async () =>
+  fixture(async (root) => {
+    const repo = join(root, "git"),
+      release = join(root, "release"),
+      workspace = join(root, "work"),
+      candidate = join(root, "candidate");
+    for (const path of [repo, release, workspace, candidate]) await mkdir(path);
+    await writePackage(repo, { "#kv": "./src/storage/kv.ts", "#http": "./src/runtime/http.ts" });
+    for (const name of ["scripts/build-permissions.ts", "src/runtime/permissions-linux.ts", "src/runtime/permissions-native.c"]) {
+      const destination = join(repo, name);
+      await mkdir(join(destination, ".."), { recursive: true });
+      await copyFile(join(repository, name), destination);
+    }
+    await mkdir(join(repo, "tools"));
+    await cp(join(repository, "tools/native-kv"), join(repo, "tools/native-kv"), { recursive: true });
+    const git = (...args: string[]) => fixtureCommand("git", args, repo);
+    await git("init", "--initial-branch=development");
+    await git("config", "user.name", "Cutover fixture");
+    await git("config", "user.email", "fixture@example.invalid");
+    await git("add", ".");
+    await git("-c", "commit.gpgsign=false", "commit", "-m", "source");
+    const sha = await git("rev-parse", "HEAD"),
+      source = join(root, "source.tar");
+    await git("archive", "--format=tar", "--output=" + source, sha);
+    for (const path of [release, candidate]) {
+      await fixtureCommand("/bin/sh", ["-c", 'umask 022; exec /usr/bin/tar -xf "$1" -C "$2"', "source", source, path], root);
+      await writeFile(join(path, "src/release.ts"), `// Generated for this immutable VPS release.\nexport const RELEASE_GIT_SHA = "${sha}";\n`, {
+        mode: 0o600,
+      });
+      await chmod(join(path, "src/release.ts"), 0o600);
+    }
+    await packageFixture(release, sha, await fileDigest(source));
+    const archive = join(root, "artifact.zip");
+    // The synthetic hosted API publishes the actual ZIP digest; all source/tree/native checks still execute.
+    await fixtureCommand(
+      "/usr/bin/python3",
+      [
+        "-c",
+        'import zipfile,sys; p=sys.argv[1]; b=open(sys.argv[2],"rb").read(); z=zipfile.ZipFile(p,"w"); z.writestr("manifest.json",b); z.close()',
+        archive,
+        join(release, ".uos-release.json"),
+      ],
+      root
+    );
+    const zipSha = await fileDigest(archive);
+    const input: CutoverArtifactInput = { revision: sha, runId: 17, artifactId: 18, archive, directory: release, sourceRepository: repo, workspace };
+    const replies: Record<string, unknown> = {
+      "actions/runs/17": {
+        id: 17,
+        head_sha: sha,
+        head_branch: "development",
+        event: "push",
+        status: "completed",
+        conclusion: "success",
+        path: ".github/workflows/deno-deploy.yml",
+      },
+      "actions/artifacts/18": { id: 18, name: `ai-ubq-fi-source-${sha}`, expired: false, digest: "sha256:" + zipSha, workflow_run: { id: 17, head_sha: sha } },
+      "actions/runs/17/jobs?per_page=100": {
+        jobs: ["validate", "mac-containment", "darwin-native", "verify-artifact"].map((name) => ({ name, status: "completed", conclusion: "success" })),
+      },
+      "git/ref/heads/development": { object: { sha } },
+    };
+    const captured = await captureCutoverArtifact(input, (route) => Promise.resolve(replies[route]));
+    await reuseCutoverPayload(captured)(candidate, sha, await fileDigest(source));
+    await verifyCutoverCandidate(captured, candidate);
+    const manifest = JSON.parse(await readFile(join(candidate, ".uos-release.json"), "utf8")) as { dependency_tree_sha256: string };
+    await writeFile(join(candidate, "node_modules/foreign-fixture"), "different self-sealed graph\n");
+    manifest.dependency_tree_sha256 = await treeDigest(join(candidate, "node_modules"));
+    await writeFile(join(candidate, ".uos-release.json"), JSON.stringify(manifest) + "\n");
+    await verifyReleasePayload(candidate, sha, captured.manifest.source_tree_sha256);
+    await assert.rejects(verifyCutoverCandidate(captured, candidate), /accepted CI manifest/);
   }));

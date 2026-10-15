@@ -2,9 +2,24 @@ import { chmod, lstat, mkdir, open, readFile, realpath } from "node:fs/promises"
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertBunConvertedStore } from "./assert-bun-store.ts";
-import { type CapturedCutoverArtifact, recheckCutoverArtifact, restoreCutoverArtifact, reuseCutoverPayload } from "./cutover-artifact.ts";
+import {
+  type CapturedCutoverArtifact,
+  recheckCutoverArtifact,
+  restoreCutoverArtifact,
+  reuseCutoverPayload,
+  verifyCutoverCandidate,
+} from "./cutover-artifact.ts";
 import { CutoverHost } from "./cutover-host.ts";
-import { assertCutoverCapacity, checkpointCutoverStore, convertAndProveCutover, privateCutoverDirectory, retainedCutoverCopy } from "./cutover-storage.ts";
+import {
+  assertCutoverCapacity,
+  checkedCutoverBudgets,
+  checkpointCutoverStore,
+  convertAndProveCutover,
+  cutoverSourceBytes,
+  privateCutoverDirectory,
+  retainedCutoverCopy,
+  type CutoverBudgets,
+} from "./cutover-storage.ts";
 import { recoverCutoverLatest } from "./cutover-recovery.ts";
 import { executeCutoverTransition, type CutoverPhase } from "./cutover-transition.ts";
 import { digest, exists, fileDigest } from "./io.ts";
@@ -19,6 +34,7 @@ export type FirstBunCutoverInput = Readonly<{
   denoBinary: string;
   denoSha256: string;
   supervisorMemoryBytes: number;
+  budgets: CutoverBudgets;
   authorization: { path: string; sha256: string };
   offlineArtifact: { path: string; sha256: string };
   reader: CutoverReaderReceipt;
@@ -33,7 +49,9 @@ type CutoverJournal = {
   prior: string;
   artifactSha256: string;
   manifestSha256: string;
-  loadedPriorUnit: { sha256: string; needsReload: boolean };
+  loadedPriorUnit: Awaited<ReturnType<CutoverHost["loadedUnit"]>>;
+  bootstrapSha256: string;
+  budgets: CutoverBudgets;
   supervisorMemoryBytes: number;
   authorizationSha256: string;
   readerReceiptSha256: string;
@@ -66,6 +84,7 @@ async function authorization(input: FirstBunCutoverInput, recovery = false): Pro
     value.reader_receipt_sha256 !== input.reader.sha256 ||
     value.offline_artifact_sha256 !== input.offlineArtifact.sha256 ||
     value.supervisor_memory_bytes !== input.supervisorMemoryBytes ||
+    value.budgets_sha256 !== digest(JSON.stringify(input.budgets)) ||
     typeof value.expires_at !== "string" ||
     !Number.isFinite(Date.parse(value.expires_at)) ||
     (!recovery && Date.parse(value.expires_at) <= Date.now())
@@ -86,8 +105,8 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
   if (!/^[a-f0-9]{40}$/.test(input.priorRevision) || !/^[a-f0-9]{64}$/.test(input.denoSha256))
     throw new Error("Exact prior and legacy codec pins are required");
   const host = new CutoverHost(canonicalRoot);
-  await host.supervisorMemory(input.supervisorMemoryBytes);
-  await host.verifyBootstrap(input.artifact);
+  await host.reassertSupervisorMemory(input.supervisorMemoryBytes);
+  const bootstrapSha256 = await host.verifyBootstrap(input.artifact);
   const requestDigest = cutoverRequestDigest(input);
   const operationId = digest("uos-first-bun-cutover-v1:" + requestDigest);
   return await withVpsDeployLock(canonicalRoot, async () => {
@@ -132,9 +151,10 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
     } finally {
       await workspaceParent.close();
     }
-    await assertCutoverCapacity(workspace, (await lstat(legacy)).size);
-    await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, workspace);
+    await assertCutoverCapacity(workspace, await cutoverSourceBytes(legacy));
+    await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, workspace, input.priorRevision);
     const candidate = await store.checkedRelease(input.artifact.revision, true);
+    await verifyCutoverCandidate(input.artifact, join(canonicalRoot, candidate.path));
     const receiptPath = join(workspace, "operation.json"),
       forwardReceipt = join(workspace, "forward.json");
     const journal: CutoverJournal = {
@@ -147,6 +167,8 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
       artifactSha256: input.artifact.archiveSha256,
       manifestSha256: input.artifact.manifestSha256,
       loadedPriorUnit,
+      bootstrapSha256,
+      budgets: input.budgets,
       supervisorMemoryBytes: input.supervisorMemoryBytes,
       authorizationSha256: input.authorization.sha256,
       readerReceiptSha256: input.reader.sha256,
@@ -186,13 +208,14 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
       {
         record,
         preflight: async () => {
-          await host.supervisorMemory(input.supervisorMemoryBytes);
+          await host.reassertSupervisorMemory(input.supervisorMemoryBytes);
+          if ((await host.verifyBootstrap(input.artifact)) !== bootstrapSha256) throw new Error("Bootstrap changed while waiting for cutover custody");
           await recheckCutoverArtifact(input.artifact);
           await authorization(input);
           await verifyCutoverReaderAcceptance(input.reader, input.artifact);
           await assertPrior();
           if (JSON.stringify(await host.loadedUnit()) !== JSON.stringify(loadedPriorUnit)) throw new Error("The loaded prior service definition changed");
-          await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, workspace);
+          await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, workspace, input.priorRevision);
           await host.health(prior.sha, prior.port);
           await host.publicHealth(prior.sha);
         },
@@ -203,6 +226,7 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
         preserve: async () => {
           await assertPrior();
           const source = await checkpointCutoverStore(legacy, "deno-v8");
+          await assertCutoverCapacity(workspace, source.bytes);
           await host.assertStopped([legacy]);
           journal.priorSourceSha256 = await retainedCutoverCopy(legacy, join(workspace, "legacy-before.sqlite3"));
           if (journal.priorSourceSha256 !== source.sha256) throw new Error("Legacy source changed at the stopped boundary");
@@ -210,7 +234,8 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
         },
         convert: async () => {
           await host.assertStopped([legacy]);
-          const signal = AbortSignal.any([AbortSignal.timeout(45 * 60_000), ...(input.signal ? [input.signal] : [])]);
+          await host.reassertSupervisorMemory(input.supervisorMemoryBytes);
+          const signal = AbortSignal.any([AbortSignal.timeout(input.budgets.conversionAndProofMs), ...(input.signal ? [input.signal] : [])]);
           journal.conversion = await convertAndProveCutover(
             {
               source: legacy,
@@ -237,8 +262,9 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
           )
             throw new Error("Stopped source, candidate database or credentials changed before startup");
           await store.checkedRelease(candidate.sha);
+          await verifyCutoverCandidate(input.artifact, join(canonicalRoot, candidate.path));
           await store.selectRelease(`releases/${candidate.sha}`);
-          await host.start();
+          await host.start(input.artifact, input.supervisorMemoryBytes, bootstrapSha256);
           await host.health(candidate.sha, 7999, true);
         },
         verify: async () => {
@@ -258,6 +284,10 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
               denoSha256: input.denoSha256,
               priorSourceSha256: journal.priorSourceSha256,
               legacyStartupAttempted: journal.legacyStartupAttempted,
+              artifact: input.artifact,
+              supervisorMemoryBytes: input.supervisorMemoryBytes,
+              bootstrapSha256,
+              budgets: input.budgets,
               record,
             },
             startupAttempted
@@ -281,6 +311,7 @@ function cutoverRequestDigest(input: FirstBunCutoverInput): string {
       reader: input.reader.sha256,
       offline: input.offlineArtifact.sha256,
       memory: input.supervisorMemoryBytes,
+      budgets: input.budgets,
     })
   );
 }
@@ -294,7 +325,11 @@ export async function runFirstBunCutover(input: FirstBunCutoverInput) {
   process.on("SIGINT", terminate);
   process.on("SIGTERM", terminate);
   try {
-    return await performFirstBunCutover({ ...input, signal: AbortSignal.any([controller.signal, ...(input.signal ? [input.signal] : [])]) });
+    return await performFirstBunCutover({
+      ...input,
+      budgets: checkedCutoverBudgets(input.budgets),
+      signal: AbortSignal.any([controller.signal, ...(input.signal ? [input.signal] : [])]),
+    });
   } finally {
     process.off("SIGINT", terminate);
     process.off("SIGTERM", terminate);
@@ -304,20 +339,20 @@ export async function runFirstBunCutover(input: FirstBunCutoverInput) {
 /** @public Pinned supervisor ExecStopPost recovery; no GitHub/model/download request. */
 export async function recoverFirstBunCutover(input: Omit<FirstBunCutoverInput, "artifact" | "signal">) {
   const artifact = await restoreCutoverArtifact(input.offlineArtifact.path, input.offlineArtifact.sha256);
-  const bound = { ...input, artifact };
+  const bound = { ...input, artifact, budgets: checkedCutoverBudgets(input.budgets) };
   if ((await realpath(fileURLToPath(new URL("../", import.meta.url)))) !== artifact.directory)
     throw new Error("Recovery code is outside the accepted artifact");
   await authorization(bound, true);
   const host = new CutoverHost(canonicalRoot);
-  await host.supervisorMemory(input.supervisorMemoryBytes);
-  await host.verifyBootstrap(artifact);
+  await host.reassertSupervisorMemory(input.supervisorMemoryBytes);
+  const bootstrapSha256 = await host.verifyBootstrap(artifact);
   const requestDigest = cutoverRequestDigest(bound),
     operationId = digest("uos-first-bun-cutover-v1:" + requestDigest);
   const workspace = join(canonicalRoot, ".data/cutovers", operationId),
     receipt = join(workspace, "operation.json");
   return await withVpsDeployLock(canonicalRoot, async () => {
     if (!(await exists(receipt))) {
-      await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, artifact.directory);
+      await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, artifact.directory, input.priorRevision);
       await host.health(input.priorRevision);
       await host.publicHealth(input.priorRevision);
       return { phase: "not_started", receipt: null };
@@ -335,6 +370,8 @@ export async function recoverFirstBunCutover(input: Omit<FirstBunCutoverInput, "
       journal.prior !== input.priorRevision ||
       journal.artifactSha256 !== artifact.archiveSha256 ||
       journal.manifestSha256 !== artifact.manifestSha256 ||
+      journal.bootstrapSha256 !== bootstrapSha256 ||
+      JSON.stringify(journal.budgets) !== JSON.stringify(bound.budgets) ||
       typeof journal.bunStartupAttempted !== "boolean" ||
       typeof journal.legacyStartupAttempted !== "boolean" ||
       pins.length !== 1 ||
@@ -344,6 +381,7 @@ export async function recoverFirstBunCutover(input: Omit<FirstBunCutoverInput, "
       throw new Error("Cutover recovery ownership changed");
     if (journal.phase === "accepted" || journal.phase === "rolled_back") {
       const selected = journal.phase === "accepted" ? journal.candidate : journal.prior;
+      if (journal.phase === "accepted") await verifyCutoverCandidate(artifact, join(canonicalRoot, ".data/releases", selected));
       await host.health(selected, 7999, true);
       await host.publicHealth(selected);
       return { phase: journal.phase, receipt };
@@ -377,6 +415,10 @@ export async function recoverFirstBunCutover(input: Omit<FirstBunCutoverInput, "
           denoSha256: input.denoSha256,
           priorSourceSha256: journal.priorSourceSha256,
           legacyStartupAttempted: journal.legacyStartupAttempted,
+          artifact,
+          supervisorMemoryBytes: input.supervisorMemoryBytes,
+          bootstrapSha256,
+          budgets: bound.budgets,
           record,
         },
         journal.bunStartupAttempted

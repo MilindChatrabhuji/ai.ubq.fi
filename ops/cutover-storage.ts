@@ -11,6 +11,18 @@ import { verifyNativeSchema, type NativeRow } from "../src/kv-conversion/native-
 import { decodeTypedValue, encodeTypedValue } from "../src/kv-conversion/typed-value.ts";
 import { exists } from "./io.ts";
 
+export type CutoverBudgets = Readonly<{ conversionAndProofMs: number; recoveryConversionMs: number; recoveryProofMs: number }>;
+export function checkedCutoverBudgets(value: CutoverBudgets): CutoverBudgets {
+  const budgets = {
+    conversionAndProofMs: value.conversionAndProofMs,
+    recoveryConversionMs: value.recoveryConversionMs,
+    recoveryProofMs: value.recoveryProofMs,
+  };
+  if (Object.values(budgets).some((ms) => !Number.isSafeInteger(ms) || ms < 60_000 || ms > 2 * 60 * 60_000))
+    throw new Error("Finite rehearsal-sized internal phase budgets are required");
+  return Object.freeze(budgets);
+}
+
 export async function privateCutoverDirectory(path: string): Promise<void> {
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o777) !== 0o700 || info.uid !== process.getuid?.() || (await realpath(path)) !== path)
@@ -22,6 +34,7 @@ export async function privateCutoverDirectory(path: string): Promise<void> {
 export async function checkpointCutoverStore(path: string, codec: "deno-v8" | "bun-jsc-v1"): Promise<{ sha256: string; bytes: number }> {
   const info = await lstat(path);
   if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid?.()) throw new Error("Unsafe stopped database");
+  await cutoverSourceBytes(path);
   const db = new Database(path, { strict: true, safeIntegers: true });
   try {
     const checkpoint = db.query<{ busy: bigint }, []>("PRAGMA wal_checkpoint(TRUNCATE)").get();
@@ -132,6 +145,20 @@ export async function convertAndProveCutover(options: Omit<ConvertOptions, "dire
   const proof = await proveCutoverRoundtrip(options.source, reversed, options.deno, options.denoSha256, workspace, options.signal);
   if (proof.rows !== forward.source.row_count || proof.rows !== reverse.destination.row_count) throw new Error("Conversion proof row counts disagree");
   return { forward, reverse, proof, forwardReceiptSha256: await fileDigest(options.receipt), reverseReceiptSha256: await fileDigest(reverseReceipt) };
+}
+
+export async function cutoverSourceBytes(source: string): Promise<number> {
+  const database = await lstat(source);
+  if (!database.isFile() || database.isSymbolicLink() || database.uid !== process.getuid?.()) throw new Error("Unsafe database capacity input");
+  if (await exists(source + "-journal")) throw new Error("An unsettled rollback journal is not a stopped boundary");
+  let wal = 0;
+  for (const suffix of ["-wal", "-shm"])
+    if (await exists(source + suffix)) {
+      const info = await lstat(source + suffix);
+      if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid() || info.nlink !== 1) throw new Error("Unsafe SQLite sidecar");
+      if (suffix === "-wal") wal = info.size;
+    }
+  return database.size + wal;
 }
 
 export async function assertCutoverCapacity(directory: string, sourceBytes: number): Promise<void> {

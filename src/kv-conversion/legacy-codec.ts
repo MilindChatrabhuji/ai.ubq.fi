@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TypedValue } from "./typed-value.ts";
 
@@ -18,9 +18,10 @@ export const openLegacyCodec = async (binary: string, expectedSha256: string, cw
   if (!lstatSync(path).isFile() || !/^[a-f0-9]{64}$/.test(expectedSha256) || binarySha256 !== expectedSha256)
     throw new Error(`Pinned legacy Deno binary does not match its SHA-256: expected ${expectedSha256}, observed ${binarySha256}`);
   const helper = fileURLToPath(new URL("./v8-helper.mjs", import.meta.url));
+  const environment = { DENO_DIR: join(cwd, ".deno-codec-cache") };
   const versionChild = Bun.spawn([path, "run", "--no-config", "--no-lock", "--no-prompt", helper, "--identity"], {
     cwd,
-    env: {},
+    env: environment,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -30,7 +31,13 @@ export const openLegacyCodec = async (binary: string, expectedSha256: string, cw
     versionChild.exited,
   ]);
   if (code !== 0 || versionError || version.trim() !== LEGACY_DENO_VERSION) throw new Error("Unsupported pinned legacy Deno version");
-  const child = Bun.spawn([path, "run", "--no-config", "--no-lock", "--no-prompt", helper], { cwd, env: {}, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([path, "run", "--no-config", "--no-lock", "--no-prompt", helper], {
+    cwd,
+    env: environment,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const interrupted = () => {
     child.kill();
   };

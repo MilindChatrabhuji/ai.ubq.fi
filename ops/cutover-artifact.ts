@@ -187,6 +187,13 @@ export async function recheckCutoverArtifact(artifact: CapturedCutoverArtifact):
   await verifyReleasePayload(artifact.directory, artifact.revision, artifact.manifest.source_tree_sha256);
 }
 
+export async function verifyCutoverCandidate(artifact: CapturedCutoverArtifact, directory: string): Promise<void> {
+  await recheckCutoverArtifact(artifact);
+  if (digest(await readFile(join(directory, ".uos-release.json"))) !== artifact.manifestSha256)
+    throw new Error("Published candidate differs from the accepted CI manifest");
+  await verifyReleasePayload(directory, artifact.revision, artifact.manifest.source_tree_sha256);
+}
+
 /** Reuses permissions AND KV artifacts; unlike normal preparation this never invokes a compiler. */
 export function reuseCutoverPayload(artifact: CapturedCutoverArtifact): VpsPayloadPreparation {
   return async (root, revision, archive) => {
