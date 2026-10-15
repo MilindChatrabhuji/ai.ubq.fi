@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { macSandboxProfile } from "./macos-sandbox.ts";
 import { digest } from "./io.ts";
 import { constants, Database } from "bun:sqlite";
+import { withMacSqliteTemp } from "./mac-sqlite-temp.ts";
 
 if (process.platform !== "darwin") throw new Error("Mac containment acceptance requires an actual macOS kernel");
 const arguments_ = process.argv.slice(2);
@@ -113,19 +114,41 @@ try {
         'import { prepareNativeKvBackend, openKv } from "./src/storage/kv.ts";',
         "prepareNativeKvBackend(" + JSON.stringify(confinedBinding) + ");",
         "const kv = await openKv(" + JSON.stringify(join(root, ".data/native.sqlite3")) + ");",
-        "const round = Number(process.argv[2]);",
-        'try { const previous = await kv.get(["confined-native"]); assert.deepEqual(previous.value, round === 1 ? null : { round: 1 }); await kv.set(["confined-native"], { round }); assert.deepEqual((await kv.get(["confined-native"])).value, { round }); } finally { kv.close(); }',
+        "const phase = process.argv[2];",
+        "try {",
+        'if (phase === "seed") { let op = kv.atomic(); for (let i = 0; i < 32; i++) op = op.set(["spill", i], new Uint8Array(16384)); assert.equal((await op.commit()).ok, true); }',
+        'else if (phase === "revisions") { const versions = []; for (let i = 0; i < 32; i++) versions.push((await kv.get(["spill", i])).versionstamp); console.log(JSON.stringify(versions)); }',
+        'else if (phase === "write") { let op = kv.atomic().set(["partial"], true); for (let i = 0; i < 32; i++) op = op.set(["spill", i], new Uint8Array(16384).fill(1)); assert.equal((await op.set(["quota"], { reserved: 1 }).commit()).ok, true); }',
+        'else if (phase === "rollback" || phase === "committed") { const committed = phase === "committed"; const versions = committed ? null : JSON.parse(process.argv[3]); for (let i = 0; i < 32; i++) { const row = await kv.get(["spill", i]); if (versions) assert.equal(row.versionstamp, versions[i]); assert.equal(row.value.byteLength, 16384); assert(row.value.every(byte => byte === (committed ? 1 : 0))); } assert.equal((await kv.get(["partial"])).value, committed ? true : null); assert.deepEqual((await kv.get(["quota"])).value, committed ? { reserved: 1 } : null); }',
+        'else { const round = Number(phase); const previous = await kv.get(["confined-native"]); assert.deepEqual(previous.value, round === 1 ? null : { round: 1 }); await kv.set(["confined-native"], { round }); assert.deepEqual((await kv.get(["confined-native"])).value, { round }); }',
+        "} finally { kv.close(); }",
       ].join("\n")
     );
-    for (const round of [1, 2]) {
-      const opened = Bun.spawnSync(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", nativeProbe, String(round)], {
-        cwd: root,
-        env: { PATH: "/usr/bin:/bin", BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      assert.equal(opened.exitCode, 0, `persistent native KV round ${round} failed: ${opened.stderr.toString()}`);
-    }
+    await withMacSqliteTemp(root, (sqliteTemp) => {
+      const nativeProfile = profile + "\n(deny network*)";
+      const runNative = (phase: string, privateTemp = true, versions = "") =>
+        Bun.spawnSync(["/usr/bin/sandbox-exec", "-p", nativeProfile, runtime, "--no-env-file", "--no-install", nativeProbe, phase, versions], {
+          cwd: root,
+          env: { PATH: "/usr/bin:/bin", TMPDIR: "/private/tmp", BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", ...(privateTemp ? { SQLITE_TMPDIR: sqliteTemp } : {}) },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      const expectNative = (phase: string): void => {
+        const opened = runNative(phase);
+        assert.equal(opened.exitCode, 0, `persistent native KV ${phase} failed: ${opened.stderr.toString()}`);
+      };
+      for (const phase of ["1", "2", "seed"]) expectNative(phase);
+      const snapshot = runNative("revisions");
+      assert.equal(snapshot.exitCode, 0, snapshot.stderr.toString());
+      const failed = runNative("write", false);
+      assert.notEqual(failed.exitCode, 0, "unbound native SQLite spill unexpectedly succeeded");
+      assert.match(failed.stderr.toString(), /no such savepoint: denokv_atomic_write/);
+      const rollback = runNative("rollback", true, snapshot.stdout.toString());
+      assert.equal(rollback.exitCode, 0, rollback.stderr.toString());
+      expectNative("write");
+      expectNative("committed");
+      return Promise.resolve();
+    });
   }
   assert.equal(digest(await readFile(runtime)), before);
   assert.equal(await readFile(join(nativeHome, "auth.json"), "utf8"), "synthetic-selected-auth");
@@ -149,6 +172,7 @@ try {
       stopped_wal_codec_read: true,
       readonly_sidecar_race_refused: true,
       native_persistent_startup_and_restart: nativeBindingText !== null,
+      native_temp_spill_failure_rollback_and_private_path_success: nativeBindingText !== null,
       real_http: true,
     })
   );
