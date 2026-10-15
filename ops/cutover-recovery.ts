@@ -8,6 +8,7 @@ import type { CutoverPhase } from "./cutover-transition.ts";
 import { exists, fileDigest } from "./io.ts";
 import type { ImmutableVpsReleaseStore, StoredVpsPrior } from "./vps-release-store.ts";
 import { verifyLegacyRollback } from "./verify-legacy-rollback.ts";
+import { canonicalVps } from "./vps-release-contract.ts";
 
 export type CutoverRecovery = {
   root: string;
@@ -53,8 +54,7 @@ export async function verifyPreparedCutover(input: {
   )
     throw new Error("Prepared-only cutover no longer proves the original live baseline");
   await input.host.assertPriorUnchanged(input.prior);
-  if (JSON.stringify(await input.host.loadedUnit()) !== JSON.stringify(input.state.loadedPriorUnit))
-    throw new Error("Prepared-only prior unit identity changed");
+  if (canonicalVps(await input.host.loadedUnit()) !== canonicalVps(input.state.loadedPriorUnit)) throw new Error("Prepared-only prior unit identity changed");
   await input.host.verifyLegacyProcess(input.denoBinary, input.denoSha256, input.workspace, input.prior.sha);
   await input.host.health(input.prior.sha, input.prior.port);
   await input.host.publicHealth(input.prior.sha);

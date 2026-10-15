@@ -27,6 +27,7 @@ import { digest, exists, fileDigest } from "./io.ts";
 import { readVpsPins, withVpsDeployLock, writeVpsAtomic } from "./vps-release-journal.ts";
 import { ImmutableVpsReleaseStore, VPS_LAUNCHER_PROFILE_SHA256, VPS_UNIT_SHA256 } from "./vps-release-store.ts";
 import { verifyCutoverReaderAcceptance, type CutoverReaderReceipt } from "./cutover-reader-gate.ts";
+import { canonicalVps } from "./vps-release-contract.ts";
 
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
 export type FirstBunCutoverInput = Readonly<{
@@ -215,7 +216,7 @@ async function performFirstBunCutover(input: FirstBunCutoverInput): Promise<{ ph
           await authorization(input);
           await verifyCutoverReaderAcceptance(input.reader, input.artifact);
           await assertPrior();
-          if (JSON.stringify(await host.loadedUnit()) !== JSON.stringify(loadedPriorUnit)) throw new Error("The loaded prior service definition changed");
+          if (canonicalVps(await host.loadedUnit()) !== canonicalVps(loadedPriorUnit)) throw new Error("The loaded prior service definition changed");
           await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, workspace, input.priorRevision);
           await host.health(prior.sha, prior.port);
           await host.publicHealth(prior.sha);

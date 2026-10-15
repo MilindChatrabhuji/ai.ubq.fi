@@ -29,6 +29,7 @@ import { currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
 import { repository, writePackage } from "./fixture-release.ts";
 import { fixtureCommand } from "./vps-release-driver-fixture.ts";
 import type { StoredVpsPrior } from "../vps-release-store.ts";
+import { writeVpsAtomic } from "../vps-release-journal.ts";
 
 const parent = fileURLToPath(new URL("../../.cleanup-evidence/first-bun-cutover/", import.meta.url));
 async function fixture(work: (root: string) => Promise<void>) {
@@ -612,6 +613,12 @@ test("prepared-only ExecStopPost verifies the still-live baseline and never stop
       /before service interruption/
     );
     assert.equal(phase, "prepared");
+    const journal = join(root, "prepared.json");
+    await writeVpsAtomic(journal, input.state);
+    input.state = JSON.parse(await readFile(journal, "utf8")) as typeof input.state;
+    assert.notDeepEqual(Object.keys(input.state.loadedPriorUnit), Object.keys(loaded));
+    assert.deepEqual(input.state.loadedPriorUnit, loaded);
+    assert.equal((await lstat(journal)).mode & 0o777, 0o600);
     await verifyPreparedCutover(input);
     assert.deepEqual(calls, ["identity", "process", "health", "public"]);
     healthFails = true;

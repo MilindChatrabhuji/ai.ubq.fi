@@ -18,6 +18,8 @@ This change does not authorize live activation itself; the user's explicit deplo
 
 Both private Bun entries use a cleared environment, an independently checksum-pinned explicit Bun configuration and a frozen working directory outside the mutable checkout. Disabling dotenv discovery and auto-install alone does not block configuration preloads or inherited runtime options. Private workspaces and receipts retain mode700/600; only the source archive extraction child uses umask022 to reproduce the exact hosted CI entry modes.
 
+The gateway launcher and its Bun legacy-rollback verifier independently select `ops/runtime-bunfig.toml`, check its fixed byte hash before invoking Bun, and remove inherited preload/module-selection options while preserving the service credential environment. That config is part of the artifact-bound bootstrap comparison; a modified root `bunfig.toml` cannot supply executable source before verification. Persisted unit identities use the existing canonical encoding so journal key sorting cannot reject unchanged live state.
+
 ## Prepared VPS artifacts use trusted constructor capabilities - 2026-10-15
 
 Deployment fixtures bind their frozen JavaScript graph, matching native headers and independently attested native KV artifact through an internal store preparation capability. Both the graph's lock and the candidate's lock must match the bound digest before packaging. The fixture imports the exact relocated deployment entry and supplies this capability to its actual candidate preparation; service environment variables do not select packaging inputs.

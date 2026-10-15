@@ -151,7 +151,15 @@ const runRelease = async (root: string, command: string, revision: string, label
   const child = spawnFixture("/usr/bin/unshare", {
     args: ["-Urm", "/bin/sh", "-c", mount],
     cwd: root,
-    env: { PATH: "/usr/bin:/bin", HOME: root + "/home", TMPDIR: root + "/tmp", DENO_TIMELINE: "production", BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+    env: {
+      PATH: "/usr/bin:/bin",
+      HOME: root + "/home",
+      TMPDIR: root + "/tmp",
+      DENO_TIMELINE: "production",
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+      NODE_OPTIONS: "--require=" + root + "/preload-trap.ts",
+      BUN_OPTIONS: "--preload=" + root + "/preload-trap.ts",
+    },
   });
   const output = outputFixture(child);
   const timer = setTimeout(() => {
@@ -194,6 +202,10 @@ test("VPS releases execute their own launcher, config, and lockfile across rollb
     for (const name of [".data/releases", "ops", "home", "tmp"]) await mkdir(root + "/" + name, { recursive: true });
     await copyRuntime(root);
     await copyFile(repository + "ops/launch-vps.sh", root + "/ops/launch-vps.sh");
+    await copyFile(repository + "ops/runtime-bunfig.toml", root + "/ops/runtime-bunfig.toml");
+    await writeFile(root + "/preload-trap.ts", 'throw new Error("mutable runtime preload executed");\n');
+    await writeFile(root + "/bunfig.toml", 'preload = ["./preload-trap.ts"]\n');
+    await writeFile(root + "/home/.bunfig.toml", 'preload = ["' + root + '/preload-trap.ts"]\n');
     await writePackage(root, { "#fixture-dependency": "./dependency.ts" });
     await writeFile(root + "/dependency.ts", 'export const label = "checkout";\n');
     await mkdir(root + "/scripts");

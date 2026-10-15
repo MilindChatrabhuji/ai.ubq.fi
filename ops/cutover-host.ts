@@ -107,6 +107,7 @@ export class CutoverHost {
     for (const name of [
       "ops/ai-ubq-fi.service",
       "ops/launch-vps.sh",
+      "ops/runtime-bunfig.toml",
       "ops/verify-legacy-rollback.ts",
       "ops/io.ts",
       "src/kv-conversion/legacy-codec.ts",

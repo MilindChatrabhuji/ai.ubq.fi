@@ -611,9 +611,12 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   ].join("\n");
   const script = root + "/deploy.activation.fixture.ts";
   const invocation = [
+    'import { existsSync } from "node:fs";',
     'import { bindPreparedVpsPayload } from "./vps-release-store.ts";',
     'const { deploy } = await import("./deploy.fixture.ts");',
-    "await deploy(bindPreparedVpsPayload(" + JSON.stringify(preparationInputs) + "));",
+    "const preparation = " + JSON.stringify(preparationInputs) + ";",
+    'if (existsSync("preparation-refused")) preparation.dependencyLockSha256 = "0".repeat(64);',
+    "await deploy(bindPreparedVpsPayload(preparation));",
     "",
   ].join("\n");
   await writeFile(script, bootstrap + invocation);
@@ -797,7 +800,13 @@ for (const marker of ["archive-refused", "preparation-refused", "restart-refused
     await write(f.root, marker, "fault\n");
     const run = await runDeployFixture(f, a.options);
     assert.notEqual(run.code, 0);
-    assert.match(run.stderr, marker === "readiness-refused" ? /did not serve the expected release/ : /fixture .* refused/);
+    const expected = {
+      "archive-refused": /fixture archive refused/,
+      "preparation-refused": /Prepared VPS dependencies do not match the frozen release lock/,
+      "restart-refused": /fixture restart refused/,
+      "readiness-refused": /did not serve the expected release/,
+    }[marker];
+    assert.match(run.stderr, expected);
     assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.oldSha);
     assert.equal(await identity(await a.publicHealth()), a.oldSha);
     assert.doesNotMatch(run.stdout, /"health_verified":true/);
