@@ -322,7 +322,7 @@ export const unavailableClaudeCapacitySource = (snapshotAtMs: number): ProviderC
  * tier genuinely cannot serve until that guard clears. A never-observed but
  * eligible tier stays `available` (there is nothing to be stale yet).
  */
-export const claudeCapacitySource = async (kv: Deno.Kv | null, snapshotAtMs: number, env?: ClaudeCodeEnvLookup): Promise<ProviderCapacityClaudeSource> => {
+export const claudeCapacitySource = async (kv: Kv | null, snapshotAtMs: number, env?: ClaudeCodeEnvLookup): Promise<ProviderCapacityClaudeSource> => {
   const [credential, workspace, quota, health] = await Promise.all([
     resolveClaudeCodeCredential(kv, env).catch(() => null),
     resolveClaudeCodeWorkspace(kv).catch(() => null),

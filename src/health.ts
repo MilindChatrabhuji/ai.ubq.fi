@@ -361,7 +361,7 @@ const claudeCodeQuotaView = (quota: ClaudeCodeQuotaState | null): Record<string,
 
 const readClaudeCodeWorkspacePinnedByEnv = (): boolean => {
   try {
-    return (Deno.env.get(CLAUDE_CODE_WORKSPACE_ID_ENV) ?? "").trim().length > 0;
+    return (process.env[CLAUDE_CODE_WORKSPACE_ID_ENV] ?? "").trim().length > 0;
   } catch {
     return false;
   }

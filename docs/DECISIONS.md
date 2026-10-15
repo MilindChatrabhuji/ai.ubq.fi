@@ -1178,18 +1178,18 @@ was taken at a context size far below the real sessions, which is why it came ba
 only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
 effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
 
-| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
-| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
-| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
-| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
-| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
-| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
-| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
-| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
+| Model                           | Actual input tokens |   n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | --: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 |  10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 |  10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 |  10 |                 9 |                    1 |     10% |
+| `deepseek-flash` (effort `max`) |              18,787 |  10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              66,533 |  10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 |  10 |                10 |                    0 |      0% |
 
 Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
 
@@ -1761,7 +1761,6 @@ Reason: the operator asked for Codex-grade analytics parity for the Claude subsc
 read from the capacity pipeline. Reversal risk: the analytics row reflects the tier's recorded guard state, so a billing
 or workspace rejection shows as `unavailable` with its exact upstream status and message until the operator fixes the
 account and clears the guard; the row never blocks inference itself.
-
 
 ## Native KV build scratch remains outside immutable releases - 2026-10-15
 

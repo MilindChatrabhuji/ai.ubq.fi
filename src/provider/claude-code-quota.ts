@@ -397,7 +397,7 @@ export const recordClaudeCodeQuotaOutcome = async (
  * observed window utilization is preserved because it is upstream truth, not a
  * gateway guard.
  */
-export const clearClaudeCodeQuotaGuards = async (kv: Deno.Kv | null): Promise<ClaudeCodeQuotaState | null> => {
+export const clearClaudeCodeQuotaGuards = async (kv: Kv | null): Promise<ClaudeCodeQuotaState | null> => {
   if (!kv) return null;
   const previous = await loadClaudeCodeQuotaState(kv);
   if (!previous) return null;

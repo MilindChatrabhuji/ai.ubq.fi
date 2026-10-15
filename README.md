@@ -424,7 +424,7 @@ The retained `DENO_DEPLOY_TOKEN` name identifies an admin credential; it does no
 - `CLAUDE_CODE_OAUTH_TOKEN` (optional): The legacy owner-gated Claude Code subscription credential (the one-year token
   printed by `claude setup-token`), still accepted when `CLAUDE_API_KEY` is absent. It travels as
   `Authorization:
-  Bearer` with the documented OAuth beta. Present alone it changes nothing: the route also needs the
+Bearer` with the documented OAuth beta. Present alone it changes nothing: the route also needs the
   requesting principal's key id in `CLAUDE_CODE_ALLOWED_KEY_IDS`, so subscription capacity can never serve a caller the
   owner did not name. It is never sent to gateway clients or exposed by health responses.
 - `CLAUDE_CODE_WORKSPACE_ID` (optional): Pins the `anthropic-workspace-id` the subscription tier names for an

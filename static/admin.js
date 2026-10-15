@@ -1237,9 +1237,9 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
       "Last upstream error",
       source.last_error
         ? `${source.last_error.kind}${
-          typeof source.last_error.status === "number" ? ` · ${source.last_error.status}` : ""
-        } · ${formatDate(source.last_error.at_ms)}${source.last_error.message ? ` — ${source.last_error.message}` : ""}`
-        : "None recorded",
+            typeof source.last_error.status === "number" ? ` · ${source.last_error.status}` : ""
+          } · ${formatDate(source.last_error.at_ms)}${source.last_error.message ? ` — ${source.last_error.message}` : ""}`
+        : "None recorded"
     );
     const standard = Array.isArray(source.standard) ? source.standard : [];
     if (standard.length) {
@@ -1461,9 +1461,8 @@ const renderClaudeCapacitySource = (source) => {
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = typeof source.label === "string" && source.label.trim()
-    ? source.label.trim()
-    : "Claude subscription";
+  title.textContent =
+    typeof source.label === "string" && source.label.trim() ? source.label.trim() : "Claude subscription";
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
@@ -3261,12 +3260,12 @@ const renderClaudeSubscriptionPanel = () => {
   const workspace = block.workspace ?? null;
   const quota = block.quota ?? null;
   const health = block.health ?? null;
-  const blockedUntil = typeof quota?.blocked_until_ms === "number" && quota.blocked_until_ms > Date.now()
-    ? quota.blocked_until_ms
-    : null;
-  const cooldownUntil = typeof quota?.cooldown_until_ms === "number" && quota.cooldown_until_ms > Date.now()
-    ? quota.cooldown_until_ms
-    : null;
+  const blockedUntil =
+    typeof quota?.blocked_until_ms === "number" && quota.blocked_until_ms > Date.now() ? quota.blocked_until_ms : null;
+  const cooldownUntil =
+    typeof quota?.cooldown_until_ms === "number" && quota.cooldown_until_ms > Date.now()
+      ? quota.cooldown_until_ms
+      : null;
 
   if (block.configured !== true) {
     setBadge(claudeSubscriptionBadge, "bad", "No credential");
@@ -3283,46 +3282,41 @@ const renderClaudeSubscriptionPanel = () => {
   }
 
   claudeCredentialSource.textContent = claudeCredentialSourceLabel(credential?.source);
-  claudeCredentialKind.textContent = credential?.kind === "oauth"
-    ? "OAuth / setup token"
-    : credential?.kind === "api_key"
-    ? "Console API key"
-    : "—";
+  claudeCredentialKind.textContent =
+    credential?.kind === "oauth" ? "OAuth / setup token" : credential?.kind === "api_key" ? "Console API key" : "—";
   claudeCredentialHint.textContent = credential?.hint ?? "—";
   claudeCredentialUpdated.textContent = credential?.updated_at_ms
     ? formatDate(credential.updated_at_ms)
     : credential?.source
-    ? "Environment"
-    : "—";
+      ? "Environment"
+      : "—";
 
   claudeWorkspaceId.textContent = workspace?.id ?? "Not selected";
   claudeWorkspaceName.textContent = workspace?.name ?? "—";
-  claudeWorkspaceSource.textContent = workspace?.source === "kv"
-    ? "Pinned in KV"
-    : workspace?.source === "env"
-    ? "Pinned by CLAUDE_CODE_WORKSPACE_ID"
-    : workspace?.source === "discovered"
-    ? "Discovered"
-    : "—";
+  claudeWorkspaceSource.textContent =
+    workspace?.source === "kv"
+      ? "Pinned in KV"
+      : workspace?.source === "env"
+        ? "Pinned by CLAUDE_CODE_WORKSPACE_ID"
+        : workspace?.source === "discovered"
+          ? "Discovered"
+          : "—";
   claudeWorkspaceVerified.textContent = workspace?.last_error
     ? workspace.last_error
     : workspace?.verified_at_ms
-    ? formatDate(workspace.verified_at_ms)
-    : "Not verified";
+      ? formatDate(workspace.verified_at_ms)
+      : "Not verified";
 
-  claudeGateProvider.textContent = block.enabled === true
-    ? "On"
-    : block.enabled === false
-    ? "Off · requests stay on the paid route"
-    : "Unknown";
-  claudeGateAllowlist.textContent = block.principal_allowlist_configured === true
-    ? "Configured"
-    : "Empty · nobody may use the tier";
-  claudeGateQuota.textContent = blockedUntil !== null
-    ? `Blocked until ${formatDate(blockedUntil)}${quota?.block_window ? ` (${quota.block_window} window)` : ""}`
-    : cooldownUntil !== null
-    ? `Cooling down until ${formatDate(cooldownUntil)}`
-    : "Clear";
+  claudeGateProvider.textContent =
+    block.enabled === true ? "On" : block.enabled === false ? "Off · requests stay on the paid route" : "Unknown";
+  claudeGateAllowlist.textContent =
+    block.principal_allowlist_configured === true ? "Configured" : "Empty · nobody may use the tier";
+  claudeGateQuota.textContent =
+    blockedUntil !== null
+      ? `Blocked until ${formatDate(blockedUntil)}${quota?.block_window ? ` (${quota.block_window} window)` : ""}`
+      : cooldownUntil !== null
+        ? `Cooling down until ${formatDate(cooldownUntil)}`
+        : "Clear";
 
   resetClaudeQuotaRows();
   const windows = quota?.windows ?? null;
@@ -3334,8 +3328,8 @@ const renderClaudeSubscriptionPanel = () => {
         claudeQuotaRow(
           `Subscription ${id}`,
           `${window.status ?? "unreported"} · ${formatUtilization(window.utilization)}`,
-          typeof window.reset_at_ms === "number" ? window.reset_at_ms : null,
-        ),
+          typeof window.reset_at_ms === "number" ? window.reset_at_ms : null
+        )
       );
     }
   }
@@ -3350,8 +3344,8 @@ const renderClaudeSubscriptionPanel = () => {
         claudeQuotaRow(
           `API ${family}`,
           `${remaining} of ${limit} remaining`,
-          typeof window.reset_at_ms === "number" ? window.reset_at_ms : null,
-        ),
+          typeof window.reset_at_ms === "number" ? window.reset_at_ms : null
+        )
       );
     }
   }
@@ -3362,13 +3356,13 @@ const renderClaudeSubscriptionPanel = () => {
   const error = quota?.last_error ?? null;
   claudeQuotaError.textContent = error
     ? `${error.kind}${typeof error.status === "number" ? ` · ${error.status}` : ""} · ${formatDate(error.at_ms)}${
-      error.message ? ` — ${error.message}` : ""
-    }`
+        error.message ? ` — ${error.message}` : ""
+      }`
     : "None recorded";
   claudeHealth.textContent = health
     ? `${health.state ?? "unknown"}${health.stale ? " · stale" : ""} · last ${health.last_event ?? "none"}${
-      health.last_observed_at_ms ? ` ${formatDate(health.last_observed_at_ms)}` : ""
-    }`
+        health.last_observed_at_ms ? ` ${formatDate(health.last_observed_at_ms)}` : ""
+      }`
     : "Not observed";
 };
 

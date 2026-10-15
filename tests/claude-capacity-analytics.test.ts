@@ -1,3 +1,5 @@
+import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { claudeCapacitySource, handleProviderCapacity } from "../src/provider/capacity.ts";
 import { setKvForTest } from "../src/kv.ts";
@@ -10,26 +12,26 @@ import { recordClaudeCodeQuotaOutcome } from "../src/provider/claude-code-quota.
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 class AnalyticsKv {
   readonly values = new Map<string, unknown>();
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
       versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as Deno.KvCommitResult);
+    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as KvCommitResult);
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.values.delete(keyOf(key));
     return Promise.resolve();
   }
@@ -43,7 +45,7 @@ const withKv = async (run: (kv: AnalyticsKv) => Promise<void>): Promise<void> =>
   resetClaudeCodeCredentialCacheForTest();
   resetProviderHealthThrottleForTest();
   resetProviderSelectionCacheForTest();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     await run(kv);
   } finally {
@@ -51,9 +53,9 @@ const withKv = async (run: (kv: AnalyticsKv) => Promise<void>): Promise<void> =>
   }
 };
 
-Deno.test("an unconfigured tier reports not_configured without inventing a credential", async () => {
+test("an unconfigured tier reports not_configured without inventing a credential", async () => {
   await withKv(async (kv) => {
-    const source = await claudeCapacitySource(kv as unknown as Deno.Kv, NOW_MS, nullEnv);
+    const source = await claudeCapacitySource(kv as unknown as Kv, NOW_MS, nullEnv);
     assert.equal(source.source, "claude_code");
     assert.equal(source.state, "unavailable");
     assert.equal(source.failure_kind, "not_configured");
@@ -65,9 +67,9 @@ Deno.test("an unconfigured tier reports not_configured without inventing a crede
   });
 });
 
-Deno.test("a configured tier reports its credential, workspace, and observed subscription windows", async () => {
+test("a configured tier reports its credential, workspace, and observed subscription windows", async () => {
   await withKv(async (kv) => {
-    const store = kv as unknown as Deno.Kv;
+    const store = kv as unknown as Kv;
     await storeClaudeCodeStoredCredential(store, { secret: "sk-ant-usr-1A6exampleBwAA" });
     await storeClaudeCodeWorkspaceState(store, {
       id: "wrkspc_01ErorW3iFLRvQy55cpNWtEt",
@@ -108,9 +110,9 @@ Deno.test("a configured tier reports its credential, workspace, and observed sub
   });
 });
 
-Deno.test("a recorded configuration rejection keeps the tier unavailable with its exact reason", async () => {
+test("a recorded configuration rejection keeps the tier unavailable with its exact reason", async () => {
   await withKv(async (kv) => {
-    const store = kv as unknown as Deno.Kv;
+    const store = kv as unknown as Kv;
     await storeClaudeCodeStoredCredential(store, { secret: "sk-ant-usr-1A6exampleBwAA" });
     await recordClaudeCodeQuotaOutcome(store, {
       observation: null,
@@ -138,9 +140,9 @@ Deno.test("a recorded configuration rejection keeps the tier unavailable with it
   });
 });
 
-Deno.test("the capacity endpoint carries the Claude analytics row next to the Codex sources", async () => {
+test("the capacity endpoint carries the Claude analytics row next to the Codex sources", async () => {
   await withKv(async (kv) => {
-    const store = kv as unknown as Deno.Kv;
+    const store = kv as unknown as Kv;
     await storeClaudeCodeStoredCredential(store, { secret: "sk-ant-usr-1A6exampleBwAA" });
     const response = await handleProviderCapacity(new Request("https://ai.ubq.fi/admin/providers/capacity?refresh=live"), {
       kv: store,

@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 /**
  * Claude subscription tier. This is the owner-gated adapter described in
  * docs/handoff/claude-code-subscription-tier-2026-10-11.md, extended with the
@@ -247,7 +248,7 @@ export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
   /** Resolved workspace; resolved from KV and the environment when absent. */
   workspace?: ClaudeCodeResolvedWorkspace | null;
   /** KV handle used for credential, workspace, and quota state. */
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   env?: ClaudeCodeEnvLookup;
   fetcher?: ClaudeCodeFetch;
   signal?: AbortSignal;
@@ -373,7 +374,7 @@ export const buildClaudeCodeRequest = (
 
 const requireClaudeCodeCredential = async (
   supplied: ClaudeCodeResolvedCredential | null | undefined,
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   env: ClaudeCodeEnvLookup | undefined
 ): Promise<ClaudeCodeResolvedCredential> => {
   if (supplied) return supplied;
@@ -421,7 +422,7 @@ export type ClaudeCodeWorkspaceDiscoveryResult =
  * configuration over the discovered entry.
  */
 export const discoverClaudeCodeWorkspace = async (
-  options: Readonly<{ credential: ClaudeCodeAuthHeaders; kv?: Deno.Kv | null; fetcher?: ClaudeCodeFetch; signal?: AbortSignal }>
+  options: Readonly<{ credential: ClaudeCodeAuthHeaders; kv?: Kv | null; fetcher?: ClaudeCodeFetch; signal?: AbortSignal }>
 ): Promise<ClaudeCodeWorkspaceDiscoveryResult> => {
   const kv = options.kv ?? null;
   const headers = claudeCodeRequestHeaders(options.credential, { stream: false });
