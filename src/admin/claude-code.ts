@@ -32,6 +32,7 @@ import {
 } from "../provider/claude-code-models.ts";
 import { clearClaudeCodeQuotaGuards } from "../provider/claude-code-quota.ts";
 import { getPassiveProviderHealthSnapshot } from "../health.ts";
+import { resolveClaudeCodeAccount } from "../provider/claude-code-accounts.ts";
 
 const CREDENTIAL_LABEL_MAX_LENGTH = 64;
 
@@ -191,6 +192,7 @@ export const handleAdminClaudeCodeAuthDelete = async (): Promise<Response> => {
 export const handleAdminClaudeCodeQuotaClear = async (): Promise<Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available; cannot clear the Claude quota guards", "server_error");
-  const cleared = await clearClaudeCodeQuotaGuards(kv);
+  const account = await resolveClaudeCodeAccount(kv);
+  const cleared = account ? await clearClaudeCodeQuotaGuards(kv, account) : null;
   return json(200, { data: await claudeSubscriptionBlock(), guards_cleared: cleared !== null });
 };

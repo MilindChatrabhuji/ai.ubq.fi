@@ -15,6 +15,7 @@ import {
   type ClaudeCodeResolvedWorkspace,
 } from "./provider/claude-code-credentials.ts";
 import { loadClaudeCodeQuotaState, type ClaudeCodeQuotaState } from "./provider/claude-code-quota.ts";
+import { resolveClaudeCodeAccount, isClaudeCodeAccountCurrent } from "./provider/claude-code-accounts.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import {
   getCerebrasProviderHealth,
@@ -375,18 +376,21 @@ const readClaudeCodeWorkspacePinnedByEnv = (): boolean => {
  */
 export const getClaudeSubscriptionStatusSnapshot = async (): Promise<Record<string, unknown>> => {
   const kv = await getKv();
-  const [credential, workspace, workspaceState, quota, selection] = await Promise.all([
-    resolveClaudeCodeCredential(kv).catch(() => null),
-    resolveClaudeCodeWorkspace(kv).catch(() => null),
-    loadClaudeCodeWorkspaceState(kv).catch(() => null),
-    loadClaudeCodeQuotaState(kv).catch(() => null),
+  const account = await resolveClaudeCodeAccount(kv).catch(() => null);
+  const [quota, selection] = await Promise.all([
+    account ? loadClaudeCodeQuotaState(kv, account).catch(() => null) : null,
     loadProviderSelectionCached().catch(() => null),
   ]);
+  const current = account && (await isClaudeCodeAccountCurrent(kv, account)) ? account : null;
+  const credential = current?.credential ?? null;
+  const workspace = current?.workspace ?? null;
   return {
     // Configured means a credential exists; the principal allowlist and the
     // operator switch are reported separately because either one keeps the
     // route inert even with a credential.
     configured: credential !== null,
+    account_id: current?.account_id ?? null,
+    account_cohort_id: current?.account_cohort_id ?? null,
     credential: credential
       ? {
           kind: credential.kind,
@@ -396,10 +400,10 @@ export const getClaudeSubscriptionStatusSnapshot = async (): Promise<Record<stri
           updated_at_ms: credential.updated_at_ms,
         }
       : null,
-    workspace: claudeWorkspaceView(workspace, workspaceState, readClaudeCodeWorkspacePinnedByEnv()),
+    workspace: claudeWorkspaceView(workspace, workspace, readClaudeCodeWorkspacePinnedByEnv()),
     principal_allowlist_configured: readClaudeCodeAllowedKeyIds().size > 0,
     enabled: isProviderEnabled("claude_code", selection),
-    quota: claudeCodeQuotaView(quota),
+    quota: claudeCodeQuotaView(current ? quota : null),
   };
 };
 
@@ -410,7 +414,12 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
   const [cerebrasHealth, claudeCodeHealth, codexHealth, deepseekHealth, lithosHealth, meteredHealth, openRouterHealth, surplusHealth, meteredQuota] =
     await Promise.all([
       providerHealthOrUnknown(getCerebrasProviderHealth()),
-      providerHealthOrUnknown(getClaudeCodeProviderHealth()),
+      providerHealthOrUnknown(
+        (async () => {
+          const account = await resolveClaudeCodeAccount(await getKv());
+          return account ? await getClaudeCodeProviderHealth(Date.now, account) : unknownProviderHealth();
+        })()
+      ),
       Promise.all(context.account_ids.map((accountId) => providerHealthOrUnknown(getCodexProviderHealth(accountId)))),
       providerHealthOrUnknown(getDeepSeekProviderHealth()),
       providerHealthOrUnknown(getLithosProviderHealth()),

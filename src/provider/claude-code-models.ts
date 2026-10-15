@@ -9,6 +9,7 @@ import {
   type ClaudeCodeResolvedCredential,
 } from "./claude-code-credentials.ts";
 import { isSurplusClaudeModel } from "./surplus-claude-request.ts";
+import { resolveClaudeCodeAccount } from "./claude-code-accounts.ts";
 
 export type ClaudeCodeModel = Readonly<{
   id: string;
@@ -136,10 +137,15 @@ export const discoverClaudeCodeModels = async (
 
 const binding = async (kv: Kv | null, env?: ClaudeCodeEnvLookup) => {
   const generation = claudeCodeStateGeneration(kv);
-  const [credential, workspace] = await Promise.all([resolveClaudeCodeCredential(kv, env), resolveClaudeCodeWorkspace(kv, env)]);
+  const account = kv ? await resolveClaudeCodeAccount(kv, env) : null;
+  if (kv && !account) return null;
+  const credential = account?.credential ?? (await resolveClaudeCodeCredential(null, env));
+  const workspace = account?.workspace ?? (kv ? null : await resolveClaudeCodeWorkspace(null, env));
   if (!credential || generation !== claudeCodeStateGeneration(kv)) return null;
   const workspaceId = workspace?.id ?? null;
-  const identity = await sha256Hex(JSON.stringify([credential.kind, credential.secret, credential.updated_at_ms, workspaceId, generation]));
+  const identity = await sha256Hex(
+    JSON.stringify([account?.account_id, account?.account_cohort_id, credential.kind, credential.secret, workspaceId, generation])
+  );
   if (generation !== claudeCodeStateGeneration(kv)) return null;
   return { credential, workspaceId, identity, generation };
 };

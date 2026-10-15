@@ -8,6 +8,13 @@ import type { Kv } from "#kv";
  * request-local cooldown so a transient 429 cannot invent a weekly block.
  */
 import { isRecord } from "../utils.ts";
+import {
+  CLAUDE_CODE_ACCOUNTS_KEY,
+  claudeCodeAccountIdentity,
+  currentClaudeCodeAccountEntry,
+  type ClaudeCodeAccountBinding,
+  type ClaudeCodeAccountIdentity,
+} from "./claude-code-accounts.ts";
 
 export const CLAUDE_CODE_QUOTA_KV_KEY = ["ubq_ai", "claude_code_quota"] as const;
 /** Margin after an upstream reset before the tier is retried. */
@@ -61,6 +68,29 @@ export type ClaudeCodeQuotaObservation = Readonly<{
   representative_claim: string | null;
   observed_at_ms: number;
 }>;
+
+export type ClaudeCodeAcceptedObservation = ClaudeCodeAccountIdentity &
+  Readonly<{
+    v: 1;
+    observation_id: string;
+    source_observed_at_ms: number | null;
+    sampled_at_ms: number;
+    response_status: number | null;
+    state: "available" | "unavailable";
+    observation: ClaudeCodeQuotaObservation;
+  }>;
+type ObservationRecorder = (kv: Kv, event: ClaudeCodeAcceptedObservation) => Promise<void>;
+let observationRecorder: ObservationRecorder | null = null;
+/** Install at application module initialization, before its first inference, never on an admin read. */
+export const registerClaudeCodeObservationRecorder = (recorder: ObservationRecorder): (() => void) => {
+  if (observationRecorder && observationRecorder !== recorder) throw new Error("Claude observation recorder is already installed");
+  observationRecorder = recorder;
+  return () => {
+    if (observationRecorder === recorder) observationRecorder = null;
+  };
+};
+export const claudeCodeQuotaKey = (binding?: ClaudeCodeAccountBinding) =>
+  binding ? (["uos_ai", "claude_code_quota", "v1", binding.account_id, binding.account_cohort_id] as const) : CLAUDE_CODE_QUOTA_KV_KEY;
 
 export type ClaudeCodeQuotaState = Readonly<{
   windows: Readonly<Partial<Record<ClaudeCodeWindowId, ClaudeCodeQuotaWindow>>>;
@@ -260,9 +290,10 @@ export const parseClaudeCodeQuotaState = (value: unknown): ClaudeCodeQuotaState 
   };
 };
 
-export const loadClaudeCodeQuotaState = async (kv: Kv | null): Promise<ClaudeCodeQuotaState | null> => {
+export const loadClaudeCodeQuotaState = async (kv: Kv | null, binding?: ClaudeCodeAccountBinding): Promise<ClaudeCodeQuotaState | null> => {
   if (!kv) return null;
-  const entry = await kv.get(CLAUDE_CODE_QUOTA_KV_KEY, { consistency: "strong" });
+  if (binding && !(await currentClaudeCodeAccountEntry(kv, binding))) return null;
+  const entry = await kv.get(claudeCodeQuotaKey(binding), { consistency: "strong" });
   return parseClaudeCodeQuotaState(entry.value);
 };
 
@@ -317,9 +348,13 @@ export const mergeClaudeCodeQuotaState = (
   };
 };
 
-export const storeClaudeCodeQuotaState = async (kv: Kv | null, state: ClaudeCodeQuotaState): Promise<boolean> => {
+export const storeClaudeCodeQuotaState = async (kv: Kv | null, state: ClaudeCodeQuotaState, binding?: ClaudeCodeAccountBinding): Promise<boolean> => {
   if (!kv) return false;
   try {
+    if (binding) {
+      const accountEntry = await currentClaudeCodeAccountEntry(kv, binding);
+      return accountEntry !== null && (await kv.atomic().check(accountEntry).set(claudeCodeQuotaKey(binding), state).commit()).ok;
+    }
     await kv.set(CLAUDE_CODE_QUOTA_KV_KEY, state);
     return true;
   } catch {
@@ -343,25 +378,25 @@ export const claudeCodeQuotaCoolingDown = (state: ClaudeCodeQuotaState | null, n
  * longer bounded config cooldown plus its displayable detail, so a transient
  * failure can never be persisted as durable exhaustion.
  */
-export const recordClaudeCodeQuotaOutcome = async (
-  kv: Kv | null,
-  input: Readonly<{
-    observation: ClaudeCodeQuotaObservation | null;
-    /** Durable exhaustion claimed by the caller's classification. */
-    exhaustion?: Readonly<{ window: ClaudeCodeWindowId; reset_at_ms: number | null }> | null;
-    /** Generic rate limit with no durable window evidence. */
-    transient?: Readonly<{ retry_after_ms: number | null }> | null;
-    /** Configuration rejection: billing, workspace, or credential scoping. */
-    config_error?: Readonly<{ kind: string; status: number | null; message: string | null; retry_after_ms?: number | null }> | null;
-    /** The tier served this request; clears any recorded configuration error. */
-    served?: boolean;
-    nowMs?: number;
-  }>
-): Promise<ClaudeCodeQuotaState | null> => {
-  const nowMs = input.nowMs ?? Date.now();
-  const previous = await loadClaudeCodeQuotaState(kv);
+type QuotaOutcome = Readonly<{
+  observation: ClaudeCodeQuotaObservation | null;
+  binding?: ClaudeCodeAccountBinding;
+  response_status?: number | null;
+  /** Durable exhaustion claimed by the caller's classification. */
+  exhaustion?: Readonly<{ window: ClaudeCodeWindowId; reset_at_ms: number | null }> | null;
+  /** Generic rate limit with no durable window evidence. */
+  transient?: Readonly<{ retry_after_ms: number | null }> | null;
+  /** Configuration rejection: billing, workspace, or credential scoping. */
+  config_error?: Readonly<{ kind: string; status: number | null; message: string | null; retry_after_ms?: number | null }> | null;
+  /** The tier served this request; clears any recorded configuration error. */
+  served?: boolean;
+  nowMs?: number;
+  /** Internal CAS retry budget, never an upstream retry. */
+  attempts?: number;
+}>;
+
+const quotaStateForOutcome = (previous: ClaudeCodeQuotaState | null, input: QuotaOutcome, nowMs: number): ClaudeCodeQuotaState => {
   const observation = input.observation ?? { windows: {}, standard: {}, representative_claim: null, observed_at_ms: nowMs };
-  if (input.observation === null && !input.exhaustion && !input.transient && !input.config_error && !input.served) return previous;
   const base = mergeClaudeCodeQuotaState(previous, observation, input.exhaustion ?? null, nowMs);
   let withCooldown: ClaudeCodeQuotaState = base;
   if (input.transient) {
@@ -387,8 +422,39 @@ export const recordClaudeCodeQuotaOutcome = async (
   } else if (input.served) {
     withCooldown = { ...withCooldown, last_error: null };
   }
-  const stored = await storeClaudeCodeQuotaState(kv, withCooldown);
-  return stored ? withCooldown : base;
+  return withCooldown;
+};
+
+const publishAcceptedObservation = async (kv: Kv, input: QuotaOutcome, withCooldown: ClaudeCodeQuotaState, nowMs: number): Promise<void> => {
+  if (input.binding && input.observation && !observationIsEmpty(input.observation) && observationRecorder) {
+    await observationRecorder(kv, {
+      ...claudeCodeAccountIdentity(input.binding),
+      v: 1,
+      observation_id: crypto.randomUUID(),
+      source_observed_at_ms:
+        Number.isFinite(input.observation.observed_at_ms) && input.observation.observed_at_ms > 0 ? input.observation.observed_at_ms : null,
+      sampled_at_ms: nowMs,
+      response_status: input.response_status ?? null,
+      state: claudeCodeQuotaBlocked(withCooldown, nowMs) || claudeCodeQuotaCoolingDown(withCooldown, nowMs) ? "unavailable" : "available",
+      observation: input.observation,
+    });
+  }
+};
+
+export const recordClaudeCodeQuotaOutcome = async (kv: Kv | null, input: QuotaOutcome): Promise<ClaudeCodeQuotaState | null> => {
+  const nowMs = input.nowMs ?? Date.now();
+  const accountEntry = kv && input.binding ? await currentClaudeCodeAccountEntry(kv, input.binding) : null;
+  if (input.binding && !accountEntry) return null;
+  const quotaEntry = kv ? await kv.get(claudeCodeQuotaKey(input.binding), { consistency: "strong" }) : null;
+  const previous = parseClaudeCodeQuotaState(quotaEntry?.value);
+  if (input.observation === null && !input.exhaustion && !input.transient && !input.config_error && !input.served) return previous;
+  const withCooldown = quotaStateForOutcome(previous, input, nowMs);
+  if (!kv) return null;
+  const atomic = kv.atomic().check(...(accountEntry ? [accountEntry] : []), ...(quotaEntry ? [quotaEntry] : []));
+  const stored = await atomic.set(claudeCodeQuotaKey(input.binding), withCooldown).commit();
+  if (!stored.ok) return (input.attempts ?? 0) < 8 ? await recordClaudeCodeQuotaOutcome(kv, { ...input, nowMs, attempts: (input.attempts ?? 0) + 1 }) : null;
+  await publishAcceptedObservation(kv, input, withCooldown, nowMs);
+  return withCooldown;
 };
 
 /**
@@ -397,18 +463,31 @@ export const recordClaudeCodeQuotaOutcome = async (
  * observed window utilization is preserved because it is upstream truth, not a
  * gateway guard.
  */
-export const clearClaudeCodeQuotaGuards = async (kv: Kv | null): Promise<ClaudeCodeQuotaState | null> => {
+export const clearClaudeCodeQuotaGuards = async (kv: Kv | null, binding?: ClaudeCodeAccountBinding): Promise<ClaudeCodeQuotaState | null> => {
   if (!kv) return null;
-  const previous = await loadClaudeCodeQuotaState(kv);
-  if (!previous) return null;
+  const accountEntry = binding ? await currentClaudeCodeAccountEntry(kv, binding) : null;
+  if (binding && !accountEntry) return null;
+  const quotaEntry = await kv.get(claudeCodeQuotaKey(binding), { consistency: "strong" });
+  const previous = parseClaudeCodeQuotaState(quotaEntry.value);
+  // Even an empty guard record invalidates older in-flight evidence.
+  if (!previous && !accountEntry) return null;
+  const base = previous ?? mergeClaudeCodeQuotaState(null, { windows: {}, standard: {}, representative_claim: null, observed_at_ms: Date.now() }, null);
   const cleared: ClaudeCodeQuotaState = {
-    ...previous,
+    ...base,
     blocked_until_ms: null,
     block_window: null,
     cooldown_until_ms: null,
     last_error: null,
     updated_at_ms: Date.now(),
   };
-  const stored = await storeClaudeCodeQuotaState(kv, cleared);
-  return stored ? cleared : previous;
+  const operation = kv.atomic().check(quotaEntry);
+  if (accountEntry?.value && binding) {
+    operation.check(accountEntry).set(CLAUDE_CODE_ACCOUNTS_KEY, {
+      ...accountEntry.value,
+      accounts: accountEntry.value.accounts.map((account) =>
+        account.account_id === binding.account_id ? { ...account, evidence_generation: crypto.randomUUID() } : account
+      ),
+    });
+  }
+  return (await operation.set(claudeCodeQuotaKey(binding), cleared).commit()).ok ? cleared : null;
 };
