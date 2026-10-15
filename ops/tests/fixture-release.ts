@@ -18,6 +18,7 @@ export const copyOps = async (destination: string): Promise<void> => {
     "native-kv-release.ts",
     "release-retention.ts",
     "verify-legacy-rollback.ts",
+    "runtime-bunfig.toml",
     "macos-sandbox.ts",
   ]) {
     if (["native-kv-release.ts", "assert-bun-store.ts"].includes(name) && !destination.endsWith("/ops")) {
