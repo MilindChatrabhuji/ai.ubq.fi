@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { constants as sqlite, Database } from "bun:sqlite";
 import { assertPortableKvKeyBytes, assertPortableKvValue } from "#kv";
 import { createHash } from "node:crypto";
 import {
@@ -20,7 +20,7 @@ import { pathToFileURL } from "node:url";
 import { deserialize, serialize } from "node:v8";
 import { transcodePersistedCursor, type ConversionDirection } from "./cursors.ts";
 import { fileDigest, openLegacyCodec } from "./legacy-codec.ts";
-import { NATIVE_DDL, validateNativeRow, verifyNativeSchema, type NativeRow } from "./native-schema.ts";
+import { createNativeSnapshotReader, NATIVE_DDL, validateNativeRow, verifyNativeSchema, type NativeReader, type NativeRow } from "./native-schema.ts";
 import { decodeTypedValue, encodeTypedValue } from "./typed-value.ts";
 
 export type ConvertOptions = {
@@ -62,9 +62,22 @@ const privateSnapshotIdentity = async (path: string, expected?: Awaited<ReturnTy
   if (expected && JSON.stringify(identity) !== JSON.stringify(expected)) throw new Error("Private conversion snapshot changed");
   return identity;
 };
-const digestRows = (db: Database, expiryOnly = false): string => {
+const openPrivateSnapshot = async (path: string, codec: "deno-v8" | "bun-jsc-v1", expected: Awaited<ReturnType<typeof snapshotIdentity>>) => {
+  // URI is explicit on every platform; no normal WAL open may create snapshot sidecars.
+  await privateSnapshotIdentity(path, expected);
+  const uri = pathToFileURL(path);
+  uri.searchParams.set("immutable", "1");
+  const reader = createNativeSnapshotReader(new Database(uri.href, sqlite.SQLITE_OPEN_READONLY | sqlite.SQLITE_OPEN_URI));
+  try {
+    return { reader, revision: verifyNativeSchema(reader, codec) };
+  } catch (error) {
+    reader.close();
+    throw error;
+  }
+};
+const digestRows = (db: NativeReader, expiryOnly = false): string => {
   const hash = createHash("sha256");
-  for (const row of db.query<NativeRow, []>("SELECT k,v,v_encoding,version,seq,expiration_ms FROM kv ORDER BY k").iterate()) {
+  for (const row of db.query<NativeRow>("SELECT k,v,v_encoding,version,seq,expiration_ms FROM kv ORDER BY k").iterate()) {
     hash.update(
       JSON.stringify(
         expiryOnly
@@ -98,7 +111,7 @@ const transcodeValue = async (row: NativeRow, codec: LegacyCodec, direction: Con
   return { bytes, changed: translated.changed };
 };
 const transferRows = async (
-  input: Database,
+  input: NativeReader,
   output: Database,
   codec: LegacyCodec,
   options: ConvertOptions,
@@ -107,7 +120,7 @@ const transferRows = async (
   let count = 0;
   let cursors = 0;
   const insert = output.query("INSERT INTO kv(k,v,v_encoding,version,seq,expiration_ms) VALUES(?,?,?,?,?,?)");
-  for (const row of input.query<NativeRow, []>("SELECT k,v,v_encoding,version,seq,expiration_ms FROM kv ORDER BY k").iterate()) {
+  for (const row of input.query<NativeRow>("SELECT k,v,v_encoding,version,seq,expiration_ms FROM kv ORDER BY k").iterate()) {
     options.signal?.throwIfAborted();
     validateNativeRow(row, revision);
     assertPortableKvKeyBytes(row.k);
@@ -130,7 +143,7 @@ export const convertKvDatabase = async (options: ConvertOptions) => {
   options.signal?.throwIfAborted();
   const identity = await snapshotIdentity(source);
   const staging = mkdtempSync(join(dirname(destination), ".uos-kv-conversion-"));
-  let input: Database | undefined;
+  let input: ReturnType<typeof createNativeSnapshotReader> | undefined;
   let output: Database | undefined;
   let codec: Awaited<ReturnType<typeof openLegacyCodec>> | undefined;
   let published = false;
@@ -146,14 +159,12 @@ export const convertKvDatabase = async (options: ConvertOptions) => {
     const copiedIdentity = await privateSnapshotIdentity(snapshot);
     if (copiedIdentity.sha256 !== identity.sha256 || JSON.stringify(await snapshotIdentity(source)) !== JSON.stringify(identity))
       throw new Error("Source changed during snapshot");
-    // Only this exclusive, hash-verified private copy is immutable; never the stopped source path.
-    const snapshotUri = pathToFileURL(snapshot);
-    snapshotUri.searchParams.set("immutable", "1");
-    input = new Database(snapshotUri.href, { readonly: true, strict: true, safeIntegers: true });
     const sourceCodec = options.direction === "deno-to-bun" ? "deno-v8" : "bun-jsc-v1";
     const destinationCodec = options.direction === "deno-to-bun" ? "bun-jsc-v1" : "deno-v8";
-    const revision = verifyNativeSchema(input, sourceCodec);
-    const schemaMetadata = input.query<{ type: string; name: string; sql: string | null }, []>("SELECT type,name,sql FROM sqlite_master ORDER BY name").all();
+    const opened = await openPrivateSnapshot(snapshot, sourceCodec, copiedIdentity);
+    input = opened.reader;
+    const revision = opened.revision;
+    const schemaMetadata = input.query<{ type: string; name: string; sql: string | null }>("SELECT type,name,sql FROM sqlite_master ORDER BY name").all();
     codec = await openLegacyCodec(options.deno, options.denoSha256, staging, options.signal);
     output = new Database(candidate, { create: true, strict: true, safeIntegers: true });
     output.run("PRAGMA journal_mode=DELETE");
@@ -174,7 +185,7 @@ export const convertKvDatabase = async (options: ConvertOptions) => {
     const destinationDigest = digestRows(output);
     const expiryDigest = digestRows(input, true);
     if (expiryDigest !== digestRows(output, true)) throw new Error("Absolute expiration or raw key changed during conversion");
-    input.close(true);
+    input.close();
     input = undefined;
     output.close(true);
     output = undefined;
@@ -221,7 +232,7 @@ export const convertKvDatabase = async (options: ConvertOptions) => {
     return receipt;
   } catch (error) {
     await codec?.abort();
-    input?.close(true);
+    input?.close();
     output?.close(true);
     if (receiptPublished) rmSync(receiptPath);
     if (published) rmSync(destination);
