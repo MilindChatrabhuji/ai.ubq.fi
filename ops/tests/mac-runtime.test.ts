@@ -1,6 +1,6 @@
 import { copyOps, seedStore } from "./fixture-release.ts";
 import { test } from "bun:test";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawnFixture, runFixture, outputFixture, fsError, type FixtureChild } from "./fixture-process.ts";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -204,6 +204,8 @@ const deployFixture = async (path: string, failure: boolean): Promise<{ source: 
       await writeFile(journal, "prepare-ready\\n", { flag: "a" }); return binary;
     };`;
   await copyOps(path + "/ops");
+  await mkdir(path + "/src/storage", { recursive: true });
+  await copyFile(new URL("../../src/storage/sqlite-readonly.ts", import.meta.url), path + "/src/storage/sqlite-readonly.ts");
   await writeFile(
     path + "/ops/release-artifact.ts",
     `import { writeFile } from "node:fs/promises";
@@ -245,7 +247,10 @@ for (const failure of [false, true]) {
         stderr: "piped",
       });
       const output = await bounded(outputFixture(child));
-      const journal = (await readFile(path + "/journal", "utf8")).trim().split("\n");
+      const journalText = await readFile(path + "/journal", "utf8").catch((cause: unknown) => {
+        throw new Error(`Mac deploy fixture journal missing (exit ${output.code}): ${decoder.decode(output.stderr)}`, { cause });
+      });
+      const journal = journalText.trim().split("\n");
       if (failure) {
         assert.notEqual(output.code, 0);
         assert.deepEqual(journal, ["prepare-start"]);

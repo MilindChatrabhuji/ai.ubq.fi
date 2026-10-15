@@ -6,6 +6,7 @@ import { deserialize, serialize } from "node:v8";
 import { guardNativeKv, retrySqliteBusy } from "./native-kv.ts";
 import { assertPortableKvValue } from "./value-compatibility.ts";
 import { preparedNativeKvBackend } from "./native-addon.ts";
+import { inspectSqliteReadOnly } from "./sqlite-readonly.ts";
 
 export type {
   AtomicCheck,
@@ -35,15 +36,12 @@ export const BUN_KV_CODEC_TABLE = "uos_kv_metadata";
 
 /** Inspect the marker before the native backend can migrate or mutate a file. */
 const verifyCodec = (path: string): void => {
-  const database = new Database(path, { readonly: true, strict: true });
-  try {
+  const codec = inspectSqliteReadOnly(path, (database) => {
     const table = database.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'uos_kv_metadata'").get();
-    const marker = table ? database.query<{ value: string }, []>("SELECT value FROM uos_kv_metadata WHERE key = 'codec'").get() : null;
-    if (marker?.value !== BUN_KV_CODEC) {
-      throw new Error("KV codec is missing or incompatible; convert the legacy database offline before opening it with Bun");
-    }
-  } finally {
-    database.close(true);
+    return table ? database.query<{ value: string }, []>("SELECT value FROM uos_kv_metadata WHERE key = 'codec'").get()?.value : null;
+  });
+  if (codec !== BUN_KV_CODEC) {
+    throw new Error("KV codec is missing or incompatible; convert the legacy database offline before opening it with Bun");
   }
 };
 

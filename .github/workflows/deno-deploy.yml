@@ -117,7 +117,7 @@ jobs:
             kv.close();
             console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, nativeKvLoaded: true }));
           '
-          bun --no-env-file --no-install ops/verify-mac-sandbox.ts
+          bun --no-env-file --no-install ops/verify-mac-sandbox.ts "--native-kv-binding=$binding"
 
   verify-artifact:
     needs: [validate, mac-containment, darwin-native]

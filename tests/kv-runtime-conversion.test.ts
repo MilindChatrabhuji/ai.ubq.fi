@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { createTestNativeKvPreload, currentTestNativeKvBinding } from "../scripts/test-native-kv.ts";
 import { afterEach, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { constants as sqlite, Database } from "bun:sqlite";
 import { assertPortableKvKeyBytes, KvU64, openKv } from "#kv";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyKvMigrationKey, parseKvMigrationEntryLine } from "../src/cache/kv-migration-base.ts";
 import { convertKvDatabase } from "../src/kv-conversion/convert.ts";
+import { fileDigest } from "../src/kv-conversion/legacy-codec.ts";
 import { packStringKey, transcodePersistedCursor } from "../src/kv-conversion/cursors.ts";
-import { NATIVE_DDL, verifyNativeSchema } from "../src/kv-conversion/native-schema.ts";
+import { createNativeSnapshotReader, NATIVE_DDL, verifyNativeSchema } from "../src/kv-conversion/native-schema.ts";
 import { entryToJson, exportEntries, toKey, toValue, valueToJson } from "../src/kv-conversion/profile-json.ts";
 import { decodeTypedValue, encodeTypedValue } from "../src/kv-conversion/typed-value.ts";
 
@@ -168,6 +169,85 @@ test("raw tuple guard rejects negative NaN and truncation without searching insi
   expect(() => {
     assertPortableKvKeyBytes(new Uint8Array([33, 0]));
   }).toThrow("Truncated");
+});
+
+test("immutable native snapshot reader preserves signed64-bit integers without parameters, writes or close sidecars", async () => {
+  const root = fixture();
+  const source = join(root, "native.sqlite3");
+  const snapshot = join(root, "private # % ?.sqlite3");
+  const kv = await openKv(source);
+  try {
+    await kv.set(["snapshot"], { count: 9007199254740993n });
+  } finally {
+    kv.close();
+  }
+  expect((await Bun.file(source).bytes())[18]).toBe(2);
+  const before = await fileDigest(source);
+  copyFileSync(source, snapshot, constants.COPYFILE_EXCL);
+  expect(await fileDigest(snapshot)).toBe(before);
+  for (const path of [source, snapshot]) for (const suffix of ["-wal", "-shm", "-journal"]) expect(existsSync(path + suffix)).toBe(false);
+  const uri = pathToFileURL(snapshot);
+  uri.searchParams.set("immutable", "1");
+  const reader = createNativeSnapshotReader(new Database(uri.href, sqlite.SQLITE_OPEN_READONLY | sqlite.SQLITE_OPEN_URI));
+  try {
+    expect(verifyNativeSchema(reader, "bun-jsc-v1").version).toBeGreaterThan(0n);
+    const statement = reader.query<{ exact: bigint; minimum: bigint; maximum: bigint }>(
+      "SELECT 9007199254740993 AS exact, -9223372036854775808 AS minimum, 9223372036854775807 AS maximum"
+    );
+    const expected = { exact: 9007199254740993n, minimum: -9223372036854775808n, maximum: 9223372036854775807n };
+    expect(statement.get()).toEqual(expected);
+    expect(statement.all()).toEqual([expected]);
+    expect([...statement.iterate()]).toEqual([expected]);
+    const compareNames = (left: string, right: string): number => left.localeCompare(right);
+    expect(Object.keys(statement).sort(compareNames)).toEqual(["all", "get", "iterate"]);
+    expect(Object.keys(reader).sort(compareNames)).toEqual(["close", "query"]);
+    expect(() => reader.query("SELECT ?")).toThrow("must not have bound parameters");
+    expect(() => reader.query("SELECT $missing")).toThrow("must not have bound parameters");
+    expect(() => reader.query("DELETE FROM kv").all()).toThrow(/readonly/i);
+  } finally {
+    reader.close();
+  }
+  expect(await fileDigest(snapshot)).toBe(before);
+  expect(await fileDigest(source)).toBe(before);
+  for (const path of [source, snapshot]) for (const suffix of ["-wal", "-shm", "-journal"]) expect(existsSync(path + suffix)).toBe(false);
+});
+
+test("snapshot reader fails closed if the pinned statement safe-integer API is unavailable", () => {
+  const database = new Database(":memory:");
+  const statement = database.query("SELECT 1");
+  Object.defineProperty(statement, "safeIntegers", { value: undefined });
+  const reader = createNativeSnapshotReader(database);
+  try {
+    expect(() => reader.query("SELECT 1")).toThrow("safe integers are unavailable");
+  } finally {
+    reader.close();
+  }
+});
+
+test("converter reads its private immutable native WAL snapshot before invoking the offline codec", async () => {
+  const root = fixture();
+  const source = join(root, "native.sqlite3");
+  const output = join(root, "output # % ?");
+  mkdirSync(output);
+  const destination = join(output, "deno.sqlite3");
+  const receipt = join(root, "receipt.json");
+  const missingCodec = join(root, "missing-offline-codec");
+  const kv = await openKv(source);
+  try {
+    await kv.set(["snapshot"], { bytes: new Uint8Array([7]), count: 9n });
+  } finally {
+    kv.close();
+  }
+  expect((await Bun.file(source).bytes())[18]).toBe(2);
+  for (const suffix of ["-wal", "-shm", "-journal"]) expect(existsSync(source + suffix)).toBe(false);
+  const before = await fileDigest(source);
+  await assert.rejects(convertKvDatabase({ direction: "bun-to-deno", source, destination, receipt, deno: missingCodec, denoSha256: "0".repeat(64) }), {
+    code: "ENOENT",
+    path: missingCodec,
+  });
+  expect(await fileDigest(source)).toBe(before);
+  expect(existsSync(destination)).toBe(false);
+  expect(existsSync(receipt)).toBe(false);
 });
 
 test("converter refuses preexisting destinations, nonempty WAL, unsupported schemas and queues without publishing", async () => {

@@ -20,7 +20,7 @@ export const copyOps = async (destination: string): Promise<void> => {
     "verify-legacy-rollback.ts",
     "macos-sandbox.ts",
   ]) {
-    if (name === "native-kv-release.ts" && !destination.endsWith("/ops")) {
+    if (["native-kv-release.ts", "assert-bun-store.ts"].includes(name) && !destination.endsWith("/ops")) {
       const source = (await readFile(join(repository, "ops", name), "utf8"))
         .replaceAll('from "../src/', 'from "./src/')
         .replaceAll('from "../scripts/', 'from "./scripts/');

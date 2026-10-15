@@ -96,6 +96,7 @@ const catalogFixture = () => ({
     },
   ],
   sources: {
+    claude_code: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
     codex: { status: "available" as const, count: 2, updated_at_ms: 1 },
     openlux: { status: "unavailable" as const, count: 0, updated_at_ms: null },
     surplus: { status: "available" as const, count: 1, updated_at_ms: 2 },
@@ -769,6 +770,10 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
     updated_at_ms: 1_789_000_000_000,
   };
   const response = await handleAdminModelsRefresh({
+    refreshClaude: (options) => {
+      calls.push(`claude:${options?.force === true ? "force" : "plain"}`);
+      return Promise.resolve({ models: [{ id: "claude-observed", created: 0 }], updated_at_ms: 3 });
+    },
     refreshEnrichment: () => {
       calls.push("openrouter");
       return Promise.resolve(enrichment);
@@ -796,13 +801,14 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
   const body = await response.json();
   assert.deepEqual(
     [...calls].sort((left, right) => left.localeCompare(right)),
-    ["openlux:force", "openrouter", "surplus:force"],
+    ["claude:force", "openlux:force", "openrouter", "surplus:force"],
     "every upstream is force-refreshed"
   );
   assert.deepEqual(body.data, {
     openrouter: { upstream_models: 2, updated_at_ms: 1_789_000_000_000, refreshed: true },
     openlux: { models: 1, updated_at_ms: 1 },
     surplus: { models: 2, updated_at_ms: 2 },
+    claude_code: { models: 1, updated_at_ms: 3, status: "available", stale: false },
   });
 });
 

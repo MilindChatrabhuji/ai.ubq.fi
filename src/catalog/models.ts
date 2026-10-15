@@ -33,6 +33,38 @@ import { codexSnapshotMetadataHint, codexSubscriptionMetadataHint, resolveModelM
 import { openRouterModelsSnapshot } from "../models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "./types.ts";
+import type { ClaudeCodeModel } from "../provider/claude-code-models.ts";
+
+/** Codex-required generic defaults are independent of Claude capability claims; windows come only from discovery. */
+export const claudeCodeCodexModels = (models: readonly ClaudeCodeModel[]): Record<string, unknown>[] =>
+  models.map((model) => ({
+    slug: model.id,
+    display_name: model.display_name ?? model.id,
+    owned_by: "anthropic",
+    supported_endpoint_types: ["openai-response", "openai"],
+    supported_reasoning_levels: [{ effort: "none", description: "No reasoning" }],
+    default_reasoning_level: "none",
+    ...(model.context_window_tokens ? { context_window: model.context_window_tokens, max_context_window: model.context_window_tokens } : {}),
+    shell_type: "shell_command",
+    visibility: "list",
+    supported_in_api: true,
+    priority: 1000,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: "",
+    support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: null,
+    web_search_tool_type: "text",
+    truncation_policy: { mode: "tokens", limit: 10000 },
+    supports_parallel_tool_calls: false,
+    experimental_supported_tools: [],
+  }));
+
+export const withClaudeCodeModels = (models: readonly Record<string, unknown>[], claude: readonly ClaudeCodeModel[]): Record<string, unknown>[] => {
+  const seen = catalogModelIds(models);
+  return [...models, ...claudeCodeCodexModels(claude).filter((model) => !seen.has(String(model.slug)))];
+};
 
 const maybeUpdateNormalizedSnapshot = async (
   kv: Kv,
