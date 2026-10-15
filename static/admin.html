@@ -771,6 +771,138 @@
               </p>
             </div>
           </article>
+
+          <article data-card aria-labelledby="card-claude-subscription">
+            <header data-card-heading>
+              <div>
+                <h2 id="card-claude-subscription">Claude subscription</h2>
+                <p>
+                  The Claude Code subscription tier, mirroring the Codex subscription surfaces: credential provenance,
+                  workspace selection, routing gates, quota windows, and the last upstream outcome. A saved credential
+                  takes effect immediately and is never printed back.
+                </p>
+              </div>
+              <span id="claude-subscription-badge" data-badge data-state="unknown" role="status" aria-live="polite">
+                Not loaded
+              </span>
+            </header>
+            <div data-card-body>
+              <div data-auth-grid>
+                <div data-auth-item>
+                  <div data-auth-head>
+                    <h3 data-auth-title>Credential</h3>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Source</span>
+                    <span data-auth-value id="claude-credential-source">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Kind</span>
+                    <span data-auth-value id="claude-credential-kind">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Hint</span>
+                    <span data-auth-value id="claude-credential-hint">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Updated</span>
+                    <span data-auth-value id="claude-credential-updated">—</span>
+                  </div>
+                </div>
+                <div data-auth-item>
+                  <div data-auth-head>
+                    <h3 data-auth-title>Workspace</h3>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Id</span>
+                    <span data-auth-value id="claude-workspace-id">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Name</span>
+                    <span data-auth-value id="claude-workspace-name">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Source</span>
+                    <span data-auth-value id="claude-workspace-source">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Verified</span>
+                    <span data-auth-value id="claude-workspace-verified">—</span>
+                  </div>
+                </div>
+                <div data-auth-item>
+                  <div data-auth-head>
+                    <h3 data-auth-title>Gates</h3>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Provider switch</span>
+                    <span data-auth-value id="claude-gate-provider">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Principal allowlist</span>
+                    <span data-auth-value id="claude-gate-allowlist">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Quota</span>
+                    <span data-auth-value id="claude-gate-quota">—</span>
+                  </div>
+                </div>
+                <div data-auth-item>
+                  <div data-auth-head>
+                    <h3 data-auth-title>Quota and outcome</h3>
+                  </div>
+                  <div id="claude-quota-windows" data-key-list role="list"
+                    aria-label="Claude subscription quota windows"></div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Last upstream error</span>
+                    <span data-auth-value id="claude-quota-error">—</span>
+                  </div>
+                  <div data-auth-meta>
+                    <span data-auth-label>Health</span>
+                    <span data-auth-value id="claude-health">—</span>
+                  </div>
+                </div>
+              </div>
+              <label data-field>
+                <span data-label>Credential</span>
+                <input
+                  id="claude-credential-input"
+                  type="password"
+                  inputmode="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="sk-ant-..."
+                  aria-describedby="claude-credential-help"
+                />
+              </label>
+              <label data-field>
+                <span data-label>Workspace id (optional)</span>
+                <input
+                  id="claude-workspace-input"
+                  type="text"
+                  inputmode="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="wrkspc_..."
+                  aria-describedby="claude-credential-help"
+                />
+              </label>
+              <small id="claude-credential-help" data-field-help>
+                Saving validates the credential against the Anthropic models listing and stores it in KV, where it wins
+                over the environment. An organization-scoped key needs its workspace id; leaving the field as-is keeps
+                the current selection, and a blank submission keeps it unchanged. "Clear credential" falls back to the
+                deployment environment, and "Clear guards" drops a recorded exhaustion or configuration cooldown so the
+                next eligible request retries the tier.
+              </small>
+              <div data-layout="row">
+                <button id="claude-credential-save" type="button" data-variant="primary">Save credential</button>
+                <button id="claude-workspace-save" type="button">Save workspace</button>
+                <button id="claude-credential-clear" type="button">Clear credential</button>
+                <button id="claude-quota-clear" type="button">Clear guards</button>
+              </div>
+              <p id="claude-subscription-status" data-field-help role="status" aria-live="polite"></p>
+            </div>
+          </article>
         </section>
 
         <section

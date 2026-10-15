@@ -3,20 +3,40 @@ import {
   buildClaudeCodeRequest,
   CLAUDE_CODE_DEFAULT_MAX_OUTPUT_TOKENS,
   CLAUDE_CODE_OAUTH_BETA,
+  classifyClaudeCodeErrorBody,
   classifyClaudeCodeResponse,
+  claudeCodeCredentialKind,
   claudeCodeRequestHeaders,
   parseClaudeCodeAllowedKeyIds,
   readClaudeCodeAllowedKeyIds,
-  readClaudeCodeToken,
   resolveClaudeCodeEligibility,
 } from "../src/provider/claude-code.ts";
 import {
+  CLAUDE_CODE_AUTH_KV_KEY,
+  CLAUDE_CODE_CREDENTIAL_CACHE_TTL_MS,
+  CLAUDE_CODE_WORKSPACE_KV_KEY,
+  clearClaudeCodeStoredCredential,
+  loadClaudeCodeStoredCredential,
+  loadClaudeCodeWorkspaceState,
+  mergeClaudeCodeWorkspaceState,
+  parseClaudeCodeWorkspaceId,
+  partialClaudeCodeCredentialHint,
+  readClaudeCodeEnvCredential,
+  resetClaudeCodeCredentialCacheForTest,
+  resolveClaudeCodeCredential,
+  resolveClaudeCodeWorkspace,
+  storeClaudeCodeStoredCredential,
+  storeClaudeCodeWorkspaceState,
+} from "../src/provider/claude-code-credentials.ts";
+import {
+  CLAUDE_CODE_CONFIG_COOLDOWN_MS,
   CLAUDE_CODE_MIN_BLOCK_MS,
   CLAUDE_CODE_QUOTA_KV_KEY,
   CLAUDE_CODE_RESET_MARGIN_MS,
   CLAUDE_CODE_TRANSIENT_COOLDOWN_MS,
   claudeCodeQuotaBlocked,
   claudeCodeQuotaCoolingDown,
+  clearClaudeCodeQuotaGuards,
   loadClaudeCodeQuotaState,
   mergeClaudeCodeQuotaState,
   observeClaudeCodeQuota,
@@ -26,7 +46,7 @@ import {
 
 const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
 
-/** Minimal Deno.Kv stand-in for the two keys this tier reads and writes. */
+/** Minimal Deno.Kv stand-in for the keys this tier reads and writes. */
 class QuotaKv {
   readonly values = new Map<string, unknown>();
   failWrites = false;
@@ -45,6 +65,11 @@ class QuotaKv {
     this.values.set(keyOf(key), value);
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as Deno.KvCommitResult);
   }
+
+  delete(key: Deno.KvKey): Promise<void> {
+    this.values.delete(keyOf(key));
+    return Promise.resolve();
+  }
 }
 
 const envLookup =
@@ -52,40 +77,143 @@ const envLookup =
   (name: string): string | null =>
     values[name] ?? null;
 const allowed = new Set(["owner-key"]);
+const oauthCredential = {
+  kind: "oauth",
+  secret: "token-1",
+  hint: "token-1",
+  label: null,
+  source: "CLAUDE_CODE_OAUTH_TOKEN",
+  updated_at_ms: null,
+} as const;
+const emptyObservation = (nowMs: number) => ({ windows: {}, standard: {}, representative_claim: null, observed_at_ms: nowMs });
 
 Deno.test("credential and allowlist reads are explicit and empty by default", () => {
-  assert.equal(readClaudeCodeToken(envLookup({})), null);
-  assert.equal(readClaudeCodeToken(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: "  " })), null);
-  assert.equal(readClaudeCodeToken(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: " token-1 " })), "token-1");
+  assert.equal(readClaudeCodeEnvCredential(envLookup({})), null);
+  assert.equal(readClaudeCodeEnvCredential(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: "  " })), null);
+  assert.equal(readClaudeCodeEnvCredential(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: " token-1 " }))?.secret, "token-1");
+  assert.equal(readClaudeCodeEnvCredential(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: " token-1 " }))?.kind, "oauth");
+  assert.equal(readClaudeCodeEnvCredential(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: " token-1 " }))?.source, "CLAUDE_CODE_OAUTH_TOKEN");
   assert.deepEqual([...parseClaudeCodeAllowedKeyIds(undefined)], []);
   assert.deepEqual([...parseClaudeCodeAllowedKeyIds("  ")], []);
   assert.deepEqual([...parseClaudeCodeAllowedKeyIds("a, b\n c")], ["a", "b", "c"]);
   assert.deepEqual([...readClaudeCodeAllowedKeyIds(envLookup({ CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" }))], ["owner-key"]);
 });
 
+Deno.test("CLAUDE_API_KEY is the primary environment credential and wins over the legacy OAuth token", () => {
+  const apiKey = readClaudeCodeEnvCredential(envLookup({ CLAUDE_API_KEY: " sk-ant-usr-1A6exampleBwAA " }));
+  assert(apiKey);
+  assert.equal(apiKey.kind, "api_key");
+  assert.equal(apiKey.secret, "sk-ant-usr-1A6exampleBwAA");
+  assert.equal(apiKey.source, "CLAUDE_API_KEY");
+  const both = readClaudeCodeEnvCredential(envLookup({ CLAUDE_API_KEY: "sk-ant-usr-key", CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-token" }));
+  assert.equal(both?.source, "CLAUDE_API_KEY");
+  const oauthOnly = readClaudeCodeEnvCredential(envLookup({ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-token" }));
+  assert.equal(oauthOnly?.kind, "oauth");
+});
+
+Deno.test("credential kinds and partial hints never expose the secret", () => {
+  assert.equal(claudeCodeCredentialKind("sk-ant-api03-abc"), "api_key");
+  assert.equal(claudeCodeCredentialKind("sk-ant-usr-1A6abc"), "api_key");
+  assert.equal(claudeCodeCredentialKind("sk-ant-oat01-abc"), "oauth");
+  assert.equal(claudeCodeCredentialKind("sk-ant-ort01-abc"), "oauth");
+  assert.equal(claudeCodeCredentialKind("something-else"), "api_key");
+  const hint = partialClaudeCodeCredentialHint("sk-ant-usr-1A6ABCDEFGHIJKLMNOPBwAA");
+  assert.equal(hint, "sk-ant-usr-1A6...BwAA");
+  assert.equal(hint.includes("ABCDEFGH"), false, "the middle of the secret never appears in a hint");
+  assert.equal(partialClaudeCodeCredentialHint("short"), "configured");
+});
+
+Deno.test("a stored credential beats the environment and clearing restores it", async () => {
+  resetClaudeCodeCredentialCacheForTest();
+  const kv = new QuotaKv();
+  const env = envLookup({ CLAUDE_API_KEY: "sk-ant-usr-env-key" });
+  const fromEnv = await resolveClaudeCodeCredential(kv as unknown as Deno.Kv, env);
+  assert.equal(fromEnv?.source, "CLAUDE_API_KEY");
+
+  const stored = await storeClaudeCodeStoredCredential(kv as unknown as Deno.Kv, { secret: "sk-ant-usr-kv-key", label: "primary" });
+  assert(stored);
+  assert.equal(stored.kind, "api_key");
+  assert.equal(stored.hint, "configured", "a short secret is never partially revealed");
+  const resolved = await resolveClaudeCodeCredential(kv as unknown as Deno.Kv, env);
+  assert.equal(resolved?.source, "kv");
+  assert.equal(resolved?.secret, "sk-ant-usr-kv-key");
+  assert.equal(resolved?.label, "primary");
+  assert.equal(resolved?.updated_at_ms !== null, true);
+  assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])), true);
+
+  const loaded = await loadClaudeCodeStoredCredential(kv as unknown as Deno.Kv);
+  assert.equal(loaded?.secret, "sk-ant-usr-kv-key");
+  assert.equal((kv.values.get(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])) as { secret?: string }).secret, "sk-ant-usr-kv-key");
+
+  await clearClaudeCodeStoredCredential(kv as unknown as Deno.Kv);
+  const afterClear = await resolveClaudeCodeCredential(kv as unknown as Deno.Kv, env);
+  assert.equal(afterClear?.source, "CLAUDE_API_KEY");
+  assert.equal(afterClear?.secret, "sk-ant-usr-env-key");
+  assert.equal(CLAUDE_CODE_CREDENTIAL_CACHE_TTL_MS > 0, true);
+  resetClaudeCodeCredentialCacheForTest();
+});
+
+Deno.test("workspace resolution prefers a KV pin, then the environment pin, then discovery state", async () => {
+  const kv = new QuotaKv();
+  assert.equal(await resolveClaudeCodeWorkspace(kv as unknown as Deno.Kv, envLookup({})), null);
+  const fromEnv = await resolveClaudeCodeWorkspace(kv as unknown as Deno.Kv, envLookup({ CLAUDE_CODE_WORKSPACE_ID: "wrkspc_01FBEp5VyCHs7ghEnJqk6giF" }));
+  assert.deepEqual(fromEnv, { id: "wrkspc_01FBEp5VyCHs7ghEnJqk6giF", name: null, source: "env" });
+
+  const discovered = mergeClaudeCodeWorkspaceState(null, { id: "wrkspc_01ErorW3iFLRvQy55cpNWtEt", name: "Default", source: "discovered" });
+  await storeClaudeCodeWorkspaceState(kv as unknown as Deno.Kv, discovered);
+  const fromDiscovery = await resolveClaudeCodeWorkspace(kv as unknown as Deno.Kv, envLookup({}));
+  assert.deepEqual(fromDiscovery, { id: "wrkspc_01ErorW3iFLRvQy55cpNWtEt", name: "Default", source: "discovered" });
+  assert.equal((await loadClaudeCodeWorkspaceState(kv as unknown as Deno.Kv))?.name, "Default");
+
+  const pinned = mergeClaudeCodeWorkspaceState(discovered, { id: "wrkspc_01FBEp5VyCHs7ghEnJqk6giF", source: "kv", verified: true });
+  await storeClaudeCodeWorkspaceState(kv as unknown as Deno.Kv, pinned);
+  const resolved = await resolveClaudeCodeWorkspace(kv as unknown as Deno.Kv, envLookup({}));
+  assert.equal(resolved?.id, "wrkspc_01FBEp5VyCHs7ghEnJqk6giF");
+  assert.equal(resolved?.source, "kv");
+  assert.equal((await loadClaudeCodeWorkspaceState(kv as unknown as Deno.Kv))?.verified_at_ms !== null, true);
+
+  assert.equal(parseClaudeCodeWorkspaceId("wrkspc_abc"), "wrkspc_abc");
+  assert.equal(parseClaudeCodeWorkspaceId("abc"), null);
+  assert.equal(parseClaudeCodeWorkspaceId("  "), null);
+  assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_WORKSPACE_KV_KEY])), true);
+});
+
 Deno.test("eligibility is the conjunction of model, provider, principal, credential, and quota gates", () => {
-  const base = { model: "claude-opus-5-5", keyId: "owner-key", providerEnabled: true, allowedKeyIds: allowed, token: "token-1", quota: null } as const;
-  assert.deepEqual(resolveClaudeCodeEligibility(base), { eligible: true, token: "token-1" });
+  const base = {
+    model: "claude-opus-5-5",
+    keyId: "owner-key",
+    providerEnabled: true,
+    allowedKeyIds: allowed,
+    credential: oauthCredential,
+    quota: null,
+  } as const;
+  assert.deepEqual(resolveClaudeCodeEligibility(base), { eligible: true, credential: oauthCredential, workspace: null });
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, model: "gpt-5.6-sol" }), { eligible: false, reason: "model_unsupported" });
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, providerEnabled: false }), { eligible: false, reason: "provider_disabled" });
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, keyId: null }), { eligible: false, reason: "principal_not_allowed" });
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, keyId: "other-key" }), { eligible: false, reason: "principal_not_allowed" });
-  assert.deepEqual(resolveClaudeCodeEligibility({ ...base, token: null }), { eligible: false, reason: "token_missing" });
+  assert.deepEqual(resolveClaudeCodeEligibility({ ...base, credential: null }), { eligible: false, reason: "credential_missing" });
 });
 
 Deno.test("an active durable block or cooldown removes eligibility until it expires", () => {
   const nowMs = 1_800_000_000_000;
   const blocked = {
     windows: {},
+    standard: {},
     representative_claim: null,
     blocked_until_ms: nowMs + 60_000,
     block_window: "5h" as const,
     cooldown_until_ms: null,
+    last_error: null,
     updated_at_ms: nowMs,
   };
-  const base = { model: "claude-opus-5-5", keyId: "owner-key", providerEnabled: true, allowedKeyIds: allowed, token: "token-1", nowMs } as const;
+  const base = { model: "claude-opus-5-5", keyId: "owner-key", providerEnabled: true, allowedKeyIds: allowed, credential: oauthCredential, nowMs } as const;
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, quota: blocked }), { eligible: false, reason: "quota_blocked" });
-  assert.deepEqual(resolveClaudeCodeEligibility({ ...base, quota: { ...blocked, blocked_until_ms: nowMs - 1 } }), { eligible: true, token: "token-1" });
+  assert.deepEqual(resolveClaudeCodeEligibility({ ...base, quota: { ...blocked, blocked_until_ms: nowMs - 1 } }), {
+    eligible: true,
+    credential: oauthCredential,
+    workspace: null,
+  });
   const cooling = { ...blocked, blocked_until_ms: null, cooldown_until_ms: nowMs + 1_000 };
   assert.deepEqual(resolveClaudeCodeEligibility({ ...base, quota: cooling }), { eligible: false, reason: "cooling_down" });
 });
@@ -117,8 +245,25 @@ Deno.test("observations read the documented unified headers and reject malformed
   assert.deepEqual(statusOnly.windows["7d"], { status: "limited", utilization: null, reset_at_ms: null, observed_at_ms: 1_800_000_000_000 });
 });
 
+Deno.test("standard per-family rate limits are captured for API-key credentials", () => {
+  const headers = new Headers({
+    "anthropic-ratelimit-requests-limit": "50",
+    "anthropic-ratelimit-requests-remaining": "49",
+    "anthropic-ratelimit-requests-reset": "1783180800",
+    "anthropic-ratelimit-input-tokens-limit": "40000",
+    "anthropic-ratelimit-input-tokens-remaining": "39000",
+    "anthropic-ratelimit-output-tokens-limit": "8000",
+  });
+  const observation = observeClaudeCodeQuota(headers, 1_800_000_000_000);
+  assert(observation);
+  assert.deepEqual(observation.standard.requests, { limit: 50, remaining: 49, reset_at_ms: 1_783_180_800_000, observed_at_ms: 1_800_000_000_000 });
+  assert.equal(observation.standard["input-tokens"]?.limit, 40_000);
+  assert.equal(observation.standard["output-tokens"]?.remaining, null);
+  assert.equal(Object.keys(observation.windows).length, 0);
+});
+
 Deno.test("response classification keeps durable exhaustion, transient limits, and auth failures apart", () => {
-  assert.equal(classifyClaudeCodeResponse(200, new Headers()).kind, "ok");
+  assert.deepEqual(classifyClaudeCodeResponse(200, new Headers()), { kind: "ok", exhaustion: null, retry_after_ms: null, detail: null });
   const durable = new Headers({
     "anthropic-ratelimit-unified-5h-status": "limited",
     "anthropic-ratelimit-unified-5h-reset": "1783180800",
@@ -127,11 +272,12 @@ Deno.test("response classification keeps durable exhaustion, transient limits, a
     kind: "durable_exhaustion",
     exhaustion: { window: "5h", reset_at_ms: 1_783_180_800_000 },
     retry_after_ms: null,
+    detail: null,
   });
   const utilizationFull = new Headers({ "anthropic-ratelimit-unified-7d-utilization": "1", "anthropic-ratelimit-unified-7d-reset": "1783180800" });
   assert.deepEqual(classifyClaudeCodeResponse(429, utilizationFull).exhaustion, { window: "7d", reset_at_ms: 1_783_180_800_000 });
   const transient = new Headers({ "retry-after": "30" });
-  assert.deepEqual(classifyClaudeCodeResponse(429, transient), { kind: "transient_rate_limited", exhaustion: null, retry_after_ms: 30_000 });
+  assert.deepEqual(classifyClaudeCodeResponse(429, transient), { kind: "transient_rate_limited", exhaustion: null, retry_after_ms: 30_000, detail: null });
   const transientAllowed = new Headers({ "anthropic-ratelimit-unified-5h-status": "allowed", "anthropic-ratelimit-unified-5h-utilization": "0.9" });
   assert.equal(classifyClaudeCodeResponse(429, transientAllowed).kind, "transient_rate_limited");
   assert.equal(classifyClaudeCodeResponse(401, new Headers()).kind, "auth_invalid");
@@ -140,14 +286,59 @@ Deno.test("response classification keeps durable exhaustion, transient limits, a
   assert.equal(classifyClaudeCodeResponse(400, new Headers()).kind, "request_rejected");
 });
 
+Deno.test("error bodies separate workspace, billing, and credential scoping rejections from generic failures", () => {
+  const rejected = classifyClaudeCodeResponse(400, new Headers());
+  const workspaceRequired = classifyClaudeCodeErrorBody(
+    rejected,
+    JSON.stringify({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.",
+      },
+    })
+  );
+  assert.equal(workspaceRequired.kind, "workspace_required");
+  assert(workspaceRequired.detail?.includes("not scoped to a workspace"));
+
+  const notFound = classifyClaudeCodeErrorBody(
+    classifyClaudeCodeResponse(404, new Headers()),
+    JSON.stringify({ type: "error", error: { type: "not_found_error", message: "Workspace `72cde404-5c32-4031-b07f-26df74e0980c` not found." } })
+  );
+  assert.equal(notFound.kind, "workspace_not_found");
+
+  const billing = classifyClaudeCodeErrorBody(
+    rejected,
+    JSON.stringify({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      },
+    })
+  );
+  assert.equal(billing.kind, "billing_blocked");
+
+  const generic = classifyClaudeCodeErrorBody(
+    rejected,
+    JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "max_tokens: must be at least 1" } })
+  );
+  assert.equal(generic.kind, "request_rejected");
+  assert(generic.detail?.startsWith("max_tokens"));
+  assert.equal(classifyClaudeCodeErrorBody(classifyClaudeCodeResponse(200, new Headers()), null).kind, "ok");
+});
+
 Deno.test("quota state merges newest window observations and never resurrects stale windows", () => {
   const early = {
     windows: { "5h": { status: "allowed", utilization: 0.1, reset_at_ms: 1_783_000_000_000, observed_at_ms: 1_800_000_000_000 } },
+    standard: {},
     representative_claim: null,
     observed_at_ms: 1_800_000_000_000,
   };
   const later = {
     windows: { "5h": { status: "allowed", utilization: 0.4, reset_at_ms: 1_783_000_000_000, observed_at_ms: 1_800_000_100_000 } },
+    standard: {},
     representative_claim: "five_hour",
     observed_at_ms: 1_800_000_100_000,
   };
@@ -160,7 +351,7 @@ Deno.test("quota state merges newest window observations and never resurrects st
 
 Deno.test("durable blocks extend past the reset margin, survive merges, and expire", () => {
   const nowMs = 1_800_000_000_000;
-  const observation = { windows: {}, representative_claim: null, observed_at_ms: nowMs };
+  const observation = emptyObservation(nowMs);
   const blocked = mergeClaudeCodeQuotaState(null, observation, { window: "5h", reset_at_ms: nowMs + 100_000 }, nowMs);
   assert.equal(blocked.blocked_until_ms, nowMs + 100_000 + CLAUDE_CODE_RESET_MARGIN_MS);
   assert.equal(blocked.block_window, "5h");
@@ -214,6 +405,46 @@ Deno.test("recorded outcomes persist windows, blocks, and cooldowns through KV",
   assert.equal(parseClaudeCodeQuotaState({ windows: {}, updated_at_ms: 0 }), null);
 });
 
+Deno.test("a configuration rejection records its reason and a bounded cooldown, and a served request clears it", async () => {
+  const kv = new QuotaKv();
+  const nowMs = 1_800_000_000_000;
+  const recorded = await recordClaudeCodeQuotaOutcome(kv as unknown as Deno.Kv, {
+    observation: null,
+    config_error: { kind: "billing_blocked", status: 400, message: "Your credit balance is too low to access the Anthropic API.", retry_after_ms: null },
+    nowMs,
+  });
+  assert(recorded);
+  assert.equal(recorded.cooldown_until_ms, nowMs + CLAUDE_CODE_CONFIG_COOLDOWN_MS);
+  assert.equal(recorded.last_error?.kind, "billing_blocked");
+  assert.equal(recorded.last_error?.status, 400);
+  assert(recorded.last_error?.message?.includes("credit balance"));
+  assert.equal(claudeCodeQuotaCoolingDown(recorded, nowMs + 1_000), true);
+  assert.equal(recorded.blocked_until_ms, null, "a billing rejection is not a quota block");
+
+  const served = await recordClaudeCodeQuotaOutcome(kv as unknown as Deno.Kv, { observation: null, served: true, nowMs: nowMs + 20 * 60_000 });
+  assert.equal(served?.last_error, null, "serving the request clears the recorded configuration error");
+
+  const cleared = await clearClaudeCodeQuotaGuards(kv as unknown as Deno.Kv);
+  assert.equal(cleared?.cooldown_until_ms, null);
+  assert.equal(cleared?.blocked_until_ms, null);
+  assert.equal(cleared?.last_error, null);
+  assert.equal(await clearClaudeCodeQuotaGuards(null), null);
+});
+
+Deno.test("configuration rejections never silently degrade into request-local cooldowns", async () => {
+  const kv = new QuotaKv();
+  const nowMs = 1_800_000_000_000;
+  const rejected = await recordClaudeCodeQuotaOutcome(kv as unknown as Deno.Kv, {
+    observation: null,
+    exhaustion: null,
+    transient: null,
+    config_error: { kind: "workspace_not_found", status: 404, message: "Workspace `72cde404` not found.", retry_after_ms: 120_000 },
+    nowMs,
+  });
+  assert.equal(rejected?.cooldown_until_ms, nowMs + 120_000, "an explicit retry-after bounds the configuration cooldown");
+  assert.equal(rejected?.last_error?.kind, "workspace_not_found");
+});
+
 Deno.test("the native request builder defaults max_tokens, strips router hints, and refuses non-Claude models", () => {
   const built = buildClaudeCodeRequest({
     model: "claude-opus-5-5",
@@ -233,12 +464,27 @@ Deno.test("the native request builder defaults max_tokens, strips router hints, 
   assert.equal(buildClaudeCodeRequest({ model: "gpt-5.6-sol", input: "hi" }), null);
 });
 
-Deno.test("subscription headers carry Bearer, the API version, and the OAuth beta without an API key", () => {
-  const streaming = claudeCodeRequestHeaders("token-1", true);
+Deno.test("OAuth credentials carry Bearer plus the OAuth beta and never an API key header", () => {
+  const streaming = claudeCodeRequestHeaders({ kind: "oauth", secret: "token-1" }, { stream: true });
   assert.equal(streaming.get("authorization"), "Bearer token-1");
   assert.equal(streaming.get("anthropic-version"), "2023-06-01");
   assert.equal(streaming.get("anthropic-beta"), CLAUDE_CODE_OAUTH_BETA);
   assert.equal(streaming.get("accept"), "text/event-stream");
   assert.equal(streaming.get("x-api-key"), null);
-  assert.equal(claudeCodeRequestHeaders("token-1", false).get("accept"), "application/json");
+  assert.equal(streaming.get("anthropic-workspace-id"), null);
+  assert.equal(claudeCodeRequestHeaders({ kind: "oauth", secret: "token-1" }, { stream: false }).get("accept"), "application/json");
+});
+
+Deno.test("API-key credentials carry x-api-key, the workspace header when selected, and no OAuth beta", () => {
+  const headers = claudeCodeRequestHeaders(
+    { kind: "api_key", secret: "sk-ant-usr-1A6exampleBwAA" },
+    { stream: false, workspaceId: "wrkspc_01ErorW3iFLRvQy55cpNWtEt" }
+  );
+  assert.equal(headers.get("x-api-key"), "sk-ant-usr-1A6exampleBwAA");
+  assert.equal(headers.get("authorization"), null);
+  assert.equal(headers.get("anthropic-beta"), null);
+  assert.equal(headers.get("anthropic-version"), "2023-06-01");
+  assert.equal(headers.get("anthropic-workspace-id"), "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
+  const noWorkspace = claudeCodeRequestHeaders({ kind: "api_key", secret: "key" }, { stream: false, workspaceId: null });
+  assert.equal(noWorkspace.get("anthropic-workspace-id"), null);
 });

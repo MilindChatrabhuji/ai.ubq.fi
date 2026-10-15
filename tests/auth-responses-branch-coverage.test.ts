@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT } from "../src/api-keys.ts";
 import {
+  API_KEY_USAGE_PROVIDERS,
   ApiKeyQuotaDispatchError,
   apiKeyQuotaUsedPercent,
   apiKeyRateLimitPolicyHeaders,
@@ -492,6 +493,13 @@ Deno.test("a malformed usage window or request row is refused instead of trusted
   assert.deepEqual(normalizeApiKeyUsageRequestV3(dispatched), dispatched);
   const openRouterDispatched = { ...reserved, state: "dispatched", provider: "openrouter", dispatched_at_ms: 2 };
   assert.deepEqual(normalizeApiKeyUsageRequestV3(openRouterDispatched), openRouterDispatched, "an OpenRouter dispatch keeps its provider identity");
+  // Every provider the ledger may write must stay readable: an unreadable
+  // dispatched row surfaces as an unavailable reservation for the next hop.
+  for (const provider of API_KEY_USAGE_PROVIDERS) {
+    const row = { ...reserved, state: "dispatched" as const, provider, dispatched_at_ms: 2 };
+    assert.deepEqual(normalizeApiKeyUsageRequestV3(row), row, `a ${provider} dispatch row stays readable`);
+  }
+  assert(API_KEY_USAGE_PROVIDERS.includes("claude_code"), "the Claude subscription dispatch must be a listed API-key usage provider");
   assert.equal(normalizeApiKeyUsageRequestV3({ ...dispatched, provider: null }), null);
   assert.equal(normalizeApiKeyUsageRequestV3({ ...dispatched, dispatched_at_ms: null }), null);
   const released = { ...reserved, state: "released", released_at_ms: 3, release_reason: "route_completed_without_provider_dispatch" };
