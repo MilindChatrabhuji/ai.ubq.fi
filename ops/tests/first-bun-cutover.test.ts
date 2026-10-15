@@ -238,6 +238,7 @@ test("an unbound artifact cannot copy payloads or bypass mutable-root provenance
 
 function readerContract(proofPath: string, proofSha256: string) {
   const manifest = artifact.manifest;
+  const runtime: { archiveSha256: string; binarySha256: string } = BUN_RUNTIMES.linux;
   assert.equal(manifest.schema, 3);
   return {
     schemaVersion: "sentinel-bun-reader-acceptance-v1",
@@ -274,8 +275,8 @@ function readerContract(proofPath: string, proofSha256: string) {
       version: "1.4.0",
       platform: "linux",
       architecture: "arm64",
-      archiveSha256: BUN_RUNTIMES.linux.archiveSha256,
-      binarySha256: BUN_RUNTIMES.linux.binarySha256,
+      archiveSha256: runtime.archiveSha256,
+      binarySha256: runtime.binarySha256,
     },
     execution: {
       platform: "linux",
