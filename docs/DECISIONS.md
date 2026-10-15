@@ -1789,3 +1789,11 @@ before generation, so it changes no request semantics; it is sent only on the cr
 and no other fingerprint (device id, session id, user agent, or additional headers) is synthesized. Reversal risk: none
 beyond the tier's existing fall-through - an attribution-less OAuth request fails closed into the paid waterfall, and the
 attribution can be removed at its single call site if the upstream requirement changes.
+
+## Claude uses the shared catalog and existing provider controls - 2026-10-15
+
+Claude model discovery belongs in the same model catalog, provider counts, and whitelist surfaces as the other providers. Read the actual authenticated upstream model listing, preserve returned model identifiers, and bind cached discovery to the credential and workspace that produced it. Credential validation must not discard the discovery result, and changing credentials must not publish stale models from the prior credential. No guessed model list substitutes for discovery.
+
+The Claude credential and workspace controls belong under its existing provider entry. Remove the separate `card-claude-subscription` dashboard card and its duplicated diagnostics; keep quota diagnostics in the shared Analytics capacity list and the existing Kernel summary. Preserve provider selection and credential/guard actions through the existing endpoints.
+
+Reason: the owner reported that the Claude whitelist showed zero models and rejected the invented standalone card because it did not follow the Codex subscription UI. A live quota row and single stored credential do not establish historical-chart or multi-account-pool parity; those capabilities remain separate acceptance requirements.
