@@ -81,6 +81,52 @@ test("singleton bootstrap preserves original keys and never attributes the legac
   assert.equal((await loadClaudeCodeAccountStore(kv)).active_account_id, account.account_id);
 });
 
+test("a pristine passive read stays unpersisted and allows later intentional first environment bootstrap", async () => {
+  assert.equal(await resolveClaudeCodeAccount(kv, () => null), null);
+  assert.deepEqual((await loadClaudeCodeAccountStore(kv, () => null)).accounts, []);
+  assert.equal((await kv.get(CLAUDE_CODE_ACCOUNTS_KEY)).value, null);
+  const first = await resolveClaudeCodeAccount(kv, env);
+  assert(first);
+  assert.equal(first.credential.secret, env("CLAUDE_CODE_OAUTH_TOKEN"));
+  assert.equal((await loadClaudeCodeAccountStore(kv)).active_account_id, first.account_id);
+});
+
+test("targeted missing-account deletion leaves pristine state untouched while explicit clear persists a tombstone", async () => {
+  assert.equal(await removeClaudeCodeAccount(kv, "nonexistent-account"), false);
+  assert.equal((await kv.get(CLAUDE_CODE_ACCOUNTS_KEY)).value, null);
+  assert.equal(await removeClaudeCodeAccount(kv), false);
+  assert.deepEqual((await loadClaudeCodeAccountStore(kv, env)).accounts, []);
+  assert.notEqual((await kv.get(CLAUDE_CODE_ACCOUNTS_KEY)).value, null);
+  resetClaudeCodeCredentialCacheForTest();
+  assert.equal(await resolveClaudeCodeAccount(kv, env), null);
+});
+
+test("an explicit first credential import creates the absent roster through native CAS", async () => {
+  const imported = await updateClaudeCodeAccount(kv, {
+    credential: {
+      secret: "sk-ant-oat-fixture-first-import",
+      kind: "oauth",
+      source: "kv",
+      hint: "fixture import",
+      label: "unverified fixture label",
+      updated_at_ms: Date.now(),
+    },
+  });
+  const store = await loadClaudeCodeAccountStore(kv);
+  assert.equal(store.accounts.length, 1);
+  assert.equal(store.active_account_id, imported.account_id);
+  assert.equal(store.active_reason, "first_configured");
+});
+
+test("concurrent native first bootstrap and explicit deletion always settle to the durable tombstone", async () => {
+  const [bootstrapped] = await Promise.all([resolveClaudeCodeAccount(kv, env), removeClaudeCodeAccount(kv)]);
+  const store = await loadClaudeCodeAccountStore(kv, env);
+  assert.deepEqual(store.accounts, []);
+  assert.equal(store.active_account_id, null);
+  assert.equal(await resolveClaudeCodeAccount(kv, env), null);
+  if (bootstrapped) assert.equal(await isClaudeCodeAccountCurrent(kv, bootstrapped), false);
+});
+
 test("durable identity/cohort and global active survive cache resets and same-binding updates", async () => {
   const first = await binding();
   const second = await updateClaudeCodeAccount(kv, { createNew: true, credential: { ...first.credential, secret: "sk-ant-oat-fixture-second-account" } });
