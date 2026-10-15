@@ -37,6 +37,7 @@ import { GATEWAY_PROVIDER_ID, GATEWAY_PROVIDER_PRESENTATION, PROVIDER_TIERS, pro
 import { deepSeekWaterfallCatalogEnabled } from "../deepseek/waterfall.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { buildModelCatalogSnapshot, type ModelCatalogSource } from "../models/catalog.ts";
+import { fetchClaudeCodeModels } from "../provider/claude-code-models.ts";
 import { listCodexResetShadowDecisions } from "../codex/banked-reset-pool.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,
@@ -597,13 +598,19 @@ export const handleAdminModelsRefresh = async (
     refreshEnrichment?: () => Promise<OpenRouterModelsSnapshot | null>;
     refreshOpenlux?: typeof fetchMeteredModels;
     refreshSurplus?: typeof fetchSurplusModels;
+    refreshClaude?: typeof fetchClaudeCodeModels;
   }> = {}
 ): Promise<Response> => {
   const before = openRouterModelsSnapshot();
   const refreshEnrichment = dependencies.refreshEnrichment ?? (() => fetchOpenRouterModels({ force: true }));
   const refreshOpenlux = dependencies.refreshOpenlux ?? fetchMeteredModels;
   const refreshSurplus = dependencies.refreshSurplus ?? fetchSurplusModels;
-  const [enrichment, openlux, surplus] = await Promise.all([refreshEnrichment(), refreshOpenlux({ force: true }), refreshSurplus({ force: true })]);
+  const [enrichment, openlux, surplus, claude] = await Promise.all([
+    refreshEnrichment(),
+    refreshOpenlux({ force: true }),
+    refreshSurplus({ force: true }),
+    (dependencies.refreshClaude ?? fetchClaudeCodeModels)({ force: true }),
+  ]);
   const enrichmentUpdatedAt = enrichment?.updated_at_ms ?? null;
   return json(
     200,
@@ -619,6 +626,12 @@ export const handleAdminModelsRefresh = async (
         },
         openlux: { models: openlux?.models.length ?? 0, updated_at_ms: openlux?.updated_at_ms ?? null },
         surplus: { models: surplus?.models.length ?? 0, updated_at_ms: surplus?.updated_at_ms ?? null },
+        claude_code: {
+          models: claude?.models.length ?? 0,
+          updated_at_ms: claude?.updated_at_ms ?? null,
+          status: claude && !claude.stale ? "available" : "unavailable",
+          stale: claude?.stale ?? false,
+        },
       },
     },
     { "Cache-Control": "no-store" }

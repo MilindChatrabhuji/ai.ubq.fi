@@ -23,12 +23,17 @@ import {
   storeClaudeCodeStoredCredential,
   storeClaudeCodeWorkspaceState,
 } from "../provider/claude-code-credentials.ts";
-import { CLAUDE_CODE_MODELS_URL, claudeCodeCredentialKind, claudeCodeRequestHeaders, type ClaudeCodeEnvLookup } from "../provider/claude-code.ts";
+import { claudeCodeCredentialKind, type ClaudeCodeEnvLookup } from "../provider/claude-code.ts";
+import {
+  cacheValidatedClaudeCodeModels,
+  ClaudeCodeModelsError,
+  discoverClaudeCodeModels,
+  type ClaudeCodeModelsSnapshot,
+} from "../provider/claude-code-models.ts";
 import { clearClaudeCodeQuotaGuards } from "../provider/claude-code-quota.ts";
 import { getPassiveProviderHealthSnapshot } from "../health.ts";
 
 const CREDENTIAL_LABEL_MAX_LENGTH = 64;
-const CREDENTIAL_VALIDATION_TIMEOUT_MS = 8_000;
 
 const getString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
@@ -42,33 +47,21 @@ const getString = (value: unknown): string | null => (typeof value === "string" 
 const validateClaudeCodeCredential = async (
   secret: string,
   workspaceId: string | null
-): Promise<Readonly<{ ok: boolean; status: number | null; detail: string | null }>> => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort(new DOMException("Claude credential validation timed out.", "TimeoutError"));
-  }, CREDENTIAL_VALIDATION_TIMEOUT_MS);
+): Promise<Readonly<{ ok: boolean; status: number | null; detail: string | null; snapshot?: ClaudeCodeModelsSnapshot }>> => {
   try {
-    const response = await fetch(CLAUDE_CODE_MODELS_URL, {
-      method: "GET",
-      headers: claudeCodeRequestHeaders({ kind: claudeCodeCredentialKind(secret), secret }, { stream: false, workspaceId }),
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    await response.body?.cancel().catch(() => {});
-    if (response.ok) return { ok: true, status: response.status, detail: null };
-    if (response.status === 429) return { ok: true, status: response.status, detail: null };
-    if (response.status === 401 || response.status === 403) {
+    const snapshot = await discoverClaudeCodeModels({ kind: claudeCodeCredentialKind(secret), secret }, workspaceId);
+    return { ok: true, status: 200, detail: null, snapshot };
+  } catch (error) {
+    const status = error instanceof ClaudeCodeModelsError ? error.status : null;
+    if (status === 429) return { ok: true, status, detail: null };
+    if (status === 401 || status === 403) {
       return {
         ok: false,
-        status: response.status,
-        detail: response.status === 401 ? "The credential was rejected as unauthenticated." : "The credential is not permitted for this endpoint.",
+        status,
+        detail: status === 401 ? "The credential was rejected as unauthenticated." : "The credential is not permitted for this endpoint.",
       };
     }
-    return { ok: true, status: response.status, detail: "Stored unvalidated: the models listing returned an error status." };
-  } catch {
-    return { ok: true, status: null, detail: "Stored unvalidated: the models listing could not be reached." };
-  } finally {
-    clearTimeout(timer);
+    return { ok: true, status, detail: "Stored unvalidated: the models listing could not be read." };
   }
 };
 
@@ -171,6 +164,9 @@ export const handleAdminClaudeCodeAuthSet = async (
 
   if (!(await persistValidatedSubmission(kv, secret, label, workspaceId, effectiveWorkspace))) {
     return openaiError(500, "The credential could not be stored", "server_error");
+  }
+  if (validation.snapshot) {
+    await cacheValidatedClaudeCodeModels(kv, credentialForValidation, effectiveWorkspace?.id ?? null, validation.snapshot, options.env);
   }
 
   return json(200, {

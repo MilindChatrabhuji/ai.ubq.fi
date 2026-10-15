@@ -80,7 +80,7 @@ const withStubbedAnthropic = async (responder: (call: StubCall) => Response, run
   }
 };
 
-const modelsOk = (): Response => new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "content-type": "application/json" } });
+const modelsOk = (): Response => new Response(JSON.stringify({ data: [], has_more: false }), { status: 200, headers: { "content-type": "application/json" } });
 
 const jsonRequest = (body: unknown, method = "POST"): Request =>
   new Request("https://ai.ubq.fi/admin/providers/claude-code/auth", {
@@ -120,7 +120,7 @@ test("a rejected credential is refused upstream and never stored", async () => {
         const response = await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-usr-rejected-key-abcdefghijklmnop" }));
         assert.equal(response.status, 400);
         assert.equal(calls.length, 1);
-        assert.equal(calls[0].url, "https://api.anthropic.com/v1/models");
+        assert.equal(calls[0].url, "https://api.anthropic.com/v1/models?limit=100");
         assert.equal(calls[0].headers.get("x-api-key"), "sk-ant-usr-rejected-key-abcdefghijklmnop");
       }
     );
