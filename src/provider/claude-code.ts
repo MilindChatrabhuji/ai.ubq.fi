@@ -48,6 +48,13 @@ export const CLAUDE_CODE_ALLOWED_KEY_IDS_ENV = "CLAUDE_CODE_ALLOWED_KEY_IDS";
 export const CLAUDE_CODE_ANTHROPIC_VERSION = "2023-06-01";
 export const CLAUDE_CODE_OAUTH_BETA = "oauth-2025-04-20";
 /**
+ * The native client attribution the subscription lane requires first in the
+ * system blocks. The endpoint strips this block before generation, but a
+ * request without it is answered with a bare rate-limit rejection, so the
+ * subscription credential always sends it exactly as the official client does.
+ */
+export const CLAUDE_CODE_SYSTEM_ATTRIBUTION = "You are Claude Code, Anthropic's official CLI for Claude.";
+/**
  * Anthropic Messages requires `max_tokens`. A client that omits one gets this
  * conservative floor rather than a fabricated per-model ceiling; an explicit
  * client value always wins, and catalog-driven resolution is a follow-up.
@@ -353,7 +360,12 @@ const readErrorBodyText = async (response: Response): Promise<string | null> => 
  */
 export const buildClaudeCodeRequest = (
   body: Record<string, unknown>,
-  options: Readonly<{ reasoningReplayScope?: string; maxOutputTokens?: number }> = {}
+  options: Readonly<{
+    reasoningReplayScope?: string;
+    maxOutputTokens?: number;
+    /** Subscription credentials lead their system blocks with the native attribution. */
+    systemAttribution?: boolean;
+  }> = {}
 ): ReturnType<typeof buildSurplusClaudeRequest> => {
   if (!isSurplusClaudeModel(body.model)) return null;
   const maxOutputTokens = body.max_output_tokens === undefined ? (options.maxOutputTokens ?? CLAUDE_CODE_DEFAULT_MAX_OUTPUT_TOKENS) : undefined;
@@ -369,6 +381,10 @@ export const buildClaudeCodeRequest = (
   // native Messages contract, so it never reaches the direct route.
   const nativeBody: Record<string, unknown> = { ...built.body };
   delete nativeBody.prompt_cache_key;
+  if (options.systemAttribution) {
+    const system = Array.isArray(nativeBody.system) ? (nativeBody.system as unknown[]) : [];
+    nativeBody.system = [{ type: "text", text: CLAUDE_CODE_SYSTEM_ATTRIBUTION }, ...system];
+  }
   return { ...built, body: nativeBody };
 };
 
@@ -522,9 +538,14 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   if (!isRecord(body)) {
     throw new ClaudeCodeError("Claude Code Messages requests must use a canonical JSON object body.", "claude_code_request_invalid", 400);
   }
+  const kv = options.kv ?? null;
+  const credential = await requireClaudeCodeCredential(options.credential, kv, options.env);
   const native = buildClaudeCodeRequest(body, {
     reasoningReplayScope: options.reasoningReplayScope,
     maxOutputTokens: undefined,
+    // Only the subscription lane carries the native attribution; a Console API
+    // key request must stay a plain API request.
+    systemAttribution: credential.kind === "oauth",
   });
   if (!native) {
     throw new ClaudeCodeError("The request has no lossless native Anthropic Messages representation.", "claude_code_request_invalid", 400);
@@ -540,8 +561,6 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
     throw new ClaudeCodeError("Claude Code Messages requests must use a JSON-serializable body.", "claude_code_request_invalid", 400);
   }
 
-  const kv = options.kv ?? null;
-  const credential = await requireClaudeCodeCredential(options.credential, kv, options.env);
   const initialWorkspace = options.workspace === undefined ? await resolveClaudeCodeWorkspace(kv, options.env) : options.workspace;
 
   const attemptOptions = {

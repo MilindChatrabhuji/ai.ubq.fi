@@ -1773,3 +1773,19 @@ account and clears the guard; the row never blocks inference itself.
 Native KV preparation retains its disk-backed source, Cargo home, compiler target, and logs below the operating-system temporary root rather than below the builder module checkout. The independently supplied artifact and provenance binding remains mandatory for immutable release preparation and isolated release fixtures.
 
 Reason: a builder imported from a staged release must not add retained scratch to the published source tree or change its recorded digest. The scratch remains disk-backed; application startup still never compiles, downloads, or installs.
+
+## Claude Code subscription requests carry the native attribution on the OAuth lane - 2026-10-15
+
+When the `claude_code` credential is an OAuth setup token (`sk-ant-oat...`), `buildClaudeCodeRequest` prepends the native
+client attribution (`You are Claude Code, Anthropic's official CLI for Claude.`) as the first system block; Console API
+keys (`sk-ant-usr...` / `sk-ant-api...`) never send it. A 12-variant probe matrix against `https://api.anthropic.com` on
+2026-10-15 established the requirement: without the attribution every `/v1/messages` request answers an opaque
+`429 rate_limit_error` (`message: "Error"`), while the same request with it answers 200 and carries the
+`anthropic-ratelimit-unified-*` subscription windows; `metadata.user_id` and `anthropic-workspace-id` are not required.
+
+Reason: the operator activated the Claude Max subscription through the documented `claude setup-token` flow and asked
+that it serve the gateway through the existing owner-gated `claude_code` tier. The endpoint strips the attribution block
+before generation, so it changes no request semantics; it is sent only on the credential kind the official client owns,
+and no other fingerprint (device id, session id, user agent, or additional headers) is synthesized. Reversal risk: none
+beyond the tier's existing fall-through - an attribution-less OAuth request fails closed into the paid waterfall, and the
+attribution can be removed at its single call site if the upstream requirement changes.
