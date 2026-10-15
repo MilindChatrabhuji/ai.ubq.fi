@@ -5,6 +5,7 @@ import {
   buildClaudeCodeRequest,
   CLAUDE_CODE_DEFAULT_MAX_OUTPUT_TOKENS,
   CLAUDE_CODE_OAUTH_BETA,
+  CLAUDE_CODE_SYSTEM_ATTRIBUTION,
   classifyClaudeCodeErrorBody,
   classifyClaudeCodeResponse,
   claudeCodeCredentialKind,
@@ -468,6 +469,24 @@ test("the native request builder defaults max_tokens, strips router hints, and r
   const explicit = buildClaudeCodeRequest({ model: "claude-sonnet-5-5", input: "hi", max_output_tokens: 4_096 });
   assert.equal(explicit?.body.max_tokens, 4_096);
   assert.equal(buildClaudeCodeRequest({ model: "gpt-5.6-sol", input: "hi" }), null);
+});
+
+test("the subscription lane leads its system blocks with the native attribution", () => {
+  const subscription = buildClaudeCodeRequest({ model: "claude-opus-5-5", input: "hello", instructions: "be brief" }, { systemAttribution: true });
+  assert(subscription);
+  const system = subscription.body.system as { type: string; text: string }[];
+  assert.equal(system[0]?.type, "text");
+  assert.equal(system[0]?.text, CLAUDE_CODE_SYSTEM_ATTRIBUTION, "the attribution must be the first system block");
+  assert.equal(system[1]?.text, "be brief", "caller system content follows the attribution");
+
+  const apiKey = buildClaudeCodeRequest({ model: "claude-opus-5-5", input: "hello", instructions: "be brief" }, { systemAttribution: false });
+  assert(apiKey);
+  const apiKeySystem = (apiKey.body.system ?? []) as { text: string }[];
+  assert.equal(
+    apiKeySystem.some((block) => block.text === CLAUDE_CODE_SYSTEM_ATTRIBUTION),
+    false,
+    "an API key request never claims the native client attribution"
+  );
 });
 
 test("OAuth credentials carry Bearer plus the OAuth beta and never an API key header", () => {

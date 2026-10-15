@@ -106,6 +106,8 @@ test("an eligible owner request is served by the subscription with the documente
     assert.equal(request.headers.get("anthropic-version"), "2023-06-01");
     assert.equal(request.headers.get("anthropic-beta"), "oauth-2025-04-20");
     assert.equal(request.headers.get("x-api-key"), null);
+    const system = (request.body.system ?? []) as { text?: string }[];
+    assert.equal(system[0]?.text, "You are Claude Code, Anthropic's official CLI for Claude.");
     assert.equal(request.body.model, model);
     assert.equal(request.body.max_tokens, 32_000);
     assert.equal(request.body.stream, true);
@@ -221,6 +223,12 @@ test("a CLAUDE_API_KEY credential travels as x-api-key without the OAuth beta or
     assert.equal(request.headers.get("x-api-key"), "sk-ant-usr-1A6exampleBwAA");
     assert.equal(request.headers.get("authorization"), null);
     assert.equal(request.headers.get("anthropic-beta"), null);
+    const apiKeySystem = (request.body.system ?? []) as { text?: string }[];
+    assert.equal(
+      apiKeySystem.some((block) => block.text === "You are Claude Code, Anthropic's official CLI for Claude."),
+      false,
+      "an API key request must stay a plain API request"
+    );
     assert.equal(request.headers.get("anthropic-version"), "2023-06-01");
     assert.equal(request.headers.get("anthropic-workspace-id"), null, "no workspace header until one is known or required");
   });
