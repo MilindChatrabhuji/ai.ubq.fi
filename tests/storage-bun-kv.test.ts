@@ -218,10 +218,10 @@ test("a persisted Bun database reopens with its codec marker and typed values", 
   await first.set(["persisted"], { amount: 9n, bytes: new Uint8Array([7]) });
   const before = await first.get(["persisted"]);
   first.close();
+  const second = await openFixture(path);
   const marker = new Database(path, { readonly: true });
   expect(marker.query<{ value: string }, []>("SELECT value FROM uos_kv_metadata WHERE key = 'codec'").get()?.value).toBe(BUN_KV_CODEC);
   marker.close(true);
-  const second = await openFixture(path);
   expect(await second.get(["persisted"])).toEqual(before);
 });
 
