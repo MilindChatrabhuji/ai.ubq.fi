@@ -215,15 +215,6 @@ export const storeClaudeCodeWorkspaceState = async (kv: Kv | null, state: Claude
   return true;
 };
 
-export const clearClaudeCodeWorkspaceState = async (kv: Kv | null): Promise<boolean> => {
-  if (!kv) return false;
-  const roster = await readClaudeCodeAccountStore(kv);
-  if (roster?.active_account_id) await updateClaudeCodeAccount(kv, { workspace: null });
-  else await kv.delete(CLAUDE_CODE_WORKSPACE_KV_KEY);
-  advanceStateGeneration(kv);
-  return true;
-};
-
 /**
  * Environment credentials carry their own source so the admin panel can say
  * where a working credential came from. `CLAUDE_API_KEY` wins over the legacy

@@ -265,6 +265,7 @@ export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
   reasoningReplayScope?: string;
   /** Positive disabled-thinking proof for this exact credential/workspace model. */
   supportsNativeDisabledThinking?: boolean;
+  nativeReasoningEfforts?: readonly string[];
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | undefined>;
   onDispatch?: () => void;
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
@@ -272,6 +273,7 @@ export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
 
 export type ClaudeCodeResponsesResult = Readonly<{
   account_binding?: ClaudeCodeAccountBinding;
+  observed_at_ms: number;
   response: Response;
   request_id: string | null;
   credential: ClaudeCodeResolvedCredential;
@@ -310,6 +312,7 @@ export const claudeCodeRequestHeaders = (credential: ClaudeCodeAuthHeaders, opti
 
 const claudeCodeTransportFailure = (error: unknown, signal: AbortSignal | undefined, headersDeadline: AbortController): unknown => {
   if (error instanceof ApiKeyQuotaDispatchError) return error;
+  if (error instanceof ClaudeCodeError) return error;
   if (signal?.aborted) return signal.reason ?? error;
   if (headersDeadline.signal.aborted) return headersDeadline.signal.reason ?? error;
   if (error instanceof Error && error.name === "AbortError") return error;
@@ -371,6 +374,7 @@ export const buildClaudeCodeRequest = (
     /** Subscription credentials lead their system blocks with the native attribution. */
     systemAttribution?: boolean;
     supportsNativeDisabledThinking?: boolean;
+    nativeReasoningEfforts?: readonly string[];
   }> = {}
 ): ReturnType<typeof buildSurplusClaudeRequest> => {
   if (!isSurplusClaudeModel(body.model)) return null;
@@ -380,7 +384,8 @@ export const buildClaudeCodeRequest = (
     reasoningReplayScope: options.reasoningReplayScope,
     // The direct Messages route carries the documented adaptive-thinking wire
     // the shared builder already emits.
-    supportsNativeReasoningEffort: true,
+    supportsNativeReasoningEffort: (options.nativeReasoningEfforts?.length ?? 0) > 0,
+    nativeReasoningEfforts: options.nativeReasoningEfforts,
     supportsNativeDisabledThinking: options.supportsNativeDisabledThinking,
   });
   if (!built) return null;
@@ -508,7 +513,13 @@ const performClaudeCodeMessagesAttempt = async (
     sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
   }>
 ): Promise<
-  Readonly<{ response: Response; classification: ClaudeCodeResponseClassification; quota: ClaudeCodeQuotaObservation | null; requestId: string | null }>
+  Readonly<{
+    response: Response;
+    classification: ClaudeCodeResponseClassification;
+    quota: ClaudeCodeQuotaObservation | null;
+    requestId: string | null;
+    observedAtMs: number;
+  }>
 > => {
   const headers = claudeCodeRequestHeaders(options.credential, { stream: options.stream, workspaceId: options.workspace?.id ?? null });
   const headersDeadline = new AbortController();
@@ -545,11 +556,12 @@ const performClaudeCodeMessagesAttempt = async (
   }
 
   const requestId = responseRequestId(response);
+  const observedAtMs = Date.now();
   const base = classifyClaudeCodeResponse(response.status, response.headers);
   const classification = base.kind === "ok" ? base : classifyClaudeCodeErrorBody(base, await readErrorBodyText(response));
-  const quota = observeClaudeCodeQuota(response.headers);
+  const quota = observeClaudeCodeQuota(response.headers, observedAtMs);
   const recorded = upstreamAttempt ? upstreamAttempt.wrap(response) : response;
-  return { response: recorded, classification, quota, requestId };
+  return { response: recorded, classification, quota, requestId, observedAtMs };
 };
 
 export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCodeAuthenticatedFetchOptions = {}): Promise<ClaudeCodeResponsesResult> => {
@@ -561,6 +573,7 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   const native = buildClaudeCodeRequest(body, {
     reasoningReplayScope: options.reasoningReplayScope,
     supportsNativeDisabledThinking: options.supportsNativeDisabledThinking,
+    nativeReasoningEfforts: options.nativeReasoningEfforts,
     maxOutputTokens: undefined,
     // Only the subscription lane carries the native attribution; a Console API
     // key request must stay a plain API request.
@@ -631,6 +644,7 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   });
   return {
     ...(accountBinding ? { account_binding: accountBinding } : {}),
+    observed_at_ms: attempt.observedAtMs,
     response: delivered,
     request_id: attempt.requestId,
     credential,
