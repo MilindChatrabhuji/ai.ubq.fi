@@ -41,6 +41,7 @@ const fixtureEnvironment = (root: string, hostPath: string): Record<string, stri
   PATH: hostPath,
   HOME: root,
   DENO_DIR: `${root}/.deno-cache`,
+  UOS_RELEASE_DEPENDENCIES: repository + "/node_modules",
   NO_COLOR: "1",
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
