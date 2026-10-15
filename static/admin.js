@@ -9412,18 +9412,27 @@ const providersHasUnsavedChanges = () =>
 const providersSelectionIsEmpty = () => providerSelection.size === 0;
 
 /**
- * Selected ids in roster order, then the narrowed subscriptions, or an empty
- * list when every active provider is checked (which is the no-filter state).
+ * Selected ids in roster order, then the narrowed subscriptions and any saved
+ * ids the roster no longer describes, or an empty list when every active
+ * provider is checked and no saved ids are missing (which is the no-filter
+ * state).
  */
 const providersSelectedIds = () => {
   const rosterIds = providersRosterIds();
-  if (providersSelectionIsEmpty() || rosterIds.every((id) => providerSelection.has(id))) return [];
+  const missingSelectionIds = providersMissingSelectionIds();
+  if (
+    providersSelectionIsEmpty() ||
+    (rosterIds.every((id) => providerSelection.has(id)) && missingSelectionIds.length === 0)
+  ) {
+    return [];
+  }
   const selected = rosterIds.filter((id) => providerSelection.has(id));
   for (const subscription of providerSubscriptions()) {
     if (providerSubscriptionSelected(subscription.id) && !providerSelection.has("codex")) {
       selected.push(subscription.id);
     }
   }
+  selected.push(...missingSelectionIds);
   return selected;
 };
 

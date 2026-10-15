@@ -1,5 +1,6 @@
 import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import { afterEach, beforeEach, test } from "bun:test";
 import assert from "node:assert/strict";
@@ -758,6 +759,43 @@ test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminScript, /providersMissingSelectionIds/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/selection"\), \{/);
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
+});
+
+test("provider serialization preserves a missing Codex subscription after Surplus is unchecked", () => {
+  const serializer = /const providersSelectedIds = \(\) => \{[\s\S]*?\n\};/.exec(adminScript)?.[0] ?? "";
+  assert.notEqual(serializer, "", "the provider-selection serializer must stay discoverable");
+
+  const removedSubscription = `codex:${"a".repeat(64)}`;
+  const configuredSubscription = `codex:${"b".repeat(64)}`;
+  const providerRoster: Array<{ id: string; selectable: boolean; subscriptions?: Array<{ id: string }> }> = [
+    { id: "codex", selectable: true, subscriptions: [{ id: configuredSubscription }] },
+    { id: "surplus", selectable: true },
+    { id: "openlux", selectable: true },
+  ];
+  const providerSelection = new Set([removedSubscription, "surplus"]);
+  const context = {
+    providerRoster,
+    providerSelection,
+    providersRosterIds: () => providerRoster.filter((entry) => entry.selectable !== false).map((entry) => entry.id),
+    providerSubscriptions: () => providerRoster.find((entry) => entry.id === "codex")?.subscriptions ?? [],
+    providerSubscriptionSelected: (subscriptionId: string) =>
+      providerSelection.has("codex") || providerSelection.has(subscriptionId),
+    providersSelectionIsEmpty: () => providerSelection.size === 0,
+    providersMissingSelectionIds: () => {
+      const known = new Set([
+        ...providerRoster.filter((entry) => entry.selectable !== false).map((entry) => entry.id),
+        ...(providerRoster.find((entry) => entry.id === "codex")?.subscriptions ?? []).map((entry) => entry.id),
+      ]);
+      return [...providerSelection].filter((id) => !known.has(id)).sort();
+    },
+  };
+
+  // Model the staged edit: the saved missing subscription remains while Surplus is unchecked.
+  providerSelection.delete("surplus");
+  runInNewContext(`${serializer}\nglobalThis.serialize = providersSelectedIds;`, context);
+
+  const runtime = context as typeof context & { serialize: () => string[] };
+  assert.deepEqual([...runtime.serialize()], [removedSubscription]);
 });
 
 test("admin metadata refresh forces every upstream and reports what is cached", async () => {
