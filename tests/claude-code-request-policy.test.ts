@@ -209,6 +209,24 @@ test("an existing Codex record retains precedence and its exact reasoning metada
   });
 });
 
+test("unrelated non-Codex paid metadata does not invoke Claude discovery", async () => {
+  const ids = ["deepseek-fixture", "unrelated-paid-fixture"];
+  await seedPaidChatModel(ids);
+  await withCatalog(async (calls) => {
+    for (const id of ids) {
+      for (const route of ["chat.completions", "responses"] as const) {
+        const metadata = await getCodexModelMetadata(id, route);
+        assert.equal(metadata.record?.slug, id);
+        assert.deepEqual(metadata.supportedEndpoints, ["openai"]);
+        assert.deepEqual(metadata.reasoning.levels, ["none"]);
+        assert.equal(validateCodexModelAvailable(id, route, metadata)?.status ?? 200, route === "responses" ? 404 : 200);
+      }
+    }
+    assert.equal(calls.discovery, 0);
+    assertNoInference(calls);
+  });
+});
+
 test("a disabled Claude provider cannot add Responses support to a chat-only paid row", async () => {
   await kv.set(PROVIDER_SELECTION_KV_KEY, { provider_ids: ["openlux"], updated_at_ms: 2 });
   resetProviderSelectionCacheForTest();
