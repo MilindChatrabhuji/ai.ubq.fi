@@ -21,6 +21,18 @@ try {
   await writeFile(join(release, "immutable.txt"), "immutable-source");
   const before = digest(await readFile(runtime));
   const probe = join(release, "probe.ts");
+  const denialProbe = join(release, "denial-probe.ts");
+  await writeFile(
+    denialProbe,
+    [
+      'import { readFileSync, writeFileSync } from "node:fs";',
+      "const paths = JSON.parse(process.argv[2]);",
+      "const operation = Number(process.argv[3]);",
+      'if (operation < 4) writeFileSync([paths.nativeHome + "/auth.json", paths.sibling + "/auth.json", paths.release + "/immutable.txt", paths.runtime][operation], "must-be-denied");',
+      'else if (operation === 4) readFileSync(paths.sibling + "/auth.json");',
+      'else Bun.spawnSync(["/bin/sh", "-c", "exit 0"]);',
+    ].join("\n")
+  );
   await writeFile(
     probe,
     [
@@ -30,32 +42,26 @@ try {
       'assert.equal(readFileSync(paths.nativeHome + "/auth.json", "utf8"), "synthetic-selected-auth");',
       'writeFileSync(paths.root + "/.data/mutable.txt", "accepted");',
       'writeFileSync(paths.control + "/state", "accepted");',
-      'for (const path of [paths.nativeHome + "/auth.json", paths.sibling + "/auth.json", paths.release + "/immutable.txt", paths.runtime]) assert.throws(() => writeFileSync(path, "must-be-denied"));',
-      'assert.throws(() => readFileSync(paths.sibling + "/auth.json"));',
       'const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("seatbelt-network") });',
       'assert.equal(await (await fetch(server.url)).text(), "seatbelt-network"); await server.stop();',
       "console.log(JSON.stringify({ selected_auth_read: true, data_write: true, control_write: true, sibling_read_denied: true, native_write_denied: true, release_runtime_write_denied: true, process_spawn_denied: true, real_http: true }));",
     ].join("\n")
   );
   const profile = macSandboxProfile({ root, release, runtime, nativeHome, control });
-  const deniedSpawn = Bun.spawnSync(["/usr/bin/sandbox-exec", "-p", profile, "/bin/sh", "-c", "exit 0"], {
+  const paths = JSON.stringify({ root, release, runtime, nativeHome, control, sibling });
+  for (let operation = 0; operation < 6; operation += 1) {
+    const denied = Bun.spawnSync(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", denialProbe, paths, String(operation)], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    assert.notEqual(denied.exitCode, 0, `denial probe ${operation} unexpectedly succeeded`);
+  }
+  const child = Bun.spawn(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", probe, paths], {
+    env: { PATH: "/usr/bin:/bin" },
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
-  assert.notEqual(deniedSpawn.exitCode, 0);
-  const child = Bun.spawn(
-    [
-      "/usr/bin/sandbox-exec",
-      "-p",
-      profile,
-      runtime,
-      "--no-env-file",
-      "--no-install",
-      probe,
-      JSON.stringify({ root, release, runtime, nativeHome, control, sibling }),
-    ],
-    { env: { PATH: "/usr/bin:/bin" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" }
-  );
   const timer = setTimeout(() => {
     child.kill("SIGKILL");
   }, 30_000);
