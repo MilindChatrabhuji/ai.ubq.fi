@@ -57,7 +57,8 @@ export const PROVIDER_PRESENTATION: Readonly<Record<SelectableProviderId, Provid
   claude_code: {
     label: "Claude Code",
     tier: "subscription",
-    detail: "Owner-only Claude Code subscription adapter. Off unless a credential and the principal allowlist are configured.",
+    detail:
+      "Claude subscription capacity. Tried before the paid waterfall for Claude models when a credential, the principal allowlist, and a workspace are configured.",
     endpoints: ["/v1/responses", "/v1/chat/completions"],
     health_key: "claude_code",
   },

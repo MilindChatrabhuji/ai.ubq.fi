@@ -265,6 +265,28 @@ const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
 const providerCapacityLedger = mustGet("provider-capacity-ledger");
+const claudeSubscriptionBadge = mustGet("claude-subscription-badge");
+const claudeCredentialSource = mustGet("claude-credential-source");
+const claudeCredentialKind = mustGet("claude-credential-kind");
+const claudeCredentialHint = mustGet("claude-credential-hint");
+const claudeCredentialUpdated = mustGet("claude-credential-updated");
+const claudeWorkspaceId = mustGet("claude-workspace-id");
+const claudeWorkspaceName = mustGet("claude-workspace-name");
+const claudeWorkspaceSource = mustGet("claude-workspace-source");
+const claudeWorkspaceVerified = mustGet("claude-workspace-verified");
+const claudeGateProvider = mustGet("claude-gate-provider");
+const claudeGateAllowlist = mustGet("claude-gate-allowlist");
+const claudeGateQuota = mustGet("claude-gate-quota");
+const claudeQuotaWindows = mustGet("claude-quota-windows");
+const claudeQuotaError = mustGet("claude-quota-error");
+const claudeHealth = mustGet("claude-health");
+const claudeCredentialInput = mustGet("claude-credential-input");
+const claudeWorkspaceInput = mustGet("claude-workspace-input");
+const claudeCredentialSave = mustGet("claude-credential-save");
+const claudeWorkspaceSave = mustGet("claude-workspace-save");
+const claudeCredentialClear = mustGet("claude-credential-clear");
+const claudeQuotaClear = mustGet("claude-quota-clear");
+const claudeSubscriptionStatus = mustGet("claude-subscription-status");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -325,6 +347,9 @@ const accessGithubQueue = mustGet("access-github-queue");
 const accessKernelPubkeys = mustGet("access-kernel-pubkeys");
 const accessUpstreamSource = mustGet("access-upstream-source");
 const accessUpstreamExpiry = mustGet("access-upstream-expiry");
+const accessClaudeSource = mustGet("access-claude-source");
+const accessClaudeHealth = mustGet("access-claude-health");
+const accessClaudeWorkspace = mustGet("access-claude-workspace");
 
 const defaultsModelSelect = mustGet("defaults-model");
 const defaultsReasoningSelect = mustGet("defaults-reasoning");
@@ -1202,6 +1227,31 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
             }`
           : "Not observed"
     );
+  } else if (source.source === "claude_code") {
+    appendProviderFact(facts, "Credential", claudeCapacityCredentialLabel(source));
+    appendProviderFact(facts, "Workspace", source.workspace_id ?? "Not selected");
+    appendProviderFact(facts, "Blocked until", formatCapacityTimestamp(source.blocked_until_ms, "Not blocked"));
+    appendProviderFact(facts, "Cooldown until", formatCapacityTimestamp(source.cooldown_until_ms, "No cooldown"));
+    appendProviderFact(
+      facts,
+      "Last upstream error",
+      source.last_error
+        ? `${source.last_error.kind}${
+          typeof source.last_error.status === "number" ? ` · ${source.last_error.status}` : ""
+        } · ${formatDate(source.last_error.at_ms)}${source.last_error.message ? ` — ${source.last_error.message}` : ""}`
+        : "None recorded",
+    );
+    const standard = Array.isArray(source.standard) ? source.standard : [];
+    if (standard.length) {
+      const limits = standard
+        .map((entry) => {
+          const limit = typeof entry.limit === "number" ? formatNumber(entry.limit) : "unlimited";
+          const remaining = typeof entry.remaining === "number" ? formatNumber(entry.remaining) : "unreported";
+          return `${entry.family}: ${remaining} of ${limit}`;
+        })
+        .join(" · ");
+      appendProviderFact(facts, "API-key limits", limits);
+    }
   } else if (source.source === "metered") {
     const status = capacityProviderStatus(source, provider);
     appendProviderFact(facts, "Inference", status.health ? providerStateLabel(status.health) : "Not observed");
@@ -1296,7 +1346,7 @@ const renderCodexCapacitySource = (source, provider = null) => {
       codexResetSaving.delete(setting.account_id_hash);
       codexResetSettingsRevision++;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       input.disabled = false;
       if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
@@ -1358,7 +1408,7 @@ const renderCodexCapacitySource = (source, provider = null) => {
       codexOverageSaving.delete(overageSetting.account_id_hash);
       codexOverageSettingsRevision++;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       overageInput.disabled = false;
       if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
@@ -1383,11 +1433,63 @@ const providerForCodexSlot = (slot) => {
   return accounts.find((account) => String(account?.slot) === String(slot)) ?? null;
 };
 
-const renderProviderCapacityList = (sources) => {
+const claudeCapacityCredentialLabel = (source) => {
+  if (source.credential_kind === "api_key") return "Console API key";
+  if (source.credential_kind === "oauth") return "OAuth / setup token";
+  return "Not configured";
+};
+
+const claudeCapacityWindowForDisplay = (window) => {
+  if (!window) return null;
+  return {
+    used_percent: window.used_percent,
+    reset_at_ms: window.reset_at_ms,
+  };
+};
+
+/**
+ * The Claude subscription row mirrors the Codex rows: a live/stale/unavailable
+ * badge, the observed subscription windows as remaining capacity, and the
+ * diagnostics the tier itself recorded (credential direction, workspace,
+ * guards, last upstream outcome, and Console API-key limits when present).
+ */
+const renderClaudeCapacitySource = (source) => {
+  const row = document.createElement("div");
+  row.dataset.capacitySource = "claude_code";
+  row.dataset.state = source.state;
+  row.setAttribute("role", "listitem");
+
+  const header = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = typeof source.label === "string" && source.label.trim()
+    ? source.label.trim()
+    : "Claude subscription";
+  const badge = document.createElement("span");
+  badge.dataset.badge = "";
+  setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
+  header.append(title, badge);
+  row.append(header);
+
+  const windows = document.createElement("div");
+  windows.dataset.capacityWindows = "";
+  renderCapacityWindow(windows, "5-hour window", claudeCapacityWindowForDisplay(source.windows?.five_hour));
+  renderCapacityWindow(windows, "Weekly window", claudeCapacityWindowForDisplay(source.windows?.seven_day));
+  row.append(windows);
+
+  appendCapacitySourceMeta(row, source, null);
+  return row;
+};
+
+const renderProviderCapacityList = (sources, claude = null) => {
   const expanded = Array.from(providerCapacityList.children, (row) => row.querySelector("details")?.open === true);
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(renderCodexCapacitySource(source, providerForCodexSlot(source.slot)));
+  }
+  // The Claude subscription mirrors the Codex rows inside the same list, so the
+  // Analytics view shows every subscription tier in one place.
+  if (claude && typeof claude === "object" && claude.source === "claude_code") {
+    providerCapacityList.appendChild(renderClaudeCapacitySource(claude));
   }
   Array.from(providerCapacityList.children).forEach((row, index) => {
     const details = row.querySelector("details");
@@ -2996,9 +3098,10 @@ const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
     rawSources.find((source) => source?.source === "codex" && source.slot === slot) ??
     unavailableCodexCapacitySource(slot);
   const sources = [sourceForSlot(1), sourceForSlot(2)];
-  latestProviderCapacityChartState = { snapshot, sources, fiveXxBuckets };
+  const claude = snapshot?.claude && typeof snapshot.claude === "object" ? snapshot.claude : null;
+  latestProviderCapacityChartState = { snapshot, sources, claude, fiveXxBuckets };
   renderProviderCapacityChart(snapshot, sources, fiveXxBuckets);
-  renderProviderCapacityList(sources);
+  renderProviderCapacityList(sources, claude);
 
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
@@ -3087,8 +3190,328 @@ const scheduleProviderCapacityChartResize = () => {
 
 globalThis.addEventListener("resize", scheduleProviderCapacityChartResize);
 
+/**
+ * The Claude subscription panel mirrors the Codex subscription surfaces: the
+ * credential provenance and workspace selection the tier will use, the routing
+ * gates, the observed quota windows, and the last upstream outcome. Credential
+ * writes go through the admin auth route, which validates them upstream and
+ * never echoes the secret back.
+ */
+let latestClaudeSubscription = null;
+let claudeSubscriptionBusy = false;
+
+const claudeCredentialSourceLabel = (source) => {
+  if (source === "kv") return "Stored in KV";
+  if (source === "CLAUDE_API_KEY") return "Environment · CLAUDE_API_KEY";
+  if (source === "CLAUDE_CODE_OAUTH_TOKEN") return "Environment · CLAUDE_CODE_OAUTH_TOKEN";
+  return source ? String(source) : "Not configured";
+};
+
+const claudeQuotaRow = (label, detail, resetAtMs = null) => {
+  const row = document.createElement("div");
+  row.dataset.claudeQuotaRow = "";
+  row.setAttribute("role", "listitem");
+  const name = document.createElement("span");
+  name.dataset.claudeQuotaLabel = "";
+  name.textContent = label;
+  const value = document.createElement("span");
+  value.dataset.claudeQuotaValue = "";
+  value.textContent = detail;
+  row.append(name, value);
+  if (typeof resetAtMs === "number" && Number.isFinite(resetAtMs)) {
+    const time = document.createElement("time");
+    time.dateTime = new Date(resetAtMs).toISOString();
+    time.textContent = `resets ${formatDate(resetAtMs)}`;
+    row.append(time);
+  }
+  return row;
+};
+
+const formatUtilization = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unreported";
+  const percent = value <= 1 ? value * 100 : value;
+  return `${percent.toFixed(percent < 10 ? 1 : 0)}% used`;
+};
+
+const resetClaudeQuotaRows = () => {
+  claudeQuotaWindows.replaceChildren();
+};
+
+const renderClaudeSubscriptionPanel = () => {
+  const block = latestClaudeSubscription;
+  if (!block || typeof block !== "object") {
+    setBadge(claudeSubscriptionBadge, "unknown", "Not loaded");
+    claudeCredentialSource.textContent = "—";
+    claudeCredentialKind.textContent = "—";
+    claudeCredentialHint.textContent = "—";
+    claudeCredentialUpdated.textContent = "—";
+    claudeWorkspaceId.textContent = "—";
+    claudeWorkspaceName.textContent = "—";
+    claudeWorkspaceSource.textContent = "—";
+    claudeWorkspaceVerified.textContent = "—";
+    claudeGateProvider.textContent = "—";
+    claudeGateAllowlist.textContent = "—";
+    claudeGateQuota.textContent = "—";
+    claudeQuotaError.textContent = "—";
+    claudeHealth.textContent = "—";
+    resetClaudeQuotaRows();
+    return;
+  }
+  const credential = block.credential ?? null;
+  const workspace = block.workspace ?? null;
+  const quota = block.quota ?? null;
+  const health = block.health ?? null;
+  const blockedUntil = typeof quota?.blocked_until_ms === "number" && quota.blocked_until_ms > Date.now()
+    ? quota.blocked_until_ms
+    : null;
+  const cooldownUntil = typeof quota?.cooldown_until_ms === "number" && quota.cooldown_until_ms > Date.now()
+    ? quota.cooldown_until_ms
+    : null;
+
+  if (block.configured !== true) {
+    setBadge(claudeSubscriptionBadge, "bad", "No credential");
+  } else if (block.enabled === false) {
+    setBadge(claudeSubscriptionBadge, "warning", "Provider switched off");
+  } else if (blockedUntil !== null) {
+    setBadge(claudeSubscriptionBadge, "bad", `Quota blocked · retry ${formatDate(blockedUntil)}`);
+  } else if (cooldownUntil !== null) {
+    setBadge(claudeSubscriptionBadge, "warning", `Cooling down · retry ${formatDate(cooldownUntil)}`);
+  } else if (health?.state === "healthy") {
+    setBadge(claudeSubscriptionBadge, "ok", "Healthy");
+  } else {
+    setBadge(claudeSubscriptionBadge, "unknown", `Health ${health?.state ?? "unknown"}`);
+  }
+
+  claudeCredentialSource.textContent = claudeCredentialSourceLabel(credential?.source);
+  claudeCredentialKind.textContent = credential?.kind === "oauth"
+    ? "OAuth / setup token"
+    : credential?.kind === "api_key"
+    ? "Console API key"
+    : "—";
+  claudeCredentialHint.textContent = credential?.hint ?? "—";
+  claudeCredentialUpdated.textContent = credential?.updated_at_ms
+    ? formatDate(credential.updated_at_ms)
+    : credential?.source
+    ? "Environment"
+    : "—";
+
+  claudeWorkspaceId.textContent = workspace?.id ?? "Not selected";
+  claudeWorkspaceName.textContent = workspace?.name ?? "—";
+  claudeWorkspaceSource.textContent = workspace?.source === "kv"
+    ? "Pinned in KV"
+    : workspace?.source === "env"
+    ? "Pinned by CLAUDE_CODE_WORKSPACE_ID"
+    : workspace?.source === "discovered"
+    ? "Discovered"
+    : "—";
+  claudeWorkspaceVerified.textContent = workspace?.last_error
+    ? workspace.last_error
+    : workspace?.verified_at_ms
+    ? formatDate(workspace.verified_at_ms)
+    : "Not verified";
+
+  claudeGateProvider.textContent = block.enabled === true
+    ? "On"
+    : block.enabled === false
+    ? "Off · requests stay on the paid route"
+    : "Unknown";
+  claudeGateAllowlist.textContent = block.principal_allowlist_configured === true
+    ? "Configured"
+    : "Empty · nobody may use the tier";
+  claudeGateQuota.textContent = blockedUntil !== null
+    ? `Blocked until ${formatDate(blockedUntil)}${quota?.block_window ? ` (${quota.block_window} window)` : ""}`
+    : cooldownUntil !== null
+    ? `Cooling down until ${formatDate(cooldownUntil)}`
+    : "Clear";
+
+  resetClaudeQuotaRows();
+  const windows = quota?.windows ?? null;
+  if (windows && typeof windows === "object") {
+    for (const id of ["5h", "7d"]) {
+      const window = windows[id];
+      if (!window) continue;
+      claudeQuotaWindows.append(
+        claudeQuotaRow(
+          `Subscription ${id}`,
+          `${window.status ?? "unreported"} · ${formatUtilization(window.utilization)}`,
+          typeof window.reset_at_ms === "number" ? window.reset_at_ms : null,
+        ),
+      );
+    }
+  }
+  const standard = quota?.standard ?? null;
+  if (standard && typeof standard === "object") {
+    for (const family of ["requests", "input-tokens", "output-tokens"]) {
+      const window = standard[family];
+      if (!window) continue;
+      const limit = typeof window.limit === "number" ? formatNumber(window.limit) : "unlimited";
+      const remaining = typeof window.remaining === "number" ? formatNumber(window.remaining) : "unreported";
+      claudeQuotaWindows.append(
+        claudeQuotaRow(
+          `API ${family}`,
+          `${remaining} of ${limit} remaining`,
+          typeof window.reset_at_ms === "number" ? window.reset_at_ms : null,
+        ),
+      );
+    }
+  }
+  if (!claudeQuotaWindows.childElementCount) {
+    claudeQuotaWindows.append(claudeQuotaRow("Quota", "No rate-limit headers observed yet"));
+  }
+
+  const error = quota?.last_error ?? null;
+  claudeQuotaError.textContent = error
+    ? `${error.kind}${typeof error.status === "number" ? ` · ${error.status}` : ""} · ${formatDate(error.at_ms)}${
+      error.message ? ` — ${error.message}` : ""
+    }`
+    : "None recorded";
+  claudeHealth.textContent = health
+    ? `${health.state ?? "unknown"}${health.stale ? " · stale" : ""} · last ${health.last_event ?? "none"}${
+      health.last_observed_at_ms ? ` ${formatDate(health.last_observed_at_ms)}` : ""
+    }`
+    : "Not observed";
+};
+
+const loadClaudeSubscription = async () => {
+  if (!adminAccessState.isAdmin || !hasAdminCredential()) return;
+  const token = getAdminToken();
+  try {
+    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
+      cache: "no-store",
+      headers: { Authorization: "Bearer " + token },
+    });
+    const payload = await response.json().catch(() => null);
+    if (token !== getAdminToken()) return;
+    if (!response.ok || !payload) return;
+    latestClaudeSubscription = payload.data ?? null;
+    renderClaudeSubscriptionPanel();
+  } catch {
+    // A transient read failure keeps the last good panel state.
+  }
+};
+
+const setClaudeSubscriptionBusy = (busy) => {
+  claudeSubscriptionBusy = busy;
+  for (const button of [claudeCredentialSave, claudeWorkspaceSave, claudeCredentialClear, claudeQuotaClear]) {
+    button.disabled = busy;
+  }
+};
+
+const saveClaudeCredential = async () => {
+  if (claudeSubscriptionBusy) return;
+  const credential = claudeCredentialInput.value.trim();
+  const workspaceId = claudeWorkspaceInput.value.trim();
+  if (!credential) {
+    toast.error("Credential required", { description: "Paste an Anthropic API key or Claude Code OAuth token first." });
+    return;
+  }
+  const body = { credential };
+  if (workspaceId) body.workspace_id = workspaceId;
+  setClaudeSubscriptionBusy(true);
+  claudeSubscriptionStatus.textContent = "Validating the credential against the Anthropic models listing…";
+  try {
+    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + getAdminToken(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.error?.message || "Could not store the Claude credential");
+    latestClaudeSubscription = payload.data ?? null;
+    claudeCredentialInput.value = "";
+    renderClaudeSubscriptionPanel();
+    claudeSubscriptionStatus.textContent = payload.validation?.detail ?? "Credential stored.";
+  } catch (error) {
+    claudeSubscriptionStatus.textContent = "";
+    toast.error("Save failed", { description: error.message });
+  } finally {
+    setClaudeSubscriptionBusy(false);
+    void loadClaudeSubscription();
+  }
+};
+
+const saveClaudeWorkspace = async () => {
+  if (claudeSubscriptionBusy) return;
+  const workspaceId = claudeWorkspaceInput.value.trim();
+  setClaudeSubscriptionBusy(true);
+  claudeSubscriptionStatus.textContent = "Validating the workspace selection…";
+  try {
+    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + getAdminToken(), "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId || null }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.error?.message || "Could not store the Claude workspace");
+    latestClaudeSubscription = payload.data ?? null;
+    claudeWorkspaceInput.value = "";
+    renderClaudeSubscriptionPanel();
+    claudeSubscriptionStatus.textContent = workspaceId ? "Workspace pinned." : "Workspace pin cleared.";
+  } catch (error) {
+    claudeSubscriptionStatus.textContent = "";
+    toast.error("Save failed", { description: error.message });
+  } finally {
+    setClaudeSubscriptionBusy(false);
+    void loadClaudeSubscription();
+  }
+};
+
+const clearClaudeCredential = async () => {
+  if (claudeSubscriptionBusy) return;
+  setClaudeSubscriptionBusy(true);
+  claudeSubscriptionStatus.textContent = "Clearing the stored credential…";
+  try {
+    const response = await fetch(apiUrl("/admin/providers/claude-code/auth"), {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + getAdminToken() },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.error?.message || "Could not clear the Claude credential");
+    latestClaudeSubscription = payload.data ?? null;
+    renderClaudeSubscriptionPanel();
+    claudeSubscriptionStatus.textContent = "Stored credential cleared; the environment credential applies again.";
+  } catch (error) {
+    claudeSubscriptionStatus.textContent = "";
+    toast.error("Clear failed", { description: error.message });
+  } finally {
+    setClaudeSubscriptionBusy(false);
+    void loadClaudeSubscription();
+  }
+};
+
+const clearClaudeQuotaGuards = async () => {
+  if (claudeSubscriptionBusy) return;
+  setClaudeSubscriptionBusy(true);
+  claudeSubscriptionStatus.textContent = "Clearing exhaustion guards…";
+  try {
+    const response = await fetch(apiUrl("/admin/providers/claude-code/quota/clear"), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + getAdminToken() },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.error?.message || "Could not clear the Claude guards");
+    latestClaudeSubscription = payload.data ?? null;
+    renderClaudeSubscriptionPanel();
+    claudeSubscriptionStatus.textContent = payload.guards_cleared
+      ? "Guards cleared; the next eligible request retries the tier."
+      : "No stored guards to clear.";
+  } catch (error) {
+    claudeSubscriptionStatus.textContent = "";
+    toast.error("Clear failed", { description: error.message });
+  } finally {
+    setClaudeSubscriptionBusy(false);
+    void loadClaudeSubscription();
+  }
+};
+
+claudeCredentialSave.addEventListener("click", () => void saveClaudeCredential());
+claudeWorkspaceSave.addEventListener("click", () => void saveClaudeWorkspace());
+claudeCredentialClear.addEventListener("click", () => void clearClaudeCredential());
+claudeQuotaClear.addEventListener("click", () => void clearClaudeQuotaGuards());
+
 const loadProviders = async () => {
   if (providersLoading) return;
+  void loadClaudeSubscription();
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !hasAdminCredential()) {
     return;
@@ -3108,13 +3531,13 @@ const loadProviders = async () => {
     if (!response.ok || !payload) {
       if (providersLoadedAt) {
         if (latestProviderCapacityChartState?.sources) {
-          renderProviderCapacityList(latestProviderCapacityChartState.sources);
+          renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
         }
         return;
       }
       latestProviderHealth = null;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       return;
     }
@@ -3148,18 +3571,22 @@ const loadProviders = async () => {
     codexOverageSettingsToken = token;
     codexProviderSettingsLoadedAt = Date.now();
     latestProviderHealth = payload;
-    if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
+    if (latestProviderCapacityChartState?.sources) {
+      renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+    }
     providersLoadedAt = Date.now();
   } catch {
     if (loadId !== providersLoadId) return;
     if (providersLoadedAt) {
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       return;
     }
     latestProviderHealth = null;
-    if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
+    if (latestProviderCapacityChartState?.sources) {
+      renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+    }
   } finally {
     if (loadId === providersLoadId) providersLoading = false;
   }
@@ -3401,12 +3828,18 @@ const refreshAccessUpstreamSummary = async () => {
   if (!token && !hasAdminCredential()) {
     setAccessValue(accessUpstreamSource, "Missing token");
     setAccessValue(accessUpstreamExpiry, "Missing token");
+    setAccessValue(accessClaudeSource, "Missing token");
+    setAccessValue(accessClaudeHealth, "Missing token");
+    setAccessValue(accessClaudeWorkspace, "Missing token");
     return;
   }
   accessUpstreamLoading = true;
   if (!accessUpstreamLoadedAt) {
     setAccessValue(accessUpstreamSource, "Loading...");
     setAccessValue(accessUpstreamExpiry, "Loading...");
+    setAccessValue(accessClaudeSource, "Loading...");
+    setAccessValue(accessClaudeHealth, "Loading...");
+    setAccessValue(accessClaudeWorkspace, "Loading...");
   }
   try {
     const res = await fetch(apiUrl("/health/providers"), {
@@ -3419,6 +3852,15 @@ const refreshAccessUpstreamSummary = async () => {
       ? data.codex.accounts.map((account) => account?.access_token_exp_ms).filter((value) => typeof value === "number")
       : [];
     const expMs = expirations.length ? Math.min(...expirations) : null;
+    // The Claude subscription tile mirrors the Codex tile from the same passive
+    // snapshot: where the credential came from, the tier's health, and the
+    // workspace it names.
+    const claude = data?.claude_code && typeof data.claude_code === "object" ? data.claude_code : null;
+    const claudeSource = claude?.credential?.source ?? (claude?.configured ? "configured" : "none");
+    const claudeHealth = typeof claude?.health?.state === "string" ? claude.health.state : "unknown";
+    setAccessValue(accessClaudeSource, claudeSource === "none" ? "None" : String(claudeSource));
+    setAccessValue(accessClaudeHealth, claudeHealth);
+    setAccessValue(accessClaudeWorkspace, claude?.workspace?.id ?? "Not selected");
     if (!res.ok) {
       if (accessUpstreamLoadedAt) return;
       setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
@@ -3432,6 +3874,9 @@ const refreshAccessUpstreamSummary = async () => {
     if (accessUpstreamLoadedAt) return;
     setAccessValue(accessUpstreamSource, "Offline");
     setAccessValue(accessUpstreamExpiry, "Offline");
+    setAccessValue(accessClaudeSource, "Offline");
+    setAccessValue(accessClaudeHealth, "Offline");
+    setAccessValue(accessClaudeWorkspace, "Offline");
   } finally {
     accessUpstreamLoading = false;
   }
@@ -9983,7 +10428,7 @@ const hydrateAdminSnapshots = async () => {
     providerCapacityUpdated.textContent = `Cached ${formatDate(capacitySnapshot.savedAt)} · refreshing`;
     setBadge(providerCapacityBadge, "unknown", "Cached · refreshing");
   } else if (latestProviderCapacityChartState?.sources) {
-    renderProviderCapacityList(latestProviderCapacityChartState.sources);
+    renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
   }
 
   const errors = cachedList(errorsSnapshot);

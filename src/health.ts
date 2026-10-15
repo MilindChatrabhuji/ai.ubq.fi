@@ -5,7 +5,17 @@ import { readDeepSeekApiKey } from "./deepseek/index.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { readLithosApiKey } from "./provider/lithos.ts";
-import { readClaudeCodeAllowedKeyIds, readClaudeCodeToken } from "./provider/claude-code.ts";
+import { claudeCodeRequestHeaders, CLAUDE_CODE_MODELS_URL, readClaudeCodeAllowedKeyIds } from "./provider/claude-code.ts";
+import {
+  CLAUDE_CODE_WORKSPACE_ID_ENV,
+  resolveClaudeCodeCredential,
+  resolveClaudeCodeWorkspace,
+  loadClaudeCodeWorkspaceState,
+  type ClaudeCodeResolvedCredential,
+  type ClaudeCodeResolvedWorkspace,
+} from "./provider/claude-code-credentials.ts";
+import { loadClaudeCodeQuotaState, type ClaudeCodeQuotaState } from "./provider/claude-code-quota.ts";
+import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import {
   getCerebrasProviderHealth,
   getClaudeCodeProviderHealth,
@@ -80,7 +90,7 @@ type CodexAuthContext = Readonly<{
 
 type ActiveProviderProbe = {
   status: number;
-  provider: "chatgpt_codex" | "metered_quota";
+  provider: "chatgpt_codex" | "metered_quota" | "claude_subscription";
   content_type: string | null;
   error?: string;
 };
@@ -91,6 +101,18 @@ type HealthUpstreamProbe = {
   probes: {
     codex: ActiveProviderProbe;
     metered_quota: ActiveProviderProbe | null;
+    /**
+     * The Claude subscription credential probe. It reports independently so a
+     * billing or workspace rejection on that tier never masquerades as a Codex
+     * upstream outage in the aggregate status.
+     */
+    claude_subscription: ActiveProviderProbe | null;
+    claude_workspace: {
+      id: string | null;
+      name: string | null;
+      source: string | null;
+      pinned_by_env: boolean;
+    } | null;
   };
 };
 
@@ -98,6 +120,8 @@ type HealthProbeProgress = {
   auth: HealthAuthMeta | null;
   codex: ActiveProviderProbe | undefined;
   metered_quota: ActiveProviderProbe | null | undefined;
+  claude_subscription: ActiveProviderProbe | null | undefined;
+  claude_workspace: HealthUpstreamProbe["probes"]["claude_workspace"] | undefined;
 };
 
 let upstreamProbeInFlight: Promise<HealthUpstreamProbe> | null = null;
@@ -296,9 +320,93 @@ const gatewayProviderHealthSubtree = (): Record<string, unknown> => {
   };
 };
 
+/**
+ * Workspace readback for the Claude subscription tier. The resolved selection
+ * (KV pin, environment pin, or discovery) is reported together with the last
+ * verification and the last workspace-resolution failure, so an operator sees
+ * which workspace the gateway will name and whether it was ever accepted.
+ */
+const claudeWorkspaceView = (
+  resolved: ClaudeCodeResolvedWorkspace | null,
+  stored: Awaited<ReturnType<typeof loadClaudeCodeWorkspaceState>>,
+  pinnedByEnv: boolean
+): Record<string, unknown> | null => {
+  const id = resolved?.id ?? stored?.id ?? null;
+  if (!id) return null;
+  return {
+    id,
+    name: resolved?.name ?? stored?.name ?? null,
+    source: resolved?.source ?? stored?.source ?? null,
+    pinned_by_env: pinnedByEnv,
+    discovered_at_ms: stored?.discovered_at_ms ?? null,
+    verified_at_ms: stored?.verified_at_ms ?? null,
+    last_error: stored?.last_error ?? null,
+  };
+};
+
+/** Quota and configuration-state readback for the Claude subscription tier. */
+const claudeCodeQuotaView = (quota: ClaudeCodeQuotaState | null): Record<string, unknown> | null => {
+  if (!quota) return null;
+  return {
+    windows: quota.windows,
+    standard: quota.standard,
+    representative_claim: quota.representative_claim,
+    blocked_until_ms: quota.blocked_until_ms,
+    block_window: quota.block_window,
+    cooldown_until_ms: quota.cooldown_until_ms,
+    last_error: quota.last_error,
+    updated_at_ms: quota.updated_at_ms,
+  };
+};
+
+const readClaudeCodeWorkspacePinnedByEnv = (): boolean => {
+  try {
+    return (Deno.env.get(CLAUDE_CODE_WORKSPACE_ID_ENV) ?? "").trim().length > 0;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The admin/health readback for the Claude subscription tier: credential
+ * provenance, workspace selection, gates, and quota state, never secret
+ * material. Shared by the passive provider snapshot and the admin status
+ * route so both always agree.
+ */
+export const getClaudeSubscriptionStatusSnapshot = async (): Promise<Record<string, unknown>> => {
+  const kv = await getKv();
+  const [credential, workspace, workspaceState, quota, selection] = await Promise.all([
+    resolveClaudeCodeCredential(kv).catch(() => null),
+    resolveClaudeCodeWorkspace(kv).catch(() => null),
+    loadClaudeCodeWorkspaceState(kv).catch(() => null),
+    loadClaudeCodeQuotaState(kv).catch(() => null),
+    loadProviderSelectionCached().catch(() => null),
+  ]);
+  return {
+    // Configured means a credential exists; the principal allowlist and the
+    // operator switch are reported separately because either one keeps the
+    // route inert even with a credential.
+    configured: credential !== null,
+    credential: credential
+      ? {
+          kind: credential.kind,
+          source: credential.source,
+          hint: credential.hint,
+          label: credential.label,
+          updated_at_ms: credential.updated_at_ms,
+        }
+      : null,
+    workspace: claudeWorkspaceView(workspace, workspaceState, readClaudeCodeWorkspacePinnedByEnv()),
+    principal_allowlist_configured: readClaudeCodeAllowedKeyIds().size > 0,
+    enabled: isProviderEnabled("claude_code", selection),
+    quota: claudeCodeQuotaView(quota),
+  };
+};
+
 export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ includeQuota?: boolean }> = {}): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
+  const claudeStatus = await getClaudeSubscriptionStatusSnapshot();
   const [cerebrasHealth, claudeCodeHealth, codexHealth, deepseekHealth, lithosHealth, meteredHealth, openRouterHealth, surplusHealth, meteredQuota] =
     await Promise.all([
       providerHealthOrUnknown(getCerebrasProviderHealth()),
@@ -332,11 +440,7 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
       health: cerebrasHealth,
     },
     claude_code: {
-      // Configured means the subscription credential exists; the principal
-      // allowlist is reported separately because an empty allowlist keeps the
-      // route inert even with a credential.
-      configured: readClaudeCodeToken() !== null,
-      principal_allowlist_configured: readClaudeCodeAllowedKeyIds().size > 0,
+      ...claudeStatus,
       health: claudeCodeHealth,
     },
     deepseek: {
@@ -419,6 +523,48 @@ const codexProbe = async (auth: HealthAuthMeta, signal: AbortSignal): Promise<Ac
   }
 };
 
+/**
+ * The Claude subscription probe lists models with the exact credential and
+ * workspace the tier would use for inference. A listing is free, so a green
+ * probe proves credential, workspace, and transport without spending quota on
+ * a completion; the tier's own billing or workspace rejections stay visible in
+ * the passive snapshot instead of failing this probe.
+ */
+const claudeSubscriptionProbe = async (
+  credential: ClaudeCodeResolvedCredential | null,
+  workspace: ClaudeCodeResolvedWorkspace | null,
+  signal: AbortSignal
+): Promise<ActiveProviderProbe | null> => {
+  if (!credential) return null;
+  try {
+    const response = await fetch(CLAUDE_CODE_MODELS_URL, {
+      method: "GET",
+      headers: claudeCodeRequestHeaders(credential, { stream: false, workspaceId: workspace?.id ?? null }),
+      redirect: "manual",
+      signal,
+    });
+    const contentType = response.headers.get("Content-Type");
+    if (response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return { status: 200, provider: "claude_subscription", content_type: contentType };
+    }
+    const detail = (await response.text().catch(() => "")).trim();
+    return {
+      status: response.status === 401 ? 401 : 503,
+      provider: "claude_subscription",
+      content_type: contentType,
+      error: detail ? detail.slice(0, 240) : "Claude models probe returned an error status.",
+    };
+  } catch {
+    return {
+      status: 503,
+      provider: "claude_subscription",
+      content_type: null,
+      error: signal.aborted ? "Claude models probe timed out." : "Claude models probe failed.",
+    };
+  }
+};
+
 // This non-billable endpoint authenticates the monitoring account, which is
 // intentionally distinct from the inference API key. Name it accordingly so
 // a green quota check is never mistaken for paid-fallback availability.
@@ -437,9 +583,17 @@ const meteredQuotaProbe = async (credentials: MeteredAccountCredentials | null, 
   }
 };
 
-const aggregateUpstreamProbe = (auth: HealthAuthMeta | null, codex: ActiveProviderProbe, meteredQuota: ActiveProviderProbe | null): HealthUpstreamProbe => {
+const aggregateUpstreamProbe = (
+  auth: HealthAuthMeta | null,
+  codex: ActiveProviderProbe,
+  meteredQuota: ActiveProviderProbe | null,
+  claudeSubscription: ActiveProviderProbe | null = null,
+  claudeWorkspace: HealthUpstreamProbe["probes"]["claude_workspace"] = null
+): HealthUpstreamProbe => {
+  // The aggregate status stays about the Codex and metered upstreams: the
+  // Claude subscription reports its own state without failing this roll-up.
   const failures = [codex, meteredQuota].filter((probe): probe is ActiveProviderProbe => probe !== null && probe.status >= 400);
-  const probes = { codex, metered_quota: meteredQuota };
+  const probes = { codex, metered_quota: meteredQuota, claude_subscription: claudeSubscription, claude_workspace: claudeWorkspace };
   if (failures.length === 0) return { status: 200, auth, probes };
   const status = failures.some((probe) => probe.status === 401) ? 401 : 503;
   return { status, auth, probes };
@@ -465,28 +619,43 @@ const probeUpstream = async (
           error: "Codex auth metadata could not be read.",
         },
         metered_quota: null,
+        claude_subscription: null,
+        claude_workspace: null,
       },
     };
   }
   progress.auth = auth;
+  const kv = await getKv();
+  const [credential, workspace] = await Promise.all([resolveClaudeCodeCredential(kv).catch(() => null), resolveClaudeCodeWorkspace(kv).catch(() => null)]);
+  progress.claude_workspace = credential
+    ? { id: workspace?.id ?? null, name: workspace?.name ?? null, source: workspace?.source ?? null, pinned_by_env: readClaudeCodeWorkspacePinnedByEnv() }
+    : null;
   const codexPromise = codexProbe(auth, signal).then((probe) => (progress.codex = probe));
   const meteredPromise = meteredQuotaProbe(meteredCredentials, signal).then((probe) => (progress.metered_quota = probe));
-  const [codex, meteredQuota] = await Promise.all([codexPromise, meteredPromise]);
-  return aggregateUpstreamProbe(auth, codex, meteredQuota);
+  const claudePromise = claudeSubscriptionProbe(credential, workspace, signal).then((probe) => (progress.claude_subscription = probe));
+  const [codex, meteredQuota, claudeSubscription] = await Promise.all([codexPromise, meteredPromise, claudePromise]);
+  return aggregateUpstreamProbe(auth, codex, meteredQuota, claudeSubscription, progress.claude_workspace);
 };
 
 const timedOutProviderProbe = (provider: ActiveProviderProbe["provider"]): ActiveProviderProbe => ({
   status: 503,
   provider,
   content_type: null,
-  error: provider === "chatgpt_codex" ? "Codex models probe timed out." : "Metered quota probe timed out.",
+  error:
+    provider === "chatgpt_codex"
+      ? "Codex models probe timed out."
+      : provider === "claude_subscription"
+        ? "Claude models probe timed out."
+        : "Metered quota probe timed out.",
 });
 
 const timeoutProbe = (progress: HealthProbeProgress): HealthUpstreamProbe =>
   aggregateUpstreamProbe(
     progress.auth,
     progress.codex ?? timedOutProviderProbe("chatgpt_codex"),
-    progress.metered_quota === undefined ? timedOutProviderProbe("metered_quota") : progress.metered_quota
+    progress.metered_quota === undefined ? timedOutProviderProbe("metered_quota") : progress.metered_quota,
+    progress.claude_subscription === undefined ? timedOutProviderProbe("claude_subscription") : progress.claude_subscription,
+    progress.claude_workspace ?? null
   );
 
 const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
@@ -497,6 +666,8 @@ const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
     auth: null,
     codex: undefined,
     metered_quota: meteredCredentials ? undefined : null,
+    claude_subscription: undefined,
+    claude_workspace: undefined,
   };
   let timeoutId: Parameters<typeof clearTimeout>[0];
   const timeout = new Promise<HealthUpstreamProbe>((resolve) => {

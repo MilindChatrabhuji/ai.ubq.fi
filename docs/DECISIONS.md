@@ -1,32 +1,10 @@
 # ai.ubq.fi Decisions
 
-Read before changing the runtime, storage codecs, model routing, cache-read telemetry, VPS acceptance, lint configuration, or Deno app inventory.
+Read before changing model routing, cache-read telemetry, VPS acceptance, lint configuration, or Deno app inventory.
 These are scoped decisions, not general policy; they narrow global defaults only for this repository and never weaken
 higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
-
-## Bun executes first-party TypeScript; live cutover remains separate - 2026-10-14
-
-The owner authorized migration of this gateway, its first-party libraries, scripts, tests, quality tooling, CI, and deployment artifacts to Bun 1.4.0. Run TypeScript directly and resolve runtime and development dependencies from the root `package.json`; both root and quality-tooling `bun.lock` files must exist before frozen installs. Strict no-emit TypeScript checking remains an explicit, separate gate: executing or testing TypeScript with Bun does not establish type correctness. Public scripts remain `bun run verify`, `bun run build`, and `bun run test`; isolated execution uses `bun --no-env-file run <script>`, with the actual OS fixture-network boundary and sparse named test profiles. Prettier owns supported first-party formats at the retained widths, with Markdown paragraph wrapping preserved.
-
-This repository-scoped decision supersedes the Deno-only runtime default, the root-dependency prohibition, Deno import-map resolution, generated `.deno-types.d.ts`, and Deno gate commands for the migrated first-party program. Earlier dated Deno decisions and their receipts remain historical evidence; they do not authorize a Bun service rollout. Vendored native Codex and other repositories remain outside this migration.
-
-The current source tree retires root `deno.json` and `deno.lock`; Bun scripts and frozen Bun graphs own application tasks and dependencies. Original immutable legacy rollback releases retain their Deno configurations, lockfiles, runtime artifacts, and supported launcher profiles unchanged. The explicit offline V8 codec and latest-state reverse-conversion helper exception remains in force.
-
-The named `application` export and explicit direct entry point use Bun's `node:http` implementation so actual transport `finish`, `error`, and `close` events remain the delivery receipt for terminal settlement; no automatic default-export Bun server may bypass that seam. Retain one inference admission lifetime and settle quota and paid accounting exactly once after the semantic terminal and transport outcome are known; consuming a response body alone is not delivery proof. Drain delivery-triggered durable request writes before optional telemetry and KV closure. Preserve cancellation, progressive SSE, WebSocket principal binding, routing eligibility, paid-hop identities, and all existing credential and quota fences. The `#http` loader resolves the installed `ws@8.18.3` package's declared ESM entry rather than Bun's bare-specifier substitute, retaining upstream headers, Unix-domain sockets, and payload/handshake limits.
-
-The SQLite storage foundation targets pinned `@deno/kv@0.14.0`, subject to proof of the existing atomic compare-and-set, heterogeneous key ordering, versionstamp, expiry, serialization, billing, quota, and restart-persistence contracts. The native correctness fix and its exact immutable artifact remain pending final acceptance and require attested source/build provenance; valid caller budgets and all-or-nothing mutation failure must not be weakened. Bun's `node:v8` value serialization uses JavaScriptCore and is not the legacy Deno V8 value codec. The Bun target `.data/kv-bun.sqlite3` requires an explicit codec marker, and an absent or incompatible marker must fail closed rather than reinterpret the retained legacy `.data/kv.sqlite3`.
-
-Legacy database conversion is an explicit offline operation into a new destination, preserving raw native key bytes, revisions, absolute expiry, typed values, and a complete hash-bound receipt. Before separately authorized live cutover, stop and drain all source writers and retain a verified consistent backup. Pinned Deno 2.9.7 is permitted only as the checksum-verified offline V8 codec and latest-state reverse-conversion helper; the external tool-owned evidence helper remains separate. Neither is an ordinary application/build/test/CI runtime requirement. After Bun writes, restoring the untouched original Deno database or an old backup loses those writes: an authorized Deno rollback must reverse-convert the latest stopped Bun state into a new Deno destination with the supported release/profile and verified private receipt. Startup, deployment, and the PR loop never convert live storage or automatically select a legacy Deno rollback after Bun startup. Disposable conversion and rollback evidence is required; an empty-database test does not prove compatibility.
-
-Runtime archives, binaries, frozen dependency trees, and auxiliary native containment/KV artifacts must be prepared, attested, and manifest-bound before immutable release publication or service interruption. Launchers use `--no-env-file --no-install`, explicitly load only the repository-root dotenv file, and refuse absent or corrupt artifacts without downloading, installing, or compiling at application startup. Native auxiliary builds do not compile application TypeScript. Preserve real Linux and macOS OS read/write/network/process boundaries, fail closed when enforcement is unsupported, and require actual platform proof rather than a JavaScript permission facade.
-
-Before production Bun cutover, the standalone Sentinel integration owner must authorize and accept its frozen-source causal reader using the captured Bun source SHA, trusted offline runtime/dependency artifacts and frozen hashes, disabled dotenv and auto-install, equivalent OS isolation, and a proven process-execution-denial bootstrap. This repository's migration does not transfer Sentinel checkout or caller-write authority; existing captures remain bound to their recorded legacy source SHA. Gateway source delivery and tests cannot substitute for that external consumer acceptance.
-
-This task authorizes source delivery through the normal PR and local Codex review workflow, not a production or Mac service restart, live database conversion, credential mutation, or provider-credit spend. Required deterministic CI and branch protections remain the merge gates; review findings retain their asynchronous official backlog policy. A later authorized deployment still requires the immutable release, deploy lock, exact release identity, requested authenticated client inference, public-route verification, and existing recovery and retention safeguards.
-
-Reason: the owner explicitly selected Bun for the complete first-party program. Reversal risk: treating execution as a type check, treating JavaScriptCore bytes as Deno V8 values, settling quota before transport delivery, restoring stale state after Bun writes, or preparing artifacts during startup would discard a correctness or custody boundary. Full settled canonical verification/CI, the exact native artifact, real Mac/platform confinement, the complete gateway acceptance surface, and the owner-gated Sentinel reader remain explicit acceptance obligations. This decision records no pass for unresolved gates or completed production acceptance.
 
 ## Authoritative unavailable subscriptions permit paid failover - 2026-10-14
 
@@ -1200,18 +1178,18 @@ was taken at a context size far below the real sessions, which is why it came ba
 only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
 effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
 
-| Model                           | Actual input tokens |   n | Emitted tool call | Narrated and stopped |    Rate |
-| ------------------------------- | ------------------: | --: | ----------------: | -------------------: | ------: |
-| `deepseek-flash` (effort `max`) |                 951 |  10 |                10 |                    0 |      0% |
-| `deepseek-flash` (effort `max`) |               4,400 |  10 |                 7 |                    3 |     30% |
-| `deepseek-flash` (effort `max`) |               9,003 |  10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              14,186 |  10 |                 9 |                    1 |     10% |
-| `deepseek-flash` (effort `max`) |              18,787 |  10 |                 5 |                    5 | **50%** |
-| `deepseek-flash` (effort `max`) |              28,558 |  10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              66,533 |  10 |                 5 |                    5 | **50%** |
-| `gpt-reserve` (effort `medium`) |              61,005 |  10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `max`)    |              61,005 |  10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `medium`) |             175,888 |  10 |                10 |                    0 |      0% |
+| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
+| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
 
 Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
 
@@ -1738,10 +1716,55 @@ a blank-account reply from a daemon holding the wrong file account stays refused
 bind and refresh is caught only by the generation checks; the fallback trusts the local home configured on that host,
 never a remote path.
 
-## Native KV preparation retains build scratch in checkout storage - 2026-10-15
+## Claude subscription parity: API-key credential, workspace selection, and admin surfaces - 2026-10-15
 
-Native KV preparation places each unique source, Cargo home, compiler target, and retained log tree under `.tmp/native-kv-builds/` in the builder module's own checkout. The scratch root is independent of the invoking directory, explicit artifact output directory, toolchain override, and inherited `TMPDIR`. Compiler subprocesses receive the existing `TMPDIR` interface pointing to that build tree's private `tmp` subdirectory.
+The `claude_code` tier now accepts the Console-billed `CLAUDE_API_KEY` direction alongside the owner-gated OAuth setup
+token, and it carries the operational surface the Codex subscription always had. Credential resolution is KV first and
+environment second (`CLAUDE_API_KEY`, then `CLAUDE_CODE_OAUTH_TOKEN`), so the admin console can rotate a credential
+without a restart; `api_key` credentials travel as `x-api-key` and OAuth tokens keep `Authorization: Bearer` plus
+`anthropic-beta: oauth-2025-04-20`. An organization-scoped key that rejects the first request with the documented "not
+scoped to a workspace" error triggers one workspace discovery through `/v1/organizations/workspaces` (preferring a
+workspace named `Default`), cached in KV and overridable by `CLAUDE_CODE_WORKSPACE_ID` or an admin pin; the retry reuses
+the request's single pre-transport dispatch reservation instead of claiming a second one, because the API-key usage
+ledger records exactly one pre-transport dispatch per request. Billing and workspace rejections are classified from the
+upstream error body into `billing_blocked` / `workspace_not_found` / `workspace_required`, stored with a bounded
+ten-minute configuration cooldown and their sanitized message, and they never become durable quota exhaustion; a served
+request clears the recorded configuration error. `GET`/`POST`/`DELETE /admin/providers/claude-code/auth` reads, stores
+(validated against the Anthropic models listing), and clears the credential plus an optional workspace pin;
+`POST /admin/providers/claude-code/quota/clear` drops the guards; `/admin/providers`, `/health/upstream`, and the admin
+panel's Claude subscription card report credential provenance, the workspace selection, the routing gates, unified and
+standard rate-limit windows, the last upstream outcome, and health. `normalizeApiKeyUsageRequestV3` now derives its
+provider allowlist from `API_KEY_USAGE_PROVIDERS`, because a `claude_code` dispatch row previously failed normalization
+and surfaced as `api_key_quota_reservation_unavailable` for the paid hop that followed it.
 
-Reason: retaining compiler source, dependencies, and output under the VPS RAM-backed `/tmp` consumes memory and swap even after a successful build. Checkout storage provides the existing disk-backed workspace for these large retained files. Artifact destinations, provenance and log hashes, log retention, pinned toolchain checks, `--jobs 1`, and existing command timeouts remain unchanged. This decision adds no cleanup, global concurrency policy, runtime activation, product setting, or memory limit.
+Reason: the operator asked for Claude subscription feature parity with the Codex subscription, including admin switches,
+panels, and analytics, and named `CLAUDE_API_KEY` as the credential to use. The Console API-key direction is the
+research's documented authentication path (GREEN) where the raw OAuth bridge is only AMBER, so the owner-gated allowlist
+stays in force while the credential itself becomes operator-managed and independently rotatable. Reversal risk: a
+workspace pin or discovery result is advisory state that names the workspace sent as `anthropic-workspace-id`; a wrong
+pin fails closed with the recorded `workspace_not_found` state until it is corrected, and the tier still falls through
+to the paid routes on every rejection. The environment's own account state (no API credits in the Console organization,
+an admin-only `Claude Code` workspace) is an account condition, not a gateway defect: the tier records the exact
+upstream rejection instead of retrying it per request.
 
-Validation must exercise the actual builder with fixture tools while varying the caller directory, artifact path, and inherited temporary directory, then verify one real pinned native build from the exact candidate on disk-backed storage. Historical build receipts and shared-memory growth support this allocation mechanism; they do not attribute every byte or every outage to the native build.
+## Claude subscription joins the provider capacity analytics - 2026-10-15
+
+`GET /admin/providers/capacity` now carries a live `claude` block next to the Codex/metered `sources`, and the admin
+Analytics capacity list renders it as a third row beside the two Codex subscription rows: state badge, the observed
+5-hour and weekly subscription windows as remaining capacity (the upstream fraction is normalized to a percentage), and
+diagnostics for credential direction, workspace, guards, standard API-key limits, and the last upstream error. The block
+is computed on the admin read from the tier's own credential, workspace, guard, and quota state; it is deliberately not
+written into the stored capacity snapshot, because that record is sampled on inference events and its command budget is
+pinned by test. Older three-source stored records therefore stay valid and the sampler cost is unchanged.
+
+Reason: the operator asked for Codex-grade analytics parity for the Claude subscription, and the Codex subscriptions are
+read from the capacity pipeline. Reversal risk: the analytics row reflects the tier's recorded guard state, so a billing
+or workspace rejection shows as `unavailable` with its exact upstream status and message until the operator fixes the
+account and clears the guard; the row never blocks inference itself.
+
+
+## Native KV build scratch remains outside immutable releases - 2026-10-15
+
+Native KV preparation retains its disk-backed source, Cargo home, compiler target, and logs below the operating-system temporary root rather than below the builder module checkout. The independently supplied artifact and provenance binding remains mandatory for immutable release preparation and isolated release fixtures.
+
+Reason: a builder imported from a staged release must not add retained scratch to the published source tree or change its recorded digest. The scratch remains disk-backed; application startup still never compiles, downloads, or installs.

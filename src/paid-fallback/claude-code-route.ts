@@ -1,26 +1,29 @@
 /**
- * The owner-only Claude Code subscription hop. It runs before the paid
- * waterfall for a Claude model when every gate is satisfied, delivers the
- * subscription response directly on success, and otherwise falls through to
- * the unchanged paid route so a broken or exhausted subscription can never
- * remove service. Durable exhaustion is recorded only from the documented
- * unified rate-limit evidence; every weaker failure stays request-local.
+ * The owner-only Claude subscription hop. It runs before the paid waterfall
+ * for a Claude model when every gate is satisfied, delivers the subscription
+ * response directly on success, and otherwise falls through to the unchanged
+ * paid route so a broken or exhausted subscription can never remove service.
+ * Durable exhaustion is recorded only from the documented unified rate-limit
+ * evidence; billing and workspace rejections become bounded, operator-visible
+ * configuration states instead of per-request retries.
  */
 import { getKv } from "../kv.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "../provider/selection.ts";
+import { isSurplusClaudeModel } from "../provider/surplus-claude-request.ts";
 import { ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
 import { type RoutedResponsesUpstream, recordFirstProviderDispatch, type UsageContext } from "../openai-telemetry.ts";
 import { bestEffortPaidFallbackBookkeeping, codexCacheScopeForUsageContext } from "./health.ts";
 import {
   ClaudeCodeError,
   fetchClaudeCodeResponses,
+  isClaudeCodeConfigurationKind,
   readClaudeCodeAllowedKeyIds,
-  readClaudeCodeToken,
   resolveClaudeCodeEligibility,
   type ClaudeCodeEnvLookup,
   type ClaudeCodeFetch,
   type ClaudeCodeResponseClassification,
 } from "../provider/claude-code.ts";
+import { resolveClaudeCodeCredential, resolveClaudeCodeWorkspace } from "../provider/claude-code-credentials.ts";
 import { loadClaudeCodeQuotaState, recordClaudeCodeQuotaOutcome } from "../provider/claude-code-quota.ts";
 import { recordClaudeCodeProviderHealth } from "../provider/health.ts";
 import { cancelResponseBody } from "../upstream-wire.ts";
@@ -34,6 +37,11 @@ const HEALTH_EVENT_BY_CLASSIFICATION: Readonly<Record<ClaudeCodeResponseClassifi
   // The transport worked and the provider answered; only the request was
   // unacceptable, so the route stays reachable rather than degraded.
   request_rejected: "reachable",
+  // Scoping rejections are configuration states: the tier is not serving, and
+  // the admin surface carries the exact reason.
+  workspace_required: "upstream_error",
+  workspace_not_found: "upstream_error",
+  billing_blocked: "upstream_error",
   transient_rate_limited: "upstream_error",
   forbidden: "upstream_error",
   upstream_error: "upstream_error",
@@ -58,20 +66,30 @@ export const attemptClaudeCodeSubscription = async (
   }>
 ): Promise<RoutedResponsesUpstream | null> => {
   const selection = await loadProviderSelectionCached();
-  const cheapGates = {
-    model: options.model,
-    keyId: options.usageContext?.keyId ?? null,
-    providerEnabled: isProviderEnabled("claude_code", selection),
-    allowedKeyIds: readClaudeCodeAllowedKeyIds(options.env),
-    token: readClaudeCodeToken(options.env),
-    quota: null,
-  } as const;
-  // A dormant tier (no credential, no allowlist entry, another model, or an
-  // operator switch-off) must cost nothing, so storage is read only after
-  // every local gate has passed.
-  if (!resolveClaudeCodeEligibility(cheapGates).eligible) return null;
+  const keyId = options.usageContext?.keyId ?? null;
+  const allowedKeyIds = readClaudeCodeAllowedKeyIds(options.env);
+  // A dormant tier (another principal, no allowlist entry, another model, or
+  // an operator switch-off) must cost nothing, so storage is read only after
+  // every local gate that needs no credential has already passed.
+  if (!isSurplusClaudeModel(options.model)) return null;
+  if (!isProviderEnabled("claude_code", selection)) return null;
+  if (!keyId || !allowedKeyIds.size || !allowedKeyIds.has(keyId)) return null;
+
   const quotaKv = await getKv();
-  const eligibility = resolveClaudeCodeEligibility({ ...cheapGates, quota: await loadClaudeCodeQuotaState(quotaKv) });
+  const [credential, workspace, quota] = await Promise.all([
+    resolveClaudeCodeCredential(quotaKv, options.env),
+    resolveClaudeCodeWorkspace(quotaKv, options.env),
+    loadClaudeCodeQuotaState(quotaKv),
+  ]);
+  const eligibility = resolveClaudeCodeEligibility({
+    model: options.model,
+    keyId,
+    providerEnabled: true,
+    allowedKeyIds,
+    credential,
+    workspace,
+    quota,
+  });
   if (!eligibility.eligible) return null;
   // The API-key reservation records exactly one pre-transport dispatch per
   // request, so a failed subscription attempt keeps this request's first
@@ -81,7 +99,10 @@ export const attemptClaudeCodeSubscription = async (
   let result: Awaited<ReturnType<typeof fetchClaudeCodeResponses>>;
   try {
     result = await fetchClaudeCodeResponses(body, {
-      token: eligibility.token,
+      credential: eligibility.credential,
+      workspace: eligibility.workspace,
+      kv: quotaKv,
+      env: options.env,
       fetcher: options.fetcher,
       signal: options.signal,
       reasoningReplayScope: codexCacheScopeForUsageContext(options.usageContext),
@@ -105,11 +126,16 @@ export const attemptClaudeCodeSubscription = async (
   }
 
   const classification = result.classification;
+  const configurationRejection = isClaudeCodeConfigurationKind(classification.kind)
+    ? { kind: classification.kind, status: result.response.status, message: classification.detail, retry_after_ms: classification.retry_after_ms }
+    : null;
   await bestEffortPaidFallbackBookkeeping("claude_code quota recording", () =>
     recordClaudeCodeQuotaOutcome(quotaKv, {
       observation: result.quota,
       exhaustion: classification.exhaustion,
       transient: classification.kind === "transient_rate_limited" ? { retry_after_ms: classification.retry_after_ms } : null,
+      config_error: configurationRejection,
+      served: classification.kind === "ok",
     })
   );
   await bestEffortPaidFallbackBookkeeping("claude_code health recording", () =>
