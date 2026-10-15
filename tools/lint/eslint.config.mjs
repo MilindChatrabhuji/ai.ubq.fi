@@ -373,6 +373,14 @@ export default tsEslint.config(
     rules: { "@typescript-eslint/no-unnecessary-type-parameters": "off" },
   },
   {
+    // DIVERGENCE: passkey responses cross an untrusted JSON boundary. The
+    // WebAuthn library's declaration narrows nested response fields more than
+    // malformed request bodies permit at runtime. Measured: three guards,
+    // each covered by rejection tests for unusable responses/attestations.
+    files: ["src/auth/passkeys.ts"],
+    rules: { "@typescript-eslint/no-unnecessary-condition": "off" },
+  },
+  {
     files: ["tests/storage-bun-kv.test.ts"],
     rules: {
       "@typescript-eslint/await-thenable": "off",

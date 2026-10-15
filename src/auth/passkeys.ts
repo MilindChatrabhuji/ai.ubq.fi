@@ -495,7 +495,7 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
 
   const storedResponse: unknown = raw.response;
   const response = isWebauthnResponseObject(storedResponse) ? (storedResponse as RegistrationResponseJSON) : undefined;
-  const clientDataJson = response?.response.clientDataJSON;
+  const clientDataJson = response?.response?.clientDataJSON;
   if (!clientDataJson) return openaiError(400, "Invalid passkey response", "invalid_request_error");
 
   const challenge = parseClientChallengeOrNull(clientDataJson);
@@ -514,7 +514,7 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
       expectedRPID: challengeRecord.rp_id,
       requireUserVerification: challengeRecord.is_admin === true,
     });
-    if (!verification.verified) {
+    if (!verification.verified || !verification.registrationInfo) {
       return openaiError(400, "Invalid passkey attestation", "invalid_request_error");
     }
 
@@ -663,7 +663,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
 
   const storedResponse: unknown = raw.response;
   const response = isWebauthnResponseObject(storedResponse) ? (storedResponse as AuthenticationResponseJSON) : undefined;
-  const clientDataJson = response?.response.clientDataJSON;
+  const clientDataJson = response?.response?.clientDataJSON;
   if (!response?.id || !clientDataJson) return openaiError(400, "Invalid passkey response", "invalid_request_error");
 
   const challenge = parseClientChallengeOrNull(clientDataJson);

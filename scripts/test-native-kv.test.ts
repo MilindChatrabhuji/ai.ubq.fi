@@ -181,10 +181,8 @@ test("one real parent build is reused across files and separate original profile
       before,
       "Reused profiles must not invoke another producer"
     );
-    const parentReceipt = JSON.parse(readFileSync(join(binding.artifactDirectory, "../parent-build-receipt.json"), "utf8")) as {
-      buildReceipt: { buildLogPath: string };
-    };
-    const commands = readFileSync(parentReceipt.buildReceipt.buildLogPath, "utf8")
+    assert.equal(before.length, 1, "The parent must prepare exactly one retained native build workspace");
+    const commands = readFileSync(join(builds, before[0], "build.log"), "utf8")
       .split("\n")
       .filter((line) => line.startsWith('{"command":'));
     assert.equal(commands.filter((line) => line.includes('"build"')).length, 1, "Actual compiler build command must occur once");

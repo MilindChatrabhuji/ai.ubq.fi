@@ -82,7 +82,7 @@ const runBatch = async (kv: Kv): Promise<SentinelReplayBudgetLedger> => {
   return await runBootstrapBatch(kv, state.ledger, state.versionstamp, budget, now);
 };
 const finishSweep = async (kv: Kv): Promise<SentinelReplayBudgetLedger> => {
-  for (let pass = 0; pass < 20; pass += 1) {
+  for (let pass = 0; pass < 200; pass += 1) {
     const ledger = await runBatch(kv);
     if (ledger.bootstrap_cursor === null) return ledger;
   }

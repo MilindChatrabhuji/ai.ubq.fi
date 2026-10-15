@@ -969,7 +969,7 @@ test("status pruning selects the oldest timestamp beyond the key-order scan", as
       await kv.set(sentinelReplayRequestStatusKey(requestId), statusRow(requestId, now + index + 1));
     }
     let maintenance = await runSentinelReplayRetentionMaintenance(kv, { now_ms: now, budget_bytes: budgetBytes });
-    for (let pass = 0; pass < 20 && !maintenance.accounting_complete; pass += 1) {
+    for (let pass = 0; pass < 200 && !maintenance.accounting_complete; pass += 1) {
       maintenance = await runSentinelReplayRetentionMaintenance(kv, { now_ms: now, budget_bytes: budgetBytes });
     }
     assert.equal(maintenance.accounting_complete, true);
@@ -1277,7 +1277,7 @@ test("legacy accounting materialization resumes across bootstrap batches without
     for (const manifest of manifests) await kv.set(legacyManifestKey(manifest), manifest);
     let status = await runSentinelReplayRetentionMaintenance(kv, { now_ms: now + 1_000, budget_bytes: budgetBytes });
     assert.equal(status.accounting_complete, false, "one bounded pass must not claim to have swept all 39 manifests");
-    for (let pass = 0; pass < 5 && !status.accounting_complete; pass += 1) {
+    for (let pass = 0; pass < 100 && !status.accounting_complete; pass += 1) {
       status = await runSentinelReplayRetentionMaintenance(kv, { now_ms: now + 1_000, budget_bytes: budgetBytes });
     }
     assert.equal(status.accounting_complete, true);

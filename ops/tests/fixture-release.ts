@@ -71,7 +71,15 @@ export const writePackage = async (root: string, imports: Record<string, string>
   manifest.devDependencies = {};
   delete manifest.patchedDependencies;
   await writeFile(join(root, "package.json"), JSON.stringify(manifest));
-  await writeFile(join(root, "bun.lock"), "{}\n");
+  await writeFile(
+    join(root, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: { "": { name: "ai-ubq-fi-fixture", dependencies: {}, devDependencies: {} } },
+      packages: {},
+    }) + "\n"
+  );
 };
 export const copyRuntimeModules = async (root: string): Promise<void> => {
   await mkdir(join(root, "src"), { recursive: true });

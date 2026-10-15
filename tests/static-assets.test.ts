@@ -314,8 +314,8 @@ test("admin console tabs follow the approved operator order", () => {
 
 test("models page labels provider counts as catalog entries, not inference availability", () => {
   assert.match(modelsHtml, /Model catalog/);
-  assert.match(modelsHtml, /Availability and quota vary by provider/);
-  assert.match(modelsHtml, /Cataloged text models and the providers that list them/);
+  assert.match(modelsHtml, /Availability and quota vary by\s+provider/);
+  assert.match(modelsHtml, /Cataloged text models and the providers that list\s+them/);
   assert.match(modelsHtml, /does not guarantee\s+inference availability or remaining quota/);
   assert.doesNotMatch(modelsHtml, /Live upstream catalog/);
   assert.match(modelsScript, /cataloged model/);

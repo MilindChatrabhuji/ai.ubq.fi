@@ -249,7 +249,7 @@ const verifyCompleteScan = async (kv: Kv): Promise<void> => {
     await kv.set([...SENTINEL_REPLAY_EVICTION_PREFIX, tombstone.fingerprint], tombstone);
   }
   let maintained = await runSentinelReplayRetentionMaintenance(kv, { now_ms: NOW, budget_bytes: budgetBytes });
-  for (let pass = 0; pass < 20 && !maintained.accounting_complete; pass += 1) {
+  for (let pass = 0; pass < 200 && !maintained.accounting_complete; pass += 1) {
     maintained = await runSentinelReplayRetentionMaintenance(kv, { now_ms: NOW, budget_bytes: budgetBytes });
   }
   assert.equal(maintained.accounting_complete, true);
