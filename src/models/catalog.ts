@@ -87,11 +87,11 @@ const claudeCapabilities = (models: readonly ClaudeCodeModel[]): Record<string, 
     display_name: model.display_name ?? model.id,
     upstream_provider: "claude_code",
     supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
-    supported_reasoning_levels: ["none"],
-    default_reasoning_effort: "none",
+    supported_reasoning_levels: model.supports_disabled_thinking === true ? ["none"] : [],
+    ...(model.supports_disabled_thinking === true ? { default_reasoning_effort: "none" } : {}),
     context_window_tokens: model.context_window_tokens ?? null,
     context_source: model.context_window_tokens ? "provider_discovery" : "unknown",
-    reasoning_source: "unknown",
+    reasoning_source: model.supports_disabled_thinking === true ? "provider_discovery" : "unknown",
   }));
 
 export const handleModels = async (req?: Request): Promise<Response> => {

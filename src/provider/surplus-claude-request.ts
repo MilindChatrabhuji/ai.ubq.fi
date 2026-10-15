@@ -14,6 +14,8 @@ export type SurplusClaudeRequestOptions = Readonly<{
   reasoningReplayScope?: string;
   /** A provider-specific contract proof is required before translating an explicit effort. */
   supportsNativeReasoningEffort?: boolean;
+  /** Independent, exact-model proof that native disabled thinking is supported. */
+  supportsNativeDisabledThinking?: boolean;
 }>;
 
 const isRecord = (value: unknown): value is JsonRecord => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -186,11 +188,12 @@ const nativeToolChoice = (value: unknown): JsonRecord | null => {
   return null;
 };
 
-const nativeReasoning = (value: unknown, supportsEffort: boolean): JsonRecord | null => {
+const nativeReasoning = (value: unknown, supportsEffort: boolean, supportsDisabledThinking: boolean): JsonRecord | null => {
   if (value === undefined || value === null) return {};
   if (!isRecord(value) || Object.keys(value).some((key) => key !== "effort" && key !== "summary")) return null;
   if (value.summary !== undefined && value.summary !== "auto" && value.summary !== "detailed" && value.summary !== "none") return null;
   if (value.effort === undefined) return {};
+  if (value.effort === "none") return supportsDisabledThinking ? { thinking: { type: "disabled" } } : null;
   if (!supportsEffort) return null;
   const effort = value.effort === "ultra" ? "max" : value.effort;
   if (typeof effort !== "string" || !["low", "medium", "high", "xhigh", "max"].includes(effort)) return null;
@@ -314,7 +317,7 @@ export const buildSurplusClaudeRequest = (
   if (!messages) return null;
   const tools = body.tools === undefined ? [] : nativeTools(body.tools);
   if (!tools) return null;
-  const reasoning = nativeReasoning(body.reasoning, options.supportsNativeReasoningEffort === true);
+  const reasoning = nativeReasoning(body.reasoning, options.supportsNativeReasoningEffort === true, options.supportsNativeDisabledThinking === true);
   if (!reasoning) return null;
   const choice = parallelToolChoice(body);
   if (!choice) return null;

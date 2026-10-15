@@ -15,10 +15,17 @@ export type ClaudeCodeModel = Readonly<{
   display_name?: string;
   created: number;
   context_window_tokens?: number;
+  supports_disabled_thinking?: boolean;
 }>;
 export type ClaudeCodeModelsSnapshot = Readonly<{ models: readonly ClaudeCodeModel[]; updated_at_ms: number; stale?: boolean }>;
 type DiscoveryOptions = Readonly<{ fetcher?: ClaudeCodeFetch; now?: () => number }>;
-type CatalogOptions = DiscoveryOptions & Readonly<{ kv?: Kv | null; env?: ClaudeCodeEnvLookup; force?: boolean }>;
+type CatalogOptions = DiscoveryOptions &
+  Readonly<{
+    kv?: Kv | null;
+    env?: ClaudeCodeEnvLookup;
+    force?: boolean;
+    expectedBinding?: Readonly<{ credential: Pick<ClaudeCodeResolvedCredential, "kind" | "secret">; workspaceId: string | null }>;
+  }>;
 type Cache = { identity: string; snapshot: ClaudeCodeModelsSnapshot | null; expires: number; pending: Promise<ClaudeCodeModelsSnapshot | null> | null };
 const CACHE_TTL_MS = 5 * 60_000;
 const RETRY_MS = 30_000;
@@ -38,11 +45,16 @@ const positiveInteger = (value: unknown): value is number => typeof value === "n
 const modelFromRecord = (value: unknown): ClaudeCodeModel | null => {
   if (!isRecord(value) || typeof value.id !== "string" || !isSurplusClaudeModel(value.id) || value.id.length > 512) return null;
   const created = typeof value.created_at === "string" ? Math.floor(Date.parse(value.created_at) / 1000) : 0;
+  const capabilities = isRecord(value.capabilities) ? value.capabilities : null;
+  const thinking = isRecord(capabilities?.thinking) ? capabilities.thinking : null;
+  const types = isRecord(thinking?.types) ? thinking.types : null;
+  const disabled = isRecord(types?.disabled) ? types.disabled : null;
   return {
     id: value.id,
     ...(typeof value.display_name === "string" ? { display_name: value.display_name } : {}),
     created: Number.isSafeInteger(created) && created > 0 ? created : 0,
     ...(positiveInteger(value.max_input_tokens) ? { context_window_tokens: value.max_input_tokens } : {}),
+    ...(typeof disabled?.supported === "boolean" ? { supports_disabled_thinking: disabled.supported } : {}),
   };
 };
 
@@ -141,6 +153,15 @@ export const fetchClaudeCodeModels = async (options: CatalogOptions = {}): Promi
     caches.delete(scope);
     return null;
   }
+  const expected = options.expectedBinding;
+  if (
+    expected &&
+    (current.credential.kind !== expected.credential.kind ||
+      current.credential.secret !== expected.credential.secret ||
+      current.workspaceId !== expected.workspaceId)
+  ) {
+    return null;
+  }
   let cached = caches.get(scope);
   if (cached?.identity !== current.identity) {
     cached = { identity: current.identity, snapshot: null, expires: 0, pending: null };
@@ -155,7 +176,13 @@ export const fetchClaudeCodeModels = async (options: CatalogOptions = {}): Promi
     try {
       snapshot = await discoverClaudeCodeModels(current.credential, current.workspaceId, options);
     } catch {
-      snapshot = state.snapshot ? { ...state.snapshot, stale: true } : null;
+      snapshot = state.snapshot
+        ? {
+            ...state.snapshot,
+            models: state.snapshot.models.map((model) => ({ ...model, supports_disabled_thinking: undefined })),
+            stale: true,
+          }
+        : null;
     }
     const latest = await binding(kv, options.env).catch(() => null);
     if (caches.get(scope) !== state || latest?.identity !== current.identity || current.generation !== claudeCodeStateGeneration(kv)) return null;

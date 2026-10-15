@@ -35,15 +35,15 @@ import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "./types.ts";
 import type { ClaudeCodeModel } from "../provider/claude-code-models.ts";
 
-/** Codex-required generic defaults are independent of Claude capability claims; windows come only from discovery. */
+/** Codex shell defaults are generic; reasoning and windows require observed Claude capabilities. */
 export const claudeCodeCodexModels = (models: readonly ClaudeCodeModel[]): Record<string, unknown>[] =>
   models.map((model) => ({
     slug: model.id,
     display_name: model.display_name ?? model.id,
     owned_by: "anthropic",
     supported_endpoint_types: ["openai-response", "openai"],
-    supported_reasoning_levels: [{ effort: "none", description: "No reasoning" }],
-    default_reasoning_level: "none",
+    supported_reasoning_levels: model.supports_disabled_thinking === true ? [{ effort: "none", description: "No reasoning" }] : [],
+    ...(model.supports_disabled_thinking === true ? { default_reasoning_level: "none" } : {}),
     ...(model.context_window_tokens ? { context_window: model.context_window_tokens, max_context_window: model.context_window_tokens } : {}),
     shell_type: "shell_command",
     visibility: "list",

@@ -23,7 +23,9 @@ import {
   type ClaudeCodeFetch,
   type ClaudeCodeResponseClassification,
 } from "../provider/claude-code.ts";
-import { resolveClaudeCodeCredential, resolveClaudeCodeWorkspace } from "../provider/claude-code-credentials.ts";
+import { claudeCodeStateGeneration, resolveClaudeCodeCredential, resolveClaudeCodeWorkspace } from "../provider/claude-code-credentials.ts";
+import { fetchClaudeCodeModels } from "../provider/claude-code-models.ts";
+import { isRecord } from "../utils.ts";
 import { loadClaudeCodeQuotaState, recordClaudeCodeQuotaOutcome } from "../provider/claude-code-quota.ts";
 import { recordClaudeCodeProviderHealth } from "../provider/health.ts";
 import { cancelResponseBody } from "../upstream-wire.ts";
@@ -57,6 +59,7 @@ const locallyEligible = (
   if (!isProviderEnabled("claude_code", selection)) return false;
   return keyId !== null && allowedKeyIds.size > 0 && allowedKeyIds.has(keyId);
 };
+const requestsDisabledThinking = (body: Record<string, unknown>): boolean => isRecord(body.reasoning) && body.reasoning.effort === "none";
 
 /**
  * Attempt the subscription tier for one Claude model request. Returns the
@@ -85,6 +88,7 @@ export const attemptClaudeCodeSubscription = async (
   if (!locallyEligible(options.model, selection, keyId, allowedKeyIds)) return null;
 
   const quotaKv = await getKv();
+  const generation = claudeCodeStateGeneration(quotaKv);
   const [credential, workspace, quota] = await Promise.all([
     resolveClaudeCodeCredential(quotaKv, options.env),
     resolveClaudeCodeWorkspace(quotaKv, options.env),
@@ -100,6 +104,21 @@ export const attemptClaudeCodeSubscription = async (
     quota,
   });
   if (!eligibility.eligible) return null;
+  const wantsDisabledThinking = requestsDisabledThinking(body);
+  const supportsDisabledThinking = async (): Promise<boolean> => {
+    if (generation !== claudeCodeStateGeneration(quotaKv)) return false;
+    const models = await fetchClaudeCodeModels({
+      kv: quotaKv,
+      env: options.env,
+      expectedBinding: { credential: eligibility.credential, workspaceId: eligibility.workspace?.id ?? null },
+    });
+    return (
+      generation === claudeCodeStateGeneration(quotaKv) &&
+      models !== null &&
+      !models.stale &&
+      models.models.some((model) => model.id === options.model && model.supports_disabled_thinking === true)
+    );
+  };
   // The API-key reservation records exactly one pre-transport dispatch per
   // request, so a failed subscription attempt keeps this request's first
   // attribution exactly as a failed Codex primary already does; the paid hop
@@ -115,7 +134,15 @@ export const attemptClaudeCodeSubscription = async (
       fetcher: options.fetcher,
       signal: options.signal,
       reasoningReplayScope: codexCacheScopeForUsageContext(options.usageContext),
-      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("claude_code") ?? Promise.resolve(undefined),
+      supportsNativeDisabledThinking: wantsDisabledThinking && (await supportsDisabledThinking()),
+      beforeDispatch: async () => {
+        const dispatch = await options.usageContext?.beforeProviderDispatch?.("claude_code");
+        if (wantsDisabledThinking && !(await supportsDisabledThinking())) {
+          await dispatch?.cancelBeforeTransport();
+          throw new ClaudeCodeError("Claude disabled-thinking credential/workspace proof changed before dispatch.", "claude_code_request_invalid", 400);
+        }
+        return dispatch;
+      },
       onDispatch: () => {
         recordFirstProviderDispatch(options.usageContext);
       },
