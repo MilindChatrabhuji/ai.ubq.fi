@@ -20,6 +20,7 @@ export const copyOps = async (destination: string): Promise<void> => {
     "verify-legacy-rollback.ts",
     "runtime-bunfig.toml",
     "macos-sandbox.ts",
+    "mac-sqlite-temp.ts",
   ]) {
     if (["native-kv-release.ts", "assert-bun-store.ts"].includes(name) && !destination.endsWith("/ops")) {
       const source = (await readFile(join(repository, "ops", name), "utf8"))
