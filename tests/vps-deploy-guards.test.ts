@@ -252,8 +252,6 @@ const archivePrevious = async (f: Fixture, sha: string): Promise<void> => {
     mode: 0o600,
   });
   await chmod(release + "/src/release.ts", 0o600);
-  await mkdir(release + "/tools", { recursive: true });
-  await cp(repository + "/tools/native-kv", release + "/tools/native-kv", { recursive: true });
   await prepareReleasePayload(
     release,
     sha,
@@ -315,6 +313,8 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
     ].join("\n")
   );
   await copyRuntimeModules(root);
+  await mkdir(root + "/tools", { recursive: true });
+  await cp(repository + "/tools/native-kv", root + "/tools/native-kv", { recursive: true });
   await write(root, "scripts/build-permissions.ts", await readFile(new URL("../scripts/build-permissions.ts", import.meta.url), "utf8"));
   await copyOps(root + "/ops");
   for (const name of ["launch-service.ts", "launch-vps.sh"])
@@ -334,7 +334,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
     ].join("\n")
   );
   await copyRuntime(root);
-  await runFixtureGit(root, f.env, ["add", "--", "ops", "scripts", "src", "serve.ts", "package.json", "bun.lock", "fixture-http.ts"]);
+  await runFixtureGit(root, f.env, ["add", "--", "ops", "scripts", "src", "tools", "serve.ts", "package.json", "bun.lock", "fixture-http.ts"]);
   await runFixtureGit(root, f.env, ["commit", "-q", "-m", "previous launcher"]);
   const oldSha = await runFixtureGit(root, f.env, ["rev-parse", "HEAD"]);
   await archivePrevious(f, oldSha);
