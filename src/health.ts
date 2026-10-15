@@ -361,7 +361,7 @@ const claudeCodeQuotaView = (quota: ClaudeCodeQuotaState | null): Record<string,
 
 const readClaudeCodeWorkspacePinnedByEnv = (): boolean => {
   try {
-    return (Deno.env.get(CLAUDE_CODE_WORKSPACE_ID_ENV) ?? "").trim().length > 0;
+    return (process.env[CLAUDE_CODE_WORKSPACE_ID_ENV] ?? "").trim().length > 0;
   } catch {
     return false;
   }
@@ -641,12 +641,11 @@ const timedOutProviderProbe = (provider: ActiveProviderProbe["provider"]): Activ
   status: 503,
   provider,
   content_type: null,
-  error:
-    provider === "chatgpt_codex"
-      ? "Codex models probe timed out."
-      : provider === "claude_subscription"
-        ? "Claude models probe timed out."
-        : "Metered quota probe timed out.",
+  error: {
+    chatgpt_codex: "Codex models probe timed out.",
+    claude_subscription: "Claude models probe timed out.",
+    metered_quota: "Metered quota probe timed out.",
+  }[provider],
 });
 
 const timeoutProbe = (progress: HealthProbeProgress): HealthUpstreamProbe =>

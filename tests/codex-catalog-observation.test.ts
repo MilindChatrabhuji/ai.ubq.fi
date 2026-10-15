@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type KvEntryMaybe, type KvKey } from "#kv";
 import assert from "node:assert/strict";
 import { SentinelKvStub } from "./helpers/sentinel-kv-stub.ts";
 
@@ -11,7 +14,7 @@ const credentialNames = [
   "OPENROUTER_API_KEY",
 ] as const;
 assert.equal(
-  credentialNames.some((name) => Boolean(Deno.env.get(name))),
+  credentialNames.some((name) => Boolean(process.env[name])),
   false,
   "this acceptance process must start without provider credentials"
 );
@@ -88,10 +91,11 @@ const traceClone = (response: Response) => {
         const nativeRead = reader.read.bind(reader);
         const nativeCancel = reader.cancel.bind(reader);
         const nativeRelease = reader.releaseLock.bind(reader);
-        reader.read = async () => {
+        reader.read = async (): Promise<{ done: true; value: undefined } | { done: false; value: Uint8Array<ArrayBuffer> }> => {
           const result = await nativeRead();
-          if (!result.done) trace.bytesRead += result.value.byteLength;
-          return result;
+          if (result.done) return { done: true, value: undefined };
+          trace.bytesRead += result.value.byteLength;
+          return { done: false, value: result.value };
         };
         reader.cancel = (reason) => {
           trace.cancellation = nativeCancel(reason);
@@ -111,7 +115,7 @@ const traceClone = (response: Response) => {
   return trace;
 };
 
-Deno.test("single-account catalog: stalled observation returns the original stream without learning partial JSON", async () => {
+test("single-account catalog: stalled observation returns the original stream without learning partial JSON", async () => {
   await seedRejection();
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   const stream = new ReadableStream<Uint8Array>({
@@ -123,7 +127,7 @@ Deno.test("single-account catalog: stalled observation returns the original stre
   const upstream = new Response(stream, { status: 200, statusText: "Catalog ready", headers: { "Content-Type": "application/json", ETag: '"raw-stalled"' } });
   const trace = traceClone(upstream);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(upstream);
+  globalThis.fetch = createFetchMock(() => Promise.resolve(upstream));
   const started = performance.now();
   const pending = fetchCodexModels({ clientVersion: VERSION });
   let closed = false;
@@ -154,7 +158,7 @@ Deno.test("single-account catalog: stalled observation returns the original stre
   }
 });
 
-Deno.test("single-account catalog: oversized observation stops at 4 MiB and preserves the full original", async () => {
+test("single-account catalog: oversized observation stops at 4 MiB and preserves the full original", async () => {
   await seedRejection();
   const content = encoder.encode(catalog + " ".repeat(BYTE_CAP * 2));
   const chunkBytes = 64 * 1024;
@@ -175,7 +179,7 @@ Deno.test("single-account catalog: oversized observation stops at 4 MiB and pres
   );
   const trace = traceClone(upstream);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(upstream);
+  globalThis.fetch = createFetchMock(() => Promise.resolve(upstream));
   try {
     const response = await withinBudget(fetchCodexModels({ clientVersion: VERSION }));
     assert.equal(response, upstream);
@@ -197,7 +201,7 @@ Deno.test("single-account catalog: oversized observation stops at 4 MiB and pres
   }
 });
 
-Deno.test("single-account catalog: complete evidence restores only the advertised account and model before return", async () => {
+test("single-account catalog: complete evidence restores only the advertised account and model before return", async () => {
   await seedRejection();
   await recordCodexModelUnsupported(ACCOUNT, "absent-model");
   await recordCodexModelUnsupported("sibling", MODEL);
@@ -205,7 +209,7 @@ Deno.test("single-account catalog: complete evidence restores only the advertise
   const upstream = new Response(catalog, { headers: { "Content-Type": "application/json", ETag: '"raw-complete"' } });
   const trace = traceClone(upstream);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve(upstream);
+  globalThis.fetch = createFetchMock(() => Promise.resolve(upstream));
   try {
     const response = await fetchCodexModels({ clientVersion: VERSION });
     assert.equal(response, upstream);
@@ -222,7 +226,7 @@ Deno.test("single-account catalog: complete evidence restores only the advertise
   }
 });
 
-Deno.test("single-account catalog: 304, malformed, failed and errored bodies never create availability evidence", async () => {
+test("single-account catalog: 304, malformed, failed and errored bodies never create availability evidence", async () => {
   const originalFetch = globalThis.fetch;
   try {
     for (const upstream of [
@@ -240,7 +244,7 @@ Deno.test("single-account catalog: 304, malformed, failed and errored bodies nev
     ]) {
       await seedRejection();
       const trace = traceClone(upstream);
-      globalThis.fetch = () => Promise.resolve(upstream);
+      globalThis.fetch = createFetchMock(() => Promise.resolve(upstream));
       const response = await fetchCodexModels({ clientVersion: VERSION, ifNoneMatch: '"raw-not-modified"' });
       assert.equal(response, upstream);
       assert.equal(codexModelUnavailableAccounts(MODEL, [ACCOUNT]).has(ACCOUNT), true);
@@ -254,7 +258,7 @@ Deno.test("single-account catalog: 304, malformed, failed and errored bodies nev
   }
 });
 
-Deno.test("catalog observation preserves the optional full-snapshot read failure boundary", async () => {
+test("catalog observation preserves the optional full-snapshot read failure boundary", async () => {
   const kv = await seedRejection();
   resetRuntimeConfigCacheForTest();
   await kv.set(RUNTIME_CONFIG_V2_KEY, {
@@ -265,7 +269,7 @@ Deno.test("catalog observation preserves the optional full-snapshot read failure
     updated_at_ms: Date.now(),
   });
   const nativeGet = kv.get.bind(kv);
-  kv.get = <T = unknown>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> =>
+  kv.get = <T = unknown>(key: KvKey): Promise<KvEntryMaybe<T>> =>
     JSON.stringify(key) === JSON.stringify(CODEX_MODELS_KV_KEY) ? Promise.reject(new Error("synthetic optional read failure")) : nativeGet<T>(key);
   assert.equal(await loadFullCodexModelsSnapshot(kv), null);
   const snapshot = await buildModelCatalogSnapshot();
@@ -275,17 +279,17 @@ Deno.test("catalog observation preserves the optional full-snapshot read failure
   );
 });
 
-Deno.test("bounded single-account observation keeps versioned client validators separate from upstream revalidation", async () => {
+test("bounded single-account observation keeps versioned client validators separate from upstream revalidation", async () => {
   const kv = await seedRejection();
   resetCodexCatalogMemoForTest();
   resetRuntimeConfigCacheForTest();
   const originalFetch = globalThis.fetch;
   const rawEtag = '"upstream-bounded-catalog"';
   let upstreamIfNoneMatch: string | null = null;
-  globalThis.fetch = (_input, init) => {
+  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     upstreamIfNoneMatch = new Headers(init?.headers).get("If-None-Match");
     return Promise.resolve(new Response(catalog, { headers: { "Content-Type": "application/json", ETag: rawEtag } }));
-  };
+  });
   try {
     const request = (etag?: string) => new Request(`https://ai.ubq.fi/v1/models?client_version=${VERSION}`, { headers: etag ? { "If-None-Match": etag } : {} });
     const first = await handleCodexCatalogModels(request(), VERSION);
@@ -299,10 +303,10 @@ Deno.test("bounded single-account observation keeps versioned client validators 
     assert.equal(entry.value?.etag, rawEtag, "upstream ETag stays source metadata");
     await kv.set(key, { ...entry.value, fetched_at_ms: Date.now() - 310_000 });
     resetCodexCatalogMemoForTest();
-    globalThis.fetch = (_input, init) => {
+    globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       upstreamIfNoneMatch = new Headers(init?.headers).get("If-None-Match");
       return Promise.resolve(new Response(null, { status: 304, headers: { ETag: rawEtag } }));
-    };
+    });
     const matched = await handleCodexCatalogModels(request(clientEtag ?? undefined), VERSION);
     assert.equal(upstreamIfNoneMatch, rawEtag);
     assert.equal(matched.status, 304);

@@ -1,18 +1,19 @@
+import type { Kv } from "#kv";
 // Codex account routing: probes, recovery, serial selection (remainder of the original module), split out of src/codex_account_routing.ts.
 
 import { getKv } from "../kv.ts";
 
-import { CodexAuthPoolState, CodexAuthState } from "../types.ts";
+import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
-  CodexAccountRoutingState,
-  CodexActiveAccountSelection,
-  CodexActiveAccountSnapshot,
-  CodexCapacityRoutingObservation,
-  CodexRoutingSlot,
-  RouteSelection,
-  RoutingAccount,
+  type CodexAccountRoutingState,
+  type CodexActiveAccountSelection,
+  type CodexActiveAccountSnapshot,
+  type CodexCapacityRoutingObservation,
+  type CodexRoutingSlot,
+  type RouteSelection,
+  type RoutingAccount,
   isSafeMs,
   isVersionstamp,
   parseCodexAccountRoutingState,
@@ -188,7 +189,7 @@ const prepareCodexResetRecoveryElection = async (
 
 /** Commit the prepared election, writing routing before the active row. */
 const commitCodexResetRecoveryElection = async (
-  kv: Deno.Kv,
+  kv: Kv,
   rows: Awaited<ReturnType<typeof readStrongCodexRoutingRows>>,
   prepared: CodexResetElectionPreparation
 ): Promise<RoutingAccount | "conflict"> => {
@@ -403,7 +404,7 @@ const locateRoutingSlot = (state: CodexAccountRoutingState, slotNumber: number):
 };
 
 /** Strong-read recheck loop: three compare-and-set attempts, then give up. */
-const recheckCodexRoutingSlotFromKv = async (kv: Deno.Kv, slotNumber: number, recheckAtMs: number): Promise<boolean> => {
+const recheckCodexRoutingSlotFromKv = async (kv: Kv, slotNumber: number, recheckAtMs: number): Promise<boolean> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" });
     const state = parseCodexAccountRoutingState(entry.value);

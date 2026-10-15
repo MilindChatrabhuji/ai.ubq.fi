@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type AtomicOperation, type Kv, type KvCommitError, type KvCommitResult, type KvConsistencyLevel, type KvEntryMaybe, type KvKey } from "#kv";
+import { runSequence } from "./helpers/sequence.ts";
 import assert from "node:assert/strict";
 import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api-keys.ts";
 import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
@@ -12,15 +16,15 @@ import { markCodexQuotaBlocked } from "../src/codex/rate-limit-429.ts";
 import type { CodexAuthPoolState } from "../src/types.ts";
 
 type StoredEntry = {
-  key: Deno.KvKey;
+  key: KvKey;
   value: unknown;
   versionstamp: string;
   expiresAtMs: number | null;
 };
 
-type AtomicMutation = { type: "set"; key: Deno.KvKey; value: unknown; options?: { expireIn?: number } } | { type: "delete"; key: Deno.KvKey };
+type AtomicMutation = { type: "set"; key: KvKey; value: unknown; options?: { expireIn?: number } } | { type: "delete"; key: KvKey };
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 const clone = <T>(value: T): T => structuredClone(value);
 
 class MemoryKv {
@@ -46,7 +50,7 @@ class MemoryKv {
     }
   }
 
-  #write(key: Deno.KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
+  #write(key: KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
     this.entries.set(encodeKey(key), {
       key: clone(key),
       value: clone(value),
@@ -55,20 +59,20 @@ class MemoryKv {
     });
   }
 
-  get<T = unknown>(key: Deno.KvKey, _options?: { consistency?: Deno.KvConsistencyLevel }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvKey, _options?: { consistency?: KvConsistencyLevel }): Promise<KvEntryMaybe<T>> {
     this.#purgeExpired();
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
       value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
   getMany<T extends readonly unknown[]>(
-    keys: readonly Deno.KvKey[],
-    _options?: { consistency?: Deno.KvConsistencyLevel }
-  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+    keys: readonly KvKey[],
+    _options?: { consistency?: KvConsistencyLevel }
+  ): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     // Snapshot every value and versionstamp synchronously so one resolved tuple
     // cannot mix rows from different write generations.
     this.#purgeExpired();
@@ -80,39 +84,39 @@ class MemoryKv {
         versionstamp: entry?.versionstamp ?? null,
       };
     });
-    return Promise.resolve(snapshot as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
+    return Promise.resolve(snapshot as { [K in keyof T]: KvEntryMaybe<T[K]> });
   }
 
-  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, options?: { expireIn?: number }): Promise<KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.#write(key, value, options, versionstamp);
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.#purgeExpired();
     this.entries.delete(encodeKey(key));
     this.#nextVersionstamp();
     return Promise.resolve();
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const mutations: AtomicMutation[] = [];
     const operation = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries.map((entry) => ({ key: clone(entry.key), versionstamp: entry.versionstamp })));
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => {
         mutations.push({ type: "set", key: clone(key), value: clone(value), options });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ type: "delete", key: clone(key) });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         this.#purgeExpired();
         for (const check of checks) {
           const current = this.entries.get(encodeKey(check.key));
@@ -132,7 +136,7 @@ class MemoryKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   close(): void {}
@@ -247,7 +251,7 @@ type ActiveRun = {
 };
 
 const memoryKv = new MemoryKv();
-const kv = memoryKv as unknown as Deno.Kv;
+const kv = memoryKv as unknown as Kv;
 let activeRun: ActiveRun | null = null;
 
 const seedFixture = async (): Promise<void> => {
@@ -459,159 +463,164 @@ const runCase = async (first: Outcome, second: Outcome, sequence: number): Promi
 };
 
 const restoreEnv = (name: string, value: string | undefined): void => {
-  if (value === undefined) Deno.env.delete(name);
-  else Deno.env.set(name, value);
+  if (value === undefined) Reflect.deleteProperty(process.env, name);
+  else process.env[name] = value;
 };
 
-Deno.test("two-account Codex-to-Metered /v1/responses routing matrix", async (t) => {
-  const originalFetch = globalThis.fetch;
-  const originalInfo = console.info;
-  const originalWarn = console.warn;
-  const originalError = console.error;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
-  setKvForTest(kv);
-  globalThis.fetch = mockedFetch;
-  console.info = (...args: unknown[]) => activeRun?.infoLogs.push(args);
-  console.warn = () => {};
-  console.error = () => {};
-  Deno.env.set("METERED_API_KEY", "metered-routing-matrix-key");
+test("two-account Codex-to-Metered /v1/responses routing matrix", () =>
+  runSequence(async (step) => {
+    const originalFetch = globalThis.fetch;
+    const originalInfo = console.info;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const originalMeteredApiKey = process.env.METERED_API_KEY;
+    setKvForTest(kv);
+    globalThis.fetch = createFetchMock(mockedFetch);
+    console.info = (...args: unknown[]) => activeRun?.infoLogs.push(args);
+    console.warn = () => {};
+    console.error = () => {};
+    process.env.METERED_API_KEY = "metered-routing-matrix-key";
 
-  try {
-    await t.step("Cartesian outcome matrix", async () => {
-      let sequence = 0;
-      for (const first of OUTCOMES) {
-        for (const second of OUTCOMES) {
-          sequence += 1;
-          await runCase(first, second, sequence);
-        }
-      }
-    });
-
-    await t.step("every first-account 5xx returns directly", async () => {
-      const second = OUTCOMES.find((outcome) => outcome.name === "429");
-      assert.ok(second);
-      for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
-        await runCase({ name: String(status), kind: "http", status }, second, 10_000 + index);
-      }
-    });
-
-    await t.step("every reached second-account 5xx returns directly", async () => {
-      const first = OUTCOMES.find((outcome) => outcome.name === "401");
-      assert.ok(first);
-      for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
-        await runCase(first, { name: String(status), kind: "http", status }, 20_000 + index);
-      }
-    });
-  } finally {
-    await drainBackgroundTasks();
-    activeRun = null;
-    globalThis.fetch = originalFetch;
-    console.info = originalInfo;
-    console.warn = originalWarn;
-    console.error = originalError;
-    restoreEnv("METERED_API_KEY", originalMeteredApiKey);
-    resetCodexAuthCacheForTest();
-    resetRuntimeConfigCacheForTest();
-    resetProviderHealthThrottleForTest();
-    setKvForTest(null);
-  }
-});
-
-Deno.test("mixed exhausted and current-invalid Codex subscriptions fail over to the same model", async (t) => {
-  const originalFetch = globalThis.fetch;
-  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
-  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
-  setKvForTest(kv);
-  Deno.env.set("METERED_API_KEY", "mixed-unavailable-test-key");
-  Deno.env.delete("SURPLUS_API_KEY");
-  try {
-    const scenarios = ["mixed", "all-invalid", "disabled", "cap-denied", "paid-failure", "generic-429", "stale-fingerprint"] as const;
-    for (const scenario of scenarios) {
-      await t.step(scenario, async () => {
-        const calls: string[] = [];
-        let paidModel: unknown = null;
-        await seedFixture();
-        const pool = (await memoryKv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY)).value;
-        assert.ok(pool);
-        const selected = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
-        assert.equal(selected.kind, "eligible");
-        if (scenario !== "all-invalid") {
-          const resetAt = Math.floor(Date.now() / 1000) + 453_376;
-          await markCodexQuotaBlocked(
-            selected.accounts[0],
-            Response.json({ error: { type: "usage_limit_reached", resets_at: resetAt } }, { status: 429, headers: { "Retry-After": "453376" } })
-          );
-        }
-        if (scenario === "stale-fingerprint") {
-          const state = (await memoryKv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY)).value;
-          assert.ok(state);
-          const second = state.slots[1];
-          assert.ok(second);
-          await memoryKv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, { ...state, slots: [state.slots[0], { ...second, invalid_credential_version: "stale-version" }] });
-        }
-        if (scenario === "cap-denied") {
-          const key = (await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(KEY_ID))).value;
-          await memoryKv.set(apiKeyIdKey(KEY_ID), { ...key, paid_fallback_limit_microcredits: 0 });
-        }
-        globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-          const url = requestUrl(input);
-          calls.push(url);
-          if (url === CODEX_RESPONSES_URL) {
-            if (scenario === "stale-fingerprint") return Promise.resolve(meteredSuccessResponse());
-            return Promise.resolve(jsonErrorResponse(scenario === "generic-429" ? 429 : 401));
+    try {
+      await step("Cartesian outcome matrix", async () => {
+        let sequence = 0;
+        for (const first of OUTCOMES) {
+          for (const second of OUTCOMES) {
+            sequence += 1;
+            await runCase(first, second, sequence);
           }
-          if (url === CODEX_REFRESH_URL) return Promise.resolve(jsonErrorResponse(401));
-          if (url === `${METERED_BASE_URL}/v1/models`) {
-            return Promise.resolve(Response.json({ data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }] }));
-          }
-          if (url === METERED_RESPONSES_URL) {
-            const body = init?.body;
-            if (typeof body !== "string") throw new Error("paid fixture requires a serialized JSON request");
-            paidModel = JSON.parse(body).model;
-            return Promise.resolve(scenario === "paid-failure" ? jsonErrorResponse(503) : meteredSuccessResponse());
-          }
-          throw new Error(`Unexpected mixed-unavailable fixture URL: ${url}`);
-        };
-        const response = await handleResponses(
-          new Request("https://ai.ubq.fi/v1/responses", { method: "POST", body: JSON.stringify({ model: MODEL, input: "mixed unavailable", stream: false }) }),
-          {
-            keyId: KEY_ID,
-            requestId: `mixed-unavailable-${scenario}`,
-            startedAtMs: Date.now(),
-            paidFallbackEnabled: scenario !== "disabled",
-            kernelOrg: null,
-            kernelRepo: null,
-          }
-        );
-        const payload = await response.json();
-        const paidExpected = ["mixed", "all-invalid", "paid-failure"].includes(scenario);
-        const completedExpected = scenario === "mixed" || scenario === "all-invalid" || scenario === "stale-fingerprint";
-        let expectedStatus = 503;
-        if (scenario === "generic-429") expectedStatus = 429;
-        if (completedExpected) expectedStatus = 200;
-        assert.equal(response.status, expectedStatus, JSON.stringify(payload));
-        assert.equal(response.headers.get("retry-after"), null);
-        assert.equal(calls.filter((url) => url === METERED_RESPONSES_URL).length, paidExpected ? 1 : 0);
-        if (completedExpected) assert.equal(payload.status, "completed");
-        if (paidExpected) assert.equal(paidModel, MODEL);
-        if (scenario === "disabled" || scenario === "cap-denied") assert.equal(payload.error.code, "codex_subscriptions_unavailable");
-        if (scenario === "mixed") {
-          assert.equal(response.headers.get("x-uos-upstream"), "metered");
-          assert.equal(calls.filter((url) => url === CODEX_RESPONSES_URL).length, 1);
-          assert.equal(calls.filter((url) => url === CODEX_REFRESH_URL).length, 1);
-          const current = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
-          assert.equal(current.kind, "quota_blocked");
-          assert.equal(current.fullCohortExhausted, false);
         }
       });
+
+      await step("every first-account 5xx returns directly", async () => {
+        const second = OUTCOMES.find((outcome) => outcome.name === "429");
+        assert.ok(second);
+        for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
+          await runCase({ name: String(status), kind: "http", status }, second, 10_000 + index);
+        }
+      });
+
+      await step("every reached second-account 5xx returns directly", async () => {
+        const first = OUTCOMES.find((outcome) => outcome.name === "401");
+        assert.ok(first);
+        for (const [index, status] of [500, 501, 502, 503, 504, 599].entries()) {
+          await runCase(first, { name: String(status), kind: "http", status }, 20_000 + index);
+        }
+      });
+    } finally {
+      await drainBackgroundTasks();
+      activeRun = null;
+      globalThis.fetch = originalFetch;
+      console.info = originalInfo;
+      console.warn = originalWarn;
+      console.error = originalError;
+      restoreEnv("METERED_API_KEY", originalMeteredApiKey);
+      resetCodexAuthCacheForTest();
+      resetRuntimeConfigCacheForTest();
+      resetProviderHealthThrottleForTest();
+      setKvForTest(null);
     }
-  } finally {
-    await drainBackgroundTasks();
-    globalThis.fetch = originalFetch;
-    restoreEnv("METERED_API_KEY", originalMeteredApiKey);
-    restoreEnv("SURPLUS_API_KEY", originalSurplusApiKey);
-    resetCodexAuthCacheForTest();
-    resetRuntimeConfigCacheForTest();
-    setKvForTest(null);
-  }
-});
+  }));
+
+test("mixed exhausted and current-invalid Codex subscriptions fail over to the same model", () =>
+  runSequence(async (step) => {
+    const originalFetch = globalThis.fetch;
+    const originalMeteredApiKey = process.env.METERED_API_KEY;
+    const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
+    setKvForTest(kv);
+    process.env.METERED_API_KEY = "mixed-unavailable-test-key";
+    Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    try {
+      const scenarios = ["mixed", "all-invalid", "disabled", "cap-denied", "paid-failure", "generic-429", "stale-fingerprint"] as const;
+      for (const scenario of scenarios) {
+        await step(scenario, async () => {
+          const calls: string[] = [];
+          let paidModel: unknown = null;
+          await seedFixture();
+          const pool = (await memoryKv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY)).value;
+          assert.ok(pool);
+          const selected = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
+          assert.equal(selected.kind, "eligible");
+          if (scenario !== "all-invalid") {
+            const resetAt = Math.floor(Date.now() / 1000) + 453_376;
+            await markCodexQuotaBlocked(
+              selected.accounts[0],
+              Response.json({ error: { type: "usage_limit_reached", resets_at: resetAt } }, { status: 429, headers: { "Retry-After": "453376" } })
+            );
+          }
+          if (scenario === "stale-fingerprint") {
+            const state = (await memoryKv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY)).value;
+            assert.ok(state);
+            const second = state.slots[1];
+            assert.ok(second);
+            await memoryKv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, { ...state, slots: [state.slots[0], { ...second, invalid_credential_version: "stale-version" }] });
+          }
+          if (scenario === "cap-denied") {
+            const key = (await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(KEY_ID))).value;
+            await memoryKv.set(apiKeyIdKey(KEY_ID), { ...key, paid_fallback_limit_microcredits: 0 });
+          }
+          globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const url = requestUrl(input);
+            calls.push(url);
+            if (url === CODEX_RESPONSES_URL) {
+              if (scenario === "stale-fingerprint") return Promise.resolve(meteredSuccessResponse());
+              return Promise.resolve(jsonErrorResponse(scenario === "generic-429" ? 429 : 401));
+            }
+            if (url === CODEX_REFRESH_URL) return Promise.resolve(jsonErrorResponse(401));
+            if (url === `${METERED_BASE_URL}/v1/models`) {
+              return Promise.resolve(Response.json({ data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }] }));
+            }
+            if (url === METERED_RESPONSES_URL) {
+              const body = init?.body;
+              if (typeof body !== "string") throw new Error("paid fixture requires a serialized JSON request");
+              paidModel = JSON.parse(body).model;
+              return Promise.resolve(scenario === "paid-failure" ? jsonErrorResponse(503) : meteredSuccessResponse());
+            }
+            throw new Error(`Unexpected mixed-unavailable fixture URL: ${url}`);
+          });
+          const response = await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              body: JSON.stringify({ model: MODEL, input: "mixed unavailable", stream: false }),
+            }),
+            {
+              keyId: KEY_ID,
+              requestId: `mixed-unavailable-${scenario}`,
+              startedAtMs: Date.now(),
+              paidFallbackEnabled: scenario !== "disabled",
+              kernelOrg: null,
+              kernelRepo: null,
+            }
+          );
+          const payload = await response.json();
+          const paidExpected = ["mixed", "all-invalid", "paid-failure"].includes(scenario);
+          const completedExpected = scenario === "mixed" || scenario === "all-invalid" || scenario === "stale-fingerprint";
+          let expectedStatus = 503;
+          if (scenario === "generic-429") expectedStatus = 429;
+          if (completedExpected) expectedStatus = 200;
+          assert.equal(response.status, expectedStatus, JSON.stringify(payload));
+          assert.equal(response.headers.get("retry-after"), null);
+          assert.equal(calls.filter((url) => url === METERED_RESPONSES_URL).length, paidExpected ? 1 : 0);
+          if (completedExpected) assert.equal(payload.status, "completed");
+          if (paidExpected) assert.equal(paidModel, MODEL);
+          if (scenario === "disabled" || scenario === "cap-denied") assert.equal(payload.error.code, "codex_subscriptions_unavailable");
+          if (scenario === "mixed") {
+            assert.equal(response.headers.get("x-uos-upstream"), "metered");
+            assert.equal(calls.filter((url) => url === CODEX_RESPONSES_URL).length, 1);
+            assert.equal(calls.filter((url) => url === CODEX_REFRESH_URL).length, 1);
+            const current = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
+            assert.equal(current.kind, "quota_blocked");
+            assert.equal(current.fullCohortExhausted, false);
+          }
+        });
+      }
+    } finally {
+      await drainBackgroundTasks();
+      globalThis.fetch = originalFetch;
+      restoreEnv("METERED_API_KEY", originalMeteredApiKey);
+      restoreEnv("SURPLUS_API_KEY", originalSurplusApiKey);
+      resetCodexAuthCacheForTest();
+      resetRuntimeConfigCacheForTest();
+      setKvForTest(null);
+    }
+  }));

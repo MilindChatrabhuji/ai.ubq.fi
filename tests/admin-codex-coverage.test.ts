@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/admin-auth-harness.ts";
 // Coverage suite for the admin Codex handlers: routing diagnostics, catalog, whitelist,
 // provider selection, Codex auth upload validation, and their KV-unavailable paths.
 
@@ -51,18 +55,18 @@ const postJson = (path: string, body: string | Json, method = "POST"): Request =
   });
 
 const baseKv = kvStub as unknown as Record<string, unknown>;
-const delegateKv = (overrides: Json): Deno.Kv => ({ ...baseKv, ...overrides }) as unknown as Deno.Kv;
+const delegateKv = (overrides: Json): Kv => ({ ...baseKv, ...overrides }) as unknown as Kv;
 
-const throwingSetKv = (message: string): Deno.Kv =>
+const throwingSetKv = (message: string): Kv =>
   delegateKv({
     set: () => {
       throw new Error(message);
     },
   });
 
-const refusingSetKv = (): Deno.Kv => delegateKv({ set: () => Promise.resolve({ ok: false }) });
+const refusingSetKv = (): Kv => delegateKv({ set: () => Promise.resolve({ ok: false }) });
 
-const throwingCommitKv = (message: string): Deno.Kv =>
+const throwingCommitKv = (message: string): Kv =>
   delegateKv({
     atomic: () => {
       const chain = {
@@ -77,14 +81,14 @@ const throwingCommitKv = (message: string): Deno.Kv =>
     },
   });
 
-const throwingListKv = (message: string): Deno.Kv =>
+const throwingListKv = (message: string): Kv =>
   delegateKv({
     list: () => {
       throw new Error(message);
     },
   });
 
-const withKv = async <T>(kv: Deno.Kv, fn: () => Promise<T>): Promise<T> => {
+const withKv = async <T>(kv: Kv, fn: () => Promise<T>): Promise<T> => {
   setKvForTest(kv);
   try {
     return await fn();
@@ -93,23 +97,19 @@ const withKv = async <T>(kv: Deno.Kv, fn: () => Promise<T>): Promise<T> => {
   }
 };
 
-/** Mirrors the missing-`--unstable-kv` runtime: getKv() has no database to fall back on. */
+/** An explicit unavailable fixture prevents getKv() from opening a disk database. */
 const withDeniedKv = async <T>(fn: () => Promise<T>): Promise<T> => {
-  const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
-  const installed = denoWithKv.openKv;
-  denoWithKv.openKv = undefined;
   setKvForTest(null);
   try {
     return await fn();
   } finally {
-    denoWithKv.openKv = installed;
     setKvForTest(kvStub);
   }
 };
 
 const withFetch = async <T>(responder: (url: string) => Response | Promise<Response>, fn: () => Promise<T>): Promise<T> => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL) => Promise.resolve(responder(urlOf(input)));
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => Promise.resolve(responder(urlOf(input))));
   try {
     return await fn();
   } finally {
@@ -141,7 +141,10 @@ const analyticsView = (groupBy: PromptCacheAnalyticsView["group_by"]): PromptCac
   buckets: [],
 });
 
-Deno.test("admin debug routing reads, clears and validates the scenario override", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("admin debug routing reads, clears and validates the scenario override", async () => {
   kvStore.clear();
   resetDebugRoutingCacheForTest();
 
@@ -180,7 +183,7 @@ Deno.test("admin debug routing reads, clears and validates the scenario override
   resetDebugRoutingCacheForTest();
 });
 
-Deno.test("admin codex recheck rejects unknown and unconfigured account slots", async () => {
+test("admin codex recheck rejects unknown and unconfigured account slots", async () => {
   kvStore.clear();
   for (const slot of [0, 3, -1, 1.5]) {
     const response = await handleAdminCodexRecheck(slot);
@@ -193,7 +196,7 @@ Deno.test("admin codex recheck rejects unknown and unconfigured account slots", 
   assert.equal((await payloadOf(unconfigured)).message, "Codex account slot is not configured");
 });
 
-Deno.test("admin banked-reset shadow decisions serve the ledger and fail closed", async () => {
+test("admin banked-reset shadow decisions serve the ledger and fail closed", async () => {
   kvStore.clear();
   const empty = await handleAdminCodexBankedResetShadowDecisions();
   assert.equal(empty.status, 200);
@@ -208,13 +211,13 @@ Deno.test("admin banked-reset shadow decisions serve the ledger and fail closed"
   assert.equal(payload.type, "server_error");
 });
 
-Deno.test("admin prompt-cache scope experiment rejects request fields", async () => {
+test("admin prompt-cache scope experiment rejects request fields", async () => {
   const withFields = await handleAdminCodexCacheScopeExperiment(postJson("/admin/codex/prompt-cache-scope-experiment", { model: "gpt-5.6" }));
   assert.equal(withFields.status, 400);
   assert.equal((await payloadOf(withFields)).message, "Prompt-cache scope experiment does not accept request fields");
 });
 
-Deno.test("admin prompt-cache telemetry baseline projects the reader result and fails closed", async () => {
+test("admin prompt-cache telemetry baseline projects the reader result and fails closed", async () => {
   const response = await handleAdminCodexCacheScopeExperimentTelemetryBaseline(() =>
     Promise.resolve({
       status: "ready",
@@ -248,7 +251,7 @@ Deno.test("admin prompt-cache telemetry baseline projects the reader result and 
   assert.equal((await payloadOf(unavailableKv)).code, "prompt_cache_scope_experiment_unavailable");
 });
 
-Deno.test("admin prompt-cache analytics validates group_by and reports reader failures", async () => {
+test("admin prompt-cache analytics validates group_by and reports reader failures", async () => {
   const cases: readonly (readonly [string, string])[] = [
     ["https://ai.ubq.fi/admin/prompt-cache/analytics?model=gpt-5.6", "Only group_by is supported for prompt-cache analytics"],
     ["https://ai.ubq.fi/admin/prompt-cache/analytics?group_by=provider&group_by=model", "group_by may appear only once"],
@@ -284,7 +287,7 @@ Deno.test("admin prompt-cache analytics validates group_by and reports reader fa
   assert.equal((await payloadOf(failing)).code, "prompt_cache_analytics_unavailable");
 });
 
-Deno.test("admin codex auth rejects bodies that are not an auth.json and an unavailable KV", async () => {
+test("admin codex auth rejects bodies that are not an auth.json and an unavailable KV", async () => {
   kvStore.clear();
   const notAuthJson = await handleAdminCodexAuth(postJson("/admin/codex/auth", {}));
   assert.equal(notAuthJson.status, 400);
@@ -295,7 +298,7 @@ Deno.test("admin codex auth rejects bodies that are not an auth.json and an unav
   assert.equal((await payloadOf(noKv)).message, "Deno KV is not available; cannot persist Codex auth");
 });
 
-Deno.test("admin codex auth maps upstream rejection and unreachable upstreams onto errors", async () => {
+test("admin codex auth maps upstream rejection and unreachable upstreams onto errors", async () => {
   kvStore.clear();
   const rejected = await withFetch(
     () => new Response('{"statusCode":401,"description":"Unauthorized"}', { status: 401, headers: { "Content-Type": "application/json" } }),
@@ -308,7 +311,7 @@ Deno.test("admin codex auth maps upstream rejection and unreachable upstreams on
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.reject(new Error("upstream is unreachable"));
+  globalThis.fetch = createFetchMock(() => Promise.reject(new Error("upstream is unreachable")));
   try {
     const unreachable = await handleAdminCodexAuth(postJson("/admin/codex/auth", { auth: authPayload }));
     assert.equal(unreachable.status, 502);
@@ -321,7 +324,7 @@ Deno.test("admin codex auth maps upstream rejection and unreachable upstreams on
   }
 });
 
-Deno.test("admin codex auth requires an existing catalog for a rate-limited upload", async () => {
+test("admin codex auth requires an existing catalog for a rate-limited upload", async () => {
   kvStore.clear();
   const response = await withFetch(
     () => new Response('{"statusCode":429,"description":"Too Many Requests"}', { status: 429, headers: { "Content-Type": "application/json" } }),
@@ -334,7 +337,7 @@ Deno.test("admin codex auth requires an existing catalog for a rate-limited uplo
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
 });
 
-Deno.test("admin codex auth keeps the stored catalog for a rate-limited upload", async () => {
+test("admin codex auth keeps the stored catalog for a rate-limited upload", async () => {
   kvStore.clear();
   kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
     source: "chatgpt_codex",
@@ -358,7 +361,7 @@ Deno.test("admin codex auth keeps the stored catalog for a rate-limited upload",
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), true);
 });
 
-Deno.test("admin codex auth rejects an empty and an oversized upstream catalog", async () => {
+test("admin codex auth rejects an empty and an oversized upstream catalog", async () => {
   kvStore.clear();
   const empty = await withFetch(
     () => new Response(JSON.stringify({ models: [] }), { status: 200, headers: { "Content-Type": "application/json" } }),
@@ -382,7 +385,7 @@ Deno.test("admin codex auth rejects an empty and an oversized upstream catalog",
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
 });
 
-Deno.test("admin codex auth stores the upstream catalog and reports catalog seeding", async () => {
+test("admin codex auth stores the upstream catalog and reports catalog seeding", async () => {
   kvStore.clear();
   const response = await withFetch(
     () =>
@@ -406,7 +409,7 @@ Deno.test("admin codex auth stores the upstream catalog and reports catalog seed
   assert.deepEqual(accountIds, ["acct"]);
 });
 
-Deno.test("admin codex auth reports a catalog seed failure without failing the upload", async () => {
+test("admin codex auth reports a catalog seed failure without failing the upload", async () => {
   kvStore.clear();
   const response = await withKv(throwingSetKv("catalog store is unavailable"), () =>
     withFetch(
@@ -425,7 +428,7 @@ Deno.test("admin codex auth reports a catalog seed failure without failing the u
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), true);
 });
 
-Deno.test("admin codex models set validates, stores and reports persistence failures", async () => {
+test("admin codex models set validates, stores and reports persistence failures", async () => {
   kvStore.clear();
   const invalidJson = await handleAdminCodexModelsSet(postJson("/admin/codex/models", "{"));
   assert.equal(invalidJson.status, 400);
@@ -465,7 +468,7 @@ Deno.test("admin codex models set validates, stores and reports persistence fail
   });
 });
 
-Deno.test("admin codex models get serves the stored snapshot or a null payload", async () => {
+test("admin codex models get serves the stored snapshot or a null payload", async () => {
   kvStore.clear();
   const empty = await handleAdminCodexModelsGet();
   assert.equal(empty.status, 200);
@@ -485,7 +488,7 @@ Deno.test("admin codex models get serves the stored snapshot or a null payload",
   assert.equal((data.models as Json[]).length, 1);
 });
 
-Deno.test("admin codex prompts purge deletes stored prompts and chunks", async () => {
+test("admin codex prompts purge deletes stored prompts and chunks", async () => {
   kvStore.clear();
   kvStore.set(keyToString(["uos_ai", "codex_instructions"]), { instructions: "top level" });
   kvStore.set(keyToString(["uos_ai", "codex_instructions_chunk", 0]), { chunk: "first" });
@@ -506,7 +509,7 @@ Deno.test("admin codex prompts purge deletes stored prompts and chunks", async (
   assert.equal((await payloadOf(noKv)).message, "Deno KV is not available; cannot purge Codex prompts");
 });
 
-Deno.test("admin codex model whitelist reads, stores and reports KV outages", async () => {
+test("admin codex model whitelist reads, stores and reports KV outages", async () => {
   kvStore.clear();
   const empty = await handleAdminCodexModelsWhitelistGet();
   assert.equal(empty.status, 200);
@@ -556,7 +559,7 @@ Deno.test("admin codex model whitelist reads, stores and reports KV outages", as
   assert.equal((await payloadOf(refused)).message, "Deno KV is not available; cannot persist model whitelist");
 });
 
-Deno.test("admin models catalog serves the picker view and reports KV outages", async () => {
+test("admin models catalog serves the picker view and reports KV outages", async () => {
   kvStore.clear();
   const unfiltered = await handleAdminModelsCatalogGet({ buildCatalog: () => Promise.resolve(catalogFixture() as never) });
   assert.equal(unfiltered.status, 200);
@@ -577,7 +580,7 @@ Deno.test("admin models catalog serves the picker view and reports KV outages", 
   assert.equal((await payloadOf(noKv)).message, "Deno KV is not available; cannot read the model catalog");
 });
 
-Deno.test("admin models refresh reports every upstream refresh result", async () => {
+test("admin models refresh reports every upstream refresh result", async () => {
   const failed = await handleAdminModelsRefresh({
     refreshEnrichment: () => Promise.resolve(null),
     refreshOpenlux: () => Promise.resolve({ models: [{ id: "gpt-5.6-sol" }, { id: "gpt-5.6-luna" }], updated_at_ms: 9 } as never),
@@ -600,7 +603,7 @@ Deno.test("admin models refresh reports every upstream refresh result", async ()
   assert.deepEqual(refreshedPayload.surplus, { models: 1, updated_at_ms: 12 });
 });
 
-Deno.test("admin provider selection get serves the roster and reports an unavailable KV", async () => {
+test("admin provider selection get serves the roster and reports an unavailable KV", async () => {
   kvStore.clear();
   const response = await handleAdminProviderSelectionGet({ buildCatalog: () => Promise.resolve(catalogFixture() as never) });
   assert.equal(response.status, 200);
@@ -627,7 +630,7 @@ Deno.test("admin provider selection get serves the roster and reports an unavail
   assert.equal((await payloadOf(noKv)).message, "Deno KV is not available; cannot read the provider selection");
 });
 
-Deno.test("admin provider selection set validates input and reports storage outages", async () => {
+test("admin provider selection set validates input and reports storage outages", async () => {
   kvStore.clear();
   const noKv = await withDeniedKv(() => handleAdminProviderSelectionSet(postJson("/admin/provider-selection", { provider_ids: ["surplus"] })));
   assert.equal(noKv.status, 500);
@@ -664,7 +667,7 @@ Deno.test("admin provider selection set validates input and reports storage outa
   assert.equal((await payloadOf(failed)).message, "Deno KV is not available; cannot persist the provider selection");
 });
 
-Deno.test("admin codex auth rejects a third account in a full auth pool", async () => {
+test("admin codex auth rejects a third account in a full auth pool", async () => {
   kvStore.clear();
   const upload = (accountId: string) =>
     withFetch(
@@ -689,7 +692,7 @@ Deno.test("admin codex auth rejects a third account in a full auth pool", async 
   );
 });
 
-Deno.test("admin codex auth reports a KV pool commit that never settles", async () => {
+test("admin codex auth reports a KV pool commit that never settles", async () => {
   kvStore.clear();
   setAtomicCommitsToFail(3);
   try {
@@ -709,7 +712,7 @@ Deno.test("admin codex auth reports a KV pool commit that never settles", async 
   }
 });
 
-Deno.test("admin codex models set reports oversized payloads and an oversized runtime config", async () => {
+test("admin codex models set reports oversized payloads and an oversized runtime config", async () => {
   kvStore.clear();
   const oversizedModels = Array.from({ length: 600 }, (_, index) => ({
     slug: `gpt-5-set-oversized-${String(index).padStart(4, "0")}`,
@@ -743,7 +746,7 @@ Deno.test("admin codex models set reports oversized payloads and an oversized ru
   assert.equal((await bodyOf(unstamped)).client_version, null);
 });
 
-Deno.test("admin codex model whitelist rejects a payload over the KV byte ceiling", async () => {
+test("admin codex model whitelist rejects a payload over the KV byte ceiling", async () => {
   kvStore.clear();
   const tooLarge = await handleAdminCodexModelsWhitelistSet(
     postJson("/admin/codex/models/whitelist", {
@@ -755,7 +758,7 @@ Deno.test("admin codex model whitelist rejects a payload over the KV byte ceilin
   assert.equal(kvStore.has(keyToString(["uos_ai", "codex_models_whitelist"])), false);
 });
 
-Deno.test("admin provider selection get lists configured Codex subscriptions", async () => {
+test("admin provider selection get lists configured Codex subscriptions", async () => {
   kvStore.clear();
   resetCodexAuthCacheForTest();
   kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
@@ -776,7 +779,7 @@ Deno.test("admin provider selection get lists configured Codex subscriptions", a
   assert.equal(typeof subscriptions[0]?.label, "string");
 });
 
-Deno.test("admin codex auth reports a catalog too large for the compact runtime config", async () => {
+test("admin codex auth reports a catalog too large for the compact runtime config", async () => {
   kvStore.clear();
   const models = Array.from({ length: 200 }, (_, index) => ({
     slug: `gpt-auth-runtime-${String(index).padStart(3, "0")}`,
@@ -791,9 +794,9 @@ Deno.test("admin codex auth reports a catalog too large for the compact runtime 
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
 });
 
-Deno.test("admin models refresh keeps the last good snapshots when every upstream fails", async () => {
+test("admin models refresh keeps the last good snapshots when every upstream fails", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.reject(new Error("upstream metadata is unreachable"));
+  globalThis.fetch = createFetchMock(() => Promise.reject(new Error("upstream metadata is unreachable")));
   try {
     const response = await handleAdminModelsRefresh();
     assert.equal(response.status, 200);

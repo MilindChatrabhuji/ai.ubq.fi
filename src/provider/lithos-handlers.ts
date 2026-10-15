@@ -26,9 +26,9 @@ import {
 } from "./lithos-streams.ts";
 import { isRecord } from "../utils.ts";
 import {
-  ResponseStreamTerminalType,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type UsageContext,
+  type UsageTokens,
   extractChatUsageTokens,
   recordAttemptedProvider,
   recordCompletionUsage,

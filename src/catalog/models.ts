@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Codex catalog model list assembly, split out of src/codex_catalog.ts.
 
 import { CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, preserveCodexDefaultModel } from "../codex/index.ts";
@@ -34,7 +35,7 @@ import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "./types.ts";
 
 const maybeUpdateNormalizedSnapshot = async (
-  kv: Deno.Kv,
+  kv: Kv,
   version: string,
   authGeneration: string,
   parsed: Record<string, unknown>,

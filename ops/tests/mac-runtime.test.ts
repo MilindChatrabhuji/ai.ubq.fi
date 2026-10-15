@@ -1,3 +1,7 @@
+import { copyOps, seedStore } from "./fixture-release.ts";
+import { test } from "bun:test";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { spawnFixture, runFixture, outputFixture, fsError, type FixtureChild } from "./fixture-process.ts";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { MAC_RUNTIME, prepareMacRuntime } from "../mac-runtime.ts";
@@ -19,116 +23,119 @@ const dependencies = async (failure?: Failure) => {
     binarySha256: await sha256(binary),
   };
   const calls: string[] = [];
-  const fetcher: typeof fetch = () => {
-    calls.push("download");
-    if (failure === "redirect")
-      return Promise.resolve(new Response(null, { status: 302, headers: { location: "https://unapproved.example.invalid/archive" } }));
-    const content = failure === "archive" ? bytes("incorrect-archive") : archive;
-    return Promise.resolve(
-      new Response(new Uint8Array(content), { headers: { "content-length": String(failure === "length" ? archive.length + 1 : archive.length) } })
-    );
-  };
-  const unzip = (args: string[]): Promise<Deno.CommandOutput> => {
+  const fetcher: typeof fetch = Object.assign(
+    () => {
+      calls.push("download");
+      if (failure === "redirect")
+        return Promise.resolve(new Response(null, { status: 302, headers: { location: "https://unapproved.example.invalid/archive" } }));
+      const content = failure === "archive" ? bytes("incorrect-archive") : archive;
+      return Promise.resolve(
+        new Response(new Uint8Array(content), { headers: { "content-length": String(failure === "length" ? archive.length + 1 : archive.length) } })
+      );
+    },
+    { preconnect: fetch.preconnect }
+  );
+  const unzip = (args: string[]): Promise<Uint8Array> => {
     calls.push(args.slice(0, 2).join(" "));
     let stdout = binary;
-    if (args[1] === "-1") stdout = bytes(failure === "member" ? "deno\nunexpected\n" : "deno\n");
-    if (args[1] === "-l") stdout = bytes("-rwxr-xr-x 3.0 unx 16 bx 10 defN deno\n");
+    if (args[1] === "-1") stdout = bytes(failure === "member" ? "bun-darwin-aarch64/bun\nunexpected\n" : "bun-darwin-aarch64/bun\n");
+    if (args[1] === "-l") stdout = bytes("-rwxr-xr-x 3.0 unx 16 bx 10 defN bun-darwin-aarch64/bun\n");
     if (args[0] === "-p" && failure === "binary") stdout = bytes("incorrect-binary");
-    return Promise.resolve({ success: failure !== "unzip", code: failure === "unzip" ? 1 : 0, signal: null, stdout, stderr: new Uint8Array() });
+    return failure === "unzip" ? Promise.reject(new Error("synthetic unzip refusal")) : Promise.resolve(stdout);
   };
   return { artifact, os: "darwin" as const, arch: "aarch64" as const, fetch: fetcher, unzip, calls };
 };
 const root = async (): Promise<string> => {
-  await Deno.mkdir(FIXTURES, { recursive: true });
-  return await Deno.realPath(await Deno.makeTempDir({ dir: FIXTURES, prefix: "case-" }));
+  await mkdir(FIXTURES, { recursive: true });
+  return await realpath(await mkdtemp(FIXTURES + "/" + "case-"));
 };
 const clean = async (path: string): Promise<void> => {
-  const runtimeStore = path + "/.data/runtimes/deno";
+  const runtimeStore = path + "/.data/runtimes/bun/darwin-arm64";
   try {
-    for await (const item of Deno.readDir(runtimeStore)) {
+    for (const item of await readdir(runtimeStore, { withFileTypes: true })) {
       const entry = runtimeStore + "/" + item.name;
-      const info = await Deno.lstat(entry);
-      if (info.isDirectory && !info.isSymlink) await Deno.chmod(entry, 0o700);
+      const info = await lstat(entry);
+      if (info.isDirectory() && !info.isSymbolicLink()) await chmod(entry, 0o700);
     }
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    if (!fsError("ENOENT")(error)) throw error;
   }
-  await Deno.remove(path, { recursive: true });
+  await rm(path, { recursive: true });
 };
 const entries = async (path: string): Promise<string[]> => {
   const names: string[] = [];
-  for await (const entry of Deno.readDir(path)) names.push(entry.name);
+  for (const entry of await readdir(path, { withFileTypes: true })) names.push(entry.name);
   return names.sort((left, right) => left.localeCompare(right));
 };
 
-Deno.test("Mac runtime uses the exact official immutable artifact pin", () => {
-  assert.equal(MAC_RUNTIME.version, "2.9.5");
-  assert.equal(MAC_RUNTIME.archiveBytes, 38511993);
-  assert.equal(MAC_RUNTIME.binaryBytes, 80900512);
-  assert.equal(MAC_RUNTIME.archiveSha256, "b796aadd131f6930560c1ee040cf0d6f53933fbb987464e9ff46bd7ea4830615");
-  assert.equal(MAC_RUNTIME.binarySha256, "b5bd08edab254d42d7b05aa5b6cb4c9b8d4dede4975aff76951ce2cce18866fa");
-  assert.equal(MAC_RUNTIME.url, "https://github.com/denoland/deno/releases/download/v2.9.5/deno-aarch64-apple-darwin.zip");
+test("Mac runtime uses the exact official immutable artifact pin", () => {
+  assert.equal(MAC_RUNTIME.version, "1.4.0");
+  assert.equal(MAC_RUNTIME.archiveBytes, 25568657);
+  assert.equal(MAC_RUNTIME.binaryBytes, 63558256);
+  assert.equal(MAC_RUNTIME.archiveSha256, "c669e97f6164e1c96e0701748db98dfa77492908cbd8394c7557134a735de381");
+  assert.equal(MAC_RUNTIME.binarySha256, "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf");
+  assert.equal(MAC_RUNTIME.url, "https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-darwin-aarch64.zip");
 });
-Deno.test("Mac runtime verifies, publishes readonly bytes and reuses without downloading", async () => {
+test("Mac runtime verifies, publishes readonly bytes and reuses without downloading", async () => {
   const path = await root();
   try {
     const test = await dependencies();
     const binary = await prepareMacRuntime(path, test);
-    assert.equal(await Deno.readTextFile(binary), "synthetic-binary");
-    const binaryMode = (await Deno.stat(binary)).mode;
-    const directoryMode = (await Deno.stat(binary.slice(0, binary.lastIndexOf("/")))).mode;
-    const storeMode = (await Deno.stat(path + "/.data/runtimes/deno")).mode;
-    assert(binaryMode !== null && directoryMode !== null && storeMode !== null);
+    assert.equal(await readFile(binary, "utf8"), "synthetic-binary");
+    const binaryMode = (await stat(binary)).mode;
+    const directoryMode = (await stat(binary.slice(0, binary.lastIndexOf("/")))).mode;
+    const storeMode = (await stat(path + "/.data/runtimes/bun/darwin-arm64")).mode;
+    assert(Number.isInteger(binaryMode) && Number.isInteger(directoryMode) && Number.isInteger(storeMode));
     assert.equal(binaryMode & 0o777, 0o500);
     assert.equal(directoryMode & 0o777, 0o500);
     assert.equal(storeMode & 0o777, 0o700);
     const calls = test.calls.slice();
     assert.equal(await prepareMacRuntime(path, test), binary);
     assert.deepEqual(test.calls, calls);
-    assert.deepEqual(await entries(path + "/.data/runtimes/deno"), ["2.9.5-" + test.artifact.binarySha256]);
+    assert.deepEqual(await entries(path + "/.data/runtimes/bun/darwin-arm64"), ["1.4.0-" + test.artifact.binarySha256]);
   } finally {
     await clean(path);
   }
 });
 for (const failure of ["archive", "length", "binary", "unzip", "member", "redirect"] as const) {
-  Deno.test("Mac runtime preparation preserves live state on " + failure + " failure", async () => {
+  test("Mac runtime preparation preserves live state on " + failure + " failure", async () => {
     const path = await root();
     try {
-      await Deno.mkdir(path + "/.data", { recursive: true });
-      await Deno.writeTextFile(path + "/.data/current", "prior-selector");
-      await Deno.writeTextFile(path + "/service-state", "prior-service");
+      await mkdir(path + "/.data", { recursive: true });
+      await writeFile(path + "/.data/current", "prior-selector");
+      await writeFile(path + "/service-state", "prior-service");
       await assert.rejects(prepareMacRuntime(path, await dependencies(failure)));
-      assert.equal(await Deno.readTextFile(path + "/.data/current"), "prior-selector");
-      assert.equal(await Deno.readTextFile(path + "/service-state"), "prior-service");
-      assert.deepEqual(await entries(path + "/.data/runtimes/deno"), []);
+      assert.equal(await readFile(path + "/.data/current", "utf8"), "prior-selector");
+      assert.equal(await readFile(path + "/service-state", "utf8"), "prior-service");
+      assert.deepEqual(await entries(path + "/.data/runtimes/bun/darwin-arm64"), []);
     } finally {
       await clean(path);
     }
   });
 }
 for (const kind of ["corrupt", "symlink", "binary-symlink", "platform"] as const) {
-  Deno.test("Mac runtime refuses " + kind + " without fallback or overwrite", async () => {
+  test("Mac runtime refuses " + kind + " without fallback or overwrite", async () => {
     const path = await root();
     try {
       const test = await dependencies();
-      const destination = path + "/.data/runtimes/deno/2.9.5-" + test.artifact.binarySha256;
+      const destination = path + "/.data/runtimes/bun/darwin-arm64/1.4.0-" + test.artifact.binarySha256;
       if (kind === "platform") {
         await assert.rejects(prepareMacRuntime(path, { ...test, arch: "x86_64" }));
       } else {
-        await Deno.mkdir(destination, { recursive: true });
+        await mkdir(destination, { recursive: true });
         const content = kind === "corrupt" ? "foreign-corrupt-bytes" : "synthetic-binary";
         if (kind === "binary-symlink") {
-          await Deno.writeTextFile(path + "/correct-binary", content);
-          const linked = await new Deno.Command("/bin/ln", { args: ["-s", path + "/correct-binary", destination + "/deno"] }).output();
+          await writeFile(path + "/correct-binary", content);
+          const linked = await runFixture("/bin/ln", { args: ["-s", path + "/correct-binary", destination + "/bun"] });
           assert.equal(linked.code, 0, decoder.decode(linked.stderr));
-        } else await Deno.writeTextFile(destination + "/deno", content);
+        } else await writeFile(destination + "/bun", content);
         if (kind === "symlink") {
-          await Deno.rename(destination, destination + "-target");
-          const link = await new Deno.Command("/bin/ln", { args: ["-s", destination + "-target", destination] }).output();
+          await rename(destination, destination + "-target");
+          const link = await runFixture("/bin/ln", { args: ["-s", destination + "-target", destination] });
           assert.equal(link.code, 0, decoder.decode(link.stderr));
         }
         await assert.rejects(prepareMacRuntime(path, test));
-        assert.equal(await Deno.readTextFile(destination + "/deno"), content);
+        assert.equal(await readFile(destination + "/bun", "utf8"), content);
       }
       assert.deepEqual(test.calls, []);
     } finally {
@@ -154,20 +161,19 @@ const bounded = async <T>(promise: Promise<T>): Promise<T> => {
 };
 const quote = (value: string): string => "'" + value.replaceAll("'", "'\\''") + "'";
 const stub = async (path: string, name: string, body: string): Promise<void> => {
-  await Deno.writeTextFile(path + "/bin/" + name, "#!/bin/sh\nset -eu\n" + body + "\n");
-  await Deno.chmod(path + "/bin/" + name, 0o700);
+  await writeFile(path + "/bin/" + name, "#!/bin/sh\nset -eu\n" + body + "\n");
+  await chmod(path + "/bin/" + name, 0o700);
 };
 const deployFixture = async (path: string, failure: boolean): Promise<{ source: string; sha: string }> => {
   const sha = "a".repeat(40);
   const journal = path + "/journal";
-  await Deno.mkdir(path + "/bin", { recursive: true });
-  await Deno.mkdir(path + "/ops", { recursive: true });
-  await Deno.mkdir(path + "/library", { recursive: true });
-  await Deno.mkdir(path + "/.data/releases", { recursive: true });
-  await Deno.writeTextFile(path + "/.data/current", "prior-selector");
-  await Deno.writeTextFile(path + "/service-state", "prior-service");
-  await Deno.writeTextFile(path + "/deno.json", '{"workspace":[],"nodeModulesDir":"none"}\n');
-  await Deno.writeTextFile(path + "/deno.lock", '{"version":"5","specifiers":{}}\n');
+  await mkdir(path + "/bin", { recursive: true });
+  await mkdir(path + "/ops", { recursive: true });
+  await mkdir(path + "/library", { recursive: true });
+  await mkdir(path + "/.data/releases", { recursive: true });
+  await writeFile(path + "/.data/current", "prior-selector");
+  await writeFile(path + "/service-state", "prior-service");
+  await seedStore(path);
   const log = (event: string): string => "printf '%s\\n' " + quote(event) + " >> " + quote(journal);
   await stub(
     path,
@@ -180,44 +186,37 @@ const deployFixture = async (path: string, failure: boolean): Promise<{ source: 
   await stub(
     path,
     "launchctl",
-    'case "$1" in print) printf "\\n pid = 999999\\n" ;; bootout) ' + log("bootout") + " ;; bootstrap) " + log("bootstrap") + " ;; esac"
+    'case "$1" in print) printf "fixture = {\\n pid = 999999\\n}\\n" ;; bootout) ' + log("bootout") + " ;; bootstrap) " + log("bootstrap") + " ;; esac"
   );
   const test = await dependencies(failure ? "archive" : undefined);
   const helperUrl = new URL("../mac-runtime.ts", import.meta.url).href;
-  const helper =
-    "import { prepareMacRuntime as prepare } from " +
-    JSON.stringify(helperUrl) +
-    ";\n" +
-    "const journal = " +
-    JSON.stringify(journal) +
-    ";\n" +
-    "export const prepareMacRuntime = async (root) => {\n" +
-    "await Deno.writeTextFile(journal, 'prepare-start\\n', { append: true });\n" +
-    "const artifact = " +
-    JSON.stringify(test.artifact) +
-    ";\n" +
-    "const fetcher = () => Promise.resolve(new Response(new TextEncoder().encode(" +
-    JSON.stringify(failure ? "incorrect-archive" : "synthetic-archive") +
-    "), {headers:{'content-length':String(artifact.archiveBytes)}}));\n" +
-    "const unzip = (args) => Promise.resolve({success:true,code:0,signal:null,stdout:new TextEncoder().encode(args[1]==='-1'?'deno\\n':args[1]==='-l'?'-rwxr-xr-x 3.0 unx 16 bx 10 defN deno\\n':'synthetic-binary'),stderr:new Uint8Array()});\n" +
-    "const binary = await prepare(root, {artifact,fetch:fetcher,unzip,os:'darwin',arch:'aarch64'});\n" +
-    "await Deno.writeTextFile(journal, 'prepare-ready\\n', {append:true});\nreturn binary;\n};\n";
-  await Deno.writeTextFile(path + "/ops/mac-runtime.ts", helper);
-  await Deno.writeTextFile(path + "/ops/release-retention.ts", "export const pruneReleases = () => Promise.resolve({removed:[]});\n");
-  let source = await Deno.readTextFile(new URL("../deploy-mac.ts", import.meta.url));
+  const helper = `import { writeFile } from "node:fs/promises";
+    import { prepareMacRuntime as prepare } from ${JSON.stringify(helperUrl)};
+    const journal = ${JSON.stringify(journal)};
+    export const prepareMacRuntime = async root => {
+      await writeFile(journal, "prepare-start\\n", { flag: "a" });
+      const artifact = ${JSON.stringify(test.artifact)};
+      const fetcher = () => Promise.resolve(new Response(new TextEncoder().encode(${JSON.stringify(failure ? "incorrect-archive" : "synthetic-archive")}),
+        { headers: { "content-length": String(artifact.archiveBytes) } }));
+      const unzip = args => Promise.resolve(new TextEncoder().encode(args[1] === "-1" ? artifact.member + "\\n" :
+        args[1] === "-l" ? "-rwxr-xr-x 3.0 unx 16 bx 10 defN " + artifact.member + "\\n" : "synthetic-binary"));
+      const binary = await prepare(root, { artifact, fetch: fetcher, unzip, os: "darwin", arch: "arm64" });
+      await writeFile(journal, "prepare-ready\\n", { flag: "a" }); return binary;
+    };`;
+  await copyOps(path + "/ops");
+  await writeFile(
+    path + "/ops/release-artifact.ts",
+    `import { writeFile } from "node:fs/promises";
+    export const prepareReleasePayload = async () => { await writeFile(${JSON.stringify(journal)}, "payload-ready\\n", { flag: "a" }); };`
+  );
+  await writeFile(path + "/ops/mac-runtime.ts", helper);
+  await writeFile(path + "/ops/release-retention.ts", "export const pruneReleases = () => Promise.resolve({removed:[]});\n");
+  let source = await readFile(new URL("../deploy-mac.ts", import.meta.url), "utf8");
   source = source
     .replaceAll("/Users/nv/repos/ubiquity/ai.ubq.fi", path)
     .replace("/Users/nv/Library/LaunchAgents/com.ubiquity.ai.local.plist", path + "/library/agent.plist");
-  source = source.replace('Deno.build.os !== "darwin"', "Deno.build.os !== " + JSON.stringify(Deno.build.os));
+  source = source.replace('process.platform !== "darwin"', "process.platform !== " + JSON.stringify(process.platform));
   const prelude =
-    "Deno.symlink = async (target, link) => {\n" +
-    "link = new URL(link, " +
-    JSON.stringify("file://" + path + "/") +
-    ").pathname;\n" +
-    "if (!link.startsWith(" +
-    JSON.stringify(path + "/") +
-    ")) throw new Error('foreign fixture symlink');\n" +
-    "const result = await new Deno.Command('/bin/ln',{args:['-s',target,link]}).output();\nif (!result.success) throw new Error('fixture ln failed');\n};\n" +
     "globalThis.fetch = () => Promise.resolve(Response.json({release:{git_sha:" +
     JSON.stringify(sha) +
     ",deployment_id:" +
@@ -230,45 +229,32 @@ const deployFixture = async (path: string, failure: boolean): Promise<{ source: 
   return { source: prelude + source, sha };
 };
 for (const failure of [false, true]) {
-  Deno.test("Mac deploy actual entry prepares runtime before selection/service effects: " + String(failure), async () => {
+  test("Mac deploy actual entry prepares runtime before selection/service effects: " + String(failure), async () => {
     const path = await root();
-    let child: Deno.ChildProcess | undefined;
+    let child: FixtureChild | undefined;
     try {
       const fixture = await deployFixture(path, failure);
-      await Deno.writeTextFile(path + "/ops/deploy-mac.ts", fixture.source);
-      const programs = ["git", "tar", "id", "ps", "launchctl"].map((name) => path + "/bin/" + name);
-      const args = [
-        "-c",
-        'exec "$@"',
-        "--",
-        Deno.execPath(),
-        "run",
-        "--frozen",
-        "--no-prompt",
-        "--allow-read=" + path,
-        "--allow-write=" + path,
-        "--allow-run=/bin/ln," + programs.join(","),
-        path + "/ops/deploy-mac.ts",
-      ];
-      child = new Deno.Command("/bin/sh", {
+      await writeFile(path + "/ops/deploy-mac.ts", fixture.source);
+      const args = ["--no-env-file", "--no-install", path + "/ops/deploy-mac.ts"];
+      child = spawnFixture(process.execPath, {
         args,
         cwd: path,
         clearEnv: true,
         env: { PATH: path + "/bin:/usr/bin:/bin", HOME: path, TMPDIR: path, DENO_DIR: path + "/cache" },
         stdout: "piped",
         stderr: "piped",
-      }).spawn();
-      const output = await bounded(child.output());
-      const journal = (await Deno.readTextFile(path + "/journal")).trim().split("\n");
+      });
+      const output = await bounded(outputFixture(child));
+      const journal = (await readFile(path + "/journal", "utf8")).trim().split("\n");
       if (failure) {
         assert.notEqual(output.code, 0);
         assert.deepEqual(journal, ["prepare-start"]);
-        assert.equal(await Deno.readTextFile(path + "/.data/current"), "prior-selector");
-        assert.equal(await Deno.readTextFile(path + "/service-state"), "prior-service");
+        assert.equal(await readFile(path + "/.data/current", "utf8"), "prior-selector");
+        assert.equal(await readFile(path + "/service-state", "utf8"), "prior-service");
       } else {
         assert.equal(output.code, 0, decoder.decode(output.stderr));
-        assert.deepEqual(journal, ["prepare-start", "prepare-ready", "archive", "tar", "bootout", "old-process-settled", "bootstrap"]);
-        assert.equal(await Deno.readLink(path + "/.data/current"), "releases/" + fixture.sha);
+        assert.deepEqual(journal, ["prepare-start", "prepare-ready", "archive", "tar", "payload-ready", "bootout", "old-process-settled", "bootstrap"]);
+        assert.equal(await readlink(path + "/.data/current"), "releases/" + fixture.sha);
       }
     } finally {
       if (child) {
@@ -277,7 +263,7 @@ for (const failure of [false, true]) {
         } catch {
           /* already reaped */
         }
-        await bounded(child.status);
+        await bounded(child.exited);
       }
       await clean(path);
     }

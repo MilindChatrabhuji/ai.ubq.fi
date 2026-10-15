@@ -1,3 +1,5 @@
+import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   handleAdminClaudeCodeAuthDelete,
@@ -17,26 +19,26 @@ import { CLAUDE_CODE_CONFIG_COOLDOWN_MS, loadClaudeCodeQuotaState, recordClaudeC
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 class AdminKv {
   readonly values = new Map<string, unknown>();
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
       versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as Deno.KvCommitResult);
+    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as KvCommitResult);
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.values.delete(keyOf(key));
     return Promise.resolve();
   }
@@ -47,7 +49,7 @@ const withAdminKv = async (run: (kv: AdminKv) => Promise<void>): Promise<void> =
   resetClaudeCodeCredentialCacheForTest();
   resetProviderSelectionCacheForTest();
   resetProviderHealthThrottleForTest();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     await run(kv);
   } finally {
@@ -57,11 +59,16 @@ const withAdminKv = async (run: (kv: AdminKv) => Promise<void>): Promise<void> =
 
 type StubCall = Readonly<{ url: string; method: string; headers: Headers }>;
 
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+};
+
 const withStubbedAnthropic = async (responder: (call: StubCall) => Response, run: (calls: StubCall[]) => Promise<void>): Promise<void> => {
   const originalFetch = globalThis.fetch;
   const calls: StubCall[] = [];
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const url = requestUrl(input);
     const call = { url, method: init?.method ?? "GET", headers: new Headers(init?.headers) };
     calls.push(call);
     return Promise.resolve(responder(call));
@@ -82,7 +89,7 @@ const jsonRequest = (body: unknown, method = "POST"): Request =>
     body: JSON.stringify(body),
   });
 
-Deno.test("the admin status route reports the tier without any secret material", async () => {
+test("the admin status route reports the tier without any secret material", async () => {
   await withAdminKv(async (kv) => {
     await withStubbedAnthropic(modelsOk, async () => {
       const stored = await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-usr-1A6ABCDEFGHIJKLMNOPBwAA", label: "primary" }));
@@ -105,7 +112,7 @@ Deno.test("the admin status route reports the tier without any secret material",
   });
 });
 
-Deno.test("a rejected credential is refused upstream and never stored", async () => {
+test("a rejected credential is refused upstream and never stored", async () => {
   await withAdminKv(async (kv) => {
     await withStubbedAnthropic(
       () => new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }), { status: 401 }),
@@ -121,7 +128,7 @@ Deno.test("a rejected credential is refused upstream and never stored", async ()
   });
 });
 
-Deno.test("credential submissions are shape-checked before any upstream call", async () => {
+test("credential submissions are shape-checked before any upstream call", async () => {
   await withAdminKv(async () => {
     await withStubbedAnthropic(modelsOk, async (calls) => {
       const blank = await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "  " }));
@@ -137,7 +144,7 @@ Deno.test("credential submissions are shape-checked before any upstream call", a
   });
 });
 
-Deno.test("a workspace pin is stored, validated, and reported with its source", async () => {
+test("a workspace pin is stored, validated, and reported with its source", async () => {
   await withAdminKv(async (kv) => {
     await withStubbedAnthropic(modelsOk, async (calls) => {
       const response = await handleAdminClaudeCodeAuthSet(
@@ -149,22 +156,22 @@ Deno.test("a workspace pin is stored, validated, and reported with its source", 
       assert.equal(body.data.workspace.source, "kv");
       assert.equal(typeof body.data.workspace.verified_at_ms, "number");
       assert.equal(calls[0].headers.get("anthropic-workspace-id"), "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
-      const resolved = await resolveClaudeCodeWorkspace(kv as unknown as Deno.Kv);
+      const resolved = await resolveClaudeCodeWorkspace(kv as unknown as Kv);
       assert.equal(resolved?.source, "kv");
 
       // A workspace-only submission changes the pin without touching the credential.
-      const storedBefore = await loadClaudeCodeStoredCredential(kv as unknown as Deno.Kv);
+      const storedBefore = await loadClaudeCodeStoredCredential(kv as unknown as Kv);
       const repinned = await handleAdminClaudeCodeAuthSet(jsonRequest({ workspace_id: "wrkspc_01FBEp5VyCHs7ghEnJqk6giF" }));
       assert.equal(repinned.status, 200);
       const repinnedBody = await repinned.json();
       assert.equal(repinnedBody.data.workspace.id, "wrkspc_01FBEp5VyCHs7ghEnJqk6giF");
-      const storedAfter = await loadClaudeCodeStoredCredential(kv as unknown as Deno.Kv);
+      const storedAfter = await loadClaudeCodeStoredCredential(kv as unknown as Kv);
       assert.equal(storedAfter?.secret, storedBefore?.secret);
     });
   });
 });
 
-Deno.test("clearing the stored credential falls back to the environment and clearing guards removes them", async () => {
+test("clearing the stored credential falls back to the environment and clearing guards removes them", async () => {
   await withAdminKv(async (kv) => {
     await withStubbedAnthropic(modelsOk, async () => {
       await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-usr-1A6ABCDEFGHIJKLMNOPBwAA" }));
@@ -172,13 +179,13 @@ Deno.test("clearing the stored credential falls back to the environment and clea
     const cleared = await handleAdminClaudeCodeAuthDelete();
     assert.equal(cleared.status, 200);
     assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])), false);
-    assert.equal(await loadClaudeCodeStoredCredential(kv as unknown as Deno.Kv), null);
+    assert.equal(await loadClaudeCodeStoredCredential(kv as unknown as Kv), null);
 
-    await recordClaudeCodeQuotaOutcome(kv as unknown as Deno.Kv, {
+    await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
       observation: null,
       config_error: { kind: "billing_blocked", status: 400, message: "credit balance too low", retry_after_ms: null },
     });
-    const cooling = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+    const cooling = await loadClaudeCodeQuotaState(kv as unknown as Kv);
     assert.equal(cooling?.last_error?.kind, "billing_blocked");
     const clearedGuards = await handleAdminClaudeCodeQuotaClear();
     const payload = await clearedGuards.json();
@@ -188,9 +195,9 @@ Deno.test("clearing the stored credential falls back to the environment and clea
   });
 });
 
-Deno.test("the admin routes stay behind admin auth and expose the documented paths", async () => {
+test("the admin routes stay behind admin auth and expose the documented paths", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
-  const paths: Array<[string, string]> = [
+  const paths: [string, string][] = [
     ["GET", "/admin/providers/claude-code/auth"],
     ["POST", "/admin/providers/claude-code/auth"],
     ["DELETE", "/admin/providers/claude-code/auth"],
@@ -203,7 +210,7 @@ Deno.test("the admin routes stay behind admin auth and expose the documented pat
   }
 });
 
-Deno.test("a workspace-only submission without any credential reports the missing credential", async () => {
+test("a workspace-only submission without any credential reports the missing credential", async () => {
   await withAdminKv(async () => {
     await withStubbedAnthropic(modelsOk, async (calls) => {
       // The seam keeps this deterministic: the acceptance process may carry an
@@ -215,9 +222,9 @@ Deno.test("a workspace-only submission without any credential reports the missin
   });
 });
 
-Deno.test("configuration cooldown recorded by the tier is visible to the admin readback", async () => {
+test("configuration cooldown recorded by the tier is visible to the admin readback", async () => {
   await withAdminKv(async (kv) => {
-    await recordClaudeCodeQuotaOutcome(kv as unknown as Deno.Kv, {
+    await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
       observation: null,
       config_error: { kind: "workspace_not_found", status: 404, message: "Workspace `72cde404` not found.", retry_after_ms: null },
       nowMs: Date.now(),

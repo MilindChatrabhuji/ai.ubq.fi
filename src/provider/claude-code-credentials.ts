@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 /**
  * Operator-managed Claude subscription credential and workspace state. The
  * Codex tier keeps an `auth.json` pool in KV with an admin upload surface; the
@@ -142,7 +143,7 @@ const cacheStoredCredential = (credential: ClaudeCodeStoredCredential | null): v
   cachedCredentialExpiresAtMs = Date.now() + CLAUDE_CODE_CREDENTIAL_CACHE_TTL_MS;
 };
 
-export const loadClaudeCodeStoredCredential = async (kv: Deno.Kv | null): Promise<ClaudeCodeStoredCredential | null> => {
+export const loadClaudeCodeStoredCredential = async (kv: Kv | null): Promise<ClaudeCodeStoredCredential | null> => {
   if (!kv) return null;
   if (cachedCredentialExpiresAtMs > Date.now()) return cachedCredential;
   const entry = await kv.get(CLAUDE_CODE_AUTH_KV_KEY, { consistency: "strong" });
@@ -152,7 +153,7 @@ export const loadClaudeCodeStoredCredential = async (kv: Deno.Kv | null): Promis
 };
 
 export const storeClaudeCodeStoredCredential = async (
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   input: Readonly<{ secret: string; label?: string | null }>
 ): Promise<ClaudeCodeStoredCredential | null> => {
   if (!kv) return null;
@@ -170,26 +171,26 @@ export const storeClaudeCodeStoredCredential = async (
   return stored;
 };
 
-export const clearClaudeCodeStoredCredential = async (kv: Deno.Kv | null): Promise<boolean> => {
+export const clearClaudeCodeStoredCredential = async (kv: Kv | null): Promise<boolean> => {
   if (!kv) return false;
   await kv.delete(CLAUDE_CODE_AUTH_KV_KEY);
   cacheStoredCredential(null);
   return true;
 };
 
-export const loadClaudeCodeWorkspaceState = async (kv: Deno.Kv | null): Promise<ClaudeCodeWorkspaceState | null> => {
+export const loadClaudeCodeWorkspaceState = async (kv: Kv | null): Promise<ClaudeCodeWorkspaceState | null> => {
   if (!kv) return null;
   const entry = await kv.get(CLAUDE_CODE_WORKSPACE_KV_KEY, { consistency: "strong" });
   return parseClaudeCodeWorkspaceState(entry.value);
 };
 
-export const storeClaudeCodeWorkspaceState = async (kv: Deno.Kv | null, state: ClaudeCodeWorkspaceState): Promise<boolean> => {
+export const storeClaudeCodeWorkspaceState = async (kv: Kv | null, state: ClaudeCodeWorkspaceState): Promise<boolean> => {
   if (!kv) return false;
   await kv.set(CLAUDE_CODE_WORKSPACE_KV_KEY, state);
   return true;
 };
 
-export const clearClaudeCodeWorkspaceState = async (kv: Deno.Kv | null): Promise<boolean> => {
+export const clearClaudeCodeWorkspaceState = async (kv: Kv | null): Promise<boolean> => {
   if (!kv) return false;
   await kv.delete(CLAUDE_CODE_WORKSPACE_KV_KEY);
   return true;
@@ -206,7 +207,7 @@ export const readClaudeCodeEnvCredential = (env?: ClaudeCodeEnvLookup): ClaudeCo
     env ??
     ((name: string) => {
       try {
-        return Deno.env.get(name);
+        return process.env[name];
       } catch {
         return null;
       }
@@ -237,7 +238,7 @@ export const readClaudeCodeEnvCredential = (env?: ClaudeCodeEnvLookup): ClaudeCo
 };
 
 /** KV credential first, then `CLAUDE_API_KEY`, then `CLAUDE_CODE_OAUTH_TOKEN`. */
-export const resolveClaudeCodeCredential = async (kv: Deno.Kv | null, env?: ClaudeCodeEnvLookup): Promise<ClaudeCodeResolvedCredential | null> => {
+export const resolveClaudeCodeCredential = async (kv: Kv | null, env?: ClaudeCodeEnvLookup): Promise<ClaudeCodeResolvedCredential | null> => {
   const stored = await loadClaudeCodeStoredCredential(kv);
   if (stored) {
     return {
@@ -257,7 +258,7 @@ export const readClaudeCodeWorkspaceIdEnv = (env?: ClaudeCodeEnvLookup): string 
     env ??
     ((name: string) => {
       try {
-        return Deno.env.get(name);
+        return process.env[name];
       } catch {
         return null;
       }
@@ -266,7 +267,7 @@ export const readClaudeCodeWorkspaceIdEnv = (env?: ClaudeCodeEnvLookup): string 
 };
 
 /** KV workspace first, then the environment pin, then a discovered workspace. */
-export const resolveClaudeCodeWorkspace = async (kv: Deno.Kv | null, env?: ClaudeCodeEnvLookup): Promise<ClaudeCodeResolvedWorkspace | null> => {
+export const resolveClaudeCodeWorkspace = async (kv: Kv | null, env?: ClaudeCodeEnvLookup): Promise<ClaudeCodeResolvedWorkspace | null> => {
   const stored = await loadClaudeCodeWorkspaceState(kv);
   if (stored) return { id: stored.id, name: stored.name, source: stored.source };
   const fromEnv = readClaudeCodeWorkspaceIdEnv(env);
@@ -285,12 +286,17 @@ export const mergeClaudeCodeWorkspaceState = (
 ): ClaudeCodeWorkspaceState => {
   const nowMs = input.nowMs ?? Date.now();
   const sameId = previous?.id === input.id;
+  const previousName = sameId ? previous.name : null;
+  let discoveredAtMs = sameId ? previous.discovered_at_ms : null;
+  if (input.source === "discovered") discoveredAtMs = nowMs;
+  let verifiedAtMs = sameId ? previous.verified_at_ms : null;
+  if (input.verified) verifiedAtMs = nowMs;
   return {
     id: input.id,
-    name: input.name ?? (sameId ? (previous?.name ?? null) : null),
+    name: input.name ?? previousName,
     source: input.source,
-    discovered_at_ms: input.source === "discovered" ? nowMs : sameId ? (previous?.discovered_at_ms ?? null) : null,
-    verified_at_ms: input.verified ? nowMs : sameId ? (previous?.verified_at_ms ?? null) : null,
+    discovered_at_ms: discoveredAtMs,
+    verified_at_ms: verifiedAtMs,
     last_error: input.last_error ?? null,
   };
 };

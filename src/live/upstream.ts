@@ -1,3 +1,4 @@
+import type { KvKey } from "#kv";
 // Upstream addresses, header construction, and the call-id to account mapping
 // for the `/v1/live` realtime voice relay.
 //
@@ -112,7 +113,7 @@ export const parseLiveCallIdFromLocation = (location: string): string | null => 
 /** The gateway-local `Location` for a created call; the upstream origin never leaks. */
 export const liveCallLocation = (callId: string): string => `/v1/live/${encodeURIComponent(callId)}`;
 
-export const liveCallAccountKey = (callId: string): Deno.KvKey => [...LIVE_CALL_ACCOUNT_KV_PREFIX, callId];
+export const liveCallAccountKey = (callId: string): KvKey => [...LIVE_CALL_ACCOUNT_KV_PREFIX, callId];
 
 /** The account that created a call and the authenticated principal it was created for. */
 export type LiveCallMapping = Readonly<{ accountId: string; principalId: string | null }>;

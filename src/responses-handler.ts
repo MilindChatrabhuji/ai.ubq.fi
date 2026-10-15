@@ -35,10 +35,10 @@ import { getString, isRecord } from "./utils.ts";
 import type { ResponsesRequest } from "./types.ts";
 import { loadDebugRoutingConfig } from "./debug-routing.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
   classifyPreHeaderFailure,
   classifyStreamFailure,
   countExplicitPromptCacheBreakpoints,
@@ -64,10 +64,10 @@ import { recordResponsesTerminal } from "./chat/stream-translation.ts";
 import { logRedactedUpstreamError, toPreHeaderErrorResponse } from "./upstream-wire.ts";
 import { isTemporaryFreeSurplusModel, WARNING_KEY_MAP, responseWarnings, validateKnownUnsupportedPromptCacheUse, withUosWarning } from "./request-policy.ts";
 import {
-  FailedResponsesAttempt,
-  PreparedResponsesAttempt,
-  ResponsesRouteAttempt,
-  ResponsesRouteFailure,
+  type FailedResponsesAttempt,
+  type PreparedResponsesAttempt,
+  type ResponsesRouteAttempt,
+  type ResponsesRouteFailure,
   failureKindForResponsesAttemptTrigger,
   fetchAndPreparePrimaryResponses,
   fetchAndPrepareRemovedProviderResponses,
@@ -79,12 +79,12 @@ import {
 import { collectBufferedResponses } from "./responses-buffered.ts";
 import { canAttemptPaidFallback, createMeteredTransportLifecycle } from "./paid-fallback/health.ts";
 import {
-  ResponsesCircuitRoute,
-  ResponsesDeliveryState,
-  ResponsesHandlerState,
-  ResponsesRequestState,
-  ResponsesRoutingState,
-  ResponsesStep,
+  type ResponsesCircuitRoute,
+  type ResponsesDeliveryState,
+  type ResponsesHandlerState,
+  type ResponsesRequestState,
+  type ResponsesRoutingState,
+  type ResponsesStep,
   buildResponsesUpstreamBodies,
   normalizeResponsesInput,
   readResponsesRequest,

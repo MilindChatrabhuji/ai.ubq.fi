@@ -1,5 +1,7 @@
 // Terminal request logging and delivery decoration, split out of src/handler.ts.
 
+import { trackRequestTask } from "#http";
+
 import type { BodyOutcome, DeliveryOutcome, RequestDeliveryInfo, SentinelBackgroundTaskRegistrar } from "./http.ts";
 import { scheduleSentinelBackgroundTask, shouldSignalSentinelProviderDegradation } from "./http.ts";
 
@@ -477,7 +479,10 @@ export const withTerminalRequestLog = (
         return response;
       } finally {
         if (deliveryOutcome) {
-          void deliveryOutcome.then((outcome) => log(undefined, outcome, false, true));
+          trackRequestTask(
+            input.deliveryCompleted,
+            deliveryOutcome.then((outcome) => log(undefined, outcome, false, true))
+          );
         } else {
           await log(undefined, "unobserved", false, true);
         }
@@ -518,8 +523,11 @@ export const withTerminalRequestLog = (
       })
     : null;
   if (bodyOutcome && deliveryOutcome) {
-    void Promise.all([bodyOutcome, deliveryOutcome]).then(([bodyResult, deliveryResult]) =>
-      log(downstreamDrainedAtMonotonicMs, bodyResult === "drained" ? deliveryResult : "interrupted", bodyResult === "failed", bodyResult === "interrupted")
+    trackRequestTask(
+      input.deliveryCompleted,
+      Promise.all([bodyOutcome, deliveryOutcome]).then(([bodyResult, deliveryResult]) =>
+        log(downstreamDrainedAtMonotonicMs, bodyResult === "drained" ? deliveryResult : "interrupted", bodyResult === "failed", bodyResult === "interrupted")
+      )
     );
   }
   /** Releases the request-owned replay capture before terminal cleanup runs. */
@@ -584,7 +592,7 @@ export const withTerminalRequestLog = (
   };
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
-      let result: ReadableStreamReadResult<Uint8Array>;
+      let result: Awaited<ReturnType<typeof reader.read>>;
       try {
         result = await reader.read();
       } catch (error) {

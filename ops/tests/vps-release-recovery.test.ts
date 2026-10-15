@@ -1,9 +1,11 @@
+import { test } from "bun:test";
+import { mkdir, readFile, readlink } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { parseVpsReceipt, vpsDigest, type VpsSettlement } from "../vps-release-contract.ts";
 import { readVpsPins, VpsOperationJournal } from "../vps-release-journal.ts";
 import { makeVpsDriverFixture, mutation } from "./vps-release-driver-fixture.ts";
 
-Deno.test("VPS recovery waits for asynchronous candidate and prior listener identity", async () => {
+test("VPS recovery waits for asynchronous candidate and prior listener identity", async () => {
   const fixture = await makeVpsDriverFixture();
   try {
     const prepared = await fixture.prepare();
@@ -22,13 +24,13 @@ Deno.test("VPS recovery waits for asynchronous candidate and prior listener iden
   }
 });
 
-Deno.test("VPS recovery resumes interrupted restart after the prior selector was restored", async () => {
+test("VPS recovery resumes interrupted restart after the prior selector was restored", async () => {
   const fixture = await makeVpsDriverFixture();
   try {
     const active = await fixture.driver.activate(await mutation(await fixture.prepare()));
     fixture.system.restartFailures = 1;
     await assert.rejects(async () => fixture.driver.restore(await mutation(active)), /interruption before restart/);
-    assert.equal(await Deno.readLink(`${fixture.root}/.data/current`), fixture.prior.target);
+    assert.equal(await readlink(`${fixture.root}/.data/current`), fixture.prior.target);
     assert.equal(fixture.system.serviceSha, fixture.candidateSha);
     const pending = await fixture.driver.observe({ operationId: active.operationId, requestDigest: active.binding.requestDigest });
     assert.equal(pending.phase, "rollback_pending");
@@ -45,7 +47,7 @@ Deno.test("VPS recovery resumes interrupted restart after the prior selector was
 });
 
 for (const disposition of ["accepted", "rolled_back", "failed"] as const) {
-  Deno.test(`VPS recovery retries ${disposition} pin cleanup with exact terminal CAS and original settlement`, async () => {
+  test(`VPS recovery retries ${disposition} pin cleanup with exact terminal CAS and original settlement`, async () => {
     const fixture = await makeVpsDriverFixture();
     const releasePin = Object.getOwnPropertyDescriptor(VpsOperationJournal.prototype, "releasePin");
     assert.ok(releasePin);
@@ -76,12 +78,12 @@ for (const disposition of ["accepted", "rolled_back", "failed"] as const) {
       fixture.system.settlementAllowed = true;
       fixture.now += 1000;
       const journal = new VpsOperationJournal(fixture.root);
-      const before = await Deno.readTextFile(journal.path(terminal.operationId));
+      const before = await readFile(journal.path(terminal.operationId), "utf8");
       const effects = [fixture.system.calls.length, fixture.system.healthCalls];
       assert.deepEqual(await fixture.driver.settle(retry), terminal);
       assert.deepEqual(await fixture.driver.settle(retry), terminal);
       assert.equal((await readVpsPins(journal.pinsPath)).length, 0);
-      assert.equal(await Deno.readTextFile(journal.path(terminal.operationId)), before);
+      assert.equal(await readFile(journal.path(terminal.operationId), "utf8"), before);
       assert.deepEqual([fixture.system.calls.length, fixture.system.healthCalls], effects);
     } finally {
       Object.defineProperty(VpsOperationJournal.prototype, "releasePin", releasePin);
@@ -90,7 +92,7 @@ for (const disposition of ["accepted", "rolled_back", "failed"] as const) {
   });
 }
 
-Deno.test("VPS recovery permits only the exact no-promotion failed receipt and never strips durable intent", async () => {
+test("VPS recovery permits only the exact no-promotion failed receipt and never strips durable intent", async () => {
   const fixture = await makeVpsDriverFixture();
   try {
     const prepared = await fixture.prepare();
@@ -105,7 +107,7 @@ Deno.test("VPS recovery permits only the exact no-promotion failed receipt and n
       assert.throws(() => parseVpsReceipt({ ...failed, ...patch }), /contract is invalid/);
     }
     const journal = new VpsOperationJournal(`${fixture.root}/intent-guard`);
-    await Deno.mkdir(`${journal.root}/.data`, { recursive: true });
+    await mkdir(`${journal.root}/.data`, { recursive: true });
     await journal.write({ ...prepared, intent: { action: "promote", persistedAt: prepared.createdAt } });
     await assert.rejects(() => journal.write(failed), /journal is unavailable/);
     assert.equal((await journal.read(prepared.operationId))?.intent?.action, "promote");

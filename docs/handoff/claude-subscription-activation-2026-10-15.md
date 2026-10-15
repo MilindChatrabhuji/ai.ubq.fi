@@ -42,7 +42,7 @@ Verified on 2026-10-15 from both the Mac and the VPS:
 - `POST /v1/messages` with the org-scoped key plus the `Default` workspace → 400 `credit balance is too low`.
 - `POST /v1/messages` with the `Claude Code` workspace (`wrkspc_01FBEp5VyCHs7ghEnJqk6giF`) → 404
   `Workspace … not
-  found`, so that workspace is not inferable from an org-scoped Console key.
+found`, so that workspace is not inferable from an org-scoped Console key.
 - No claim/credit API exists for the Max monthly credits:
   `/v1/organizations/{credits,credit_grants,subscription,billing}` and eight further variants return 404; the claim is a
   Console (Plans & Billing) action.

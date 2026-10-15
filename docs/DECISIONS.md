@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Prepared VPS artifacts use trusted constructor capabilities - 2026-10-15
+
+Deployment fixtures bind their frozen JavaScript graph, matching native headers and independently attested native KV artifact through an internal store preparation capability. Both the graph's lock and the candidate's lock must match the bound digest before packaging. The fixture imports the exact relocated deployment entry and supplies this capability to its actual candidate preparation; service environment variables do not select packaging inputs.
+
+The production CLI keeps real frozen dependency and native artifact preparation before immutable publication. Runtime startup only verifies and loads the published payload. Source, archive, manifest, graph, native provenance, OS confinement, fresh candidate publication and rollback checks remain unchanged. Focused hosted preflights run before the complete aggregate and never replace its acceptance.
+
 ## Authoritative unavailable subscriptions permit paid failover - 2026-10-14
 
 The owner authorized same-model paid failover after the Mac gateway stalled on 2026-10-14.
@@ -1178,18 +1184,18 @@ was taken at a context size far below the real sessions, which is why it came ba
 only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
 effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
 
-| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
-| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
-| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
-| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
-| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
-| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
-| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
-| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
-| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
-| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
+| Model                           | Actual input tokens |   n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | --: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 |  10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 |  10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 |  10 |                 9 |                    1 |     10% |
+| `deepseek-flash` (effort `max`) |              18,787 |  10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 |  10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              66,533 |  10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 |  10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 |  10 |                10 |                    0 |      0% |
 
 Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
 
@@ -1761,3 +1767,9 @@ Reason: the operator asked for Codex-grade analytics parity for the Claude subsc
 read from the capacity pipeline. Reversal risk: the analytics row reflects the tier's recorded guard state, so a billing
 or workspace rejection shows as `unavailable` with its exact upstream status and message until the operator fixes the
 account and clears the guard; the row never blocks inference itself.
+
+## Native KV build scratch remains outside immutable releases - 2026-10-15
+
+Native KV preparation retains its disk-backed source, Cargo home, compiler target, and logs below the operating-system temporary root rather than below the builder module checkout. The independently supplied artifact and provenance binding remains mandatory for immutable release preparation and isolated release fixtures.
+
+Reason: a builder imported from a staged release must not add retained scratch to the published source tree or change its recorded digest. The scratch remains disk-backed; application startup still never compiles, downloads, or installs.

@@ -21,7 +21,7 @@ const parseTokens = (raw: string | undefined | null): Set<string> => {
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }
@@ -65,5 +65,5 @@ export const runtimeDeploymentId = (): string => {
   const configured = firstNonEmpty(getEnv("DENO_DEPLOY_BUILD_ID")?.trim(), getEnv("DENO_DEPLOYMENT_ID")?.trim());
   if (configured) return configured;
   if (config.isDeploy || runtimeGitSha() === "unknown") return "unknown";
-  return `${Deno.build.os === "darwin" ? "mac" : "vps"}-${runtimeGitSha()}`;
+  return `${process.platform === "darwin" ? "mac" : "vps"}-${runtimeGitSha()}`;
 };

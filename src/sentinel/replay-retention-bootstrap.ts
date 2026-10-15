@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 /**
  * Resumable bootstrap accounting for capture-owned storage.
  *
@@ -44,12 +45,7 @@ import {
 } from "./replay-retention-schema.ts";
 
 /** Legacy reservation release: read once, delete chunks, then delete the row. */
-export const releaseLegacyReservation = async (
-  kv: Deno.Kv,
-  key: Deno.KvKey,
-  reservation: SentinelReplayLegacyReservation,
-  budgetBytes: number
-): Promise<void> => {
+export const releaseLegacyReservation = async (kv: Kv, key: KvKey, reservation: SentinelReplayLegacyReservation, budgetBytes: number): Promise<void> => {
   if (reservation.state === "published") {
     await kv.delete(key);
     return;
@@ -75,7 +71,7 @@ export const releaseLegacyReservation = async (
  * significant — "accounting" sorts before "manifest", so the accounting sweep is
  * always complete before a manifest is checked for an existing accounting row.
  */
-const bootstrapPrefixes = (): readonly Deno.KvKey[] => [
+const bootstrapPrefixes = (): readonly KvKey[] => [
   SENTINEL_REPLAY_ACCOUNTING_PREFIX,
   SENTINEL_REPLAY_CHUNK_PREFIX,
   SENTINEL_REPLAY_DEDUPE_PREFIX,
@@ -86,8 +82,8 @@ const bootstrapPrefixes = (): readonly Deno.KvKey[] => [
 ];
 
 type BootstrapMaterialization = Readonly<{
-  accounting_key: Deno.KvKey;
-  manifest_key: Deno.KvKey;
+  accounting_key: KvKey;
+  manifest_key: KvKey;
   manifest_versionstamp: string;
   row: SentinelReplayAccountingRow;
 }>;
@@ -134,14 +130,14 @@ const parseCursor = (cursor: string | null): Readonly<{ index: number; inner: st
 };
 
 /** Accounting rows own the durable charge, so the sweep counts them directly. */
-const bootstrapAccountingDelta = (key: Deno.KvKey, value: unknown, delta: BootstrapDelta): BootstrapDelta => {
+const bootstrapAccountingDelta = (key: KvKey, value: unknown, delta: BootstrapDelta): BootstrapDelta => {
   if (!isAccountingRow(value) || !accountingKeyMatches(key, value)) return addDelta(delta, { invalid: true });
   if (value.state === "stored" || value.state === "evicting") return addDelta(delta, { stored_bytes: value.bytes, records: 1 });
   return addDelta(delta, { reserved_bytes: value.bytes });
 };
 
 /** A legacy manifest gains its durable charge owner in the same commit as the bootstrap ledger delta. */
-const bootstrapManifestDelta = async (kv: Deno.Kv, entry: Deno.KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
+const bootstrapManifestDelta = async (kv: Kv, entry: KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
   const { key, value } = entry;
   if (!isSentinelReplayManifest(value) || !manifestKeyMatches(key, value)) return addDelta(delta, { invalid: true });
   const accountingKey = sentinelReplayAccountingKey(value.captured_at_ms, value.capture_id);
@@ -190,13 +186,13 @@ const bootstrapTombstoneDelta = (value: unknown, delta: BootstrapDelta): Bootstr
 };
 
 /** Legacy reservation rows are read only to release their own charge once. */
-const bootstrapLegacyDelta = async (kv: Deno.Kv, key: Deno.KvKey, value: unknown, delta: BootstrapDelta, budgetBytes: number): Promise<BootstrapDelta> => {
+const bootstrapLegacyDelta = async (kv: Kv, key: KvKey, value: unknown, delta: BootstrapDelta, budgetBytes: number): Promise<BootstrapDelta> => {
   if (!isLegacyReservation(value)) return addDelta(delta, { invalid: true });
   await releaseLegacyReservation(kv, key, value, budgetBytes);
   return addDelta(delta, { legacy_reaped: 1 });
 };
 
-const chunkHasOwner = async (kv: Deno.Kv, captureId: string): Promise<boolean> => {
+const chunkHasOwner = async (kv: Kv, captureId: string): Promise<boolean> => {
   for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX })) {
     if (isAccountingRow(entry.value) && accountingKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) return true;
   }
@@ -207,7 +203,7 @@ const chunkHasOwner = async (kv: Deno.Kv, captureId: string): Promise<boolean> =
 };
 
 /** Reclaim staged chunks that have no durable manifest or accounting owner. */
-const bootstrapChunkDelta = async (kv: Deno.Kv, entry: Deno.KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
+const bootstrapChunkDelta = async (kv: Kv, entry: KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
   const { key } = entry;
   if (key.length !== SENTINEL_REPLAY_CHUNK_PREFIX.length + 2 || typeof key[4] !== "string" || !counter(key[5])) return addDelta(delta, { invalid: true });
   if (await chunkHasOwner(kv, key[4])) return delta;
@@ -230,13 +226,7 @@ const bootstrapDedupeDelta = (value: unknown, delta: BootstrapDelta): BootstrapD
  * not match their own prefix's contract are counted as invalid rather than
  * trusted or deleted on a guess, which keeps discovery fail-closed.
  */
-const bootstrapEntryDelta = async (
-  kv: Deno.Kv,
-  prefix: Deno.KvKey,
-  entry: Deno.KvEntry<unknown>,
-  delta: BootstrapDelta,
-  budgetBytes: number
-): Promise<BootstrapDelta> => {
+const bootstrapEntryDelta = async (kv: Kv, prefix: KvKey, entry: KvEntry<unknown>, delta: BootstrapDelta, budgetBytes: number): Promise<BootstrapDelta> => {
   if (prefix === SENTINEL_REPLAY_ACCOUNTING_PREFIX) return bootstrapAccountingDelta(entry.key, entry.value, delta);
   if (prefix === SENTINEL_REPLAY_MANIFEST_PREFIX) return await bootstrapManifestDelta(kv, entry, delta);
   if (prefix === SENTINEL_REPLAY_REQUEST_PREFIX) return bootstrapStatusDelta(entry.value, delta);
@@ -255,8 +245,8 @@ type BootstrapSweep = Readonly<{ delta: BootstrapDelta; scanned: number; cursor:
  * same prefix instead of advancing.
  */
 const sweepBootstrapPrefix = async (
-  kv: Deno.Kv,
-  prefix: Deno.KvKey,
+  kv: Kv,
+  prefix: KvKey,
   cursor: string | null,
   budget: number,
   delta: BootstrapDelta,
@@ -279,7 +269,7 @@ const sweepBootstrapPrefix = async (
  * new admissions stay refused instead of trusting a zero.
  */
 export const runBootstrapBatch = async (
-  kv: Deno.Kv,
+  kv: Kv,
   ledger: SentinelReplayBudgetLedger,
   versionstamp: string | null,
   budgetBytes: number,
@@ -344,7 +334,7 @@ export const runBootstrapBatch = async (
  * when accounting is authoritative, and null when the ledger is corrupt or the
  * sweep is still incomplete, in which case no counter may move.
  */
-export const bootstrapBeforeMutation = async (kv: Deno.Kv, budgetBytes: number, nowMs: number): Promise<SentinelReplayBudgetLedger | null> => {
+export const bootstrapBeforeMutation = async (kv: Kv, budgetBytes: number, nowMs: number): Promise<SentinelReplayBudgetLedger | null> => {
   const state = await readLedger(kv, budgetBytes);
   if (state.kind === "corrupt") return null;
   const ledger = withBudget(state.ledger, budgetBytes);

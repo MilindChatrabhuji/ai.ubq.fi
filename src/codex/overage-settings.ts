@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 // Per-account overage-usage setting: when an operator explicitly allows
 // overage spending for a Codex subscription, an exhausted account may probe
 // (and thereby serve through the paid backup balance) instead of waiting for a
@@ -15,18 +16,18 @@ export const CODEX_OVERAGE_USAGE_PREFIX = ["uos_ai", "codex_overage_usage", "acc
 const OVERAGE_USAGE_CACHE_TTL_MS = 5_000;
 
 /** The admin-facing account hash is the same unsalted hash the other settings surfaces use. */
-export const codexOverageUsageKey = (accountIdHash: string): Deno.KvKey => [...CODEX_OVERAGE_USAGE_PREFIX, accountIdHash];
+export const codexOverageUsageKey = (accountIdHash: string): KvKey => [...CODEX_OVERAGE_USAGE_PREFIX, accountIdHash];
 
 let allowedRoutingHashes: ReadonlySet<string> = new Set();
 let cacheLoadedAtMs = 0;
 
 /** A strong read; an absent or malformed row never permits overage spending. */
-export const readOverageUsage = async (kv: Deno.Kv, accountIdHash: string): Promise<boolean> => {
+export const readOverageUsage = async (kv: Kv, accountIdHash: string): Promise<boolean> => {
   const entry = await kv.get(codexOverageUsageKey(accountIdHash), { consistency: "strong" });
   return isRecord(entry.value) && entry.value.allow === true;
 };
 
-export const writeOverageUsage = async (kv: Deno.Kv, accountIdHash: string, allow: boolean): Promise<void> => {
+export const writeOverageUsage = async (kv: Kv, accountIdHash: string, allow: boolean): Promise<void> => {
   await kv.set(codexOverageUsageKey(accountIdHash), { allow });
 };
 

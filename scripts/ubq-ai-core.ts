@@ -1,4 +1,5 @@
 // ubq-ai shared runtime, IO, flag and request helpers, split out of scripts/ubq-ai.ts.
+import { realpath } from "node:fs/promises";
 export type FlagValue = string | boolean | string[];
 export type ParsedArgs = Readonly<{
   _: string[];
@@ -67,7 +68,7 @@ const readCodexVersionFile = async (runtime: UbqAiRuntime, homeDir: string | und
 };
 const readCodexPackageVersion = async (runtime: UbqAiRuntime, codexPath: string | null): Promise<string | null> => {
   if (!codexPath) return null;
-  const realPath = await Deno.realPath(codexPath).catch(() => codexPath);
+  const realPath = await realpath(codexPath).catch(() => codexPath);
   const normalized = realPath.replace(/\\/g, "/");
   const marker = "/node_modules/@openai/codex/";
   const index = normalized.lastIndexOf(marker);
@@ -101,7 +102,7 @@ const listCodexBinaryCandidates = (runtime: UbqAiRuntime, codexBinFlag: string |
   const candidates: string[] = [];
   if (codexBinFlag) candidates.push(expandTilde(codexBinFlag, homeDir));
   const pathValue = runtime.envGet("PATH") ?? "";
-  const separator = Deno.build.os === "windows" ? ";" : ":";
+  const separator = process.platform === "win32" ? ";" : ":";
   for (const segment of pathValue.split(separator).filter(Boolean)) {
     candidates.push(`${segment.replace(/\/$/, "")}/codex`);
   }
@@ -270,7 +271,7 @@ const renderUbqLogo = (revision: string | null): string => {
 const usageText = async (runtime: UbqAiRuntime): Promise<string> =>
   `${renderUbqLogo(await gitShortRevision(runtime))}
 Usage:
-  deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts [--url <base>] <command> [options]
+  bun run scripts/ubq-ai.ts [--url <base>] <command> [options]
 Global options:
   --url <url>                 Base URL (default: https://ai.ubq.fi)
   --token <token>             Client token (or set UOS_AI_TOKEN; falls back to admin token if unset)
@@ -302,12 +303,12 @@ Admin key expiration:
   --expires <preset>           day|week|month|quarter|year|forever (sets expires_at_ms)
   --expires-at-ms <ms>         Unix epoch ms timestamp; -1 means does not expire
 Examples:
-  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system "You are a helpful assistant." "Tell me a short joke."
-  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system "You are a helpful assistant." --stream "Say hello in 5 different ways."
-  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
-  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create "example key"
-  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create "tmp key" --expires week
-  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
+  UOS_AI_TOKEN=... bun run scripts/ubq-ai.ts chat --system "You are a helpful assistant." "Tell me a short joke."
+  UOS_AI_TOKEN=... bun run scripts/ubq-ai.ts chat --system "You are a helpful assistant." --stream "Say hello in 5 different ways."
+  DENO_DEPLOY_TOKEN=... bun run scripts/ubq-ai.ts admin upload-auth
+  DENO_DEPLOY_TOKEN=... bun run scripts/ubq-ai.ts admin keys create "example key"
+  DENO_DEPLOY_TOKEN=... bun run scripts/ubq-ai.ts admin keys create "tmp key" --expires week
+  UOS_AI_TOKEN=... bun run scripts/ubq-ai.ts whoami | jq
 `;
 export type UbqAiRuntime = Readonly<{
   fetch: (req: Request) => Promise<Response>;
@@ -336,7 +337,7 @@ const parseJsonOrNull = (raw: string): unknown => {
 };
 const readStdin = async (): Promise<string> => {
   const chunks: Uint8Array[] = [];
-  const reader = Deno.stdin.readable.getReader();
+  const reader = Bun.stdin.stream().getReader();
   try {
     for (;;) {
       const { value, done } = await reader.read();

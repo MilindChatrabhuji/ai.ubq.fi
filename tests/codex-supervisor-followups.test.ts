@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { extractFollowEntries, followEntryRevision, readFollowUpdate, selectFollowUpdates } from "../src/codex/supervisor-follow.ts";
@@ -9,7 +10,7 @@ const SOURCE: SupervisorSource = { id: "local", name: "m1.local", socketPath: "/
 
 /* ------------------------------------------------------------------ issue 400 */
 
-Deno.test("follow updates re-emit one command index as its output, status and exit code change", () => {
+test("follow updates re-emit one command index as its output, status and exit code change", () => {
   const partial = extractFollowEntries("turn-1", [
     { type: "commandExecution", id: "c1", command: "deno task test", status: "in_progress", exitCode: null, aggregatedOutput: "running" },
   ]);
@@ -130,7 +131,7 @@ const tick = (): Promise<void> =>
     }, 0);
   });
 
-Deno.test("a rejected initialize terminates the exact socket, settles callbacks, and rethrows the cause", async () => {
+test("a rejected initialize terminates the exact socket, settles callbacks, and rethrows the cause", async () => {
   FakeSupervisorSocket.reset();
   setSupervisorWebSocketConstructorForTest(FakeSupervisorSocket as unknown);
   try {
@@ -156,7 +157,7 @@ Deno.test("a rejected initialize terminates the exact socket, settles callbacks,
   }
 });
 
-Deno.test("a stalled initialize terminates the exact socket at the call deadline and rethrows", async () => {
+test("a stalled initialize terminates the exact socket at the call deadline and rethrows", async () => {
   FakeSupervisorSocket.reset();
   setSupervisorWebSocketConstructorForTest(FakeSupervisorSocket as unknown);
   try {
@@ -293,7 +294,7 @@ class ScriptedFollowSocket {
 
 const turnRead = { thread: { id: "thread-1", name: "Ordering", status: { type: "active" }, updatedAt: 1_790_000_900 } };
 
-Deno.test("a failed follow enrichment does not replace an already-rendered command output", async () => {
+test("a failed follow enrichment does not replace an already-rendered command output", async () => {
   const summary = {
     data: [
       {
@@ -323,8 +324,8 @@ Deno.test("a failed follow enrichment does not replace an already-rendered comma
     const revisions = new Map<string, string>();
     const signal = new AbortController().signal;
     const first = await readFollowUpdate(SOURCE, "thread-follow", "", signal, revisions);
-    const firstEntry = first.entries.at(0);
-    if (!firstEntry) throw new Error("the successful enrichment must emit the command");
+    const firstEntry = first.entries[0];
+    assert.ok(firstEntry, "the successful enrichment must emit the command");
     assert.equal(first.enriched, true);
     assert.equal(firstEntry.text, "known output");
 
@@ -342,7 +343,7 @@ Deno.test("a failed follow enrichment does not replace an already-rendered comma
   }
 });
 
-Deno.test("brief turns are deduplicated and presented chronologically", async () => {
+test("brief turns are deduplicated and presented chronologically", async () => {
   const { connection } = briefConnection({
     read: turnRead,
     asc: [
@@ -393,7 +394,7 @@ Deno.test("brief turns are deduplicated and presented chronologically", async ()
   assert.match(prompt, /newest progress/);
 });
 
-Deno.test("brief turns stay chronological by page order when every timestamp is missing", async () => {
+test("brief turns stay chronological by page order when every timestamp is missing", async () => {
   const { connection } = briefConnection({
     read: { thread: { id: "thread-1", name: "No timestamps", status: { type: "active" } } },
     asc: [
@@ -426,7 +427,7 @@ Deno.test("brief turns stay chronological by page order when every timestamp is 
   assert.ok(prompt.indexOf("middle progress") < prompt.indexOf("newest progress"), "the prompt stays chronological");
 });
 
-Deno.test("the newest brief turn survives when the transcript budget trims older material", async () => {
+test("the newest brief turn survives when the transcript budget trims older material", async () => {
   const heavyTurn = (id: string, startedAt: number) => ({
     id,
     status: "completed",
@@ -455,7 +456,7 @@ Deno.test("the newest brief turn survives when the transcript budget trims older
   assert.match(buildSupervisorBriefPrompt(context), /newest tail survives/);
 });
 
-Deno.test("the newest empty turn is enriched from one desc limit-1 full read", async () => {
+test("the newest empty turn is enriched from one desc limit-1 full read", async () => {
   const { connection, calls, requests } = briefConnection({
     read: turnRead,
     asc: [{ data: [{ id: "turn-opening", status: "completed", startedAt: 1_790_000_000, completedAt: 1_790_000_005, items: [] }] }],
@@ -507,7 +508,7 @@ Deno.test("the newest empty turn is enriched from one desc limit-1 full read", a
   );
 });
 
-Deno.test("an unmatched enrichment id is never substituted", async () => {
+test("an unmatched enrichment id is never substituted", async () => {
   const { connection, requests } = briefConnection({
     read: turnRead,
     asc: [{ data: [{ id: "turn-missing", status: "completed", startedAt: 1_790_000_100, completedAt: 1_790_000_110, items: [] }] }],
@@ -541,7 +542,7 @@ Deno.test("an unmatched enrichment id is never substituted", async () => {
   );
 });
 
-Deno.test("the opening turn is enriched only when the single full read returns it", async () => {
+test("the opening turn is enriched only when the single full read returns it", async () => {
   const run = async (withTimestamps: boolean) => {
     const stamp = (value: number) => (withTimestamps ? { startedAt: value, completedAt: value + 1 } : {});
     // A single-turn thread: the opening turn is also the newest turn, so the one
@@ -606,7 +607,7 @@ Deno.test("the opening turn is enriched only when the single full read returns i
   await run(true);
 });
 
-Deno.test("every full-view read is a single newest turn: limit 1 and descending", async () => {
+test("every full-view read is a single newest turn: limit 1 and descending", async () => {
   const { connection, requests } = briefConnection({
     read: turnRead,
     asc: [{ data: [{ id: "turn-opening", status: "completed", items: [] }] }],
@@ -633,7 +634,7 @@ Deno.test("every full-view read is a single newest turn: limit 1 and descending"
   );
 });
 
-Deno.test("a failed full read degrades to the recorded summary instead of failing the brief", async () => {
+test("a failed full read degrades to the recorded summary instead of failing the brief", async () => {
   const { connection, calls, requests } = briefConnection({
     read: turnRead,
     asc: [

@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 /**
  * Claude subscription tier. This is the owner-gated adapter described in
  * docs/handoff/claude-code-subscription-tier-2026-10-11.md, extended with the
@@ -69,7 +70,7 @@ export type ClaudeCodeEnvLookup = (name: string) => string | null | undefined;
 
 const defaultEnvLookup: ClaudeCodeEnvLookup = (name) => {
   try {
-    return Deno.env.get(name);
+    return process.env[name];
   } catch {
     return null;
   }
@@ -247,7 +248,7 @@ export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
   /** Resolved workspace; resolved from KV and the environment when absent. */
   workspace?: ClaudeCodeResolvedWorkspace | null;
   /** KV handle used for credential, workspace, and quota state. */
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   env?: ClaudeCodeEnvLookup;
   fetcher?: ClaudeCodeFetch;
   signal?: AbortSignal;
@@ -373,7 +374,7 @@ export const buildClaudeCodeRequest = (
 
 const requireClaudeCodeCredential = async (
   supplied: ClaudeCodeResolvedCredential | null | undefined,
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   env: ClaudeCodeEnvLookup | undefined
 ): Promise<ClaudeCodeResolvedCredential> => {
   if (supplied) return supplied;
@@ -394,7 +395,7 @@ const parseWorkspaceList = (value: unknown): ClaudeCodeWorkspaceListEntry[] => {
   for (const item of value.data) {
     if (!isRecord(item)) continue;
     const id = nonEmptyString(item.id);
-    if (!id || !id.startsWith("wrkspc_")) continue;
+    if (!id?.startsWith("wrkspc_")) continue;
     if (item.archived_at !== null && item.archived_at !== undefined) continue;
     entries.push({ id, name: nonEmptyString(item.name) });
   }
@@ -407,8 +408,8 @@ const parseWorkspaceList = (value: unknown): ClaudeCodeWorkspaceListEntry[] => {
  * the listing order; otherwise the first non-archived workspace is used.
  */
 const pickWorkspace = (entries: readonly ClaudeCodeWorkspaceListEntry[]): ClaudeCodeWorkspaceListEntry | null => {
-  const preferred = entries.find((entry) => entry.name?.trim().toLowerCase() === "default");
-  return preferred ?? entries[0] ?? null;
+  const preferred = entries.find((entry) => (entry.name ?? "").trim().toLowerCase() === "default");
+  return preferred ?? entries[0];
 };
 
 export type ClaudeCodeWorkspaceDiscoveryResult =
@@ -421,7 +422,7 @@ export type ClaudeCodeWorkspaceDiscoveryResult =
  * configuration over the discovered entry.
  */
 export const discoverClaudeCodeWorkspace = async (
-  options: Readonly<{ credential: ClaudeCodeAuthHeaders; kv?: Deno.Kv | null; fetcher?: ClaudeCodeFetch; signal?: AbortSignal }>
+  options: Readonly<{ credential: ClaudeCodeAuthHeaders; kv?: Kv | null; fetcher?: ClaudeCodeFetch; signal?: AbortSignal }>
 ): Promise<ClaudeCodeWorkspaceDiscoveryResult> => {
   const kv = options.kv ?? null;
   const headers = claudeCodeRequestHeaders(options.credential, { stream: false });
@@ -441,12 +442,13 @@ export const discoverClaudeCodeWorkspace = async (
   if (!response.ok) {
     return { ok: false, status: response.status, error: sanitizeClaudeCodeErrorMessage(bodyText) };
   }
-  let parsed: unknown = null;
-  try {
-    parsed = bodyText ? JSON.parse(bodyText) : null;
-  } catch {
-    parsed = null;
-  }
+  const parsed: unknown = (() => {
+    try {
+      return bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      return null;
+    }
+  })();
   const picked = pickWorkspace(parseWorkspaceList(parsed));
   if (!picked) return { ok: false, status: response.status, error: "No usable workspace was listed for this credential." };
   const workspace: ClaudeCodeResolvedWorkspace = { id: picked.id, name: picked.name, source: "discovered" };

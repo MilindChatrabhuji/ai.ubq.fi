@@ -1,3 +1,8 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { serveHttp } from "#http";
+import type { NetAddr } from "#http";
+import { runSequence } from "./helpers/sequence.ts";
 import assert from "node:assert/strict";
 
 import { handleLithosChatCompletions, handleLithosResponses } from "../src/provider/lithos-handlers.ts";
@@ -15,7 +20,7 @@ const ULTRA = "deepseek-ai/DeepSeek-V4.1-Flash-ultra";
 const FAST = "deepseek-ai/DeepSeek-V4.1-Flash-fast";
 const BASE = "deepseek-ai/DeepSeek-V4.1-Flash";
 
-Deno.test("Lithos tier windows expire independently in both reset orders and model families", () => {
+test("Lithos tier windows expire independently in both reset orders and model families", () => {
   try {
     for (const family of ["deepseek-ai/DeepSeek-V4.1-Flash", "moonshotai/Kimi-K3"]) {
       const ultra = `${family}-ultra`;
@@ -39,7 +44,7 @@ Deno.test("Lithos tier windows expire independently in both reset orders and mod
   }
 });
 
-Deno.test("out-of-order shallow refusals cannot borrow the fast deadline and same-rung windows never shorten", () => {
+test("out-of-order shallow refusals cannot borrow the fast deadline and same-rung windows never shorten", () => {
   clearLithosFailoverWindows();
   try {
     lithosOpenFailoverWindow(ULTRA, 1_000, 60_000, BASE);
@@ -65,7 +70,7 @@ Deno.test("out-of-order shallow refusals cannot borrow the fast deadline and sam
   }
 });
 
-Deno.test("illegal and nonfinite windows are ignored, base stays legal, and clear resets all rungs", () => {
+test("illegal and nonfinite windows are ignored, base stays legal, and clear resets all rungs", () => {
   clearLithosFailoverWindows();
   try {
     for (const waitMs of [NaN, Infinity, -Infinity, 0, -1]) {
@@ -112,23 +117,24 @@ const refusal = (waitMs: number, retryable = true): Response =>
 /** Only the real Lithos HTTP destination is redirected to this disposable loopback server. */
 const withHttpFixture = async (run: (fixture: HttpFixture) => Promise<void>): Promise<void> => {
   const originalFetch = globalThis.fetch;
-  const previousKey = Deno.env.get("LITHOSAI_API_KEY");
+  const previousKey = process.env.LITHOSAI_API_KEY;
   console.info("Lithos HTTP fixture preexisting credential present", previousKey !== undefined);
   const models: string[] = [];
   let handler: (model: string, index: number) => Response = completion;
-  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
     assert.equal(request.headers.get("authorization"), "Bearer lith_sk_tier_window_fixture");
     const body = (await request.json()) as { model: string };
     models.push(body.model);
     return handler(body.model, models.length);
   });
-  const address = server.addr as Deno.NetAddr;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  await server.ready;
+  const address = server.addr as NetAddr;
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     assert.equal(url, LITHOS_CHAT_COMPLETIONS_URL, "no alternate provider or discovery request is authorized");
     return originalFetch(`http://127.0.0.1:${address.port}/chat/completions`, init);
-  };
-  Deno.env.set("LITHOSAI_API_KEY", "lith_sk_tier_window_fixture");
+  });
+  process.env.LITHOSAI_API_KEY = "lith_sk_tier_window_fixture";
   try {
     await run({
       models,
@@ -138,8 +144,8 @@ const withHttpFixture = async (run: (fixture: HttpFixture) => Promise<void>): Pr
     });
   } finally {
     globalThis.fetch = originalFetch;
-    if (previousKey === undefined) Deno.env.delete("LITHOSAI_API_KEY");
-    else Deno.env.set("LITHOSAI_API_KEY", previousKey);
+    if (previousKey === undefined) Reflect.deleteProperty(process.env, "LITHOSAI_API_KEY");
+    else process.env.LITHOSAI_API_KEY = previousKey;
     await server.shutdown();
     await server.finished;
     clearLithosFailoverWindows();
@@ -156,55 +162,56 @@ const dispatch = async (route: string, model: string): Promise<Response> => {
   return await (route === "chat" ? handleLithosChatCompletions(request, body, model) : handleLithosResponses(request, body, model));
 };
 
-Deno.test("real Lithos Chat and Responses HTTP dispatch returns to each recovered rung at its own reset", async (t) => {
-  const originalNow = Date.now;
-  try {
-    for (const route of ["chat", "responses"]) {
-      for (const [ultraWait, fastWait] of [
-        [60_000, 1_000],
-        [1_000, 60_000],
-      ]) {
-        await t.step(`${route}: ultra ${ultraWait}ms, fast ${fastWait}ms`, async () => {
-          clearLithosFailoverWindows();
-          const started = originalNow();
-          let nowMs = started;
-          Date.now = () => nowMs;
-          await withHttpFixture(async ({ models, setHandler }) => {
-            setHandler((model, index) => {
-              if (index === 1) return refusal(ultraWait);
-              if (index === 2) return refusal(fastWait);
-              return completion(model);
+test("real Lithos Chat and Responses HTTP dispatch returns to each recovered rung at its own reset", async () =>
+  runSequence(async (step) => {
+    const originalNow = Date.now;
+    try {
+      for (const route of ["chat", "responses"]) {
+        for (const [ultraWait, fastWait] of [
+          [60_000, 1_000],
+          [1_000, 60_000],
+        ]) {
+          await step(`${route}: ultra ${ultraWait}ms, fast ${fastWait}ms`, async () => {
+            clearLithosFailoverWindows();
+            const started = originalNow();
+            let nowMs = started;
+            Date.now = () => nowMs;
+            await withHttpFixture(async ({ models, setHandler }) => {
+              setHandler((model, index) => {
+                if (index === 1) return refusal(ultraWait);
+                if (index === 2) return refusal(fastWait);
+                return completion(model);
+              });
+              const first = await dispatch(route, ULTRA);
+              assert.equal(first.status, 200);
+              await first.text();
+              assert.deepEqual(models, [ULTRA, FAST, BASE]);
+              setHandler(completion);
+              for (const [elapsed, requested, expected] of [
+                [999, ULTRA, BASE],
+                [1_000, ULTRA, ultraWait === 1_000 ? ULTRA : FAST],
+                [1_000, FAST, fastWait === 1_000 ? FAST : BASE],
+                [60_000, ULTRA, ULTRA],
+              ] as const) {
+                nowMs = started + elapsed;
+                const previousCalls = models.length;
+                const response = await dispatch(route, requested);
+                assert.equal(response.status, 200);
+                await response.text();
+                assert.deepEqual(models.slice(previousCalls), [expected]);
+              }
+              console.info("Lithos tier-window HTTP proof", JSON.stringify({ route, ultraWait, fastWait, models }));
             });
-            const first = await dispatch(route, ULTRA);
-            assert.equal(first.status, 200);
-            await first.text();
-            assert.deepEqual(models, [ULTRA, FAST, BASE]);
-            setHandler(completion);
-            for (const [elapsed, requested, expected] of [
-              [999, ULTRA, BASE],
-              [1_000, ULTRA, ultraWait === 1_000 ? ULTRA : FAST],
-              [1_000, FAST, fastWait === 1_000 ? FAST : BASE],
-              [60_000, ULTRA, ULTRA],
-            ] as const) {
-              nowMs = started + elapsed;
-              const previousCalls = models.length;
-              const response = await dispatch(route, requested);
-              assert.equal(response.status, 200);
-              await response.text();
-              assert.deepEqual(models.slice(previousCalls), [expected]);
-            }
-            console.info("Lithos tier-window HTTP proof", JSON.stringify({ route, ultraWait, fastWait, models }));
           });
-        });
+        }
       }
+    } finally {
+      Date.now = originalNow;
+      clearLithosFailoverWindows();
     }
-  } finally {
-    Date.now = originalNow;
-    clearLithosFailoverWindows();
-  }
-});
+  }));
 
-Deno.test("a no-retry tier is not dispatched again after a later tier names the wait window", async () => {
+test("a no-retry tier is not dispatched again after a later tier names the wait window", async () => {
   await withHttpFixture(async ({ models, setHandler }) => {
     setHandler((model, index) => {
       if (index === 1) return refusal(1, false);
@@ -218,7 +225,7 @@ Deno.test("a no-retry tier is not dispatched again after a later tier names the 
   });
 });
 
-Deno.test("real Lithos HTTP transient failure does not fail over to another tier or provider", async () => {
+test("real Lithos HTTP transient failure does not fail over to another tier or provider", async () => {
   clearLithosFailoverWindows();
   await withHttpFixture(async ({ models, setHandler }) => {
     setHandler(() =>
@@ -231,7 +238,7 @@ Deno.test("real Lithos HTTP transient failure does not fail over to another tier
   });
 });
 
-Deno.test("619 abort reasons and existing bounded retry waits survive independent tier windows", async () => {
+test("619 abort reasons and existing bounded retry waits survive independent tier windows", async () => {
   for (const name of ["TimeoutError", "AbortError"]) {
     const controller = new AbortController();
     const reason = new DOMException("Tier window fixture", name);

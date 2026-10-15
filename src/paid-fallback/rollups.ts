@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 import { getKv } from "../kv.ts";
 import { isRecord } from "../utils.ts";
 
@@ -128,7 +129,7 @@ export const isPaidFallbackUsageRollup = (value: unknown): value is PaidFallback
   );
 };
 
-export const paidFallbackUsageRollupKey = (bucketStartAtMs: number, model: string, provider: string, shard: number): Deno.KvKey => [
+export const paidFallbackUsageRollupKey = (bucketStartAtMs: number, model: string, provider: string, shard: number): KvKey => [
   ...PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
   bucketStartAtMs,
   model,
@@ -191,7 +192,7 @@ const observedTokenCount = (value: unknown): number | null => {
  * attempt loses its compare-and-set race. A terminal response is already
  * final, so callers on that path swallow failures instead of surfacing them.
  */
-export const recordTerminalUsageRollup = async (input: TerminalUsageRollupInput, kvOverride?: Deno.Kv | null): Promise<boolean> => {
+export const recordTerminalUsageRollup = async (input: TerminalUsageRollupInput, kvOverride?: Kv | null): Promise<boolean> => {
   const model = input.model?.trim() ?? "";
   const provider = input.provider?.trim() ?? "";
   if (!model || !provider || provider === "gateway" || provider === "mixed" || PAID_FALLBACK_SETTLED_PROVIDERS.has(provider)) return false;
@@ -234,18 +235,18 @@ export const recordTerminalUsageRollup = async (input: TerminalUsageRollupInput,
 };
 
 export const listPaidFallbackUsageRollups = async (
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   options: Readonly<{ sinceMs: number; nowMs: number }>
 ): Promise<PaidFallbackUsageRollup[]> => {
   if (!kv) return [];
   const entries: PaidFallbackUsageRollup[] = [];
   // Floor the scan start to the hour boundary so the bucket that contains the
   // window start is never excluded (bucket-level precision is documented).
-  const start: Deno.KvKey = [
+  const start: KvKey = [
     ...PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
     Math.floor(Math.max(0, Math.trunc(options.sinceMs)) / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) * PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
   ];
-  const end: Deno.KvKey = [...PAID_FALLBACK_USAGE_ROLLUP_PREFIX, Math.trunc(options.nowMs) + PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS];
+  const end: KvKey = [...PAID_FALLBACK_USAGE_ROLLUP_PREFIX, Math.trunc(options.nowMs) + PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS];
   // Deno KV rejects selectors that combine a prefix with both range bounds.
   // These bounds already include the complete rollup namespace.
   for await (const entry of kv.list<PaidFallbackUsageRollup>({ start, end })) {
