@@ -1,9 +1,11 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { openKv } from "#kv";
 import { normalizeDependencyLinks } from "../release-artifact.ts";
+import { bindPreparedVpsPayload, vpsBytesDigest } from "../vps-release-store.ts";
+import { currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
 import { copyOps, copyRuntime, copyRuntimeModules, packageFixture, repository, writePackage } from "./fixture-release.ts";
 import { outputFixture, spawnFixture } from "./fixture-process.ts";
 
@@ -15,6 +17,31 @@ const ENV_MARKER = "repository-root";
 const TELEMETRY_ORDER = ["shutdownOptionalTelemetry", "kv.close"];
 const sha = (digit: string): string => digit.repeat(40);
 const quote = (value: string): string => "'" + value.replaceAll("'", "'\\''") + "'";
+test("prepared release inputs reject graph and candidate lock drift before packaging writes", async () => {
+  await mkdir(FIXTURE_PARENT, { recursive: true });
+  const root = await mkdtemp(FIXTURE_PARENT + "/lock-");
+  try {
+    const graph = root + "/graph";
+    const candidate = root + "/candidate";
+    await mkdir(graph + "/node_modules", { recursive: true });
+    await mkdir(candidate);
+    const lock = "frozen graph lock\n";
+    const prepare = bindPreparedVpsPayload({
+      dependencies: graph + "/node_modules",
+      dependencyLockSha256: await vpsBytesDigest(new TextEncoder().encode(lock)),
+      nativeArtifact: currentTestNativeKvBinding(),
+    });
+    for (const changed of [graph, candidate]) {
+      await writeFile(graph + "/bun.lock", lock);
+      await writeFile(candidate + "/bun.lock", lock);
+      await writeFile(changed + "/bun.lock", "changed lock\n");
+      await assert.rejects(prepare(candidate, sha("c"), "a".repeat(64)), /do not match the frozen release lock/);
+      assert.deepEqual(await readdir(candidate), ["bun.lock"], "lock drift is refused before any packaging writes");
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 const waitFor = async (path: string): Promise<void> => {
   const deadline = performance.now() + 10_000;
   while (performance.now() < deadline) {

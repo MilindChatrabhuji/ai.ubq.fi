@@ -7,7 +7,7 @@ import { missing } from "./io.ts";
 const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 // Run from the VPS repository root after the candidate's required CI has passed.
 import { pruneReleases } from "./release-retention.ts";
-import { ImmutableVpsReleaseStore } from "./vps-release-store.ts";
+import { ImmutableVpsReleaseStore, type VpsPayloadPreparation } from "./vps-release-store.ts";
 import { readVpsPins } from "./vps-release-journal.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
 
@@ -155,7 +155,6 @@ async function exists(path: string): Promise<boolean> {
 // Compare every entry without following symlinks. Generated files have explicit
 // modes, so verification does not depend on a later deployment's umask.
 const releaseStore = new ImmutableVpsReleaseStore(canonicalRoot, (program, args) => command(program, args));
-const checkedRelease = (sha: string, create = false): Promise<Release> => releaseStore.checkedRelease(sha, create);
 const selector = (): Promise<string | null> => releaseStore.selector();
 const checkedPrevious = (selected: string): Promise<Previous> => releaseStore.checkedPrevious(selected);
 const checkedPreviousRelease = (sha: string, selected: string): Promise<Previous> => releaseStore.checkedPreviousRelease(sha, selected);
@@ -329,7 +328,7 @@ async function assertDataDirectories(): Promise<void> {
   }
 }
 
-async function prepareCandidate(sha: string): Promise<void> {
+async function prepareCandidate(sha: string, preparePayload?: VpsPayloadPreparation): Promise<void> {
   const release = ".data/releases/" + sha;
   const selected = await selector();
   let receipt = await readRecovery();
@@ -345,7 +344,8 @@ async function prepareCandidate(sha: string): Promise<void> {
       await previousPublicIdentity(previous);
     }
   }
-  const candidate = await checkedRelease(sha, !present);
+  const candidateStore = new ImmutableVpsReleaseStore(canonicalRoot, (program, args) => command(program, args), preparePayload);
+  const candidate = await candidateStore.checkedRelease(sha, !present);
   if (!present) {
     receipt = { schema: 1, candidate, previous, phase: "prepared" };
     await saveRecovery(receipt);
@@ -353,7 +353,7 @@ async function prepareCandidate(sha: string): Promise<void> {
   await activate(candidate, selected, receipt, !present);
 }
 
-async function deploy(): Promise<void> {
+export async function deploy(preparePayload?: VpsPayloadPreparation): Promise<void> {
   let releaseLock: (() => void) | undefined;
   try {
     // The canonical-root boundary stays before any Git subprocess: running Git in
@@ -379,7 +379,7 @@ async function deploy(): Promise<void> {
     await ensureCaddyIngressReady();
     const release = `.data/releases/${sha}`;
     await prepareBunRuntime(root);
-    await prepareCandidate(sha);
+    await prepareCandidate(sha, preparePayload);
     // Retention runs only after both health checks prove the release is live, so
     // a pruning fault cannot turn a verified deployment into a failed one.
     let releasesPruned: number | "failed" = "failed";

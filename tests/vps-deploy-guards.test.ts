@@ -4,7 +4,7 @@ import { spawnFixture, runFixture, outputFixture, fsError, type FixtureChild, ty
 import { copyOps, copyRuntime, copyRuntimeModules, repository, seedStore, writePackage } from "../ops/tests/fixture-release.ts";
 import { currentTestNativeKvBinding } from "../scripts/test-native-kv.ts";
 import { acquireDeployLock } from "../ops/deploy-lock.ts";
-import { prepareReleasePayload } from "../ops/release-artifact.ts";
+import { bindPreparedVpsPayload, type VpsPayloadPreparation } from "../ops/vps-release-store.ts";
 import { serveHttp, type HttpServer } from "#http";
 import { openKv } from "#kv";
 import { createServer } from "node:net";
@@ -41,7 +41,6 @@ const fixtureEnvironment = (root: string, hostPath: string): Record<string, stri
   PATH: hostPath,
   HOME: root,
   DENO_DIR: `${root}/.deno-cache`,
-  UOS_RELEASE_DEPENDENCIES: repository + "/node_modules",
   NO_COLOR: "1",
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
@@ -236,7 +235,7 @@ const calls = async (f: Fixture): Promise<string[]> => (await readFile(f.root + 
 type Profile = "current" | "unknown" | "env-port" | "legacy";
 type Active = { options: DeployOptions; sha: string; oldSha: string; publicHealth: () => Promise<Response> };
 const write = (root: string, path: string, source: string): Promise<void> => writeFile(root + "/" + path, source);
-const archivePrevious = async (f: Fixture, sha: string): Promise<void> => {
+const archivePrevious = async (f: Fixture, sha: string, preparePayload: VpsPayloadPreparation): Promise<void> => {
   const release = f.root + "/.data/releases/" + sha;
   const archive = f.root + "/.data/previous.tar";
   await mkdir(release, { recursive: true });
@@ -253,19 +252,18 @@ const archivePrevious = async (f: Fixture, sha: string): Promise<void> => {
     mode: 0o600,
   });
   await chmod(release + "/src/release.ts", 0o600);
-  await prepareReleasePayload(
-    release,
-    sha,
-    await hash(await readFile(archive)),
-    repository + "/node_modules/node-api-headers/include",
-    currentTestNativeKvBinding(),
-    repository + "/node_modules"
-  );
+  await preparePayload(release, sha, await hash(await readFile(archive)));
   await rm(archive);
 };
 
 const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"): Promise<Active> => {
   const root = f.root;
+  const preparationInputs = {
+    dependencies: repository + "/node_modules",
+    dependencyLockSha256: await hash(await readFile(repository + "/bun.lock")),
+    nativeArtifact: currentTestNativeKvBinding(),
+  };
+  const preparePayload = bindPreparedVpsPayload(preparationInputs);
   for (const dir of ["bin", "ops", "scripts", "src", ".data/releases"]) await mkdir(root + "/" + dir, { recursive: true });
   await write(root, ".data/trace", "");
   await writeFile(root + "/ops/Caddyfile", "fixture config\n", { mode: 0o604 });
@@ -338,7 +336,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   await runFixtureGit(root, f.env, ["add", "--", "ops", "scripts", "src", "tools", "serve.ts", "package.json", "bun.lock", "fixture-http.ts"]);
   await runFixtureGit(root, f.env, ["commit", "-q", "-m", "previous launcher"]);
   const oldSha = await runFixtureGit(root, f.env, ["rev-parse", "HEAD"]);
-  await archivePrevious(f, oldSha);
+  await archivePrevious(f, oldSha, preparePayload);
   const link = await runFixture("/bin/ln", {
     args: ["-s", "releases/" + oldSha, root + "/.data/current"],
     env: f.env,
@@ -476,7 +474,6 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
         DENO_TIMELINE: "production",
         FIXTURE_CANDIDATE: sha,
         BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-        UOS_RELEASE_DEPENDENCIES: repository + "/node_modules",
       },
       clearEnv: true,
       stdout: "piped",
@@ -613,8 +610,15 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
     "",
   ].join("\n");
   const script = root + "/deploy.activation.fixture.ts";
-  await writeFile(script, bootstrap + source);
-  assert.equal((await readFile(script, "utf8")).slice(bootstrap.length), source);
+  const invocation = [
+    'import { bindPreparedVpsPayload } from "./vps-release-store.ts";',
+    'const { deploy } = await import("./deploy.fixture.ts");',
+    "await deploy(bindPreparedVpsPayload(" + JSON.stringify(preparationInputs) + "));",
+    "",
+  ].join("\n");
+  await writeFile(script, bootstrap + invocation);
+  assert.equal(await readFile(f.script, "utf8"), source, "the imported production entry keeps its exact relocated source");
+  assert.equal((await readFile(script, "utf8")).slice(bootstrap.length), invocation);
   console.log(
     JSON.stringify({
       fixture: "actual_launcher",

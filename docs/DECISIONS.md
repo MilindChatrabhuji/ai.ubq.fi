@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Prepared VPS artifacts use trusted constructor capabilities - 2026-10-15
+
+Deployment fixtures bind their frozen JavaScript graph, matching native headers and independently attested native KV artifact through an internal store preparation capability. Both the graph's lock and the candidate's lock must match the bound digest before packaging. The fixture imports the exact relocated deployment entry and supplies this capability to its actual candidate preparation; service environment variables do not select packaging inputs.
+
+The production CLI keeps real frozen dependency and native artifact preparation before immutable publication. Runtime startup only verifies and loads the published payload. Source, archive, manifest, graph, native provenance, OS confinement, fresh candidate publication and rollback checks remain unchanged. Focused hosted preflights run before the complete aggregate and never replace its acceptance.
+
 ## Authoritative unavailable subscriptions permit paid failover - 2026-10-14
 
 The owner authorized same-model paid failover after the Mac gateway stalled on 2026-10-14.

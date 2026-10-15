@@ -1,5 +1,7 @@
-import { prepareReleasePayload, verifyReleasePayload, releaseSourceTree } from "./release-artifact.ts";
+import { prepareReleasePayload, verifyReleasePayload, releaseSourceTree, type BunReleaseManifest } from "./release-artifact.ts";
 import { chmod, lstat, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { NativeKvArtifactBinding } from "../src/storage/native-addon.ts";
 import { missing } from "./io.ts";
 const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 /** Shared immutable-release primitives for the existing CLI and bound controller. */
@@ -10,12 +12,31 @@ const HISTORICAL_BUN_VPS_UNIT_SHA256 = "d3ab2b0d56706f4965c25ef077bf93b27ae34d32
 export type StoredVpsRelease = { sha: string; path: string; archive: string; tree: string };
 export type StoredVpsPrior = StoredVpsRelease & { selector: string; port: number; profile: string };
 export type VpsCommand = (program: string, args: string[], cwd: string) => Promise<string>;
+export type VpsPayloadPreparation = (root: string, sha: string, archive: string) => Promise<BunReleaseManifest>;
+export type PreparedVpsPayload = Readonly<{
+  dependencies: string;
+  dependencyLockSha256: string;
+  nativeArtifact: NativeKvArtifactBinding;
+}>;
 export async function vpsBytesDigest(bytes: Uint8Array): Promise<string> {
   const input = new Uint8Array(bytes.byteLength);
   input.set(bytes);
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", input))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 export const vpsTextDigest = (text: string): Promise<string> => vpsBytesDigest(new TextEncoder().encode(text));
+/** Trusted constructor capability; graph, headers and native provenance travel together. */
+export function bindPreparedVpsPayload(inputs: PreparedVpsPayload): VpsPayloadPreparation {
+  const dependencies = resolve(inputs.dependencies);
+  const lockSha256 = inputs.dependencyLockSha256;
+  const nativeArtifact = { ...inputs.nativeArtifact };
+  if (!/^[0-9a-f]{64}$/.test(lockSha256)) throw new Error("Prepared VPS dependencies require an independent frozen lock digest");
+  return async (root, sha, archive) => {
+    for (const lock of [resolve(dependencies, "../bun.lock"), `${root}/bun.lock`]) {
+      if ((await vpsBytesDigest(await readFile(lock))) !== lockSha256) throw new Error("Prepared VPS dependencies do not match the frozen release lock");
+    }
+    return await prepareReleasePayload(root, sha, archive, `${dependencies}/node-api-headers/include`, nativeArtifact, dependencies);
+  };
+}
 async function removeTemporary(path: string): Promise<void> {
   try {
     await rm(path);
@@ -27,7 +48,8 @@ async function removeTemporary(path: string): Promise<void> {
 export class ImmutableVpsReleaseStore {
   constructor(
     readonly root: string,
-    private readonly _run: VpsCommand
+    private readonly _run: VpsCommand,
+    private readonly _preparePayload: VpsPayloadPreparation = prepareReleasePayload
   ) {}
   absolute(path: string): string {
     return `${this.root}/${path}`;
@@ -110,14 +132,7 @@ export class ImmutableVpsReleaseStore {
     if (!(await this.exists(packageFile.slice(this.root.length + 1)))) return;
     const metadata: unknown = JSON.parse(await readTextFile(packageFile));
     if (metadata && typeof metadata === "object" && "packageManager" in metadata && metadata.packageManager === "bun@1.4.0")
-      await prepareReleasePayload(
-        staging,
-        sha,
-        archive,
-        `${this.root}/node_modules/node-api-headers/include`,
-        undefined,
-        process.env.UOS_RELEASE_DEPENDENCIES ?? `${this.root}/node_modules`
-      );
+      await this._preparePayload(staging, sha, archive);
   }
   private async _verifyPublished(absolute: string, expected: StoredVpsRelease, bun: boolean): Promise<void> {
     if (bun) {

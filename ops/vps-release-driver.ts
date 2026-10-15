@@ -24,7 +24,7 @@ import {
   type VpsSettlement,
 } from "./vps-release-contract.ts";
 import { VpsOperationJournal, withVpsDeployLock } from "./vps-release-journal.ts";
-import { ImmutableVpsReleaseStore, type StoredVpsRelease, type VpsCommand } from "./vps-release-store.ts";
+import { ImmutableVpsReleaseStore, type StoredVpsRelease, type VpsCommand, type VpsPayloadPreparation } from "./vps-release-store.ts";
 
 export type VpsDriverDependencies = {
   root: string;
@@ -32,6 +32,7 @@ export type VpsDriverDependencies = {
   environment: "production" | "isolated";
   driverSha256: string;
   run: VpsCommand;
+  preparePayload?: VpsPayloadPreparation;
   fetch: typeof fetch;
   now: () => number;
   /** Real trusted review/CI/native merge observer; never a model boolean. */
@@ -71,7 +72,7 @@ export class VpsDeploymentDriver {
   private readonly _store: ImmutableVpsReleaseStore;
   private readonly _journal: VpsOperationJournal;
   constructor(private readonly _deps: VpsDriverDependencies) {
-    this._store = new ImmutableVpsReleaseStore(this._deps.root, this._deps.run);
+    this._store = new ImmutableVpsReleaseStore(this._deps.root, this._deps.run, this._deps.preparePayload);
     this._journal = new VpsOperationJournal(this._deps.root);
   }
   private _lock<T>(work: () => Promise<T>): Promise<T> {
