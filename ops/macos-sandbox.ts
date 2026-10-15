@@ -27,6 +27,7 @@ export const macSandboxProfile = (paths: MacSandboxPaths): string => {
   return [
     "(version 1)",
     "(deny default)",
+    '(import "system.sb")',
     "(allow network* mach-lookup sysctl-read process-info* signal)",
     "(allow process-exec (literal " + quote(paths.runtime) + "))",
     "(allow process-fork)",
