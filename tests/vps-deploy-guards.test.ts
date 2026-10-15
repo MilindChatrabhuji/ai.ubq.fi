@@ -874,7 +874,7 @@ for (const corruption of [
     const before = (await calls(f)).length;
     const run = await runDeployFixture(f, a.options);
     assert.notEqual(run.code, 0);
-    assert.match(run.stderr, /recovery|Immutable release/i);
+    assert.match(run.stderr, /recovery|Immutable(?: Bun)? release/i);
     const trace = (await calls(f)).slice(before);
     assert.ok(!trace.includes(RESTART_COMMAND) && !trace.includes(RELOAD_COMMAND) && !trace.some((line) => line.startsWith("selector-link ")));
     assert.equal(await identity(await a.publicHealth()), a.oldSha);
