@@ -90,6 +90,8 @@ import { getString, isRecord } from "./utils.ts";
 import type { ResponseInputItem } from "./types.ts";
 import { fetchMeteredModels } from "./provider/metered.ts";
 import { fetchSurplusModels } from "./provider/surplus.ts";
+import { fetchClaudeCodeModels } from "./provider/claude-code-models.ts";
+import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import { countExplicitPromptCacheBreakpoints } from "./openai-telemetry.ts";
 
 export type CodexModelReasoning = Readonly<{
@@ -176,6 +178,24 @@ export const getCodexModelMetadata = async (model: string, route: "chat.completi
   const snapshot = await loadCodexModelsSnapshot();
   const record = findSnapshotModelRecord(snapshot, model);
   if (record) return { snapshot, record, reasoning: getCodexModelReasoning(record), supportedEndpoints: null };
+  const selection = await loadProviderSelectionCached();
+  const claude = isProviderEnabled("claude_code", selection) ? await fetchClaudeCodeModels() : null;
+  const claudeModel = claude?.models.find((candidate) => candidate.id === model);
+  if (claudeModel) {
+    // The native subscription adapter serves both wires. A same-id paid row
+    // cannot remove that route, but only this credential's observed IDs add it.
+    const subscriptionRecord = {
+      slug: model,
+      supported_reasoning_levels: claudeModel.supports_disabled_thinking === true ? ["none"] : [],
+      ...(claudeModel.supports_disabled_thinking === true ? { default_reasoning_level: "none" } : {}),
+    };
+    return {
+      snapshot,
+      record: subscriptionRecord,
+      reasoning: getCodexModelReasoning(subscriptionRecord),
+      supportedEndpoints: ["openai", "openai-response"],
+    };
+  }
   const [metered, surplus] = await Promise.all([fetchMeteredModels(), fetchSurplusModels()]);
   const meteredRecord = metered?.models.find((candidate) => candidate.id === model);
   const surplusRecord = surplus?.models.find((candidate) => candidate.id === model);

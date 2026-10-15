@@ -261,6 +261,8 @@ export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
   signal?: AbortSignal;
   /** Private authenticated identity for signed native reasoning replay; never sent upstream. */
   reasoningReplayScope?: string;
+  /** Positive disabled-thinking proof for this exact credential/workspace model. */
+  supportsNativeDisabledThinking?: boolean;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | undefined>;
   onDispatch?: () => void;
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
@@ -365,6 +367,7 @@ export const buildClaudeCodeRequest = (
     maxOutputTokens?: number;
     /** Subscription credentials lead their system blocks with the native attribution. */
     systemAttribution?: boolean;
+    supportsNativeDisabledThinking?: boolean;
   }> = {}
 ): ReturnType<typeof buildSurplusClaudeRequest> => {
   if (!isSurplusClaudeModel(body.model)) return null;
@@ -375,6 +378,7 @@ export const buildClaudeCodeRequest = (
     // The direct Messages route carries the documented adaptive-thinking wire
     // the shared builder already emits.
     supportsNativeReasoningEffort: true,
+    supportsNativeDisabledThinking: options.supportsNativeDisabledThinking,
   });
   if (!built) return null;
   // `prompt_cache_key` is a reseller-router affinity hint with no place in the
@@ -542,6 +546,7 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   const credential = await requireClaudeCodeCredential(options.credential, kv, options.env);
   const native = buildClaudeCodeRequest(body, {
     reasoningReplayScope: options.reasoningReplayScope,
+    supportsNativeDisabledThinking: options.supportsNativeDisabledThinking,
     maxOutputTokens: undefined,
     // Only the subscription lane carries the native attribution; a Console API
     // key request must stay a plain API request.
@@ -579,7 +584,9 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   // An organization-scoped key rejects the first request with a workspace
   // requirement; one discovery call (cached in KV) resolves it for the whole
   // deployment without a per-request lookup afterwards.
-  if (attempt.classification.kind === "workspace_required" && !workspace) {
+  // Disabled thinking was proven for the original binding, not a newly found
+  // workspace. Preserve its first failure rather than transfer that permission.
+  if (attempt.classification.kind === "workspace_required" && !workspace && !(isRecord(native.body.thinking) && native.body.thinking.type === "disabled")) {
     const discovered = await discoverClaudeCodeWorkspace({ credential, kv, fetcher: options.fetcher, signal: options.signal }).catch(() => null);
     if (discovered?.ok) {
       workspace = discovered.workspace;
