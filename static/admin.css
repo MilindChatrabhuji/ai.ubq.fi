@@ -1624,6 +1624,7 @@ body[data-page="admin"] [data-auth-title] {
 
 body[data-page="admin"] [data-auth-meta] {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1641,6 +1642,8 @@ body[data-page="admin"] [data-auth-label] {
 }
 
 body[data-page="admin"] [data-auth-value] {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--text);
