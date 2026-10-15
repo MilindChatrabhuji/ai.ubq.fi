@@ -1718,3 +1718,11 @@ while it routes inference through the gateway, which blocked the previous Darwin
 a blank-account reply from a daemon holding the wrong file account stays refused, but a same-account file swap between
 bind and refresh is caught only by the generation checks; the fallback trusts the local home configured on that host,
 never a remote path.
+
+## Native KV preparation retains build scratch in checkout storage - 2026-10-15
+
+Native KV preparation places each unique source, Cargo home, compiler target, and retained log tree under `.tmp/native-kv-builds/` in the builder module's own checkout. The scratch root is independent of the invoking directory, explicit artifact output directory, toolchain override, and inherited `TMPDIR`. Compiler subprocesses receive the existing `TMPDIR` interface pointing to that build tree's private `tmp` subdirectory.
+
+Reason: retaining compiler source, dependencies, and output under the VPS RAM-backed `/tmp` consumes memory and swap even after a successful build. Checkout storage provides the existing disk-backed workspace for these large retained files. Artifact destinations, provenance and log hashes, log retention, pinned toolchain checks, `--jobs 1`, and existing command timeouts remain unchanged. This decision adds no cleanup, global concurrency policy, runtime activation, product setting, or memory limit.
+
+Validation must exercise the actual builder with fixture tools while varying the caller directory, artifact path, and inherited temporary directory, then verify one real pinned native build from the exact candidate on disk-backed storage. Historical build receipts and shared-memory growth support this allocation mechanism; they do not attribute every byte or every outage to the native build.

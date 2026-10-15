@@ -36,7 +36,9 @@ The build verifies pinned Rust/Cargo 1.98.1 binaries already installed under the
 
 It downloads only the checksum-bound source and locked Cargo dependencies during artifact preparation.
 
-Source, Cargo home, compiler target, and logs stay in a dedicated `/tmp/uos-native-kv-*` directory.
+Source, Cargo home, compiler target, and logs stay in a dedicated `.tmp/native-kv-builds/uos-native-kv-*` directory in the builder checkout.
+
+The scratch root is independent of the current directory, artifact output path, and inherited `TMPDIR`. Compiler subprocesses use its `tmp` subdirectory through `TMPDIR`. Build trees and logs remain retained on success or failure.
 
 Cargo uses `--locked --release --jobs 1` and a 30-minute process-group timeout. No compiler is installed.
 

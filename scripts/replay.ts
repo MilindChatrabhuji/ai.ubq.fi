@@ -109,6 +109,7 @@ const UPSTREAM_ENDED_CODE = "server_error";
  */
 const PROVIDER_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Object.freeze({
   chatgpt_codex: `${config.codexBaseUrl}/responses`,
+  claude_code: "https://sentinel-replay.invalid/claude-code/v1/messages",
   surplus: `${SURPLUS_BASE_URL}/v1/responses`,
   metered: `${METERED_BASE_URL}/v1/responses`,
   cerebras: "https://sentinel-replay.invalid/cerebras/v1/chat/completions",

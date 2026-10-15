@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { copyFile, lstat, mkdir, mkdtemp, open, readFile, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import inputs from "../tools/native-kv/inputs.json";
@@ -129,7 +129,11 @@ export const buildNativeKv = async (outputDirectory: string, options: { toolchai
       throw new Error(`Native KV output already exists: ${destination}`);
     }
   }
-  const workspace = await mkdtemp(join(tmpdir(), "uos-native-kv-"));
+  const workspaceRoot = fileURLToPath(new URL("../.tmp/native-kv-builds/", import.meta.url));
+  await mkdir(workspaceRoot, { recursive: true, mode: 0o700 });
+  const workspace = await mkdtemp(join(workspaceRoot, "uos-native-kv-"));
+  const temporaryDirectory = join(workspace, "tmp");
+  await mkdir(temporaryDirectory, { mode: 0o700 });
   const buildLogPath = join(workspace, "build.log");
   const toolchain = options.toolchainDirectory ?? join(homedir(), ".rustup", "toolchains", `stable-${inputs.artifact.target}`, "bin");
   const rustc = join(toolchain, "rustc");
@@ -140,6 +144,7 @@ export const buildNativeKv = async (outputDirectory: string, options: { toolchai
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     CARGO_HOME: join(workspace, "cargo-home"),
     CARGO_TARGET_DIR: join(workspace, "target"),
+    TMPDIR: temporaryDirectory,
     RUSTC: rustc,
   };
   await run([rustc, "--version"], workspace, buildLogPath, environment);

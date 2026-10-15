@@ -35,6 +35,7 @@ ensure_deps() {
     fi
   fi
   deps_ready_at "$TOOLS" || { echo "error: locked quality dependencies are unavailable" >&2; exit 1; }
+  bun --no-env-file --no-install scripts/patch-bun-types.ts || exit 1
   # The type-aware parser must fail rather than silently lint without Bun types.
   [ -f "$ROOT/node_modules/@types/bun/index.d.ts" ] && [ -f "$ROOT/node_modules/@types/node/index.d.ts" ] && [ -f "$ROOT/node_modules/typescript/bin/tsc" ] || {
     echo "error: install the locked root dependencies with bun install --frozen-lockfile" >&2

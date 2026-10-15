@@ -26,6 +26,9 @@ jobs:
           bun-version: 1.4.0
       - name: Frozen dependencies
         run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+      - name: Permit unprivileged test namespaces on the ephemeral Linux runner
+        run: |
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
       - name: Prepare checksum-pinned ephemeral native toolchain
         run: bash ops/prepare-ci-native-toolchain.sh
       - name: Prepare one independently bound native KV artifact
@@ -83,13 +86,11 @@ jobs:
           bun-version: 1.4.0
       - name: Frozen dependencies
         run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
-      - name: Prepare checksum-pinned ephemeral native toolchain
-        run: bash ops/prepare-ci-native-toolchain.sh
       - name: Build and bind the Darwin native KV artifact
         shell: bash
         run: |
           set -euo pipefail
-          bun --no-env-file --no-install -e 'import {join,resolve} from "node:path"; import {buildNativeKv} from "./scripts/build-native-kv.ts"; const workspace=process.env.RUNNER_TEMP; if(!workspace) throw new Error("Missing runner temporary directory"); const artifactDirectory=join(workspace,"uos-native-kv/artifact"); const buildReceipt=await buildNativeKv(artifactDirectory,{toolchainDirectory:join(workspace,"uos-native-kv/toolchain/bin")}); console.log(JSON.stringify({artifactDirectory,expectedProvenanceSha256:buildReceipt.provenanceSha256,inputsManifest:resolve("tools/native-kv/inputs.json"),buildReceipt}));' > "$RUNNER_TEMP/uos-native-kv/receipt.json"
+          bun --no-env-file --no-install -e 'import {join,resolve} from "node:path"; import {buildNativeKvDarwin} from "./scripts/build-native-kv-darwin.ts"; const workspace=process.env.RUNNER_TEMP; if(!workspace) throw new Error("Missing runner temporary directory"); const artifactDirectory=join(workspace,"uos-native-kv/artifact"); const buildReceipt=await buildNativeKvDarwin(artifactDirectory); console.log(JSON.stringify({artifactDirectory,expectedProvenanceSha256:buildReceipt.provenanceSha256,inputsManifest:resolve("tools/native-kv/inputs-darwin-arm64.json"),buildReceipt}));' > "$RUNNER_TEMP/uos-native-kv/receipt.json"
       - name: Prove Darwin native loading, startup, confinement and quality gates
         shell: bash
         run: |
