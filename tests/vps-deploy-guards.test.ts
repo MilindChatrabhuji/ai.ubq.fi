@@ -1,5 +1,5 @@
 import { test } from "bun:test";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { spawnFixture, runFixture, outputFixture, fsError, type FixtureChild, type FixtureOutput } from "../ops/tests/fixture-process.ts";
 import { copyOps, copyRuntime, copyRuntimeModules, repository, seedStore, writePackage } from "../ops/tests/fixture-release.ts";
 import { currentTestNativeKvBinding } from "../scripts/test-native-kv.ts";
@@ -252,6 +252,8 @@ const archivePrevious = async (f: Fixture, sha: string): Promise<void> => {
     mode: 0o600,
   });
   await chmod(release + "/src/release.ts", 0o600);
+  await mkdir(release + "/tools", { recursive: true });
+  await cp(repository + "/tools/native-kv", release + "/tools/native-kv", { recursive: true });
   await prepareReleasePayload(
     release,
     sha,
