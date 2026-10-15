@@ -127,6 +127,22 @@ test("Claude credential actions stay within the existing provider entry and surv
   assert.deepEqual(calls, [1, 1, 1, 1], "each preserved action retains exactly one listener");
 });
 
+test("Claude credential disclosure uses the existing single-column body and wrapping form actions", () => {
+  const html = readFileSync(new URL("../static/admin.html", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../static/style.css", import.meta.url), "utf8");
+  const controlsStart = html.indexOf('id="claude-subscription-controls"');
+  const disclosure = html.slice(controlsStart, html.indexOf("</details>", controlsStart));
+  assert.match(disclosure, /<summary>Manage credential<\/summary>\s*<div data-card-body>/);
+  assert.doesNotMatch(disclosure, /data-layout="grid"/, "the 12-column page grid must not squeeze form fields at narrow or wide widths");
+  assert.match(disclosure, /<div data-action-row>\s*<button id="claude-credential-save"/);
+  const bodyRule = /\[data-card-body\]\s*\{([^}]+)\}/.exec(styles)?.[1] ?? "";
+  assert.match(bodyRule, /display:\s*grid/);
+  assert.doesNotMatch(bodyRule, /grid-template-columns/, "form rows use one implicit column at every viewport width");
+  const actionsRule = /\[data-action-row\]\s*\{([^}]+)\}/.exec(styles)?.[1] ?? "";
+  assert.match(actionsRule, /display:\s*flex/);
+  assert.match(actionsRule, /flex-wrap:\s*wrap/, "credential actions wrap instead of overflowing at 500px");
+});
+
 test("shared Claude analytics diagnostics retain credential, workspace and routing facts", () => {
   const fixture = { ...context };
   runInNewContext(
