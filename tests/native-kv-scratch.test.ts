@@ -49,14 +49,14 @@ const run = async (state: ReturnType<typeof fixture>, entry: string, args: strin
   return { code, output: stdout + stderr };
 };
 
-const scratchRoot = `/tmp/uos-native-kv-builds-${process.getuid?.() ?? "unknown"}`;
-const retainedWorkspace = (state: ReturnType<typeof fixture>, before: readonly string[]): void => {
-  assert.equal(existsSync(scratchRoot), true, "The private temporary root must own the retained workspace");
-  const entries = readdirSync(scratchRoot);
+const scratchRoot = (state: ReturnType<typeof fixture>): string => join(state.directory, "retained-builds");
+const retainedWorkspace = (state: ReturnType<typeof fixture>, root: string, before: readonly string[]): void => {
+  assert.equal(existsSync(root), true, "The private temporary root must own the retained workspace");
+  const entries = readdirSync(root);
   const created = entries.filter((entry) => !before.includes(entry));
   assert.equal(created.length, 1, "The build must retain exactly its task-owned workspace");
   assert.match(created[0], /^uos-native-kv-/);
-  const workspace = join(scratchRoot, created[0]);
+  const workspace = join(root, created[0]);
   assert.equal(lstatSync(workspace).isDirectory(), true);
   assert.equal(lstatSync(join(workspace, "tmp")).isDirectory(), true);
   assert.equal(lstatSync(join(workspace, "tmp")).mode & 0o777, 0o700);
@@ -79,14 +79,14 @@ test.skipIf(!supported)("native builder retains scratch in its checkout for an e
     const output = join(state.directory, "explicit-artifact-output");
     writeFileSync(
       driver,
-      `import { buildNativeKv } from "./build-native-kv.ts";\nawait buildNativeKv(process.argv[2], { toolchainDirectory: process.argv[3] });\n`
+      `import { buildNativeKv } from "./build-native-kv.ts";\nawait buildNativeKv(process.argv[2], { toolchainDirectory: process.argv[3], workspaceDirectory: process.argv[4] });\n`
     );
-    const before = existsSync(scratchRoot) ? readdirSync(scratchRoot) : [];
-    const result = await run(state, driver, [output, state.toolchain]);
+    const before = existsSync(scratchRoot(state)) ? readdirSync(scratchRoot(state)) : [];
+    const result = await run(state, driver, [output, state.toolchain, join(state.directory, "retained-builds")]);
     assert.equal(result.code, 1, result.output);
     assert.match(result.output, /Native KV command failed \(7\)/);
     assert.equal(existsSync(output), true, "The explicit artifact destination remains unchanged");
-    retainedWorkspace(state, before);
+    retainedWorkspace(state, scratchRoot(state), before);
   } finally {
     rmSync(state.directory, { recursive: true, force: true });
   }
@@ -95,12 +95,13 @@ test.skipIf(!supported)("native builder retains scratch in its checkout for an e
 test.skipIf(!supported)("native builder CLI scratch ignores caller cwd and inherited TMPDIR", async () => {
   const state = fixture(false);
   try {
-    const before = existsSync(scratchRoot) ? readdirSync(scratchRoot) : [];
+    const cliRoot = join(state.checkout, ".tmp/native-kv-builds");
+    const before = existsSync(cliRoot) ? readdirSync(cliRoot) : [];
     const result = await run(state, join(state.checkout, "scripts", "build-native-kv.ts"));
     assert.equal(result.code, 1, result.output);
     assert.match(result.output, /Native KV command failed \(7\)/);
     assert.equal(existsSync(join(state.checkout, ".tmp", "native-kv")), true, "The CLI artifact destination remains unchanged");
-    retainedWorkspace(state, before);
+    retainedWorkspace(state, cliRoot, before);
   } finally {
     rmSync(state.directory, { recursive: true, force: true });
   }

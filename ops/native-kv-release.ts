@@ -130,12 +130,14 @@ export const stageNativeKvReleasePayload = async (root: string, supplied?: Nativ
   } else {
     const builderFile = process.platform === "linux" ? "scripts/build-native-kv.ts" : "scripts/build-native-kv-darwin.ts";
     const builder = (await import(pathToFileURL(join(root, builderFile)).href)) as {
-      buildNativeKv?: (out: string) => Promise<NativeKvArtifact>;
+      buildNativeKv?: (out: string, options: { workspaceDirectory: string }) => Promise<NativeKvArtifact>;
       buildNativeKvDarwin?: (out: string) => Promise<NativeKvArtifact>;
     };
-    const build = process.platform === "linux" ? builder.buildNativeKv : builder.buildNativeKvDarwin;
-    if (!build) throw new Error("Native KV platform builder is unavailable");
-    const receipt = await build(directory);
+    const receipt =
+      process.platform === "linux"
+        ? await builder.buildNativeKv?.(directory, { workspaceDirectory: resolve(root, "../../native-kv-builds") })
+        : await builder.buildNativeKvDarwin?.(directory);
+    if (!receipt) throw new Error("Native KV platform builder is unavailable");
     binding = { artifactDirectory: directory, expectedProvenanceSha256: receipt.provenanceSha256, inputsManifest: inputs.path };
     const verified = verifyNativeKvArtifact(binding);
     if (verified.artifactSha256 !== receipt.sha256 || verified.inputsSha256 !== receipt.inputsSha256)

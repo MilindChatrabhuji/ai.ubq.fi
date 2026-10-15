@@ -55,7 +55,7 @@ export const prepareTestNativeKv = async (root = ROOT): Promise<TestNativeKvPrep
   const buildReceipt =
     process.platform === "darwin"
       ? await (await import("./build-native-kv-darwin.ts")).buildNativeKvDarwin(join(runDirectory, "artifact"))
-      : await (await import("./build-native-kv.ts")).buildNativeKv(join(runDirectory, "artifact"));
+      : await (await import("./build-native-kv.ts")).buildNativeKv(join(runDirectory, "artifact"), { workspaceDirectory: join(runDirectory, "workspace") });
   const binding = parseTestNativeKvBinding({
     artifactDirectory: dirname(buildReceipt.path),
     expectedProvenanceSha256: buildReceipt.provenanceSha256,

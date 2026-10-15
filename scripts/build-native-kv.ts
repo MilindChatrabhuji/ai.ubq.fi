@@ -109,7 +109,10 @@ const prepareSource = async (workspace: string, logPath: string, environment: Re
 };
 
 /** CI/packaging preparation only; application startup verifies and loads prepared immutable bytes. */
-export const buildNativeKv = async (outputDirectory: string, options: { toolchainDirectory?: string } = {}): Promise<NativeKvArtifact> => {
+export const buildNativeKv = async (
+  outputDirectory: string,
+  options: { toolchainDirectory?: string; workspaceDirectory: string }
+): Promise<NativeKvArtifact> => {
   if (process.platform !== inputs.artifact.platform || process.arch !== inputs.artifact.architecture || Bun.version !== "1.4.0") {
     throw new Error("Native KV build requires pinned Bun 1.4.0 on Linux ARM64");
   }
@@ -131,7 +134,7 @@ export const buildNativeKv = async (outputDirectory: string, options: { toolchai
       throw new Error(`Native KV output already exists: ${destination}`);
     }
   }
-  const workspaceRoot = `/tmp/uos-native-kv-builds-${process.getuid?.() ?? "unknown"}`;
+  const workspaceRoot = resolve(options.workspaceDirectory);
   await mkdir(workspaceRoot, { recursive: true, mode: 0o700 });
   const workspaceFilesystemType = (await statfs(workspaceRoot)).type;
   if (workspaceFilesystemType === 0x01021994) throw new Error("Native KV retained build scratch requires disk-backed storage, not tmpfs");
@@ -195,5 +198,11 @@ export const buildNativeKv = async (outputDirectory: string, options: { toolchai
 };
 
 if (import.meta.main) {
-  console.log(JSON.stringify(await buildNativeKv(fileURLToPath(new URL("../.tmp/native-kv", import.meta.url)))));
+  console.log(
+    JSON.stringify(
+      await buildNativeKv(fileURLToPath(new URL("../.tmp/native-kv", import.meta.url)), {
+        workspaceDirectory: fileURLToPath(new URL("../.tmp/native-kv-builds", import.meta.url)),
+      })
+    )
+  );
 }

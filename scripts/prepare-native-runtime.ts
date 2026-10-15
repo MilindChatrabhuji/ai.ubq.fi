@@ -45,7 +45,9 @@ export const prepareNativeKvDevelopmentArtifact = async (repositoryRoot?: string
     if ((await previousBinding(paths.root, paths.receipt)) !== previous) throw new Error("Native KV development binding changed before preparation");
     // Unique staging is not referenced by startup until the durable binding is published.
     const output = await mkdtemp(join(paths.data, "native-kv-"));
-    const receipt = await (process.platform === "darwin" ? buildNativeKvDarwin(output) : buildNativeKv(output));
+    const receipt = await (process.platform === "darwin"
+      ? buildNativeKvDarwin(output)
+      : buildNativeKv(output, { workspaceDirectory: join(paths.data, "native-kv-builds") }));
     if (dirname(receipt.path) !== output || dirname(receipt.provenancePath) !== output) throw new Error("Native KV builder returned an unexpected output path");
     const binding = {
       artifactDirectory: output,
