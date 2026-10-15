@@ -7,7 +7,7 @@ import type { Kv } from "#kv";
  * organization-scoped key needs. Resolution is KV first and environment
  * second, so a deployment can bootstrap from the environment and rotate from
  * the admin console without a restart. Secrets never leave this module
- * unmasked except on the outbound inference request itself.
+ * unmasked except on outbound account discovery and inference requests.
  */
 import { isRecord } from "../utils.ts";
 import type { ClaudeCodeEnvLookup } from "./claude-code.ts";
@@ -132,10 +132,17 @@ export const parseClaudeCodeWorkspaceId = (value: unknown): string | null => {
 
 let cachedCredential: ClaudeCodeStoredCredential | null = null;
 let cachedCredentialExpiresAtMs = 0;
+let cachedCredentialKv: Kv | null = null;
+const stateGenerations = new WeakMap<Kv, number>();
+export const claudeCodeStateGeneration = (kv: Kv | null): number => (kv ? (stateGenerations.get(kv) ?? 0) : 0);
+const advanceStateGeneration = (kv: Kv): void => {
+  stateGenerations.set(kv, claudeCodeStateGeneration(kv) + 1);
+};
 
 export const resetClaudeCodeCredentialCacheForTest = (): void => {
   cachedCredential = null;
   cachedCredentialExpiresAtMs = 0;
+  cachedCredentialKv = null;
 };
 
 const cacheStoredCredential = (credential: ClaudeCodeStoredCredential | null): void => {
@@ -145,9 +152,12 @@ const cacheStoredCredential = (credential: ClaudeCodeStoredCredential | null): v
 
 export const loadClaudeCodeStoredCredential = async (kv: Kv | null): Promise<ClaudeCodeStoredCredential | null> => {
   if (!kv) return null;
-  if (cachedCredentialExpiresAtMs > Date.now()) return cachedCredential;
+  if (cachedCredentialKv === kv && cachedCredentialExpiresAtMs > Date.now()) return cachedCredential;
+  const generation = claudeCodeStateGeneration(kv);
   const entry = await kv.get(CLAUDE_CODE_AUTH_KV_KEY, { consistency: "strong" });
+  if (generation !== claudeCodeStateGeneration(kv)) return await loadClaudeCodeStoredCredential(kv);
   const parsed = parseClaudeCodeStoredCredential(entry.value);
+  cachedCredentialKv = kv;
   cacheStoredCredential(parsed);
   return parsed;
 };
@@ -167,6 +177,8 @@ export const storeClaudeCodeStoredCredential = async (
     updated_at_ms: Date.now(),
   };
   await kv.set(CLAUDE_CODE_AUTH_KV_KEY, stored);
+  advanceStateGeneration(kv);
+  cachedCredentialKv = kv;
   cacheStoredCredential(stored);
   return stored;
 };
@@ -174,6 +186,8 @@ export const storeClaudeCodeStoredCredential = async (
 export const clearClaudeCodeStoredCredential = async (kv: Kv | null): Promise<boolean> => {
   if (!kv) return false;
   await kv.delete(CLAUDE_CODE_AUTH_KV_KEY);
+  advanceStateGeneration(kv);
+  cachedCredentialKv = kv;
   cacheStoredCredential(null);
   return true;
 };
@@ -187,12 +201,14 @@ export const loadClaudeCodeWorkspaceState = async (kv: Kv | null): Promise<Claud
 export const storeClaudeCodeWorkspaceState = async (kv: Kv | null, state: ClaudeCodeWorkspaceState): Promise<boolean> => {
   if (!kv) return false;
   await kv.set(CLAUDE_CODE_WORKSPACE_KV_KEY, state);
+  advanceStateGeneration(kv);
   return true;
 };
 
 export const clearClaudeCodeWorkspaceState = async (kv: Kv | null): Promise<boolean> => {
   if (!kv) return false;
   await kv.delete(CLAUDE_CODE_WORKSPACE_KV_KEY);
+  advanceStateGeneration(kv);
   return true;
 };
 

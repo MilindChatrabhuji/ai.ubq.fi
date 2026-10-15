@@ -249,6 +249,7 @@ const catalogFixture = () => ({
     { id: "deepseek-flash", providers: [{ id: "deepseek" as const, owned_by: "deepseek", supported_endpoints: ["/v1/chat/completions", "/v1/responses"] }] },
   ],
   sources: {
+    claude_code: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
     codex: { status: "available" as const, count: 1, updated_at_ms: 1 },
     openlux: { status: "unavailable" as const, count: 0, updated_at_ms: null },
     surplus: { status: "available" as const, count: 2, updated_at_ms: 2 },
