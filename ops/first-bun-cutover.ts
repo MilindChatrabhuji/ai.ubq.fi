@@ -18,6 +18,7 @@ import {
   cutoverSourceBytes,
   privateCutoverDirectory,
   retainedCutoverCopy,
+  withCutoverCodecProbe,
   type CutoverBudgets,
 } from "./cutover-storage.ts";
 import { recoverCutoverLatest } from "./cutover-recovery.ts";
@@ -352,7 +353,7 @@ export async function recoverFirstBunCutover(input: Omit<FirstBunCutoverInput, "
     receipt = join(workspace, "operation.json");
   return await withVpsDeployLock(canonicalRoot, async () => {
     if (!(await exists(receipt))) {
-      await host.verifyLegacyProcess(input.denoBinary, input.denoSha256, artifact.directory, input.priorRevision);
+      await withCutoverCodecProbe(canonicalRoot, (probe) => host.verifyLegacyProcess(input.denoBinary, input.denoSha256, probe, input.priorRevision));
       await host.health(input.priorRevision);
       await host.publicHealth(input.priorRevision);
       return { phase: "not_started", receipt: null };

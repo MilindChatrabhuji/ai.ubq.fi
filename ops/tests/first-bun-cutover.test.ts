@@ -18,14 +18,15 @@ import { assertCutoverReaderAcceptance, verifyCutoverReaderAcceptance } from "..
 import { assertCutoverMemoryLimit, boundedCutoverHolderCheck } from "../cutover-host.ts";
 import { assertCutoverDropin, assertCutoverExecStart, cutoverDropinDigest, cutoverSupervisorUnit } from "../cutover-unit.ts";
 import { executeCutoverTransition, type CutoverPhase, type CutoverTransition } from "../cutover-transition.ts";
-import { checkedCutoverBudgets, checkpointCutoverStore, cutoverSourceBytes, retainedCutoverCopy } from "../cutover-storage.ts";
+import { checkedCutoverBudgets, checkpointCutoverStore, cutoverSourceBytes, retainedCutoverCopy, withCutoverCodecProbe } from "../cutover-storage.ts";
 import { preserveUnstartedCutover } from "../cutover-recovery.ts";
 import { NATIVE_DDL } from "../../src/kv-conversion/native-schema.ts";
 import { packStringKey } from "../../src/kv-conversion/cursors.ts";
 import { BUN_RUNTIMES } from "../bun-runtime.ts";
 import { fileDigest, treeDigest } from "../io.ts";
-import { verifyReleasePayload } from "../release-artifact.ts";
-import { packageFixture, repository, writePackage } from "./fixture-release.ts";
+import { prepareReleasePayload, verifyReleasePayload } from "../release-artifact.ts";
+import { currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
+import { repository, writePackage } from "./fixture-release.ts";
 import { fixtureCommand } from "./vps-release-driver-fixture.ts";
 
 const parent = fileURLToPath(new URL("../../.cleanup-evidence/first-bun-cutover/", import.meta.url));
@@ -514,6 +515,34 @@ test("capacity accounts for WAL bytes and checkpoint refuses a sidecar symlink b
     assert.equal(await readFile(other, "utf8"), "must remain unchanged");
   }));
 
+test("baseline-left-live codec probes use private disk scratch and clean up on success and failure", async () =>
+  fixture(async (root) => {
+    const artifactDirectory = join(root, "immutable-artifact");
+    await mkdir(artifactDirectory);
+    await writeFile(join(artifactDirectory, "source-marker"), "immutable fixture");
+    await chmod(artifactDirectory, 0o500);
+    const parent = join(root, ".data/cutovers");
+    const probe = async (directory: string) => {
+      assert.ok(directory.startsWith(parent + "/.codec-probe-"));
+      assert.equal((await lstat(directory)).mode & 0o777, 0o700);
+      await mkdir(join(directory, ".deno-codec-cache"));
+      await writeFile(join(directory, ".deno-codec-cache/fixture"), "owned cache");
+      return "baseline-left-live";
+    };
+    assert.equal(await withCutoverCodecProbe(root, probe), "baseline-left-live");
+    await assert.rejects(
+      withCutoverCodecProbe(root, async (directory) => {
+        await probe(directory);
+        throw new Error("Identity probe refused");
+      }),
+      /Identity probe refused/
+    );
+    assert.deepEqual(await readdir(parent), []);
+    assert.deepEqual(await readdir(artifactDirectory), ["source-marker"]);
+    assert.equal(await readFile(join(artifactDirectory, "source-marker"), "utf8"), "immutable fixture");
+    await chmod(artifactDirectory, 0o700);
+  }));
+
 test("a self-consistent existing candidate for the same Git SHA must still equal its exact accepted CI manifest", async () =>
   fixture(async (root) => {
     const repo = join(root, "git"),
@@ -545,7 +574,15 @@ test("a self-consistent existing candidate for the same Git SHA must still equal
       });
       await chmod(join(path, "src/release.ts"), 0o600);
     }
-    await packageFixture(release, sha, await fileDigest(source));
+    // Package the extracted Git source as CI does; copying checkout fixtures over it changes hashed file modes.
+    await prepareReleasePayload(
+      release,
+      sha,
+      await fileDigest(source),
+      join(repository, "node_modules/node-api-headers/include"),
+      currentTestNativeKvBinding(),
+      join(repository, "node_modules")
+    );
     const archive = join(root, "artifact.zip");
     // The synthetic hosted API publishes the actual ZIP digest; all source/tree/native checks still execute.
     await fixtureCommand(

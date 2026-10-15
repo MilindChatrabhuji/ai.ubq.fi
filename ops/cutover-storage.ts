@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, copyFile, lstat, open, readFile, realpath, statfs } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { deserialize } from "node:v8";
 import { convertKvDatabase, type ConvertOptions } from "../src/kv-conversion/convert.ts";
@@ -28,6 +28,20 @@ export async function privateCutoverDirectory(path: string): Promise<void> {
   if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o777) !== 0o700 || info.uid !== process.getuid?.() || (await realpath(path)) !== path)
     throw new Error("Cutover workspace must be a private owned physical directory");
   if ((await statfs(path)).type === 0x01021994) throw new Error("Cutover storage must be disk-backed");
+}
+
+/** A baseline-left-live recovery check must never put its codec cache in the immutable artifact. */
+export async function withCutoverCodecProbe<T>(root: string, work: (directory: string) => Promise<T>): Promise<T> {
+  const parent = join(root, ".data/cutovers");
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  await privateCutoverDirectory(parent);
+  const probe = await mkdtemp(join(parent, ".codec-probe-"));
+  try {
+    await privateCutoverDirectory(probe);
+    return await work(probe);
+  } finally {
+    await rm(probe, { recursive: true, force: true });
+  }
 }
 
 /** Called only after the host has proved the service and every database holder stopped. */
