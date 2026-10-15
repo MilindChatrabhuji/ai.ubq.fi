@@ -143,6 +143,16 @@ test("Claude credential disclosure uses the existing single-column body and wrap
   assert.match(actionsRule, /flex-wrap:\s*wrap/, "credential actions wrap instead of overflowing at 500px");
 });
 
+test("shared Kernel metadata shrinks and wraps long values without hiding content", () => {
+  const styles = readFileSync(new URL("../static/admin.css", import.meta.url), "utf8");
+  const metaRule = /\[data-auth-meta\]\s*\{([^}]+)\}/.exec(styles)?.[1] ?? "";
+  const valueRule = /\[data-auth-value\]\s*\{([^}]+)\}/.exec(styles)?.[1] ?? "";
+  assert.match(metaRule, /min-width:\s*0\s*;/, "the metadata grid child must shrink within its existing card");
+  assert.match(valueRule, /min-width:\s*0\s*;/, "the value flex child must shrink beside its label");
+  assert.match(valueRule, /overflow-wrap:\s*anywhere\s*;/, "unbroken workspace ids wrap instead of enlarging the row");
+  assert.doesNotMatch(metaRule + valueRule, /overflow(?:-[xy])?:\s*(?:hidden|clip)|text-overflow:\s*ellipsis/);
+});
+
 test("shared Claude analytics diagnostics retain credential, workspace and routing facts", () => {
   const fixture = { ...context };
   runInNewContext(
