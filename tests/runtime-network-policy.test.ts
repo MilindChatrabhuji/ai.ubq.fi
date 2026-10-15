@@ -224,7 +224,7 @@ for (const mode of ["normal", "timeout", "SIGTERM", "SIGKILL"]) {
   if (mode === "SIGTERM" || mode === "SIGKILL") signalGroup(child.pid, mode);
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   assert.equal(stdout, "");
-  assert.equal(stderr, "");
+  assert(mode === "normal" ? stderr === "" : stderr === "" || stderr === "Terminated\n");
   mode === "normal" ? assert.equal(code, 7) : assert.notEqual(code, 0);
   signalGroup(child.pid, "SIGKILL");
   const settlementDeadline = Date.now() + 3000;

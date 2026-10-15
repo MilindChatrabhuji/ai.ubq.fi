@@ -469,7 +469,14 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
     child = spawnFixture("/usr/bin/unshare", {
       args: ["-Urm", "/bin/sh", "-c", namespaced],
       cwd: root,
-      env: { ...f.env, PATH: "/usr/bin:/bin", DENO_TIMELINE: "production", FIXTURE_CANDIDATE: sha, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+      env: {
+        ...f.env,
+        PATH: "/usr/bin:/bin",
+        DENO_TIMELINE: "production",
+        FIXTURE_CANDIDATE: sha,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+        UOS_RELEASE_DEPENDENCIES: repository + "/node_modules",
+      },
       clearEnv: true,
       stdout: "piped",
       stderr: "piped",

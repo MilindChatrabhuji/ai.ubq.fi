@@ -110,7 +110,14 @@ export class ImmutableVpsReleaseStore {
     if (!(await this.exists(packageFile.slice(this.root.length + 1)))) return;
     const metadata: unknown = JSON.parse(await readTextFile(packageFile));
     if (metadata && typeof metadata === "object" && "packageManager" in metadata && metadata.packageManager === "bun@1.4.0")
-      await prepareReleasePayload(staging, sha, archive);
+      await prepareReleasePayload(
+        staging,
+        sha,
+        archive,
+        `${this.root}/node_modules/node-api-headers/include`,
+        undefined,
+        process.env.UOS_RELEASE_DEPENDENCIES ?? `${this.root}/node_modules`
+      );
   }
   private async _verifyPublished(absolute: string, expected: StoredVpsRelease, bun: boolean): Promise<void> {
     if (bun) {
