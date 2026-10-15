@@ -603,7 +603,7 @@ test("a generic 429 retries the same account and never switches siblings", async
   }
 });
 
-test("a mixed quota and invalid-credential cohort cannot open paid fallback", async () => {
+test("a mixed quota and current-invalid-credential cohort authorizes paid fallback", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
@@ -613,20 +613,24 @@ test("a mixed quota and invalid-credential cohort cannot open paid fallback", as
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = createFetchMock(
-      countingUpstreamFetch("mixed-cohort", () => {
-        dispatches += 1;
-      })
-    );
-    const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
+    globalThis.fetch = countingUpstreamFetch("mixed-cohort", () => {
+      dispatches += 1;
+    });
+    const initial = await selectCodexRoutingAccounts(authPool, authPool.accounts, now, "gpt-5-routing");
     assert.equal(initial.kind, "eligible");
     await markCodexQuotaBlocked(initial.accounts[0], httpDateQuotaResponse(now + 60_000), now);
     await markCodexCredentialInvalid(initial.accounts[1]);
     resetCodexAccountRoutingForTest();
 
+    const selected = await selectCodexRoutingAccountsStrong(authPool, authPool.accounts, Date.now(), "gpt-5-routing");
+    assert.equal(selected.kind, "quota_blocked");
+    assert.equal(selected.fullCohortUnavailable, true);
+    assert.equal(selected.fullCohortExhausted, false);
+
     const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "mixed-cohort" }, { retrySleep: async () => {} });
-    assert.equal(response.status, 429);
-    assert.equal(getCodexRoutingError(response), null);
+    assert.equal(response.status, 503);
+    assert.equal(getCodexRoutingError(response), "codex_subscriptions_unavailable");
+    assert.equal(response.headers.get("retry-after"), null);
     assert.equal(dispatches, 0);
     await response.arrayBuffer();
   } finally {

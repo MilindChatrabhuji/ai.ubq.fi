@@ -11,6 +11,9 @@ import { handleResponses } from "../src/responses-handler.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
 import { METERED_BASE_URL } from "../src/provider/metered.ts";
+import { CODEX_ACCOUNT_ROUTING_KV_KEY, type CodexAccountRoutingState, selectCodexRoutingAccountsStrong } from "../src/codex/account-routing.ts";
+import { markCodexQuotaBlocked } from "../src/codex/rate-limit-429.ts";
+import type { CodexAuthPoolState } from "../src/types.ts";
 
 type StoredEntry = {
   key: KvKey;
@@ -209,6 +212,7 @@ const meteredSuccessResponse = (): Response => {
       type: "response.completed",
       response: {
         id: "resp_matrix",
+        status: "completed",
         model: MODEL,
         output: [
           {
@@ -364,6 +368,10 @@ const mockedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     return Promise.resolve(meteredSuccessResponse());
   }
 
+  if (url === `${METERED_BASE_URL}/v1/models`) {
+    return Promise.resolve(Response.json({ data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }] }));
+  }
+
   if (url !== CODEX_RESPONSES_URL) throw new Error(`Unexpected routing matrix URL: ${url}`);
   const accountId = new Headers(init?.headers).get("ChatGPT-Account-ID");
   const accountIndex = ACCOUNT_IDS.indexOf(accountId as (typeof ACCOUNT_IDS)[number]);
@@ -430,10 +438,13 @@ const runCase = async (first: Outcome, second: Outcome, sequence: number): Promi
     const secondAuthRetry = reachesSecond && is401(second) ? 1 : 0;
     const secondGenericRetry = reachesSecond && is429(second) ? 1 : 0;
     const terminalCodexOutcome = reachesSecond ? second : first;
-    const expectedStatus = is401(terminalCodexOutcome) ? 503 : directStatus(terminalCodexOutcome);
+    const allCredentialsInvalid = is401(first) && is401(second);
+    let expectedStatus = directStatus(terminalCodexOutcome);
+    if (is401(terminalCodexOutcome)) expectedStatus = 503;
+    if (allCredentialsInvalid) expectedStatus = 200;
     assert.equal(response.status, expectedStatus, `${label}: final status`);
-    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex", `${label}: selected upstream`);
-    assert.equal(run.meteredCalls, 0, `${label}: no authoritative exhaustion in this matrix`);
+    assert.equal(response.headers.get("x-uos-upstream"), allCredentialsInvalid ? "metered" : "chatgpt_codex", `${label}: selected upstream`);
+    assert.equal(run.meteredCalls, allCredentialsInvalid ? 1 : 0, `${label}: paid fallback requires complete authoritative unavailability`);
     assert.equal(run.codexCalls["account-one"], 1 + firstAuthRetry + firstGenericRetry, `${label}: account one attempt count`);
     assert.equal(run.codexCalls["account-two"], reachesSecond ? 1 + secondAuthRetry + secondGenericRetry : 0, `${label}: account two attempt count`);
     assert.equal(run.refreshCalls["account-one"], firstAuthRetry, `${label}: account one refresh count`);
@@ -507,6 +518,109 @@ test("two-account Codex-to-Metered /v1/responses routing matrix", () =>
       resetCodexAuthCacheForTest();
       resetRuntimeConfigCacheForTest();
       resetProviderHealthThrottleForTest();
+      setKvForTest(null);
+    }
+  }));
+
+test("mixed exhausted and current-invalid Codex subscriptions fail over to the same model", () =>
+  runSequence(async (step) => {
+    const originalFetch = globalThis.fetch;
+    const originalMeteredApiKey = process.env.METERED_API_KEY;
+    const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
+    setKvForTest(kv);
+    process.env.METERED_API_KEY = "mixed-unavailable-test-key";
+    Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    try {
+      const scenarios = ["mixed", "all-invalid", "disabled", "cap-denied", "paid-failure", "generic-429", "stale-fingerprint"] as const;
+      for (const scenario of scenarios) {
+        await step(scenario, async () => {
+          const calls: string[] = [];
+          let paidModel: unknown = null;
+          await seedFixture();
+          const pool = (await memoryKv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY)).value;
+          assert.ok(pool);
+          const selected = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
+          assert.equal(selected.kind, "eligible");
+          if (scenario !== "all-invalid") {
+            const resetAt = Math.floor(Date.now() / 1000) + 453_376;
+            await markCodexQuotaBlocked(
+              selected.accounts[0],
+              Response.json({ error: { type: "usage_limit_reached", resets_at: resetAt } }, { status: 429, headers: { "Retry-After": "453376" } })
+            );
+          }
+          if (scenario === "stale-fingerprint") {
+            const state = (await memoryKv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY)).value;
+            assert.ok(state);
+            const second = state.slots[1];
+            assert.ok(second);
+            await memoryKv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, { ...state, slots: [state.slots[0], { ...second, invalid_credential_version: "stale-version" }] });
+          }
+          if (scenario === "cap-denied") {
+            const key = (await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(KEY_ID))).value;
+            await memoryKv.set(apiKeyIdKey(KEY_ID), { ...key, paid_fallback_limit_microcredits: 0 });
+          }
+          globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const url = requestUrl(input);
+            calls.push(url);
+            if (url === CODEX_RESPONSES_URL) {
+              if (scenario === "stale-fingerprint") return Promise.resolve(meteredSuccessResponse());
+              return Promise.resolve(jsonErrorResponse(scenario === "generic-429" ? 429 : 401));
+            }
+            if (url === CODEX_REFRESH_URL) return Promise.resolve(jsonErrorResponse(401));
+            if (url === `${METERED_BASE_URL}/v1/models`) {
+              return Promise.resolve(Response.json({ data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }] }));
+            }
+            if (url === METERED_RESPONSES_URL) {
+              const body = init?.body;
+              if (typeof body !== "string") throw new Error("paid fixture requires a serialized JSON request");
+              paidModel = JSON.parse(body).model;
+              return Promise.resolve(scenario === "paid-failure" ? jsonErrorResponse(503) : meteredSuccessResponse());
+            }
+            throw new Error(`Unexpected mixed-unavailable fixture URL: ${url}`);
+          });
+          const response = await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              body: JSON.stringify({ model: MODEL, input: "mixed unavailable", stream: false }),
+            }),
+            {
+              keyId: KEY_ID,
+              requestId: `mixed-unavailable-${scenario}`,
+              startedAtMs: Date.now(),
+              paidFallbackEnabled: scenario !== "disabled",
+              kernelOrg: null,
+              kernelRepo: null,
+            }
+          );
+          const payload = await response.json();
+          const paidExpected = ["mixed", "all-invalid", "paid-failure"].includes(scenario);
+          const completedExpected = scenario === "mixed" || scenario === "all-invalid" || scenario === "stale-fingerprint";
+          let expectedStatus = 503;
+          if (scenario === "generic-429") expectedStatus = 429;
+          if (completedExpected) expectedStatus = 200;
+          assert.equal(response.status, expectedStatus, JSON.stringify(payload));
+          assert.equal(response.headers.get("retry-after"), null);
+          assert.equal(calls.filter((url) => url === METERED_RESPONSES_URL).length, paidExpected ? 1 : 0);
+          if (completedExpected) assert.equal(payload.status, "completed");
+          if (paidExpected) assert.equal(paidModel, MODEL);
+          if (scenario === "disabled" || scenario === "cap-denied") assert.equal(payload.error.code, "codex_subscriptions_unavailable");
+          if (scenario === "mixed") {
+            assert.equal(response.headers.get("x-uos-upstream"), "metered");
+            assert.equal(calls.filter((url) => url === CODEX_RESPONSES_URL).length, 1);
+            assert.equal(calls.filter((url) => url === CODEX_REFRESH_URL).length, 1);
+            const current = await selectCodexRoutingAccountsStrong(pool, pool.accounts, Date.now(), MODEL);
+            assert.equal(current.kind, "quota_blocked");
+            assert.equal(current.fullCohortExhausted, false);
+          }
+        });
+      }
+    } finally {
+      await drainBackgroundTasks();
+      globalThis.fetch = originalFetch;
+      restoreEnv("METERED_API_KEY", originalMeteredApiKey);
+      restoreEnv("SURPLUS_API_KEY", originalSurplusApiKey);
+      resetCodexAuthCacheForTest();
+      resetRuntimeConfigCacheForTest();
       setKvForTest(null);
     }
   }));

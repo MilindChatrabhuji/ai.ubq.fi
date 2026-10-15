@@ -30,6 +30,7 @@ import {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
+  CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE,
   type CodexAuthAccountEntry,
   CodexError,
   codexAuthWarningForError,
@@ -59,6 +60,7 @@ import {
   type CodexAttemptPhase,
   type CodexBankedResetCandidate,
   CodexBankedResetRetryFenceError,
+  cancelResponseBody,
   codexErrorClass,
   codexStatusClass,
   fetchCodexResponseWithAuth,
@@ -205,10 +207,35 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     }
   });
 
-  const quotaBlockedOrRetryableResponse = (ctx.quotaBlockedOrRetryableResponse = async (retryAtMs: number | null = null): Promise<Response> =>
-    (await ctx.freshFullCohortExhaustedProof())
-      ? routingErrorResponse(429, "All configured Codex accounts are quota-blocked; retry after their next reset.", CODEX_QUOTA_BLOCKED_ERROR_CODE, retryAtMs)
-      : routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable", retryAtMs));
+  const freshFullCohortUnavailableProof = (ctx.freshFullCohortUnavailableProof = async (): Promise<boolean> => {
+    try {
+      const currentPoolEntry = await getAuthPoolEntry(true, true);
+      const currentSelection = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
+      return (currentSelection.kind === "quota_blocked" || currentSelection.kind === "credentials_invalid") && currentSelection.fullCohortUnavailable === true;
+    } catch {
+      return false;
+    }
+  });
+
+  const subscriptionsUnavailableResponse = (): Response =>
+    routingErrorResponse(
+      503,
+      "No Codex subscription can serve the requested model: quota is exhausted or current credentials are invalid.",
+      CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE
+    );
+
+  const quotaBlockedOrRetryableResponse = (ctx.quotaBlockedOrRetryableResponse = async (retryAtMs: number | null = null): Promise<Response> => {
+    if (await ctx.freshFullCohortExhaustedProof()) {
+      return routingErrorResponse(
+        429,
+        "All configured Codex accounts are quota-blocked; retry after their next reset.",
+        CODEX_QUOTA_BLOCKED_ERROR_CODE,
+        retryAtMs
+      );
+    }
+    if (await ctx.freshFullCohortUnavailableProof()) return subscriptionsUnavailableResponse();
+    return routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable", retryAtMs);
+  });
 
   const authFailureResponse = (ctx.authFailureResponse = (error: CodexError | null): Response => {
     const response = routingErrorResponse(
@@ -820,9 +847,18 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     return disposition.response;
   });
 
-  const authorizePaidFallbackForCompleteQuotaEvidence = (ctx.authorizePaidFallbackForCompleteQuotaEvidence = async (response: Response): Promise<Response> => {
+  const authorizePaidFallbackForCompleteCapacityEvidence = (ctx.authorizePaidFallbackForCompleteCapacityEvidence = async (
+    response: Response
+  ): Promise<Response> => {
     if (response.status === 429 && (await ctx.freshFullCohortExhaustedProof())) {
       codexRoutingErrors.set(response, CODEX_QUOTA_BLOCKED_ERROR_CODE);
+    } else if ((response.status === 401 || response.status === 429) && (await ctx.freshFullCohortUnavailableProof())) {
+      if (response.status === 401) {
+        codexRoutingErrors.set(response, CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE);
+        return response;
+      }
+      cancelResponseBody(response);
+      return ctx.decorateAuthWarning(subscriptionsUnavailableResponse());
     }
     return response;
   });
@@ -859,6 +895,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     noteCodexAuthFailure,
     decorateAuthWarning,
     freshFullCohortExhaustedProof,
+    freshFullCohortUnavailableProof,
     quotaBlockedOrRetryableResponse,
     authFailureResponse,
     ensureActiveRoutingAdmissionCurrent,
@@ -883,7 +920,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     fetchAttempt,
     refreshAfter401,
     classify429,
-    authorizePaidFallbackForCompleteQuotaEvidence,
+    authorizePaidFallbackForCompleteCapacityEvidence,
     persistVerifiedCapacityReset,
   });
 };

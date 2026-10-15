@@ -121,6 +121,7 @@ type SerialSelectionContext = Readonly<{
   capacitySnapshotJson: string;
   eligibleInPoolOrder: readonly RoutingAccount[];
   fullCohortExhausted: boolean;
+  fullCohortUnavailable: boolean;
   activeEvaluation: CodexRoutingAccountEvaluation | null;
 }>;
 
@@ -150,7 +151,8 @@ const blockedSerialSelection = (context: SerialSelectionContext, current: CodexA
     context.fullCohortExhausted,
     { selection: current },
     context.poolSnapshotJson,
-    context.capacitySnapshotJson
+    context.capacitySnapshotJson,
+    context.fullCohortUnavailable
   );
 
 /** A missing active row bootstraps the first account eligible under the requested model. */
@@ -235,6 +237,12 @@ const serialSelectionDecision = (
   const activeEvaluation = accountForActive ? (evaluations.byAccountId.get(accountForActive.account_id) ?? null) : null;
   const fullCohortExhausted =
     pool.accounts.length > 0 && pool.accounts.every((auth) => evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason === "quota_exhausted");
+  const fullCohortUnavailable =
+    pool.accounts.length > 0 &&
+    pool.accounts.every((auth) => {
+      const reason = evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason;
+      return reason === "quota_exhausted" || reason === "credential_invalid";
+    });
   const context: SerialSelectionContext = {
     evaluations,
     poolVersionstamp,
@@ -243,6 +251,7 @@ const serialSelectionDecision = (
     capacitySnapshotJson,
     eligibleInPoolOrder,
     fullCohortExhausted,
+    fullCohortUnavailable,
     activeEvaluation,
   };
   if (active === null) return serialBootstrapDecision(context);

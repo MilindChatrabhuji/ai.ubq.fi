@@ -73,6 +73,7 @@ export type CodexResponseOperations = {
   noteCodexAuthFailure: (error: unknown) => void;
   decorateAuthWarning: (response: Response) => Response;
   freshFullCohortExhaustedProof: () => Promise<boolean>;
+  freshFullCohortUnavailableProof: () => Promise<boolean>;
   quotaBlockedOrRetryableResponse: (retryAtMs?: number | null) => Promise<Response>;
   authFailureResponse: (error: CodexError | null) => Response;
   ensureActiveRoutingAdmissionCurrent: (routing: RoutingAccount) => Promise<void>;
@@ -131,7 +132,7 @@ export type CodexResponseOperations = {
     trigger: "401" | "proactive"
   ) => Promise<Readonly<{ auth: CodexAuthState; routing: RoutingAccount }>>;
   classify429: (accountEntry: CodexAuthAccountEntry, routing: RoutingAccount, auth: CodexAuthState, response: Response) => Promise<Response>;
-  authorizePaidFallbackForCompleteQuotaEvidence: (response: Response) => Promise<Response>;
+  authorizePaidFallbackForCompleteCapacityEvidence: (response: Response) => Promise<Response>;
   persistVerifiedCapacityReset: (
     candidate: CodexBankedResetCandidate,
     record: NonNullable<Awaited<ReturnType<typeof reconcileCodexBankedReset>>>["record"]
@@ -192,7 +193,9 @@ export const createCodexResponseState = async (
   // routing evaluation reads a bounded, current value.
   await loadOverageUsageSettings(poolEntry.pool);
   const selected = await selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, Date.now(), requestedModel);
-  const terminalSelection = initialCodexSelectionResponse(selected);
+  // Current-invalid pools use the same fresh complete proof as mixed pools
+  // before they may authorize paid fallback.
+  const terminalSelection = selected.kind === "credentials_invalid" ? null : initialCodexSelectionResponse(selected);
   if (terminalSelection) return { kind: "terminal" as const, response: terminalSelection };
   const accountEntries: CodexDispatchAccountEntry[] =
     selected.kind === "eligible" ? selected.accounts.map((routing) => ({ ...poolEntry, auth: routing.auth, routing })) : [];

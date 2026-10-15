@@ -25,6 +25,7 @@ import {
   CODEX_CLIENT_VERSION,
   CODEX_ORIGINATOR,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
+  CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE,
   CODEX_UPSTREAM_DEGRADED_ERROR_CODE,
   CodexError,
   accessTokenExpired,
@@ -250,7 +251,7 @@ const routingErrorResponse = (status: 401 | 404 | 429 | 503, message: string, co
     }),
     { status, headers }
   );
-  if (code === CODEX_QUOTA_BLOCKED_ERROR_CODE || code === CODEX_UPSTREAM_DEGRADED_ERROR_CODE) {
+  if (code === CODEX_QUOTA_BLOCKED_ERROR_CODE || code === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE || code === CODEX_UPSTREAM_DEGRADED_ERROR_CODE) {
     codexRoutingErrors.set(response, code);
   }
   return response;

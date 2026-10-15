@@ -914,12 +914,14 @@ test("paid fallback releases its dispatch intent when metered quota admission fa
   }
 });
 
-test("expired Codex credentials exhaust both accounts and fail closed without paid fallback", async () => {
+test("expired Codex credentials prove both accounts unavailable and use same-model paid fallback", async () => {
   kv.values.clear();
   resetProviderHealthThrottleForTest();
   resetApiKeyPolicyCacheForTest();
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
   kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool(2));
   const token = `u_${"b".repeat(64)}`;
@@ -929,11 +931,14 @@ test("expired Codex credentials exhaust both accounts and fail closed without pa
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const originalMeteredApiKey = process.env.METERED_API_KEY;
+  const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
   const accountIds: string[] = [];
+  const paidModels: unknown[] = [];
   const logs: unknown[][] = [];
   let refreshCalls = 0;
   let meteredCalls = 0;
   process.env.METERED_API_KEY = "metered-test-key";
+  Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
   globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     if (request.url === "https://auth.openai.com/oauth/token") {
@@ -945,8 +950,14 @@ test("expired Codex credentials exhaust both accounts and fail closed without pa
         })
       );
     }
+    if (request.url === "https://api.openlux.ai/v1/models") {
+      return Promise.resolve(Response.json({ data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }] }));
+    }
     if (request.url === "https://api.openlux.ai/v1/responses") {
       meteredCalls += 1;
+      const body = init?.body;
+      if (typeof body !== "string") throw new Error("paid fixture requires a serialized JSON request");
+      paidModels.push(JSON.parse(body).model);
       return Promise.resolve(sse());
     }
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
@@ -964,29 +975,36 @@ test("expired Codex credentials exhaust both accounts and fail closed without pa
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ input: "ping", stream: true }),
+        body: JSON.stringify({ model: MODEL, input: "ping", stream: true }),
       })
     );
-    assert.equal(response.status, 503);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "metered");
+    assert.equal(response.headers.get("retry-after"), null);
     await response.text();
     assert.equal(accountIds.length, 2);
     assert.equal(new Set(accountIds).size, 2);
     assert.equal(refreshCalls, 2);
-    assert.equal(meteredCalls, 0);
+    assert.equal(meteredCalls, 1);
+    assert.deepEqual(paidModels, [MODEL]);
     assert.deepEqual(await Promise.all(["acct-1", "acct-2"].map(async (accountId) => (await getCodexProviderHealth(accountId)).state)), ["invalid", "invalid"]);
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
-    assert.equal(terminal.provider, "chatgpt_codex");
-    assert.equal(terminal.fallback_reason, null);
-    assert.equal(terminal.stream_terminal_type, "error");
+    assert.equal(terminal.provider, "metered");
+    assert.equal(terminal.fallback_reason, "primary_subscriptions_unavailable");
+    assert.equal(terminal.stream_terminal_type, "response.completed");
   } finally {
     console.info = originalInfo;
     globalThis.fetch = originalFetch;
     resetCodexAuthCacheForTest();
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
     if (originalMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
     else process.env.METERED_API_KEY = originalMeteredApiKey;
+    if (originalSurplusApiKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = originalSurplusApiKey;
   }
 });
 
