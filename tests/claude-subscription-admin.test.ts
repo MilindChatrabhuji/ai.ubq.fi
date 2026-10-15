@@ -18,11 +18,30 @@ import {
 import { CLAUDE_CODE_CONFIG_COOLDOWN_MS, loadClaudeCodeQuotaState, recordClaudeCodeQuotaOutcome } from "../src/provider/claude-code-quota.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
+import { CLAUDE_CODE_ACCOUNTS_KEY, resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 class AdminKv {
   readonly values = new Map<string, unknown>();
+
+  atomic() {
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (..._entries: unknown[]) => operation,
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => this.values.set(keyOf(key), value));
+        return operation;
+      },
+      commit: () => {
+        for (const write of writes) {
+          write();
+        }
+        return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+      },
+    };
+    return operation;
+  }
 
   get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
@@ -102,7 +121,7 @@ test("the admin status route reports the tier without any secret material", asyn
       assert.equal(body.data.credential.label, "primary");
       assert.equal(JSON.stringify(body).includes("ABCDEFGHIJ"), false, "the full secret never appears in an admin response");
       assert.equal(body.hint, "sk-ant-usr-1A6...BwAA");
-      assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])), true);
+      assert.equal(kv.values.has(keyOf(CLAUDE_CODE_ACCOUNTS_KEY)), true);
     });
 
     const status = await handleAdminClaudeCodeAuthGet();
@@ -171,27 +190,28 @@ test("a workspace pin is stored, validated, and reported with its source", async
   });
 });
 
-test("clearing the stored credential falls back to the environment and clearing guards removes them", async () => {
+test("clearing account guards preserves observations and account removal remains a tombstone", async () => {
   await withAdminKv(async (kv) => {
     await withStubbedAnthropic(modelsOk, async () => {
       await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-usr-1A6ABCDEFGHIJKLMNOPBwAA" }));
     });
-    const cleared = await handleAdminClaudeCodeAuthDelete();
-    assert.equal(cleared.status, 200);
-    assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])), false);
-    assert.equal(await loadClaudeCodeStoredCredential(kv as unknown as Kv), null);
-
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
     await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
+      binding: account,
       observation: null,
       config_error: { kind: "billing_blocked", status: 400, message: "credit balance too low", retry_after_ms: null },
     });
-    const cooling = await loadClaudeCodeQuotaState(kv as unknown as Kv);
+    const cooling = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
     assert.equal(cooling?.last_error?.kind, "billing_blocked");
     const clearedGuards = await handleAdminClaudeCodeQuotaClear();
     const payload = await clearedGuards.json();
     assert.equal(payload.guards_cleared, true);
     assert.equal(payload.data.quota.cooldown_until_ms, null);
     assert.equal(payload.data.quota.last_error, null);
+    const cleared = await handleAdminClaudeCodeAuthDelete();
+    assert.equal(cleared.status, 200);
+    assert.equal(await loadClaudeCodeStoredCredential(kv as unknown as Kv), null);
   });
 });
 
@@ -224,7 +244,13 @@ test("a workspace-only submission without any credential reports the missing cre
 
 test("configuration cooldown recorded by the tier is visible to the admin readback", async () => {
   await withAdminKv(async (kv) => {
+    await withStubbedAnthropic(modelsOk, async () => {
+      await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-config" }));
+    });
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
     await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
+      binding: account,
       observation: null,
       config_error: { kind: "workspace_not_found", status: 404, message: "Workspace `72cde404` not found.", retry_after_ms: null },
       nowMs: Date.now(),

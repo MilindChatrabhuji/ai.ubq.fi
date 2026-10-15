@@ -23,13 +23,14 @@ import {
   type ClaudeCodeFetch,
   type ClaudeCodeResponseClassification,
 } from "../provider/claude-code.ts";
-import { claudeCodeStateGeneration, resolveClaudeCodeCredential, resolveClaudeCodeWorkspace } from "../provider/claude-code-credentials.ts";
+import { claudeCodeStateGeneration } from "../provider/claude-code-credentials.ts";
 import { fetchClaudeCodeModels } from "../provider/claude-code-models.ts";
 import { isRecord } from "../utils.ts";
 import { loadClaudeCodeQuotaState, recordClaudeCodeQuotaOutcome } from "../provider/claude-code-quota.ts";
 import { recordClaudeCodeProviderHealth } from "../provider/health.ts";
 import { cancelResponseBody } from "../upstream-wire.ts";
 import type { ProviderHealthEvent } from "../provider/health.ts";
+import { resolveClaudeCodeAccount, isClaudeCodeAccountCurrent } from "../provider/claude-code-accounts.ts";
 
 /** The health event each upstream classification honestly maps to. */
 const HEALTH_EVENT_BY_CLASSIFICATION: Readonly<Record<ClaudeCodeResponseClassification["kind"], ProviderHealthEvent>> = {
@@ -59,6 +60,8 @@ const locallyEligible = (
   if (!isProviderEnabled("claude_code", selection)) return false;
   return keyId !== null && allowedKeyIds.size > 0 && allowedKeyIds.has(keyId);
 };
+const isLocalClaudeRequestFailure = (error: unknown): boolean =>
+  error instanceof ClaudeCodeError && (error.code === "claude_code_request_invalid" || error.code === "claude_code_credential_missing");
 const requestsDisabledThinking = (body: Record<string, unknown>): boolean => isRecord(body.reasoning) && body.reasoning.effort === "none";
 
 /**
@@ -89,11 +92,11 @@ export const attemptClaudeCodeSubscription = async (
 
   const quotaKv = await getKv();
   const generation = claudeCodeStateGeneration(quotaKv);
-  const [credential, workspace, quota] = await Promise.all([
-    resolveClaudeCodeCredential(quotaKv, options.env),
-    resolveClaudeCodeWorkspace(quotaKv, options.env),
-    loadClaudeCodeQuotaState(quotaKv),
-  ]);
+  const account = await resolveClaudeCodeAccount(quotaKv, options.env);
+  if (!account) return null;
+  const credential = account.credential;
+  const workspace = account.workspace;
+  const quota = await loadClaudeCodeQuotaState(quotaKv, account);
   const eligibility = resolveClaudeCodeEligibility({
     model: options.model,
     keyId,
@@ -128,6 +131,7 @@ export const attemptClaudeCodeSubscription = async (
   try {
     result = await fetchClaudeCodeResponses(body, {
       credential: eligibility.credential,
+      accountBinding: account,
       workspace: eligibility.workspace,
       kv: quotaKv,
       env: options.env,
@@ -137,7 +141,7 @@ export const attemptClaudeCodeSubscription = async (
       supportsNativeDisabledThinking: wantsDisabledThinking && (await supportsDisabledThinking()),
       beforeDispatch: async () => {
         const dispatch = await options.usageContext?.beforeProviderDispatch?.("claude_code");
-        if (wantsDisabledThinking && !(await supportsDisabledThinking())) {
+        if (!(await isClaudeCodeAccountCurrent(quotaKv, account)) || (wantsDisabledThinking && !(await supportsDisabledThinking()))) {
           await dispatch?.cancelBeforeTransport();
           throw new ClaudeCodeError("Claude disabled-thinking credential/workspace proof changed before dispatch.", "claude_code_request_invalid", 400);
         }
@@ -153,21 +157,24 @@ export const attemptClaudeCodeSubscription = async (
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     // A local build failure never reached the upstream, so it must not record
     // an upstream health event; only real transport failures degrade the route.
-    const localRequestFailure =
-      error instanceof ClaudeCodeError && (error.code === "claude_code_request_invalid" || error.code === "claude_code_credential_missing");
-    if (!localRequestFailure) {
-      await bestEffortPaidFallbackBookkeeping("claude_code failure recording", () => recordClaudeCodeProviderHealth("upstream_error", null));
+    if (!isLocalClaudeRequestFailure(error)) {
+      await bestEffortPaidFallbackBookkeeping("claude_code failure recording", () =>
+        recordClaudeCodeProviderHealth("upstream_error", null, Date.now, null, account)
+      );
     }
     return null;
   }
 
   const classification = result.classification;
+  const outcomeAccount = result.account_binding ?? account;
   const configurationRejection = isClaudeCodeConfigurationKind(classification.kind)
     ? { kind: classification.kind, status: result.response.status, message: classification.detail, retry_after_ms: classification.retry_after_ms }
     : null;
   await bestEffortPaidFallbackBookkeeping("claude_code quota recording", () =>
     recordClaudeCodeQuotaOutcome(quotaKv, {
       observation: result.quota,
+      binding: outcomeAccount,
+      response_status: result.response.status,
       exhaustion: classification.exhaustion,
       transient: classification.kind === "transient_rate_limited" ? { retry_after_ms: classification.retry_after_ms } : null,
       config_error: configurationRejection,
@@ -175,7 +182,7 @@ export const attemptClaudeCodeSubscription = async (
     })
   );
   await bestEffortPaidFallbackBookkeeping("claude_code health recording", () =>
-    recordClaudeCodeProviderHealth(HEALTH_EVENT_BY_CLASSIFICATION[classification.kind], result.response.status, Date.now, result.request_id)
+    recordClaudeCodeProviderHealth(HEALTH_EVENT_BY_CLASSIFICATION[classification.kind], result.response.status, Date.now, result.request_id, outcomeAccount)
   );
 
   if (classification.kind === "ok") {
