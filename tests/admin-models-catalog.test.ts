@@ -1,5 +1,6 @@
 import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import { afterEach, beforeEach, test } from "bun:test";
 import assert from "node:assert/strict";
@@ -683,6 +684,53 @@ test("the Models tab renders checkbox tools instead of a free-text whitelist", (
   assert.match(modelsScript, /source\?\.configured !== false/);
   assert.match(modelsScript, /deepseek: "DeepSeek"/);
   assert.match(modelsScript, /cerebras: "Cerebras"/);
+});
+
+test("model whitelist save preserves a checkbox edit made while save is pending", async () => {
+  type SaveResponse = { ok: boolean; status: number; json: () => Promise<{ model_ids: string[] }> };
+  const saveStart = adminScript.indexOf("const saveModelsWhitelist = async () => {");
+  const saveEnd = adminScript.indexOf("\n\nconst discardModelsChanges", saveStart);
+  assert.ok(saveStart >= 0 && saveEnd > saveStart, "the model whitelist save handler must stay discoverable");
+
+  let resolveResponse!: (response: SaveResponse) => void;
+  const pendingResponse = new Promise<SaveResponse>((resolve) => {
+    resolveResponse = resolve;
+  });
+  const context = {
+    apiUrl: (path: string) => path,
+    fetch: () => pendingResponse,
+    formatNumber: (value: number) => String(value),
+    getAdminToken: () => "admin-token",
+    hasAdminCredential: () => true,
+    modelsHasUnsavedChanges: () => true,
+    modelsLoadedAt: 0,
+    modelsSaveError: "",
+    modelsSavedSelection: new Set(["before-save"]),
+    modelsSelection: new Set(["initial"]),
+    modelsSelectedIds: () => ["initial"],
+    modelsSelectionFromIds: (ids: unknown) =>
+      new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []),
+    modelsSaving: false,
+    modelsWhitelistSave: { disabled: false },
+    renderModelsPicker: () => {},
+    setModelsWhitelistBadge: () => {},
+    toast: { error: () => {}, success: () => {} },
+    updateModelsStatus: () => {},
+  };
+  runInNewContext(
+    `${adminScript.slice(saveStart, saveEnd)}\nglobalThis.saveModelsWhitelist = saveModelsWhitelist;`,
+    context
+  );
+  const save = (context as typeof context & { saveModelsWhitelist: () => Promise<void> }).saveModelsWhitelist;
+  const savePromise = save();
+  // This is the state change performed by the checkbox change listener after Save is clicked.
+  context.modelsSelection.add("edited-after-save");
+  resolveResponse({ ok: true, status: 200, json: async () => ({ model_ids: ["initial"] }) });
+  await savePromise;
+
+  assert.deepEqual([...context.modelsSelection].sort(), ["edited-after-save", "initial"]);
+  assert.deepEqual([...context.modelsSavedSelection], ["initial"]);
+  assert.notDeepEqual([...context.modelsSelection].sort(), [...context.modelsSavedSelection].sort());
 });
 
 test("provider roster completion rerenders Models after normalizing its filter", () => {
