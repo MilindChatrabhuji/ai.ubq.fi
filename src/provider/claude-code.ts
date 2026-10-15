@@ -19,7 +19,6 @@ import {
   type ClaudeCodeResolvedCredential,
   type ClaudeCodeResolvedWorkspace,
   CLAUDE_CODE_OAUTH_TOKEN_ENV,
-  CLAUDE_CODE_WORKSPACE_ID_ENV,
   classifyClaudeCodeCredentialKind,
   resolveClaudeCodeCredential,
   resolveClaudeCodeWorkspace,
@@ -43,7 +42,7 @@ export const CLAUDE_CODE_BASE_URL = "https://api.anthropic.com";
 export const CLAUDE_CODE_MESSAGES_URL = `${CLAUDE_CODE_BASE_URL}/v1/messages`;
 export const CLAUDE_CODE_MODELS_URL = `${CLAUDE_CODE_BASE_URL}/v1/models`;
 export const CLAUDE_CODE_WORKSPACES_URL = `${CLAUDE_CODE_BASE_URL}/v1/organizations/workspaces`;
-export { CLAUDE_CODE_OAUTH_TOKEN_ENV, CLAUDE_CODE_WORKSPACE_ID_ENV };
+export { CLAUDE_CODE_OAUTH_TOKEN_ENV };
 export const CLAUDE_CODE_ALLOWED_KEY_IDS_ENV = "CLAUDE_CODE_ALLOWED_KEY_IDS";
 export const CLAUDE_CODE_ANTHROPIC_VERSION = "2023-06-01";
 export const CLAUDE_CODE_OAUTH_BETA = "oauth-2025-04-20";

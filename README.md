@@ -418,6 +418,9 @@ ubq-ai admin keys list | jq
   `POST /admin/providers/claude-code/quota/clear` drops a recorded exhaustion block, cooldown, or configuration error.
   `/admin/providers` and the admin panel's Claude subscription card report credential provenance, the workspace
   selection, the routing gates, unified and standard rate-limit windows, the last upstream outcome, and health.
+  `/admin/providers/capacity` additionally carries a live `claude` analytics row (credential direction, workspace,
+  windows, guards, last error) that the Analytics capacity list renders next to the Codex subscription rows; the stored
+  Codex/metered capacity snapshot record keeps its own three sources, so the event sampler pays no extra KV reads.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
