@@ -2,9 +2,11 @@ import type { Kv, KvEntryMaybe } from "#kv";
 import { type CodexCapacityAccount, getCodexCapacityAccounts } from "../codex/index.ts";
 import { json } from "../http.ts";
 import { getKv } from "../kv.ts";
-import { resolveClaudeCodeCredential, resolveClaudeCodeWorkspace } from "./claude-code-credentials.ts";
+import { loadClaudeCodeAccountStore, resolveClaudeCodeAccount, type ClaudeCodeAccountBinding } from "./claude-code-accounts.ts";
 import type { ClaudeCodeEnvLookup } from "./claude-code.ts";
-import { loadClaudeCodeQuotaState, type ClaudeCodeQuotaState } from "./claude-code-quota.ts";
+import { loadClaudeCodeQuotaState, registerClaudeCodeObservationRecorder, type ClaudeCodeQuotaState } from "./claude-code-quota.ts";
+import { claudeCapacityUsedPercent, readClaudeCapacityHistory, recordClaudeCapacityObservation } from "./claude-capacity-history.ts";
+import { listClaudeCapacityRollups } from "./claude-capacity-rollups.ts";
 import { getClaudeCodeProviderHealth } from "./health.ts";
 import { type CodexCapacityRoutingObservationInput, recordCodexCapacityRoutingObservations } from "../codex/account-routing.ts";
 import {
@@ -84,6 +86,9 @@ import {
   recoverRateLimitObservations,
   recoverySlotsForSnapshot,
 } from "./capacity-history.ts";
+
+// Handler startup imports this module before inference; no admin visit is needed.
+registerClaudeCodeObservationRecorder(recordClaudeCapacityObservation);
 
 export const PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS = PROVIDER_CAPACITY_HISTORY_RETENTION_MS;
 
@@ -256,19 +261,14 @@ const meteredCapacitySource = (snapshot: MeteredQuotaSnapshot | null, snapshotAt
   };
 };
 
-/** Unified headers report a fraction (0..1); a value above 1 is already a percentage. */
-const claudeUsedPercent = (utilization: number | null): number | null => {
-  if (utilization === null) return null;
-  return utilization <= 1 ? utilization * 100 : utilization;
-};
-
+/** Unified headers report a fraction; normalize and clamp without guessing percent units. */
 const claudeCapacityWindow = (
   window: Readonly<{ status: string | null; utilization: number | null; reset_at_ms: number | null; observed_at_ms: number }> | undefined
 ): ProviderCapacityClaudeWindow | null =>
   window
     ? {
         status: window.status,
-        used_percent: claudeUsedPercent(window.utilization),
+        used_percent: claudeCapacityUsedPercent(window.utilization),
         reset_at_ms: window.reset_at_ms,
         observed_at_ms: window.observed_at_ms,
       }
@@ -284,14 +284,13 @@ const claudeStandardLimits = (quota: ClaudeCodeQuotaState | null): ProviderCapac
   }));
 };
 
-const claudeLatestObservationMs = (quota: ClaudeCodeQuotaState | null, healthLastObservedAtMs: number | null): number | null => {
+const claudeLatestObservationMs = (quota: ClaudeCodeQuotaState | null): number | null => {
   const candidates: number[] = [];
   const push = (value: number | null | undefined): void => {
     if (typeof value === "number" && Number.isFinite(value)) candidates.push(value);
   };
   for (const window of Object.values(quota?.windows ?? {})) push(window.observed_at_ms);
   for (const window of Object.values(quota?.standard ?? {})) push(window.observed_at_ms);
-  push(healthLastObservedAtMs);
   return candidates.length ? Math.max(...candidates) : null;
 };
 
@@ -322,21 +321,27 @@ export const unavailableClaudeCapacitySource = (snapshotAtMs: number): ProviderC
  * tier genuinely cannot serve until that guard clears. A never-observed but
  * eligible tier stays `available` (there is nothing to be stale yet).
  */
-export const claudeCapacitySource = async (kv: Kv | null, snapshotAtMs: number, env?: ClaudeCodeEnvLookup): Promise<ProviderCapacityClaudeSource> => {
-  const [credential, workspace, quota, health] = await Promise.all([
-    resolveClaudeCodeCredential(kv, env).catch(() => null),
-    resolveClaudeCodeWorkspace(kv).catch(() => null),
-    loadClaudeCodeQuotaState(kv).catch(() => null),
-    getClaudeCodeProviderHealth().catch(() => null),
-  ]);
+const capacitySourceForClaudeAccount = async (
+  kv: Kv | null,
+  snapshotAtMs: number,
+  binding: ClaudeCodeAccountBinding | null
+): Promise<ProviderCapacityClaudeSource> => {
+  const credential = binding?.credential ?? null;
+  const workspace = binding?.workspace ?? null;
+  const [quota, health] = binding
+    ? await Promise.all([loadClaudeCodeQuotaState(kv, binding).catch(() => null), getClaudeCodeProviderHealth(() => snapshotAtMs, binding).catch(() => null)])
+    : [null, null];
   const blockedUntilMs = quota?.blocked_until_ms ?? null;
   const cooldownUntilMs = quota?.cooldown_until_ms ?? null;
   const blocked = blockedUntilMs !== null && blockedUntilMs > snapshotAtMs;
   const cooling = cooldownUntilMs !== null && cooldownUntilMs > snapshotAtMs;
   const lastError = quota?.last_error ?? null;
-  const observedAtMs = claudeLatestObservationMs(quota, health?.last_observed_at_ms ?? null);
+  // A healthy response without quota headers cannot refresh old quota evidence.
+  const observedAtMs = claudeLatestObservationMs(quota);
   const failing = blocked || cooling || lastError !== null;
-  const state: ProviderCapacityClaudeSource["state"] = !credential || failing ? "unavailable" : "available";
+  let state: ProviderCapacityClaudeSource["state"] = "available";
+  if (!credential || failing) state = "unavailable";
+  else if (observedAtMs !== null && snapshotAtMs - observedAtMs > PROVIDER_CAPACITY_SOURCE_STALE_MS) state = "stale";
   let failureKind: ProviderCapacityFailureKind | null = null;
   if (!credential) failureKind = "not_configured";
   else if (failing) failureKind = "upstream_error";
@@ -346,6 +351,8 @@ export const claudeCapacitySource = async (kv: Kv | null, snapshotAtMs: number, 
   return {
     source: "claude_code",
     label: "Claude subscription",
+    account_id: binding?.account_id ?? null,
+    account_cohort_id: binding?.account_cohort_id ?? null,
     state,
     source_observed_at_ms: observedAtMs,
     snapshot_at_ms: snapshotAtMs,
@@ -368,6 +375,21 @@ export const claudeCapacitySource = async (kv: Kv | null, snapshotAtMs: number, 
           at_ms: lastError.at_ms,
         }
       : null,
+  };
+};
+
+export const claudeCapacitySource = async (kv: Kv | null, snapshotAtMs: number, env?: ClaudeCodeEnvLookup): Promise<ProviderCapacityClaudeSource> =>
+  await capacitySourceForClaudeAccount(kv, snapshotAtMs, await resolveClaudeCodeAccount(kv, env).catch(() => null));
+
+const claudeCapacityRoster = async (kv: Kv | null, snapshotAtMs: number) => {
+  if (!kv) return { claude: unavailableClaudeCapacitySource(snapshotAtMs), claude_accounts: [] };
+  // The foundation validates the bounded roster before any per-account read.
+  // Resolve once so old clients see exactly the active row from this same roster.
+  const store = await loadClaudeCodeAccountStore(kv);
+  const accounts = await Promise.all(store.accounts.map((binding) => capacitySourceForClaudeAccount(kv, snapshotAtMs, binding)));
+  return {
+    claude: accounts.find((source) => source.account_id === store.active_account_id) ?? unavailableClaudeCapacitySource(snapshotAtMs),
+    claude_accounts: accounts,
   };
 };
 
@@ -771,6 +793,7 @@ export const handleProviderCapacityRollups = async (
   const windowDays = providerCapacityResearchWindowDays(new URL(request.url).searchParams.get("window_days"));
   const windowMs = windowDays * 24 * 60 * 60_000;
   const rollups = kv ? await listProviderCapacityRollups(kv, { sinceMs: Math.max(0, nowMs - windowMs), nowMs }).catch(() => null) : null;
+  const claudeRollups = await listClaudeCapacityRollups(kv, Math.max(0, nowMs - windowMs), nowMs);
   return json(
     200,
     {
@@ -783,6 +806,9 @@ export const handleProviderCapacityRollups = async (
       // A failed scan must not masquerade as an empty curve.
       rollup_scan: rollups === null ? "unavailable" : "ok",
       rollups: rollups ?? [],
+      claude_rollup_scan: claudeRollups.scan,
+      claude_rollup_truncated: claudeRollups.truncated,
+      claude_rollups: claudeRollups.points,
     },
     { "Cache-Control": "no-store" }
   );
@@ -798,6 +824,7 @@ export const handleProviderCapacity = async (
   // (retention rows only) and never touches the capacity rollups.
   const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
+  const claudeHistory = readClaudeCapacityHistory(kv, nowMs);
   const ledgerGrowth = await readPaidFallbackLedgerGrowth(kv, { nowMs, retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS });
   try {
     const live = new URL(request.url).searchParams.get("refresh") === "live";
@@ -809,18 +836,26 @@ export const handleProviderCapacity = async (
     // its bounded cold wait. A refresh that throws keeps the last known
     // snapshot; a refresh that reaches upstream but fails leaves the affected
     // source unavailable rather than fabricating a percentage.
-    const claude = await claudeCapacitySource(kv, nowMs).catch(() => unavailableClaudeCapacitySource(nowMs));
+    const claudeRoster = await claudeCapacityRoster(kv, nowMs).catch(() => ({ claude: unavailableClaudeCapacitySource(nowMs), claude_accounts: [] }));
     const cached = await getPersistedProviderCapacityView(options).catch(() => null);
     if (!live && cached && capacityViewIsFresh(cached, safeNow(options.now ?? Date.now))) {
-      return json(200, { ...cached, claude, prompt_cache: await promptCache, ledger_growth: ledgerGrowth }, { "Cache-Control": "no-store" });
+      return json(
+        200,
+        { ...cached, ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+        { "Cache-Control": "no-store" }
+      );
     }
     const refreshed = await refreshProviderCapacityInternal(options, live).catch(() => null);
     const view = refreshed ?? cached ?? unavailableView(Date.now(), [], [], [], []);
-    return json(200, { ...view, claude, prompt_cache: await promptCache, ledger_growth: ledgerGrowth }, { "Cache-Control": "no-store" });
+    return json(
+      200,
+      { ...view, ...claudeRoster, claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+      { "Cache-Control": "no-store" }
+    );
   } catch {
     return json(
       200,
-      { ...unavailableView(Date.now(), [], [], [], []), prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+      { ...unavailableView(Date.now(), [], [], [], []), claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
       { "Cache-Control": "no-store" }
     );
   }

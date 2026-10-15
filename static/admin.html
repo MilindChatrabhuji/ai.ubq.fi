@@ -768,6 +768,17 @@
                   <div data-card-body>
                     <p id="claude-credential-summary" data-help>Credential status unavailable.</p>
                     <label data-field>
+                      <span data-label>Local account</span>
+                      <select id="claude-account-select" aria-describedby="claude-credential-help"></select>
+                    </label>
+                    <div data-action-row>
+                      <button id="claude-account-activate" type="button">Make active</button>
+                    </div>
+                    <label data-field>
+                      <span data-label>Local label (optional, not a verified profile)</span>
+                      <input id="claude-account-label" type="text" autocomplete="off" maxlength="64" />
+                    </label>
+                    <label data-field>
                       <span data-label>Credential</span>
                       <input
                         id="claude-credential-input"
@@ -792,8 +803,10 @@
                       />
                     </label>
                     <small id="claude-credential-help" data-field-help>
-                      Saving replaces the stored credential; clearing it uses the environment credential again. Save an
-                      empty workspace to remove its pin. Clear guards allows the next eligible request to retry.
+                      Choose an account before replacing its credential, or choose Add account to import another one.
+                      Import does not grant access. Save an empty workspace to remove its pin. Clear guards permits a
+                      retry, not a subscription reset. Provider profile, refresh and banked-reset actions are not
+                      established.
                     </small>
                     <div data-action-row>
                       <button id="claude-credential-save" type="button" data-variant="primary">Save credential</button>
@@ -802,6 +815,21 @@
                       <button id="claude-quota-clear" type="button">Clear guards</button>
                     </div>
                     <p id="claude-subscription-status" data-field-help role="status" aria-live="polite"></p>
+                    <label data-field>
+                      <span data-label>Allowed API key IDs</span>
+                      <textarea
+                        id="claude-access-input"
+                        rows="3"
+                        autocomplete="off"
+                        spellcheck="false"
+                        aria-describedby="claude-access-help"
+                      ></textarea>
+                    </label>
+                    <small id="claude-access-help" data-field-help
+                      >One non-secret key ID per line; an empty list denies everyone.</small
+                    >
+                    <p id="claude-access-source" data-field-help></p>
+                    <div data-action-row><button id="claude-access-save" type="button">Save access</button></div>
                   </div>
                 </details>
               </div>
