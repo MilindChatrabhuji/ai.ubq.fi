@@ -112,6 +112,8 @@ export const prepareNativeKvBackend = (binding: NativeKvArtifactBinding): void =
   };
 };
 
+export const nativeKvBackendIsPrepared = (): boolean => prepared !== null;
+
 /** Pass the same independently verified binding to task-owned child processes. */
 export const preparedNativeKvArtifactBinding = (): NativeKvArtifactBinding => {
   if (!prepared) throw new Error("Prepare the verified native KV artifact before starting a child");

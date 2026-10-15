@@ -129,7 +129,7 @@ export const buildNativeKv = async (outputDirectory: string, options: { toolchai
       throw new Error(`Native KV output already exists: ${destination}`);
     }
   }
-  const workspaceRoot = "/var/tmp/uos-native-kv-builds";
+  const workspaceRoot = join(homedir(), ".cache/uos-native-kv-builds");
   await mkdir(workspaceRoot, { recursive: true, mode: 0o700 });
   const workspace = await mkdtemp(join(workspaceRoot, "uos-native-kv-"));
   const temporaryDirectory = join(workspace, "tmp");

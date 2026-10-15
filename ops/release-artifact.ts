@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { resolve, join, isAbsolute, dirname, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BUN_RUNTIMES, selectedRuntime, type RuntimeArtifact } from "./bun-runtime.ts";
@@ -93,7 +93,8 @@ export const prepareReleasePayload = async (
   sha: string,
   archiveDigest: string,
   headerDirectory?: string,
-  nativeArtifact?: NativeKvArtifactBinding
+  nativeArtifact?: NativeKvArtifactBinding,
+  preparedDependencies?: string
 ): Promise<BunReleaseManifest> => {
   if (Bun.version !== "1.4.0" || !/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{64}$/.test(archiveDigest))
     throw new Error("Release preparation requires pinned Bun and exact source identity");
@@ -108,11 +109,15 @@ export const prepareReleasePayload = async (
   }
   // An empty, exclusive dotenv fence plus a sparse child environment prevents an
   // install in nested .data/releases from discovering production credentials.
-  await writeFile(join(root, ".env"), "", { flag: "wx", mode: 0o600 });
-  try {
-    await command(process.execPath, ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts", "--backend=copyfile"], { cwd: root, sparse: true });
-  } finally {
-    await rm(join(root, ".env"));
+  if (preparedDependencies) {
+    await cp(preparedDependencies, join(root, "node_modules"), { recursive: true, dereference: false });
+  } else {
+    await writeFile(join(root, ".env"), "", { flag: "wx", mode: 0o600 });
+    try {
+      await command(process.execPath, ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts", "--backend=copyfile"], { cwd: root, sparse: true });
+    } finally {
+      await rm(join(root, ".env"));
+    }
   }
   await rm(join(root, ".bun-cache"), { recursive: true, force: true });
   await normalizeDependencyLinks(join(root, "node_modules"));

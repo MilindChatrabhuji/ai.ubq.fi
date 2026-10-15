@@ -1,7 +1,7 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, type Stats } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { prepareNativeKvBackend, verifyNativeKvArtifact, type NativeKvArtifactBinding } from "../storage/native-addon.ts";
+import { nativeKvBackendIsPrepared, prepareNativeKvBackend, verifyNativeKvArtifact, type NativeKvArtifactBinding } from "../storage/native-addon.ts";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const BINDING_FILE = "native-kv.binding.json";
@@ -99,5 +99,5 @@ export const readNativeKvDevelopmentBinding = (repositoryRoot?: string): NativeK
 /** Development startup only verifies and loads; explicit preparation happens separately. */
 export const prepareNativeKvForDevelopment = (repositoryRoot?: string): Promise<void> =>
   Promise.resolve().then(() => {
-    prepareNativeKvBackend(readNativeKvDevelopmentBinding(repositoryRoot));
+    if (!nativeKvBackendIsPrepared()) prepareNativeKvBackend(readNativeKvDevelopmentBinding(repositoryRoot));
   });

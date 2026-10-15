@@ -71,19 +71,8 @@ export const writePackage = async (root: string, imports: Record<string, string>
     patchedDependencies?: Record<string, string>;
   };
   manifest.imports = imports;
-  manifest.dependencies = {};
-  manifest.devDependencies = {};
-  delete manifest.patchedDependencies;
   await writeFile(join(root, "package.json"), JSON.stringify(manifest));
-  await writeFile(
-    join(root, "bun.lock"),
-    JSON.stringify({
-      lockfileVersion: 2,
-      configVersion: 1,
-      workspaces: { "": { name: manifest.name, dependencies: {}, devDependencies: {} } },
-      packages: {},
-    }) + "\n"
-  );
+  await copyFile(join(repository, "bun.lock"), join(root, "bun.lock"));
 };
 export const copyRuntimeModules = async (root: string): Promise<void> => {
   await mkdir(join(root, "src"), { recursive: true });
