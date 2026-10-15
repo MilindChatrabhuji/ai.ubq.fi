@@ -129,6 +129,40 @@ test("openrouter responses forwards the client body and reports the upstream", a
   });
 });
 
+test("openrouter buffered Responses fails an empty completion closed without masking truncation", async () => {
+  await withServedCatalogue(async () => {
+    for (const output of [[], null, [{ type: "reasoning", summary: [] }]]) {
+      const telemetry = createResponseTelemetryState();
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi" },
+        "vendor/beta",
+        streamUsageContext(telemetry),
+        { fetchResponses: () => Promise.resolve(jsonResponse({ status: "completed", output, usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } })) }
+      );
+      assert.equal(response.status, 502);
+      const body = (await response.json()) as { error?: { code?: string } };
+      assert.equal(body.error?.code, "empty_upstream_completion");
+      assert.equal(telemetry.completed, false);
+      assert.equal(telemetry.failureKind, "empty_upstream_completion");
+      assert.equal(telemetry.streamTerminalType, "response.failed");
+    }
+
+    const telemetry = createResponseTelemetryState();
+    const incomplete = await handleOpenRouterResponses(
+      new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+      { model: "vendor/beta", input: "hi" },
+      "vendor/beta",
+      streamUsageContext(telemetry),
+      { fetchResponses: () => Promise.resolve(jsonResponse({ status: "incomplete", output: null })) }
+    );
+    assert.equal(incomplete.status, 200);
+    assert.equal(telemetry.completed, false);
+    assert.equal(telemetry.failureKind, null);
+    assert.equal(telemetry.streamTerminalType, "response.incomplete");
+  });
+});
+
 const dispatchCases = [
   { path: "/v1/chat/completions", body: { messages: [{ role: "user", content: "hi" }] }, handle: handleOpenRouterChatCompletions },
   { path: "/v1/responses", body: { input: "hi" }, handle: handleOpenRouterResponses },
