@@ -31,6 +31,7 @@ const rawState = (path: string) => {
 export const proveLegacyRoundtrip = async (directory: string, deno: string, denoSha256: string) => {
   const expectedPin = Buffer.from(denoSha256, "hex");
   assert.equal(expectedPin.length, 32, "The explicit legacy codec pin must be SHA-256");
+  assert.equal(await fileDigest(deno), expectedPin.toString("hex"), "Legacy codec executable does not match the explicit SHA-256 pin");
   const root = resolve(directory);
   if (existsSync(root)) throw new Error("Proof directory must be NEW and disposable");
   mkdirSync(root, { recursive: true, mode: 0o700 });

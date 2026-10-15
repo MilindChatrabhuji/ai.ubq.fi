@@ -30,7 +30,6 @@ export const macSandboxProfile = (paths: MacSandboxPaths): string => {
     '(import "system.sb")',
     "(allow network* mach-lookup sysctl-read process-info* signal)",
     "(allow process-exec (literal " + quote(paths.runtime) + "))",
-    "(allow process-fork)",
     "(allow file-read* " +
       read.map((path) => "(subpath " + quote(path) + ")").join(" ") +
       " " +

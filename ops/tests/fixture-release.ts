@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { runtimePath, selectedRuntime } from "../bun-runtime.ts";
 import { digest } from "../io.ts";
 import { prepareReleasePayload } from "../release-artifact.ts";
+import { currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
 
 export const repository = fileURLToPath(new URL("../../", import.meta.url));
 export const copyOps = async (destination: string): Promise<void> => {
@@ -57,7 +58,9 @@ export const packageFixture = async (release: string, sha: string, archive: stri
   for (const file of ["scripts/build-permissions.ts", "src/runtime/permissions-linux.ts", "src/runtime/permissions-native.c"]) {
     await copyFile(join(repository, file), join(release, file));
   }
-  await prepareReleasePayload(release, sha, archive, join(repository, "node_modules/node-api-headers/include"));
+  await mkdir(join(release, "tools"), { recursive: true });
+  await cp(join(repository, "tools/native-kv"), join(release, "tools/native-kv"), { recursive: true });
+  await prepareReleasePayload(release, sha, archive, join(repository, "node_modules/node-api-headers/include"), currentTestNativeKvBinding());
 };
 export const writePackage = async (root: string, imports: Record<string, string>): Promise<void> => {
   const manifest = JSON.parse(await readFile(join(repository, "package.json"), "utf8")) as {

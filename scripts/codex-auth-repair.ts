@@ -28,7 +28,7 @@
  * is streamed over stdin and imports the other host's deployed Bun storage module.
  * Nothing on the remote host is ever written.
  */
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, stat } from "node:fs/promises";
 import { BUN_KV_DATABASE_PATH, openKv, type Kv } from "#kv";
 import { prepareNativeKvForDevelopment } from "../src/runtime/native-kv-bootstrap.ts";
 import {
@@ -660,7 +660,7 @@ export const repairExternalNativePool = async (
   const regular =
     hooks.isRegularFile ??
     (async (path: string): Promise<boolean> => {
-      const info = await stat(path);
+      const info = await lstat(path);
       return info.isFile() && !info.isSymbolicLink();
     });
   const document = parseExternalNativeCodexDocument(raw);
@@ -703,6 +703,14 @@ const main = async (): Promise<number> => {
   if ("error" in local) {
     console.error(`codex-auth-repair: ${local.error}`);
     return 2;
+  }
+
+  const external = await repairExternalNativePool(flags, local);
+  if (external) {
+    const report = { ...external, accounts: [], candidates: [], notes: ["Only the current external native leaf was considered"] };
+    if (flags.json) console.log(JSON.stringify(report, null, 2));
+    else console.log(`codex-auth-repair: external native consumer ${external.status}`);
+    return external.status === "repair_available" ? 1 : 0;
   }
 
   const nowMs = Date.now();

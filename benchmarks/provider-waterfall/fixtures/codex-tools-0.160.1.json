@@ -72,7 +72,11 @@
         "sandbox_permissions": {
           "type": "string",
           "description": "Per-command sandbox override. Defaults to `use_default`; use `with_additional_permissions` with `additional_permissions`, or `require_escalated` for unsandboxed execution.",
-          "enum": ["use_default", "with_additional_permissions", "require_escalated"]
+          "enum": [
+            "use_default",
+            "with_additional_permissions",
+            "require_escalated"
+          ]
         },
         "shell": {
           "type": "string",
@@ -91,7 +95,9 @@
           "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
         }
       },
-      "required": ["cmd"],
+      "required": [
+        "cmd"
+      ],
       "additionalProperties": false
     }
   },
@@ -120,7 +126,9 @@
           "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default."
         }
       },
-      "required": ["session_id"],
+      "required": [
+        "session_id"
+      ],
       "additionalProperties": false
     }
   },
@@ -181,7 +189,10 @@
           "description": "Resource URI to read. Must be one of the URIs returned by list_mcp_resources."
         }
       },
-      "required": ["server", "uri"],
+      "required": [
+        "server",
+        "uri"
+      ],
       "additionalProperties": false
     }
   },
@@ -206,19 +217,28 @@
               "status": {
                 "type": "string",
                 "description": "Step status.",
-                "enum": ["pending", "in_progress", "completed"]
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed"
+                ]
               },
               "step": {
                 "type": "string",
                 "description": "Task step text."
               }
             },
-            "required": ["step", "status"],
+            "required": [
+              "step",
+              "status"
+            ],
             "additionalProperties": false
           }
         }
       },
-      "required": ["plan"],
+      "required": [
+        "plan"
+      ],
       "additionalProperties": false
     }
   },
@@ -259,7 +279,10 @@
                       "description": "User-facing label (1-5 words)."
                     }
                   },
-                  "required": ["label", "description"],
+                  "required": [
+                    "label",
+                    "description"
+                  ],
                   "additionalProperties": false
                 }
               },
@@ -268,12 +291,19 @@
                 "description": "Single-sentence prompt shown to the user."
               }
             },
-            "required": ["id", "header", "question", "options"],
+            "required": [
+              "id",
+              "header",
+              "question",
+              "options"
+            ],
             "additionalProperties": false
           }
         }
       },
-      "required": ["questions"],
+      "required": [
+        "questions"
+      ],
       "additionalProperties": false
     }
   },
@@ -306,7 +336,9 @@
               "description": "How long to sleep in milliseconds. Must be between 1 and 43200000."
             }
           },
-          "required": ["duration_ms"],
+          "required": [
+            "duration_ms"
+          ],
           "additionalProperties": false
         }
       }
@@ -325,7 +357,9 @@
           "description": "Local filesystem path to an image file."
         }
       },
-      "required": ["path"],
+      "required": [
+        "path"
+      ],
       "additionalProperties": false
     }
   },
@@ -352,7 +386,10 @@
               "description": "Agent id or canonical task name to send a follow-up task to (from spawn_agent)."
             }
           },
-          "required": ["target", "message"],
+          "required": [
+            "target",
+            "message"
+          ],
           "additionalProperties": false
         }
       },
@@ -369,7 +406,9 @@
               "description": "Agent id or canonical task name to interrupt (from spawn_agent)."
             }
           },
-          "required": ["target"],
+          "required": [
+            "target"
+          ],
           "additionalProperties": false
         }
       },
@@ -407,7 +446,10 @@
               "description": "Relative or canonical task name to message (from spawn_agent)."
             }
           },
-          "required": ["target", "message"],
+          "required": [
+            "target",
+            "message"
+          ],
           "additionalProperties": false
         }
       },
@@ -441,7 +483,10 @@
               "description": "Task name for the new agent. Use lowercase letters, digits, and underscores."
             }
           },
-          "required": ["task_name", "message"],
+          "required": [
+            "task_name",
+            "message"
+          ],
           "additionalProperties": false
         }
       },
@@ -481,7 +526,9 @@
               "description": "Cloudflare documentation search query"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -501,7 +548,9 @@
               "description": "JavaScript async arrow function to execute"
             }
           },
-          "required": ["code"]
+          "required": [
+            "code"
+          ]
         }
       },
       {
@@ -517,7 +566,9 @@
               "description": "JavaScript async arrow function to search the OpenAPI spec"
             }
           },
-          "required": ["code"]
+          "required": [
+            "code"
+          ]
         }
       }
     ]
@@ -546,7 +597,14 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "enum": ["wnam", "enam", "weur", "eeur", "apac", "oc"]
+                  "enum": [
+                    "wnam",
+                    "enam",
+                    "weur",
+                    "eeur",
+                    "apac",
+                    "oc"
+                  ]
                 },
                 {
                   "type": "null"
@@ -554,7 +612,9 @@
               ]
             }
           },
-          "required": ["name"]
+          "required": [
+            "name"
+          ]
         }
       },
       {
@@ -573,7 +633,9 @@
               "type": "string"
             }
           },
-          "required": ["database_id"]
+          "required": [
+            "database_id"
+          ]
         }
       },
       {
@@ -592,7 +654,9 @@
               "type": "string"
             }
           },
-          "required": ["database_id"]
+          "required": [
+            "database_id"
+          ]
         }
       },
       {
@@ -627,7 +691,10 @@
               "type": "string"
             }
           },
-          "required": ["database_id", "sql"]
+          "required": [
+            "database_id",
+            "sql"
+          ]
         }
       },
       {
@@ -692,7 +759,9 @@
               "description": "The ID of the Hyperdrive configuration"
             }
           },
-          "required": ["hyperdrive_id"]
+          "required": [
+            "hyperdrive_id"
+          ]
         }
       },
       {
@@ -793,7 +862,9 @@
                 {
                   "type": "string",
                   "description": "The database protocol",
-                  "enum": ["postgresql"]
+                  "enum": [
+                    "postgresql"
+                  ]
                 },
                 {
                   "type": "null"
@@ -812,7 +883,9 @@
               ]
             }
           },
-          "required": ["hyperdrive_id"]
+          "required": [
+            "hyperdrive_id"
+          ]
         }
       },
       {
@@ -832,7 +905,9 @@
               "description": "The ID of the Hyperdrive configuration"
             }
           },
-          "required": ["hyperdrive_id"]
+          "required": [
+            "hyperdrive_id"
+          ]
         }
       },
       {
@@ -852,7 +927,10 @@
                 {
                   "type": "string",
                   "description": "Direction to order",
-                  "enum": ["asc", "desc"]
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
                 },
                 {
                   "type": "null"
@@ -864,7 +942,10 @@
                 {
                   "type": "string",
                   "description": "Field to order by",
-                  "enum": ["id", "name"]
+                  "enum": [
+                    "id",
+                    "name"
+                  ]
                 },
                 {
                   "type": "null"
@@ -913,7 +994,9 @@
               "description": "The human-readable name/title of the KV namespace"
             }
           },
-          "required": ["title"]
+          "required": [
+            "title"
+          ]
         }
       },
       {
@@ -933,7 +1016,9 @@
               "description": "The ID of the KV namespace"
             }
           },
-          "required": ["namespace_id"]
+          "required": [
+            "namespace_id"
+          ]
         }
       },
       {
@@ -953,7 +1038,9 @@
               "description": "The ID of the KV namespace"
             }
           },
-          "required": ["namespace_id"]
+          "required": [
+            "namespace_id"
+          ]
         }
       },
       {
@@ -977,7 +1064,10 @@
               "description": "The human-readable name/title of the KV namespace"
             }
           },
-          "required": ["namespace_id", "title"]
+          "required": [
+            "namespace_id",
+            "title"
+          ]
         }
       },
       {
@@ -999,12 +1089,18 @@
                 "direction": {
                   "type": "string",
                   "description": "Direction to order namespaces (asc/desc)",
-                  "enum": ["asc", "desc"]
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
                 },
                 "order": {
                   "type": "string",
                   "description": "Field to order namespaces by (id/title)",
-                  "enum": ["id", "title"]
+                  "enum": [
+                    "id",
+                    "title"
+                  ]
                 },
                 "page": {
                   "type": "integer",
@@ -1046,7 +1142,9 @@
               "description": "The name of the r2 bucket"
             }
           },
-          "required": ["name"]
+          "required": [
+            "name"
+          ]
         }
       },
       {
@@ -1066,7 +1164,9 @@
               "description": "The name of the r2 bucket"
             }
           },
-          "required": ["name"]
+          "required": [
+            "name"
+          ]
         }
       },
       {
@@ -1086,7 +1186,9 @@
               "description": "The name of the r2 bucket"
             }
           },
-          "required": ["name"]
+          "required": [
+            "name"
+          ]
         }
       },
       {
@@ -1117,7 +1219,10 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "enum": ["asc", "desc"]
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
                 },
                 {
                   "type": "null"
@@ -1171,7 +1276,9 @@
               "type": "string"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -1191,7 +1298,9 @@
               "description": "The name of the worker script to retrieve"
             }
           },
-          "required": ["scriptName"]
+          "required": [
+            "scriptName"
+          ]
         }
       },
       {
@@ -1211,7 +1320,9 @@
               "description": "The name of the worker script to retrieve"
             }
           },
-          "required": ["scriptName"]
+          "required": [
+            "scriptName"
+          ]
         }
       },
       {
@@ -1253,7 +1364,9 @@
               "description": "The build UUID to get details for."
             }
           },
-          "required": ["buildUUID"]
+          "required": [
+            "buildUUID"
+          ]
         }
       },
       {
@@ -1273,7 +1386,9 @@
               "description": "The build UUID to get logs for."
             }
           },
-          "required": ["buildUUID"]
+          "required": [
+            "buildUUID"
+          ]
         }
       },
       {
@@ -1301,7 +1416,9 @@
               "description": "The Worker ID to list builds for."
             }
           },
-          "required": ["workerId"]
+          "required": [
+            "workerId"
+          ]
         }
       },
       {
@@ -1321,7 +1438,9 @@
               "description": "The name of the worker script to retrieve"
             }
           },
-          "required": ["scriptName"]
+          "required": [
+            "scriptName"
+          ]
         }
       },
       {
@@ -1341,7 +1460,9 @@
               "description": "The name of the worker script to retrieve"
             }
           },
-          "required": ["scriptName"]
+          "required": [
+            "scriptName"
+          ]
         }
       },
       {
@@ -1388,7 +1509,9 @@
               "type": "string"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     ]
@@ -1457,7 +1580,11 @@
                       },
                       "type": {
                         "type": "string",
-                        "enum": ["string", "number", "boolean"]
+                        "enum": [
+                          "string",
+                          "number",
+                          "boolean"
+                        ]
                       },
                       "value": {
                         "anyOf": [
@@ -1473,7 +1600,11 @@
                         ]
                       }
                     },
-                    "required": ["key", "operation", "type"]
+                    "required": [
+                      "key",
+                      "operation",
+                      "type"
+                    ]
                   }
                 },
                 "keyNeedle": {
@@ -1499,7 +1630,9 @@
                       ]
                     }
                   },
-                  "required": ["value"]
+                  "required": [
+                    "value"
+                  ]
                 },
                 "limit": {
                   "type": "number"
@@ -1527,7 +1660,9 @@
                       ]
                     }
                   },
-                  "required": ["value"]
+                  "required": [
+                    "value"
+                  ]
                 },
                 "timeframe": {
                   "anyOf": [
@@ -1541,7 +1676,10 @@
                           "type": "string"
                         }
                       },
-                      "required": ["to", "from"]
+                      "required": [
+                        "to",
+                        "from"
+                      ]
                     },
                     {
                       "type": "object",
@@ -1553,15 +1691,22 @@
                           "type": "string"
                         }
                       },
-                      "required": ["reference", "offset"]
+                      "required": [
+                        "reference",
+                        "offset"
+                      ]
                     }
                   ]
                 }
               },
-              "required": ["timeframe"]
+              "required": [
+                "timeframe"
+              ]
             }
           },
-          "required": ["keysQuery"]
+          "required": [
+            "keysQuery"
+          ]
         }
       },
       {
@@ -1613,7 +1758,11 @@
                       },
                       "type": {
                         "type": "string",
-                        "enum": ["string", "number", "boolean"]
+                        "enum": [
+                          "string",
+                          "number",
+                          "boolean"
+                        ]
                       },
                       "value": {
                         "anyOf": [
@@ -1629,7 +1778,11 @@
                         ]
                       }
                     },
-                    "required": ["key", "operation", "type"]
+                    "required": [
+                      "key",
+                      "operation",
+                      "type"
+                    ]
                   }
                 },
                 "key": {
@@ -1661,7 +1814,9 @@
                       ]
                     }
                   },
-                  "required": ["value"]
+                  "required": [
+                    "value"
+                  ]
                 },
                 "timeframe": {
                   "anyOf": [
@@ -1675,7 +1830,10 @@
                           "type": "string"
                         }
                       },
-                      "required": ["to", "from"]
+                      "required": [
+                        "to",
+                        "from"
+                      ]
                     },
                     {
                       "type": "object",
@@ -1687,19 +1845,32 @@
                           "type": "string"
                         }
                       },
-                      "required": ["reference", "offset"]
+                      "required": [
+                        "reference",
+                        "offset"
+                      ]
                     }
                   ]
                 },
                 "type": {
                   "type": "string",
-                  "enum": ["string", "boolean", "number"]
+                  "enum": [
+                    "string",
+                    "boolean",
+                    "number"
+                  ]
                 }
               },
-              "required": ["timeframe", "key", "type"]
+              "required": [
+                "timeframe",
+                "key",
+                "type"
+              ]
             }
           },
-          "required": ["valuesQuery"]
+          "required": [
+            "valuesQuery"
+          ]
         }
       },
       {
@@ -1750,7 +1921,11 @@
                           },
                           "keyType": {
                             "type": "string",
-                            "enum": ["string", "number", "boolean"]
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
                           },
                           "operator": {
                             "type": "string",
@@ -1777,7 +1952,9 @@
                             ]
                           }
                         },
-                        "required": ["operator"]
+                        "required": [
+                          "operator"
+                        ]
                       }
                     },
                     "datasets": {
@@ -1788,7 +1965,12 @@
                     },
                     "filterCombination": {
                       "type": "string",
-                      "enum": ["and", "or", "AND", "OR"]
+                      "enum": [
+                        "and",
+                        "or",
+                        "AND",
+                        "OR"
+                      ]
                     },
                     "filters": {
                       "type": "array",
@@ -1819,7 +2001,11 @@
                           },
                           "type": {
                             "type": "string",
-                            "enum": ["string", "number", "boolean"]
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
                           },
                           "value": {
                             "anyOf": [
@@ -1835,7 +2021,11 @@
                             ]
                           }
                         },
-                        "required": ["key", "operation", "type"]
+                        "required": [
+                          "key",
+                          "operation",
+                          "type"
+                        ]
                       }
                     },
                     "groupBys": {
@@ -1845,13 +2035,20 @@
                         "properties": {
                           "type": {
                             "type": "string",
-                            "enum": ["string", "number", "boolean"]
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
                           },
                           "value": {
                             "type": "string"
                           }
                         },
-                        "required": ["type", "value"]
+                        "required": [
+                          "type",
+                          "value"
+                        ]
                       }
                     },
                     "limit": {
@@ -1880,20 +2077,27 @@
                           ]
                         }
                       },
-                      "required": ["value"]
+                      "required": [
+                        "value"
+                      ]
                     },
                     "orderBy": {
                       "type": "object",
                       "properties": {
                         "order": {
                           "type": "string",
-                          "enum": ["asc", "desc"]
+                          "enum": [
+                            "asc",
+                            "desc"
+                          ]
                         },
                         "value": {
                           "type": "string"
                         }
                       },
-                      "required": ["value"]
+                      "required": [
+                        "value"
+                      ]
                     }
                   }
                 },
@@ -1912,7 +2116,10 @@
                           "type": "string"
                         }
                       },
-                      "required": ["to", "from"]
+                      "required": [
+                        "to",
+                        "from"
+                      ]
                     },
                     {
                       "type": "object",
@@ -1924,19 +2131,32 @@
                           "type": "string"
                         }
                       },
-                      "required": ["reference", "offset"]
+                      "required": [
+                        "reference",
+                        "offset"
+                      ]
                     }
                   ]
                 },
                 "view": {
                   "type": "string",
-                  "enum": ["events", "calculations", "invocations"]
+                  "enum": [
+                    "events",
+                    "calculations",
+                    "invocations"
+                  ]
                 }
               },
-              "required": ["queryId", "parameters", "timeframe"]
+              "required": [
+                "queryId",
+                "parameters",
+                "timeframe"
+              ]
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -1951,7 +2171,9 @@
               "type": "string"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -1971,7 +2193,9 @@
               "description": "The name of the worker script to retrieve"
             }
           },
-          "required": ["scriptName"]
+          "required": [
+            "scriptName"
+          ]
         }
       },
       {
@@ -1991,7 +2215,9 @@
               "description": "The name of the worker script to retrieve"
             }
           },
-          "required": ["scriptName"]
+          "required": [
+            "scriptName"
+          ]
         }
       },
       {
@@ -2063,7 +2289,10 @@
             "sort": {
               "type": "string",
               "description": "Use relevance for keyword searches or recent for a time-ordered view.",
-              "enum": ["relevance", "recent"]
+              "enum": [
+                "relevance",
+                "recent"
+              ]
             }
           },
           "additionalProperties": false
@@ -2097,7 +2326,9 @@
               "description": "Short user-facing description of what the code does."
             }
           },
-          "required": ["code"],
+          "required": [
+            "code"
+          ],
           "additionalProperties": false
         }
       },
@@ -2140,7 +2371,9 @@
               "description": "Short user-facing description of what the code does."
             }
           },
-          "required": ["code"],
+          "required": [
+            "code"
+          ],
           "additionalProperties": false
         }
       },
@@ -2157,7 +2390,9 @@
               "description": "Absolute path to a node_modules directory to add to Node package resolution."
             }
           },
-          "required": ["path"],
+          "required": [
+            "path"
+          ],
           "additionalProperties": false
         }
       },
@@ -2194,7 +2429,9 @@
               "type": "string"
             }
           },
-          "required": ["url"]
+          "required": [
+            "url"
+          ]
         }
       },
       {
@@ -2218,7 +2455,9 @@
               "type": "string"
             }
           },
-          "required": ["url"]
+          "required": [
+            "url"
+          ]
         }
       },
       {
@@ -2266,7 +2505,9 @@
               "type": "string"
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     ]
@@ -2300,7 +2541,9 @@
           "description": "Positive token budget for the new goal. Omit unless explicitly requested."
         }
       },
-      "required": ["objective"],
+      "required": [
+        "objective"
+      ],
       "additionalProperties": false
     }
   },
@@ -2315,10 +2558,16 @@
         "status": {
           "type": "string",
           "description": "Required. `paused` requires an explicit user request. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
-          "enum": ["complete", "blocked", "paused"]
+          "enum": [
+            "complete",
+            "blocked",
+            "paused"
+          ]
         }
       },
-      "required": ["status"],
+      "required": [
+        "status"
+      ],
       "additionalProperties": false
     }
   },

@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -102,7 +102,7 @@ jobs:
 
   verify-artifact:
     needs: [validate, mac-containment, darwin-native]
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       actions: read
       contents: read

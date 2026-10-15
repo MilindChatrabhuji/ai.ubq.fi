@@ -275,10 +275,10 @@ test("Mac entry preserves event maintenance and defers missing settlement logs w
   let launcher = originalLauncher;
   const hostGuard = 'if (process.platform !== "linux") throw new Error("Fixture host mismatch");';
   if (process.platform !== "darwin") launcher = launcher.replace(guard, hostGuard);
-  assert.equal(launcher.split('from "#kv"').length - 1, 1);
-  assert.equal(launcher.split('from "#http"').length - 1, 1);
-  launcher = launcher.replace('from "#kv"', 'from "../fixture-kv.ts"').replace('from "#http"', 'from "../fixture-http.ts"');
-  const restored = launcher.replace('from "../fixture-kv.ts"', 'from "#kv"').replace('from "../fixture-http.ts"', 'from "#http"');
+  assert.equal(launcher.split('import("#kv")').length - 1, 1);
+  assert.equal(launcher.split('import("#http")').length - 1, 1);
+  launcher = launcher.replace('import("#kv")', 'import("../fixture-kv.ts")').replace('import("#http")', 'import("../fixture-http.ts")');
+  const restored = launcher.replace('import("../fixture-kv.ts")', 'import("#kv")').replace('import("../fixture-http.ts")', 'import("#http")');
   assert.equal(process.platform === "darwin" ? restored : restored.replace(hostGuard, guard), originalLauncher);
   const maintenance = await readFile(`${root}serve.ts`, "utf8");
   await mkdir(fixtureParent, { recursive: true });

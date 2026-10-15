@@ -5,7 +5,9 @@ import { prepareNativeKvBackend, preparedNativeKvArtifactBinding, verifyNativeKv
 import type { NativeKvArtifact } from "./build-native-kv.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const INPUTS = fileURLToPath(new URL("../tools/native-kv/inputs.json", import.meta.url));
+const INPUTS = fileURLToPath(
+  new URL(process.platform === "darwin" ? "../tools/native-kv/inputs-darwin-arm64.json" : "../tools/native-kv/inputs.json", import.meta.url)
+);
 export type TestNativeKvBinding = Readonly<{ artifactDirectory: string; expectedProvenanceSha256: string; inputsManifest: string }>;
 export type TestNativeKvPreparation = TestNativeKvBinding & Readonly<{ buildReceipt: NativeKvArtifact; runDirectory: string }>;
 
@@ -50,8 +52,10 @@ export const prepareTestNativeKv = async (root = ROOT): Promise<TestNativeKvPrep
   const directory = join(root, ".cleanup-evidence", "native-kv-builds");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const runDirectory = mkdtempSync(join(directory, "run-"));
-  const { buildNativeKv } = await import("./build-native-kv.ts");
-  const buildReceipt = await buildNativeKv(join(runDirectory, "artifact"));
+  const buildReceipt =
+    process.platform === "darwin"
+      ? await (await import("./build-native-kv-darwin.ts")).buildNativeKvDarwin(join(runDirectory, "artifact"))
+      : await (await import("./build-native-kv.ts")).buildNativeKv(join(runDirectory, "artifact"));
   const binding = parseTestNativeKvBinding({
     artifactDirectory: dirname(buildReceipt.path),
     expectedProvenanceSha256: buildReceipt.provenanceSha256,

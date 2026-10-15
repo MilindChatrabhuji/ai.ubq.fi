@@ -30,6 +30,7 @@ try {
       "const operation = Number(process.argv[3]);",
       'if (operation < 4) writeFileSync([paths.nativeHome + "/auth.json", paths.sibling + "/auth.json", paths.release + "/immutable.txt", paths.runtime][operation], "must-be-denied");',
       'else if (operation === 4) readFileSync(paths.sibling + "/auth.json");',
+      'else if (operation === 5) Bun.spawnSync([paths.runtime, "--no-env-file", "--no-install", "-e", "process.exit(0)"]);',
       'else Bun.spawnSync(["/bin/sh", "-c", "exit 0"]);',
     ].join("\n")
   );
@@ -47,7 +48,7 @@ try {
   );
   const profile = macSandboxProfile({ root, release, runtime, nativeHome, control });
   const paths = JSON.stringify({ root, release, runtime, nativeHome, control, sibling });
-  for (let operation = 0; operation < 6; operation += 1) {
+  for (let operation = 0; operation < 7; operation += 1) {
     const denied = Bun.spawnSync(["/usr/bin/sandbox-exec", "-p", profile, runtime, "--no-env-file", "--no-install", denialProbe, paths, String(operation)], {
       stdout: "pipe",
       stderr: "pipe",
@@ -72,7 +73,8 @@ try {
       sibling_read_denied: true,
       native_write_denied: true,
       release_runtime_write_denied: true,
-      process_spawn_denied: true,
+      runtime_self_execution_denied: true,
+      shell_execution_denied: true,
       real_http: true,
     })
   );

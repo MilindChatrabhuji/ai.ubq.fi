@@ -80,7 +80,7 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
     case "vps":
       return [
         group("vps", [
-          "ops/tests/vps-release.test.ts",
+          ...(process.platform === "linux" ? ["ops/tests/vps-release.test.ts"] : []),
           "ops/tests/release-retention.test.ts",
           "ops/tests/vps-release-driver.test.ts",
           "ops/tests/vps-release-recovery.test.ts",
@@ -103,7 +103,9 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
           ["SENTINEL_REPLAY_KEY"]
         ),
         group("sentinel-upstream", ["tests/sentinel-upstream-providers.test.ts"], ["SENTINEL_REPLAY_KEY"]),
-        group("sentinel-consumer", ["tests/sentinel-replay-consumer.test.ts"], ["DENO_DIR", "DENO_NO_UPDATE_CHECK", "PATH", "HOME"]),
+        ...(process.platform === "linux"
+          ? [group("sentinel-consumer", ["tests/sentinel-replay-consumer.test.ts"], ["DENO_DIR", "DENO_NO_UPDATE_CHECK", "PATH", "HOME"])]
+          : []),
       ];
     case "benchmark":
       return [group("benchmark", [...filesBelow("benchmarks/tests"), ...filesBelow("benchmarks/baselines/tests")])];
