@@ -286,12 +286,17 @@ export const mergeClaudeCodeWorkspaceState = (
 ): ClaudeCodeWorkspaceState => {
   const nowMs = input.nowMs ?? Date.now();
   const sameId = previous?.id === input.id;
+  const previousName = sameId ? previous.name : null;
+  let discoveredAtMs = sameId ? previous.discovered_at_ms : null;
+  if (input.source === "discovered") discoveredAtMs = nowMs;
+  let verifiedAtMs = sameId ? previous.verified_at_ms : null;
+  if (input.verified) verifiedAtMs = nowMs;
   return {
     id: input.id,
-    name: input.name ?? (sameId ? (previous?.name ?? null) : null),
+    name: input.name ?? previousName,
     source: input.source,
-    discovered_at_ms: input.source === "discovered" ? nowMs : sameId ? (previous?.discovered_at_ms ?? null) : null,
-    verified_at_ms: input.verified ? nowMs : sameId ? (previous?.verified_at_ms ?? null) : null,
+    discovered_at_ms: discoveredAtMs,
+    verified_at_ms: verifiedAtMs,
     last_error: input.last_error ?? null,
   };
 };

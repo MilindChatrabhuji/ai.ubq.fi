@@ -59,11 +59,16 @@ const withAdminKv = async (run: (kv: AdminKv) => Promise<void>): Promise<void> =
 
 type StubCall = Readonly<{ url: string; method: string; headers: Headers }>;
 
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+};
+
 const withStubbedAnthropic = async (responder: (call: StubCall) => Response, run: (calls: StubCall[]) => Promise<void>): Promise<void> => {
   const originalFetch = globalThis.fetch;
   const calls: StubCall[] = [];
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const url = requestUrl(input);
     const call = { url, method: init?.method ?? "GET", headers: new Headers(init?.headers) };
     calls.push(call);
     return Promise.resolve(responder(call));
@@ -192,7 +197,7 @@ test("clearing the stored credential falls back to the environment and clearing 
 
 test("the admin routes stay behind admin auth and expose the documented paths", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
-  const paths: Array<[string, string]> = [
+  const paths: [string, string][] = [
     ["GET", "/admin/providers/claude-code/auth"],
     ["POST", "/admin/providers/claude-code/auth"],
     ["DELETE", "/admin/providers/claude-code/auth"],

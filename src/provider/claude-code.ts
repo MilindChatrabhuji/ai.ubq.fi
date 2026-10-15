@@ -395,7 +395,7 @@ const parseWorkspaceList = (value: unknown): ClaudeCodeWorkspaceListEntry[] => {
   for (const item of value.data) {
     if (!isRecord(item)) continue;
     const id = nonEmptyString(item.id);
-    if (!id || !id.startsWith("wrkspc_")) continue;
+    if (!id?.startsWith("wrkspc_")) continue;
     if (item.archived_at !== null && item.archived_at !== undefined) continue;
     entries.push({ id, name: nonEmptyString(item.name) });
   }
@@ -408,8 +408,8 @@ const parseWorkspaceList = (value: unknown): ClaudeCodeWorkspaceListEntry[] => {
  * the listing order; otherwise the first non-archived workspace is used.
  */
 const pickWorkspace = (entries: readonly ClaudeCodeWorkspaceListEntry[]): ClaudeCodeWorkspaceListEntry | null => {
-  const preferred = entries.find((entry) => entry.name?.trim().toLowerCase() === "default");
-  return preferred ?? entries[0] ?? null;
+  const preferred = entries.find((entry) => (entry.name ?? "").trim().toLowerCase() === "default");
+  return preferred ?? entries[0];
 };
 
 export type ClaudeCodeWorkspaceDiscoveryResult =
@@ -442,12 +442,13 @@ export const discoverClaudeCodeWorkspace = async (
   if (!response.ok) {
     return { ok: false, status: response.status, error: sanitizeClaudeCodeErrorMessage(bodyText) };
   }
-  let parsed: unknown = null;
-  try {
-    parsed = bodyText ? JSON.parse(bodyText) : null;
-  } catch {
-    parsed = null;
-  }
+  const parsed: unknown = (() => {
+    try {
+      return bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      return null;
+    }
+  })();
   const picked = pickWorkspace(parseWorkspaceList(parsed));
   if (!picked) return { ok: false, status: response.status, error: "No usable workspace was listed for this credential." };
   const workspace: ClaudeCodeResolvedWorkspace = { id: picked.id, name: picked.name, source: "discovered" };

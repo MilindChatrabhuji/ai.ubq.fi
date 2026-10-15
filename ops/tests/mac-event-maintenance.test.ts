@@ -2,6 +2,7 @@ import { writePackage } from "./fixture-release.ts";
 import { test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnFixture, outputFixture, type FixtureOutput } from "./fixture-process.ts";
+import { createTestNativeKvPreload, currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
@@ -304,7 +305,15 @@ test("Mac entry preserves event maintenance and defers missing settlement logs w
     hashes["scripts/serve-mac.ts"] = await sha256(launcher);
     hashes["maintenance.ts"] = await sha256(maintenance);
     const child = spawnFixture(process.execPath, {
-      args: ["--no-env-file", "--no-install", `${fixture}/bootstrap.ts`],
+      args: [
+        "--no-env-file",
+        "--no-install",
+        "--define",
+        "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(currentTestNativeKvBinding()),
+        "--preload",
+        createTestNativeKvPreload(fixture),
+        `${fixture}/bootstrap.ts`,
+      ],
       cwd: fixture,
       clearEnv: true,
       env: { HOME: fixture, METERED_API_KEY: "synthetic-mac-fixture" },

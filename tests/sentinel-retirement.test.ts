@@ -19,7 +19,7 @@ test("gateway entry points start no Sentinel automation but keep the authorized 
   assert.doesNotMatch(handlerSource, /\?\? recordSentinelProviderDegradationFromEnvironment/u);
   assert.doesNotMatch(catalogSource, /\?\? recordSentinelProviderDegradationFromEnvironment/u);
   assert.match(deploymentWorkflow, /sh scripts\/verify\.sh/u);
-  assert.match(verificationScript, /test-runner\.ts sentinel/u);
+  assert.match(verificationScript, /run_test "Bun test \(sentinel local\)" sentinel/u);
   assert.doesNotMatch(deploymentWorkflow, /provider-sentinel|sentinel-revision-control|scripts\/sentinel/u);
   assert.match(terminalRouteSource, /captureAcceptedSentinelReplayInput/u);
   assert.match(handlerSource, /\/admin\/sentinel\/replay-captures/u);

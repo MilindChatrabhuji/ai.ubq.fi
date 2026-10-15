@@ -50,8 +50,8 @@ const run = async (state: ReturnType<typeof fixture>, entry: string, args: strin
 };
 
 const retainedWorkspace = (state: ReturnType<typeof fixture>): void => {
-  const root = join(state.checkout, ".tmp", "native-kv-builds");
-  assert.equal(existsSync(root), true, "The builder checkout must own the retained workspace");
+  const root = "/var/tmp/uos-native-kv-builds";
+  assert.equal(existsSync(root), true, "The disk-backed external scratch root must own the retained workspace");
   const entries = readdirSync(root);
   assert.equal(entries.length, 1);
   assert.match(entries[0], /^uos-native-kv-/);

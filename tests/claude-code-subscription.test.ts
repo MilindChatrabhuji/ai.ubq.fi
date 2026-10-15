@@ -137,10 +137,11 @@ test("a stored credential beats the environment and clearing restores it", async
   assert.equal(stored.kind, "api_key");
   assert.equal(stored.hint, "configured", "a short secret is never partially revealed");
   const resolved = await resolveClaudeCodeCredential(kv as unknown as Kv, env);
-  assert.equal(resolved?.source, "kv");
-  assert.equal(resolved?.secret, "sk-ant-usr-kv-key");
-  assert.equal(resolved?.label, "primary");
-  assert.equal(resolved?.updated_at_ms !== null, true);
+  assert(resolved);
+  assert.equal(resolved.source, "kv");
+  assert.equal(resolved.secret, "sk-ant-usr-kv-key");
+  assert.equal(resolved.label, "primary");
+  assert.equal(resolved.updated_at_ms !== null, true);
   assert.equal(kv.values.has(keyOf([...CLAUDE_CODE_AUTH_KV_KEY])), true);
 
   const loaded = await loadClaudeCodeStoredCredential(kv as unknown as Kv);
@@ -150,8 +151,8 @@ test("a stored credential beats the environment and clearing restores it", async
   await clearClaudeCodeStoredCredential(kv as unknown as Kv);
   const afterClear = await resolveClaudeCodeCredential(kv as unknown as Kv, env);
   assert.equal(afterClear?.source, "CLAUDE_API_KEY");
-  assert.equal(afterClear?.secret, "sk-ant-usr-env-key");
-  assert.equal(CLAUDE_CODE_CREDENTIAL_CACHE_TTL_MS > 0, true);
+  assert.equal(afterClear.secret, "sk-ant-usr-env-key");
+  assert.equal(CLAUDE_CODE_CREDENTIAL_CACHE_TTL_MS, 60_000);
   resetClaudeCodeCredentialCacheForTest();
 });
 
@@ -170,8 +171,9 @@ test("workspace resolution prefers a KV pin, then the environment pin, then disc
   const pinned = mergeClaudeCodeWorkspaceState(discovered, { id: "wrkspc_01FBEp5VyCHs7ghEnJqk6giF", source: "kv", verified: true });
   await storeClaudeCodeWorkspaceState(kv as unknown as Kv, pinned);
   const resolved = await resolveClaudeCodeWorkspace(kv as unknown as Kv, envLookup({}));
-  assert.equal(resolved?.id, "wrkspc_01FBEp5VyCHs7ghEnJqk6giF");
-  assert.equal(resolved?.source, "kv");
+  assert(resolved);
+  assert.equal(resolved.id, "wrkspc_01FBEp5VyCHs7ghEnJqk6giF");
+  assert.equal(resolved.source, "kv");
   assert.equal((await loadClaudeCodeWorkspaceState(kv as unknown as Kv))?.verified_at_ms !== null, true);
 
   assert.equal(parseClaudeCodeWorkspaceId("wrkspc_abc"), "wrkspc_abc");
@@ -415,11 +417,11 @@ test("a configuration rejection records its reason and a bounded cooldown, and a
     config_error: { kind: "billing_blocked", status: 400, message: "Your credit balance is too low to access the Anthropic API.", retry_after_ms: null },
     nowMs,
   });
-  assert(recorded);
+  assert(recorded?.last_error?.message);
   assert.equal(recorded.cooldown_until_ms, nowMs + CLAUDE_CODE_CONFIG_COOLDOWN_MS);
-  assert.equal(recorded.last_error?.kind, "billing_blocked");
-  assert.equal(recorded.last_error?.status, 400);
-  assert(recorded.last_error?.message?.includes("credit balance"));
+  assert.equal(recorded.last_error.kind, "billing_blocked");
+  assert.equal(recorded.last_error.status, 400);
+  assert(recorded.last_error.message.includes("credit balance"));
   assert.equal(claudeCodeQuotaCoolingDown(recorded, nowMs + 1_000), true);
   assert.equal(recorded.blocked_until_ms, null, "a billing rejection is not a quota block");
 
@@ -427,9 +429,10 @@ test("a configuration rejection records its reason and a bounded cooldown, and a
   assert.equal(served?.last_error, null, "serving the request clears the recorded configuration error");
 
   const cleared = await clearClaudeCodeQuotaGuards(kv as unknown as Kv);
-  assert.equal(cleared?.cooldown_until_ms, null);
-  assert.equal(cleared?.blocked_until_ms, null);
-  assert.equal(cleared?.last_error, null);
+  assert(cleared);
+  assert.equal(cleared.cooldown_until_ms, null);
+  assert.equal(cleared.blocked_until_ms, null);
+  assert.equal(cleared.last_error, null);
   assert.equal(await clearClaudeCodeQuotaGuards(null), null);
 });
 
@@ -443,8 +446,9 @@ test("configuration rejections never silently degrade into request-local cooldow
     config_error: { kind: "workspace_not_found", status: 404, message: "Workspace `72cde404` not found.", retry_after_ms: 120_000 },
     nowMs,
   });
-  assert.equal(rejected?.cooldown_until_ms, nowMs + 120_000, "an explicit retry-after bounds the configuration cooldown");
-  assert.equal(rejected?.last_error?.kind, "workspace_not_found");
+  assert(rejected?.last_error);
+  assert.equal(rejected.cooldown_until_ms, nowMs + 120_000, "an explicit retry-after bounds the configuration cooldown");
+  assert.equal(rejected.last_error.kind, "workspace_not_found");
 });
 
 test("the native request builder defaults max_tokens, strips router hints, and refuses non-Claude models", () => {

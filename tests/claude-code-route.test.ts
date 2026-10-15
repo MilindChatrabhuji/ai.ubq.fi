@@ -269,7 +269,7 @@ test("an organization-scoped key discovers the workspace once and the retry carr
     assert.equal(messages[1].headers.get("anthropic-workspace-id"), "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
     const stored = await resolveClaudeCodeWorkspace(kv as unknown as Kv);
     assert.equal(stored?.id, "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
-    assert.equal(stored?.source, "discovered");
+    assert.equal(stored.source, "discovered");
 
     captured.length = 0;
     const second = await attemptClaudeCodeSubscription(
@@ -358,10 +358,11 @@ test("a billing rejection becomes an operator-visible configuration state and sk
     );
     assert.equal(rejected, null, "a billing rejection never serves the request itself");
     const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv);
-    assert.equal(quota?.last_error?.kind, "billing_blocked");
-    assert(quota?.last_error?.message?.includes("credit balance"));
-    assert(quota?.blocked_until_ms === null, "a billing rejection is not quota exhaustion");
-    assert(quota !== null && quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());
+    assert(quota?.last_error?.message);
+    assert.equal(quota.last_error.kind, "billing_blocked");
+    assert(quota.last_error.message.includes("credit balance"));
+    assert(quota.blocked_until_ms === null, "a billing rejection is not quota exhaustion");
+    assert(quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());
 
     const callsAfterFirst = captured.length;
     const second = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher });

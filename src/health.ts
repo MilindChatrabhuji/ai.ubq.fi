@@ -641,12 +641,11 @@ const timedOutProviderProbe = (provider: ActiveProviderProbe["provider"]): Activ
   status: 503,
   provider,
   content_type: null,
-  error:
-    provider === "chatgpt_codex"
-      ? "Codex models probe timed out."
-      : provider === "claude_subscription"
-        ? "Claude models probe timed out."
-        : "Metered quota probe timed out.",
+  error: {
+    chatgpt_codex: "Codex models probe timed out.",
+    claude_subscription: "Claude models probe timed out.",
+    metered_quota: "Metered quota probe timed out.",
+  }[provider],
 });
 
 const timeoutProbe = (progress: HealthProbeProgress): HealthUpstreamProbe =>

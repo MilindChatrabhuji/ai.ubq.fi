@@ -47,6 +47,17 @@ const HEALTH_EVENT_BY_CLASSIFICATION: Readonly<Record<ClaudeCodeResponseClassifi
   upstream_error: "upstream_error",
 };
 
+const locallyEligible = (
+  model: string,
+  selection: Awaited<ReturnType<typeof loadProviderSelectionCached>>,
+  keyId: string | null,
+  allowedKeyIds: ReadonlySet<string>
+): boolean => {
+  if (!isSurplusClaudeModel(model)) return false;
+  if (!isProviderEnabled("claude_code", selection)) return false;
+  return keyId !== null && allowedKeyIds.size > 0 && allowedKeyIds.has(keyId);
+};
+
 /**
  * Attempt the subscription tier for one Claude model request. Returns the
  * routed upstream only when the subscription itself served the request; null
@@ -71,9 +82,7 @@ export const attemptClaudeCodeSubscription = async (
   // A dormant tier (another principal, no allowlist entry, another model, or
   // an operator switch-off) must cost nothing, so storage is read only after
   // every local gate that needs no credential has already passed.
-  if (!isSurplusClaudeModel(options.model)) return null;
-  if (!isProviderEnabled("claude_code", selection)) return null;
-  if (!keyId || !allowedKeyIds.size || !allowedKeyIds.has(keyId)) return null;
+  if (!locallyEligible(options.model, selection, keyId, allowedKeyIds)) return null;
 
   const quotaKv = await getKv();
   const [credential, workspace, quota] = await Promise.all([

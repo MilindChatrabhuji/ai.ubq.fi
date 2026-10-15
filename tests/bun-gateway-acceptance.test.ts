@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createTestNativeKvPreload, currentTestNativeKvBinding } from "../scripts/test-native-kv.ts";
 import { test } from "bun:test";
 import { serveHttp, type HttpServer } from "#http";
 import { openKv, type Kv } from "#kv";
@@ -125,13 +126,26 @@ await server.finished;
 type GatewayProcess = Readonly<{ origin: string; stop: () => Promise<void> }>;
 
 const startGateway = async (databasePath: string, upstreamOrigin: string): Promise<GatewayProcess> => {
-  const child = Bun.spawn([process.execPath, "--no-env-file", "-e", gatewaySource(databasePath, upstreamOrigin)], {
-    cwd: ROOT,
-    env: {},
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--no-env-file",
+      "--no-install",
+      "--define",
+      "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(currentTestNativeKvBinding()),
+      "--preload",
+      createTestNativeKvPreload(ROOT),
+      "-e",
+      gatewaySource(databasePath, upstreamOrigin),
+    ],
+    {
+      cwd: ROOT,
+      env: {},
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
   const ready = Promise.withResolvers<number>();
   const reader = child.stdout.getReader();
   const stderr = new Response(child.stderr).text();

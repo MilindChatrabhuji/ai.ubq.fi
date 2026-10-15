@@ -684,6 +684,15 @@ export const repairExternalNativePool = async (
   return { status: "repaired", applied: true };
 };
 
+const dispatchExternalRepair = async (flags: Flags, local: { pool: CodexAuthPoolState; versionstamp: string }): Promise<number | null> => {
+  const external = await repairExternalNativePool(flags, local);
+  if (!external) return null;
+  const report = { ...external, accounts: [], candidates: [], notes: ["Only the current external native leaf was considered"] };
+  if (flags.json) console.log(JSON.stringify(report, null, 2));
+  else console.log(`codex-auth-repair: external native consumer ${external.status}`);
+  return external.status === "repair_available" ? 1 : 0;
+};
+
 const main = async (): Promise<number> => {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h")) {
@@ -705,13 +714,8 @@ const main = async (): Promise<number> => {
     return 2;
   }
 
-  const external = await repairExternalNativePool(flags, local);
-  if (external) {
-    const report = { ...external, accounts: [], candidates: [], notes: ["Only the current external native leaf was considered"] };
-    if (flags.json) console.log(JSON.stringify(report, null, 2));
-    else console.log(`codex-auth-repair: external native consumer ${external.status}`);
-    return external.status === "repair_available" ? 1 : 0;
-  }
+  const externalExit = await dispatchExternalRepair(flags, local);
+  if (externalExit !== null) return externalExit;
 
   const nowMs = Date.now();
   const localProbes = await probeLocalPool(local.pool, flags.codexBaseUrl);

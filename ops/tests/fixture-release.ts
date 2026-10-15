@@ -64,6 +64,7 @@ export const packageFixture = async (release: string, sha: string, archive: stri
 };
 export const writePackage = async (root: string, imports: Record<string, string>): Promise<void> => {
   const manifest = JSON.parse(await readFile(join(repository, "package.json"), "utf8")) as {
+    name: string;
     imports: Record<string, string>;
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
@@ -79,7 +80,7 @@ export const writePackage = async (root: string, imports: Record<string, string>
     JSON.stringify({
       lockfileVersion: 2,
       configVersion: 1,
-      workspaces: { "": { name: "ai-ubq-fi-fixture", dependencies: {}, devDependencies: {} } },
+      workspaces: { "": { name: manifest.name, dependencies: {}, devDependencies: {} } },
       packages: {},
     }) + "\n"
   );

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createTestNativeKvPreload, currentTestNativeKvBinding } from "../scripts/test-native-kv.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { assertPortableKvKeyBytes, KvU64, openKv } from "#kv";
@@ -39,7 +40,20 @@ test("actual Bun profile CLI exports, analyzes and imports disposable typed stat
     original.close();
   }
   const execute = async (args: string[]): Promise<{ imported?: number; skipped?: number; total?: number }> => {
-    const child = Bun.spawn([process.execPath, "--no-env-file", cli, ...args], { env: {}, stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "--no-env-file",
+        "--no-install",
+        "--define",
+        "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(currentTestNativeKvBinding()),
+        "--preload",
+        createTestNativeKvPreload(root),
+        cli,
+        ...args,
+      ],
+      { env: {}, stdout: "pipe", stderr: "pipe" }
+    );
     const [text, error, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     assert.equal(exit, 0, error);
     return JSON.parse(text);

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildPermissionsNative } from "../scripts/build-permissions.ts";
+import { createTestNativeKvPreload, currentTestNativeKvBinding } from "../scripts/test-native-kv.ts";
 
 const linuxArm64Test = process.platform === "linux" && process.arch === "arm64" ? test : test.skip;
 
@@ -73,21 +74,33 @@ linuxArm64Test(
       newWorker.postMessage(root + "/denied/auth.json");
       assert.equal(await newDenied, true);
       newWorker.terminate();
-      const { openKv } = await import(${JSON.stringify(new URL("../node_modules/@deno/kv/esm/npm.js", import.meta.url).href)});
-      const { serialize, deserialize } = await import("bun:jsc");
-      const kv = await openKv(root + "/write/kv.sqlite3", { encodeV8: (value) => new Uint8Array(serialize(value)), decodeV8: deserialize });
+      const { openKv } = await import(${JSON.stringify(new URL("../src/storage/kv.ts", import.meta.url).href)});
+      const kv = await openKv(root + "/write/kv.sqlite3");
       await kv.set(["kernel-proof"], { value: "native-thread-write" });
       assert.deepEqual((await kv.get(["kernel-proof"])).value, { value: "native-thread-write" });
       kv.close();
       console.log(JSON.stringify({ receipt, existingThreadDenied: true, newThreadDenied: true, nativeKvOpened: true, childrenSettled: true }));
     `;
-      const child = Bun.spawn([process.execPath, "--no-env-file", "-e", source], {
-        cwd: fixture,
-        env: { PATH: "/usr/bin:/bin", HOME: join(fixture, "home"), TMPDIR: join(fixture, "tmp"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 10_000,
-      });
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          "--no-env-file",
+          "--no-install",
+          "--define",
+          "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(currentTestNativeKvBinding()),
+          "--preload",
+          createTestNativeKvPreload(fixture),
+          "-e",
+          source,
+        ],
+        {
+          cwd: fixture,
+          env: { PATH: "/usr/bin:/bin", HOME: join(fixture, "home"), TMPDIR: join(fixture, "tmp"), BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 10_000,
+        }
+      );
       const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
