@@ -395,13 +395,29 @@ ubq-ai admin keys list | jq
 - `SURPLUS_API_KEY` (optional): Surplus Intelligence API key used only by the server for paid fallback. It is never sent
   to gateway clients. When both paid-provider keys are configured, the gateway selects the provider by model family and
   fails over between them on provider authentication, quota, and upstream failures.
-- `CLAUDE_CODE_OAUTH_TOKEN` (optional): Owner-only Claude Code subscription credential (the one-year token printed by
-  `claude setup-token`). Present alone it changes nothing: the route also needs the requesting principal's key id in
-  `CLAUDE_CODE_ALLOWED_KEY_IDS`, so subscription capacity can never serve a caller the owner did not name. It is never
-  sent to gateway clients or exposed by health responses.
+- `CLAUDE_API_KEY` (optional): Claude subscription credential used by the `claude_code` tier. It accepts the Console API
+  key the operator created for the subscription (including organization-scoped `sk-ant-usr-` keys) and travels as
+  `x-api-key`; an organization-scoped key discovers its `anthropic-workspace-id` once through
+  `/v1/organizations/workspaces` and caches it in KV. A credential stored from the admin console wins over this
+  environment value. It is never sent to gateway clients or exposed by health responses.
+- `CLAUDE_CODE_OAUTH_TOKEN` (optional): The legacy owner-gated Claude Code subscription credential (the one-year token
+  printed by `claude setup-token`), still accepted when `CLAUDE_API_KEY` is absent. It travels as
+  `Authorization:
+  Bearer` with the documented OAuth beta. Present alone it changes nothing: the route also needs the
+  requesting principal's key id in `CLAUDE_CODE_ALLOWED_KEY_IDS`, so subscription capacity can never serve a caller the
+  owner did not name. It is never sent to gateway clients or exposed by health responses.
+- `CLAUDE_CODE_WORKSPACE_ID` (optional): Pins the `anthropic-workspace-id` the subscription tier names for an
+  organization-scoped credential (a `wrkspc_` id). When absent, the first rejection that requires a workspace triggers
+  one discovery call and the result is cached in KV; the admin panel can also pin or clear the workspace without a
+  restart.
 - `CLAUDE_CODE_ALLOWED_KEY_IDS` (optional): Comma- or whitespace-separated API key ids allowed to use the subscription
   route. Empty or absent disables the route for everyone; there is no wildcard. The allowlist is checked per request and
   teammates outside it always fall through to the paid providers.
+- Claude subscription admin surface: `GET`/`POST`/`DELETE /admin/providers/claude-code/auth` reads, stores (validated
+  against the Anthropic models listing), and clears the credential plus an optional workspace pin;
+  `POST /admin/providers/claude-code/quota/clear` drops a recorded exhaustion block, cooldown, or configuration error.
+  `/admin/providers` and the admin panel's Claude subscription card report credential provenance, the workspace
+  selection, the routing gates, unified and standard rate-limit windows, the last upstream outcome, and health.
 - `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.

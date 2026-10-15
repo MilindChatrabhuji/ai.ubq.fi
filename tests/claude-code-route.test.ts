@@ -3,7 +3,8 @@ import { attemptClaudeCodeSubscription } from "../src/paid-fallback/claude-code-
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { CLAUDE_CODE_QUOTA_KV_KEY, loadClaudeCodeQuotaState } from "../src/provider/claude-code-quota.ts";
+import { CLAUDE_CODE_QUOTA_KV_KEY, clearClaudeCodeQuotaGuards, loadClaudeCodeQuotaState } from "../src/provider/claude-code-quota.ts";
+import { resetClaudeCodeCredentialCacheForTest, resolveClaudeCodeWorkspace } from "../src/provider/claude-code-credentials.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -76,6 +77,7 @@ const withRouteKv = async (run: (kv: RouteKv) => Promise<void>): Promise<void> =
   const kv = new RouteKv();
   resetProviderSelectionCacheForTest();
   resetProviderHealthThrottleForTest();
+  resetClaudeCodeCredentialCacheForTest();
   setKvForTest(kv as unknown as Deno.Kv);
   try {
     await run(kv);
@@ -194,5 +196,182 @@ Deno.test("a transient rate limit falls through with a short cooldown and no dur
     assert(quota, "the transient outcome is still recorded");
     assert.equal(quota.blocked_until_ms, null, "a generic 429 never becomes durable exhaustion");
     assert(quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());
+  });
+});
+
+const workspacesBody = (id = "wrkspc_01ErorW3iFLRvQy55cpNWtEt", name = "Default"): string =>
+  JSON.stringify({
+    data: [
+      { id, type: "workspace", name, created_at: "2026-02-02T22:25:14.167463Z", archived_at: null },
+      { id: "wrkspc_01FBEp5VyCHs7ghEnJqk6giF", type: "workspace", name: "Claude Code", created_at: "2025-03-22T10:01:42Z", archived_at: null },
+    ],
+    has_more: false,
+  });
+
+Deno.test("a CLAUDE_API_KEY credential travels as x-api-key without the OAuth beta or a Bearer header", async () => {
+  await withRouteKv(async () => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    const routed = await attemptClaudeCodeSubscription({ model, input: "hello", stream: false }, { model, usageContext, env: envLookup(apiKeyEnv), fetcher });
+    assert(routed, "the subscription route must serve this request");
+    assert.equal(captured.length, 1);
+    const request = captured[0];
+    assert.equal(request.headers.get("x-api-key"), "sk-ant-usr-1A6exampleBwAA");
+    assert.equal(request.headers.get("authorization"), null);
+    assert.equal(request.headers.get("anthropic-beta"), null);
+    assert.equal(request.headers.get("anthropic-version"), "2023-06-01");
+    assert.equal(request.headers.get("anthropic-workspace-id"), null, "no workspace header until one is known or required");
+  });
+});
+
+Deno.test("an organization-scoped key discovers the workspace once and the retry carries the header", async () => {
+  await withRouteKv(async (kv) => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    const discovery: { count: number } = { count: 0 };
+    const requireWorkspaceFetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = requestUrl(input);
+      captured.push({ url, headers: new Headers(init?.headers), body: jsonBody(init) });
+      if (url.endsWith("/v1/organizations/workspaces")) {
+        discovery.count += 1;
+        return Promise.resolve(new Response(workspacesBody(), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      const workspaceId = new Headers(init?.headers).get("anthropic-workspace-id");
+      if (!workspaceId) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                message:
+                  "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          )
+        );
+      }
+      return Promise.resolve(new Response(sse(successEvents()), { status: 200, headers: { "content-type": "text/event-stream", "request-id": "req_ws" } }));
+    };
+
+    const routed = await attemptClaudeCodeSubscription(
+      { model, input: "hello", stream: true },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: requireWorkspaceFetcher }
+    );
+    assert(routed, "the discovered workspace must let the retry serve the request");
+    assert.equal(discovery.count, 1, "discovery runs once for the deployment");
+    const messages = captured.filter((entry) => entry.url.endsWith("/v1/messages"));
+    assert.equal(messages.length, 2, "the first rejection is retried exactly once");
+    assert.equal(messages[0].headers.get("anthropic-workspace-id"), null);
+    assert.equal(messages[1].headers.get("anthropic-workspace-id"), "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
+    const stored = await resolveClaudeCodeWorkspace(kv as unknown as Deno.Kv);
+    assert.equal(stored?.id, "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
+    assert.equal(stored?.source, "discovered");
+
+    captured.length = 0;
+    const second = await attemptClaudeCodeSubscription(
+      { model, input: "again", stream: true },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: requireWorkspaceFetcher }
+    );
+    assert(second, "the cached workspace serves the next request");
+    assert.equal(discovery.count, 1, "the workspace lookup is cached in KV");
+    assert.equal(captured.filter((entry) => entry.url.endsWith("/v1/messages")).length, 1);
+    assert.equal(captured[0].headers.get("anthropic-workspace-id"), "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
+  });
+});
+
+Deno.test("the workspace discovery retry keeps the single-use dispatch reservation to one claim", async () => {
+  await withRouteKv(async () => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    let reservations = 0;
+    const requireWorkspaceFetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = requestUrl(input);
+      captured.push({ url, headers: new Headers(init?.headers), body: jsonBody(init) });
+      if (url.endsWith("/v1/organizations/workspaces")) {
+        return Promise.resolve(new Response(workspacesBody(), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      const workspaceId = new Headers(init?.headers).get("anthropic-workspace-id");
+      if (!workspaceId) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                message:
+                  "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          )
+        );
+      }
+      return Promise.resolve(new Response(sse(successEvents()), { status: 200, headers: { "content-type": "text/event-stream", "request-id": "req_ws" } }));
+    };
+    const routed = await attemptClaudeCodeSubscription(
+      { model, input: "hello", stream: true },
+      {
+        model,
+        env: envLookup(apiKeyEnv),
+        fetcher: requireWorkspaceFetcher,
+        usageContext: {
+          ...usageContext,
+          beforeProviderDispatch: () => {
+            reservations += 1;
+            return Promise.resolve(undefined);
+          },
+        },
+      }
+    );
+    assert(routed, "the retry must serve the request");
+    assert.equal(reservations, 1, "the retry reuses the request's single pre-transport reservation");
+    assert.equal(captured.filter((entry) => entry.url.endsWith("/v1/messages")).length, 2, "two transports ran for the discovery retry");
+  });
+});
+
+Deno.test("a billing rejection becomes an operator-visible configuration state and skips the transport until cleared", async () => {
+  await withRouteKv(async (kv) => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    const billingFetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      captured.push({ url: requestUrl(input), headers: new Headers(init?.headers), body: jsonBody(init) });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        )
+      );
+    };
+    const rejected = await attemptClaudeCodeSubscription(
+      { model, input: "hello" },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
+    );
+    assert.equal(rejected, null, "a billing rejection never serves the request itself");
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+    assert.equal(quota?.last_error?.kind, "billing_blocked");
+    assert(quota?.last_error?.message?.includes("credit balance"));
+    assert(quota?.blocked_until_ms === null, "a billing rejection is not quota exhaustion");
+    assert(quota !== null && quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());
+
+    const callsAfterFirst = captured.length;
+    const second = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher });
+    assert.equal(second, null);
+    assert.equal(captured.length, callsAfterFirst, "the configuration cooldown keeps the tier from hammering the upstream");
+
+    await clearClaudeCodeQuotaGuards(kv as unknown as Deno.Kv);
+    const afterClear = await attemptClaudeCodeSubscription(
+      { model, input: "hello" },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
+    );
+    assert.equal(afterClear, null, "the rejection still cannot serve, but the tier was retried");
+    assert.equal(captured.length, callsAfterFirst + 1, "clearing the guards retries the tier immediately");
   });
 });

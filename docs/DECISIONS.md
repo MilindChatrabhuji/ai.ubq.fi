@@ -1715,3 +1715,34 @@ while it routes inference through the gateway, which blocked the previous Darwin
 a blank-account reply from a daemon holding the wrong file account stays refused, but a same-account file swap between
 bind and refresh is caught only by the generation checks; the fallback trusts the local home configured on that host,
 never a remote path.
+
+## Claude subscription parity: API-key credential, workspace selection, and admin surfaces - 2026-10-15
+
+The `claude_code` tier now accepts the Console-billed `CLAUDE_API_KEY` direction alongside the owner-gated OAuth setup
+token, and it carries the operational surface the Codex subscription always had. Credential resolution is KV first and
+environment second (`CLAUDE_API_KEY`, then `CLAUDE_CODE_OAUTH_TOKEN`), so the admin console can rotate a credential
+without a restart; `api_key` credentials travel as `x-api-key` and OAuth tokens keep `Authorization: Bearer` plus
+`anthropic-beta: oauth-2025-04-20`. An organization-scoped key that rejects the first request with the documented "not
+scoped to a workspace" error triggers one workspace discovery through `/v1/organizations/workspaces` (preferring a
+workspace named `Default`), cached in KV and overridable by `CLAUDE_CODE_WORKSPACE_ID` or an admin pin; the retry reuses
+the request's single pre-transport dispatch reservation instead of claiming a second one, because the API-key usage
+ledger records exactly one pre-transport dispatch per request. Billing and workspace rejections are classified from the
+upstream error body into `billing_blocked` / `workspace_not_found` / `workspace_required`, stored with a bounded
+ten-minute configuration cooldown and their sanitized message, and they never become durable quota exhaustion; a served
+request clears the recorded configuration error. `GET`/`POST`/`DELETE /admin/providers/claude-code/auth` reads, stores
+(validated against the Anthropic models listing), and clears the credential plus an optional workspace pin;
+`POST /admin/providers/claude-code/quota/clear` drops the guards; `/admin/providers`, `/health/upstream`, and the admin
+panel's Claude subscription card report credential provenance, the workspace selection, the routing gates, unified and
+standard rate-limit windows, the last upstream outcome, and health. `normalizeApiKeyUsageRequestV3` now derives its
+provider allowlist from `API_KEY_USAGE_PROVIDERS`, because a `claude_code` dispatch row previously failed normalization
+and surfaced as `api_key_quota_reservation_unavailable` for the paid hop that followed it.
+
+Reason: the operator asked for Claude subscription feature parity with the Codex subscription, including admin switches,
+panels, and analytics, and named `CLAUDE_API_KEY` as the credential to use. The Console API-key direction is the
+research's documented authentication path (GREEN) where the raw OAuth bridge is only AMBER, so the owner-gated allowlist
+stays in force while the credential itself becomes operator-managed and independently rotatable. Reversal risk: a
+workspace pin or discovery result is advisory state that names the workspace sent as `anthropic-workspace-id`; a wrong
+pin fails closed with the recorded `workspace_not_found` state until it is corrected, and the tier still falls through
+to the paid routes on every rejection. The environment's own account state (no API credits in the Console organization,
+an admin-only `Claude Code` workspace) is an account condition, not a gateway defect: the tier records the exact
+upstream rejection instead of retrying it per request.

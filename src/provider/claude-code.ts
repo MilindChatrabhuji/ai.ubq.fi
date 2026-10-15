@@ -1,13 +1,12 @@
 /**
- * Claude Code subscription tier. This is the owner-gated adapter described in
- * docs/handoff/claude-code-subscription-tier-2026-10-11.md: it speaks the
- * native Anthropic Messages wire with the subscriber's own OAuth credential
- * (the documented one-year `claude setup-token` token for v1), keeps the
- * provider's unified rate-limit headers as the only authoritative quota
- * evidence, and never fabricates client identity beyond the documented OAuth
- * beta. Eligibility is decided by the operator selection, an explicit
- * principal allowlist, and configured credentials; any missing condition
- * leaves the route inert for that request.
+ * Claude subscription tier. This is the owner-gated adapter described in
+ * docs/handoff/claude-code-subscription-tier-2026-10-11.md, extended with the
+ * Console API-key direction: a `CLAUDE_API_KEY` (or admin-stored equivalent)
+ * travels as `x-api-key`, the legacy `CLAUDE_CODE_OAUTH_TOKEN` keeps the
+ * documented Bearer plus OAuth beta wire, and an organization-scoped key that
+ * demands `anthropic-workspace-id` discovers a workspace once instead of
+ * failing every request. The provider's rate-limit headers stay the only
+ * authoritative quota evidence and no client fingerprint is ever synthesized.
  */
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "../inference-deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
@@ -16,6 +15,20 @@ import type { PromptCacheMode } from "../openai-telemetry.ts";
 import { buildSurplusClaudeRequest, isSurplusClaudeModel } from "./surplus-claude-request.ts";
 import { normalizeAnthropicResponsesResponse } from "./anthropic-responses.ts";
 import {
+  type ClaudeCodeCredentialKind,
+  type ClaudeCodeResolvedCredential,
+  type ClaudeCodeResolvedWorkspace,
+  CLAUDE_CODE_OAUTH_TOKEN_ENV,
+  CLAUDE_CODE_WORKSPACE_ID_ENV,
+  classifyClaudeCodeCredentialKind,
+  resolveClaudeCodeCredential,
+  resolveClaudeCodeWorkspace,
+  storeClaudeCodeWorkspaceState,
+  mergeClaudeCodeWorkspaceState,
+  loadClaudeCodeWorkspaceState,
+} from "./claude-code-credentials.ts";
+import { isRecord } from "../utils.ts";
+import {
   claudeCodeExhaustionFromResponse,
   claudeCodeQuotaBlocked,
   claudeCodeQuotaCoolingDown,
@@ -23,11 +36,14 @@ import {
   type ClaudeCodeQuotaState,
   type ClaudeCodeWindowId,
   observeClaudeCodeQuota,
+  sanitizeClaudeCodeErrorMessage,
 } from "./claude-code-quota.ts";
 
 export const CLAUDE_CODE_BASE_URL = "https://api.anthropic.com";
-const CLAUDE_CODE_MESSAGES_URL = `${CLAUDE_CODE_BASE_URL}/v1/messages`;
-export const CLAUDE_CODE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+export const CLAUDE_CODE_MESSAGES_URL = `${CLAUDE_CODE_BASE_URL}/v1/messages`;
+export const CLAUDE_CODE_MODELS_URL = `${CLAUDE_CODE_BASE_URL}/v1/models`;
+export const CLAUDE_CODE_WORKSPACES_URL = `${CLAUDE_CODE_BASE_URL}/v1/organizations/workspaces`;
+export { CLAUDE_CODE_OAUTH_TOKEN_ENV, CLAUDE_CODE_WORKSPACE_ID_ENV };
 export const CLAUDE_CODE_ALLOWED_KEY_IDS_ENV = "CLAUDE_CODE_ALLOWED_KEY_IDS";
 export const CLAUDE_CODE_ANTHROPIC_VERSION = "2023-06-01";
 export const CLAUDE_CODE_OAUTH_BETA = "oauth-2025-04-20";
@@ -38,6 +54,8 @@ export const CLAUDE_CODE_OAUTH_BETA = "oauth-2025-04-20";
  */
 export const CLAUDE_CODE_DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 const CLAUDE_CODE_MAX_TRANSIENT_COOLDOWN_MS = 30 * 60_000;
+/** Bounded error text retained from upstream for classification and display. */
+const CLAUDE_CODE_ERROR_BODY_MAX_BYTES = 4_096;
 
 export type ClaudeCodeFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -46,8 +64,6 @@ const nonEmptyString = (value: unknown): string | null => {
   const trimmed = value.trim();
   return trimmed.length ? trimmed : null;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** Environment lookup seam so tests never touch process state. */
 export type ClaudeCodeEnvLookup = (name: string) => string | null | undefined;
@@ -59,9 +75,6 @@ const defaultEnvLookup: ClaudeCodeEnvLookup = (name) => {
     return null;
   }
 };
-
-export const readClaudeCodeToken = (env: ClaudeCodeEnvLookup = defaultEnvLookup): string | null =>
-  nonEmptyString(env(CLAUDE_CODE_OAUTH_TOKEN_ENV) ?? undefined);
 
 /**
  * The explicit principal allowlist. Empty or absent means nobody, so enabling
@@ -82,10 +95,10 @@ export const readClaudeCodeAllowedKeyIds = (env: ClaudeCodeEnvLookup = defaultEn
   parseClaudeCodeAllowedKeyIds(env(CLAUDE_CODE_ALLOWED_KEY_IDS_ENV) ?? undefined);
 
 export type ClaudeCodeEligibility =
-  | Readonly<{ eligible: true; token: string }>
+  | Readonly<{ eligible: true; credential: ClaudeCodeResolvedCredential; workspace: ClaudeCodeResolvedWorkspace | null }>
   | Readonly<{
       eligible: false;
-      reason: "model_unsupported" | "provider_disabled" | "principal_not_allowed" | "token_missing" | "quota_blocked" | "cooling_down";
+      reason: "model_unsupported" | "provider_disabled" | "principal_not_allowed" | "credential_missing" | "quota_blocked" | "cooling_down";
     }>;
 
 export type ClaudeCodeEligibilityInput = Readonly<{
@@ -95,7 +108,8 @@ export type ClaudeCodeEligibilityInput = Readonly<{
   keyId: string | null;
   providerEnabled: boolean;
   allowedKeyIds: ReadonlySet<string>;
-  token: string | null;
+  credential: ClaudeCodeResolvedCredential | null;
+  workspace?: ClaudeCodeResolvedWorkspace | null;
   quota: ClaudeCodeQuotaState | null;
   nowMs?: number;
 }>;
@@ -111,10 +125,10 @@ export const resolveClaudeCodeEligibility = (input: ClaudeCodeEligibilityInput):
   if (!isSurplusClaudeModel(input.model)) return { eligible: false, reason: "model_unsupported" };
   if (!input.providerEnabled) return { eligible: false, reason: "provider_disabled" };
   if (!input.keyId || !input.allowedKeyIds.has(input.keyId)) return { eligible: false, reason: "principal_not_allowed" };
-  if (!input.token) return { eligible: false, reason: "token_missing" };
+  if (!input.credential) return { eligible: false, reason: "credential_missing" };
   if (claudeCodeQuotaBlocked(input.quota, nowMs)) return { eligible: false, reason: "quota_blocked" };
   if (claudeCodeQuotaCoolingDown(input.quota, nowMs)) return { eligible: false, reason: "cooling_down" };
-  return { eligible: true, token: input.token };
+  return { eligible: true, credential: input.credential, workspace: input.workspace ?? null };
 };
 
 export type ClaudeCodeErrorCode = "claude_code_credential_missing" | "claude_code_request_invalid" | "claude_code_upstream_unreachable";
@@ -133,11 +147,33 @@ export class ClaudeCodeError extends Error {
   }
 }
 
+export type ClaudeCodeResponseKind =
+  | "ok"
+  | "durable_exhaustion"
+  | "transient_rate_limited"
+  | "auth_invalid"
+  | "forbidden"
+  | "billing_blocked"
+  | "workspace_required"
+  | "workspace_not_found"
+  | "upstream_error"
+  | "request_rejected";
+
 export type ClaudeCodeResponseClassification = Readonly<{
-  kind: "ok" | "durable_exhaustion" | "transient_rate_limited" | "auth_invalid" | "forbidden" | "upstream_error" | "request_rejected";
+  kind: ClaudeCodeResponseKind;
   exhaustion: Readonly<{ window: ClaudeCodeWindowId; reset_at_ms: number | null }> | null;
   retry_after_ms: number | null;
+  /** Sanitized upstream message for operator display; never a header echo. */
+  detail: string | null;
 }>;
+
+/**
+ * True for the rejections that mean the credential or its workspace selection
+ * is wrong for this account, not that the provider is degraded. They are
+ * retried only after the bounded configuration cooldown.
+ */
+export const isClaudeCodeConfigurationKind = (kind: ClaudeCodeResponseKind): boolean =>
+  kind === "billing_blocked" || kind === "workspace_not_found" || kind === "workspace_required" || kind === "forbidden";
 
 const parseRetryAfterMs = (value: string | null): number | null => {
   if (value === null) return null;
@@ -152,24 +188,68 @@ const parseRetryAfterMs = (value: string | null): number | null => {
  * Classify one upstream response without reading its body: durable exhaustion
  * needs the documented unified window evidence on a rejection, a generic rate
  * limit stays request-local, and authentication failures are their own class.
+ * `classifyClaudeCodeErrorBody` then narrows 4xx configuration rejections.
  */
 export const classifyClaudeCodeResponse = (status: number, headers: Headers, nowMs: number = Date.now()): ClaudeCodeResponseClassification => {
-  if (status >= 200 && status < 300) return { kind: "ok", exhaustion: null, retry_after_ms: null };
+  if (status >= 200 && status < 300) return { kind: "ok", exhaustion: null, retry_after_ms: null, detail: null };
   if (status === 429) {
     const observation = observeClaudeCodeQuota(headers, nowMs);
     const exhaustion = claudeCodeExhaustionFromResponse(status, observation);
-    if (exhaustion) return { kind: "durable_exhaustion", exhaustion, retry_after_ms: null };
-    return { kind: "transient_rate_limited", exhaustion: null, retry_after_ms: parseRetryAfterMs(headers.get("retry-after")) };
+    if (exhaustion) return { kind: "durable_exhaustion", exhaustion, retry_after_ms: null, detail: null };
+    return { kind: "transient_rate_limited", exhaustion: null, retry_after_ms: parseRetryAfterMs(headers.get("retry-after")), detail: null };
   }
-  if (status === 401) return { kind: "auth_invalid", exhaustion: null, retry_after_ms: null };
-  if (status === 403) return { kind: "forbidden", exhaustion: null, retry_after_ms: null };
-  if (status >= 500) return { kind: "upstream_error", exhaustion: null, retry_after_ms: null };
-  return { kind: "request_rejected", exhaustion: null, retry_after_ms: null };
+  if (status === 401) return { kind: "auth_invalid", exhaustion: null, retry_after_ms: null, detail: null };
+  if (status === 403) return { kind: "forbidden", exhaustion: null, retry_after_ms: null, detail: null };
+  if (status >= 500) return { kind: "upstream_error", exhaustion: null, retry_after_ms: null, detail: null };
+  return { kind: "request_rejected", exhaustion: null, retry_after_ms: null, detail: null };
+};
+
+/** Prefer the nested `error.message`; fall back to the sanitized raw text. */
+const extractClaudeCodeErrorMessage = (bodyText: string | null): string | null => {
+  if (!bodyText) return null;
+  try {
+    const parsed: unknown = JSON.parse(bodyText);
+    if (isRecord(parsed) && isRecord(parsed.error)) {
+      const message = nonEmptyString(parsed.error.message);
+      if (message) return sanitizeClaudeCodeErrorMessage(message);
+    }
+  } catch {
+    // Fall through: the sanitized raw body is still useful for diagnosis.
+  }
+  return sanitizeClaudeCodeErrorMessage(bodyText);
+};
+
+/**
+ * Narrow a non-2xx classification using the upstream error message. The
+ * workspace and billing rejections are configuration states the operator must
+ * see in the admin console, not generic request failures or provider outages.
+ */
+export const classifyClaudeCodeErrorBody = (classification: ClaudeCodeResponseClassification, bodyText: string | null): ClaudeCodeResponseClassification => {
+  if (classification.kind === "ok" || classification.kind === "durable_exhaustion" || classification.kind === "upstream_error") {
+    return classification;
+  }
+  const detail = extractClaudeCodeErrorMessage(bodyText);
+  if (!detail) return classification;
+  const lower = detail.toLowerCase();
+  const withDetail = { ...classification, detail };
+  if (classification.kind === "request_rejected" && lower.includes("not scoped to a workspace")) {
+    return { ...withDetail, kind: "workspace_required" };
+  }
+  if (lower.includes("not found") && lower.includes("workspace")) return { ...withDetail, kind: "workspace_not_found" };
+  if (lower.includes("workspace") && lower.includes("valid workspace")) return { ...withDetail, kind: "workspace_not_found" };
+  if (lower.includes("credit balance") || lower.includes("purchase credits")) return { ...withDetail, kind: "billing_blocked" };
+  if (lower.includes("workspace") && lower.includes("organization")) return { ...withDetail, kind: "workspace_not_found" };
+  return withDetail;
 };
 
 export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
-  /** OAuth or setup token; resolved internally from the environment when absent. */
-  token?: string | null;
+  /** Resolved credential; resolved from KV and the environment when absent. */
+  credential?: ClaudeCodeResolvedCredential | null;
+  /** Resolved workspace; resolved from KV and the environment when absent. */
+  workspace?: ClaudeCodeResolvedWorkspace | null;
+  /** KV handle used for credential, workspace, and quota state. */
+  kv?: Deno.Kv | null;
+  env?: ClaudeCodeEnvLookup;
   fetcher?: ClaudeCodeFetch;
   signal?: AbortSignal;
   /** Private authenticated identity for signed native reasoning replay; never sent upstream. */
@@ -182,38 +262,39 @@ export type ClaudeCodeAuthenticatedFetchOptions = Readonly<{
 export type ClaudeCodeResponsesResult = Readonly<{
   response: Response;
   request_id: string | null;
+  credential: ClaudeCodeResolvedCredential;
+  /** Workspace used for this attempt, including one discovered during it. */
+  workspace: ClaudeCodeResolvedWorkspace | null;
   prompt_cache_mode?: PromptCacheMode;
   explicit_breakpoint_count?: number;
   quota: ClaudeCodeQuotaObservation | null;
   classification: ClaudeCodeResponseClassification;
 }>;
 
-const requireClaudeCodeToken = (supplied: string | null | undefined): string => {
-  const token = supplied === undefined ? readClaudeCodeToken() : nonEmptyString(supplied);
-  if (token) return token;
-  throw new ClaudeCodeError(
-    `Claude Code subscription inference is unavailable because ${CLAUDE_CODE_OAUTH_TOKEN_ENV} is not configured.`,
-    "claude_code_credential_missing",
-    503
-  );
-};
+export type ClaudeCodeAuthHeaders = Readonly<{ kind: ClaudeCodeCredentialKind; secret: string }>;
 
 /**
- * The documented subscription-traffic header set. Bearer alone replaces the
- * API key, the OAuth beta must survive gateway forwarding, and no client
- * fingerprint beyond that is synthesized.
+ * The documented credential wire per credential kind. Console API keys travel
+ * as `x-api-key`; OAuth and setup tokens travel as `Authorization: Bearer`
+ * with the OAuth beta that must survive gateway forwarding. An
+ * organization-scoped key additionally needs the workspace selection, and no
+ * client fingerprint beyond these documented headers is ever synthesized.
  */
-export const claudeCodeRequestHeaders = (token: string, stream: boolean): Headers => {
+export const claudeCodeRequestHeaders = (credential: ClaudeCodeAuthHeaders, options: Readonly<{ stream: boolean; workspaceId?: string | null }>): Headers => {
   const headers = new Headers();
-  headers.set("Authorization", `Bearer ${token}`);
+  if (credential.kind === "oauth") {
+    headers.set("Authorization", `Bearer ${credential.secret}`);
+    headers.set("anthropic-beta", CLAUDE_CODE_OAUTH_BETA);
+  } else {
+    headers.set("x-api-key", credential.secret);
+  }
   headers.set("Content-Type", "application/json");
-  headers.set("Accept", stream ? "text/event-stream" : "application/json");
+  headers.set("Accept", options.stream ? "text/event-stream" : "application/json");
   headers.set("anthropic-version", CLAUDE_CODE_ANTHROPIC_VERSION);
-  headers.set("anthropic-beta", CLAUDE_CODE_OAUTH_BETA);
+  const workspaceId = nonEmptyString(options.workspaceId);
+  if (workspaceId) headers.set("anthropic-workspace-id", workspaceId);
   return headers;
 };
-
-const claudeCodeRequestUrl = (): string => CLAUDE_CODE_MESSAGES_URL;
 
 const claudeCodeTransportFailure = (error: unknown, signal: AbortSignal | undefined, headersDeadline: AbortController): unknown => {
   if (error instanceof ApiKeyQuotaDispatchError) return error;
@@ -255,6 +336,16 @@ const responseReasoningSummary = (body: Record<string, unknown>): string | undef
   return isRecord(reasoning) ? (nonEmptyString(reasoning.summary) ?? undefined) : undefined;
 };
 
+/** Bounded body read for error classification; never throws. */
+const readErrorBodyText = async (response: Response): Promise<string | null> => {
+  try {
+    const text = await response.clone().text();
+    return text.length > CLAUDE_CODE_ERROR_BODY_MAX_BYTES ? text.slice(0, CLAUDE_CODE_ERROR_BODY_MAX_BYTES) : text;
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Build the native Messages request for a Claude model. Returns null when the
  * caller's body has no lossless native representation; the caller then leaves
@@ -281,6 +372,151 @@ export const buildClaudeCodeRequest = (
   return { ...built, body: nativeBody };
 };
 
+const requireClaudeCodeCredential = async (
+  supplied: ClaudeCodeResolvedCredential | null | undefined,
+  kv: Deno.Kv | null,
+  env: ClaudeCodeEnvLookup | undefined
+): Promise<ClaudeCodeResolvedCredential> => {
+  if (supplied) return supplied;
+  const resolved = await resolveClaudeCodeCredential(kv, env);
+  if (resolved) return resolved;
+  throw new ClaudeCodeError(
+    `Claude subscription inference is unavailable because neither CLAUDE_API_KEY, ${CLAUDE_CODE_OAUTH_TOKEN_ENV}, nor a stored credential is configured.`,
+    "claude_code_credential_missing",
+    503
+  );
+};
+
+type ClaudeCodeWorkspaceListEntry = Readonly<{ id: string; name: string | null }>;
+
+const parseWorkspaceList = (value: unknown): ClaudeCodeWorkspaceListEntry[] => {
+  if (!isRecord(value) || !Array.isArray(value.data)) return [];
+  const entries: ClaudeCodeWorkspaceListEntry[] = [];
+  for (const item of value.data) {
+    if (!isRecord(item)) continue;
+    const id = nonEmptyString(item.id);
+    if (!id || !id.startsWith("wrkspc_")) continue;
+    if (item.archived_at !== null && item.archived_at !== undefined) continue;
+    entries.push({ id, name: nonEmptyString(item.name) });
+  }
+  return entries;
+};
+
+/**
+ * The Console default workspace is the inference target for an
+ * organization-scoped key, so a workspace literally named `Default` wins over
+ * the listing order; otherwise the first non-archived workspace is used.
+ */
+const pickWorkspace = (entries: readonly ClaudeCodeWorkspaceListEntry[]): ClaudeCodeWorkspaceListEntry | null => {
+  const preferred = entries.find((entry) => entry.name?.trim().toLowerCase() === "default");
+  return preferred ?? entries[0] ?? null;
+};
+
+export type ClaudeCodeWorkspaceDiscoveryResult =
+  Readonly<{ ok: true; workspace: ClaudeCodeResolvedWorkspace }> | Readonly<{ ok: false; status: number | null; error: string | null }>;
+
+/**
+ * Discover the workspace an organization-scoped credential must name. The
+ * result is cached in KV as advisory state so later requests skip the lookup;
+ * an operator pin always wins because resolution prefers KV and environment
+ * configuration over the discovered entry.
+ */
+export const discoverClaudeCodeWorkspace = async (
+  options: Readonly<{ credential: ClaudeCodeAuthHeaders; kv?: Deno.Kv | null; fetcher?: ClaudeCodeFetch; signal?: AbortSignal }>
+): Promise<ClaudeCodeWorkspaceDiscoveryResult> => {
+  const kv = options.kv ?? null;
+  const headers = claudeCodeRequestHeaders(options.credential, { stream: false });
+  let response: Response;
+  try {
+    response = await (options.fetcher ?? fetch)(CLAUDE_CODE_WORKSPACES_URL, {
+      method: "GET",
+      headers,
+      redirect: "manual",
+      signal: options.signal,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, status: null, error: sanitizeClaudeCodeErrorMessage(message) };
+  }
+  const bodyText = await response.text().catch(() => null);
+  if (!response.ok) {
+    return { ok: false, status: response.status, error: sanitizeClaudeCodeErrorMessage(bodyText) };
+  }
+  let parsed: unknown = null;
+  try {
+    parsed = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    parsed = null;
+  }
+  const picked = pickWorkspace(parseWorkspaceList(parsed));
+  if (!picked) return { ok: false, status: response.status, error: "No usable workspace was listed for this credential." };
+  const workspace: ClaudeCodeResolvedWorkspace = { id: picked.id, name: picked.name, source: "discovered" };
+  if (kv) {
+    const previous = await loadClaudeCodeWorkspaceState(kv).catch(() => null);
+    await storeClaudeCodeWorkspaceState(kv, mergeClaudeCodeWorkspaceState(previous, { id: workspace.id, name: workspace.name, source: "discovered" })).catch(
+      () => false
+    );
+  }
+  return { ok: true, workspace };
+};
+
+const performClaudeCodeMessagesAttempt = async (
+  options: Readonly<{
+    credential: ClaudeCodeResolvedCredential;
+    workspace: ClaudeCodeResolvedWorkspace | null;
+    encodedBody: string;
+    stream: boolean;
+    signal?: AbortSignal;
+    fetcher?: ClaudeCodeFetch;
+    beforeDispatch?: () => Promise<ApiKeyProviderDispatch | undefined>;
+    onDispatch?: () => void;
+    sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
+  }>
+): Promise<
+  Readonly<{ response: Response; classification: ClaudeCodeResponseClassification; quota: ClaudeCodeQuotaObservation | null; requestId: string | null }>
+> => {
+  const headers = claudeCodeRequestHeaders(options.credential, { stream: options.stream, workspaceId: options.workspace?.id ?? null });
+  const headersDeadline = new AbortController();
+  const headersTimer = setTimeout(() => {
+    headersDeadline.abort(new DOMException("Claude Code response headers timed out.", "TimeoutError"));
+  }, STREAM_FIRST_EVENT_DEADLINE_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, headersDeadline.signal]) : headersDeadline.signal;
+  let response: Response;
+  let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
+  try {
+    const dispatch = options.beforeDispatch ? await options.beforeDispatch() : undefined;
+    if (signal.aborted) {
+      await dispatch?.cancelBeforeTransport();
+      throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+    }
+    dispatch?.markTransportStarted();
+    options.onDispatch?.();
+    upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("claude_code") ?? null;
+    response = await awaitWithAbort(
+      (options.fetcher ?? fetch)(CLAUDE_CODE_MESSAGES_URL, {
+        method: "POST",
+        headers,
+        body: options.encodedBody,
+        redirect: "manual",
+        signal,
+      }),
+      signal
+    );
+  } catch (error) {
+    upstreamAttempt?.recordFetchError();
+    throw claudeCodeTransportFailure(error, options.signal, headersDeadline);
+  } finally {
+    clearTimeout(headersTimer);
+  }
+
+  const requestId = responseRequestId(response);
+  const base = classifyClaudeCodeResponse(response.status, response.headers);
+  const classification = base.kind === "ok" ? base : classifyClaudeCodeErrorBody(base, await readErrorBodyText(response));
+  const quota = observeClaudeCodeQuota(response.headers);
+  const recorded = upstreamAttempt ? upstreamAttempt.wrap(response) : response;
+  return { response: recorded, classification, quota, requestId };
+};
+
 export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCodeAuthenticatedFetchOptions = {}): Promise<ClaudeCodeResponsesResult> => {
   if (!isRecord(body)) {
     throw new ClaudeCodeError("Claude Code Messages requests must use a canonical JSON object body.", "claude_code_request_invalid", 400);
@@ -303,48 +539,40 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
     throw new ClaudeCodeError("Claude Code Messages requests must use a JSON-serializable body.", "claude_code_request_invalid", 400);
   }
 
-  const token = requireClaudeCodeToken(options.token);
-  const headers = claudeCodeRequestHeaders(token, native.body.stream === true);
-  const headersDeadline = new AbortController();
-  const headersTimer = setTimeout(() => {
-    headersDeadline.abort(new DOMException("Claude Code response headers timed out.", "TimeoutError"));
-  }, STREAM_FIRST_EVENT_DEADLINE_MS);
-  const signal = options.signal ? AbortSignal.any([options.signal, headersDeadline.signal]) : headersDeadline.signal;
-  let response: Response;
-  let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
-  try {
-    const dispatch = options.beforeDispatch ? await options.beforeDispatch() : undefined;
-    if (signal.aborted) {
-      await dispatch?.cancelBeforeTransport();
-      throw signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+  const kv = options.kv ?? null;
+  const credential = await requireClaudeCodeCredential(options.credential, kv, options.env);
+  const initialWorkspace = options.workspace === undefined ? await resolveClaudeCodeWorkspace(kv, options.env) : options.workspace;
+
+  const attemptOptions = {
+    credential,
+    encodedBody,
+    stream: native.body.stream === true,
+    signal: options.signal,
+    fetcher: options.fetcher,
+    beforeDispatch: options.beforeDispatch,
+    onDispatch: options.onDispatch,
+    sentinelUpstreamRecorder: options.sentinelUpstreamRecorder,
+  } as const;
+
+  let workspace = initialWorkspace;
+  let attempt = await performClaudeCodeMessagesAttempt({ ...attemptOptions, workspace });
+  // An organization-scoped key rejects the first request with a workspace
+  // requirement; one discovery call (cached in KV) resolves it for the whole
+  // deployment without a per-request lookup afterwards.
+  if (attempt.classification.kind === "workspace_required" && !workspace) {
+    const discovered = await discoverClaudeCodeWorkspace({ credential, kv, fetcher: options.fetcher, signal: options.signal }).catch(() => null);
+    if (discovered?.ok) {
+      workspace = discovered.workspace;
+      // The retry is the same client dispatch: the single-use pre-transport
+      // reservation and the first-provider attribution already happened for
+      // this request and must not be claimed twice.
+      attempt = await performClaudeCodeMessagesAttempt({ ...attemptOptions, workspace, beforeDispatch: undefined, onDispatch: undefined });
     }
-    dispatch?.markTransportStarted();
-    options.onDispatch?.();
-    upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("claude_code") ?? null;
-    response = await awaitWithAbort(
-      (options.fetcher ?? fetch)(claudeCodeRequestUrl(), {
-        method: "POST",
-        headers,
-        body: encodedBody,
-        redirect: "manual",
-        signal,
-      }),
-      signal
-    );
-  } catch (error) {
-    upstreamAttempt?.recordFetchError();
-    throw claudeCodeTransportFailure(error, options.signal, headersDeadline);
-  } finally {
-    clearTimeout(headersTimer);
   }
 
-  const requestId = responseRequestId(response);
-  const classification = classifyClaudeCodeResponse(response.status, response.headers);
-  const quota = observeClaudeCodeQuota(response.headers);
-  const recorded = upstreamAttempt ? upstreamAttempt.wrap(response) : response;
-  const delivered = await normalizeAnthropicResponsesResponse(recorded, {
+  const delivered = await normalizeAnthropicResponsesResponse(attempt.response, {
     model: String(body.model),
-    requestId: requestId ?? undefined,
+    requestId: attempt.requestId ?? undefined,
     signal: options.signal,
     reasoningSummary: responseReasoningSummary(body),
     reasoningReplayScope: options.reasoningReplayScope,
@@ -352,10 +580,15 @@ export const fetchClaudeCodeResponses = async (body: unknown, options: ClaudeCod
   });
   return {
     response: delivered,
-    request_id: requestId,
+    request_id: attempt.requestId,
+    credential,
+    workspace,
     prompt_cache_mode: native.promptCacheMode,
     explicit_breakpoint_count: native.explicitBreakpointCount,
-    quota,
-    classification,
+    quota: attempt.quota,
+    classification: attempt.classification,
   };
 };
+
+/** Kind of a credential the admin surface is about to store, for validation. */
+export const claudeCodeCredentialKind = (secret: string): ClaudeCodeCredentialKind => classifyClaudeCodeCredentialKind(secret);

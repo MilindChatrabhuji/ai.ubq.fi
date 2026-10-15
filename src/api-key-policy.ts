@@ -15,8 +15,28 @@ export const API_KEY_USAGE_V3_RESERVATION_LEASE_MS = 5 * 60_000;
 export const API_KEY_USAGE_V3_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_KV_RETRIES = 5;
 
-export type ApiKeyUsageProvider =
-  "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus" | "voyage";
+/**
+ * Every provider that may own an API-key usage dispatch. The request-row
+ * normalizer reads this list, so a provider added here is accepted by the
+ * ledger instead of turning its dispatched row into an unreadable one.
+ */
+export const API_KEY_USAGE_PROVIDERS = [
+  "cerebras",
+  "chatgpt_codex",
+  "claude_code",
+  "deepseek",
+  "lithos",
+  "openrouter",
+  "removed_provider",
+  "metered",
+  "surplus",
+  "voyage",
+] as const;
+
+export type ApiKeyUsageProvider = (typeof API_KEY_USAGE_PROVIDERS)[number];
+
+const isApiKeyUsageProvider = (value: unknown): value is ApiKeyUsageProvider =>
+  typeof value === "string" && (API_KEY_USAGE_PROVIDERS as readonly string[]).includes(value);
 
 export type ApiKeyProviderDispatch = Readonly<{
   markTransportStarted: () => void;
@@ -187,18 +207,7 @@ export const normalizeApiKeyUsageRequestV3 = (value: unknown): ApiKeyUsageReques
     (value.state !== "reserved" && value.state !== "dispatched" && value.state !== "released") ||
     !isSafeNonNegativeInteger(value.reserved_at_ms) ||
     !isSafeNonNegativeInteger(value.lease_expires_at_ms) ||
-    !(
-      value.provider === null ||
-      value.provider === "cerebras" ||
-      value.provider === "chatgpt_codex" ||
-      value.provider === "deepseek" ||
-      value.provider === "lithos" ||
-      value.provider === "openrouter" ||
-      value.provider === "removed_provider" ||
-      value.provider === "metered" ||
-      value.provider === "surplus" ||
-      value.provider === "voyage"
-    ) ||
+    !(value.provider === null || isApiKeyUsageProvider(value.provider)) ||
     !(value.dispatched_at_ms === null || isSafeNonNegativeInteger(value.dispatched_at_ms)) ||
     !(value.released_at_ms === null || isSafeNonNegativeInteger(value.released_at_ms)) ||
     !(value.release_reason === null || typeof value.release_reason === "string")
