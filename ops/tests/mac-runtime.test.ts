@@ -3,7 +3,7 @@ import { test } from "bun:test";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { spawnFixture, runFixture, outputFixture, fsError, type FixtureChild } from "./fixture-process.ts";
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { MAC_RUNTIME, prepareMacRuntime } from "../mac-runtime.ts";
 import { dirname, join, resolve } from "node:path";
 import { withMacSqliteTemp } from "../mac-sqlite-temp.ts";
@@ -413,4 +413,21 @@ test("the Mac launcher overrides only child SQLite temp after explicit root dote
   assert.match(mac, /await child\.exited/);
   assert.match(mac, /"--no-env-file", "--no-install"/);
   assert.doesNotMatch(source.slice(source.indexOf("} else {", source.indexOf('if (mode === "mac")'))), /SQLITE_TMPDIR|withMacSqliteTemp/);
+});
+
+test("copied service launcher ops retain every static relative dependency on both platform branches", async () => {
+  await fixture(async (root) => {
+    const destination = join(root, "ops");
+    await mkdir(destination);
+    await copyOps(destination);
+    const entry = new URL("../launch-service.ts", import.meta.url);
+    const source = await readFile(entry, "utf8");
+    const imports = Array.from(source.matchAll(/from "(\.\/[^"]+)"/g), (match) => match[1]);
+    assert(imports.includes("./mac-sqlite-temp.ts"));
+    for (const specifier of imports) {
+      assert.equal(await readFile(join(destination, specifier), "utf8"), await readFile(new URL(specifier, entry), "utf8"), specifier);
+    }
+    const copied: unknown = await import(pathToFileURL(join(destination, "mac-sqlite-temp.ts")).href);
+    assert(copied !== null && typeof copied === "object" && "withMacSqliteTemp" in copied && typeof copied.withMacSqliteTemp === "function");
+  });
 });
