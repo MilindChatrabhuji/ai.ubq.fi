@@ -1,6 +1,6 @@
 import { lstat, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { digest, exists } from "./io.ts";
+import { digest, exists, fileDigest } from "./io.ts";
 
 type Receipt = {
   schema: string;
@@ -32,7 +32,7 @@ export const verifyLegacyRollback = async (root: string): Promise<void> => {
     (await realpath(receipt.destination.path)) !== (await realpath(destination)) ||
     !["absent", "empty"].includes(receipt.source.snapshot.wal) ||
     receipt.source.snapshot.drain_boundary !== "checkpointed-no-wal" ||
-    digest(await readFile(bun)) !== receipt.source.file.sha256
+    (await fileDigest(bun)) !== receipt.source.file.sha256
   )
     throw new Error("Legacy rollback receipt does not prove the latest stopped Bun state");
   if ((await exists(bun + "-wal")) && (await lstat(bun + "-wal")).size !== 0) throw new Error("Bun WAL still contains writes; drain before rollback");
@@ -44,8 +44,7 @@ export const verifyLegacyRollback = async (root: string): Promise<void> => {
       throw new Error("The active legacy codec receipt changed");
     return;
   }
-  if (digest(await readFile(destination)) !== receipt.destination.file.sha256)
-    throw new Error("Converted latest-state Deno destination differs from the receipt");
+  if ((await fileDigest(destination)) !== receipt.destination.file.sha256) throw new Error("Converted latest-state Deno destination differs from the receipt");
   const temporary = active + "-" + crypto.randomUUID();
   try {
     await writeFile(temporary, identity + "\n", { flag: "wx", mode: 0o600 });

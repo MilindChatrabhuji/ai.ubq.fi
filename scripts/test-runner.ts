@@ -85,6 +85,7 @@ const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[
           "ops/tests/vps-release-driver.test.ts",
           "ops/tests/vps-release-recovery.test.ts",
           "ops/tests/vps-release-metrics.test.ts",
+          "ops/tests/first-bun-cutover.test.ts",
         ]),
       ];
     case "deploy-guards":

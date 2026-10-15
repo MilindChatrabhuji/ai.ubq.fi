@@ -101,7 +101,8 @@ export class ImmutableVpsReleaseStore {
     try {
       await this._run("git", ["archive", "--format=tar", `--output=${archivePath}`, sha], this.root);
       const archive = await vpsBytesDigest(await readFile(archivePath));
-      await this._run("tar", ["-xf", archivePath, "-C", staging], this.root);
+      // Materialized source modes are part of its CI identity, independent of the private operator's umask.
+      await this._run("/bin/sh", ["-c", 'umask 022; exec /usr/bin/tar -xf "$1" -C "$2"', "uos-source", archivePath, staging], this.root);
       const directory = await lstat(`${staging}/src`);
       if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error("Unsafe generated release directory in source archive");
       for (const generated of ["src/release.ts", ".uos-release.json"]) {
