@@ -22,7 +22,7 @@ import {
   storeClaudeCodeStoredCredential,
   storeClaudeCodeWorkspaceState,
 } from "../provider/claude-code-credentials.ts";
-import { CLAUDE_CODE_MODELS_URL, claudeCodeCredentialKind, claudeCodeRequestHeaders } from "../provider/claude-code.ts";
+import { CLAUDE_CODE_MODELS_URL, claudeCodeCredentialKind, claudeCodeRequestHeaders, type ClaudeCodeEnvLookup } from "../provider/claude-code.ts";
 import { clearClaudeCodeQuotaGuards } from "../provider/claude-code-quota.ts";
 import { getPassiveProviderHealthSnapshot } from "../health.ts";
 
@@ -82,7 +82,10 @@ const claudeSubscriptionBlock = async (): Promise<Record<string, unknown> | null
 export const handleAdminClaudeCodeAuthGet = async (): Promise<Response> =>
   json(200, { data: await claudeSubscriptionBlock() }, { "Cache-Control": "no-store" });
 
-export const handleAdminClaudeCodeAuthSet = async (req: Request): Promise<Response> => {
+export const handleAdminClaudeCodeAuthSet = async (
+  req: Request,
+  options: Readonly<{ /** Test seam: environment lookup for credential resolution. */ env?: ClaudeCodeEnvLookup }> = {}
+): Promise<Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available; cannot persist the Claude credential", "server_error");
 
@@ -125,7 +128,7 @@ export const handleAdminClaudeCodeAuthSet = async (req: Request): Promise<Respon
   if (secret !== null) {
     credentialForValidation = secret;
   } else {
-    const current = await resolveClaudeCodeCredential(kv);
+    const current = await resolveClaudeCodeCredential(kv, options.env);
     if (!current) return openaiError(409, "No Claude credential is configured to validate this workspace against", "credential_missing");
     credentialForValidation = current.secret;
   }

@@ -204,22 +204,15 @@ Deno.test("the admin routes stay behind admin auth and expose the documented pat
 });
 
 Deno.test("a workspace-only submission without any credential reports the missing credential", async () => {
-  const previousApiKey = Deno.env.get("CLAUDE_API_KEY");
-  const previousOauth = Deno.env.get("CLAUDE_CODE_OAUTH_TOKEN");
-  Deno.env.delete("CLAUDE_API_KEY");
-  Deno.env.delete("CLAUDE_CODE_OAUTH_TOKEN");
-  try {
-    await withAdminKv(async () => {
-      await withStubbedAnthropic(modelsOk, async (calls) => {
-        const response = await handleAdminClaudeCodeAuthSet(jsonRequest({ workspace_id: "wrkspc_01ErorW3iFLRvQy55cpNWtEt" }));
-        assert.equal(response.status, 409);
-        assert.equal(calls.length, 0);
-      });
+  await withAdminKv(async () => {
+    await withStubbedAnthropic(modelsOk, async (calls) => {
+      // The seam keeps this deterministic: the acceptance process may carry an
+      // ambient CLAUDE_API_KEY of its own.
+      const response = await handleAdminClaudeCodeAuthSet(jsonRequest({ workspace_id: "wrkspc_01ErorW3iFLRvQy55cpNWtEt" }), { env: () => null });
+      assert.equal(response.status, 409);
+      assert.equal(calls.length, 0);
     });
-  } finally {
-    if (previousApiKey !== undefined) Deno.env.set("CLAUDE_API_KEY", previousApiKey);
-    if (previousOauth !== undefined) Deno.env.set("CLAUDE_CODE_OAUTH_TOKEN", previousOauth);
-  }
+  });
 });
 
 Deno.test("configuration cooldown recorded by the tier is visible to the admin readback", async () => {
