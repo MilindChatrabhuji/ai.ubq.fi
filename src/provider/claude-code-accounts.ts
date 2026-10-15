@@ -122,6 +122,14 @@ const makeAccount = async (
   };
 };
 
+const emptyAccountStore = (): ClaudeCodeAccountStore => ({
+  v: 1,
+  accounts: [],
+  active_account_id: null,
+  active_reason: "unconfigured",
+  updated_at_ms: Date.now(),
+});
+
 const bootstrapWorkspace = (value: unknown, env?: ClaudeCodeEnvLookup): ClaudeCodeWorkspaceState | null => {
   const stored = parseClaudeCodeWorkspaceState(value);
   if (stored) return stored;
@@ -144,12 +152,14 @@ export const loadClaudeCodeAccountStore = async (kv: Kv, env?: ClaudeCodeEnvLook
     }
     const stored = parseClaudeCodeStoredCredential(legacyCredential.value);
     const credential: ClaudeCodeResolvedCredential | null = stored ? { ...stored, source: "kv" } : readClaudeCodeEnvCredential(env);
+    // Absence is not an intentional removal: a passive read must not retire a future first credential.
+    if (!credential) return emptyAccountStore();
     const workspace = bootstrapWorkspace(legacyWorkspace.value, env);
-    const account = credential ? await makeAccount(credential, workspace) : null;
+    const account = await makeAccount(credential, workspace);
     const store: ClaudeCodeAccountStore = {
       v: 1,
-      accounts: account ? [account] : [],
-      active_account_id: account?.account_id ?? null,
+      accounts: [account],
+      active_account_id: account.account_id,
       active_reason: "singleton_bootstrap",
       updated_at_ms: Date.now(),
     };
@@ -221,7 +231,7 @@ export const updateClaudeCodeAccount = async (kv: Kv, input: AccountUpdate, env?
   await loadClaudeCodeAccountStore(kv, env);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
     const entry = await kv.get(CLAUDE_CODE_ACCOUNTS_KEY, { consistency: "strong" });
-    const store = parseClaudeCodeAccountStore(entry.value);
+    const store = entry.value === null ? emptyAccountStore() : parseClaudeCodeAccountStore(entry.value);
     if (!store) throw new Error("Claude account roster is invalid");
     const { account, next } = await changedAccountStore(store, input);
     if ((await kv.atomic().check(entry).set(CLAUDE_CODE_ACCOUNTS_KEY, next).commit()).ok) return account;
@@ -251,11 +261,12 @@ export const selectClaudeCodeAccount = async (kv: Kv, accountId: string, reason 
 };
 
 export const removeClaudeCodeAccount = async (kv: Kv, accountId?: string): Promise<boolean> => {
-  await loadClaudeCodeAccountStore(kv);
+  if (!accountId) await loadClaudeCodeAccountStore(kv);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
     const entry = await kv.get(CLAUDE_CODE_ACCOUNTS_KEY, { consistency: "strong" });
-    const store = parseClaudeCodeAccountStore(entry.value);
-    if (!store) return false;
+    const store = entry.value === null ? emptyAccountStore() : parseClaudeCodeAccountStore(entry.value);
+    if (!store) throw new Error("Claude account roster is invalid");
+    if (accountId && !store.accounts.some((account) => account.account_id === accountId)) return false;
     const target = accountId ?? store.active_account_id;
     const accounts = store.accounts.filter((account) => account.account_id !== target);
     const removedActive = target === store.active_account_id;
