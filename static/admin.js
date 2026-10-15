@@ -41,10 +41,7 @@ const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
 const DEFAULT_FINITE_USAGE_LIMIT = 50;
 const DEFAULT_FINITE_PAID_FALLBACK_LIMIT = 1;
 const KEY_CHANGES_LIMIT = 20;
-const LEGACY_ADMIN_CACHE_STORAGE_KEYS = [
-  "uos_ai.admin.defaults_snapshot",
-  "uos_ai.admin.defaults_models",
-];
+const LEGACY_ADMIN_CACHE_STORAGE_KEYS = ["uos_ai.admin.defaults_snapshot", "uos_ai.admin.defaults_models"];
 const adminSnapshotCache = createAdminSnapshotCache();
 let adminCacheScope = "";
 let adminCacheEpoch = 0;
@@ -102,10 +99,14 @@ const clearAdminSnapshotScope = () => {
 const cacheFreshAdminRead = (response, cacheKey, scope, epoch) => {
   if (!response.ok || !cacheKey || !scope || epoch !== adminCacheEpoch || scope !== adminCacheScope) return;
   if (!response.headers.get("content-type")?.includes("application/json")) return;
-  void response.clone().json().then((payload) => {
-    if (epoch !== adminCacheEpoch || scope !== adminCacheScope) return;
-    void adminSnapshotCache.write(scope, cacheKey, payload);
-  }).catch(() => {});
+  void response
+    .clone()
+    .json()
+    .then((payload) => {
+      if (epoch !== adminCacheEpoch || scope !== adminCacheScope) return;
+      void adminSnapshotCache.write(scope, cacheKey, payload);
+    })
+    .catch(() => {});
 };
 
 const fetch = async (input, init = {}) => {
@@ -363,7 +364,7 @@ const kernelSortSelect = mustGet("kernel-sort");
 const kernelNewToggle = mustGet("kernel-new-toggle");
 const kernelNewPanel = mustGet("kernel-new-panel");
 const kernelNewOwnerInput = mustGet("kernel-new-owner");
-const _kernelNewRepoField = mustGet("kernel-new-repo-field");
+mustGet("kernel-new-repo-field");
 const kernelNewRepoInput = mustGet("kernel-new-repo");
 const kernelNewLimitInput = mustGet("kernel-new-limit");
 const kernelNewWindowInput = mustGet("kernel-new-window");
@@ -477,8 +478,8 @@ const setSignedInState = (signedIn, options = {}) => {
   const deviceRegistered = options.deviceRegistered ?? hasStoredPasskeyCredentials();
   const canRegisterPasskey = options.canRegisterPasskey ?? false;
   passkeyLoginBtn.hidden = signedIn;
-  passkeyRegisterBtn.hidden = isAuthRelayMode || isRemoteRelayOrigin() || deviceRegistered ||
-    (signedIn && !canRegisterPasskey);
+  passkeyRegisterBtn.hidden =
+    isAuthRelayMode || isRemoteRelayOrigin() || deviceRegistered || (signedIn && !canRegisterPasskey);
   signOutBtn.hidden = !signedIn;
   if (signedIn) setPasskeyStatus("ok", options.statusText ?? "Token active");
   else setPasskeyStatus("unknown", "Passkey idle");
@@ -535,7 +536,7 @@ const authRelayOrigin = parseTrustedAuthRelayOrigin(pageUrl.searchParams.get("au
 const authRelayAction = parseAuthRelayAction(pageUrl.searchParams.get("auth_relay_action"));
 const isAuthRelayMode = Boolean(authRelayOrigin && authRelayAction && globalThis.opener);
 
-const getPasskeyBaseUrl = () => isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl();
+const getPasskeyBaseUrl = () => (isAuthRelayMode ? globalThis.location.origin : resolveBaseUrl());
 
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
 const isRemoteRelayOrigin = () => isTrustedAuthRelayClientOrigin(globalThis.location.origin);
@@ -634,12 +635,15 @@ const applySignedInToken = (token, options = {}) => {
 
 const postAuthRelayResult = (result) => {
   if (!isAuthRelayMode || result?.relay_session !== true) return false;
-  globalThis.opener.postMessage({
-    type: AUTH_RELAY_MESSAGE_TYPE,
-    authenticated: true,
-    handle: result.handle ?? getPasskeyHandle(),
-    expires_at_ms: result.expires_at_ms ?? null,
-  }, authRelayOrigin);
+  globalThis.opener.postMessage(
+    {
+      type: AUTH_RELAY_MESSAGE_TYPE,
+      authenticated: true,
+      handle: result.handle ?? getPasskeyHandle(),
+      expires_at_ms: result.expires_at_ms ?? null,
+    },
+    authRelayOrigin
+  );
   setPasskeyStatus("ok", "Signed in. Returning to the requesting admin...");
   setTimeout(() => globalThis.close(), 300);
   return true;
@@ -648,7 +652,8 @@ const postAuthRelayResult = (result) => {
 const formatPasskeyLoginError = (error) => {
   const message = error?.message ?? "Passkey sign-in failed";
   if (
-    !isAuthRelayMode && isLocalDevelopmentOrigin() &&
+    !isAuthRelayMode &&
+    isLocalDevelopmentOrigin() &&
     /invalid passkey assertion|unknown passkey|passkey account not found|no passkeys registered/i.test(message)
   ) {
     return `${message}. This origin uses localhost passkeys; choose ai.ubq.fi or add a local passkey with the fallback token.`;
@@ -753,7 +758,7 @@ const runPasskeyLogin = async ({ automatic = false } = {}) => {
     const message = formatPasskeyLoginError(error);
     setPasskeyStatus(
       automatic ? "unknown" : "bad",
-      automatic ? `${message} Click the sign-in button to continue.` : message,
+      automatic ? `${message} Click the sign-in button to continue.` : message
     );
     return null;
   } finally {
@@ -776,7 +781,7 @@ const restoreSettings = () => {
   if (remember) tokenInput.value = storage.get(STORAGE_KEYS.token) ?? "";
   passkeyHandleInput.value = storage.get(STORAGE_KEYS.passkeyHandle) ?? "";
   keyExpiresSelect.value = storage.get(STORAGE_KEYS.expiresPreset) ?? "quarter";
-  baseSelect.value = isRemoteRelayOrigin() ? "ai" : storage.get(STORAGE_KEYS.base) ?? "local";
+  baseSelect.value = isRemoteRelayOrigin() ? "ai" : (storage.get(STORAGE_KEYS.base) ?? "local");
   if (isRemoteRelayOrigin()) storage.set(STORAGE_KEYS.base, "ai");
   applyLocalDevelopmentAuth();
   updateBasePreview();
@@ -933,7 +938,7 @@ const formatCredits = (value) => {
   if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
   return `${creditFormatter.format(value)} credits`;
 };
-const formatPaidFallbackLimit = (value) => value === -1 ? "Unlimited" : formatCredits(value);
+const formatPaidFallbackLimit = (value) => (value === -1 ? "Unlimited" : formatCredits(value));
 const formatMicrocreditsAsCredits = (value) => {
   if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
   return formatCredits(value / MICROCREDITS_PER_CREDIT);
@@ -944,7 +949,7 @@ const formatOptionalText = (value) => {
   return trimmed ? trimmed : "unknown";
 };
 
-const providerBadgeState = (state) => state === "healthy" ? "ok" : state === "unknown" ? "unknown" : "bad";
+const providerBadgeState = (state) => (state === "healthy" ? "ok" : state === "unknown" ? "unknown" : "bad");
 
 const providerStateLabel = (health) => {
   const state = formatOptionalText(health?.state);
@@ -961,7 +966,7 @@ const appendProviderFact = (list, label, value) => {
   list.appendChild(item);
 };
 
-const capacityBadgeState = (state) => state === "available" ? "ok" : state === "stale" ? "unknown" : "bad";
+const capacityBadgeState = (state) => (state === "available" ? "ok" : state === "stale" ? "unknown" : "bad");
 
 const capacityStateLabel = (state) => {
   if (state === "available") return "Live";
@@ -998,9 +1003,8 @@ const renderCapacityWindow = (container, label, window) => {
   const remaining = document.createElement("div");
   remaining.dataset.capacityRemaining = "";
   const remainingValue = document.createElement("strong");
-  remainingValue.textContent = remainingPercent === null
-    ? "Not reported"
-    : `${formatCapacityPercent(remainingPercent)} remaining`;
+  remainingValue.textContent =
+    remainingPercent === null ? "Not reported" : `${formatCapacityPercent(remainingPercent)} remaining`;
   remaining.appendChild(remainingValue);
   usage.appendChild(remaining);
   const progress = document.createElement("div");
@@ -1026,7 +1030,7 @@ const renderCapacityWindow = (container, label, window) => {
     "Window",
     typeof window?.limit_window_seconds === "number"
       ? formatWindowShort(window.limit_window_seconds * 1000)
-      : "Not reported",
+      : "Not reported"
   );
   appendProviderFact(facts, "Reset", formatCapacityTimestamp(window?.reset_at_ms));
   card.append(title, usage, facts);
@@ -1052,9 +1056,14 @@ const capacityProviderStatus = (source, provider) => {
   const health = provider?.health ?? provider ?? null;
   const state = provider?.configured === false ? "unconfigured" : health?.state;
   const hasState = typeof state === "string" && state.trim().length > 0;
-  const quotaReachable = source.source === "codex" && source.state === "available" &&
-    health?.last_event === "reachable" && health.last_status === 200 && health.stale === false &&
-    provider?.access_token_expired === false && provider.access_token_exp_ms > Date.now();
+  const quotaReachable =
+    source.source === "codex" &&
+    source.state === "available" &&
+    health?.last_event === "reachable" &&
+    health.last_status === 200 &&
+    health.stale === false &&
+    provider?.access_token_expired === false &&
+    provider.access_token_exp_ms > Date.now();
   let badgeState = capacityBadgeState(source.state);
   if (hasState && !quotaReachable) {
     badgeState = providerBadgeState(state);
@@ -1063,9 +1072,10 @@ const capacityProviderStatus = (source, provider) => {
   const healthLabel = quotaReachable ? "Reachable" : hasState ? providerStateLabel({ ...health, state }) : "";
   return {
     badgeState,
-    label: healthLabel && healthLabel !== "unknown"
-      ? `${healthLabel} · ${capacityStateLabel(source.state)}`
-      : capacityStateLabel(source.state),
+    label:
+      healthLabel && healthLabel !== "unknown"
+        ? `${healthLabel} · ${capacityStateLabel(source.state)}`
+        : capacityStateLabel(source.state),
     health,
     quotaReachable,
   };
@@ -1081,13 +1091,13 @@ const capacityProviderStatus = (source, provider) => {
 const formatCreditExpiry = (value) =>
   typeof value === "number" && Number.isFinite(value)
     ? new Date(value).toLocaleString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    })
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      })
     : "expiry unavailable";
 
 /** A short integer-day hint for a future credit expiry; unknown values add nothing. */
@@ -1105,10 +1115,10 @@ const creditExpiryHint = (value, nowMs = Date.now()) => {
  */
 const appendCodexResetDiagnostics = (diagnostics, resetSetting, overageSetting) => {
   const credits = Array.isArray(resetSetting?.credits)
-    ? [...resetSetting.credits].sort((
-      left,
-      right,
-    ) => ((left?.expires_at_ms ?? Number.POSITIVE_INFINITY) - (right?.expires_at_ms ?? Number.POSITIVE_INFINITY)))
+    ? [...resetSetting.credits].sort(
+        (left, right) =>
+          (left?.expires_at_ms ?? Number.POSITIVE_INFINITY) - (right?.expires_at_ms ?? Number.POSITIVE_INFINITY)
+      )
     : null;
   if (resetSetting && (Number.isSafeInteger(resetSetting.available_count) || credits)) {
     // A real list: several credits can expire at different times, and each row
@@ -1117,7 +1127,8 @@ const appendCodexResetDiagnostics = (diagnostics, resetSetting, overageSetting) 
     block.dataset.capacityWindow = "";
     block.dataset.bankedResetDiagnostics = "";
     const label = document.createElement("h4");
-    label.textContent = "Banked resets \u2014 " +
+    label.textContent =
+      "Banked resets \u2014 " +
       (Number.isSafeInteger(resetSetting.available_count)
         ? String(resetSetting.available_count) + " available"
         : "count unavailable");
@@ -1154,11 +1165,12 @@ const appendCodexResetDiagnostics = (diagnostics, resetSetting, overageSetting) 
       appendProviderFact(facts, "Overage balance", "usage unavailable");
     } else {
       const balance = typeof overage.balance === "string" && overage.balance.trim() ? overage.balance : "unavailable";
-      const limit = overage.overage_limit_reached === true
-        ? "reached"
-        : overage.overage_limit_reached === false
-        ? "not reached"
-        : "unknown";
+      const limit =
+        overage.overage_limit_reached === true
+          ? "reached"
+          : overage.overage_limit_reached === false
+            ? "not reached"
+            : "unknown";
       appendProviderFact(facts, "Overage balance", balance + " \u2014 limit " + limit);
     }
     diagnostics.appendChild(facts);
@@ -1176,7 +1188,7 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
     appendProviderFact(
       facts,
       "HTTP status",
-      typeof health.last_status === "number" ? String(health.last_status) : "Not observed",
+      typeof health.last_status === "number" ? String(health.last_status) : "Not observed"
     );
     appendProviderFact(facts, "Token expires", formatDate(provider?.access_token_exp_ms));
     appendProviderFact(
@@ -1185,20 +1197,16 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
       health.last_refresh_succeeded === true
         ? `Succeeded · ${formatDate(health.last_refresh_at_ms)}`
         : health.last_refresh_succeeded === false
-        ? `Failed · ${formatDate(health.last_refresh_at_ms)}${
-          capacityProviderStatus(source, provider).quotaReachable ? " · Quota reads currently succeed" : ""
-        }`
-        : "Not observed",
+          ? `Failed · ${formatDate(health.last_refresh_at_ms)}${
+              capacityProviderStatus(source, provider).quotaReachable ? " · Quota reads currently succeed" : ""
+            }`
+          : "Not observed"
     );
   } else if (source.source === "metered") {
     const status = capacityProviderStatus(source, provider);
     appendProviderFact(facts, "Inference", status.health ? providerStateLabel(status.health) : "Not observed");
     appendProviderFact(facts, "Last response", formatDate(status.health?.last_observed_at_ms));
-    appendProviderFact(
-      facts,
-      "Cache",
-      source.wallet?.cache_state ?? provider?.quota?.cache_state ?? "Unavailable",
-    );
+    appendProviderFact(facts, "Cache", source.wallet?.cache_state ?? provider?.quota?.cache_state ?? "Unavailable");
   }
   const details = document.createElement("details");
   details.dataset.providerDetails = "";
@@ -1230,19 +1238,19 @@ const renderCodexCapacitySource = (source, provider = null) => {
 
   const header = document.createElement("header");
   const title = document.createElement("h3");
-  title.textContent = typeof source.label === "string" && source.label.trim()
-    ? source.label.trim()
-    : `Codex account ${source.slot}`;
+  title.textContent =
+    typeof source.label === "string" && source.label.trim() ? source.label.trim() : `Codex account ${source.slot}`;
   const badge = document.createElement("span");
   badge.dataset.badge = "";
   const status = capacityProviderStatus(source, provider);
   setBadge(badge, status.badgeState, status.label);
   header.append(title, badge);
-  const setting = codexResetSettingsTarget === apiUrl("/admin/providers") && codexResetSettingsToken === getAdminToken()
-    ? codexResetSettings.find((entry) =>
-      entry.account_cohort_id === source.account_cohort_id && entry.slot === source.slot
-    )
-    : null;
+  const setting =
+    codexResetSettingsTarget === apiUrl("/admin/providers") && codexResetSettingsToken === getAdminToken()
+      ? codexResetSettings.find(
+          (entry) => entry.account_cohort_id === source.account_cohort_id && entry.slot === source.slot
+        )
+      : null;
   const label = document.createElement("label");
   label.dataset.check = "";
   const copy = document.createElement("span");
@@ -1297,9 +1305,9 @@ const renderCodexCapacitySource = (source, provider = null) => {
 
   const overageSetting =
     codexOverageSettingsTarget === apiUrl("/admin/providers") && codexOverageSettingsToken === getAdminToken()
-      ? codexOverageSettings.find((entry) =>
-        entry.account_cohort_id === source.account_cohort_id && entry.slot === source.slot
-      )
+      ? codexOverageSettings.find(
+          (entry) => entry.account_cohort_id === source.account_cohort_id && entry.slot === source.slot
+        )
       : null;
   const overageLabel = document.createElement("label");
   overageLabel.dataset.check = "";
@@ -1429,17 +1437,17 @@ const CAPACITY_CHART_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
-const CAPACITY_CHART_SERIES = [
-  { key: "available-capacity", label: "Codex capacity", source: "aggregate" },
-];
+const CAPACITY_CHART_SERIES = [{ key: "available-capacity", label: "Codex capacity", source: "aggregate" }];
 
 const capacityChartFailureIsDowntime = (source) =>
   source?.source === "codex" &&
   source?.state === "unavailable" &&
   (source.failure_kind === "upstream_error" || source.failure_kind === "unreachable") &&
   (source.failure_kind === "unreachable" ||
-    (typeof source.failure_status === "number" && Number.isFinite(source.failure_status) &&
-      source.failure_status >= 500 && source.failure_status <= 599));
+    (typeof source.failure_status === "number" &&
+      Number.isFinite(source.failure_status) &&
+      source.failure_status >= 500 &&
+      source.failure_status <= 599));
 
 const capacityChartSampleIsDowntime = (sample) => {
   if (!Array.isArray(sample?.sources)) return false;
@@ -1455,18 +1463,24 @@ const capacityChartSampleIsDowntime = (sample) => {
 const capacityChartDowntimeEventIsDowntime = (event) => {
   if (event?.provider !== "openai") return false;
   if (event.failure_kind === "unreachable") return true;
-  return event.failure_kind === "upstream_error" &&
-    typeof event.status === "number" && Number.isFinite(event.status) &&
-    event.status >= 500 && event.status <= 599;
+  return (
+    event.failure_kind === "upstream_error" &&
+    typeof event.status === "number" &&
+    Number.isFinite(event.status) &&
+    event.status >= 500 &&
+    event.status <= 599
+  );
 };
 
 const capacityChartDowntimeEventTimes = (events, displayInterval) =>
   (Array.isArray(events) ? events : [])
-    .filter((event) =>
-      capacityChartDowntimeEventIsDowntime(event) &&
-      typeof event.observed_at_ms === "number" && Number.isFinite(event.observed_at_ms) &&
-      (!displayInterval ||
-        (event.observed_at_ms >= displayInterval.startAtMs && event.observed_at_ms <= displayInterval.resetAtMs))
+    .filter(
+      (event) =>
+        capacityChartDowntimeEventIsDowntime(event) &&
+        typeof event.observed_at_ms === "number" &&
+        Number.isFinite(event.observed_at_ms) &&
+        (!displayInterval ||
+          (event.observed_at_ms >= displayInterval.startAtMs && event.observed_at_ms <= displayInterval.resetAtMs))
     )
     .map((event) => event.observed_at_ms)
     .sort((left, right) => left - right);
@@ -1488,8 +1502,11 @@ const capacityChartSampleBucketStart = (sample) => {
 const capacityChartSampleGapBetween = (left, right) => {
   const leftBucket = capacityChartSampleBucketStart(left);
   const rightBucket = capacityChartSampleBucketStart(right);
-  return typeof leftBucket === "number" && typeof rightBucket === "number" &&
-    rightBucket - leftBucket > CAPACITY_CHART_BUCKET_MS;
+  return (
+    typeof leftBucket === "number" &&
+    typeof rightBucket === "number" &&
+    rightBucket - leftBucket > CAPACITY_CHART_BUCKET_MS
+  );
 };
 
 const capacityChartSvgElement = (name, attributes = {}) => {
@@ -1501,16 +1518,12 @@ const capacityChartSvgElement = (name, attributes = {}) => {
 const clampCapacityChartPercent = (value) => Math.max(0, Math.min(100, value));
 
 const capacityChartTickConfig = (chartWindow, plotWidth = Number.POSITIVE_INFINITY) => {
-  const maxTickCount = Number.isFinite(plotWidth) && plotWidth > 0
-    ? Math.max(1, Math.floor(plotWidth / 96))
-    : CAPACITY_CHART_MAX_DAYS;
+  const maxTickCount =
+    Number.isFinite(plotWidth) && plotWidth > 0 ? Math.max(1, Math.floor(plotWidth / 96)) : CAPACITY_CHART_MAX_DAYS;
   const durationDays = chartWindow.durationMs / CAPACITY_CHART_DAY_MS;
   if (durationDays < 1) {
     return {
-      count: Math.max(
-        1,
-        Math.min(8, maxTickCount, Math.ceil(chartWindow.durationMs / (3 * CAPACITY_CHART_HOUR_MS))),
-      ),
+      count: Math.max(1, Math.min(8, maxTickCount, Math.ceil(chartWindow.durationMs / (3 * CAPACITY_CHART_HOUR_MS)))),
       formatter: CAPACITY_CHART_DATE_TIME_FORMATTER,
     };
   }
@@ -1538,7 +1551,8 @@ const capacityChartWindow = (window) => {
     durationSeconds <= 0 ||
     typeof resetAtMs !== "number" ||
     !Number.isFinite(resetAtMs)
-  ) return null;
+  )
+    return null;
   const durationMs = durationSeconds * 1_000;
   const startAtMs = resetAtMs - durationMs;
   if (!Number.isFinite(durationMs) || !Number.isFinite(startAtMs)) return null;
@@ -1547,8 +1561,8 @@ const capacityChartWindow = (window) => {
 
 const capacityChartViewportWidth = () => {
   const chartStyles = getComputedStyle(providerCapacityChart);
-  const horizontalPadding = (Number.parseFloat(chartStyles.paddingLeft) || 0) +
-    (Number.parseFloat(chartStyles.paddingRight) || 0);
+  const horizontalPadding =
+    (Number.parseFloat(chartStyles.paddingLeft) || 0) + (Number.parseFloat(chartStyles.paddingRight) || 0);
   const width = providerCapacityChart.getBoundingClientRect().width - horizontalPadding;
   return Number.isFinite(width) && width > 0
     ? Math.max(CAPACITY_CHART_PLOT_LEFT + CAPACITY_CHART_PLOT_RIGHT + 1, width)
@@ -1560,23 +1574,24 @@ const capacityChartIntrinsicWidth = (displayWindow) =>
     capacityChartViewportWidth(),
     CAPACITY_CHART_MIN_WIDTH_PX,
     Math.ceil(
-      ((displayWindow?.durationMs ?? CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS) /
-        CAPACITY_CHART_DAY_MS) * CAPACITY_CHART_PIXELS_PER_DAY,
-    ),
+      ((displayWindow?.durationMs ?? CAPACITY_CHART_MIN_DAYS * CAPACITY_CHART_DAY_MS) / CAPACITY_CHART_DAY_MS) *
+        CAPACITY_CHART_PIXELS_PER_DAY
+    )
   );
 
 const capacityChartPlotHeight = () => {
   const viewportHeight = Number.isFinite(globalThis.innerHeight) ? globalThis.innerHeight : 0;
   const availableHeight = Math.max(
     0,
-    viewportHeight - CAPACITY_CHART_VIEWPORT_GAP_PX - CAPACITY_CHART_FIGURE_OVERHEAD_PX,
+    viewportHeight - CAPACITY_CHART_VIEWPORT_GAP_PX - CAPACITY_CHART_FIGURE_OVERHEAD_PX
   );
   const plotChromeHeight = CAPACITY_CHART_PLOT_TOP + CAPACITY_CHART_PLOT_BOTTOM;
-  const pixelsPerPercent = availableHeight >= plotChromeHeight + CAPACITY_CHART_MAX_PIXELS_PER_PERCENT * 100
-    ? CAPACITY_CHART_MAX_PIXELS_PER_PERCENT
-    : availableHeight >= plotChromeHeight + CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT * 100
-    ? CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT
-    : CAPACITY_CHART_MIN_PIXELS_PER_PERCENT;
+  const pixelsPerPercent =
+    availableHeight >= plotChromeHeight + CAPACITY_CHART_MAX_PIXELS_PER_PERCENT * 100
+      ? CAPACITY_CHART_MAX_PIXELS_PER_PERCENT
+      : availableHeight >= plotChromeHeight + CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT * 100
+        ? CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT
+        : CAPACITY_CHART_MIN_PIXELS_PER_PERCENT;
   return CAPACITY_CHART_PLOT_HEIGHT * pixelsPerPercent;
 };
 
@@ -1617,14 +1632,11 @@ const capacityChartSpendPacing = (chartWindow, sources, nowMs) => {
     };
   }
 
-  const elapsedPercent = clampCapacityChartPercent(
-    ((nowMs - chartWindow.startAtMs) / chartWindow.durationMs) * 100,
-  );
+  const elapsedPercent = clampCapacityChartPercent(((nowMs - chartWindow.startAtMs) / chartWindow.durationMs) * 100);
   const targetRemainingPercent = clampCapacityChartPercent(100 - elapsedPercent);
   const currentRemainingPercent = capacityChartCodexAggregateRemainingPercent({ sources });
-  const currentSpendPercent = currentRemainingPercent === null
-    ? null
-    : clampCapacityChartPercent(100 - currentRemainingPercent);
+  const currentSpendPercent =
+    currentRemainingPercent === null ? null : clampCapacityChartPercent(100 - currentRemainingPercent);
   return {
     elapsedPercent,
     targetSpendPercent: elapsedPercent,
@@ -1672,12 +1684,12 @@ const renderCapacitySpendSummary = (pacing, activeCycleWindow) => {
   appendMetric(
     "Target spend now",
     formatCapacityPercent(pacing.targetSpendPercent),
-    `${formatCapacityPercent(pacing.targetRemainingPercent)} remaining on plan`,
+    `${formatCapacityPercent(pacing.targetRemainingPercent)} remaining on plan`
   );
   appendMetric(
     "Current spend",
     formatCapacityPercent(pacing.currentSpendPercent),
-    `${formatCapacityPercent(pacing.currentRemainingPercent)} remaining across Codex`,
+    `${formatCapacityPercent(pacing.currentRemainingPercent)} remaining across Codex`
   );
   appendMetric("Pacing", formatCapacitySpendDelta(pacing.spendVariancePercent), "Actual spend minus target");
 
@@ -1688,12 +1700,7 @@ const renderCapacitySpendSummary = (pacing, activeCycleWindow) => {
   return summary;
 };
 
-const capacityChartPoint = (
-  sample,
-  series,
-  activeInterval = null,
-  chartWindow = null,
-) => {
+const capacityChartPoint = (sample, series, activeInterval = null, chartWindow = null) => {
   if (series.source === "aggregate") {
     const displayInterval = chartWindow ?? activeInterval;
     const sampledAtMs = sample?.sampled_at_ms;
@@ -1701,24 +1708,29 @@ const capacityChartPoint = (
     const remainingPercent = capacityChartCodexAggregateRemainingPercent(sample);
     if (
       !displayInterval ||
-      typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
-      sampledAtMs < displayInterval.startAtMs || sampledAtMs > displayInterval.resetAtMs ||
-      typeof remainingPercent !== "number" || !Number.isFinite(remainingPercent)
-    ) return null;
+      typeof sampledAtMs !== "number" ||
+      !Number.isFinite(sampledAtMs) ||
+      sampledAtMs < displayInterval.startAtMs ||
+      sampledAtMs > displayInterval.resetAtMs ||
+      typeof remainingPercent !== "number" ||
+      !Number.isFinite(remainingPercent)
+    )
+      return null;
     return {
       elapsedPercent: clampCapacityChartPercent(
-        ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100,
+        ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100
       ),
       remainingPercent: clampCapacityChartPercent(remainingPercent),
     };
   }
   const source = Array.isArray(sample?.sources)
-    ? sample.sources.find((candidate) =>
-      candidate?.source === series.source && (series.source === "metered" || candidate.slot === series.slot)
-    )
+    ? sample.sources.find(
+        (candidate) =>
+          candidate?.source === series.source && (series.source === "metered" || candidate.slot === series.slot)
+      )
     : null;
   const window = series.source === "codex" ? source?.windows?.[series.windowKey] : null;
-  const interval = series.source === "metered" ? chartWindow : activeInterval ?? capacityChartWindow(window);
+  const interval = series.source === "metered" ? chartWindow : (activeInterval ?? capacityChartWindow(window));
   const displayInterval = chartWindow ?? interval;
   const reportedPercent = series.source === "metered" ? source?.wallet?.[series.valueKey] : window?.used_percent;
   const remainingPercent = series.source === "metered" ? reportedPercent : capacityRemainingPercent(reportedPercent);
@@ -1736,10 +1748,11 @@ const capacityChartPoint = (
     !Number.isFinite(sampledAtMs) ||
     sampledAtMs < displayInterval.startAtMs ||
     sampledAtMs > displayInterval.resetAtMs
-  ) return null;
+  )
+    return null;
   return {
     elapsedPercent: clampCapacityChartPercent(
-      ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100,
+      ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100
     ),
     remainingPercent: clampCapacityChartPercent(remainingPercent),
   };
@@ -1751,13 +1764,17 @@ const capacityChartResetPoint = (event, series, activeInterval = null, chartWind
   const displayInterval = chartWindow ?? interval;
   const sampledAtMs = event?.observed_at_ms;
   if (
-    !interval || !displayInterval ||
-    typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs) ||
-    sampledAtMs < displayInterval.startAtMs || sampledAtMs > displayInterval.resetAtMs
-  ) return null;
+    !interval ||
+    !displayInterval ||
+    typeof sampledAtMs !== "number" ||
+    !Number.isFinite(sampledAtMs) ||
+    sampledAtMs < displayInterval.startAtMs ||
+    sampledAtMs > displayInterval.resetAtMs
+  )
+    return null;
   return {
     elapsedPercent: clampCapacityChartPercent(
-      ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100,
+      ((sampledAtMs - displayInterval.startAtMs) / displayInterval.durationMs) * 100
     ),
     remainingPercent: 0,
   };
@@ -1771,11 +1788,10 @@ const capacityChartSeriesPoints = (
   currentPoint,
   nowMs,
   resetEvents,
-  downtimeEvents,
+  downtimeEvents
 ) => {
-  const eventTimes = series.source === "aggregate"
-    ? capacityChartDowntimeEventTimes(downtimeEvents, chartWindow ?? activeInterval)
-    : [];
+  const eventTimes =
+    series.source === "aggregate" ? capacityChartDowntimeEventTimes(downtimeEvents, chartWindow ?? activeInterval) : [];
   const runs = [];
   let run = [];
   let previousSample = null;
@@ -1786,10 +1802,12 @@ const capacityChartSeriesPoints = (
   for (const sample of [...history].sort((left, right) => (left?.sampled_at_ms ?? 0) - (right?.sampled_at_ms ?? 0))) {
     const sampledAtMs = sample?.sampled_at_ms;
     if (
-      previousSample && typeof sampledAtMs === "number" &&
+      previousSample &&
+      typeof sampledAtMs === "number" &&
       (capacityChartSampleGapBetween(previousSample, sample) ||
         capacityChartDowntimeEventBetween(eventTimes, previousSample.sampled_at_ms, sampledAtMs))
-    ) pushRun();
+    )
+      pushRun();
     const point = capacityChartPoint(sample, series, activeInterval, chartWindow);
     if (!point) {
       pushRun();
@@ -1800,10 +1818,12 @@ const capacityChartSeriesPoints = (
     previousSample = typeof sampledAtMs === "number" ? sample : previousSample;
   }
   if (
-    currentPoint && previousSample &&
+    currentPoint &&
+    previousSample &&
     (capacityChartSampleGapBetween(previousSample, { sampled_at_ms: nowMs }) ||
       capacityChartDowntimeEventBetween(eventTimes, previousSample.sampled_at_ms, nowMs))
-  ) pushRun();
+  )
+    pushRun();
   if (currentPoint) run.push({ sampledAtMs: nowMs, point: currentPoint, synthetic: false });
   pushRun();
 
@@ -1811,13 +1831,15 @@ const capacityChartSeriesPoints = (
     const point = capacityChartResetPoint(event, series, activeInterval, chartWindow);
     if (!point) continue;
     const sampledAtMs = event.observed_at_ms;
-    let target = runs.find((candidate) =>
-      sampledAtMs >= candidate[0].sampledAtMs && sampledAtMs <= candidate[candidate.length - 1].sampledAtMs
+    let target = runs.find(
+      (candidate) =>
+        sampledAtMs >= candidate[0].sampledAtMs && sampledAtMs <= candidate[candidate.length - 1].sampledAtMs
     );
     if (!target && runs.length) {
-      target = sampledAtMs >= runs[runs.length - 1][runs[runs.length - 1].length - 1].sampledAtMs
-        ? runs[runs.length - 1]
-        : runs[0];
+      target =
+        sampledAtMs >= runs[runs.length - 1][runs[runs.length - 1].length - 1].sampledAtMs
+          ? runs[runs.length - 1]
+          : runs[0];
     }
     if (!target) {
       target = [];
@@ -1827,15 +1849,12 @@ const capacityChartSeriesPoints = (
   }
 
   for (const candidate of runs) {
-    candidate.sort((left, right) =>
-      left.sampledAtMs - right.sampledAtMs || Number(left.synthetic) - Number(right.synthetic)
+    candidate.sort(
+      (left, right) => left.sampledAtMs - right.sampledAtMs || Number(left.synthetic) - Number(right.synthetic)
     );
   }
   runs.sort((left, right) => left[0].sampledAtMs - right[0].sampledAtMs);
-  return runs.flatMap((candidate, index) => [
-    ...(index === 0 ? [] : [null]),
-    ...candidate.map(({ point }) => point),
-  ]);
+  return runs.flatMap((candidate, index) => [...(index === 0 ? [] : [null]), ...candidate.map(({ point }) => point)]);
 };
 
 const capacityChartDowntimeBridges = (
@@ -1845,30 +1864,34 @@ const capacityChartDowntimeBridges = (
   chartWindow,
   currentPoint,
   nowMs,
-  downtimeEvents,
+  downtimeEvents
 ) => {
   if (series.source !== "aggregate") return [];
   const displayInterval = chartWindow ?? activeInterval;
-  const samples = [...history].sort((left, right) => (left?.sampled_at_ms ?? 0) - (right?.sampled_at_ms ?? 0)).map((
-    sample,
-  ) => ({
-    sampledAtMs: sample?.sampled_at_ms,
-    downtime: capacityChartSampleIsDowntime(sample),
-    point: capacityChartPoint(sample, series, activeInterval, chartWindow),
-  }));
+  const samples = [...history]
+    .sort((left, right) => (left?.sampled_at_ms ?? 0) - (right?.sampled_at_ms ?? 0))
+    .map((sample) => ({
+      sampledAtMs: sample?.sampled_at_ms,
+      downtime: capacityChartSampleIsDowntime(sample),
+      point: capacityChartPoint(sample, series, activeInterval, chartWindow),
+    }));
   if (currentPoint) samples.push({ sampledAtMs: nowMs, downtime: false, point: currentPoint });
 
-  const validSamples = samples.filter((sample) =>
-    typeof sample.sampledAtMs === "number" && sample.point &&
-    (!displayInterval ||
-      (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
+  const validSamples = samples.filter(
+    (sample) =>
+      typeof sample.sampledAtMs === "number" &&
+      sample.point &&
+      (!displayInterval ||
+        (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
   );
   const markerTimes = [
     ...samples
-      .filter((sample) =>
-        sample.downtime && typeof sample.sampledAtMs === "number" &&
-        (!displayInterval ||
-          (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
+      .filter(
+        (sample) =>
+          sample.downtime &&
+          typeof sample.sampledAtMs === "number" &&
+          (!displayInterval ||
+            (sample.sampledAtMs >= displayInterval.startAtMs && sample.sampledAtMs <= displayInterval.resetAtMs))
       )
       .map((sample) => sample.sampledAtMs),
     ...capacityChartDowntimeEventTimes(downtimeEvents, displayInterval),
@@ -1902,13 +1925,15 @@ const capacityChartDowntimeBridges = (
 };
 
 const capacityChartBridgePath = (bridges, plot) =>
-  bridges.map(([from, to]) => {
-    const fromX = plot.left + (from.elapsedPercent / 100) * plot.width;
-    const fromY = plot.top + ((100 - from.remainingPercent) / 100) * plot.height;
-    const toX = plot.left + (to.elapsedPercent / 100) * plot.width;
-    const toY = plot.top + ((100 - to.remainingPercent) / 100) * plot.height;
-    return `M${fromX.toFixed(2)} ${fromY.toFixed(2)} L${toX.toFixed(2)} ${toY.toFixed(2)}`;
-  }).join(" ");
+  bridges
+    .map(([from, to]) => {
+      const fromX = plot.left + (from.elapsedPercent / 100) * plot.width;
+      const fromY = plot.top + ((100 - from.remainingPercent) / 100) * plot.height;
+      const toX = plot.left + (to.elapsedPercent / 100) * plot.width;
+      const toY = plot.top + ((100 - to.remainingPercent) / 100) * plot.height;
+      return `M${fromX.toFixed(2)} ${fromY.toFixed(2)} L${toX.toFixed(2)} ${toY.toFixed(2)}`;
+    })
+    .join(" ");
 
 const capacityChartDowntimeBandCoordinates = (bridge, plot) => {
   const [from, to] = bridge ?? [];
@@ -2005,18 +2030,23 @@ const capacityChartInferredRateLimitResetMarkers = (history, displayWindow, down
     const previous = samples[index - 1];
     const current = samples[index];
     if (
-      current.sampled_at_ms <= previous.sampled_at_ms || capacityChartSampleGapBetween(previous, current) ||
+      current.sampled_at_ms <= previous.sampled_at_ms ||
+      capacityChartSampleGapBetween(previous, current) ||
       capacityChartDowntimeEventBetween(downtimeTimes, previous.sampled_at_ms, current.sampled_at_ms)
-    ) continue;
+    )
+      continue;
     for (const slot of [1, 2]) {
       const previousSource = previous.sources?.find((source) => source?.source === "codex" && source.slot === slot);
       const currentSource = current.sources?.find((source) => source?.source === "codex" && source.slot === slot);
       if (
-        !previousSource || !currentSource || previousSource.state === "unavailable" ||
+        !previousSource ||
+        !currentSource ||
+        previousSource.state === "unavailable" ||
         currentSource.state === "unavailable" ||
         !/^[a-f0-9]{64}$/.test(previousSource.account_cohort_id ?? "") ||
         previousSource.account_cohort_id !== currentSource.account_cohort_id
-      ) continue;
+      )
+        continue;
       for (const window of ["primary", "secondary"]) {
         const previousWindow = previousSource.windows?.[window];
         const currentWindow = currentSource.windows?.[window];
@@ -2025,16 +2055,24 @@ const capacityChartInferredRateLimitResetMarkers = (history, displayWindow, down
         const previousResetAtMs = previousWindow?.reset_at_ms;
         const resetAtMs = currentWindow?.reset_at_ms;
         if (
-          typeof previousUsedPercent !== "number" || !Number.isFinite(previousUsedPercent) ||
-          typeof currentUsedPercent !== "number" || !Number.isFinite(currentUsedPercent) ||
-          typeof previousResetAtMs !== "number" || !Number.isFinite(previousResetAtMs) ||
-          typeof resetAtMs !== "number" || !Number.isFinite(resetAtMs) || resetAtMs <= previousResetAtMs
-        ) continue;
+          typeof previousUsedPercent !== "number" ||
+          !Number.isFinite(previousUsedPercent) ||
+          typeof currentUsedPercent !== "number" ||
+          !Number.isFinite(currentUsedPercent) ||
+          typeof previousResetAtMs !== "number" ||
+          !Number.isFinite(previousResetAtMs) ||
+          typeof resetAtMs !== "number" ||
+          !Number.isFinite(resetAtMs) ||
+          resetAtMs <= previousResetAtMs
+        )
+          continue;
         const capacityGain = previousUsedPercent - currentUsedPercent;
         if (
           capacityGain < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
-          current.sampled_at_ms < displayWindow.startAtMs || current.sampled_at_ms > displayWindow.resetAtMs
-        ) continue;
+          current.sampled_at_ms < displayWindow.startAtMs ||
+          current.sampled_at_ms > displayWindow.resetAtMs
+        )
+          continue;
         markers.push({
           v: 1,
           event_id: `history-openai-${slot}-${window}-${previous.sampled_at_ms}-${current.sampled_at_ms}`,
@@ -2067,33 +2105,48 @@ const capacityChartRateLimitResetMarkers = (events, history, displayWindow, down
     const previousUsedPercent = event?.previous_used_percent;
     const currentUsedPercent = event?.current_used_percent;
     const capacityGain = event?.capacity_gain_percentage_points;
-    return event?.provider === "openai" &&
+    return (
+      event?.provider === "openai" &&
       (event.slot === 1 || event.slot === 2) &&
       (event.window === "primary" || event.window === "secondary") &&
-      typeof observedAtMs === "number" && Number.isFinite(observedAtMs) &&
-      typeof previousSampledAtMs === "number" && Number.isFinite(previousSampledAtMs) &&
+      typeof observedAtMs === "number" &&
+      Number.isFinite(observedAtMs) &&
+      typeof previousSampledAtMs === "number" &&
+      Number.isFinite(previousSampledAtMs) &&
       previousSampledAtMs < observedAtMs &&
-      typeof previousResetAtMs === "number" && Number.isFinite(previousResetAtMs) &&
-      typeof resetAtMs === "number" && Number.isFinite(resetAtMs) &&
+      typeof previousResetAtMs === "number" &&
+      Number.isFinite(previousResetAtMs) &&
+      typeof resetAtMs === "number" &&
+      Number.isFinite(resetAtMs) &&
       resetAtMs > previousResetAtMs &&
-      typeof previousUsedPercent === "number" && Number.isFinite(previousUsedPercent) &&
-      previousUsedPercent >= 0 && previousUsedPercent <= 100 &&
-      typeof currentUsedPercent === "number" && Number.isFinite(currentUsedPercent) &&
-      currentUsedPercent >= 0 && currentUsedPercent <= 100 &&
-      typeof capacityGain === "number" && Number.isFinite(capacityGain) &&
+      typeof previousUsedPercent === "number" &&
+      Number.isFinite(previousUsedPercent) &&
+      previousUsedPercent >= 0 &&
+      previousUsedPercent <= 100 &&
+      typeof currentUsedPercent === "number" &&
+      Number.isFinite(currentUsedPercent) &&
+      currentUsedPercent >= 0 &&
+      currentUsedPercent <= 100 &&
+      typeof capacityGain === "number" &&
+      Number.isFinite(capacityGain) &&
       Math.abs(previousUsedPercent - currentUsedPercent - capacityGain) <= 0.001 &&
       capacityGain >= CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS &&
-      observedAtMs >= displayWindow.startAtMs && observedAtMs <= displayWindow.resetAtMs;
+      observedAtMs >= displayWindow.startAtMs &&
+      observedAtMs <= displayWindow.resetAtMs
+    );
   });
   const markers = new Map();
   const candidates = [
-    ...inferredEvents.filter((inferred) =>
-      !recordedEvents.some((recorded) =>
-        recorded?.slot === inferred.slot && recorded?.window === inferred.window &&
-        typeof recorded?.observed_at_ms === "number" &&
-        recorded.observed_at_ms > inferred.previous_sampled_at_ms &&
-        recorded.observed_at_ms <= inferred.observed_at_ms
-      )
+    ...inferredEvents.filter(
+      (inferred) =>
+        !recordedEvents.some(
+          (recorded) =>
+            recorded?.slot === inferred.slot &&
+            recorded?.window === inferred.window &&
+            typeof recorded?.observed_at_ms === "number" &&
+            recorded.observed_at_ms > inferred.previous_sampled_at_ms &&
+            recorded.observed_at_ms <= inferred.observed_at_ms
+        )
     ),
     ...recordedEvents,
   ];
@@ -2103,18 +2156,22 @@ const capacityChartRateLimitResetMarkers = (events, history, displayWindow, down
       event?.provider !== "openai" ||
       (event.slot !== 1 && event.slot !== 2) ||
       (event.window !== "primary" && event.window !== "secondary") ||
-      typeof observedAtMs !== "number" || !Number.isFinite(observedAtMs) ||
+      typeof observedAtMs !== "number" ||
+      !Number.isFinite(observedAtMs) ||
       typeof event.capacity_gain_percentage_points !== "number" ||
       !Number.isFinite(event.capacity_gain_percentage_points) ||
       event.capacity_gain_percentage_points < CAPACITY_CHART_RESET_MIN_GAIN_PERCENTAGE_POINTS ||
-      observedAtMs < displayWindow.startAtMs || observedAtMs > displayWindow.resetAtMs
-    ) continue;
+      observedAtMs < displayWindow.startAtMs ||
+      observedAtMs > displayWindow.resetAtMs
+    )
+      continue;
     const key = `${event.slot}:${event.window}:${observedAtMs}`;
     markers.set(key, event);
   }
-  return [...markers.values()].sort((left, right) =>
-    left.observed_at_ms - right.observed_at_ms ||
-    String(left.event_id ?? "").localeCompare(String(right.event_id ?? ""))
+  return [...markers.values()].sort(
+    (left, right) =>
+      left.observed_at_ms - right.observed_at_ms ||
+      String(left.event_id ?? "").localeCompare(String(right.event_id ?? ""))
   );
 };
 
@@ -2127,31 +2184,44 @@ const capacityChartPromptCacheBuckets = (snapshot, chartWindow) => {
     snapshot?.prompt_cache?.status !== "ready" ||
     bucketMs !== CAPACITY_CHART_BUCKET_MS ||
     !Array.isArray(snapshot?.prompt_cache?.buckets)
-  ) return [];
+  )
+    return [];
   const buckets = [];
   for (const bucket of snapshot.prompt_cache.buckets) {
     const bucketStartAtMs = bucket?.bucket_start_at_ms;
     const inputTokens = bucket?.input_tokens;
     const cachedInputTokens = bucket?.cached_input_tokens;
-    const cacheWriteFieldsMissing = bucket?.cache_write_input_tokens === undefined &&
-      bucket?.cache_write_reported_sample_count === undefined;
+    const cacheWriteFieldsMissing =
+      bucket?.cache_write_input_tokens === undefined && bucket?.cache_write_reported_sample_count === undefined;
     const cacheWriteInputTokens = cacheWriteFieldsMissing ? null : bucket?.cache_write_input_tokens;
     const cacheWriteReportedSampleCount = cacheWriteFieldsMissing ? 0 : bucket?.cache_write_reported_sample_count;
     const sampleCount = bucket?.sample_count;
     if (
-      typeof bucketStartAtMs !== "number" || !Number.isFinite(bucketStartAtMs) ||
-      bucketStartAtMs < chartWindow.startAtMs || bucketStartAtMs > chartWindow.resetAtMs ||
-      typeof inputTokens !== "number" || !Number.isSafeInteger(inputTokens) || inputTokens <= 0 ||
-      typeof cachedInputTokens !== "number" || !Number.isSafeInteger(cachedInputTokens) ||
-      cachedInputTokens < 0 || cachedInputTokens > inputTokens ||
+      typeof bucketStartAtMs !== "number" ||
+      !Number.isFinite(bucketStartAtMs) ||
+      bucketStartAtMs < chartWindow.startAtMs ||
+      bucketStartAtMs > chartWindow.resetAtMs ||
+      typeof inputTokens !== "number" ||
+      !Number.isSafeInteger(inputTokens) ||
+      inputTokens <= 0 ||
+      typeof cachedInputTokens !== "number" ||
+      !Number.isSafeInteger(cachedInputTokens) ||
+      cachedInputTokens < 0 ||
+      cachedInputTokens > inputTokens ||
       (cacheWriteInputTokens !== null &&
-        (typeof cacheWriteInputTokens !== "number" || !Number.isSafeInteger(cacheWriteInputTokens) ||
+        (typeof cacheWriteInputTokens !== "number" ||
+          !Number.isSafeInteger(cacheWriteInputTokens) ||
           cacheWriteInputTokens < 0)) ||
-      typeof cacheWriteReportedSampleCount !== "number" || !Number.isSafeInteger(cacheWriteReportedSampleCount) ||
-      cacheWriteReportedSampleCount < 0 || cacheWriteReportedSampleCount > sampleCount ||
+      typeof cacheWriteReportedSampleCount !== "number" ||
+      !Number.isSafeInteger(cacheWriteReportedSampleCount) ||
+      cacheWriteReportedSampleCount < 0 ||
+      cacheWriteReportedSampleCount > sampleCount ||
       (cacheWriteInputTokens === null) !== (cacheWriteReportedSampleCount === 0) ||
-      typeof sampleCount !== "number" || !Number.isSafeInteger(sampleCount) || sampleCount <= 0
-    ) continue;
+      typeof sampleCount !== "number" ||
+      !Number.isSafeInteger(sampleCount) ||
+      sampleCount <= 0
+    )
+      continue;
     buckets.push({
       bucketStartAtMs,
       bucketEndAtMs: bucketStartAtMs + bucketMs,
@@ -2202,10 +2272,17 @@ const rememberCapacityChartScroll = () => {
   capacityChartFollowsLatest = atNewestEdge;
   capacityChartScrollState = {
     atNewestEdge,
-    anchorAtMs: !atNewestEdge && clientWidth > 0 && Number.isFinite(startAtMs) && Number.isFinite(durationMs) &&
-        durationMs > 0 && Number.isFinite(plotLeft) && Number.isFinite(plotWidth) && plotWidth > 0
-      ? startAtMs + ((scrollLeft + clientWidth / 2 - plotLeft) / plotWidth) * durationMs
-      : null,
+    anchorAtMs:
+      !atNewestEdge &&
+      clientWidth > 0 &&
+      Number.isFinite(startAtMs) &&
+      Number.isFinite(durationMs) &&
+      durationMs > 0 &&
+      Number.isFinite(plotLeft) &&
+      Number.isFinite(plotWidth) &&
+      plotWidth > 0
+        ? startAtMs + ((scrollLeft + clientWidth / 2 - plotLeft) / plotWidth) * durationMs
+        : null,
   };
 };
 
@@ -2234,7 +2311,7 @@ const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displa
     ...new Set(
       (Array.isArray(resetMarkers) ? resetMarkers : [])
         .map((event) => event?.observed_at_ms)
-        .filter((timestamp) => typeof timestamp === "number" && Number.isFinite(timestamp)),
+        .filter((timestamp) => typeof timestamp === "number" && Number.isFinite(timestamp))
     ),
   ].sort((left, right) => left - right);
   const addWeeklySegment = (startAtMs, nextResetAtMs = Number.POSITIVE_INFINITY) => {
@@ -2247,9 +2324,10 @@ const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displa
     }
     const point = (timestamp) => ({
       x: capacityChartMarkerX(timestamp, displayWindow, plot),
-      y: plot.top + clampCapacityChartPercent(
-            ((timestamp - startAtMs) / CAPACITY_CHART_OPTIMAL_WEEK_MS) * 100,
-          ) / 100 * plot.height,
+      y:
+        plot.top +
+        (clampCapacityChartPercent(((timestamp - startAtMs) / CAPACITY_CHART_OPTIMAL_WEEK_MS) * 100) / 100) *
+          plot.height,
     });
     seenStarts.add(startAtMs);
     segments.push({ start: point(visibleStartAtMs), end: point(visibleEndAtMs) });
@@ -2295,16 +2373,14 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const legend = document.createElement("div");
   legend.dataset.capacityChartLegend = "";
   legend.setAttribute("role", "list");
-  for (
-    const series of [
-      { key: "cached-input", label: "Cached input share" },
-      ...CAPACITY_CHART_SERIES,
-      { key: "rate-limit-reset", label: "Reset" },
-      { key: "openai-downtime", label: "Downtime" },
-      { key: "inference-error", label: "Errors (5xx)" },
-      { key: "optimal-spend", label: "Spend target" },
-    ]
-  ) {
+  for (const series of [
+    { key: "cached-input", label: "Cached input share" },
+    ...CAPACITY_CHART_SERIES,
+    { key: "rate-limit-reset", label: "Reset" },
+    { key: "openai-downtime", label: "Downtime" },
+    { key: "inference-error", label: "Errors (5xx)" },
+    { key: "optimal-spend", label: "Spend target" },
+  ]) {
     const item = document.createElement("span");
     item.dataset.capacityLegendItem = series.key;
     item.setAttribute("role", "listitem");
@@ -2343,7 +2419,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     chartWindow,
     capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
     nowMs,
-    snapshot?.downtime_events,
+    snapshot?.downtime_events
   );
   const defs = capacityChartSvgElement("defs");
   const downtimePattern = capacityChartSvgElement("pattern", {
@@ -2402,16 +2478,17 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     });
     cached.dataset.capacityCacheFill = "";
     const tooltip = capacityChartSvgElement("title");
-    const cacheWriteText = bucket.cacheWriteInputTokens === null
-      ? "cache writes unavailable"
-      : `${formatNumber(bucket.cacheWriteInputTokens)} written to cache across ${
-        formatNumber(bucket.cacheWriteReportedSampleCount)
-      } response${bucket.cacheWriteReportedSampleCount === 1 ? "" : "s"}`;
-    tooltip.textContent = `${formatCapacityTimestamp(bucket.bucketStartAtMs)} · ${
-      quotaPercentFormatter.format(bucket.cachedPercent)
-    }% cached · ${formatNumber(bucket.cachedInputTokens)} of ${
-      formatNumber(bucket.inputTokens)
-    } input tokens · ${cacheWriteText} · ${formatNumber(bucket.sampleCount)} response${
+    const cacheWriteText =
+      bucket.cacheWriteInputTokens === null
+        ? "cache writes unavailable"
+        : `${formatNumber(bucket.cacheWriteInputTokens)} written to cache across ${formatNumber(
+            bucket.cacheWriteReportedSampleCount
+          )} response${bucket.cacheWriteReportedSampleCount === 1 ? "" : "s"}`;
+    tooltip.textContent = `${formatCapacityTimestamp(bucket.bucketStartAtMs)} · ${quotaPercentFormatter.format(
+      bucket.cachedPercent
+    )}% cached · ${formatNumber(bucket.cachedInputTokens)} of ${formatNumber(
+      bucket.inputTokens
+    )} input tokens · ${cacheWriteText} · ${formatNumber(bucket.sampleCount)} response${
       bucket.sampleCount === 1 ? "" : "s"
     }`;
     group.setAttribute("aria-label", tooltip.textContent);
@@ -2448,7 +2525,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     snapshot?.rate_limit_reset_events,
     history,
     chartWindow,
-    snapshot?.downtime_events,
+    snapshot?.downtime_events
   );
   for (const event of rateLimitResetMarkers) {
     const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
@@ -2481,17 +2558,21 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     marker.dataset.capacityRateLimitReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
     marker.setAttribute(
       "aria-label",
-      `OpenAI ${event.window} rate-limit reset for account ${event.slot}: ${
-        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
-      } percentage points of capacity gained`,
+      `OpenAI ${event.window} rate-limit reset for account ${event.slot}: ${quotaPercentFormatter.format(
+        event.capacity_gain_percentage_points
+      )} percentage points of capacity gained`
     );
     marker.append(background, stripes, centerLine);
     svg.appendChild(marker);
   }
 
-  const visibleFiveXxBuckets = (Array.isArray(fiveXxBuckets) ? fiveXxBuckets : []).filter((bucket) =>
-    Number.isFinite(bucket?.bucket_start_at_ms) && Number.isSafeInteger(bucket?.count) && bucket.count > 0 &&
-    bucket.bucket_start_at_ms >= chartWindow.startAtMs && bucket.bucket_start_at_ms <= chartWindow.resetAtMs
+  const visibleFiveXxBuckets = (Array.isArray(fiveXxBuckets) ? fiveXxBuckets : []).filter(
+    (bucket) =>
+      Number.isFinite(bucket?.bucket_start_at_ms) &&
+      Number.isSafeInteger(bucket?.count) &&
+      bucket.count > 0 &&
+      bucket.bucket_start_at_ms >= chartWindow.startAtMs &&
+      bucket.bucket_start_at_ms <= chartWindow.resetAtMs
   );
   const fiveXxMarkerElements = new Map();
   for (const bucket of visibleFiveXxBuckets) {
@@ -2504,7 +2585,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       "aria-label",
       `${bucket.count} failed inference response${
         bucket.count === 1 ? "" : "s"
-      } (HTTP 5xx) during the 15-minute bucket starting ${formatCapacityTimestamp(bucket.bucket_start_at_ms)}`,
+      } (HTTP 5xx) during the 15-minute bucket starting ${formatCapacityTimestamp(bucket.bucket_start_at_ms)}`
     );
     const line = capacityChartSvgElement("line", {
       x1: markerX,
@@ -2582,7 +2663,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     rateLimitResetMarkers,
     chartWindow,
     plot,
-    nowMs,
+    nowMs
   );
   for (const [index, coordinates] of optimalSpendCoordinates.entries()) {
     const optimalSpendTrend = capacityChartSvgElement("line", {
@@ -2611,22 +2692,21 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   svg.appendChild(reticule);
 
   for (const series of CAPACITY_CHART_SERIES) {
-    const activeInterval = series.source === "aggregate" || series.source === "metered"
-      ? chartWindow
-      : activeUsageWindow;
+    const activeInterval =
+      series.source === "aggregate" || series.source === "metered" ? chartWindow : activeUsageWindow;
     const shouldRender = true;
     const currentPoint = shouldRender ? capacityChartPoint(currentSample, series, activeInterval, chartWindow) : null;
     const chartPoints = shouldRender
       ? capacityChartSeriesPoints(
-        history,
-        series,
-        activeInterval,
-        chartWindow,
-        currentPoint,
-        nowMs,
-        snapshot?.reset_events,
-        snapshot?.downtime_events,
-      )
+          history,
+          series,
+          activeInterval,
+          chartWindow,
+          currentPoint,
+          nowMs,
+          snapshot?.reset_events,
+          snapshot?.downtime_events
+        )
       : [];
     const path = capacityChartSvgElement("path", {
       d: capacityChartPath(chartPoints, plot, {
@@ -2641,15 +2721,18 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     path.setAttribute("aria-label", series.label);
     svg.appendChild(path);
 
-    const downtimeBridges = series.source === "aggregate" ? aggregateDowntimeBridges : capacityChartDowntimeBridges(
-      history,
-      series,
-      activeInterval,
-      chartWindow,
-      currentPoint,
-      nowMs,
-      snapshot?.downtime_events,
-    );
+    const downtimeBridges =
+      series.source === "aggregate"
+        ? aggregateDowntimeBridges
+        : capacityChartDowntimeBridges(
+            history,
+            series,
+            activeInterval,
+            chartWindow,
+            currentPoint,
+            nowMs,
+            snapshot?.downtime_events
+          );
     if (downtimeBridges.length) {
       const downtimePath = capacityChartSvgElement("path", {
         d: capacityChartBridgePath(downtimeBridges, plot),
@@ -2751,9 +2834,9 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       button.textContent = `${formatCapacityTimestamp(bucket.bucket_start_at_ms)} · ${bucket.count} failed`;
       button.setAttribute(
         "aria-label",
-        `${bucket.count} failed inference response${bucket.count === 1 ? "" : "s"}, 15-minute bucket starting ${
-          formatCapacityTimestamp(bucket.bucket_start_at_ms)
-        }. Move the chart to this marker.`,
+        `${bucket.count} failed inference response${bucket.count === 1 ? "" : "s"}, 15-minute bucket starting ${formatCapacityTimestamp(
+          bucket.bucket_start_at_ms
+        )}. Move the chart to this marker.`
       );
       button.addEventListener("click", () => {
         const markerX = capacityChartMarkerX(bucket.bucket_start_at_ms, chartWindow, plot);
@@ -2776,16 +2859,16 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.capacityReset = event.event_id || `${event.slot}-${event.window}-${event.observed_at_ms}`;
-      button.textContent = `${formatCapacityTimestamp(event.observed_at_ms)} · +${
-        quotaPercentFormatter.format(event.capacity_gain_percentage_points)
-      } pp`;
+      button.textContent = `${formatCapacityTimestamp(event.observed_at_ms)} · +${quotaPercentFormatter.format(
+        event.capacity_gain_percentage_points
+      )} pp`;
       button.setAttribute(
         "aria-label",
         `Go to rate-limit reset ${
           index + 1
-        } of ${rateLimitResetMarkers.length}, account ${event.slot} ${event.window} window, ${
-          quotaPercentFormatter.format(event.capacity_gain_percentage_points)
-        } percentage points of capacity gained and timer reset`,
+        } of ${rateLimitResetMarkers.length}, account ${event.slot} ${event.window} window, ${quotaPercentFormatter.format(
+          event.capacity_gain_percentage_points
+        )} percentage points of capacity gained and timer reset`
       );
       button.addEventListener("click", () => {
         const markerX = capacityChartMarkerX(event.observed_at_ms, chartWindow, plot);
@@ -2819,7 +2902,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     chartWindow,
     capacityChartPoint(currentSample, CAPACITY_CHART_SERIES[0], chartWindow, chartWindow),
     nowMs,
-    snapshot?.downtime_events,
+    snapshot?.downtime_events
   ).length;
   const downtimeSuffix = downtimeBridgeCount
     ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
@@ -2829,24 +2912,26 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     ? ` · ${fiveXxCount} failed inference response${fiveXxCount === 1 ? "" : "s"} (HTTP 5xx)`
     : "";
   const latestCacheBucket = promptCacheBuckets.at(-1);
-  const latestCacheWrite = latestCacheBucket?.cacheWriteInputTokens === null
-    ? "cache writes unavailable"
-    : latestCacheBucket
-    ? `${formatNumber(latestCacheBucket.cacheWriteInputTokens)} written to cache`
-    : null;
-  const cacheSuffix = snapshot?.prompt_cache?.status !== "ready"
-    ? " · cache analytics unavailable"
-    : latestCacheBucket
-    ? ` · ${promptCacheBuckets.length} cache bucket${promptCacheBuckets.length === 1 ? "" : "s"} · latest ${
-      quotaPercentFormatter.format(latestCacheBucket.cachedPercent)
-    }% cached · ${latestCacheWrite} at ${formatCapacityTimestamp(latestCacheBucket.bucketStartAtMs)}`
-    : " · no cache-token history yet";
+  const latestCacheWrite =
+    latestCacheBucket?.cacheWriteInputTokens === null
+      ? "cache writes unavailable"
+      : latestCacheBucket
+        ? `${formatNumber(latestCacheBucket.cacheWriteInputTokens)} written to cache`
+        : null;
+  const cacheSuffix =
+    snapshot?.prompt_cache?.status !== "ready"
+      ? " · cache analytics unavailable"
+      : latestCacheBucket
+        ? ` · ${promptCacheBuckets.length} cache bucket${promptCacheBuckets.length === 1 ? "" : "s"} · latest ${quotaPercentFormatter.format(
+            latestCacheBucket.cachedPercent
+          )}% cached · ${latestCacheWrite} at ${formatCapacityTimestamp(latestCacheBucket.bucketStartAtMs)}`
+        : " · no cache-token history yet";
   caption.textContent = samples.length
-    ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${
-      formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
-    } · ${samples.length} sample${
-      samples.length === 1 ? "" : "s"
-    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`
+    ? `15-minute buckets · ${formatCapacityTimestamp(samples[0].sampled_at_ms)} → ${formatCapacityTimestamp(
+        samples[samples.length - 1].sampled_at_ms
+      )} · ${samples.length} sample${
+        samples.length === 1 ? "" : "s"
+      }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`
     : `No retained capacity samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`;
   details.appendChild(caption);
   figure.appendChild(details);
@@ -2876,27 +2961,27 @@ const renderProviderCapacityLedger = (snapshot) => {
   const parts = [];
   if (typeof ledgerGrowth.estimated_retained_raw_bytes === "number") {
     parts.push(
-      `~${formatByteSize(ledgerGrowth.estimated_retained_raw_bytes)} of retained settled rows over ${
-        formatNumber(ledgerGrowth.retention_days ?? 365)
-      } days`,
+      `~${formatByteSize(ledgerGrowth.estimated_retained_raw_bytes)} of retained settled rows over ${formatNumber(
+        ledgerGrowth.retention_days ?? 365
+      )} days`
     );
   }
   if (typeof ledgerGrowth.avg_row_bytes === "number") {
     parts.push(`~${formatNumber(Math.round(ledgerGrowth.avg_row_bytes))} B per settled row`);
   }
   const projection = Array.isArray(ledgerGrowth.projections)
-    ? ledgerGrowth.projections.find((entry) => entry?.window_days === 30) ?? ledgerGrowth.projections.at(-1)
+    ? (ledgerGrowth.projections.find((entry) => entry?.window_days === 30) ?? ledgerGrowth.projections.at(-1))
     : null;
   if (projection && typeof projection.avg_read_units_per_view === "number") {
     parts.push(
       `${formatNumber(projection.avg_read_units_per_view)} KV read units per ${
         projection.window_days ?? 30
-      }-day quota projection`,
+      }-day quota projection`
     );
   }
   if (!parts.length) parts.push("no settled rows measured yet");
   const threshold = formatByteSize(
-    typeof ledgerGrowth.alert_threshold_bytes === "number" ? ledgerGrowth.alert_threshold_bytes : 0,
+    typeof ledgerGrowth.alert_threshold_bytes === "number" ? ledgerGrowth.alert_threshold_bytes : 0
   );
   const alert = ledgerGrowth.alert === true;
   parts.push(alert ? `storage alert ≥ ${threshold}` : `alert at ${threshold}`);
@@ -2909,7 +2994,7 @@ const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
   const rawSources = Array.isArray(snapshot?.sources) ? snapshot.sources : [];
   const sourceForSlot = (slot) =>
     rawSources.find((source) => source?.source === "codex" && source.slot === slot) ??
-      unavailableCodexCapacitySource(slot);
+    unavailableCodexCapacitySource(slot);
   const sources = [sourceForSlot(1), sourceForSlot(2)];
   latestProviderCapacityChartState = { snapshot, sources, fiveXxBuckets };
   renderProviderCapacityChart(snapshot, sources, fiveXxBuckets);
@@ -2969,7 +3054,7 @@ const loadProviderCapacity = async () => {
     }
     renderProviderCapacity(
       payload,
-      errorsResponse.ok && Array.isArray(errorsPayload?.five_xx_buckets) ? errorsPayload.five_xx_buckets : [],
+      errorsResponse.ok && Array.isArray(errorsPayload?.five_xx_buckets) ? errorsPayload.five_xx_buckets : []
     );
     providerCapacityLoadedAt = Date.now();
     return true;
@@ -2995,7 +3080,7 @@ const scheduleProviderCapacityChartResize = () => {
     renderProviderCapacityChart(
       latestProviderCapacityChartState.snapshot,
       latestProviderCapacityChartState.sources,
-      latestProviderCapacityChartState.fiveXxBuckets,
+      latestProviderCapacityChartState.fiveXxBuckets
     );
   });
 };
@@ -3143,9 +3228,9 @@ const pad2 = (value) => String(value).padStart(2, "0");
 const toDateTimeLocalValue = (ms) => {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "";
   const date = new Date(ms);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${
-    pad2(date.getMinutes())
-  }`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(
+    date.getMinutes()
+  )}`;
 };
 
 const parseDateTimeLocalValue = (value) => {
@@ -3331,9 +3416,7 @@ const refreshAccessUpstreamSummary = async () => {
     const data = await res.json().catch(() => null);
     const source = data?.codex?.source ?? "unknown";
     const expirations = Array.isArray(data?.codex?.accounts)
-      ? data.codex.accounts
-        .map((account) => account?.access_token_exp_ms)
-        .filter((value) => typeof value === "number")
+      ? data.codex.accounts.map((account) => account?.access_token_exp_ms).filter((value) => typeof value === "number")
       : [];
     const expMs = expirations.length ? Math.min(...expirations) : null;
     if (!res.ok) {
@@ -3441,8 +3524,8 @@ const hasKernelPolicyCap = (owner, repo, policyState) => {
   if (!policyState) return false;
   const orgAvailable = policyState.orgAvailable === true;
   const repoAvailable = policyState.repoAvailable === true;
-  const orgRecord = orgAvailable && owner ? policyState.orgLimits.get(owner) ?? null : null;
-  const repoRecord = repoAvailable && owner && repo ? policyState.repoLimits.get(`${owner}/${repo}`) ?? null : null;
+  const orgRecord = orgAvailable && owner ? (policyState.orgLimits.get(owner) ?? null) : null;
+  const repoRecord = repoAvailable && owner && repo ? (policyState.repoLimits.get(`${owner}/${repo}`) ?? null) : null;
   const orgLimit = orgAvailable ? getKernelPolicyLimitValue(orgRecord) : null;
   const repoLimit = repoAvailable ? getKernelPolicyLimitValue(repoRecord) : null;
   return (orgLimit !== null && orgLimit !== -1) || (repoLimit !== null && repoLimit !== -1);
@@ -3800,7 +3883,7 @@ const refreshKernelPolicyQueue = async () => {
     renderKernelPolicyQueue(records);
     setKernelQueueBadge(
       "ok",
-      records.length === 0 ? "No requests" : `${records.length} request${records.length === 1 ? "" : "s"}`,
+      records.length === 0 ? "No requests" : `${records.length} request${records.length === 1 ? "" : "s"}`
     );
   } catch {
     if (kernelQueueLoadedAt) {
@@ -3932,7 +4015,7 @@ const saveNewKernelLimit = async () => {
   const expiresResult = parseKernelExpiresValue(
     kernelNewExpiresInput.value,
     kernelNewNeverInput.checked,
-    setKernelNewBadge,
+    setKernelNewBadge
   );
   if (!expiresResult.ok) return;
 
@@ -4129,20 +4212,11 @@ const loadKernelList = async () => {
       fetchKernelPolicyList(token, "repo"),
     ]);
     if (loadId !== kernelListLoadId) return;
-    if (
-      !orgUsageResult.ok &&
-      !repoUsageResult.ok &&
-      !orgPolicyResult.ok &&
-      !repoPolicyResult.ok
-    ) {
-      const message = [
-        orgUsageResult.message,
-        repoUsageResult.message,
-        orgPolicyResult.message,
-        repoPolicyResult.message,
-      ]
-        .filter(Boolean)
-        .join(" · ") || "Error";
+    if (!orgUsageResult.ok && !repoUsageResult.ok && !orgPolicyResult.ok && !repoPolicyResult.ok) {
+      const message =
+        [orgUsageResult.message, repoUsageResult.message, orgPolicyResult.message, repoPolicyResult.message]
+          .filter(Boolean)
+          .join(" · ") || "Error";
       if (kernelListLoadedAt) {
         setKernelListBadge("unknown", "Cached · refresh unavailable");
         updateAccessGithubSummary();
@@ -4159,12 +4233,12 @@ const loadKernelList = async () => {
       org: mergeKernelRecords(
         orgUsageResult.ok ? orgUsageResult.records : [],
         orgPolicyResult.ok ? orgPolicyResult.records : [],
-        "org",
+        "org"
       ),
       repo: mergeKernelRecords(
         repoUsageResult.ok ? repoUsageResult.records : [],
         repoPolicyResult.ok ? repoPolicyResult.records : [],
-        "repo",
+        "repo"
       ),
     };
     const result = renderKernelList(kernelListRecords, kernelPolicyState);
@@ -4327,7 +4401,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
     infoRow,
     "Rate limit",
     formatLimitValue(record.usage_limit_requests),
-    limitState ? { state: limitState } : {},
+    limitState ? { state: limitState } : {}
   );
   const windowInfo = appendKeyInfo(infoRow, "Window", formatWindowMs(record.window_ms));
   const usageInfo = appendKeyInfo(infoRow, "Window requests", formatNumber(record.usage_requests));
@@ -4638,7 +4712,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
 
 const renderKernelList = (records, policyState = kernelPolicyState) => {
   kernelList.textContent = "";
-  const { org: _org, repo } = normalizeKernelListRecords(records);
+  const { repo } = normalizeKernelListRecords(records);
   const allGroups = buildKernelGroups(records);
   const totalOrgCount = allGroups.length;
   const totalRepoCount = repo.length;
@@ -4670,24 +4744,24 @@ const renderKernelList = (records, policyState = kernelPolicyState) => {
     const orgSummaryRow = buildKernelOrgSummaryRow(group);
     const groupTile = orgHasPolicy
       ? buildKernelPolicyTile(orgRecord, {
-        owner: group.owner,
-        repo: "",
-        scope: "org",
-        titleText: group.owner || "unknown",
-        index,
-        summaryRow: orgSummaryRow,
-        showDetails: false,
-      })
+          owner: group.owner,
+          repo: "",
+          scope: "org",
+          titleText: group.owner || "unknown",
+          index,
+          summaryRow: orgSummaryRow,
+          showDetails: false,
+        })
       : buildKernelPolicyPlaceholder(orgRecord, {
-        owner: group.owner,
-        repo: "",
-        scope: "org",
-        titleText: group.owner || "unknown",
-        index,
-        summaryRow: orgSummaryRow,
-        showDetails: false,
-        policyAvailable: policyAvailableOrg,
-      });
+          owner: group.owner,
+          repo: "",
+          scope: "org",
+          titleText: group.owner || "unknown",
+          index,
+          summaryRow: orgSummaryRow,
+          showDetails: false,
+          policyAvailable: policyAvailableOrg,
+        });
 
     if (!groupTile) return;
     groupTile.dataset.group = "org";
@@ -4703,24 +4777,24 @@ const renderKernelList = (records, policyState = kernelPolicyState) => {
         const repoHasPolicy = policyAvailableRepo && typeof record?.usage_limit_requests === "number";
         const tile = repoHasPolicy
           ? buildKernelPolicyTile(record, {
-            owner: group.owner,
-            repo: repoName,
-            scope: "repo",
-            titleText: repoName,
-            index: repoIndex,
-            isSubtile: true,
-            showDetails: true,
-          })
+              owner: group.owner,
+              repo: repoName,
+              scope: "repo",
+              titleText: repoName,
+              index: repoIndex,
+              isSubtile: true,
+              showDetails: true,
+            })
           : buildKernelPolicyPlaceholder(record, {
-            owner: group.owner,
-            repo: repoName,
-            scope: "repo",
-            titleText: repoName,
-            index: repoIndex,
-            isSubtile: true,
-            showDetails: true,
-            policyAvailable: policyAvailableRepo,
-          });
+              owner: group.owner,
+              repo: repoName,
+              scope: "repo",
+              titleText: repoName,
+              index: repoIndex,
+              isSubtile: true,
+              showDetails: true,
+              policyAvailable: policyAvailableRepo,
+            });
         if (tile) sublist.appendChild(tile);
       });
 
@@ -5267,9 +5341,10 @@ const buildUsageSparkline = (usage, options = {}) => {
   svg.appendChild(linePathEl);
 
   const scaleMaxLabel = Math.max(1, Math.round(scaleMax));
-  const formattedScaleMax = typeof options.formatScaleMax === "function"
-    ? options.formatScaleMax(scaleMaxLabel)
-    : formatCompactNumber(scaleMaxLabel);
+  const formattedScaleMax =
+    typeof options.formatScaleMax === "function"
+      ? options.formatScaleMax(scaleMaxLabel)
+      : formatCompactNumber(scaleMaxLabel);
   const maxLabel = maxValue > scaleMax ? `Max ${formattedScaleMax}+` : `Max ${formattedScaleMax}`;
 
   const container = document.createElement("div");
@@ -5343,11 +5418,7 @@ const buildUsageSummary = (usage) => {
     appendUsagePill(summary, "Requests", formatCompactNumber(usage.request_count), {
       title: formatNumber(usage.request_count),
     });
-    appendUsagePill(
-      summary,
-      "Limit",
-      toNumber(usage.limit) === -1 ? "Unlimited" : formatCompactNumber(usage.limit),
-    );
+    appendUsagePill(summary, "Limit", toNumber(usage.limit) === -1 ? "Unlimited" : formatCompactNumber(usage.limit));
     appendUsagePill(summary, "Resets", formatDate(usage.reset_at_ms));
     return summary;
   }
@@ -5405,11 +5476,7 @@ const buildUsageDetails = (usage, options = {}) => {
     const usageList = document.createElement("div");
     usageList.dataset.usageList = "list";
     appendMetaItem(usageList, "Requests", formatNumber(usage.request_count));
-    appendMetaItem(
-      usageList,
-      "Limit",
-      toNumber(usage.limit) === -1 ? "Unlimited" : formatNumber(usage.limit),
-    );
+    appendMetaItem(usageList, "Limit", toNumber(usage.limit) === -1 ? "Unlimited" : formatNumber(usage.limit));
     appendMetaItem(usageList, "Resets", formatDate(usage.reset_at_ms));
     usageSection.appendChild(usageList);
     return usageSection;
@@ -5423,7 +5490,7 @@ const buildUsageDetails = (usage, options = {}) => {
     buildUsageSparkline(usage, {
       dailyKey: "daily_metered_fallback_requests",
       ariaLabel: "Metered fallback requests",
-    }),
+    })
   );
   appendUsageSeries(
     usageSection,
@@ -5432,7 +5499,7 @@ const buildUsageDetails = (usage, options = {}) => {
       dailyKey: "daily_metered_spend_microcredits",
       ariaLabel: "Metered spend",
       formatScaleMax: formatMicrocreditsAsCredits,
-    }),
+    })
   );
 
   if (usage === undefined) {
@@ -5484,12 +5551,9 @@ const buildUsageDetails = (usage, options = {}) => {
       appendMetaItem(usageList, "Metered tokens total", formatNumber(usage.metered_total_tokens));
     }
     if (Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")) {
-      appendMetaItem(
-        usageList,
-        "Metered spend",
-        formatMicrocreditsAsCredits(usage.metered_spend_microcredits),
-        { title: `${formatNumber(usage.metered_spend_microcredits)} microcredits` },
-      );
+      appendMetaItem(usageList, "Metered spend", formatMicrocreditsAsCredits(usage.metered_spend_microcredits), {
+        title: `${formatNumber(usage.metered_spend_microcredits)} microcredits`,
+      });
     }
     usageSection.appendChild(usageList);
   }
@@ -5528,9 +5592,10 @@ const normalizeApiKeyRequestLogRecord = (record) => {
   const reasoning = typeof record.reasoning === "string" ? record.reasoning.trim() : "";
 
   return {
-    id: typeof record.id === "string" && record.id.trim()
-      ? record.id.trim()
-      : `${route || "request"}-${createdAtMs || Date.now()}`,
+    id:
+      typeof record.id === "string" && record.id.trim()
+        ? record.id.trim()
+        : `${route || "request"}-${createdAtMs || Date.now()}`,
     created_at_ms: createdAtMs === null ? null : Math.trunc(createdAtMs),
     started_at_ms: startedAtMs === null ? null : Math.trunc(startedAtMs),
     completed_at_ms: completedAtMs === null ? null : Math.trunc(completedAtMs),
@@ -5617,9 +5682,12 @@ const createRequestLogRow = (record) => {
   const provider = formatOptionalText(record.provider);
   const billingStatus = formatOptionalText(record.billing_state ?? record.billing_status);
   const normalizedBillingStatus = billingStatus.toLowerCase();
-  const billingState = normalizedBillingStatus === "pending"
-    ? "warning"
-    : (/failed|error|unresolved/.test(normalizedBillingStatus) ? "bad" : "");
+  const billingState =
+    normalizedBillingStatus === "pending"
+      ? "warning"
+      : /failed|error|unresolved/.test(normalizedBillingStatus)
+        ? "bad"
+        : "";
   row.dataset.provider = provider.toLowerCase();
   if (record.billing_status) row.dataset.billingStatus = normalizedBillingStatus;
 
@@ -5635,7 +5703,7 @@ const createRequestLogRow = (record) => {
     `${statusCode === null ? "unknown" : formatNumber(statusCode)}${record.stream ? " · stream" : " · single"}`,
     {
       state: statusState,
-    },
+    }
   );
   appendMetaItem(row, "Provider", provider);
   appendMetaItem(row, "Model", formatOptionalText(record.model));
@@ -5647,9 +5715,8 @@ const createRequestLogRow = (record) => {
     appendMetaItem(row, "Dispatch", record.dispatch_state);
   }
   if (record.terminal_state) {
-    const terminalState = record.terminal_state === "completed"
-      ? ""
-      : (record.terminal_state === "pending" ? "warning" : "bad");
+    const terminalState =
+      record.terminal_state === "completed" ? "" : record.terminal_state === "pending" ? "warning" : "bad";
     appendMetaItem(row, "Terminal", record.terminal_state, {
       state: terminalState,
     });
@@ -5664,7 +5731,7 @@ const createRequestLogRow = (record) => {
     appendMetaItem(row, "Completed", formatDate(record.completed_at_ms));
   }
   if (record.latency_ms !== null) {
-    appendMetaItem(row, "Latency", formatLatency(record.latency_ms));
+    appendMetaItem(row, "Latency", formatWindowMs(record.latency_ms));
   }
   if (record.fallback_reason) {
     appendMetaItem(row, "Fallback reason", record.fallback_reason);
@@ -5832,9 +5899,7 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
   const scope = adminCacheScope;
   const epoch = adminCacheEpoch;
   const isCurrentPanel = () =>
-    panel.isConnected &&
-    panel.dataset.keyId === currentKeyId &&
-    isCurrentApiKeyRequestLogScope(scope, epoch);
+    panel.isConnected && panel.dataset.keyId === currentKeyId && isCurrentApiKeyRequestLogScope(scope, epoch);
   const summary = panel.querySelector("[data-usage-summary]");
   const list = panel.querySelector("[data-api-key-request-list]");
   if (!summary || !list) return;
@@ -5845,7 +5910,8 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
       if (
         isCurrentApiKeyRequestLogCacheEntry(cached, scope, epoch) &&
         Date.now() - cached.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS
-      ) return;
+      )
+        return;
     }
   }
 
@@ -5882,7 +5948,7 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
       list,
       summary,
       response.error || API_KEY_REQUEST_LOG_STATUS_ERROR,
-      API_KEY_REQUEST_LOG_STATUS_ERROR,
+      API_KEY_REQUEST_LOG_STATUS_ERROR
     );
     panel.dataset.requestLogsLoading = "0";
     return;
@@ -5969,7 +6035,7 @@ const renderKeys = (keys, view = "all") => {
       const title = `${formatNumber(current)} requests${
         hasLimit ? ` of ${formatNumber(limitValue)} rate limit` : ""
       } (window ${formatWindowShort(windowMs)}, resets ${formatDate(key.usage_reset_at_ms)})`;
-      const state = isAtLimit ? "bad" : (isNearLimit ? "warning" : "");
+      const state = isAtLimit ? "bad" : isNearLimit ? "warning" : "";
       return { usageText, title, state, limitValue, windowMs };
     };
 
@@ -5980,7 +6046,7 @@ const renderKeys = (keys, view = "all") => {
       infoRow,
       "Request limit",
       formatLimitValue(usageData.limitValue),
-      limitState ? { state: limitState } : {},
+      limitState ? { state: limitState } : {}
     );
     const windowInfo = appendKeyInfo(infoRow, "Window", formatWindowShort(usageData.windowMs), {
       title: formatWindowMs(usageData.windowMs),
@@ -6030,15 +6096,14 @@ const renderKeys = (keys, view = "all") => {
       const spent = normalizeFiniteNumber(key.paid_fallback_spent_credits) ?? 0;
       const reserved = normalizeFiniteNumber(key.paid_fallback_reserved_credits) ?? 0;
       const usage = key.usage && typeof key.usage === "object" ? key.usage : null;
-      const providerUsage = key.paid_fallback_provider_usage && typeof key.paid_fallback_provider_usage === "object"
-        ? key.paid_fallback_provider_usage
-        : null;
-      const meteredUsage = providerUsage?.metered && typeof providerUsage.metered === "object"
-        ? providerUsage.metered
-        : null;
-      const surplusUsage = providerUsage?.surplus && typeof providerUsage.surplus === "object"
-        ? providerUsage.surplus
-        : null;
+      const providerUsage =
+        key.paid_fallback_provider_usage && typeof key.paid_fallback_provider_usage === "object"
+          ? key.paid_fallback_provider_usage
+          : null;
+      const meteredUsage =
+        providerUsage?.metered && typeof providerUsage.metered === "object" ? providerUsage.metered : null;
+      const surplusUsage =
+        providerUsage?.surplus && typeof providerUsage.surplus === "object" ? providerUsage.surplus : null;
 
       paidFallbackStatus.dataset.state = enabled ? "ok" : "unknown";
       paidFallbackStatus.textContent = enabled ? "Enabled" : "Disabled";
@@ -6048,14 +6113,14 @@ const renderKeys = (keys, view = "all") => {
       paidReservedInfo.valueEl.textContent = formatCredits(reserved);
       paidPendingInfo.valueEl.textContent = formatNumber(normalizeFiniteNumber(key.paid_fallback_pending_count) ?? 0);
       paidResetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
-      lifetimeSpendInfo.valueEl.textContent = usage &&
-          Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")
-        ? formatMicrocreditsAsCredits(usage.metered_spend_microcredits)
-        : "unknown";
-      fallbackCountInfo.valueEl.textContent = usage &&
-          Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")
-        ? formatNumber(usage.metered_fallback_requests)
-        : "unknown";
+      lifetimeSpendInfo.valueEl.textContent =
+        usage && Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")
+          ? formatMicrocreditsAsCredits(usage.metered_spend_microcredits)
+          : "unknown";
+      fallbackCountInfo.valueEl.textContent =
+        usage && Object.prototype.hasOwnProperty.call(usage, "metered_fallback_requests")
+          ? formatNumber(usage.metered_fallback_requests)
+          : "unknown";
       meteredWindowCountInfo.valueEl.textContent = meteredUsage ? formatNumber(meteredUsage.request_count) : "unknown";
       surplusWindowCountInfo.valueEl.textContent = surplusUsage ? formatNumber(surplusUsage.request_count) : "unknown";
       meteredWindowSpendInfo.valueEl.textContent = meteredUsage
@@ -6180,7 +6245,7 @@ const renderKeys = (keys, view = "all") => {
     const limitUnlimited = buildUnlimitedToggle(
       `key-usage-limit-unlimited-${key.id}`,
       limitInput.id,
-      "Unlimited requests",
+      "Unlimited requests"
     );
     limitUnlimited.input.checked = initialLimit === -1;
 
@@ -6253,9 +6318,8 @@ const renderKeys = (keys, view = "all") => {
     paidFallbackLimitInput.placeholder = "1";
     paidFallbackLimitInput.id = `key-paid-fallback-limit-${key.id}`;
     const initialPaidFallbackLimit = normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0;
-    let lastFinitePaidFallbackLimit = initialPaidFallbackLimit > 0
-      ? initialPaidFallbackLimit
-      : DEFAULT_FINITE_PAID_FALLBACK_LIMIT;
+    let lastFinitePaidFallbackLimit =
+      initialPaidFallbackLimit > 0 ? initialPaidFallbackLimit : DEFAULT_FINITE_PAID_FALLBACK_LIMIT;
     paidFallbackLimitInput.value = String(lastFinitePaidFallbackLimit);
     paidFallbackLimitField.appendChild(paidFallbackLimitLabel);
     paidFallbackLimitField.appendChild(paidFallbackLimitInput);
@@ -6263,7 +6327,7 @@ const renderKeys = (keys, view = "all") => {
     const paidLimitUnlimited = buildUnlimitedToggle(
       `key-paid-fallback-limit-unlimited-${key.id}`,
       paidFallbackLimitInput.id,
-      "Unlimited credits",
+      "Unlimited credits"
     );
     paidLimitUnlimited.input.checked = initialPaidFallbackLimit === -1;
 
@@ -6455,7 +6519,7 @@ const renderKeys = (keys, view = "all") => {
         changed = true;
       }
 
-      let nextExpiresAtMs = editSnapshot.expires_at_ms;
+      let nextExpiresAtMs;
       if (neverInput.checked) {
         nextExpiresAtMs = -1;
       } else {
@@ -6535,8 +6599,8 @@ const renderKeys = (keys, view = "all") => {
       const { payload, nextSnapshot } = result;
       const hasExpiresField = Object.prototype.hasOwnProperty.call(payload, "expires_at_ms");
       const requestInputs = getEditInputState();
-      const initializingPaidFallback = payload.paid_fallback_enabled === true &&
-        editSnapshot.paid_fallback_enabled === false;
+      const initializingPaidFallback =
+        payload.paid_fallback_enabled === true && editSnapshot.paid_fallback_enabled === false;
       editSaving = true;
       const requestTarget = apiUrl("/admin/api-keys");
       setEditBadge("unknown", initializingPaidFallback ? "Initializing Metered..." : "Saving...");
@@ -6557,20 +6621,23 @@ const renderKeys = (keys, view = "all") => {
         }
 
         const updatedName = typeof data?.name === "string" ? data.name : nextSnapshot.name;
-        const updatedLimit = typeof data?.usage_limit_requests === "number"
-          ? data.usage_limit_requests
-          : nextSnapshot.usage_limit_requests;
+        const updatedLimit =
+          typeof data?.usage_limit_requests === "number"
+            ? data.usage_limit_requests
+            : nextSnapshot.usage_limit_requests;
         const updatedWindowMs = typeof data?.window_ms === "number" ? data.window_ms : nextSnapshot.window_ms;
-        const updatedExpires = typeof data?.expires_at_ms === "number"
-          ? data.expires_at_ms
-          : nextSnapshot.expires_at_ms;
-        const updatedPaidFallbackEnabled = typeof data?.paid_fallback_enabled === "boolean"
-          ? data.paid_fallback_enabled
-          : nextSnapshot.paid_fallback_enabled;
-        const updatedPaidFallbackLimit = typeof data?.paid_fallback_limit_credits === "number"
-          ? data.paid_fallback_limit_credits
-          : nextSnapshot.paid_fallback_limit_credits;
-        const expiresMismatch = hasExpiresField &&
+        const updatedExpires =
+          typeof data?.expires_at_ms === "number" ? data.expires_at_ms : nextSnapshot.expires_at_ms;
+        const updatedPaidFallbackEnabled =
+          typeof data?.paid_fallback_enabled === "boolean"
+            ? data.paid_fallback_enabled
+            : nextSnapshot.paid_fallback_enabled;
+        const updatedPaidFallbackLimit =
+          typeof data?.paid_fallback_limit_credits === "number"
+            ? data.paid_fallback_limit_credits
+            : nextSnapshot.paid_fallback_limit_credits;
+        const expiresMismatch =
+          hasExpiresField &&
           typeof data?.expires_at_ms === "number" &&
           data.expires_at_ms !== nextSnapshot.expires_at_ms;
         const resolvedExpires = expiresMismatch ? nextSnapshot.expires_at_ms : updatedExpires;
@@ -6734,11 +6801,13 @@ const renderKeys = (keys, view = "all") => {
     const usage = hasUsageField ? key.usage : undefined;
 
     if (hasUsageField) {
-      main.appendChild(buildUsageDetails(usage, {
-        label: "Request limit",
-        unavailable: "Request count unavailable.",
-        empty: "No request count available.",
-      }));
+      main.appendChild(
+        buildUsageDetails(usage, {
+          label: "Request limit",
+          unavailable: "Request count unavailable.",
+          empty: "No request count available.",
+        })
+      );
     }
 
     row.appendChild(main);
@@ -6852,7 +6921,7 @@ const refreshPasskeyUsers = async () => {
       setPasskeyUsersMessage(
         res.status === 403
           ? "Admin token required. Paste a Deno/admin token in the fallback token field."
-          : "Failed to load passkey users.",
+          : "Failed to load passkey users."
       );
       return;
     }
@@ -6982,7 +7051,7 @@ const VIEW_HASH_ALIASES = new Map([
   ["view-session", "session"],
 ]);
 
-const normalizeAdminView = (view) => viewSections[view] ? view : ADMIN_VIEW_DEFAULT;
+const normalizeAdminView = (view) => (viewSections[view] ? view : ADMIN_VIEW_DEFAULT);
 
 const canAccessView = (view) => {
   if (view === "loading") return true;
@@ -7020,13 +7089,14 @@ const bindTablistKeyboard = (tablist) => {
     const tabs = [...tablist.querySelectorAll('[role="tab"]:not(:disabled)')];
     if (!tabs.length) return;
     const currentIndex = Math.max(0, tabs.indexOf(document.activeElement));
-    const nextIndex = event.key === "Home"
-      ? 0
-      : event.key === "End"
-      ? tabs.length - 1
-      : event.key === "ArrowRight"
-      ? (currentIndex + 1) % tabs.length
-      : (currentIndex - 1 + tabs.length) % tabs.length;
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : event.key === "ArrowRight"
+            ? (currentIndex + 1) % tabs.length
+            : (currentIndex - 1 + tabs.length) % tabs.length;
     event.preventDefault();
     tabs[nextIndex].focus();
     tabs[nextIndex].click();
@@ -7100,16 +7170,18 @@ const renderErrorsRetention = (payload) => {
   const retention = payload?.retention;
   if (
     retention?.state === "ok" &&
-    retention.accounting_complete === true && !retention.accounting_error &&
-    [retention.stored_bytes, retention.reserved_bytes, retention.budget_bytes, retention.records].every((value) =>
-      typeof value === "number" && Number.isFinite(value) && value >= 0
-    ) && Number.isFinite(retention.stored_bytes + retention.reserved_bytes)
+    retention.accounting_complete === true &&
+    !retention.accounting_error &&
+    [retention.stored_bytes, retention.reserved_bytes, retention.budget_bytes, retention.records].every(
+      (value) => typeof value === "number" && Number.isFinite(value) && value >= 0
+    ) &&
+    Number.isFinite(retention.stored_bytes + retention.reserved_bytes)
   ) {
     const used = retention.stored_bytes + retention.reserved_bytes;
     parts.push(
-      `Capture storage ${formatRetentionBytes(used)} of ${formatRetentionBytes(retention.budget_bytes)} · ${
-        formatNumber(retention.records)
-      } recordings`,
+      `Capture storage ${formatRetentionBytes(used)} of ${formatRetentionBytes(retention.budget_bytes)} · ${formatNumber(
+        retention.records
+      )} recordings`
     );
     if (typeof retention.evicted_records === "number" && retention.evicted_records > 0) {
       parts.push("Oldest recordings were removed to keep new ones within the 1 GiB limit");
@@ -7426,7 +7498,10 @@ const setAdminAccessState = (next) => {
     pendingAdminView = null;
     setAdminView(view, { hashMode: "replace" });
   } else if (
-    pendingAdminView && adminAccessState.checked && adminAccessState.isAdmin && !canAccessView(pendingAdminView)
+    pendingAdminView &&
+    adminAccessState.checked &&
+    adminAccessState.isAdmin &&
+    !canAccessView(pendingAdminView)
   ) {
     pendingAdminView = null;
     setAdminView(ADMIN_VIEW_AUTHENTICATED_DEFAULT, { hashMode: "replace", allowInaccessible: false });
@@ -7527,7 +7602,9 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
     let authResult;
     if (isRemoteRelayOrigin()) {
       authResult = await requestAuth({});
-      relaySessionActive = authResult.res.ok && authResult.data?.auth?.is_admin === true &&
+      relaySessionActive =
+        authResult.res.ok &&
+        authResult.data?.auth?.is_admin === true &&
         authResult.data?.auth?.method?.kind === "passkey_session";
       if (!relaySessionActive && token && allowBearerFallback) {
         authResult = await requestAuth({ Authorization: `Bearer ${token}` });
@@ -7666,13 +7743,11 @@ const createKey = async () => {
           ? "enabled"
           : "disabled"
       }`,
-      `paid_fallback_limit: ${
-        formatPaidFallbackLimit(
-          typeof data?.paid_fallback_limit_credits === "number"
-            ? data.paid_fallback_limit_credits
-            : paidFallbackLimitCredits,
-        )
-      }`,
+      `paid_fallback_limit: ${formatPaidFallbackLimit(
+        typeof data?.paid_fallback_limit_credits === "number"
+          ? data.paid_fallback_limit_credits
+          : paidFallbackLimitCredits
+      )}`,
       `created_at: ${formatDate(data?.created_at_ms)}`,
       `expires_at: ${formatExpires(data?.expires_at_ms)}`,
     ];
@@ -7845,9 +7920,9 @@ const createKeyChangeRow = (event) => {
 
   const meta = document.createElement("div");
   meta.dataset.keyChangeFields = "fields";
-  meta.textContent = `Actor: ${formatKeyChangeActor(event.actor)} · Key ${
-    formatOptionalText(event.target_key_id)
-  } · Request ${formatOptionalText(event.request_id)}`;
+  meta.textContent = `Actor: ${formatKeyChangeActor(event.actor)} · Key ${formatOptionalText(
+    event.target_key_id
+  )} · Request ${formatOptionalText(event.request_id)}`;
 
   row.appendChild(header);
   row.appendChild(fields);
@@ -8086,13 +8161,14 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
   // carry no balance header. There is no honest live balance, so no token
   // figure is displayed; the provider's real, event-derived outcome is shown in
   // the capacity panel.
-  const tokenUsage = typeof diagnostics.total_available === "number" ||
+  const tokenUsage =
+    typeof diagnostics.total_available === "number" ||
     typeof diagnostics.total_granted === "number" ||
     typeof diagnostics.total_used === "number";
-  const remaining = !tokenUsage && typeof diagnostics.remaining_percent === "number" &&
-      Number.isFinite(diagnostics.remaining_percent)
-    ? Math.min(100, Math.max(0, diagnostics.remaining_percent))
-    : null;
+  const remaining =
+    !tokenUsage && typeof diagnostics.remaining_percent === "number" && Number.isFinite(diagnostics.remaining_percent)
+      ? Math.min(100, Math.max(0, diagnostics.remaining_percent))
+      : null;
   if (remaining !== null) {
     const formatted = quotaPercentFormatter.format(remaining);
     meteredQuotaRemaining.textContent = `${formatted}%`;
@@ -8114,20 +8190,18 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
   }
   meteredQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
   meteredQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
-  meteredQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
-    ? formatDate(diagnostics.observed_at_ms)
-    : "—";
-  meteredQuotaCycleStarted.textContent = typeof diagnostics.cycle_started_at_ms === "number"
-    ? formatDate(diagnostics.cycle_started_at_ms)
-    : "—";
+  meteredQuotaObserved.textContent =
+    typeof diagnostics.observed_at_ms === "number" ? formatDate(diagnostics.observed_at_ms) : "—";
+  meteredQuotaCycleStarted.textContent =
+    typeof diagnostics.cycle_started_at_ms === "number" ? formatDate(diagnostics.cycle_started_at_ms) : "—";
 
   const refillAmount = formatQuotaCredits(diagnostics.latest_refill_amount_credits);
-  const refillTime = typeof diagnostics.latest_refill_completed_at_ms === "number"
-    ? formatDate(diagnostics.latest_refill_completed_at_ms)
-    : "—";
-  meteredQuotaLatestRefill.textContent = refillAmount === "—" && refillTime === "—"
-    ? "—"
-    : `${refillAmount} · ${refillTime}`;
+  const refillTime =
+    typeof diagnostics.latest_refill_completed_at_ms === "number"
+      ? formatDate(diagnostics.latest_refill_completed_at_ms)
+      : "—";
+  meteredQuotaLatestRefill.textContent =
+    refillAmount === "—" && refillTime === "—" ? "—" : `${refillAmount} · ${refillTime}`;
   if (typeof diagnostics.latest_refill_id === "string" && diagnostics.latest_refill_id) {
     meteredQuotaLatestRefill.title = `Refill ${diagnostics.latest_refill_id}`;
   }
@@ -8142,9 +8216,11 @@ const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
   defaultsModelMap = new Map(models.map((model) => [model.slug, model]));
   if (snapshot.meta) updateDefaultsMeta(snapshot.meta, models);
   const modelOptions = models.map((model) => ({ value: model.slug, label: formatModelLabel(model) }));
-  const preferredModel = options.preserveInputs ? defaultsModelSelect.value : defaults?.model ?? "";
+  const preferredModel = options.preserveInputs ? defaultsModelSelect.value : (defaults?.model ?? "");
   const selectedModel = setSelectOptions(defaultsModelSelect, modelOptions, preferredModel, "No models available");
-  const preferredReasoning = options.preserveInputs ? defaultsReasoningSelect.value : defaults?.reasoning_effort ?? "";
+  const preferredReasoning = options.preserveInputs
+    ? defaultsReasoningSelect.value
+    : (defaults?.reasoning_effort ?? "");
   const selectedReasoning = updateReasoningOptions(selectedModel, preferredReasoning);
   if (!options.preserveInputs) {
     if (typeof defaults?.kernel_policy_limit_requests === "number") {
@@ -8254,21 +8330,22 @@ const loadDefaults = async (options = {}) => {
 
     const serverDefaults = {
       model: typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "",
-      reasoning_effort: typeof defaultsPayload?.defaults?.reasoning_effort === "string"
-        ? defaultsPayload.defaults.reasoning_effort
-        : "",
-      kernel_policy_limit_requests: typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
-        ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
-        : DEFAULT_KERNEL_POLICY_LIMIT,
-      kernel_policy_window_ms: typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
-        ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
-        : DEFAULT_KERNEL_POLICY_WINDOW_MS,
+      reasoning_effort:
+        typeof defaultsPayload?.defaults?.reasoning_effort === "string"
+          ? defaultsPayload.defaults.reasoning_effort
+          : "",
+      kernel_policy_limit_requests:
+        typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
+          ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
+          : DEFAULT_KERNEL_POLICY_LIMIT,
+      kernel_policy_window_ms:
+        typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
+          ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
+          : DEFAULT_KERNEL_POLICY_WINDOW_MS,
     };
-    const result = applyDefaultsSnapshot(
-      { models, meta: snapshot },
-      serverDefaults,
-      { preserveInputs: preserveInputs || defaultsTouched },
-    );
+    const result = applyDefaultsSnapshot({ models, meta: snapshot }, serverDefaults, {
+      preserveInputs: preserveInputs || defaultsTouched,
+    });
     defaultsLoaded = true;
     defaultsLoadedAt = Date.now();
     if (!defaultsTouched && result) {
@@ -8338,9 +8415,8 @@ const modelsHasUnsavedChanges = () =>
 const modelsSelectionFromIds = (ids) =>
   new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : []);
 
-const modelsPositiveTokenCount = (
-  value,
-) => (typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null);
+const modelsPositiveTokenCount = (value) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 
 const modelsCreatedSeconds = (entry) =>
   typeof entry?.created === "number" && Number.isSafeInteger(entry.created) && entry.created > 0 ? entry.created : 0;
@@ -8354,8 +8430,10 @@ const modelsReasoningLevels = (value) => {
   return [...new Set(levels)].sort((left, right) => {
     const leftIndex = MODEL_REASONING_ORDER.indexOf(left);
     const rightIndex = MODEL_REASONING_ORDER.indexOf(right);
-    return (leftIndex < 0 ? MODEL_REASONING_ORDER.length : leftIndex) -
-      (rightIndex < 0 ? MODEL_REASONING_ORDER.length : rightIndex);
+    return (
+      (leftIndex < 0 ? MODEL_REASONING_ORDER.length : leftIndex) -
+      (rightIndex < 0 ? MODEL_REASONING_ORDER.length : rightIndex)
+    );
   });
 };
 
@@ -8383,11 +8461,18 @@ const modelsEntryMatchesQuery = (entry, query) => {
     maxContextWindow && MODEL_TOKEN_FORMAT.format(maxContextWindow),
     autoCompact && MODEL_TOKEN_FORMAT.format(autoCompact),
     contextWindow ? "context compact compression" : "",
-  ].filter(Boolean).join(" ").toLowerCase();
-  return String(entry.id ?? "").toLowerCase().includes(query) ||
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return (
+    String(entry.id ?? "")
+      .toLowerCase()
+      .includes(query) ||
     (entry.providers ?? []).some((provider) => providerLabelFor(provider.id).toLowerCase().includes(query)) ||
     reasoning?.levels?.some((level) => level.includes(query)) ||
-    contextSearch.includes(query);
+    contextSearch.includes(query)
+  );
 };
 
 const modelsFilterIsActive = () =>
@@ -8401,15 +8486,17 @@ const modelsVisibleEntries = () => {
     if (
       modelsProviderFilter !== "all" &&
       !(entry.providers ?? []).some((provider) => provider.id === modelsProviderFilter)
-    ) return false;
+    )
+      return false;
     if (onlySelected && !modelsSelection.has(entry.id)) return false;
     return modelsEntryMatchesQuery(entry, query);
   });
-  const sorted = modelsSortSelect.value === "created"
-    ? visible.sort((left, right) =>
-      modelsCreatedSeconds(right) - modelsCreatedSeconds(left) || left.id.localeCompare(right.id)
-    )
-    : visible.sort((left, right) => left.id.localeCompare(right.id));
+  const sorted =
+    modelsSortSelect.value === "created"
+      ? visible.sort(
+          (left, right) => modelsCreatedSeconds(right) - modelsCreatedSeconds(left) || left.id.localeCompare(right.id)
+        )
+      : visible.sort((left, right) => left.id.localeCompare(right.id));
   return sorted;
 };
 
@@ -8541,9 +8628,9 @@ const modelsCatalogWarning = () => {
     })
     .map((id) => providerLabelFor(id));
   if (!unavailable.length) return "";
-  return `${
-    unavailable.join(", ")
-  } could not be read, so those models are missing from this list. Reload before saving a selection.`;
+  return `${unavailable.join(
+    ", "
+  )} could not be read, so those models are missing from this list. Reload before saving a selection.`;
 };
 
 const modelsMissingWarning = () => {
@@ -8618,15 +8705,16 @@ const updateModelsStatus = () => {
   const saving = modelsSaving;
 
   const missing = modelsMissingIds();
-  modelsSummary.textContent = !modelsLoadedAt && total === 0
-    ? "Waiting for the catalog."
-    : total === 0
-    ? "No models were discovered from the configured providers."
-    : selected === 0
-    ? `No models checked: the filter is off, so all ${formatNumber(total)} discovered models stay listed.`
-    : `${formatNumber(selected)} of ${formatNumber(total)} models checked: only those stay listed.` +
-      (missing.length ? ` ${formatNumber(missing.length)} of them are missing from the catalog.` : "") +
-      (visibleCount < total ? ` Showing ${formatNumber(visibleCount)}.` : "");
+  modelsSummary.textContent =
+    !modelsLoadedAt && total === 0
+      ? "Waiting for the catalog."
+      : total === 0
+        ? "No models were discovered from the configured providers."
+        : selected === 0
+          ? `No models checked: the filter is off, so all ${formatNumber(total)} discovered models stay listed.`
+          : `${formatNumber(selected)} of ${formatNumber(total)} models checked: only those stay listed.` +
+            (missing.length ? ` ${formatNumber(missing.length)} of them are missing from the catalog.` : "") +
+            (visibleCount < total ? ` Showing ${formatNumber(visibleCount)}.` : "");
 
   const metadata = modelsMetadataStatus();
   if (metadata) {
@@ -8674,7 +8762,7 @@ const renderModelsPicker = () => {
     renderModelsMessage(
       modelsOnlySelectedInput.checked
         ? "No checked model matches the current filters."
-        : "No model matches the current filters.",
+        : "No model matches the current filters."
     );
   } else {
     modelsList.replaceChildren(...visible.map(buildModelOption));
@@ -8765,7 +8853,7 @@ const saveModelsWhitelist = async () => {
   try {
     const response = await fetch(apiUrl("/admin/models/whitelist"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ model_ids: modelsSelectedIds() }),
     });
     const payload = await response.json().catch(() => null);
@@ -8785,10 +8873,11 @@ const saveModelsWhitelist = async () => {
     toast.success(
       modelsSelection.size === 0 ? "Filter cleared" : `${formatNumber(modelsSelection.size)} models listed`,
       {
-        description: modelsSelection.size === 0
-          ? "Every discovered model is listed again."
-          : "Unchecked models are hidden from the public catalog.",
-      },
+        description:
+          modelsSelection.size === 0
+            ? "Every discovered model is listed again."
+            : "Unchecked models are hidden from the public catalog.",
+      }
     );
   } catch (error) {
     modelsSaving = false;
@@ -8819,9 +8908,8 @@ const readModelsFilterPreference = (key, fallback, allowed) => {
 };
 
 const storedModelsProviderFilter = storage.get(MODEL_PROVIDER_STORAGE_KEY);
-modelsProviderFilter = typeof storedModelsProviderFilter === "string" && storedModelsProviderFilter
-  ? storedModelsProviderFilter
-  : "all";
+modelsProviderFilter =
+  typeof storedModelsProviderFilter === "string" && storedModelsProviderFilter ? storedModelsProviderFilter : "all";
 modelsSortSelect.value = readModelsFilterPreference(MODEL_SORT_STORAGE_KEY, "id", ["id", "created"]);
 modelsOnlySelectedInput.checked = storage.get(MODEL_ONLY_SELECTED_STORAGE_KEY) === "1";
 
@@ -8887,7 +8975,7 @@ modelsDropMissingBtn.addEventListener("click", () => {
   modelsSaveError = "";
   renderModelsPicker();
   toast.success(
-    `Removed ${formatNumber(missing.length)} missing ${missing.length === 1 ? "identifier" : "identifiers"}`,
+    `Removed ${formatNumber(missing.length)} missing ${missing.length === 1 ? "identifier" : "identifiers"}`
   );
 });
 
@@ -9037,14 +9125,18 @@ const providersTierCounts = () => {
 
 const providersEntryMatchesQuery = (entry, query) => {
   if (!query) return true;
-  return entry.id.toLowerCase().includes(query) ||
+  return (
+    entry.id.toLowerCase().includes(query) ||
     entry.label.toLowerCase().includes(query) ||
     providerTierLabelFor(entry.tier).toLowerCase().includes(query) ||
     String(entry.model_count ?? 0).includes(query) ||
     entry.detail.toLowerCase().includes(query) ||
     providersSubscriptionsFor(entry).some((subscription) =>
-      String(subscription.label ?? "").toLowerCase().includes(query)
-    );
+      String(subscription.label ?? "")
+        .toLowerCase()
+        .includes(query)
+    )
+  );
 };
 
 const providersFilterIsActive = () =>
@@ -9057,13 +9149,16 @@ const providersVisibleEntries = () => {
   const visible = providerRoster.filter((entry) => {
     if (providerTierFilter !== "all" && entry.tier !== providerTierFilter) return false;
     if (
-      onlyActive && !providerSelection.has(entry.id) && !(entry.id === "codex" && providerCodexSelection().selected > 0)
-    ) return false;
+      onlyActive &&
+      !providerSelection.has(entry.id) &&
+      !(entry.id === "codex" && providerCodexSelection().selected > 0)
+    )
+      return false;
     return providersEntryMatchesQuery(entry, query);
   });
   if (providersSortSelect.value === "models") {
-    return visible.sort((left, right) =>
-      Number(right.model_count ?? 0) - Number(left.model_count ?? 0) || left.id.localeCompare(right.id)
+    return visible.sort(
+      (left, right) => Number(right.model_count ?? 0) - Number(left.model_count ?? 0) || left.id.localeCompare(right.id)
     );
   }
   if (providersSortSelect.value === "id") {
@@ -9147,7 +9242,7 @@ const buildProviderOption = (entry) => {
     facts.push(
       codex.all
         ? `${formatNumber(codex.total)} subscriptions`
-        : `${formatNumber(codex.selected)} of ${formatNumber(codex.total)} subscriptions`,
+        : `${formatNumber(codex.selected)} of ${formatNumber(codex.total)} subscriptions`
     );
   } else if (health?.accountCount) facts.push(`${formatNumber(health.accountCount)} accounts`);
   const meta = document.createElement("span");
@@ -9188,8 +9283,8 @@ const buildProviderSubscriptions = (entry) => {
     name.textContent = subscription.label ?? subscription.id;
     const meta = document.createElement("span");
     meta.dataset.providerSubscriptionMeta = "";
-    const health = latestProviderHealth?.codex?.accounts?.find?.((account) => account?.slot === subscription.slot) ??
-      null;
+    const health =
+      latestProviderHealth?.codex?.accounts?.find?.((account) => account?.slot === subscription.slot) ?? null;
     const facts = [`slot ${formatNumber(Number(subscription.slot ?? 0))}`];
     if (health?.access_token_expired === true) facts.push("token expired");
     else if (health?.refresh_recommended === true) facts.push("refresh due");
@@ -9250,15 +9345,15 @@ const providersRoutingWarnings = () => {
         missing.length === 1 ? "subscription is" : "subscriptions are"
       } no longer configured, so ${
         missing.length === 1 ? "it" : "they"
-      } cannot serve; remove the missing entries to keep the selection honest.`,
+      } cannot serve; remove the missing entries to keep the selection honest.`
     );
   }
   const codex = providerCodexSelection();
   if (!providerSelection.has("codex") && codex.total && codex.selected > 0) {
     warnings.push(
-      `Codex is limited to ${formatNumber(codex.selected)} of ${
-        formatNumber(codex.total)
-      } subscriptions; the other accounts stay unused.`,
+      `Codex is limited to ${formatNumber(codex.selected)} of ${formatNumber(
+        codex.total
+      )} subscriptions; the other accounts stay unused.`
     );
   }
   if (!isProviderChecked("codex")) {
@@ -9271,8 +9366,8 @@ const providersRoutingWarnings = () => {
 };
 
 const providersHealthWarning = () => {
-  const missing = providerRoster.filter((entry) =>
-    isProviderChecked(entry.id) && providerHealthFor(entry)?.configured === false
+  const missing = providerRoster.filter(
+    (entry) => isProviderChecked(entry.id) && providerHealthFor(entry)?.configured === false
   );
   if (!missing.length) return "";
   const labels = missing.map((entry) => entry.label ?? entry.id);
@@ -9296,19 +9391,21 @@ const updateProvidersStatus = () => {
   const codex = providerCodexSelection();
   // A narrowed Codex tier is active, so it belongs in the active list with the
   // subscription count that is doing the work.
-  const activeLabels = providersRosterIds().filter((id) => isProviderChecked(id)).map((id) => {
-    const label = providerRosterEntry(id)?.label ?? id;
-    if (id !== "codex" || !codex.total || codex.all) return label;
-    return `${label} (${formatNumber(codex.selected)} of ${formatNumber(codex.total)} subscriptions)`;
-  });
+  const activeLabels = providersRosterIds()
+    .filter((id) => isProviderChecked(id))
+    .map((id) => {
+      const label = providerRosterEntry(id)?.label ?? id;
+      if (id !== "codex" || !codex.total || codex.all) return label;
+      return `${label} (${formatNumber(codex.selected)} of ${formatNumber(codex.total)} subscriptions)`;
+    });
   if (!providerSelectionLoadedAt && total === 0) {
     providersSummary.textContent = "Waiting for the provider roster.";
   } else if (selected === 0) {
     providersSummary.textContent = "Nothing checked: check the providers that should stay active.";
   } else if (!filterActive) {
-    providersSummary.textContent = `All ${
-      formatNumber(total)
-    } providers checked: no filter is saved, so every provider is active.`;
+    providersSummary.textContent = `All ${formatNumber(
+      total
+    )} providers checked: no filter is saved, so every provider is active.`;
   } else {
     providersSummary.textContent =
       `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active: ${activeLabels.join(", ")}.` +
@@ -9359,7 +9456,7 @@ const renderProvidersPicker = () => {
     renderProvidersMessage(
       providersOnlyActiveInput.checked
         ? "No active provider matches the current filters."
-        : "No provider matches the current filters.",
+        : "No provider matches the current filters."
     );
   } else {
     providersList.replaceChildren(...visible.map(buildProviderEntry));
@@ -9481,7 +9578,7 @@ const saveProviderSelection = async () => {
   try {
     const response = await fetch(apiUrl("/admin/providers/selection"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ provider_ids: providersSelectedIds() }),
     });
     const payload = await response.json().catch(() => null);
@@ -9502,10 +9599,11 @@ const saveProviderSelection = async () => {
     toast.success(
       savedIds.length === 0 ? "Filter cleared" : `${formatNumber(providerSelection.size)} providers active`,
       {
-        description: savedIds.length === 0
-          ? "Every provider is eligible for routing again."
-          : "Routing, model listings, and the Codex catalog now skip the unchecked providers.",
-      },
+        description:
+          savedIds.length === 0
+            ? "Every provider is eligible for routing again."
+            : "Routing, model listings, and the Codex catalog now skip the unchecked providers.",
+      }
     );
   } catch (error) {
     providerSelectionSaving = false;
@@ -9531,9 +9629,8 @@ const reloadProviderSelection = () => {
 };
 
 const storedProviderTierFilter = storage.get(PROVIDER_TIER_STORAGE_KEY);
-providerTierFilter = typeof storedProviderTierFilter === "string" && storedProviderTierFilter
-  ? storedProviderTierFilter
-  : "all";
+providerTierFilter =
+  typeof storedProviderTierFilter === "string" && storedProviderTierFilter ? storedProviderTierFilter : "all";
 providersSortSelect.value = readModelsFilterPreference(PROVIDER_SORT_STORAGE_KEY, "roster", ["roster", "models", "id"]);
 providersOnlyActiveInput.checked = storage.get(PROVIDER_ONLY_ACTIVE_STORAGE_KEY) === "1";
 
@@ -9635,7 +9732,7 @@ providersDropMissingBtn.addEventListener("click", () => {
   providerSelectionSaveError = "";
   renderProvidersPicker();
   toast.success(
-    `Removed ${formatNumber(missing.length)} missing ${missing.length === 1 ? "subscription" : "subscriptions"}`,
+    `Removed ${formatNumber(missing.length)} missing ${missing.length === 1 ? "subscription" : "subscriptions"}`
   );
 });
 
@@ -9706,7 +9803,8 @@ const saveDefaults = async () => {
   }
 };
 
-const cachedPayload = (snapshot) => snapshot?.payload && typeof snapshot.payload === "object" ? snapshot.payload : null;
+const cachedPayload = (snapshot) =>
+  snapshot?.payload && typeof snapshot.payload === "object" ? snapshot.payload : null;
 
 const cachedList = (snapshot, key = "data") => {
   const payload = cachedPayload(snapshot);
@@ -9807,7 +9905,7 @@ const hydrateAdminSnapshots = async () => {
       orgUsageSnapshot.savedAt,
       repoUsageSnapshot.savedAt,
       orgPolicySnapshot.savedAt,
-      repoPolicySnapshot.savedAt,
+      repoPolicySnapshot.savedAt
     );
     if (kernelListLoadedAt <= cachedAt) {
       kernelPolicyState = buildKernelPolicyStateFromLists(orgPolicyResult, repoPolicyResult);
@@ -9827,19 +9925,24 @@ const hydrateAdminSnapshots = async () => {
     ? modelsPayload.data.models.filter((model) => typeof model?.slug === "string")
     : [];
   if (
-    models.length && defaultsPayload && defaultsLoadedAt <= Math.min(modelsSnapshot.savedAt, defaultsSnapshot.savedAt)
+    models.length &&
+    defaultsPayload &&
+    defaultsLoadedAt <= Math.min(modelsSnapshot.savedAt, defaultsSnapshot.savedAt)
   ) {
     const serverDefaults = {
       model: typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "",
-      reasoning_effort: typeof defaultsPayload?.defaults?.reasoning_effort === "string"
-        ? defaultsPayload.defaults.reasoning_effort
-        : "",
-      kernel_policy_limit_requests: typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
-        ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
-        : DEFAULT_KERNEL_POLICY_LIMIT,
-      kernel_policy_window_ms: typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
-        ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
-        : DEFAULT_KERNEL_POLICY_WINDOW_MS,
+      reasoning_effort:
+        typeof defaultsPayload?.defaults?.reasoning_effort === "string"
+          ? defaultsPayload.defaults.reasoning_effort
+          : "",
+      kernel_policy_limit_requests:
+        typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
+          ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
+          : DEFAULT_KERNEL_POLICY_LIMIT,
+      kernel_policy_window_ms:
+        typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
+          ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
+          : DEFAULT_KERNEL_POLICY_WINDOW_MS,
     };
     const result = applyDefaultsSnapshot({ models, meta: modelsPayload.data }, serverDefaults, {
       preserveInputs: defaultsTouched,
@@ -9855,8 +9958,8 @@ const hydrateAdminSnapshots = async () => {
     const source = upstreamPayload?.codex?.source ?? "unknown";
     const expirations = Array.isArray(upstreamPayload?.codex?.accounts)
       ? upstreamPayload.codex.accounts
-        .map((account) => account?.access_token_exp_ms)
-        .filter((value) => typeof value === "number")
+          .map((account) => account?.access_token_exp_ms)
+          .filter((value) => typeof value === "number")
       : [];
     setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
     setAccessValue(accessUpstreamExpiry, expirations.length ? formatDate(Math.min(...expirations)) : "Unknown");
@@ -9874,7 +9977,7 @@ const hydrateAdminSnapshots = async () => {
   if (capacityPayload && providerCapacityLoadedAt <= capacitySnapshot.savedAt) {
     renderProviderCapacity(
       capacityPayload,
-      Array.isArray(capacityErrorsPayload?.five_xx_buckets) ? capacityErrorsPayload.five_xx_buckets : [],
+      Array.isArray(capacityErrorsPayload?.five_xx_buckets) ? capacityErrorsPayload.five_xx_buckets : []
     );
     providerCapacityLoadedAt = capacitySnapshot.savedAt;
     providerCapacityUpdated.textContent = `Cached ${formatDate(capacitySnapshot.savedAt)} · refreshing`;
@@ -10270,7 +10373,7 @@ keyPaidFallbackLimitInput.addEventListener("input", () => {
       DEFAULT_FINITE_PAID_FALLBACK_LIMIT,
       {
         positive: true,
-      },
+      }
     );
   }
 });
@@ -10282,7 +10385,7 @@ keyPaidFallbackLimitUnlimitedInput.addEventListener("change", () => {
       DEFAULT_FINITE_PAID_FALLBACK_LIMIT,
       {
         positive: true,
-      },
+      }
     );
   }
   keyPaidFallbackLimitInput.value = lastFinitePaidFallbackLimitValue;

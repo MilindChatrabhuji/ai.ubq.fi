@@ -30,9 +30,9 @@ const checkedAtomic = (kv: Kv): AtomicOperation => {
   return operation;
 };
 
-const checkedList = <T>(kv: Kv, selector: KvListSelector, options: KvListOptions = {}): KvListIterator<T> => {
+const checkedList = (kv: Kv, selector: KvListSelector, options: KvListOptions = {}): KvListIterator<unknown> => {
   // Retain the SDK's selector/option validation before adjusting its scan start.
-  const validated = kv.list<T>(selector, options);
+  const validated = kv.list(selector, options);
   let nativeSelector = selector;
   if ("prefix" in selector && !("start" in selector)) {
     // An exact-prefix row can stall the SDK when it consumes the whole batch.
@@ -40,8 +40,8 @@ const checkedList = <T>(kv: Kv, selector: KvListSelector, options: KvListOptions
     const start = [...selector.prefix, new Uint8Array()];
     nativeSelector = "end" in selector ? { start, end: selector.end } : { prefix: selector.prefix, start };
   }
-  const iterator = nativeSelector === selector ? validated : kv.list<T>(nativeSelector, options);
-  let cursor = options.cursor || undefined;
+  const iterator = nativeSelector === selector ? validated : kv.list(nativeSelector, options);
+  let cursor = options.cursor ?? undefined;
   let yielded = 0;
   return {
     get cursor() {
@@ -97,6 +97,6 @@ export const guardNativeKv = (kv: Kv): Kv => {
     get: <T>(...args: Parameters<Kv["get"]>) => retrySqliteBusy(() => native.get<T>(...args)),
     getMany: <T extends readonly unknown[]>(keys: readonly [...{ [K in keyof T]: KvKey }], options?: Parameters<Kv["getMany"]>[1]) =>
       retrySqliteBusy(() => native.getMany<T>(keys, options)),
-    list: <T>(selector: KvListSelector, options?: KvListOptions) => checkedList<T>(native, selector, options),
+    list: <T>(selector: KvListSelector, options?: KvListOptions) => checkedList(native, selector, options) as KvListIterator<T>,
   };
 };

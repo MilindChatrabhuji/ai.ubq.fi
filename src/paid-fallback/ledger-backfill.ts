@@ -1,4 +1,4 @@
-import type { Kv, KvCommitResult, KvEntry, KvEntryMaybe, KvKey, KvListSelector } from "#kv";
+import type { Kv, KvEntry, KvEntryMaybe, KvKey, KvListSelector } from "#kv";
 // Paid-fallback ledger v3: backfill layer, split out of src/paid_fallback_ledger.ts.
 
 import { type MeteredTokenLogEntry, fetchMeteredTokenLogs } from "../provider/metered.ts";

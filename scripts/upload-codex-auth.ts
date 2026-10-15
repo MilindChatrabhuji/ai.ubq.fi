@@ -22,9 +22,9 @@ const parseArgs = (args: string[]): Record<string, string | boolean | undefined>
 };
 
 const expandTilde = (path: string): string => {
-  if (path === "~") return process.env["HOME"] ?? path;
+  if (path === "~") return process.env.HOME ?? path;
   if (path.startsWith("~/")) {
-    const home = process.env["HOME"];
+    const home = process.env.HOME;
     if (home) return `${home}${path.slice(1)}`;
   }
   return path;
@@ -37,7 +37,7 @@ const normalizeVersion = (value: unknown): string | null => {
 };
 
 const readCodexModelsCacheVersion = async (): Promise<string | null> => {
-  const home = process.env["HOME"];
+  const home = process.env.HOME;
   if (!home) return null;
   try {
     const text = await readFile(`${home}/.codex/models_cache.json`, "utf8");
@@ -49,7 +49,7 @@ const readCodexModelsCacheVersion = async (): Promise<string | null> => {
 };
 
 const readCodexVersionFile = async (): Promise<string | null> => {
-  const home = process.env["HOME"];
+  const home = process.env.HOME;
   if (!home) return null;
   try {
     const text = await readFile(`${home}/.codex/version.json`, "utf8");
@@ -97,7 +97,7 @@ const resolveCodexClientVersion = async (paths: string[]): Promise<string | null
 const listCodexBinaryCandidates = (codexBinFlag?: string): string[] => {
   const candidates: string[] = [];
   if (codexBinFlag) candidates.push(expandTilde(codexBinFlag));
-  const pathValue = process.env["PATH"] ?? "";
+  const pathValue = process.env.PATH ?? "";
   const separator = process.platform === "win32" ? ";" : ":";
   for (const segment of pathValue.split(separator).filter(Boolean)) {
     candidates.push(`${segment.replace(/\/$/, "")}/codex`);
@@ -127,7 +127,7 @@ if (process.argv.slice(2).includes("--help") || process.argv.slice(2).includes("
 const parsed = parseArgs(process.argv.slice(2));
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
 const authJsonPath = expandTilde((parsed["auth-json"] as string | undefined) ?? "~/.codex/auth.json");
-const adminToken = (parsed["admin-token"] as string | undefined) ?? process.env["DENO_DEPLOY_TOKEN"] ?? "";
+const adminToken = (parsed["admin-token"] as string | undefined) ?? process.env.DENO_DEPLOY_TOKEN ?? "";
 if (Object.hasOwn(parsed, "skip-models") || Object.hasOwn(parsed, "no-models")) {
   console.error("--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.");
   process.exit(2);

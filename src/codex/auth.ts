@@ -497,7 +497,7 @@ const loadAuthSeedFromEnv = (): CodexAuthState => {
 
 const loadAuthSeedFromDisk = (): CodexAuthState => {
   if (!config.isDeploy) {
-    const home = process.env["HOME"];
+    const home = process.env.HOME;
     if (!home) {
       throw new CodexError("Could not resolve home directory for ~/.codex/auth.json.", "codex_auth_invalid", 503);
     }

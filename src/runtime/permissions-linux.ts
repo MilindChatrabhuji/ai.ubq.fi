@@ -70,6 +70,12 @@ const beneath = (parent: string, child: string): boolean => {
   return path === "" || (path !== ".." && !path.startsWith("../") && !isAbsolute(path));
 };
 
+const requireConfinementSupport = (support: LinuxPermissionsSupport): void => {
+  if (!support.landlockThreadSync || !support.seccomp) {
+    throw new Error("Linux confinement requires supported Landlock ABI8..10 and seccomp thread synchronization");
+  }
+};
+
 /**
  * Irreversible, Linux ARM64 application-child boundary. Invoke before product imports or
  * unrelated file opens; Landlock cannot revoke descriptors opened before enforcement or
@@ -81,16 +87,14 @@ const beneath = (parent: string, child: string): boolean => {
 export const applyLinuxPermissions = (permissions: LinuxPermissions, artifact?: LinuxPermissionsArtifact): LinuxPermissionsReceipt => {
   const native = nativeLibrary(artifact);
   const support = getLinuxPermissionsSupport(artifact);
-  if (!support.landlockThreadSync || !support.seccomp)
-    throw new Error("Linux confinement requires supported Landlock ABI8..10 and seccomp thread synchronization");
-  const canonical = (paths: readonly string[]): string[] =>
-    paths.map((path) => {
-      if (!isAbsolute(path)) throw new Error("Linux confinement paths must be absolute");
-      return realpathSync(path);
-    });
-  const readPaths = canonical(permissions.read);
-  const writePaths = canonical(permissions.write);
-  const immutablePaths = canonical(permissions.immutable ?? []);
+  requireConfinementSupport(support);
+  const canonicalize = (path: string): string => {
+    if (!isAbsolute(path)) throw new Error("Linux confinement paths must be absolute");
+    return realpathSync(path);
+  };
+  const readPaths = permissions.read.map(canonicalize);
+  const writePaths = permissions.write.map(canonicalize);
+  const immutablePaths = (permissions.immutable ?? []).map(canonicalize);
   const immutableMounts: string[] = [];
   for (const path of immutablePaths) {
     if (!writePaths.some((parent) => beneath(parent, path) || beneath(path, parent))) continue;
@@ -99,7 +103,9 @@ export const applyLinuxPermissions = (permissions: LinuxPermissions, artifact?: 
   }
   const grants = new Map<string, number>();
   for (const path of readPaths) {
-    const readable = 4 | (statSync(path).isDirectory() ? 8 | (support.landlockAbi >= 9 ? 0x10000 : 0) : 0);
+    let directoryAccess = 0;
+    if (statSync(path).isDirectory()) directoryAccess = 8 | (support.landlockAbi >= 9 ? 0x10000 : 0);
+    const readable = 4 | directoryAccess;
     grants.set(path, (grants.get(path) ?? 0) | readable);
   }
   for (const path of writePaths) {

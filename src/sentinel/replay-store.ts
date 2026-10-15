@@ -761,7 +761,7 @@ export const persistEncryptedSentinelReplay = async (
 
 const readReplayKeyFromEnvironment = (): Uint8Array<ArrayBuffer> | null => {
   try {
-    const raw = process.env["SENTINEL_REPLAY_KEY"]?.trim();
+    const raw = process.env.SENTINEL_REPLAY_KEY?.trim();
     return raw ? decodeSentinelReplayKey(raw) : null;
   } catch {
     return null;

@@ -147,7 +147,13 @@ const openRpc = async (socketPath: string, home: string, verifyIdentity = true):
     assert.equal(await realpath(String(initialized.codexHome)), await realpath(home), "initialize must identify the isolated home");
     socket.send(JSON.stringify({ method: "initialized" }));
     if (verifyIdentity) verifyNativeAccount(await call("account/read", { refreshToken: false }));
-    return { call, events, close: () => socket.terminate() };
+    return {
+      call,
+      events,
+      close: () => {
+        socket.terminate();
+      },
+    };
   } catch (error) {
     socket.terminate();
     throw error;
@@ -459,7 +465,7 @@ type Gateway = {
   reset: () => void;
 };
 const createGateway = async (endpoint: string, kv: Kv): Promise<Gateway> => {
-  process.env["CODEX_BASE_URL"] = `${endpoint}/codex`;
+  process.env.CODEX_BASE_URL = `${endpoint}/codex`;
   const auth = await import("../../src/codex/auth.ts");
   const refresh = await import("../../src/codex/auth-refresh.ts");
   const native = await import("../../src/codex/native-auth.ts");
@@ -566,7 +572,6 @@ const persistedProof = async (home: string, mock: MockAuthority, gateway: Gatewa
   assert.equal(auth.tokens.access_token, mock.winner.tokens.access_token);
   assert.equal(auth.tokens.refresh_token, mock.winner.tokens.refresh_token);
   const mode = (await stat(`${home}/auth.json`)).mode;
-  assert(mode !== null);
   assert.equal(mode & 0o777, 0o600);
   const pool = await gateway.pool();
   assert.equal(pool.accounts[0].access_token, auth.tokens.access_token);
@@ -695,7 +700,11 @@ const runCase = async (
     }))
   );
   if (failures.length) throw new AggregateError(failures, "Native acceptance and process cleanup results");
-  assert(result);
+  return requireAcceptanceResult(result);
+};
+
+const requireAcceptanceResult = (result: Record<string, unknown> | null): Record<string, unknown> => {
+  if (result === null) throw new Error("Native acceptance completed without a result");
   return result;
 };
 
@@ -706,7 +715,6 @@ const requireFixtureBase = async (): Promise<string> => {
   const info = await lstat(base);
   assert(info.isDirectory() && !info.isSymbolicLink(), "Fixture base must be an existing real directory");
   assert.equal(info.uid, 501, "Fixture base must belong to the authorized Mac fixture owner");
-  assert(info.mode !== null);
   assert.equal(info.mode & 0o777, 0o700, "Fixture base must have mode 0700");
   for (const entry of await readdir(base, { withFileTypes: true })) throw new Error(`Fixture base is not empty: ${entry.name}`);
   return base;

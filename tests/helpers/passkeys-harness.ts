@@ -161,14 +161,14 @@ const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../../
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
   const previous = new Map(Object.keys(updates).map((name) => [name, process.env[name]]));
   for (const [name, value] of Object.entries(updates)) {
-    if (value === null) delete process.env[name];
+    if (value === null) Reflect.deleteProperty(process.env, name);
     else process.env[name] = value;
   }
   try {
     await fn();
   } finally {
     for (const [name, value] of previous) {
-      if (value === undefined) delete process.env[name];
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
       else process.env[name] = value;
     }
   }

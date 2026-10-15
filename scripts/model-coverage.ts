@@ -117,7 +117,7 @@ const readBaseUrl = (args: readonly string[]): string => {
   const fromArgs = argValue(args, "base-url");
   if (fromArgs) return withoutTrailingSlash(fromArgs);
   try {
-    return withoutTrailingSlash(process.env["BASE_URL"] ?? DEFAULT_BASE_URL);
+    return withoutTrailingSlash(process.env.BASE_URL ?? DEFAULT_BASE_URL);
   } catch {
     return DEFAULT_BASE_URL;
   }

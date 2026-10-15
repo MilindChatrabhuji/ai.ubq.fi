@@ -192,7 +192,7 @@ const mergeModelCapabilities = (models, capabilities) => {
     capabilities
       .map((capability) => ({ id: normalizeModelId(capability), capability }))
       .filter((entry) => entry.id)
-      .map((entry) => [entry.id, entry.capability]),
+      .map((entry) => [entry.id, entry.capability])
   );
 
   return models.map((model) => {
@@ -207,22 +207,17 @@ const mergeModelCapabilities = (models, capabilities) => {
     if (Array.isArray(capability.supported_reasoning_levels)) {
       merged.supported_reasoning_levels = capability.supported_reasoning_levels;
     }
-    const defaultReasoning = typeof capability.default_reasoning_effort === "string"
-      ? capability.default_reasoning_effort.trim()
-      : typeof capability.default_reasoning_level === "string"
-      ? capability.default_reasoning_level.trim()
-      : "";
+    const defaultReasoning =
+      typeof capability.default_reasoning_effort === "string"
+        ? capability.default_reasoning_effort.trim()
+        : typeof capability.default_reasoning_level === "string"
+          ? capability.default_reasoning_level.trim()
+          : "";
     if (defaultReasoning) {
       merged.default_reasoning_effort = defaultReasoning;
       merged.default_reasoning_level = defaultReasoning;
     }
-    for (
-      const key of [
-        "context_window_tokens",
-        "max_context_window_tokens",
-        "auto_compact_token_limit_tokens",
-      ]
-    ) {
+    for (const key of ["context_window_tokens", "max_context_window_tokens", "auto_compact_token_limit_tokens"]) {
       if (typeof capability[key] === "number" || capability[key] === null) {
         merged[key] = capability[key];
       }
@@ -325,19 +320,19 @@ const loadModels = async (token, options = {}) => {
       fetch(buildBackendUrl("/v1/models", backendBase), {
         headers: authHeaders(trimmed),
         cache: "no-store",
-      }).then(
-        async (res) => ({ res, data: await res.json().catch(() => null) }),
-      ),
-      fetch(
-        buildBackendUrl("/uos/models/capabilities", backendBase),
-        { headers: authHeaders(trimmed), cache: "no-store" },
-      ).then(
-        async (res) => ({ res, data: await res.json().catch(() => null) }),
-      ).catch((error) => ({ error })),
-      loadDefaultModelFromAdmin(trimmed, backendBase).then((model) => ({ ok: true, model })).catch(() => ({
-        ok: false,
-        model: "",
-      })),
+      }).then(async (res) => ({ res, data: await res.json().catch(() => null) })),
+      fetch(buildBackendUrl("/uos/models/capabilities", backendBase), {
+        headers: authHeaders(trimmed),
+        cache: "no-store",
+      })
+        .then(async (res) => ({ res, data: await res.json().catch(() => null) }))
+        .catch((error) => ({ error })),
+      loadDefaultModelFromAdmin(trimmed, backendBase)
+        .then((model) => ({ ok: true, model }))
+        .catch(() => ({
+          ok: false,
+          model: "",
+        })),
     ]);
     const { res, data } = modelsResponse;
     if (requestId !== modelsRequestId) return;
@@ -347,17 +342,18 @@ const loadModels = async (token, options = {}) => {
         setModelPlaceholder(buildBackendAwareMessage(backendBase, "Auth failed for the configured backend."));
         return;
       }
-      const message = typeof data?.error?.message === "string" && data?.error?.message.trim().length > 0
-        ? data.error.message
-        : `Failed to load models (${res.status} ${res.statusText})`;
+      const message =
+        typeof data?.error?.message === "string" && data?.error?.message.trim().length > 0
+          ? data.error.message
+          : `Failed to load models (${res.status} ${res.statusText})`;
       setModelPlaceholder(message);
       return;
     }
     const rawModels = Array.isArray(data?.data) ? data.data : [];
-    const capabilities = "res" in capabilitiesResponse && capabilitiesResponse.res.ok &&
-        Array.isArray(capabilitiesResponse.data?.data)
-      ? capabilitiesResponse.data.data
-      : [];
+    const capabilities =
+      "res" in capabilitiesResponse && capabilitiesResponse.res.ok && Array.isArray(capabilitiesResponse.data?.data)
+        ? capabilitiesResponse.data.data
+        : [];
     if (!capabilities.length && "res" in capabilitiesResponse && !capabilitiesResponse.res.ok) {
       console.warn("[ai.ubq.fi] model capabilities unavailable:", capabilitiesResponse.res.status);
     } else if ("error" in capabilitiesResponse) {
@@ -372,7 +368,7 @@ const loadModels = async (token, options = {}) => {
       models
         .map((model) => ({ id: normalizeModelId(model), model }))
         .filter((entry) => entry.id)
-        .map((entry) => [entry.id, entry.model]),
+        .map((entry) => [entry.id, entry.model])
     );
     const defaultsModel = defaultsResponse.ok ? defaultsResponse.model : "";
     const selected = setModelOptions(models, preferredModel, defaultsModel);
@@ -383,8 +379,8 @@ const loadModels = async (token, options = {}) => {
       preferredModel = selected;
     }
     modelsLoadedToken = principal;
-    preferredReasoningEffort = updateReasoningForModel(selected || modelInput.value.trim(), preferredReasoningEffort) ??
-      "";
+    preferredReasoningEffort =
+      updateReasoningForModel(selected || modelInput.value.trim(), preferredReasoningEffort) ?? "";
     updateStreamControl(selected || modelInput.value.trim());
   } catch {
     if (requestId !== modelsRequestId) return;
@@ -913,9 +909,8 @@ const sendPrompt = async () => {
     const scheduleStreamFlush = () => {
       if (pendingStreamFlush !== null) return;
       const raf = globalThis.requestAnimationFrame;
-      pendingStreamFlush = typeof raf === "function"
-        ? raf(flushAssistantText)
-        : globalThis.setTimeout(flushAssistantText, 16);
+      pendingStreamFlush =
+        typeof raf === "function" ? raf(flushAssistantText) : globalThis.setTimeout(flushAssistantText, 16);
     };
     assistantEl.dataset.streaming = "";
     await streamSse(res, (rawEvent) => {

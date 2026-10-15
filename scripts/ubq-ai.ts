@@ -116,13 +116,23 @@ const getDefaultRuntime = (): UbqAiRuntime => ({
   fetch,
   envGet: (key: string) => process.env[key],
   readTextFile: (path: string) => readFile(path, "utf8"),
-  stdinIsTerminal: process.stdin.isTTY === true,
+  stdinIsTerminal: process.stdin.isTTY,
   readStdin,
   out: async (chunk: Uint8Array) => {
-    await new Promise<void>((resolve, reject) => process.stdout.write(chunk, (error) => (error ? reject(error) : resolve())));
+    await new Promise<void>((resolve, reject) =>
+      process.stdout.write(chunk, (error) => {
+        if (error) reject(error);
+        else resolve();
+      })
+    );
   },
   err: async (chunk: Uint8Array) => {
-    await new Promise<void>((resolve, reject) => process.stderr.write(chunk, (error) => (error ? reject(error) : resolve())));
+    await new Promise<void>((resolve, reject) =>
+      process.stderr.write(chunk, (error) => {
+        if (error) reject(error);
+        else resolve();
+      })
+    );
   },
 });
 

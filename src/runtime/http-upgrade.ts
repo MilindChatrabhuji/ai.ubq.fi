@@ -42,7 +42,9 @@ export const createWebSocketUpgrades = (handler: ServeUpgradeHandler | undefined
   return {
     async upgrade(incoming: IncomingMessage, socket: UpgradeSocket, head: Buffer): Promise<void> {
       const controller = new AbortController();
-      const closed = (): void => controller.abort(new Error("WebSocket upgrade disconnected"));
+      const closed = (): void => {
+        controller.abort(new Error("WebSocket upgrade disconnected"));
+      };
       socket.once("close", closed);
       socket.once("error", closed);
       try {
@@ -62,9 +64,9 @@ export const createWebSocketUpgrades = (handler: ServeUpgradeHandler | undefined
           await refuseUpgrade(socket, new Response("Server shutting down", { status: 503 }));
           return;
         }
-        const { default: Socket, WebSocketServer } = await loadWebSocketModule();
+        const { default: webSocketCtor, WebSocketServer } = await loadWebSocketModule();
         const payloadLimitClose = result.payloadLimitClose;
-        class PayloadLimitedSocket extends Socket {
+        class PayloadLimitedSocket extends webSocketCtor {
           override close(code?: number, reason?: string | Buffer): void {
             // ws invokes a bare 1009 close for its receiver's maxPayload failure.
             // An explicit peer-propagated close retains its original code/reason.
@@ -115,7 +117,9 @@ export const createWebSocketUpgrades = (handler: ServeUpgradeHandler | undefined
         [...sockets].map(
           (socket) =>
             new Promise<void>((resolve) => {
-              const timer = setTimeout(() => socket.terminate(), 10_000);
+              const timer = setTimeout(() => {
+                socket.terminate();
+              }, 10_000);
               socket.once("close", () => {
                 clearTimeout(timer);
                 resolve();

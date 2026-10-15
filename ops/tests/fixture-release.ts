@@ -14,11 +14,24 @@ export const copyOps = async (destination: string): Promise<void> => {
     "assert-bun-store.ts",
     "bun-runtime.ts",
     "release-artifact.ts",
+    "native-kv-release.ts",
     "release-retention.ts",
     "verify-legacy-rollback.ts",
     "macos-sandbox.ts",
   ]) {
-    await copyFile(join(repository, "ops", name), join(destination, name));
+    if (name === "native-kv-release.ts" && !destination.endsWith("/ops")) {
+      const source = (await readFile(join(repository, "ops", name), "utf8"))
+        .replaceAll('from "../src/', 'from "./src/')
+        .replaceAll('from "../scripts/', 'from "./scripts/');
+      await writeFile(join(destination, name), source);
+    } else {
+      await copyFile(join(repository, "ops", name), join(destination, name));
+    }
+  }
+  if (!destination.endsWith("/ops")) {
+    await copyRuntimeModules(destination);
+    await mkdir(join(destination, "scripts"), { recursive: true });
+    await copyFile(join(repository, "scripts/build-native-kv.ts"), join(destination, "scripts/build-native-kv.ts"));
   }
 };
 export const seedStore = async (root: string): Promise<void> => {

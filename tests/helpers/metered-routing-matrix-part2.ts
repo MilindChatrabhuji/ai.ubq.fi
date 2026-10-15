@@ -38,8 +38,8 @@ import {
 } from "./openai-compat-harness.ts";
 
 export const runMeteredPaidFallbackMatrixPart2 = async (step: SequenceStep): Promise<void> => {
-  const originalApiKey = process.env["METERED_API_KEY"];
-  process.env["METERED_API_KEY"] = "metered-test-key";
+  const originalApiKey = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-test-key";
   try {
     await step("direct Codex failure selects RemovedProvider without failed metadata", async () => {
       const debugKey = keyToString(DEBUG_ROUTING_KEY);
@@ -1378,7 +1378,7 @@ export const runMeteredPaidFallbackMatrixPart2 = async (step: SequenceStep): Pro
     kvStore.delete(keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY));
     resetCodexAccountRoutingForTest();
     resetCodexAuthCacheForTest();
-    if (originalApiKey === undefined) delete process.env["METERED_API_KEY"];
-    else process.env["METERED_API_KEY"] = originalApiKey;
+    if (originalApiKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalApiKey;
   }
 };

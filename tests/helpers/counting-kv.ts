@@ -1,7 +1,6 @@
 import { KvU64 } from "#kv";
 import type {
   AtomicOperation,
-  Kv,
   KvCommitError,
   KvCommitResult,
   KvEntry,

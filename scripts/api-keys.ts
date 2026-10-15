@@ -64,7 +64,7 @@ if (!command || command.startsWith("--")) {
 
 const parsed = parseArgs(rest);
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
-const adminToken = (parsed["admin-token"] as string | undefined) ?? process.env["DENO_DEPLOY_TOKEN"] ?? "";
+const adminToken = (parsed["admin-token"] as string | undefined) ?? process.env.DENO_DEPLOY_TOKEN ?? "";
 
 if (!adminToken) {
   console.error("Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.");

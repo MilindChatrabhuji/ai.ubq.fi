@@ -125,7 +125,7 @@ export const seed = (): void => {
     latest_refill_amount_credits: 10,
     latest_refill_completed_at_ms: nowMs - 5_000,
   });
-  process.env["METERED_API_KEY"] = "metered-api-key";
+  process.env.METERED_API_KEY = "metered-api-key";
 };
 
 const codexUsageBody = (primaryUsed: number, secondaryUsed: number, primaryResetAt = 1_800_010_000, secondaryResetAt = 1_800_020_000) => ({
@@ -240,7 +240,7 @@ export const resetHarness = (): void => {
 };
 export const cleanupHarness = (): void => {
   for (const [name, value] of harnessEnvironment ?? []) {
-    if (value === undefined) delete process.env[name];
+    if (value === undefined) Reflect.deleteProperty(process.env, name);
     else process.env[name] = value;
   }
   harnessEnvironment = null;

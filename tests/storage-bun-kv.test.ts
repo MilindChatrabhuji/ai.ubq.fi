@@ -242,7 +242,9 @@ test("the injection seam disables disk fallback and accepts initialization", asy
   const kv = await openFixture();
   initializeKv(kv);
   expect(await getKv()).toBe(kv);
-  expect(() => initializeKv(kv)).toThrow("already been initialized");
+  expect(() => {
+    initializeKv(kv);
+  }).toThrow("already been initialized");
 });
 
 test("native list preserves heterogeneous key order and resumable ranges", async () => {
@@ -343,15 +345,27 @@ test("numeric key order distinguishes signed zeros and retains infinity and cano
 
 test("legacy raw-key validation rejects negative NaN without confusing byte payloads", () => {
   const raw = (hex: string): Uint8Array => Buffer.from(hex, "hex");
-  expect(() => assertPortableKvKeyBytes(raw("026e616e00210007ffffffffffff"))).toThrow("Negative NaN");
+  expect(() => {
+    assertPortableKvKeyBytes(raw("026e616e00210007ffffffffffff"));
+  }).toThrow("Negative NaN");
   for (const hex of ["026e616e0021fff8000000000000", "217fffffffffffffff", "218000000000000000", "21000fffffffffffff", "21fff0000000000000"]) {
-    expect(() => assertPortableKvKeyBytes(raw(hex))).not.toThrow();
+    expect(() => {
+      assertPortableKvKeyBytes(raw(hex));
+    }).not.toThrow();
   }
   // The float-like bytes occur inside an escaped byte-string part, not a number.
-  expect(() => assertPortableKvKeyBytes(new Uint8Array([1, 0x21, 0, 0xff, 7, 255, 255, 255, 255, 255, 255, 0]))).not.toThrow();
-  expect(() => assertPortableKvKeyBytes(raw("21"))).toThrow("Truncated");
-  expect(() => assertPortableKvKeyBytes(raw("01ff"))).toThrow("Truncated");
-  expect(() => assertPortableKvKeyBytes(raw("1d0201"))).toThrow("Truncated");
+  expect(() => {
+    assertPortableKvKeyBytes(new Uint8Array([1, 0x21, 0, 0xff, 7, 255, 255, 255, 255, 255, 255, 0]));
+  }).not.toThrow();
+  expect(() => {
+    assertPortableKvKeyBytes(raw("21"));
+  }).toThrow("Truncated");
+  expect(() => {
+    assertPortableKvKeyBytes(raw("01ff"));
+  }).toThrow("Truncated");
+  expect(() => {
+    assertPortableKvKeyBytes(raw("1d0201"));
+  }).toThrow("Truncated");
 });
 
 test("Error cause graphs fail before any atomic mutation can lose persisted fields", async () => {

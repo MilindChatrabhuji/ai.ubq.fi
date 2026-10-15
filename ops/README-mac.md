@@ -46,8 +46,7 @@ unauthenticated forwarding path to this listener; it does not prove that none ca
   adapter (`codex/jev-compaction-proxy.ts` in `/Users/nv/repos/0x4007/fast-jev-compaction`). Its product entrypoint
   fixes the upstream at `http://127.0.0.1:8000` and forwards ordinary requests there byte-transparently; it does not
   point at 7999. A live probe of the running process, `GET http://127.0.0.1:8787/healthz`, returned plaintext
-  `fast-jev-compaction proxy ready; upstream=http://127.0.0.1:8000; compaction=responses`, and no process listened on
-  8000. That closes the running/source gap for this fixed upstream, because the running adapter reports the same
+  `fast-jev-compaction proxy ready; upstream=http://127.0.0.1:8000; compaction=responses`, and no process listened on 8000. That closes the running/source gap for this fixed upstream, because the running adapter reports the same
   upstream the reviewed entrypoint fixes; it is a point-in-time observation and does not establish that no exposure is
   possible. Only tests override that upstream.
 - PID 1011 (`deno`, `*:8765`) is the Capture release download server (`server.ts` in

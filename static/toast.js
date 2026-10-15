@@ -100,9 +100,9 @@ const showToast = (options = {}) => {
 
   const raf = globalThis.requestAnimationFrame;
   if (typeof raf === "function") {
-    raf(() => toastEl.dataset.visible = "");
+    raf(() => (toastEl.dataset.visible = ""));
   } else {
-    globalThis.setTimeout(() => toastEl.dataset.visible = "", 0);
+    globalThis.setTimeout(() => (toastEl.dataset.visible = ""), 0);
   }
 
   let timerId = 0;

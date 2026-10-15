@@ -105,7 +105,7 @@ kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
-const originalVoyageApiKey = process.env["VOYAGEAI_API_KEY"];
+const originalVoyageApiKey = process.env.VOYAGEAI_API_KEY;
 
 let failNextAtomicCommit: ((checks: readonly KvEntryMaybe<unknown>[], ops: readonly { type: string; key: KvKey }[]) => boolean | Error) | null = null;
 
@@ -418,7 +418,7 @@ let harnessEnvironment: Map<string, string | undefined> | null = null;
 /** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
 export const installHarness = (): void => {
   harnessEnvironment ??= new Map(["VOYAGEAI_API_KEY"].map((name) => [name, process.env[name]]));
-  delete process.env["VOYAGEAI_API_KEY"];
+  delete process.env.VOYAGEAI_API_KEY;
   setKvForTest(kvStub);
 };
 export const resetHarness = (): void => {
@@ -428,7 +428,7 @@ export const resetHarness = (): void => {
 };
 export const cleanupHarness = (): void => {
   for (const [name, value] of harnessEnvironment ?? []) {
-    if (value === undefined) delete process.env[name];
+    if (value === undefined) Reflect.deleteProperty(process.env, name);
     else process.env[name] = value;
   }
   harnessEnvironment = null;

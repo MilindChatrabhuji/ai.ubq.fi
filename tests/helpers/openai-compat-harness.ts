@@ -740,8 +740,8 @@ export const seedPaidReasoningProvider = async (provider: "surplus" | "metered")
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   if (provider === "surplus") {
-    delete process.env["METERED_API_KEY"];
-    process.env["SURPLUS_API_KEY"] = "surplus-test-key";
+    delete process.env.METERED_API_KEY;
+    process.env.SURPLUS_API_KEY = "surplus-test-key";
     await fetchSurplusModels({
       apiKey: "surplus-test-key",
       force: true,
@@ -758,8 +758,8 @@ export const seedPaidReasoningProvider = async (provider: "surplus" | "metered")
         ),
     });
   } else {
-    process.env["METERED_API_KEY"] = "metered-test-key";
-    delete process.env["SURPLUS_API_KEY"];
+    process.env.METERED_API_KEY = "metered-test-key";
+    delete process.env.SURPLUS_API_KEY;
     await fetchMeteredModels({
       force: true,
       fetcher: () =>
@@ -1030,18 +1030,18 @@ export const withProviderSelection = async <T>(providerIds: readonly string[] | 
 };
 
 export const withDiscoveryKeys = async <T>(meteredKey: string | null, run: () => Promise<T>): Promise<T> => {
-  const previousMetered = process.env["METERED_API_KEY"];
-  const previousSurplus = process.env["SURPLUS_API_KEY"];
-  delete process.env["SURPLUS_API_KEY"];
-  if (meteredKey === null) delete process.env["METERED_API_KEY"];
-  else process.env["METERED_API_KEY"] = meteredKey;
+  const previousMetered = process.env.METERED_API_KEY;
+  const previousSurplus = process.env.SURPLUS_API_KEY;
+  delete process.env.SURPLUS_API_KEY;
+  if (meteredKey === null) delete process.env.METERED_API_KEY;
+  else process.env.METERED_API_KEY = meteredKey;
   try {
     return await run();
   } finally {
-    if (previousMetered === undefined) delete process.env["METERED_API_KEY"];
-    else process.env["METERED_API_KEY"] = previousMetered;
-    if (previousSurplus === undefined) delete process.env["SURPLUS_API_KEY"];
-    else process.env["SURPLUS_API_KEY"] = previousSurplus;
+    if (previousMetered === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = previousMetered;
+    if (previousSurplus === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = previousSurplus;
   }
 };
 
@@ -1104,7 +1104,7 @@ export const resetHarness = (): void => {
 };
 export const cleanupHarness = (): void => {
   for (const [name, value] of harnessEnvironment ?? []) {
-    if (value === undefined) delete process.env[name];
+    if (value === undefined) Reflect.deleteProperty(process.env, name);
     else process.env[name] = value;
   }
   harnessEnvironment = null;

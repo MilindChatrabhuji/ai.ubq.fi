@@ -10,8 +10,7 @@ body[data-page="admin"] [data-shell] {
   max-width: 1600px;
   min-height: 100svh;
   grid-template-rows: auto minmax(0, 1fr);
-  padding: calc(20px + env(safe-area-inset-top)) clamp(16px, 3vw, 40px)
-    calc(88px + env(safe-area-inset-bottom));
+  padding: calc(20px + env(safe-area-inset-top)) clamp(16px, 3vw, 40px) calc(88px + env(safe-area-inset-bottom));
   gap: 18px;
 }
 

@@ -53,8 +53,7 @@ const formatListenerAddress = (address: Addr): string => {
     const hostname = address.hostname.includes(":") ? `[${address.hostname}]` : address.hostname;
     return `${address.transport}://${hostname}:${address.port}`;
   }
-  if (address.transport === "unix") return `unix://${address.path}`;
-  return address.transport;
+  return "path" in address ? `unix://${address.path}` : address.transport;
 };
 
 export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, address: Addr): boolean => {
