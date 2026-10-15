@@ -1746,3 +1746,18 @@ pin fails closed with the recorded `workspace_not_found` state until it is corre
 to the paid routes on every rejection. The environment's own account state (no API credits in the Console organization,
 an admin-only `Claude Code` workspace) is an account condition, not a gateway defect: the tier records the exact
 upstream rejection instead of retrying it per request.
+
+## Claude subscription joins the provider capacity analytics - 2026-10-15
+
+`GET /admin/providers/capacity` now carries a live `claude` block next to the Codex/metered `sources`, and the admin
+Analytics capacity list renders it as a third row beside the two Codex subscription rows: state badge, the observed
+5-hour and weekly subscription windows as remaining capacity (the upstream fraction is normalized to a percentage), and
+diagnostics for credential direction, workspace, guards, standard API-key limits, and the last upstream error. The block
+is computed on the admin read from the tier's own credential, workspace, guard, and quota state; it is deliberately not
+written into the stored capacity snapshot, because that record is sampled on inference events and its command budget is
+pinned by test. Older three-source stored records therefore stay valid and the sampler cost is unchanged.
+
+Reason: the operator asked for Codex-grade analytics parity for the Claude subscription, and the Codex subscriptions are
+read from the capacity pipeline. Reversal risk: the analytics row reflects the tier's recorded guard state, so a billing
+or workspace rejection shows as `unavailable` with its exact upstream status and message until the operator fixes the
+account and clears the guard; the row never blocks inference itself.

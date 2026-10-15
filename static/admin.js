@@ -1212,6 +1212,31 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
         }`
         : "Not observed",
     );
+  } else if (source.source === "claude_code") {
+    appendProviderFact(facts, "Credential", claudeCapacityCredentialLabel(source));
+    appendProviderFact(facts, "Workspace", source.workspace_id ?? "Not selected");
+    appendProviderFact(facts, "Blocked until", formatCapacityTimestamp(source.blocked_until_ms, "Not blocked"));
+    appendProviderFact(facts, "Cooldown until", formatCapacityTimestamp(source.cooldown_until_ms, "No cooldown"));
+    appendProviderFact(
+      facts,
+      "Last upstream error",
+      source.last_error
+        ? `${source.last_error.kind}${
+          typeof source.last_error.status === "number" ? ` · ${source.last_error.status}` : ""
+        } · ${formatDate(source.last_error.at_ms)}${source.last_error.message ? ` — ${source.last_error.message}` : ""}`
+        : "None recorded",
+    );
+    const standard = Array.isArray(source.standard) ? source.standard : [];
+    if (standard.length) {
+      const limits = standard
+        .map((entry) => {
+          const limit = typeof entry.limit === "number" ? formatNumber(entry.limit) : "unlimited";
+          const remaining = typeof entry.remaining === "number" ? formatNumber(entry.remaining) : "unreported";
+          return `${entry.family}: ${remaining} of ${limit}`;
+        })
+        .join(" · ");
+      appendProviderFact(facts, "API-key limits", limits);
+    }
   } else if (source.source === "metered") {
     const status = capacityProviderStatus(source, provider);
     appendProviderFact(facts, "Inference", status.health ? providerStateLabel(status.health) : "Not observed");
@@ -1310,7 +1335,7 @@ const renderCodexCapacitySource = (source, provider = null) => {
       codexResetSaving.delete(setting.account_id_hash);
       codexResetSettingsRevision++;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       input.disabled = false;
       if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
@@ -1372,7 +1397,7 @@ const renderCodexCapacitySource = (source, provider = null) => {
       codexOverageSaving.delete(overageSetting.account_id_hash);
       codexOverageSettingsRevision++;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       overageInput.disabled = false;
       if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
@@ -1397,11 +1422,63 @@ const providerForCodexSlot = (slot) => {
   return accounts.find((account) => String(account?.slot) === String(slot)) ?? null;
 };
 
-const renderProviderCapacityList = (sources) => {
+const claudeCapacityCredentialLabel = (source) => {
+  if (source.credential_kind === "api_key") return "Console API key";
+  if (source.credential_kind === "oauth") return "OAuth / setup token";
+  return "Not configured";
+};
+
+const claudeCapacityWindowForDisplay = (window) => {
+  if (!window) return null;
+  return {
+    used_percent: window.used_percent,
+    reset_at_ms: window.reset_at_ms,
+  };
+};
+
+/**
+ * The Claude subscription row mirrors the Codex rows: a live/stale/unavailable
+ * badge, the observed subscription windows as remaining capacity, and the
+ * diagnostics the tier itself recorded (credential direction, workspace,
+ * guards, last upstream outcome, and Console API-key limits when present).
+ */
+const renderClaudeCapacitySource = (source) => {
+  const row = document.createElement("div");
+  row.dataset.capacitySource = "claude_code";
+  row.dataset.state = source.state;
+  row.setAttribute("role", "listitem");
+
+  const header = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = typeof source.label === "string" && source.label.trim()
+    ? source.label.trim()
+    : "Claude subscription";
+  const badge = document.createElement("span");
+  badge.dataset.badge = "";
+  setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
+  header.append(title, badge);
+  row.append(header);
+
+  const windows = document.createElement("div");
+  windows.dataset.capacityWindows = "";
+  renderCapacityWindow(windows, "5-hour window", claudeCapacityWindowForDisplay(source.windows?.five_hour));
+  renderCapacityWindow(windows, "Weekly window", claudeCapacityWindowForDisplay(source.windows?.seven_day));
+  row.append(windows);
+
+  appendCapacitySourceMeta(row, source, null);
+  return row;
+};
+
+const renderProviderCapacityList = (sources, claude = null) => {
   const expanded = Array.from(providerCapacityList.children, (row) => row.querySelector("details")?.open === true);
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(renderCodexCapacitySource(source, providerForCodexSlot(source.slot)));
+  }
+  // The Claude subscription mirrors the Codex rows inside the same list, so the
+  // Analytics view shows every subscription tier in one place.
+  if (claude && typeof claude === "object" && claude.source === "claude_code") {
+    providerCapacityList.appendChild(renderClaudeCapacitySource(claude));
   }
   Array.from(providerCapacityList.children).forEach((row, index) => {
     const details = row.querySelector("details");
@@ -2933,9 +3010,10 @@ const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
     rawSources.find((source) => source?.source === "codex" && source.slot === slot) ??
       unavailableCodexCapacitySource(slot);
   const sources = [sourceForSlot(1), sourceForSlot(2)];
-  latestProviderCapacityChartState = { snapshot, sources, fiveXxBuckets };
+  const claude = snapshot?.claude && typeof snapshot.claude === "object" ? snapshot.claude : null;
+  latestProviderCapacityChartState = { snapshot, sources, claude, fiveXxBuckets };
   renderProviderCapacityChart(snapshot, sources, fiveXxBuckets);
-  renderProviderCapacityList(sources);
+  renderProviderCapacityList(sources, claude);
 
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
   const staleCount = sources.filter((source) => source.state === "stale").length;
@@ -3365,13 +3443,13 @@ const loadProviders = async () => {
     if (!response.ok || !payload) {
       if (providersLoadedAt) {
         if (latestProviderCapacityChartState?.sources) {
-          renderProviderCapacityList(latestProviderCapacityChartState.sources);
+          renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
         }
         return;
       }
       latestProviderHealth = null;
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       return;
     }
@@ -3405,18 +3483,22 @@ const loadProviders = async () => {
     codexOverageSettingsToken = token;
     codexProviderSettingsLoadedAt = Date.now();
     latestProviderHealth = payload;
-    if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
+    if (latestProviderCapacityChartState?.sources) {
+      renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+    }
     providersLoadedAt = Date.now();
   } catch {
     if (loadId !== providersLoadId) return;
     if (providersLoadedAt) {
       if (latestProviderCapacityChartState?.sources) {
-        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
       }
       return;
     }
     latestProviderHealth = null;
-    if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
+    if (latestProviderCapacityChartState?.sources) {
+      renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
+    }
   } finally {
     if (loadId === providersLoadId) providersLoading = false;
   }
@@ -10222,7 +10304,7 @@ const hydrateAdminSnapshots = async () => {
     providerCapacityUpdated.textContent = `Cached ${formatDate(capacitySnapshot.savedAt)} · refreshing`;
     setBadge(providerCapacityBadge, "unknown", "Cached · refreshing");
   } else if (latestProviderCapacityChartState?.sources) {
-    renderProviderCapacityList(latestProviderCapacityChartState.sources);
+    renderProviderCapacityList(latestProviderCapacityChartState.sources, latestProviderCapacityChartState.claude);
   }
 
   const errors = cachedList(errorsSnapshot);
