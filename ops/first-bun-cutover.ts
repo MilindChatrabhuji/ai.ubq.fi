@@ -21,7 +21,7 @@ import {
   withCutoverCodecProbe,
   type CutoverBudgets,
 } from "./cutover-storage.ts";
-import { recoverCutoverLatest } from "./cutover-recovery.ts";
+import { recoverCutoverLatest, verifyPreparedCutover } from "./cutover-recovery.ts";
 import { executeCutoverTransition, type CutoverPhase } from "./cutover-transition.ts";
 import { digest, exists, fileDigest } from "./io.ts";
 import { readVpsPins, withVpsDeployLock, writeVpsAtomic } from "./vps-release-journal.ts";
@@ -391,6 +391,19 @@ export async function recoverFirstBunCutover(input: Omit<FirstBunCutoverInput, "
     const prior = await store.checkedPreviousRelease(input.priorRevision, `releases/${input.priorRevision}`);
     if (prior.profile !== VPS_LAUNCHER_PROFILE_SHA256 || (await store.unitDigest(prior.sha)) !== VPS_UNIT_SHA256)
       throw new Error("Unsupported retained recovery profile");
+    if (journal.phase === "prepared") {
+      await verifyPreparedCutover({
+        root: canonicalRoot,
+        workspace,
+        prior,
+        denoBinary: input.denoBinary,
+        denoSha256: input.denoSha256,
+        state: journal,
+        store,
+        host,
+      });
+      return { phase: "not_started", receipt };
+    }
     const record = async (phase: CutoverPhase) => {
       journal.phase = phase;
       if (phase === "legacy_starting") journal.legacyStartupAttempted = true;

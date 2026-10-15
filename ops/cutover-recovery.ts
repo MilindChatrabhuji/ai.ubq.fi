@@ -26,6 +26,40 @@ export type CutoverRecovery = {
   record: (phase: CutoverPhase) => Promise<void>;
 };
 
+/** A prepared receipt contains no stopping intent. ExecStopPost must leave the live writer running. */
+export async function verifyPreparedCutover(input: {
+  root: string;
+  workspace: string;
+  prior: StoredVpsPrior;
+  denoBinary: string;
+  denoSha256: string;
+  state: {
+    bunStartupAttempted: boolean;
+    legacyStartupAttempted: boolean;
+    priorSourceSha256: string | null;
+    conversion: unknown;
+    loadedPriorUnit: Awaited<ReturnType<CutoverHost["loadedUnit"]>>;
+  };
+  store: Pick<ImmutableVpsReleaseStore, "selector">;
+  host: Pick<CutoverHost, "assertPriorUnchanged" | "loadedUnit" | "verifyLegacyProcess" | "health" | "publicHealth">;
+}): Promise<void> {
+  if (
+    input.state.bunStartupAttempted ||
+    input.state.legacyStartupAttempted ||
+    input.state.priorSourceSha256 !== null ||
+    input.state.conversion !== null ||
+    (await input.store.selector()) !== input.prior.selector ||
+    (await exists(join(input.root, ".data/kv-bun.sqlite3")))
+  )
+    throw new Error("Prepared-only cutover no longer proves the original live baseline");
+  await input.host.assertPriorUnchanged(input.prior);
+  if (JSON.stringify(await input.host.loadedUnit()) !== JSON.stringify(input.state.loadedPriorUnit))
+    throw new Error("Prepared-only prior unit identity changed");
+  await input.host.verifyLegacyProcess(input.denoBinary, input.denoSha256, input.workspace, input.prior.sha);
+  await input.host.health(input.prior.sha, input.prior.port);
+  await input.host.publicHealth(input.prior.sha);
+}
+
 async function restoreLatestBun(input: CutoverRecovery, data: string, legacy: string, bun: string): Promise<void> {
   const adoption = join(data, "legacy-rollback-active.json");
   const rollbackReceipt = join(data, "bun-rollback-receipt.json");

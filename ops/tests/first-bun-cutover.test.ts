@@ -19,7 +19,7 @@ import { assertCutoverMemoryLimit, boundedCutoverHolderCheck } from "../cutover-
 import { assertCutoverDropin, assertCutoverExecStart, cutoverDropinDigest, cutoverSupervisorUnit } from "../cutover-unit.ts";
 import { executeCutoverTransition, type CutoverPhase, type CutoverTransition } from "../cutover-transition.ts";
 import { checkedCutoverBudgets, checkpointCutoverStore, cutoverSourceBytes, retainedCutoverCopy, withCutoverCodecProbe } from "../cutover-storage.ts";
-import { preserveUnstartedCutover } from "../cutover-recovery.ts";
+import { preserveUnstartedCutover, verifyPreparedCutover } from "../cutover-recovery.ts";
 import { NATIVE_DDL } from "../../src/kv-conversion/native-schema.ts";
 import { packStringKey } from "../../src/kv-conversion/cursors.ts";
 import { BUN_RUNTIMES } from "../bun-runtime.ts";
@@ -28,6 +28,7 @@ import { prepareReleasePayload, verifyReleasePayload } from "../release-artifact
 import { currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
 import { repository, writePackage } from "./fixture-release.ts";
 import { fixtureCommand } from "./vps-release-driver-fixture.ts";
+import type { StoredVpsPrior } from "../vps-release-store.ts";
 
 const parent = fileURLToPath(new URL("../../.cleanup-evidence/first-bun-cutover/", import.meta.url));
 async function fixture(work: (root: string) => Promise<void>) {
@@ -541,6 +542,105 @@ test("baseline-left-live codec probes use private disk scratch and clean up on s
     assert.deepEqual(await readdir(artifactDirectory), ["source-marker"]);
     assert.equal(await readFile(join(artifactDirectory, "source-marker"), "utf8"), "immutable fixture");
     await chmod(artifactDirectory, 0o700);
+  }));
+
+test("prepared-only ExecStopPost verifies the still-live baseline and never stops it after preflight refusal", async () =>
+  fixture(async (root) => {
+    await mkdir(join(root, ".data"));
+    const legacy = join(root, ".data/kv.sqlite3");
+    await writeFile(legacy, "live legacy writer fixture");
+    const before = await fileDigest(legacy),
+      calls: string[] = [];
+    const prior: StoredVpsPrior = {
+      sha: "1".repeat(40),
+      path: ".data/releases/" + "1".repeat(40),
+      archive: h("a"),
+      tree: h("b"),
+      selector: "releases/" + "1".repeat(40),
+      port: 7999,
+      profile: h("c"),
+    };
+    const loaded = { sha256: h("d"), needsReload: true, pid: 42, startedMonotonic: "123" };
+    let healthFails = false;
+    const input: Parameters<typeof verifyPreparedCutover>[0] = {
+      root,
+      workspace: root,
+      prior,
+      denoBinary: "/fixture/deno",
+      denoSha256: h("e"),
+      state: { bunStartupAttempted: false, legacyStartupAttempted: false, priorSourceSha256: null, conversion: null, loadedPriorUnit: loaded },
+      store: { selector: () => Promise.resolve(prior.selector) },
+      host: {
+        assertPriorUnchanged: () => {
+          calls.push("identity");
+          return Promise.resolve();
+        },
+        loadedUnit: () => Promise.resolve(loaded),
+        verifyLegacyProcess: () => {
+          calls.push("process");
+          return Promise.resolve();
+        },
+        health: () => {
+          calls.push("health");
+          return healthFails ? Promise.reject(new Error("Health refused")) : Promise.resolve();
+        },
+        publicHealth: () => {
+          calls.push("public");
+          return Promise.resolve();
+        },
+      },
+    };
+    const forbidden = () => {
+      calls.push("unexpected service mutation");
+      return Promise.reject(new Error("No stopping intent"));
+    };
+    let phase = "";
+    await assert.rejects(
+      executeCutoverTransition({
+        record: (value) => {
+          phase = value;
+          return Promise.resolve();
+        },
+        preflight: () => Promise.reject(new Error("Authorization expired")),
+        stop: forbidden,
+        preserve: forbidden,
+        convert: forbidden,
+        start: forbidden,
+        verify: forbidden,
+        recover: forbidden,
+      }),
+      /before service interruption/
+    );
+    assert.equal(phase, "prepared");
+    await verifyPreparedCutover(input);
+    assert.deepEqual(calls, ["identity", "process", "health", "public"]);
+    healthFails = true;
+    await assert.rejects(verifyPreparedCutover(input), /Health refused/);
+    input.state.bunStartupAttempted = true;
+    await assert.rejects(verifyPreparedCutover(input), /original live baseline/);
+    assert.equal(calls.includes("unexpected service mutation"), false);
+    assert.equal(await fileDigest(legacy), before);
+  }));
+
+test("immutable release extraction under private umask keeps exact CI source modes and private manifests", async () =>
+  fixture(async (root) => {
+    await mkdir(join(root, "src"));
+    await mkdir(join(root, ".data/releases"), { recursive: true, mode: 0o700 });
+    await writeFile(join(root, "src/app.ts"), "export const source = true;\n");
+    const git = (...args: string[]) => fixtureCommand("git", args, root);
+    await git("init", "--initial-branch=development");
+    await git("config", "user.name", "Cutover umask fixture");
+    await git("config", "user.email", "fixture@example.invalid");
+    await git("add", "src");
+    await git("-c", "commit.gpgsign=false", "commit", "-m", "source");
+    const sha = await git("rev-parse", "HEAD");
+    const program = join(root, "extract.ts");
+    await writeFile(
+      program,
+      `import {ImmutableVpsReleaseStore} from ${JSON.stringify(fileURLToPath(new URL("../vps-release-store.ts", import.meta.url)))};\nimport {lstat,rm} from "node:fs/promises";\nconst root=process.argv[2],sha=process.argv[3];process.umask(0o077);const store=new ImmutableVpsReleaseStore(root,async(program,args,cwd)=>{const child=Bun.spawn([program,...args],{cwd,env:{PATH:"/usr/bin:/bin"},stdout:"pipe",stderr:"pipe"});const[code,out,error]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);if(code!==0)throw new Error(error);return out.trim();});const release=await store.expectedRelease(sha);const path=store.absolute(release.path);console.log(JSON.stringify({source:(await lstat(path+"/src/app.ts")).mode&0o777,directory:(await lstat(path+"/src")).mode&0o777,manifest:(await lstat(path+"/.uos-release.json")).mode&0o777,stamp:(await lstat(path+"/src/release.ts")).mode&0o777}));await rm(path,{recursive:true});\n`
+    );
+    const result = JSON.parse(await fixtureCommand(process.execPath, ["--no-env-file", "--no-install", program, root, sha], root)) as Record<string, number>;
+    assert.deepEqual(result, { source: 0o644, directory: 0o755, manifest: 0o600, stamp: 0o600 });
   }));
 
 test("a self-consistent existing candidate for the same Git SHA must still equal its exact accepted CI manifest", async () =>
