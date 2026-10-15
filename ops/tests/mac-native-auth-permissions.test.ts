@@ -2,7 +2,7 @@ import { cp } from "node:fs/promises";
 import { copyOps, packageFixture, writePackage } from "./fixture-release.ts";
 import { runtimePath, selectedRuntime } from "../bun-runtime.ts";
 import { test } from "bun:test";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { spawnFixture, runFixture, fsError, denied, type FixtureChild } from "./fixture-process.ts";
 import { openKv } from "#kv";
 import assert from "node:assert/strict";
@@ -91,6 +91,12 @@ const childFixture = async (api: ChildApi, input: FixtureInput): Promise<void> =
   globalThis.fetch = Object.assign(() => Promise.reject(new Error("No real provider call is permitted")), { preconnect: fetch.preconnect });
   assert.equal(Bun.version, "1.4.0");
   assert.equal(process.execPath, input.runtime, "the child must execute the managed fixture artifact");
+  process.chdir(input.root);
+  assert.equal(process.cwd(), input.root, "the confined service must adopt its canonical repository working directory");
+  if (process.platform === "darwin") {
+    assert((await readdir(input.root)).includes(".data"), "the root directory-data right needed by getcwd also permits its names");
+    for (const name of ["package.json", "bun.lock"]) await assert.rejects(readFile(input.root + "/" + name, "utf8"), denied);
+  }
   if (input.namedFile) {
     assert.equal(await readFile(input.namedFile, "utf8"), "synthetic-external-native-leaf");
     await assert.rejects(writeFile(input.namedFile, "forbidden"), denied);
@@ -211,7 +217,7 @@ const childSource = (input: FixtureInput): string => {
   const moduleUrl = (path: string): string => JSON.stringify("file://" + input.root + "/.data/releases/" + RELEASE_SHA + "/" + path);
   return [
     'import assert from "node:assert/strict";',
-    'import { mkdir, readFile, writeFile } from "node:fs/promises";',
+    'import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";',
     'import { openKv } from "#kv";',
     "import { verifyReleasePayload } from " + moduleUrl("ops/release-artifact.ts") + ";",
     "import { nativeKvReleaseBinding } from " + moduleUrl("ops/native-kv-release.ts") + ";",
