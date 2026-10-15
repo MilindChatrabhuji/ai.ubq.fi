@@ -151,6 +151,9 @@ const paidFallbackReasonFor = (
   return null;
 };
 
+const isGatewaySubscriptionsUnavailable = (status: number, routingError: string | null): boolean =>
+  routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE && status !== 401;
+
 const resolvePaidFallbackAdmission = (
   routing: Readonly<{ meteredOnly: boolean; codexEnabled: boolean; paidProviders: readonly ("metered" | "surplus")[] }>,
   primary: Response,
@@ -722,7 +725,7 @@ export const fetchResponsesWithPaidFallback = async (
   const gatewayResponse =
     directPaidProvider !== null ||
     routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
-    (routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE && primaryStatus !== 401) ||
+    isGatewaySubscriptionsUnavailable(primaryStatus, routingError) ||
     routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
