@@ -373,6 +373,7 @@ const start = async (_args: string[], input: FixtureInput, env: Record<string, s
   assert.equal(relocated.replaceAll(input.runtimeHash, artifact.binarySha256), source, "only the disposable runtime digest may change");
   await mkdir(input.root + "/ops", { recursive: true });
   await writeFile(input.root + "/ops/" + name, relocated);
+  await copyFile(new URL("../runtime-bunfig.toml", import.meta.url), input.root + "/ops/runtime-bunfig.toml");
   let command = "exec /bin/sh " + quote(input.root + "/ops/" + name);
   if (process.platform === "linux") {
     command = [
