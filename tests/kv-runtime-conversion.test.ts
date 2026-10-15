@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyKvMigrationKey, parseKvMigrationEntryLine } from "../src/cache/kv-migration-base.ts";
 import { convertKvDatabase } from "../src/kv-conversion/convert.ts";
+import { fileDigest } from "../src/kv-conversion/legacy-codec.ts";
 import { packStringKey, transcodePersistedCursor } from "../src/kv-conversion/cursors.ts";
 import { NATIVE_DDL, verifyNativeSchema } from "../src/kv-conversion/native-schema.ts";
 import { entryToJson, exportEntries, toKey, toValue, valueToJson } from "../src/kv-conversion/profile-json.ts";
@@ -168,6 +169,30 @@ test("raw tuple guard rejects negative NaN and truncation without searching insi
   expect(() => {
     assertPortableKvKeyBytes(new Uint8Array([33, 0]));
   }).toThrow("Truncated");
+});
+
+test("converter reads its drained native WAL snapshot before invoking the separately supplied offline codec", async () => {
+  const root = fixture();
+  const source = join(root, "native.sqlite3");
+  const destination = join(root, "deno.sqlite3");
+  const receipt = join(root, "receipt.json");
+  const missingCodec = join(root, "missing-offline-codec");
+  const kv = await openKv(source);
+  try {
+    await kv.set(["snapshot"], { bytes: new Uint8Array([7]), count: 9n });
+  } finally {
+    kv.close();
+  }
+  expect((await Bun.file(source).bytes())[18]).toBe(2);
+  for (const suffix of ["-wal", "-shm", "-journal"]) expect(existsSync(source + suffix)).toBe(false);
+  const before = await fileDigest(source);
+  await assert.rejects(convertKvDatabase({ direction: "bun-to-deno", source, destination, receipt, deno: missingCodec, denoSha256: "0".repeat(64) }), {
+    code: "ENOENT",
+    path: missingCodec,
+  });
+  expect(await fileDigest(source)).toBe(before);
+  expect(existsSync(destination)).toBe(false);
+  expect(existsSync(receipt)).toBe(false);
 });
 
 test("converter refuses preexisting destinations, nonempty WAL, unsupported schemas and queues without publishing", async () => {

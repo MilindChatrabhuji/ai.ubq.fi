@@ -16,6 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { deserialize, serialize } from "node:v8";
 import { transcodePersistedCursor, type ConversionDirection } from "./cursors.ts";
 import { fileDigest, openLegacyCodec } from "./legacy-codec.ts";
@@ -54,6 +55,12 @@ const snapshotIdentity = async (path: string) => {
     wal: existsSync(wal) ? "empty" : "absent",
     drain_boundary: "checkpointed-no-wal",
   };
+};
+const privateSnapshotIdentity = async (path: string, expected?: Awaited<ReturnType<typeof snapshotIdentity>>) => {
+  if (["-wal", "-shm", "-journal"].some((suffix) => existsSync(path + suffix))) throw new Error("Exclusive conversion snapshot must not have SQLite sidecars");
+  const identity = await snapshotIdentity(path);
+  if (expected && JSON.stringify(identity) !== JSON.stringify(expected)) throw new Error("Private conversion snapshot changed");
+  return identity;
 };
 const digestRows = (db: Database, expiryOnly = false): string => {
   const hash = createHash("sha256");
@@ -136,9 +143,13 @@ export const convertKvDatabase = async (options: ConvertOptions) => {
     const candidate = join(staging, "candidate.sqlite3");
     const receiptFile = join(staging, "receipt.json");
     copyFileSync(source, snapshot, constants.COPYFILE_EXCL);
-    if ((await fileDigest(snapshot)) !== identity.sha256 || JSON.stringify(await snapshotIdentity(source)) !== JSON.stringify(identity))
+    const copiedIdentity = await privateSnapshotIdentity(snapshot);
+    if (copiedIdentity.sha256 !== identity.sha256 || JSON.stringify(await snapshotIdentity(source)) !== JSON.stringify(identity))
       throw new Error("Source changed during snapshot");
-    input = new Database(snapshot, { readonly: true, strict: true, safeIntegers: true });
+    // Only this exclusive, hash-verified private copy is immutable; never the stopped source path.
+    const snapshotUri = pathToFileURL(snapshot);
+    snapshotUri.searchParams.set("immutable", "1");
+    input = new Database(snapshotUri.href, { readonly: true, strict: true, safeIntegers: true });
     const sourceCodec = options.direction === "deno-to-bun" ? "deno-v8" : "bun-jsc-v1";
     const destinationCodec = options.direction === "deno-to-bun" ? "bun-jsc-v1" : "deno-v8";
     const revision = verifyNativeSchema(input, sourceCodec);
@@ -167,6 +178,7 @@ export const convertKvDatabase = async (options: ConvertOptions) => {
     input = undefined;
     output.close(true);
     output = undefined;
+    await privateSnapshotIdentity(snapshot, copiedIdentity);
     if (JSON.stringify(await snapshotIdentity(source)) !== JSON.stringify(identity)) throw new Error("Source changed before conversion publication");
     const receipt = {
       schema: "uos-kv-runtime-conversion-v1" as const,
