@@ -297,7 +297,7 @@ const prepare = async (testCase: FixtureCase): Promise<{ base: string; input: Fi
     runtime,
     runtimeHash,
     dormantRuntime,
-    namedFile: testCase.noHome || testCase.missing ? undefined : namedFile,
+    namedFile: process.platform !== "darwin" || testCase.noHome || testCase.missing ? undefined : namedFile,
   };
   if (!testCase.absent) await mkdir(home + "/app-server-control", { recursive: true });
   await mkdir(release + "/scripts", { recursive: true });

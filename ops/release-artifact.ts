@@ -86,7 +86,13 @@ export const normalizeDependencyLinks = async (directory: string): Promise<void>
   }
 };
 const validateLinks = async (directory: string): Promise<void> => {
-  for (const link of await dependencyLinks(directory)) if (isAbsolute(link.target)) throw new Error("Dependency symlink escapes the immutable release");
+  const root = await realpath(directory);
+  for (const link of await dependencyLinks(directory)) {
+    const local = relative(root, link.resolved);
+    if (isAbsolute(link.target) || local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local)) {
+      throw new Error("Dependency symlink escapes the approved dependency graph");
+    }
+  }
 };
 export const prepareReleasePayload = async (
   root: string,
@@ -110,7 +116,8 @@ export const prepareReleasePayload = async (
   // An empty, exclusive dotenv fence plus a sparse child environment prevents an
   // install in nested .data/releases from discovering production credentials.
   if (preparedDependencies) {
-    await cp(preparedDependencies, join(root, "node_modules"), { recursive: true, dereference: false });
+    await validateLinks(preparedDependencies);
+    await cp(preparedDependencies, join(root, "node_modules"), { recursive: true, dereference: true });
   } else {
     await writeFile(join(root, ".env"), "", { flag: "wx", mode: 0o600 });
     try {

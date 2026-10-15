@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, mkdtemp, open, readFile, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, statfs, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,8 @@ export type NativeKvArtifact = {
   architecture: string;
   napiVersion: number;
   buildLogPath: string;
+  workspacePath?: string;
+  workspaceFilesystemType?: number;
 };
 
 type LockedPackage = { name: string; version: string; source?: string; checksum?: string };
@@ -129,8 +131,10 @@ export const buildNativeKv = async (outputDirectory: string, options: { toolchai
       throw new Error(`Native KV output already exists: ${destination}`);
     }
   }
-  const workspaceRoot = join(homedir(), ".cache/uos-native-kv-builds");
+  const workspaceRoot = `/tmp/uos-native-kv-builds-${process.getuid?.() ?? "unknown"}`;
   await mkdir(workspaceRoot, { recursive: true, mode: 0o700 });
+  const workspaceFilesystemType = (await statfs(workspaceRoot)).type;
+  if (workspaceFilesystemType === 0x01021994) throw new Error("Native KV retained build scratch requires disk-backed storage, not tmpfs");
   const workspace = await mkdtemp(join(workspaceRoot, "uos-native-kv-"));
   const temporaryDirectory = join(workspace, "tmp");
   await mkdir(temporaryDirectory, { mode: 0o700 });
@@ -185,6 +189,8 @@ export const buildNativeKv = async (outputDirectory: string, options: { toolchai
     registryChecksumsSha256: inputs.lock.registryChecksumsSha256,
     ...inputs.artifact,
     buildLogPath,
+    workspacePath: workspace,
+    workspaceFilesystemType,
   };
 };
 

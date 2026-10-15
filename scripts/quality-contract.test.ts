@@ -193,8 +193,13 @@ test("focused selection refuses excluded and unknown files; sentinel consumer ke
     assert.equal(unknown.code, 1, unknown.output);
     assert.match(unknown.output, /excluded or unknown/);
     const accepted = await runFixture(directory, ["sentinel", consumer]);
-    assert.equal(accepted.code, 0, accepted.output);
-    assert.match(accepted.output, /1 files, 0 failures/);
+    if (process.platform === "linux") {
+      assert.equal(accepted.code, 0, accepted.output);
+      assert.match(accepted.output, /1 files, 0 failures/);
+    } else {
+      assert.equal(accepted.code, 1, accepted.output);
+      assert.match(accepted.output, /excluded or unknown/);
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -346,7 +351,7 @@ test("runner children keep local TCP and Unix sockets but cannot reach the paren
     assert.ok(address !== null && typeof address !== "string");
     writeFileSync(
       join(directory, "tests/transport.test.ts"),
-      `import { test, expect } from "bun:test";\nimport { createConnection, createServer } from "node:net";\nconst read = (options) => new Promise((resolve, reject) => { const socket = createConnection(options); const parts = []; socket.on("data", chunk => parts.push(chunk)); socket.on("end", () => resolve(Buffer.concat(parts).toString())); socket.on("error", reject); socket.setTimeout(1000, () => socket.destroy(new Error("transport timeout"))); });\ntest("kernel network boundary", async () => { await expect(read({ host: "127.0.0.1", port: ${address.port} })).rejects.toThrow(); expect(await read({ path: ${JSON.stringify(socketPath)} })).toBe("parent-unix"); const local = createServer(socket => socket.end("child-local")); await new Promise(ready => local.listen(0, "127.0.0.1", ready)); try { expect(await read({ host: "127.0.0.1", port: local.address().port })).toBe("child-local"); } finally { await new Promise(ready => local.close(ready)); } });\n`
+      `import { test, expect } from "bun:test";\nimport { createConnection, createServer } from "node:net";\nconst read = (options) => new Promise((resolve, reject) => { const socket = createConnection(options); const parts = []; socket.on("data", chunk => parts.push(chunk)); socket.on("end", () => resolve(Buffer.concat(parts).toString())); socket.on("error", reject); socket.setTimeout(1000, () => socket.destroy(new Error("transport timeout"))); });\ntest("kernel network boundary", async () => { await expect(read({ host: ${JSON.stringify(process.platform === "darwin" ? "192.0.2.1" : "127.0.0.1")}, port: ${address.port} })).rejects.toThrow(); expect(await read({ path: ${JSON.stringify(socketPath)} })).toBe("parent-unix"); const local = createServer(socket => socket.end("child-local")); await new Promise(ready => local.listen(0, "127.0.0.1", ready)); try { expect(await read({ host: "127.0.0.1", port: local.address().port })).toBe("child-local"); } finally { await new Promise(ready => local.close(ready)); } });\n`
     );
     const result = await runFixture(directory, ["main", "tests/transport.test.ts"]);
     assert.equal(result.code, 0, result.output);

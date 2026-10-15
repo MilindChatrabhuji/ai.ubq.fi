@@ -135,14 +135,13 @@ export const startMacMaintenance = (kv: Kv): (() => Promise<void>) => {
 const serveHandler = createServeHandler();
 const serveUpgradeHandler = createServeUpgradeHandler();
 
-const runtimeOptions = parseServeRuntimeOptions(import.meta.main ? process.argv.slice(2) : [], { isDeploy: config.isDeploy });
-if (import.meta.main) await prepareNativeKvForDevelopment();
+let runtimeOptions = parseServeRuntimeOptions([], { isDeploy: config.isDeploy });
 
-// `--disable-admin-auth` is loopback-only (a non-loopback listener fails at
-// startup), so provisioning here can never reach a hosted deployment. The local
-// development key makes loopback requests a super-admin inference principal
-// with unlimited paid-provider routing instead of a policy-free one.
-if (runtimeOptions.disableAdminAuth) {
+// Imported loopback launchers must opt in explicitly; hosted/deploy listeners
+// remain unable to disable admin auth through the parser's fail-closed guard.
+export const configureLoopbackServeRuntime = async (args: readonly string[]): Promise<void> => {
+  runtimeOptions = parseServeRuntimeOptions(args, { isDeploy: config.isDeploy });
+  if (!runtimeOptions.disableAdminAuth) return;
   try {
     const kv = await getKv();
     if (kv) {
@@ -153,6 +152,11 @@ if (runtimeOptions.disableAdminAuth) {
   } catch (error) {
     console.warn("[ai.ubq.fi] Local development key provisioning failed:", error instanceof Error ? error.message : String(error));
   }
+};
+
+if (import.meta.main) {
+  await prepareNativeKvForDevelopment();
+  await configureLoopbackServeRuntime(process.argv.slice(2));
 }
 
 /**

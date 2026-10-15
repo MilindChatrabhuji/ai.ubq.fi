@@ -50,6 +50,13 @@ delete process.env.DENO_TIMELINE;
 
 // Share the selected application's runtime graph, including durable-request
 // tracking and native KV value identities, instead of the invoking checkout's.
+const { verifyReleasePayload } = (await import(`file://${releasePath}/ops/release-artifact.ts`)) as typeof import("../../ops/release-artifact.ts");
+const { nativeKvReleaseBinding } = (await import(`file://${releasePath}/ops/native-kv-release.ts`)) as typeof import("../../ops/native-kv-release.ts");
+const { prepareNativeKvBackend } = (await import(`file://${releasePath}/src/storage/native-addon.ts`)) as typeof import("../../src/storage/native-addon.ts");
+const revision = releasePath.slice(releasePath.lastIndexOf("/") + 1);
+const releaseManifest = await verifyReleasePayload(releasePath, revision);
+if (releaseManifest.schema !== 3) throw new Error("Benchmark requires native KV release schema 3");
+prepareNativeKvBackend(nativeKvReleaseBinding(releasePath, releaseManifest.native_kv));
 const { openKv } = (await import(`file://${releasePath}/src/storage/kv.ts`)) as Readonly<{ openKv: typeof import("#kv").openKv }>;
 const { serveHttp } = (await import(`file://${releasePath}/src/runtime/http.ts`)) as Readonly<{ serveHttp: typeof import("#http").serveHttp }>;
 
@@ -63,9 +70,11 @@ type ReleaseServe = Readonly<{
   application: ServeDefaultExport;
   shutdownOptionalTelemetry: () => Promise<void>;
   startMacMaintenance: (kv: Kv) => () => Promise<void>;
+  configureLoopbackServeRuntime: (args: readonly string[]) => Promise<void>;
 }>;
 
 const serve = (await import(`file://${releasePath}/serve.ts`)) as ReleaseServe;
+await serve.configureLoopbackServeRuntime(["--disable-admin-auth"]);
 const stopMaintenance = serve.startMacMaintenance(kv);
 
 const server = serveHttp(

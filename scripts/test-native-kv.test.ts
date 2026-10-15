@@ -2,7 +2,6 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
 import { currentTestNativeKvBinding, createTestNativeKvPreload, parseTestNativeKvBinding, type TestNativeKvBinding } from "./test-native-kv.ts";
@@ -114,13 +113,13 @@ test("invalid native bindings fail before a child can write a database", async (
 });
 
 test("VPS discovery includes both upstream additions exactly once without preparing again", async () => {
-  const builds = join(homedir(), ".cache/uos-native-kv-builds");
+  const builds = `/tmp/uos-native-kv-builds-${process.getuid?.() ?? "unknown"}`;
   const before = readdirSync(builds).sort((left, right) => left.localeCompare(right));
   const result = await run([process.execPath, "--no-env-file", "--no-install", join(ROOT, "scripts/test-runner.ts"), "vps", "--list"]);
   assert.equal(result.code, 0, result.output);
   const groups = JSON.parse(result.output) as { files: string[] }[];
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].files.length, 5);
+  assert.equal(groups[0].files.length, process.platform === "linux" ? 5 : 4);
   for (const name of ["vps-release-driver.test.ts", "vps-release-recovery.test.ts", "vps-release-metrics.test.ts"]) {
     assert.equal(groups[0].files.filter((path) => path.endsWith(name)).length, 1);
     const focused = await run([process.execPath, "--no-env-file", "--no-install", join(ROOT, "scripts/test-runner.ts"), "vps", "ops/tests/" + name, "--list"]);
@@ -140,7 +139,7 @@ test("VPS discovery includes both upstream additions exactly once without prepar
 test("one real parent build is reused across files and separate original profile processes", async () => {
   const binding = currentTestNativeKvBinding();
   const directory = scratch();
-  const builds = join(homedir(), ".cache/uos-native-kv-builds");
+  const builds = `/tmp/uos-native-kv-builds-${process.getuid?.() ?? "unknown"}`;
   const before = readdirSync(builds).sort((left, right) => left.localeCompare(right));
   try {
     mkdirSync(join(directory, "scripts"));

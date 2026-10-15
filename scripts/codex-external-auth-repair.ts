@@ -1,4 +1,5 @@
 import { readLocalPool, repairExternalNativePool, resolveFlags } from "./codex-auth-repair.ts";
+import { prepareNativeKvForDevelopment } from "../src/runtime/native-kv-bootstrap.ts";
 
 type ExternalOnlyHooks = {
   readPool?: typeof readLocalPool;
@@ -18,6 +19,7 @@ export const runExternalNativeRepair = async (args: readonly string[], hooks: Ex
     return 0;
   }
   const flags = resolveFlags(args);
+  await prepareNativeKvForDevelopment();
   const local = await (hooks.readPool ?? readLocalPool)(flags.kv);
   if ("error" in local) throw new Error(local.error);
   const result = await repairExternalNativePool(flags, local, hooks.external);

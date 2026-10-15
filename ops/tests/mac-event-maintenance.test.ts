@@ -229,6 +229,7 @@ const fixtureSources = (fixture: string): Record<string, string> => ({
   "ops/release-artifact.ts": `export const verifyReleasePayload = () => Promise.resolve({ schema: 3, native_kv: {} });`,
   "ops/native-kv-release.ts": `export const nativeKvReleaseBinding = () => ({});`,
   "src/storage/native-addon.ts": `export const prepareNativeKvBackend = () => {};`,
+  "src/runtime/native-kv-bootstrap.ts": `export const prepareNativeKvForDevelopment = () => Promise.resolve();`,
   "src/config.ts": `export const config = { isDeploy: false }; export const runtimeGitSha = () => ${JSON.stringify(revision)};`,
   "src/kv.ts": `import { initializeKv as install, getKv } from ${importSource("src/kv.ts")};
     export { getKv }; export const initializeKv = kv => { install(kv); globalThis.maintenanceFixture.sameKv = true; };`,
