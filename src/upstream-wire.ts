@@ -11,7 +11,7 @@ import { openaiError } from "./http.ts";
 import { getString, isRecord } from "./utils.ts";
 import { MeteredError } from "./provider/metered.ts";
 import { SurplusError } from "./provider/surplus.ts";
-import { ResponseStreamTerminalType, UpstreamProvider } from "./openai-telemetry.ts";
+import { type ResponseStreamTerminalType, type UpstreamProvider } from "./openai-telemetry.ts";
 
 export const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   const raw = error instanceof Error ? error.message : String(error);

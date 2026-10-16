@@ -7,6 +7,12 @@ import {
   handleAdminApiKeysRevoke,
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
+  handleAdminClaudeCodeAccess,
+  handleAdminClaudeCodeAccountActive,
+  handleAdminClaudeCodeAuthDelete,
+  handleAdminClaudeCodeAuthGet,
+  handleAdminClaudeCodeAuthSet,
+  handleAdminClaudeCodeQuotaClear,
   handleAdminCodexAuth,
   handleAdminCodexBankedResetShadowDecisions,
   handleAdminCodexCacheScopeExperiment,
@@ -39,6 +45,8 @@ import {
   handleAdminProvidersQuotaProjectionBackfill,
 } from "../admin/index.ts";
 import { handleAdminErrors } from "../admin/error-log.ts";
+import { proxyAdminChartSource } from "../admin/chart-source-proxy.ts";
+import { handleCapacityObservationIngest } from "../admin/capacity-observation-sync.ts";
 import type { ApiKeyAuditContext } from "../admin/api-key-audit.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "../agent-messages.ts";
 import { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth, type AdminAuthResult } from "../auth/index.ts";
@@ -146,14 +154,21 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET"], path: "/admin/codex/supervisor/sessions", run: () => handleAdminCodexSupervisorSessions() },
   { methods: ["GET"], path: "/admin/codex/supervisor/output", run: (req) => handleAdminCodexSupervisorOutput(req) },
   { methods: ["POST"], path: "/admin/codex/supervisor/brief", run: (req) => handleAdminCodexSupervisorBrief(req) },
-  { methods: ["GET"], path: "/admin/errors", run: (req) => handleAdminErrors(req) },
+  { methods: ["GET"], path: "/admin/errors", run: (req) => proxyAdminChartSource(req, handleAdminErrors(req)) },
   { methods: ["GET", "POST"], path: "/admin/defaults", run: (req) => handleAdminDefaults(req) },
   { methods: ["GET", "POST", "DELETE"], path: "/admin/debug/routing", run: (req) => handleAdminDebugRouting(req) },
   { methods: ["GET"], path: "/admin/providers", run: () => handleHealthProviders({ includeQuota: true }) },
   { methods: ["GET"], path: "/admin/providers/selection", run: () => handleAdminProviderSelectionGet() },
   { methods: ["POST"], path: "/admin/providers/selection", run: (req) => handleAdminProviderSelectionSet(req) },
-  { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => handleProviderCapacity(req) },
+  { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => proxyAdminChartSource(req, handleProviderCapacity(req)) },
+  { methods: ["POST"], path: "/admin/providers/capacity/observations", run: (req) => handleCapacityObservationIngest(req) },
   { methods: ["GET"], path: "/admin/providers/capacity/rollups", run: (req) => handleProviderCapacityRollups(req) },
+  { methods: ["GET", "POST"], path: "/admin/providers/claude-code/access", run: (req) => handleAdminClaudeCodeAccess(req) },
+  { methods: ["POST"], path: "/admin/providers/claude-code/accounts/active", run: (req) => handleAdminClaudeCodeAccountActive(req) },
+  { methods: ["GET"], path: "/admin/providers/claude-code/auth", run: () => handleAdminClaudeCodeAuthGet() },
+  { methods: ["POST"], path: "/admin/providers/claude-code/auth", run: (req) => handleAdminClaudeCodeAuthSet(req) },
+  { methods: ["DELETE"], path: "/admin/providers/claude-code/auth", run: (req) => handleAdminClaudeCodeAuthDelete(req) },
+  { methods: ["POST"], path: "/admin/providers/claude-code/quota/clear", run: (req) => handleAdminClaudeCodeQuotaClear(req) },
   { methods: ["GET"], path: "/admin/providers/quota-projection", run: (req) => handleAdminProvidersQuotaProjection(req) },
   { methods: ["POST"], path: "/admin/providers/quota-projection/backfill", run: (req) => handleAdminProvidersQuotaProjectionBackfill(req) },
   { methods: ["GET"], path: "/admin/prompt-cache-analytics", run: (req) => handleAdminPromptCacheAnalytics(req) },
@@ -308,10 +323,8 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   const uosResponse = await handleUosRoute(req, path);
   if (uosResponse) return withCors(uosResponse);
 
-  // The realtime voice relay owns its own decorations: a sideband upgrade must
-  // be returned exactly as `Deno.upgradeWebSocket` produced it, and `withCors`
-  // above would rebuild the response and drop its socket. The JSON arms apply
-  // both decorations themselves.
+  // The realtime voice relay decorates its own JSON responses. Actual WebSocket
+  // switching is handled by the separate authenticated transport entry point.
   const liveResponse = await handleLiveRoute(req, requestId);
   if (liveResponse) return liveResponse;
 
@@ -322,3 +335,5 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
 
   return await handleTerminalRoute(req, path, delivery, requestId, requestStartedAtMs, requestStartedAtMonotonicMs);
 }
+
+export { handleLiveUpgrade as upgradeHandler } from "../live/handler.ts";

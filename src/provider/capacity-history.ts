@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 // Provider capacity history, transition detection and rate-limit recovery, split out of src/provider_capacity.ts.
 
 import {
@@ -22,20 +23,20 @@ import {
 import { isRecord } from "../utils.ts";
 import { isSafeTimestamp, readStoredCodexSource, readStoredHistoryPoint, unavailableCodexSource, unavailableMeteredSource } from "./capacity-parse.ts";
 
-export const providerCapacityHistoryKey = (bucketStartAtMs: number): Deno.KvKey => [...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX, bucketStartAtMs];
+export const providerCapacityHistoryKey = (bucketStartAtMs: number): KvKey => [...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX, bucketStartAtMs];
 
 // A live refresh can observe a banked reset inside the same 15-minute bucket
 // as the exhausted sample. Keep that earlier point under a sibling key so the
 // chart can show the zero-to-refill transition without turning every refresh
 // into an unbounded history stream.
-const providerCapacityHistoryTransitionKey = (bucketStartAtMs: number, previousSampledAtMs: number): Deno.KvKey => [
+const providerCapacityHistoryTransitionKey = (bucketStartAtMs: number, previousSampledAtMs: number): KvKey => [
   ...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
   bucketStartAtMs,
   "transition",
   previousSampledAtMs,
 ];
 
-const readCapacityHistory = async (kv: Deno.Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
+const readCapacityHistory = async (kv: Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
   const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_HISTORY_RETENTION_MS);
   const newestBucketMs = Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
   const points: ProviderCapacityHistoryPoint[] = [];
@@ -291,7 +292,7 @@ const observedHistoricalRateLimitResetEvents = (history: readonly ProviderCapaci
 };
 
 const mergeHistoricalRateLimitResetEvents = async (
-  kv: Deno.Kv,
+  kv: Kv,
   history: readonly ProviderCapacityHistoryPoint[],
   events: readonly ProviderCapacityRateLimitResetEvent[]
 ): Promise<readonly ProviderCapacityRateLimitResetEvent[]> => {
@@ -330,7 +331,7 @@ const recoverySlotsForSnapshot = (
   });
 
 const recoverRateLimitObservations = async (
-  kv: Deno.Kv,
+  kv: Kv,
   snapshot: ProviderCapacitySnapshot,
   recoverySlots: readonly (1 | 2)[]
 ): Promise<StoredRateLimitObservation[]> => {

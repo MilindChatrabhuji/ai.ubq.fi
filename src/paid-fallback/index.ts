@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 import { apiKeyIdKey, MICROCREDITS_PER_CREDIT, PAID_FALLBACK_NO_LIMIT } from "../api-keys.ts";
 import {
   admitPaidFallbackV3,
@@ -207,10 +208,10 @@ export const initializePaidFallbackPolicy = async (
 
 type PaidFallbackPolicyEntry = Readonly<{
   record: ApiKeyRecord;
-  check: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>;
+  check: Readonly<{ key: KvKey; versionstamp: string | null }>;
 }>;
 
-const loadStrictKeyRecord = async (kv: Deno.Kv, keyId: string): Promise<PaidFallbackPolicyEntry | null> => {
+const loadStrictKeyRecord = async (kv: Kv, keyId: string): Promise<PaidFallbackPolicyEntry | null> => {
   const idEntry = await kv.get<ApiKeyRecord>(apiKeyIdKey(keyId), { consistency: "strong" });
   if (!idEntry.value || !hasStrictPaidFallbackKeyPolicy(idEntry.value)) return null;
   return {
@@ -252,7 +253,7 @@ export const reservePaidFallback = async (
     stream: boolean;
     reasoning: string | null;
     allowUnrosteredModel?: boolean;
-    reason: "primary_429" | "primary_quota_blocked" | "dynamic_paid_model";
+    reason: "primary_429" | "primary_quota_blocked" | "primary_subscriptions_unavailable" | "dynamic_paid_model";
   }>
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await getKv();
@@ -362,6 +363,8 @@ export type SurplusBillingPricing = Readonly<{
   output_price_per_token: number;
   cache_read_price_per_token?: number;
   cache_write_price_per_token?: number;
+  /** Native Messages billing requires the original exact provider charge. */
+  require_provider_cost?: true;
 }>;
 
 export type SurplusUsage = Readonly<{
@@ -369,6 +372,8 @@ export type SurplusUsage = Readonly<{
   cached_input_tokens: number | null;
   cache_write_input_tokens: number | null;
   output_tokens: number | null;
+  /** Provider-reported exact charge, when present in the original usage. */
+  buyer_cost_micro?: number | null;
 }>;
 
 /**
@@ -385,15 +390,7 @@ export const recordSurplusUsage = async (
   usage: SurplusUsage,
   pricing: SurplusBillingPricing
 ): Promise<void> => {
-  if (
-    !settlementRequestId.trim() ||
-    !model.trim() ||
-    !isNonNegativeSafeInteger(usage.input_tokens) ||
-    !isNonNegativeSafeInteger(usage.output_tokens) ||
-    !isNonNegativeFiniteNumber(pricing.input_price_per_token) ||
-    !isNonNegativeFiniteNumber(pricing.output_price_per_token)
-  )
-    return;
+  if (!settlementRequestId.trim() || !model.trim() || !isNonNegativeSafeInteger(usage.input_tokens) || !isNonNegativeSafeInteger(usage.output_tokens)) return;
   // Absent cache counters settle as zero; non-null counts keep their exact value.
   const cachedInputTokens = usage.cached_input_tokens ?? 0;
   const cacheWriteInputTokens = usage.cache_write_input_tokens ?? 0;
@@ -405,23 +402,35 @@ export const recordSurplusUsage = async (
   )
     return;
   const uncachedInputTokens = usage.input_tokens - cachedInputTokens;
-  const cacheReadPrice = pricing.cache_read_price_per_token ?? pricing.input_price_per_token;
-  const cacheWritePrice = pricing.cache_write_price_per_token ?? pricing.input_price_per_token;
-  if (!isNonNegativeFiniteNumber(cacheReadPrice) || !isNonNegativeFiniteNumber(cacheWritePrice)) return;
-  const chargedCredits =
-    uncachedInputTokens * pricing.input_price_per_token +
-    cachedInputTokens * cacheReadPrice +
-    cacheWriteInputTokens * cacheWritePrice +
-    usage.output_tokens * pricing.output_price_per_token;
+  let buyerCostMicro: number | undefined;
+  let chargedCredits: number;
+  if (Object.prototype.hasOwnProperty.call(usage, "buyer_cost_micro")) {
+    // A present malformed charge cannot become a catalog-price estimate.
+    if (!isNonNegativeSafeInteger(usage.buyer_cost_micro)) return;
+    buyerCostMicro = usage.buyer_cost_micro;
+    chargedCredits = buyerCostMicro / MICROCREDITS_PER_CREDIT;
+  } else {
+    if (pricing.require_provider_cost) return;
+    if (!isNonNegativeFiniteNumber(pricing.input_price_per_token) || !isNonNegativeFiniteNumber(pricing.output_price_per_token)) return;
+    const cacheReadPrice = pricing.cache_read_price_per_token ?? pricing.input_price_per_token;
+    const cacheWritePrice = pricing.cache_write_price_per_token ?? pricing.input_price_per_token;
+    if (!isNonNegativeFiniteNumber(cacheReadPrice) || !isNonNegativeFiniteNumber(cacheWritePrice)) return;
+    chargedCredits =
+      uncachedInputTokens * pricing.input_price_per_token +
+      cachedInputTokens * cacheReadPrice +
+      cacheWriteInputTokens * cacheWritePrice +
+      usage.output_tokens * pricing.output_price_per_token;
+  }
   const providerQuota = Math.round(chargedCredits * reservation.quota_per_credit);
   if (!Number.isSafeInteger(providerQuota) || providerQuota < 0) return;
   await settlePaidFallbackUsageV3(reservation, {
     settlement_request_id: settlementRequestId,
     provider_quota: providerQuota,
     input_tokens: usage.input_tokens,
-    cached_input_tokens: cachedInputTokens,
+    cached_input_tokens: buyerCostMicro === undefined ? cachedInputTokens : usage.cached_input_tokens,
     output_tokens: usage.output_tokens,
     model,
     created_at_ms: Date.now(),
+    ...(buyerCostMicro === undefined ? {} : { buyer_cost_micro: buyerCostMicro }),
   });
 };

@@ -57,6 +57,8 @@ export const openRouterUpstreamModelFor = (model: string): string | null => {
   return openRouterServableModelIds().includes(trimmed) ? trimmed : null;
 };
 
+const OPENROUTER_MODEL_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/;
+
 /**
  * The same resolution for a request that arrives before the catalogue cache
  * has warmed - for example the first request after a restart. A cold snapshot
@@ -67,7 +69,8 @@ export const openRouterUpstreamModelFor = (model: string): string | null => {
  */
 export const resolveOpenRouterUpstreamModel = async (model: string): Promise<string | null> => {
   const resolved = openRouterUpstreamModelFor(model);
-  if (resolved !== null || openRouterModelsSnapshot() !== null) return resolved;
+  const trimmed = model.trim();
+  if (resolved !== null || openRouterModelsSnapshot() !== null || !OPENROUTER_MODEL_ID_PATTERN.test(trimmed)) return resolved;
   if (readOpenRouterApiKey() === null) return null;
   await fetchOpenRouterModels().catch(() => null);
   return openRouterUpstreamModelFor(model);
@@ -129,7 +132,7 @@ export const fetchOpenRouterResponses = async (
 
 export const readOpenRouterApiKey = (): string | null => {
   try {
-    const value = Deno.env.get(OPENROUTER_API_KEY_ENV)?.trim();
+    const value = process.env[OPENROUTER_API_KEY_ENV]?.trim();
     if (!value) return null;
     return value;
   } catch {
