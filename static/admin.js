@@ -1535,6 +1535,11 @@ const renderClaudeCapacitySource = (source) => {
   return row;
 };
 
+const claudeCapacitySourcesForDisplay = (claude, claudeAccounts) =>
+  (Array.isArray(claudeAccounts) ? claudeAccounts : [claude]).filter(
+    (source) => source && typeof source === "object" && source.source === "claude_code"
+  );
+
 const renderProviderCapacityList = (sources, claude = null, claudeAccounts = null) => {
   const expanded = new Map(
     Array.from(providerCapacityList.children, (row) => [
@@ -1550,9 +1555,7 @@ const renderProviderCapacityList = (sources, claude = null, claudeAccounts = nul
   }
   // New servers supply every configured account. Old servers retain the single
   // active row fallback; never append that projection a second time.
-  const accounts = Array.isArray(claudeAccounts) ? claudeAccounts : [claude];
-  for (const source of accounts) {
-    if (!source || typeof source !== "object" || source.source !== "claude_code") continue;
+  for (const source of claudeCapacitySourcesForDisplay(claude, claudeAccounts)) {
     const row = renderClaudeCapacitySource(source);
     row.dataset.capacityKey = `claude_code:${source.account_id ?? "legacy"}`;
     providerCapacityList.appendChild(row);
@@ -3321,10 +3324,11 @@ const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
   renderProviderCapacityChart(snapshot, sources, fiveXxBuckets);
   renderProviderCapacityList(sources, claude, claudeAccounts);
 
-  const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
-  const staleCount = sources.filter((source) => source.state === "stale").length;
+  const displayedSources = [...sources, ...claudeCapacitySourcesForDisplay(claude, claudeAccounts)];
+  const unavailableCount = displayedSources.filter((source) => source.state === "unavailable").length;
+  const staleCount = displayedSources.filter((source) => source.state === "stale").length;
   const cacheAnalyticsUnavailable = snapshot?.prompt_cache?.status !== "ready";
-  if (unavailableCount === sources.length) {
+  if (unavailableCount === displayedSources.length) {
     setBadge(providerCapacityBadge, "unknown", "Quota unavailable");
   } else if (unavailableCount > 0) {
     setBadge(providerCapacityBadge, "unknown", `Partial quota · ${unavailableCount} unavailable`);
@@ -10001,10 +10005,10 @@ const providersRoutingWarnings = () => {
     );
   }
   if (!isProviderChecked("codex")) {
-    warnings.push("Codex is off, so requests start at the paid tiers and the subscription capacity stays unused.");
+    warnings.push("Codex is off; Codex subscription capacity stays unused.");
   }
   if (!providerSelection.has("surplus") && !providerSelection.has("openlux")) {
-    warnings.push("Both paid tiers are off, so a model outside the Codex roster has no fallback left.");
+    warnings.push("Both paid tiers are off; no paid fallback is available after subscription routing.");
   }
   return warnings;
 };
