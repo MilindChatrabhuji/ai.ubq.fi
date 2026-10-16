@@ -1,6 +1,9 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { chmod, mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { acquireDeployLock } from "../deploy-lock.ts";
 import { VpsJournalMetrics } from "../vps-release-metrics.ts";
-import { createVpsJoinFileStorage } from "../vps-metrics-join.ts";
+import { createVpsJoinFileStorage } from "../vps-metrics-storage.ts";
 import { boundedRows, metricsFixture } from "./vps-metrics-fixture.ts";
 import type { VpsIdentity } from "../vps-release-contract.ts";
 const start = 1_800_000_000_000;
@@ -39,7 +42,12 @@ const reader = (raw: string) => ({
     }),
 });
 const input = { identity, windowStart: start, windowEnd: start + 30_000 };
-Deno.test("VPS joins: interrupted collection reconstructs an encrypted checkpoint and counts the long request once", async () => {
+const temporaryRoot = async (prefix: string): Promise<string> => {
+  const parent = new URL("../../.cleanup-evidence/vps-metrics-fixtures/", import.meta.url).pathname;
+  await mkdir(parent, { recursive: true });
+  return realpath(await mkdtemp(parent + prefix));
+};
+test("VPS joins: interrupted collection reconstructs an encrypted checkpoint and counts the long request once", async () => {
   let now = start + 35_000;
   const source = reader([row(true, start + 29_500), row(false, start + 69_500)].join("\n"));
   const fixture = await metricsFixture(identity, source, () => now);
@@ -57,7 +65,7 @@ Deno.test("VPS joins: interrupted collection reconstructs an encrypted checkpoin
   assert.equal(result.requestCount, 1);
   assert.equal((await resumed.sample(input)).requestCount, 1);
 });
-Deno.test("VPS joins: a progressing stream beyond thirty minutes and bounded old admission recovery preserve exact denominator", async () => {
+test("VPS joins: a progressing stream beyond thirty minutes and bounded old admission recovery preserve exact denominator", async () => {
   let now = start + 35_000;
   const source = reader([row(true, start + 29_500), row(false, start + 1_850_000)].join("\n"));
   const fixture = await metricsFixture(identity, source, () => now);
@@ -69,7 +77,7 @@ Deno.test("VPS joins: a progressing stream beyond thirty minutes and bounded old
   assert.equal((await old.metrics.sample(input)).coverage, "complete");
   assert.equal((await old.metrics.sample(input)).requestCount, 0, "old admission never enters this cohort denominator");
 });
-Deno.test("VPS joins: missing policy, corrupted ciphertext, expiry, byte bound and stale checkpoint CAS never pass", async () => {
+test("VPS joins: missing policy, corrupted ciphertext, expiry, byte bound and stale checkpoint CAS never pass", async () => {
   const source = reader([row(true, start + 1), row(false, start + 2)].join("\n"));
   let now = start + 65_000;
   const fixture = await metricsFixture(identity, source, () => now);
@@ -93,8 +101,8 @@ Deno.test("VPS joins: missing policy, corrupted ciphertext, expiry, byte bound a
     /unavailable/
   );
 });
-Deno.test("VPS joins: filesystem storage enforces exact private modes, operation path, file CAS and stale scope", async () => {
-  const root = await Deno.makeTempDir({ prefix: "vps-metrics-store-" });
+test("VPS joins: filesystem storage enforces exact private modes, operation path, file CAS and stale scope", async () => {
+  const root = await temporaryRoot("store-");
   try {
     const source = reader([row(true, start + 1), row(false, start + 2)].join("\n"));
     const fixture = await metricsFixture(identity, source, () => start + 65_000);
@@ -109,8 +117,8 @@ Deno.test("VPS joins: filesystem storage enforces exact private modes, operation
     fixture.options.storage = disk;
     assert.equal((await fixture.metrics.sample(input)).coverage, "complete");
     const path = `${root}/.data/sentinel-vps-metrics/${scope.operationId}.sealed`;
-    assert.equal(((await Deno.stat(path)).mode ?? 0) & 0o777, 0o600);
-    assert.equal(((await Deno.stat(`${root}/.data/sentinel-vps-metrics`)).mode ?? 0) & 0o777, 0o700);
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.equal((await stat(`${root}/.data/sentinel-vps-metrics`)).mode & 0o777, 0o700);
     assert.equal(await disk.save({ ...scope, stateHead: "a".repeat(40) }, 1, fixture.stored() ?? new Uint8Array()), false);
     assert.equal(await disk.save(scope, 0, (await disk.load(scope)) ?? new Uint8Array()), false);
     assert.equal(
@@ -118,14 +126,14 @@ Deno.test("VPS joins: filesystem storage enforces exact private modes, operation
       false,
       "replaying the same encrypted sequence is not a CAS increment"
     );
-    await Deno.chmod(path, 0o400);
+    await chmod(path, 0o400);
     await assert.rejects(() => disk.load(scope), /unavailable/);
   } finally {
-    await Deno.remove(root, { recursive: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("VPS joins: late accepted terminal with a missing admission cannot disappear from the denominator", async () => {
+test("VPS joins: late accepted terminal with a missing admission cannot disappear from the denominator", async () => {
   const source = reader([row(true, start + 1, "A"), row(false, start + 60_000, "A"), row(false, start + 65_000, "B")].join("\n"));
   const fixture = await metricsFixture(identity, source, () => start + 100_000);
   const result = await fixture.metrics.sample(input);
@@ -133,8 +141,8 @@ Deno.test("VPS joins: late accepted terminal with a missing admission cannot dis
   assert.equal(result.requestCount, null);
 });
 
-Deno.test("VPS joins: scope advancing during the owned deploy-lock wait refuses checkpoint publication", async () => {
-  const root = await Deno.makeTempDir({ prefix: "vps-metrics-lock-race-" });
+test("VPS joins: scope advancing during the owned deploy-lock wait refuses checkpoint publication", async () => {
+  const root = await temporaryRoot("lock-race-");
   try {
     const source = reader([row(true, start + 1), row(false, start + 2)].join("\n"));
     const fixture = await metricsFixture(identity, source, () => start + 65_000);
@@ -157,20 +165,19 @@ Deno.test("VPS joins: scope advancing during the owned deploy-lock wait refuses 
       },
       () => start + 65_000
     );
-    await Deno.mkdir(`${root}/.data`, { recursive: true, mode: 0o700 });
-    const lock = await Deno.open(`${root}/.data/deploy.lock`, { create: true, write: true, mode: 0o600 });
-    await lock.lock(true);
+    await mkdir(`${root}/.data`, { recursive: true, mode: 0o700 });
+    const release = await acquireDeployLock(`${root}/.data/deploy.lock`);
     const writing = disk.save(scope, null, bytes);
     await before;
     current = { ...scope, stateHead: "9".repeat(40), stateSequence: scope.stateSequence + 1 };
-    lock.close();
+    release();
     assert.equal(await writing, false, "the pre-lock scope cannot authorize a write after state advancement");
   } finally {
-    await Deno.remove(root, { recursive: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("VPS joins: elapsed query budget checkpoints completed slices and yields collecting", async () => {
+test("VPS joins: elapsed query budget checkpoints completed slices and yields collecting", async () => {
   let now = start + 100_000,
     queries = 0;
   const original = reader([row(true, start + 1), row(false, start + 60_001)].join("\n"));

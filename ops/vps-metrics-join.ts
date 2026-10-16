@@ -1,14 +1,11 @@
 import { canonicalVps, exactObject, parseVpsIdentity, sha256, vpsDigest } from "./vps-release-contract.ts";
-import { withVpsDeployLock } from "./vps-release-journal.ts";
 import {
   VPS_METRICS_MAX_ENTRIES,
   type VpsJoinCheckpoint,
   type VpsJoinCohort,
-  type VpsJoinStorage,
   type VpsMetricsOptions,
   type VpsMetricsRetention,
   type VpsMetricsScope,
-  type VpsJoinCipher,
 } from "./vps-metrics-types.ts";
 
 const refusal = (): never => {
@@ -211,82 +208,4 @@ export class VpsJoinCheckpoints {
       plain.fill(0);
     }
   }
-}
-/** Trusted filesystem adapter. Cipher and fresh scope come only from the authenticated host. */
-export function createVpsJoinFileStorage(
-  root: string,
-  policy: VpsMetricsRetention,
-  cipher: VpsJoinCipher,
-  current: (scope: VpsMetricsScope) => Promise<VpsMetricsScope>,
-  now = Date.now
-): VpsJoinStorage {
-  checkedRetention(policy);
-  const directory = `${root}/.data/sentinel-vps-metrics`;
-  const path = (scope: VpsMetricsScope) => `${directory}/${sha256(scope.operationId)}.sealed`;
-  const assertDirectory = async () => {
-    await Deno.mkdir(directory, { recursive: true, mode: 0o700 });
-    const stat = await Deno.lstat(directory);
-    if (!stat.isDirectory || stat.isSymlink || (stat.mode ?? 0) % 512 !== 0o700 || (await Deno.realPath(directory)) !== directory) return refusal();
-  };
-  const read = async (scope: VpsMetricsScope): Promise<Uint8Array | null> => {
-    await assertDirectory();
-    try {
-      const stat = await Deno.lstat(path(scope));
-      if (!stat.isFile || stat.isSymlink || (stat.mode ?? 0) % 512 !== 0o600 || stat.size > policy.evidenceMaxBytes) {
-        return refusal();
-      }
-      return await Deno.readFile(path(scope));
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) return null;
-      throw error;
-    }
-  };
-  return {
-    load: (scope) => withVpsDeployLock(root, () => read(scope)),
-    save: async (scope, expected, bytes) => {
-      if (canonicalVps(await current(scope)) !== canonicalVps(scope) || bytes.byteLength > policy.evidenceMaxBytes) return false;
-      return withVpsDeployLock(root, async () => {
-        if (canonicalVps(await current(scope)) !== canonicalVps(scope)) return false;
-        const binding = await joinBinding(scope, policy);
-        const incoming = await cipher.open(bytes, new TextEncoder().encode(binding));
-        try {
-          const next = parseJoinCheckpoint(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(incoming)), binding, now(), policy);
-          if (next.sequence !== (expected ?? 0) + 1 || next.stateHead !== scope.stateHead || next.stateSequence !== scope.stateSequence) return false;
-        } finally {
-          incoming.fill(0);
-        }
-        const old = await read(scope);
-        if (old === null ? expected !== null : expected === null) return false;
-        if (old !== null) {
-          const plain = await cipher.open(old, new TextEncoder().encode(binding));
-          try {
-            const prior = parseJoinCheckpoint(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plain)), binding, now(), policy);
-            if (prior.sequence !== expected) return false;
-          } finally {
-            plain.fill(0);
-          }
-        }
-        const temporary = `${path(scope)}-${crypto.randomUUID()}`;
-        try {
-          const file = await Deno.open(temporary, { createNew: true, write: true, mode: 0o600 });
-          try {
-            let offset = 0;
-            while (offset < bytes.byteLength) {
-              offset += await file.write(bytes.subarray(offset));
-            }
-            await file.sync();
-          } finally {
-            file.close();
-          }
-          if (canonicalVps(await current(scope)) !== canonicalVps(scope)) return false;
-          await Deno.rename(temporary, path(scope));
-          return true;
-        } finally {
-          await Deno.remove(temporary).catch((error: unknown) => {
-            if (!(error instanceof Deno.errors.NotFound)) throw error;
-          });
-        }
-      });
-    },
-  };
 }

@@ -26,7 +26,9 @@ import {
   type VpsMetricsProgress,
   type VpsQueryLimits,
 } from "./vps-metrics-types.ts";
+/** @public Standalone Sentinel's pinned VPS bridge composes its actual unit-scoped journal reader here. */
 export { createVpsJournalReader, runVpsJournalCommand } from "./vps-journal-reader.ts";
+/** @public The bridge's independent coverage proof and telemetry capabilities use these shapes. */
 export type { VpsJournalCoverage, VpsJournalReader, VpsJournalRequest, VpsMetricsOptions } from "./vps-metrics-types.ts";
 const incomplete = (): never => {
   throw new Error("VPS journal coverage is incomplete");

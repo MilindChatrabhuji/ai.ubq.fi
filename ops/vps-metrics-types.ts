@@ -52,6 +52,7 @@ export type VpsJoinCipher = {
   open(ciphertext: Uint8Array, associatedData: Uint8Array): Promise<Uint8Array>;
 };
 export type VpsMetricsProgress = { state: "collecting" | "complete" | "unavailable"; reason: string | null };
+/** @public The standalone controller drives bounded ticks and reads collection progress through this port. */
 export type VpsMetricsWork = { beginTick(observedAt: number): void; progress(input: VpsJournalRequest): Promise<VpsMetricsProgress> };
 export type VpsMetricsOptions = {
   retention: VpsMetricsRetention;

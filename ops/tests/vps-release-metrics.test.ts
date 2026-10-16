@@ -1,8 +1,10 @@
 import { test } from "bun:test";
 import { runSequence } from "../../tests/helpers/sequence.ts";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { type VpsJournalReader } from "../vps-release-metrics.ts";
 import type { VpsIdentity } from "../vps-release-contract.ts";
+import { metricsFixture, boundedRows } from "./vps-metrics-fixture.ts";
 
 const identity: VpsIdentity = {
   runtime: "vps",
@@ -11,7 +13,6 @@ const identity: VpsIdentity = {
   sourceArchiveSha256: "b".repeat(64),
   immutableTreeSha256: "c".repeat(64),
 };
-import { metricsFixture, boundedRows } from "./vps-metrics-fixture.ts";
 
 const start = 1_800_000_000_000;
 const entry = (name: string, at: number, extra: Record<string, unknown> = {}): string =>
@@ -162,4 +163,20 @@ test("VPS metrics: actual journal suppression notice refuses coverage while appl
   const ordinary = await sampleRaw(JSON.stringify({ ...row, MESSAGE: '[ai.ubq.fi] diagnostic {"suppressed":false,"dropped":0,"rate_limit_wait_ms":0}' }));
   assert.equal(ordinary.coverage, "complete");
   assert.equal(ordinary.requestCount, 0);
+});
+
+test("VPS metrics: the bridge-loaded journal metrics graph never imports a Bun-only specifier", async () => {
+  const seen = new Set<string>();
+  const visit = async (url: URL): Promise<void> => {
+    if (seen.has(url.href)) return;
+    seen.add(url.href);
+    const source = await readFile(url, "utf8");
+    for (const [, specifier] of source.matchAll(/^(?:import|export)\b[^;]*?\bfrom\s+"([^"]+)"/gm)) {
+      assert.equal(specifier.startsWith("bun:"), false, `${url.pathname} imports ${specifier}`);
+      if (specifier.startsWith(".")) await visit(new URL(specifier, url));
+    }
+  };
+  await visit(new URL("../vps-release-metrics.ts", import.meta.url));
+  assert.ok([...seen].some((href) => href.endsWith("/ops/vps-metrics-join.ts")));
+  assert.ok([...seen].some((href) => href.endsWith("/ops/vps-journal-reader.ts")));
 });

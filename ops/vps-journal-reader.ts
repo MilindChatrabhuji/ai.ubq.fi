@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import {
   VpsQueryBudgetError,
   VPS_METRICS_MAX_BYTES,
@@ -104,14 +105,56 @@ export const runVpsJournalCommand: VpsBoundedJournalCommand = (args, limits, cwd
     args[4] !== "--no-pager"
   )
     throw new Error("VPS journal command refused");
-  const child = new Deno.Command("journalctl", {
-    args: [...args],
-    cwd,
-    clearEnv: true,
-    env: { PATH: "/usr/bin:/bin" },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "null",
-  }).spawn();
-  return readVpsJournalProcess(child, limits);
+  // node:child_process keeps this port loadable and runnable under Bun and the Deno bridge alike.
+  const child = spawn("/usr/bin/journalctl", [...args], { cwd, env: { PATH: "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "ignore"] });
+  const status = new Promise<{ success: boolean }>((resolve) => {
+    child.once("error", () => {
+      resolve({ success: false });
+    });
+    child.once("close", (code, signal) => {
+      resolve({ success: code === 0 && signal === null });
+    });
+  });
+  const pipe = child.stdout;
+  // A failed spawn ends the body; the settled status then refuses it as unavailable.
+  const stdout = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const end = () => {
+        try {
+          controller.close();
+        } catch {
+          /* already settled */
+        }
+      };
+      pipe.on("data", (chunk: Buffer) => {
+        controller.enqueue(new Uint8Array(chunk));
+        if ((controller.desiredSize ?? 0) <= 0) pipe.pause();
+      });
+      pipe.once("end", end);
+      pipe.once("error", (error) => {
+        try {
+          controller.error(error);
+        } catch {
+          /* already settled */
+        }
+      });
+      child.once("error", end);
+    },
+    pull() {
+      pipe.resume();
+    },
+    cancel() {
+      pipe.destroy();
+    },
+  });
+  return readVpsJournalProcess(
+    {
+      stdout,
+      status,
+      kill: (signal) => {
+        child.kill(signal);
+      },
+    },
+    limits
+  );
 };

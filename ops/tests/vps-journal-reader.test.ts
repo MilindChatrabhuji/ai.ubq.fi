@@ -1,8 +1,9 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createVpsJournalReader, readVpsJournalProcess, runVpsJournalCommand, type VpsJournalProcess } from "../vps-journal-reader.ts";
 const fixtureRoot = new URL(".", import.meta.url).pathname;
 const limits = () => ({ deadline: Date.now() + 1000, maxBytes: 100, maxEntries: 2 });
-Deno.test("VPS journal reader: fixed unit slices and caller output bounds reach the actual command port", async () => {
+test("VPS journal reader: fixed unit slices and caller output bounds reach the actual command port", async () => {
   const calls: unknown[] = [];
   const reader = createVpsJournalReader(
     (args, bound, cwd) => {
@@ -18,7 +19,7 @@ Deno.test("VPS journal reader: fixed unit slices and caller output bounds reach 
   assert.throws(() => reader.read(1000, 31001, bound), /range/);
   assert.throws(() => runVpsJournalCommand(["--unit=another.service"], bound, "/tmp"), /refused/);
 });
-Deno.test("VPS journal output: complete result, byte overflow and row overflow settle their owned child", async () => {
+test("VPS journal output: complete result, byte overflow and row overflow settle their owned child", async () => {
   for (const [text, bytes, entries, valid] of [
     ["{}\n", 20, 1, true],
     ["{}\n{}\n", 3, 2, false],
@@ -45,7 +46,7 @@ Deno.test("VPS journal output: complete result, byte overflow and row overflow s
     }
   }
 });
-Deno.test("VPS journal output: a silent owned child is cancelled and settled at the caller deadline", async () => {
+test("VPS journal output: a silent owned child is cancelled and settled at the caller deadline", async () => {
   let settle!: (result: { success: boolean }) => void;
   let close!: () => void;
   const signals: string[] = [];
@@ -68,4 +69,11 @@ Deno.test("VPS journal output: a silent owned child is cancelled and settled at 
   };
   await assert.rejects(() => readVpsJournalProcess(child, { ...limits(), deadline: Date.now() + 30 }), /budget/);
   assert.ok(signals.includes("SIGTERM"));
+});
+test("VPS journal command: the actual Bun child-process port settles a failed spawn as unavailable", async () => {
+  const missingRoot = new URL("../../.cleanup-evidence/vps-journal-missing-root/", import.meta.url).pathname;
+  await assert.rejects(
+    () => runVpsJournalCommand(["--unit=ai-ubq-fi.service", "--since=@1", "--until=@31", "--output=json", "--no-pager"], limits(), missingRoot),
+    /VPS journal command unavailable/
+  );
 });
