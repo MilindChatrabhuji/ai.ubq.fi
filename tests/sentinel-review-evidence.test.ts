@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "bun:test";
 
 import backlog from "../docs/sentinel-review-backlog.md" with { type: "text" };
 import evidence from "../docs/sentinel-review-evidence/2ab2b39b61e6ae05584349e5a92d9275db1218c2-backlog.txt" with {
@@ -14,7 +15,7 @@ const markdownRows = (source: string): string[][] =>
     .filter((line) => line.startsWith("| `") && line.endsWith("|"))
     .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()));
 
-Deno.test("migrated Sentinel review evidence keeps exact review identities", () => {
+test("migrated Sentinel review evidence keeps exact review identities", () => {
   const reviewTableStart = evidence.indexOf("| Fingerprint                                                        | Reviewed head SHA");
   assert.ok(reviewTableStart >= 0, "the evidence archive must contain its review identity table");
   const reviewTableEnd = evidence.indexOf("\n- PR #226", reviewTableStart);
@@ -47,7 +48,7 @@ Deno.test("migrated Sentinel review evidence keeps exact review identities", () 
   );
 });
 
-Deno.test("canonical Sentinel backlog records a full reviewed base for every row", () => {
+test("canonical Sentinel backlog records a full reviewed base for every row", () => {
   const rows = markdownRows(backlog);
   assert.ok(rows.length > 0, "the canonical backlog must not be empty");
   const header = backlog.split("\n").find((line) => line.startsWith("| Fingerprint"));
