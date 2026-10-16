@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "bun:test";
 
 import d465107dLocalText from "../docs/sentinel-review-d465107d-local.json" with { type: "text" };
 import backlogText from "../docs/sentinel-review-backlog.md" with { type: "text" };
@@ -70,7 +71,7 @@ const archives = [
   pr250LocalText,
 ];
 
-Deno.test("Sentinel backlog retains the complete archived finding text", () => {
+test("Sentinel backlog retains the complete archived finding text", () => {
   const backlog = backlogFindings(backlogText);
   const archived = new Map<string, string>();
   for (const archive of archives) {
