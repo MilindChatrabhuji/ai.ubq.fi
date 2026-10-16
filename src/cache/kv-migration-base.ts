@@ -269,6 +269,18 @@ const boundedMigrationExpireIn = (anchorMs: unknown, retentionMs: number, nowMs:
   return expiresAtMs - nowMs;
 };
 
+const apiKeyUsageV3RequestWindowResetAtMs = (key: KvKey): number | null => {
+  const offset = API_KEY_USAGE_V3_REQUEST_PREFIX.length;
+  if (key.length !== offset + 4) return null;
+  const policyVersion = key[offset + 1];
+  const windowStartMs = key[offset + 2];
+  if (typeof policyVersion !== "string" || typeof windowStartMs !== "number" || !Number.isSafeInteger(windowStartMs) || windowStartMs < 0) return null;
+  const windowMs = Number(policyVersion.slice("v3:".length));
+  if (!policyVersion.startsWith("v3:") || !Number.isSafeInteger(windowMs) || windowMs <= 0 || policyVersion !== `v3:${windowMs}`) return null;
+  const windowResetAtMs = windowStartMs + windowMs;
+  return Number.isSafeInteger(windowResetAtMs) ? windowResetAtMs : null;
+};
+
 /**
  * Profile NDJSON does not carry the source KV expiry metadata.  These rows are
  * nevertheless bounded state, so restore the same anchored retention instead
@@ -280,10 +292,10 @@ const migrationExpireIn = (key: KvKey, value: unknown, nowMs: number): Migration
     return boundedMigrationExpireIn(record?.window_reset_at_ms, API_KEY_USAGE_V3_RETENTION_MS, nowMs);
   }
   if (keyStartsWith(key, API_KEY_USAGE_V3_REQUEST_PREFIX)) {
-    // V3 request rows predate the reset timestamp field.  Their admission
-    // timestamp still gives them a bounded retention window rather than a
-    // permanent lifetime when the source aggregate is not in this stream.
-    return boundedMigrationExpireIn(record?.window_reset_at_ms ?? record?.reserved_at_ms, API_KEY_USAGE_V3_RETENTION_MS, nowMs);
+    // V3 request rows predate the reset timestamp field. Reconstruct the
+    // matching aggregate window from the request key, as the source writer
+    // anchors both rows to that window rather than to admission time.
+    return boundedMigrationExpireIn(apiKeyUsageV3RequestWindowResetAtMs(key), API_KEY_USAGE_V3_RETENTION_MS, nowMs);
   }
   if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "window"])) {
     return boundedMigrationExpireIn(record?.window_reset_at_ms, PAID_FALLBACK_REQUEST_LOG_RETENTION_MS, nowMs);

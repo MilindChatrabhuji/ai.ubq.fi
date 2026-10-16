@@ -216,6 +216,24 @@ test("KV migration restores bounded TTLs and skips expired usage rows", async ()
   assert.equal(store.has(keyToString(expiredKey)), false);
 });
 
+test("KV migration anchors V3 request TTLs to their usage window", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const windowMs = 30 * 24 * 60 * 60_000;
+  const windowStartMs = now - 8 * 24 * 60 * 60_000;
+  const requestKey = ["uos_ai", "api_key_usage", "v3", "request", "ttl-key", `v3:${windowMs}`, windowStartMs, "request"] as const;
+  let importedTtl: number | undefined;
+
+  const result = await importKvMigrationLines(
+    makeKvStub(store, { onSet: (_key, options) => (importedTtl = options?.expireIn) }),
+    [entryLine(requestKey, { reserved_at_ms: windowStartMs })],
+    { profile: "prod", includeCache: false, includeLegacy: false, overwrite: true, dryRun: false }
+  );
+
+  assert.equal(result.imported, 1);
+  assert.ok(importedTtl !== undefined && importedTtl > API_KEY_USAGE_V3_RETENTION_MS);
+});
+
 test("KV migration reconciles an imported Kernel quota reservation aggregate", async () => {
   const store = new Map<string, unknown>();
   const now = Date.now();
