@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
-import d465107dLocalText from "../docs/sentinel-review-d465107d-local.json" with { type: "text" };
+import d465107dLocal from "../docs/sentinel-review-d465107d-local.json";
 import backlogText from "../docs/sentinel-review-backlog.md" with { type: "text" };
-import pr244GithubText from "../docs/sentinel-review-pr244-github.json" with { type: "text" };
-import pr246GithubText from "../docs/sentinel-review-pr246-github.json" with { type: "text" };
-import pr247GithubText from "../docs/sentinel-review-pr247-github.json" with { type: "text" };
-import pr247LocalText from "../docs/sentinel-review-pr247-local.json" with { type: "text" };
-import pr248GithubText from "../docs/sentinel-review-pr248-github.json" with { type: "text" };
-import pr249GithubText from "../docs/sentinel-review-pr249-github.json" with { type: "text" };
-import pr250GithubText from "../docs/sentinel-review-pr250-github.json" with { type: "text" };
-import pr250LocalText from "../docs/sentinel-review-pr250-local.json" with { type: "text" };
+import pr244Github from "../docs/sentinel-review-pr244-github.json";
+import pr246Github from "../docs/sentinel-review-pr246-github.json";
+import pr247Github from "../docs/sentinel-review-pr247-github.json";
+import pr247Local from "../docs/sentinel-review-pr247-local.json";
+import pr248Github from "../docs/sentinel-review-pr248-github.json";
+import pr249Github from "../docs/sentinel-review-pr249-github.json";
+import pr250Github from "../docs/sentinel-review-pr250-github.json";
+import pr250Local from "../docs/sentinel-review-pr250-local.json";
 
 type ReviewFinding = Readonly<{
   fingerprint: string;
@@ -20,8 +20,7 @@ type ReviewFinding = Readonly<{
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
-const archivedFindings = (text: string): ReviewFinding[] => {
-  const value: unknown = JSON.parse(text);
+const archivedFindings = (value: unknown): ReviewFinding[] => {
   if (!isRecord(value) || !isRecord(value.report) || !Array.isArray(value.report.findings)) {
     throw new Error("Sentinel review archive has no findings array");
   }
@@ -60,15 +59,15 @@ const backlogFindings = (markdown: string): ReadonlyMap<string, string> => {
 const normalizedFinding = (finding: ReviewFinding): string => `${finding.title} — ${finding.body}`.trim().replace(/\s+/gu, " ");
 
 const archives = [
-  d465107dLocalText,
-  pr244GithubText,
-  pr246GithubText,
-  pr247GithubText,
-  pr247LocalText,
-  pr248GithubText,
-  pr249GithubText,
-  pr250GithubText,
-  pr250LocalText,
+  d465107dLocal,
+  pr244Github,
+  pr246Github,
+  pr247Github,
+  pr247Local,
+  pr248Github,
+  pr249Github,
+  pr250Github,
+  pr250Local,
 ];
 
 test("Sentinel backlog retains the complete archived finding text", () => {
