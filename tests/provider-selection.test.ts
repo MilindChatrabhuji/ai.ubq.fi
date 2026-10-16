@@ -309,6 +309,10 @@ test("an in-flight selection read cannot replace a cache primed by an admin save
     assert.equal(saved.status, 200);
     const savedBody = (await saved.json()) as { provider_ids: string[]; updated_at_ms: number };
     assert.deepEqual(savedBody.provider_ids, ["cerebras"]);
+    assert.deepEqual(await loadProviderSelectionCached(), {
+      provider_ids: ["cerebras"],
+      updated_at_ms: savedBody.updated_at_ms,
+    });
 
     kv.releaseRead.resolve();
     assert.deepEqual(await inFlightRead, { provider_ids: ["openlux"], updated_at_ms: 1_700_000_000_000 });
