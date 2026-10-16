@@ -1018,10 +1018,11 @@ Two consequences are recorded here so they are not re-derived:
 - **The mapping is safe to keep.** Codex parses the incomplete terminal natively, surfaces the reason string verbatim,
   and fails the turn. A truncated generation therefore moves from "accepted as success with exit 0" to "reported with
   the reason and exit 1", which is the intended trade rather than a regression.
-- **The mapping is already opt-in per provider, so no filter is needed.** `deepSeekFinishDisposition` is the only
-  constructor of `response.incomplete` in the repository, and it is consumed only by the DeepSeek Responses translator.
-  Surplus, OpenLux, and the Codex upstream route through their own paths and cannot inherit it. Adding a provider
-  inherits nothing; a provider that should use it needs its own deliberate mapping.
+- **The mapping is already opt-in per provider, so no filter is needed.** `deepSeekFinishDisposition` reaches a route
+  only through a `ChatOnlyResponsesProfile` that names it; the per-upstream truncation entry below lists the sites that
+  construct `response.incomplete` and the routes that relay it, so this mapping is not the only constructor (corrected
+  2026-10-16, #606). Surplus, OpenLux, OpenRouter, and the Codex upstream route through their own paths and cannot
+  inherit it. Adding a provider inherits nothing; a provider that should use it needs its own deliberate mapping.
 
 Reversal risk: removing the mapping restores the silent truncation, and reading a non-completed terminal as a transport
 failure would discard a partial answer the client can still use. Do not add a per-provider allow/deny list for this
@@ -1322,13 +1323,43 @@ underpowered to exclude a small effort effect.
 
 ## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
 
+> **Corrected on 2026-10-16 (#606): construction and relaying are separate, and the untested surface is not empty.** As
+> first written, this entry said `response.incomplete` "is built at exactly one place, `src/deepseek/responses.ts`",
+> that "No other provider route can emit it", and of Surplus and OpenLux that "neither can currently emit the
+> incompletion at all, so the untested surface is empty". The gateway constructs the terminal in three translations and
+> relays it on further routes, Surplus, OpenLux and OpenRouter included, so those two paragraphs are rewritten below.
+> The provider table, the Cerebras reproduction and the 2026-09-22 recheck are unchanged.
+
 The terminal-truthfulness work changes what a truncated generation reports. Whether that is safe per provider was
 checked provider by provider rather than assumed from one implementation, because the mapping lives inside a route.
 
-**Only one construction site exists.** `response.incomplete` is built at exactly one place, `src/deepseek/responses.ts`
-(the DeepSeek translator), and is reachable only from `handleDeepSeekChatCompletions` and `handleDeepSeekResponses`. No
-other provider route can emit it. A per-provider allow/deny filter would therefore be solving a leak that does not
-exist; a provider that should use the mapping needs its own deliberate implementation.
+**Where the incompletion is constructed.** The gateway builds a `response.incomplete` terminal itself in three
+translations, each mapping one upstream stop-reason vocabulary on purpose:
+
+- the shared Chat-only Responses translation: `deepSeekTerminalEnvelope` in `src/deepseek/responses-payload.ts`, used by
+  the buffered payload and by the stream translator in `src/deepseek/responses-stream.ts`. `deepSeekFinishDisposition`
+  maps `length` to `incomplete_details.reason: "max_output_tokens"` and `content_filter` to `"content_filter"`, and the
+  DeepSeek, LithosAI and Cerebras profiles in `src/deepseek/responses.ts` all reuse it, so a Cerebras truncation that
+  carries content becomes `response.incomplete` while the reasoning-only case below still fails closed;
+- the Claude Chat writer, `createClaudeResponsesWriter` in `src/provider/anthropic-response-wire.ts`, which maps the
+  same two Chat reasons for Surplus's native Claude path;
+- the Anthropic Messages translation in `src/provider/anthropic-responses.ts`, which maps `max_tokens` to
+  `"max_output_tokens"` for OpenLux's native Claude path and for the Claude Code route.
+
+**Where it is relayed or mapped.** `relayResponsesStream` in `src/provider/stream-relay.ts` emits the translator's
+terminal and settles the request as `response.incomplete` when the translator's terminal kind is incomplete; the
+streamed DeepSeek and LithosAI routes (`src/deepseek/handlers.ts`, `src/provider/lithos-streams.ts`) both use it. The
+buffered DeepSeek, LithosAI and Cerebras Responses paths map the payload status the same way through
+`deepSeekTerminalTypeForPayload`. The native Responses paths - Surplus, OpenLux and OpenRouter `/v1/responses` and the
+Codex subscription - pass an upstream-authored `response.incomplete` through as the terminal. OpenRouter's route,
+`handleOpenRouterResponses` in `src/provider/openrouter-handlers.ts`, is reached directly and as the third hop of the
+DeepSeek waterfall. It streams through `proxyResponsesStream` (`src/provider/openrouter-streams.ts`), which forwards
+every upstream event, the terminal included, and its buffered path returns the upstream payload unchanged, including a
+`status: "incomplete"`.
+
+A per-provider allow/deny filter would still be solving a leak that does not exist: every construction is a deliberate
+per-route mapping, and every relay forwards a terminal that a translator or the upstream already chose. A provider that
+should use the mapping still needs its own deliberate wiring.
 
 | Provider | Reachable | Truncation behaviour                                                                         |
 | -------- | --------- | -------------------------------------------------------------------------------------------- |
@@ -1353,9 +1384,21 @@ Reversal risk: treating reasoning as payload, or reporting a reasoning-only trun
 restore the silent truncation on both routes.
 
 **Residual gap, stated rather than closed.** Surplus and OpenLux are blocked on external account state, so their
-truncation behaviour is unverified. The gap is narrower than "unknown": neither can currently emit the incompletion at
-all, so the untested surface is empty until either is deliberately wired in. Probe both before trusting either, and
-recheck the blockers before treating them as permanent.
+truncation behaviour is unverified, and the untested surface is not empty. Each provider has two paths, and both can
+deliver the incompletion:
+
+- **Native Claude paths construct it.** Surplus maps Claude Chat `length` and `content_filter` through
+  `createClaudeResponsesWriter`, and OpenLux maps Anthropic `max_tokens` through `src/provider/anthropic-responses.ts`.
+  Whether either upstream reports those stop reasons when it truncates is unmeasured, so neither mapping has been
+  exercised against a real truncation.
+- **Native Responses paths relay it.** Both pass the upstream's own `/v1/responses` terminal type through, so whether a
+  client sees `response.incomplete` on truncation depends on what that upstream sends, which is also unmeasured.
+
+OpenRouter is reachable, but its truncation behaviour is unmeasured too: its `/v1/responses` route relays the upstream's
+own terminal, and no probe has recorded what OpenRouter sends when a generation is cut off.
+
+Probe both paths on both blocked providers, and OpenRouter's `/v1/responses`, before trusting any of them, and recheck
+the blockers before treating them as permanent.
 
 **Recheck 2026-09-22, both blockers still hold.** Surplus answers a probe on a Surplus-routed id with HTTP 402
 `Insufficient USDC balance: need ~$1.0000, have $0.9895` (request id `01M33CFBC7AHTBXM365KNCM28D`), and the terminal
