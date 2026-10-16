@@ -315,15 +315,20 @@ the output-validity rules below.
 
 Decision rule for the terminal event, evaluated in order:
 
-| Condition                                                          | Terminal                 | Rationale                                                                                                                                                                                        |
-| ------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Stop reason `length`                                               | incomplete               | G1 owns this mapping even when other output items were emitted.                                                                                                                                  |
-| Stop reason `content_filter`                                       | incomplete               | G1 preserves the filtering outcome instead of allowing output shape to relabel it.                                                                                                               |
-| Absent or unrecognized stop reason                                 | Fail closed              | G1 treats an unknown reason as an adapter error, never as a normal stop.                                                                                                                         |
-| Stop reason `tool_calls`, with at least one tool call              | completed                | The turn continues.                                                                                                                                                                              |
-| Stop reason `stop`, with a non-empty assistant message             | completed                | The model produced an answer.                                                                                                                                                                    |
-| Stop reason `stop`, only reasoning, no message or tool call        | **unspecified — see Q2** | This is the interesting case: the model spent budget thinking and then stopped. Whether that is a completion or a degenerate stop is a specification question, not an implementation preference. |
-| Stop reason `stop`, with zero output items                         | Not completed            | See G3.                                                                                                                                                                                          |
+| Condition                                                   | Terminal                 | Rationale                                                                                                                                                                                        |
+| ----------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Stop reason `length`                                        | incomplete               | G1 owns this mapping even when other output items were emitted.                                                                                                                                  |
+| Stop reason `content_filter`                                | incomplete               | G1 preserves the filtering outcome instead of allowing output shape to relabel it.                                                                                                               |
+| Absent or unrecognized stop reason                          | Fail closed              | G1 treats an unknown reason as an adapter error, never as a normal stop.                                                                                                                         |
+| Stop reason `tool_calls`, with at least one tool call       | completed                | The turn continues.                                                                                                                                                                              |
+| Stop reason `stop`, with a non-empty assistant message      | completed                | The model produced an answer.                                                                                                                                                                    |
+| Stop reason `stop`, only reasoning, no message or tool call | **unspecified — see Q2** | This is the interesting case: the model spent budget thinking and then stopped. Whether that is a completion or a degenerate stop is a specification question, not an implementation preference. |
+| Stop reason `stop`, with zero output items                  | Not completed            | See G3.                                                                                                                                                                                          |
+
+Reasoning-only output remains in the G1/G2 decision path: G1 controls a `length`
+stop, while G2 leaves a `stop` reason to Q2. G3 never applies because the reasoning
+item counts as an output item; the Cerebras reasoning-only policy therefore remains
+fail-closed rather than being relabeled as an empty completion.
 
 Signal that triggers it: the presence and kind of terminal output items together with the stop reason from G1.
 
