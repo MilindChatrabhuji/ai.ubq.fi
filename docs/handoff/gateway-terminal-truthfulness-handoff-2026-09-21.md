@@ -349,9 +349,9 @@ The gateway already fails closed when a stream reached a completed terminal with
 validity check at its own terminal seam, and to classify the outcome with the same failure kind the rest of the gateway
 already uses, so telemetry stays comparable across providers.
 
-Signal that triggers it: after G1 and G2 have handled the stop reason, a stream that is about to emit its terminal event
-with zero output items total. This is narrower than having no answer-bearing output: a reasoning item is still an output
-item, so reasoning-only outcomes remain with G1/G2 rather than triggering G3.
+Signal that triggers it: only after G1 and G2 have handled the stop reason, when a stream is about to emit its terminal
+event with exactly zero output items. Do not trigger G3 merely because answer-bearing output is empty: a reasoning item
+is still an output item, so reasoning-only outcomes remain with G1/G2 rather than triggering G3.
 
 Failure mode prevented: the gateway reports success for a response that gives the client nothing to act on.
 
