@@ -4,13 +4,13 @@ import { readBoundedResponseBody } from "../bounded-response-body.ts";
 import { getString, isRecord } from "../utils.ts";
 import {
   CODEX_HALF_OPEN_LEASE_MS,
-  CodexAccountRoutingState,
-  CodexProbeCircuit,
-  CodexQuotaBlockSource,
-  CodexQuotaClass,
-  CodexQuotaClassBlock,
-  CodexRoutingSlot,
-  RoutingAccount,
+  type CodexAccountRoutingState,
+  type CodexProbeCircuit,
+  type CodexQuotaBlockSource,
+  type CodexQuotaClass,
+  type CodexQuotaClassBlock,
+  type CodexRoutingSlot,
+  type RoutingAccount,
 } from "./routing-state.ts";
 import {
   parseFinitePercent,

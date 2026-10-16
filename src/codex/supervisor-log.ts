@@ -9,6 +9,8 @@
  * are never returned, and no Codex file, database, or session is written.
  */
 
+import { open, realpath } from "node:fs/promises";
+
 const MAX_TAIL_BYTES = 256 * 1024;
 const MAX_EVENTS = 200;
 
@@ -148,26 +150,25 @@ export const readSupervisorRolloutTail = async (input: { codexHome: string | nul
   const lexical = resolveSupervisorRolloutPath(input.codexHome, input.threadId, input.rolloutPath);
   if (!lexical) return [];
   try {
-    const resolved = await Deno.realPath(lexical);
+    const resolved = await realpath(lexical);
     if (!resolveSupervisorRolloutPath(input.codexHome, input.threadId, resolved)) return [];
-    const file = await Deno.open(resolved, { read: true });
+    const file = await open(resolved, "r");
     try {
       const size = (await file.stat()).size;
       const start = Math.max(0, size - MAX_TAIL_BYTES);
-      await file.seek(start, Deno.SeekMode.Start);
       const buffer = new Uint8Array(size - start);
       let read = 0;
       while (read < buffer.length) {
-        const chunk = await file.read(buffer.subarray(read));
-        if (chunk === null) break;
-        read += chunk;
+        const { bytesRead } = await file.read(buffer, read, buffer.length - read, start + read);
+        if (bytesRead === 0) break;
+        read += bytesRead;
       }
       const text = new TextDecoder().decode(buffer.subarray(0, read));
       const newline = text.indexOf("\n");
       const complete = start > 0 && newline >= 0 ? text.slice(newline + 1) : text;
       return parseSupervisorRolloutTail(complete);
     } finally {
-      file.close();
+      await file.close();
     }
   } catch {
     return [];

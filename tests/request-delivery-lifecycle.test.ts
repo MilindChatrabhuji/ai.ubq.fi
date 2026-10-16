@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createRequestDeliveryLifecycle } from "../src/handler/serve-handler.ts";
 
@@ -11,7 +12,7 @@ const deferred = () => {
   return { promise, reject, resolve };
 };
 
-Deno.test("request delivery lifecycle switches from request aborts to server delivery completion", async () => {
+test("request delivery lifecycle switches from request aborts to server delivery completion", async () => {
   const beforeHandoffRequest = new AbortController();
   const beforeHandoffCompletion = deferred();
   const beforeHandoff = createRequestDeliveryLifecycle(beforeHandoffRequest.signal, beforeHandoffCompletion.promise);

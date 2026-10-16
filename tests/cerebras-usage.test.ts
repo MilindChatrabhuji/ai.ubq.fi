@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { normalizeCerebrasChatCompletion } from "../src/provider/cerebras.ts";
@@ -17,7 +18,7 @@ const usageOf = (usage: unknown): unknown => {
   return result.value.usage;
 };
 
-Deno.test("cerebras: relays the documented cache-read and reasoning counters under their official names", () => {
+test("cerebras: relays the documented cache-read and reasoning counters under their official names", () => {
   // Shaped like a real gpt-oss-120b response: the provider nests the counters
   // beside prediction bookkeeping this gateway does not report.
   assert.deepEqual(
@@ -38,7 +39,7 @@ Deno.test("cerebras: relays the documented cache-read and reasoning counters und
   );
 });
 
-Deno.test("cerebras: an unreported counter stays absent instead of becoming a measured zero", () => {
+test("cerebras: an unreported counter stays absent instead of becoming a measured zero", () => {
   assert.deepEqual(usageOf({ prompt_tokens: 71, completion_tokens: 31, total_tokens: 102 }), {
     prompt_tokens: 71,
     completion_tokens: 31,
@@ -53,7 +54,7 @@ Deno.test("cerebras: an unreported counter stays absent instead of becoming a me
   });
 });
 
-Deno.test("cerebras: a counter larger than the total it is a subset of is dropped as unreadable", () => {
+test("cerebras: a counter larger than the total it is a subset of is dropped as unreadable", () => {
   assert.deepEqual(usageOf({ prompt_tokens: 71, completion_tokens: 31, total_tokens: 102, prompt_tokens_details: { cached_tokens: 72 } }), {
     prompt_tokens: 71,
     completion_tokens: 31,

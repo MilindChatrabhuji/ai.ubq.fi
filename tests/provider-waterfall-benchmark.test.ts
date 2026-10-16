@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 // Focused hermetic tests for the DeepSeek V4.1 Flash provider waterfall
 // benchmark: percentile derivation, cost math, score normalization and the
 // chat projection audit. No network, no corpus content is modified.
@@ -11,7 +12,7 @@ import type { ProviderMetrics } from "../benchmarks/provider-waterfall/metrics.t
 import type { CorpusEntry } from "../benchmarks/provider-waterfall/types.ts";
 import type { AttemptRecord } from "../benchmarks/provider-waterfall/types.ts";
 
-Deno.test("percentile interpolates between order statistics", () => {
+test("percentile interpolates between order statistics", () => {
   assert.equal(percentile([], 0.5), null);
   assert.equal(percentile([5], 0.5), 5);
   assert.equal(percentile([1, 2, 3, 4], 0.5), 2.5);
@@ -20,7 +21,7 @@ Deno.test("percentile interpolates between order statistics", () => {
   assert.equal(percentile([10, 0, 20], 0.5), 10);
 });
 
-Deno.test("DeepSeek expected cost uses the UTC peak/off-peak window", () => {
+test("DeepSeek expected cost uses the UTC peak/off-peak window", () => {
   // Tuesday 02:00 UTC is a peak hour; Sunday 02:00 UTC is off-peak.
   const peakMs = Date.UTC(2026, 9, 6, 2, 0, 0);
   const offPeakMs = Date.UTC(2026, 9, 11, 2, 0, 0);
@@ -34,7 +35,7 @@ Deno.test("DeepSeek expected cost uses the UTC peak/off-peak window", () => {
   assert.ok(Math.abs(offPeak.total_micro_usd - 750_000) <= 1);
 });
 
-Deno.test("Surplus expected cost follows the catalogue USD per token rates", () => {
+test("Surplus expected cost follows the catalogue USD per token rates", () => {
   const usage = { input_tokens: 1_000_000, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1_000_000 };
   const cost = expectedCostMicroUsd("surplus", usage, Date.now());
   assert.ok(cost);
@@ -84,7 +85,7 @@ const metric = (provider: string, overrides: Partial<ProviderMetrics>): Provider
     ...overrides,
   }) as ProviderMetrics;
 
-Deno.test("score normalization ranks the cheaper, faster, more reliable provider first", () => {
+test("score normalization ranks the cheaper, faster, more reliable provider first", () => {
   const metrics = [
     metric("surplus", { median_e2e_ms: 900, p95_e2e_ms: 950, median_tps: 120 }),
     metric("openlux", { median_e2e_ms: 2_000, p95_e2e_ms: 2_400, median_tps: 60 }),
@@ -121,7 +122,7 @@ Deno.test("score normalization ranks the cheaper, faster, more reliable provider
   assert.ok(rows[0].overall_score !== null && rows[1].overall_score !== null && rows[0].overall_score > rows[1].overall_score);
 });
 
-Deno.test("chat projection preserves ordered text and flattens namespaced tools", () => {
+test("chat projection preserves ordered text and flattens namespaced tools", () => {
   const entry: CorpusEntry = {
     id: "t",
     cls: "small",
@@ -166,7 +167,7 @@ Deno.test("chat projection preserves ordered text and flattens namespaced tools"
   assert.deepEqual(names, ["f", "ns__g"]);
 });
 
-Deno.test("attempt records never claim success without a terminal observation", () => {
+test("attempt records never claim success without a terminal observation", () => {
   const record: AttemptRecord = {
     run_id: "r",
     provider: "lithos",

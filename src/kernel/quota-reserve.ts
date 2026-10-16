@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Kernel quota v2 reservation entry points, split out of src/kernel_quota_v2.ts.
 
 import { API_KEY_NO_USAGE_LIMIT } from "../api-keys.ts";
@@ -6,15 +7,15 @@ import { getKv } from "../kv.ts";
 import {
   KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY,
   KERNEL_QUOTA_RESERVATION_LEASE_MS,
-  KernelDefaultWindowCutoverV2,
-  KernelDefaults,
-  KernelQuotaEffectivePolicy,
-  KernelQuotaEffectiveWindow,
-  KernelQuotaPolicyV2,
-  KernelQuotaReservationDecision,
-  KernelQuotaReservationRowV2,
-  KernelQuotaScope,
-  KernelQuotaWindowV2,
+  type KernelDefaultWindowCutoverV2,
+  type KernelDefaults,
+  type KernelQuotaEffectivePolicy,
+  type KernelQuotaEffectiveWindow,
+  type KernelQuotaPolicyV2,
+  type KernelQuotaReservationDecision,
+  type KernelQuotaReservationRowV2,
+  type KernelQuotaScope,
+  type KernelQuotaWindowV2,
   MAX_KV_RETRIES,
   isExpired,
   kernelPolicyKeys,
@@ -47,7 +48,7 @@ const quotaExceeded = (window: KernelQuotaWindowV2, limit: number): KernelQuotaR
 };
 
 type KernelQuotaReserveOptions = Readonly<{
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   nowMs?: number;
   renewalIntervalMs?: number;
   expectedRepoPolicy?: "present" | "absent";
@@ -57,11 +58,11 @@ type KernelQuotaReserveOptions = Readonly<{
 /** Every entry one reservation attempt compares against. */
 type KernelQuotaReservationEntries = Readonly<{
   defaults: KernelDefaults;
-  policyEntry: Deno.KvEntryMaybe<KernelQuotaPolicyV2>;
-  windowEntry: Deno.KvEntryMaybe<KernelQuotaWindowV2>;
-  repoGuardEntry: Deno.KvEntryMaybe<KernelQuotaPolicyV2> | null;
-  defaultCutoverEntry: Deno.KvEntryMaybe<KernelDefaultWindowCutoverV2>;
-  windowKey: Deno.KvKey;
+  policyEntry: KvEntryMaybe<KernelQuotaPolicyV2>;
+  windowEntry: KvEntryMaybe<KernelQuotaWindowV2>;
+  repoGuardEntry: KvEntryMaybe<KernelQuotaPolicyV2> | null;
+  defaultCutoverEntry: KvEntryMaybe<KernelDefaultWindowCutoverV2>;
+  windowKey: KvKey;
 }>;
 
 /** The loaded entries together with the policy and window this attempt reserves against. */
@@ -81,8 +82,8 @@ type KernelQuotaCapacityOutcome =
 
 /** Loads every entry one reservation attempt compares against. */
 const loadKernelQuotaReservationEntries = async (
-  kv: Deno.Kv,
-  keys: Readonly<{ policyKey: Deno.KvKey; windowKey: Deno.KvKey }>,
+  kv: Kv,
+  keys: Readonly<{ policyKey: KvKey; windowKey: KvKey }>,
   owner: string,
   options: KernelQuotaReserveOptions
 ): Promise<KernelQuotaReservationEntries> => {
@@ -103,7 +104,7 @@ const loadKernelQuotaReservationEntries = async (
  * effective policy and resolved window when the request may reserve capacity.
  */
 const evaluateKernelQuotaEligibility = async (
-  kv: Deno.Kv,
+  kv: Kv,
   entries: KernelQuotaReservationEntries,
   scope: KernelQuotaScope,
   owner: string,
@@ -142,7 +143,7 @@ const evaluateKernelQuotaEligibility = async (
  * Returns "retry" once capacity was reclaimed, so the attempt is repeated.
  */
 const reclaimKernelQuotaCapacity = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -163,7 +164,7 @@ const reclaimKernelQuotaCapacity = async (
 };
 
 const commitKernelQuotaReservation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -238,7 +239,7 @@ const commitKernelQuotaReservation = async (
 };
 
 const attemptReserveKernelQuota = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -289,7 +290,7 @@ export const reserveKernelOrgUsageLimit = async (
   owner: string,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {}
+  options: Readonly<{ kv?: Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {}
 ): Promise<KernelQuotaReservationDecision> => await reserveLimit("org", owner, undefined, requestId, route, options);
 
 export const reserveEffectiveKernelUsageLimit = async (
@@ -297,7 +298,7 @@ export const reserveEffectiveKernelUsageLimit = async (
   repo: string,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {}
+  options: Readonly<{ kv?: Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {}
 ): Promise<KernelQuotaReservationDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
