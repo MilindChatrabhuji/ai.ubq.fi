@@ -18,7 +18,12 @@ const isIpv4Loopback = (hostname) => {
   const octets = hostname.split(".");
   if (octets.length !== 4) return false;
   const parsed = octets.map((octet) => Number(octet));
-  return parsed.every((octet, index) => Number.isInteger(octet) && octet >= 0 && octet <= 255 && String(octet) === octets[index]) && parsed[0] === 127;
+  return (
+    parsed.every(
+      (octet, index) =>
+        Number.isInteger(octet) && octet >= 0 && octet <= 255 && String(octet) === octets[index]
+    ) && parsed[0] === 127
+  );
 };
 
 export const isLocalDevelopmentOrigin = () => {
