@@ -1124,9 +1124,9 @@ test("openai: a switched-off DeepSeek provider is not dispatched on the Response
   }
 });
 
-Deno.test("openai: a switched-off OpenRouter provider does not refresh a cold catalogue", async () => {
-  const originalApiKey = Deno.env.get("OPENROUTER_API_KEY");
-  Deno.env.set("OPENROUTER_API_KEY", "openrouter-test-key");
+test("openai: a switched-off OpenRouter provider does not refresh a cold catalogue", async () => {
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "openrouter-test-key";
   resetOpenRouterModelsCacheForTest();
   let catalogueFetches = 0;
   setOpenRouterModelsFetchForTest(() => {
@@ -1150,8 +1150,8 @@ Deno.test("openai: a switched-off OpenRouter provider does not refresh a cold ca
   } finally {
     setOpenRouterModelsFetchForTest(null);
     resetOpenRouterModelsCacheForTest();
-    if (originalApiKey === undefined) Deno.env.delete("OPENROUTER_API_KEY");
-    else Deno.env.set("OPENROUTER_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
+    else process.env.OPENROUTER_API_KEY = originalApiKey;
   }
 });
 

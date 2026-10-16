@@ -57,6 +57,8 @@ export const openRouterUpstreamModelFor = (model: string): string | null => {
   return openRouterServableModelIds().includes(trimmed) ? trimmed : null;
 };
 
+const OPENROUTER_MODEL_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/;
+
 /**
  * The same resolution for a request that arrives before the catalogue cache
  * has warmed - for example the first request after a restart. A cold snapshot
@@ -68,8 +70,7 @@ export const openRouterUpstreamModelFor = (model: string): string | null => {
 export const resolveOpenRouterUpstreamModel = async (model: string): Promise<string | null> => {
   const resolved = openRouterUpstreamModelFor(model);
   const trimmed = model.trim();
-  const separator = trimmed.indexOf("/");
-  if (resolved !== null || openRouterModelsSnapshot() !== null || separator <= 0 || separator === trimmed.length - 1) return resolved;
+  if (resolved !== null || openRouterModelsSnapshot() !== null || !OPENROUTER_MODEL_ID_PATTERN.test(trimmed)) return resolved;
   if (readOpenRouterApiKey() === null) return null;
   await fetchOpenRouterModels().catch(() => null);
   return openRouterUpstreamModelFor(model);
