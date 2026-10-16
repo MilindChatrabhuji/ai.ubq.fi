@@ -1015,6 +1015,38 @@ test("a selected Codex subscription restricts which account may serve inference"
   }
 });
 
+test("reset election uses the selected exhausted cohort", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = Date.now();
+    const authPool: CodexAuthPoolState = { accounts: pool.accounts.map((account) => ({ ...account, updated_at_ms: now })), updated_at_ms: now };
+    await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
+    await seedSubscriptionSelection(kv, ["one"]);
+
+    const initial = await selectCodexRoutingAccountsStrong(authPool, authPool.accounts, now, "gpt-5-routing");
+    assert.equal(initial.kind, "eligible");
+    assert.equal(initial.accounts[0].auth.account_id, "one");
+    await markCodexQuotaBlocked(initial.accounts[0], httpDateQuotaResponse(now + 60_000), now);
+
+    const blocked = await selectCodexRoutingAccountsStrong(authPool, authPool.accounts, now + 1, "gpt-5-routing");
+    assert.equal(blocked.kind, "quota_blocked");
+    assert.equal(blocked.fullCohortExhausted, true);
+    assert.equal(blocked.blockedAccounts.length, 1);
+    const candidate = blocked.blockedAccounts.at(0);
+    if (!candidate) throw new Error("expected the selected blocked subscription");
+
+    const elected = await electCodexResetRecoveryAccount(candidate, blocked.activeSnapshot, candidate.quotaResetAtMs);
+    assert.ok(elected, "the reset election must use the same narrowed cohort as redemption");
+    assert.equal(elected.auth.account_id, "one");
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+    resetProviderSelectionCacheForTest();
+  }
+});
+
 test("a selection that names no configured subscription leaves no eligible Codex account", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Kv);
