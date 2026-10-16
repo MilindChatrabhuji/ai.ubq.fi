@@ -694,6 +694,22 @@ test("provider roster completion rerenders Models after normalizing its filter",
   assert.ok(modelsRender > filterReset, "the Models picker must rerender after the filter reset");
 });
 
+test("provider picker edits invalidate an in-flight roster refresh", () => {
+  assert.match(
+    adminScript,
+    /const markProviderSelectionEdited = \(\) => \{\s*providerSelectionLoadId \+= 1;\s*\};/
+  );
+  assert.match(adminScript, /const loadId = \+\+providerSelectionLoadId;[\s\S]*?if \(loadId !== providerSelectionLoadId\) return false;/);
+  const applyStart = adminScript.indexOf("const applyProvidersSelection = (mutate) => {");
+  const changeStart = adminScript.indexOf('providersList.addEventListener("change", (event) => {', applyStart);
+  const dropMissingStart = adminScript.indexOf('providersDropMissingBtn.addEventListener("click", () => {', changeStart);
+  assert.ok(applyStart >= 0 && changeStart > applyStart && dropMissingStart > changeStart, "provider picker handlers must stay discoverable");
+  const marker = /markProviderSelectionEdited\(\);/;
+  assert.match(adminScript.slice(applyStart, changeStart), marker);
+  assert.match(adminScript.slice(changeStart, dropMissingStart), marker);
+  assert.match(adminScript.slice(dropMissingStart), marker);
+});
+
 test("the Providers tab renders a provider picker next to the Analytics tab", () => {
   assert.match(adminHtml, /id="providers-selection-list" data-provider-picker/);
   assert.match(adminHtml, /id="view-analytics"[\s\S]*?id="provider-capacity-chart"/, "the analytics view keeps the capacity chart");
