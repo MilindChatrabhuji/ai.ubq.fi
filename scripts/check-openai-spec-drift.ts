@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { parse } from "@std/yaml";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "../src/openai-schema.ts";
 
@@ -9,9 +10,10 @@ const isRecord = (value: unknown): value is JsonRecord => typeof value === "obje
 
 const getArgValue = (name: string): string | null => {
   const prefix = `${name}=`;
-  for (let i = 0; i < Deno.args.length; i++) {
-    const arg = Deno.args[i];
-    if (arg === name) return Deno.args[i + 1] ?? null;
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === name) return args[i + 1] ?? null;
     if (arg.startsWith(prefix)) return arg.slice(prefix.length);
   }
   return null;
@@ -25,7 +27,7 @@ const readSpecText = async (location: string): Promise<string> => {
     }
     return await response.text();
   }
-  return await Deno.readTextFile(location);
+  return await readFile(location, "utf8");
 };
 
 const sortedUnique = (values: Iterable<string>): string[] => Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
@@ -90,5 +92,5 @@ const failures = [
 if (failures.length) {
   console.error(`OpenAI spec drift detected from ${specLocation}`);
   console.error(failures.join("\n"));
-  Deno.exit(1);
+  process.exitCode = 1;
 }

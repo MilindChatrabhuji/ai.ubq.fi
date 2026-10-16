@@ -1,10 +1,11 @@
+import { test } from "bun:test";
 import { FixtureWorkspace } from "../fixture.ts";
 import { loadTasks } from "../manifest.ts";
 import { evaluateOracle, runVerification } from "../oracle.ts";
-import { TaskManifest, TaskOracle } from "../schemas.ts";
+import { type TaskManifest, type TaskOracle } from "../schemas.ts";
 
-const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
-const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
+const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
 function requiredTask(id: string): TaskManifest {
   const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === id);
@@ -16,7 +17,7 @@ async function withWorkspace(task: TaskManifest, fn: (ws: FixtureWorkspace) => P
   const ws = new FixtureWorkspace({
     fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
     runId: `oracle-test-${task.id}-${Date.now()}-${crypto.randomUUID()}`,
-    tmpParent: `${Deno.cwd()}/benchmark-runs/tmp`,
+    tmpParent: `${process.cwd()}/benchmark-runs/tmp`,
     task,
   });
   try {
@@ -27,7 +28,7 @@ async function withWorkspace(task: TaskManifest, fn: (ws: FixtureWorkspace) => P
   }
 }
 
-Deno.test("oracle: file checks pass, fail, and invert", async () => {
+test("oracle: file checks pass, fail, and invert", async () => {
   const nav = requiredTask("nav-001");
   await withWorkspace(nav, async (ws) => {
     ws.write("answer.txt", "docs/spec.txt");
@@ -48,7 +49,7 @@ Deno.test("oracle: file checks pass, fail, and invert", async () => {
   });
 });
 
-Deno.test("oracle: verification passes, fails, and times out", async () => {
+test("oracle: verification passes, fails, and times out", async () => {
   const nav = requiredTask("nav-001");
   await withWorkspace(nav, async (ws) => {
     ws.write("answer.txt", "docs/spec.txt");
@@ -63,7 +64,7 @@ Deno.test("oracle: verification passes, fails, and times out", async () => {
   });
 });
 
-Deno.test("oracle: git checks on a disposable repository", async () => {
+test("oracle: git checks on a disposable repository", async () => {
   const seq004 = requiredTask("seq-004");
   await withWorkspace(seq004, async (ws) => {
     const oracle: TaskOracle = {
@@ -79,7 +80,7 @@ Deno.test("oracle: git checks on a disposable repository", async () => {
   });
 });
 
-Deno.test("oracle: git checks without a repository fail closed", async () => {
+test("oracle: git checks without a repository fail closed", async () => {
   const nav = requiredTask("nav-001");
   await withWorkspace(nav, async (ws) => {
     const out = await evaluateOracle({ ...nav, oracle: { git_checks: [{ kind: "worktree_clean" }] } }, ws);

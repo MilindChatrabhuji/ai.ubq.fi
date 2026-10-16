@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { verifyNativeCodexAccount } from "../src/codex/native-auth-transport.ts";
 
@@ -12,7 +13,7 @@ const reported = (overrides: Record<string, unknown> = {}): Record<string, unkno
   },
 });
 
-Deno.test("a reported ChatGPT identity must match email and account exactly", () => {
+test("a reported ChatGPT identity must match email and account exactly", () => {
   assert.equal(verifyNativeCodexAccount(reported(), expected, null).ok, true);
   const mismatches: unknown[] = [
     reported({ email: "other@example.test" }),
@@ -34,7 +35,7 @@ Deno.test("a reported ChatGPT identity must match email and account exactly", ()
   }
 });
 
-Deno.test("a blank account is accepted only for a non-OpenAI-auth provider with the bound file account", () => {
+test("a blank account is accepted only for a non-OpenAI-auth provider with the bound file account", () => {
   const blank = { account: null, requiresOpenaiAuth: false, workspaceRouting: null };
   assert.equal(verifyNativeCodexAccount(blank, expected, expected.accountId).ok, true);
   for (const fileAccountId of [null, "acct-other"]) {

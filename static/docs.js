@@ -84,9 +84,7 @@ const isTableSeparator = (line) => {
 
 const renderTable = (headerCells, rows) => {
   const head = headerCells.map((cell) => `<th scope="col">${renderInline(cell)}</th>`).join("");
-  const body = rows
-    .map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell)}</td>`).join("")}</tr>`)
-    .join("");
+  const body = rows.map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell)}</td>`).join("")}</tr>`).join("");
   return `<div data-table-scroll tabindex="0"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 };
 
@@ -326,7 +324,10 @@ const showCopyFeedback = (button, copied, label) => {
     button.dataset.copyError = "";
   }
   button.dataset.tooltip = label;
-  copyResetTimers.set(button, globalThis.setTimeout(() => resetCopyFeedback(button), COPY_FEEDBACK_MS));
+  copyResetTimers.set(
+    button,
+    globalThis.setTimeout(() => resetCopyFeedback(button), COPY_FEEDBACK_MS)
+  );
 };
 
 const copyCodeBlock = async (button) => {

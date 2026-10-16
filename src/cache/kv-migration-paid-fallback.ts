@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 // Paid fallback v3 inspection, split out of src/kv_migration.ts.
 
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyRequestLogRecord, PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../types.ts";
@@ -39,7 +40,7 @@ const isPendingPaidFallbackLedgerRecord = (value: unknown): value is ApiKeyReque
 
 const paidFallbackLedgerReference = (keyId: string, requestId: string): string => JSON.stringify([keyId, requestId]);
 
-const pendingPaidFallbackLedgerReferenceFromEntry = (entry: Pick<Deno.KvEntry<unknown>, "key" | "value">, prefix: Deno.KvKey): string | null => {
+const pendingPaidFallbackLedgerReferenceFromEntry = (entry: Pick<KvEntry<unknown>, "key" | "value">, prefix: KvKey): string | null => {
   if (entry.key.length !== prefix.length + 3 || !isPendingPaidFallbackLedgerRecord(entry.value)) return null;
   const [keyId, createdAtMs, requestId] = entry.key.slice(prefix.length);
   if (keyId !== entry.value.key_id || createdAtMs !== entry.value.created_at_ms || requestId !== entry.value.id) return null;
@@ -47,7 +48,7 @@ const pendingPaidFallbackLedgerReferenceFromEntry = (entry: Pick<Deno.KvEntry<un
 };
 
 const paidFallbackLedgerEntryMatchesIdentity = (
-  entry: Pick<Deno.KvEntry<unknown>, "key" | "value">,
+  entry: Pick<KvEntry<unknown>, "key" | "value">,
   expected: Pick<ApiKeyRequestLogRecord, "key_id" | "id" | "created_at_ms">
 ): boolean => {
   if (entry.key.length !== PAID_FALLBACK_LEDGER_PREFIX.length + 3 || !hasPaidFallbackLedgerIdentity(entry.value)) return false;
@@ -162,7 +163,7 @@ type PaidFallbackRequestMap = Map<string, PaidFallbackRequestV3>;
 
 /** Validates every V3 window row and indexes it by its key reference. */
 const collectPaidFallbackWindows = async (
-  kv: Deno.Kv,
+  kv: Kv,
   knownKeyIds: ReadonlySet<string>,
   errors: string[]
 ): Promise<Readonly<{ count: number; windows: PaidFallbackWindowMap }>> => {
@@ -190,7 +191,7 @@ const collectPaidFallbackWindows = async (
 
 /** Validates every V3 request row and indexes it by its key reference. */
 const collectPaidFallbackRequests = async (
-  kv: Deno.Kv,
+  kv: Kv,
   knownKeyIds: ReadonlySet<string>,
   errors: string[]
 ): Promise<Readonly<{ count: number; requests: PaidFallbackRequestMap }>> => {
@@ -217,7 +218,7 @@ const collectPaidFallbackRequests = async (
 };
 
 /** Validates every outstanding-pending marker row. */
-const collectPaidFallbackPending = async (kv: Deno.Kv, errors: string[]): Promise<Readonly<{ count: number; pending: Set<string> }>> => {
+const collectPaidFallbackPending = async (kv: Kv, errors: string[]): Promise<Readonly<{ count: number; pending: Set<string> }>> => {
   const pending = new Set<string>();
   let count = 0;
   for await (const entry of kv.list({ prefix: PAID_FALLBACK_PENDING_V3_PREFIX })) {
@@ -243,7 +244,7 @@ const collectPaidFallbackPending = async (kv: Deno.Kv, errors: string[]): Promis
 };
 
 /** Validates every reconciliation lease row and counts them. */
-const countPaidFallbackLeases = async (kv: Deno.Kv, knownKeyIds: ReadonlySet<string>, errors: string[]): Promise<number> => {
+const countPaidFallbackLeases = async (kv: Kv, knownKeyIds: ReadonlySet<string>, errors: string[]): Promise<number> => {
   let count = 0;
   for await (const entry of kv.list({ prefix: PAID_FALLBACK_RECONCILIATION_LEASE_V3_PREFIX })) {
     count += 1;
@@ -265,7 +266,7 @@ const countPaidFallbackLeases = async (kv: Deno.Kv, knownKeyIds: ReadonlySet<str
 };
 
 /** Validates every deletion guard row and counts them. */
-const countPaidFallbackDeletionGuards = async (kv: Deno.Kv, errors: string[]): Promise<number> => {
+const countPaidFallbackDeletionGuards = async (kv: Kv, errors: string[]): Promise<number> => {
   let count = 0;
   for await (const entry of kv.list({ prefix: PAID_FALLBACK_DELETION_GUARD_V3_PREFIX })) {
     count += 1;
@@ -365,7 +366,7 @@ const auditPaidFallbackWindows = (windows: PaidFallbackWindowMap, requests: Paid
 };
 
 const inspectPaidFallbackV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   knownKeyIds: ReadonlySet<string>,
   unlimitedKeyIds: ReadonlySet<string>,
   nowMs = Date.now()

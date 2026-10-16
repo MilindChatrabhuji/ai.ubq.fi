@@ -4,11 +4,7 @@
 <dict>
   <key>Label</key><string>com.ubiquity.ai.local</string>
   <key>ProgramArguments</key>
-  <array>
-    <string>/bin/sh</string>
-    <string>-c</string>
-    <string>set -eu; cd -P .data/current; uos_runtime=/Users/nv/repos/ubiquity/ai.ubq.fi/.data/runtimes/deno/2.9.5-b5bd08edab254d42d7b05aa5b6cb4c9b8d4dede4975aff76951ce2cce18866fa/deno; if ! test -f "$uos_runtime" || test -L "$uos_runtime"; then echo "Managed Mac runtime unavailable or invalid" &gt;&amp;2; exit 1; fi; uos_runtime_hash=$(/usr/bin/shasum -a256 "$uos_runtime"); if test "${uos_runtime_hash%% *}" != b5bd08edab254d42d7b05aa5b6cb4c9b8d4dede4975aff76951ce2cce18866fa; then echo "Managed Mac runtime unavailable or invalid" &gt;&amp;2; exit 1; fi; exec "$uos_runtime" task --config="$PWD/deno.json" --no-lock --env-file=/Users/nv/repos/ubiquity/ai.ubq.fi/.env --eval '/bin/sh -c '\''set -eu; uos_native_home=${CODEX_HOME:-${HOME:?HOME or CODEX_HOME is required}/.codex}; uos_permissions_home=$(printf "%s_" "$uos_native_home" | /usr/bin/sed "s/,/,,/g"); uos_permissions_home=${uos_permissions_home%_}; exec /Users/nv/repos/ubiquity/ai.ubq.fi/.data/runtimes/deno/2.9.5-b5bd08edab254d42d7b05aa5b6cb4c9b8d4dede4975aff76951ce2cce18866fa/deno run --frozen --no-prompt --env-file=/Users/nv/repos/ubiquity/ai.ubq.fi/.env --unstable-kv --allow-env --allow-net --allow-sys=hostname --deny-write=/Users/nv/repos/ubiquity/ai.ubq.fi/.data/runtimes "--allow-read=/Users/nv/repos/ubiquity/ai.ubq.fi,$uos_permissions_home" "--allow-write=/Users/nv/repos/ubiquity/ai.ubq.fi/.data,$uos_permissions_home/app-server-control" scripts/serve-mac.ts'\'''</string>
-  </array>
+  <array><string>/bin/sh</string><string>/Users/nv/repos/ubiquity/ai.ubq.fi/ops/launch-mac.sh</string></array>
   <key>WorkingDirectory</key><string>/Users/nv/repos/ubiquity/ai.ubq.fi</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -17,9 +13,5 @@
   <key>Umask</key><integer>63</integer>
   <key>StandardOutPath</key><string>/Users/nv/repos/ubiquity/ai.ubq.fi/.data/mac.stdout.log</string>
   <key>StandardErrorPath</key><string>/Users/nv/repos/ubiquity/ai.ubq.fi/.data/mac.stderr.log</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>DENO_DIR</key><string>/Users/nv/repos/ubiquity/ai.ubq.fi/.data/deno</string>
-  </dict>
 </dict>
 </plist>

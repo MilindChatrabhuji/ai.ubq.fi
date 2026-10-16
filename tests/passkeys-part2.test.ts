@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/passkeys-harness.ts";
 // Suite part: tests moved out of the original file.
 
 import assert from "node:assert/strict";
@@ -13,7 +15,10 @@ import {
   seedPasskeySession,
 } from "./helpers/passkeys-harness.ts";
 
-Deno.test("allowlisted GitHub client bearers keep precedence over passkey cookies", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("allowlisted GitHub client bearers keep precedence over passkey cookies", async () => {
   kvStore.clear();
   const { token: passkeyToken } = seedPasskeySession("uos_ai_session_client_cookie");
   const githubToken = "ghp_allowlisted_client_token_1234567890abcdefghijklmnopqrstuvwxyz";
@@ -37,7 +42,7 @@ Deno.test("allowlisted GitHub client bearers keep precedence over passkey cookie
   }
 });
 
-Deno.test("allowlisted GitHub admin bearers keep precedence over passkey cookies on /uos/auth", async () => {
+test("allowlisted GitHub admin bearers keep precedence over passkey cookies on /uos/auth", async () => {
   kvStore.clear();
   const { token: passkeyToken } = seedPasskeySession("uos_ai_session_non_admin_cookie", { isAdmin: false });
   const githubToken = "ghp_allowlisted_admin_fixture";
@@ -63,7 +68,7 @@ Deno.test("allowlisted GitHub admin bearers keep precedence over passkey cookies
   }
 });
 
-Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub bearer", async () => {
+test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub bearer", async () => {
   kvStore.clear();
   const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
   const { token, user } = seedPasskeySession("uos_ai_session_lifecycle_cookie", { audienceOrigin });
@@ -98,7 +103,7 @@ Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub 
   assert.equal((await kvStub.get(passkeySessionKey(token))).value, null);
 });
 
-Deno.test("passkey lifecycle handlers preserve configured bearer precedence", async () => {
+test("passkey lifecycle handlers preserve configured bearer precedence", async () => {
   for (const configuredKind of ["client", "admin"] as const) {
     kvStore.clear();
     const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
@@ -141,7 +146,7 @@ Deno.test("passkey lifecycle handlers preserve configured bearer precedence", as
   }
 });
 
-Deno.test("passkey logout preserves valid bearer precedence over a relay cookie", async () => {
+test("passkey logout preserves valid bearer precedence over a relay cookie", async () => {
   kvStore.clear();
   const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
   const { token: bearerToken } = seedPasskeySession("uos_ai_session_bearer_precedence");
@@ -163,7 +168,7 @@ Deno.test("passkey logout preserves valid bearer precedence over a relay cookie"
   assert.notEqual((await kvStub.get(passkeySessionKey(cookieToken))).value, null);
 });
 
-Deno.test("authenticated passkey token overrides remain bound to their relay audience", async () => {
+test("authenticated passkey token overrides remain bound to their relay audience", async () => {
   kvStore.clear();
   const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
   const { token } = seedPasskeySession("uos_ai_session_override_audience", { audienceOrigin });

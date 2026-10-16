@@ -1,31 +1,33 @@
+import { readFileSync } from "node:fs";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import handler from "../src/handler/index.ts";
 import { corsHeaders } from "../src/http.ts";
 import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
-import readmeText from "../README.md" with { type: "text" };
-import adminCss from "../static/admin.css" with { type: "text" };
-import adminCacheScript from "../static/admin-cache.js" with { type: "text" };
-import adminHtml from "../static/admin.html" with { type: "text" };
-import aboutHtml from "../static/about.html" with { type: "text" };
-import adminScript from "../static/admin.js" with { type: "text" };
-import authScript from "../static/auth.js" with { type: "text" };
-import chatCss from "../static/chat.css" with { type: "text" };
-import chatHtml from "../static/chat.html" with { type: "text" };
-import chatScript from "../static/chat.js" with { type: "text" };
-import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
-import contactHtml from "../static/contact.html" with { type: "text" };
-import developersHtml from "../static/developers.html" with { type: "text" };
-import docsHtml from "../static/docs.html" with { type: "text" };
-import indexHtml from "../static/index.html" with { type: "text" };
-import llmsText from "../static/llms.txt" with { type: "text" };
-import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
-import modelsCss from "../static/models.css" with { type: "text" };
-import modelsHtml from "../static/models.html" with { type: "text" };
-import modelsScript from "../static/models.js" with { type: "text" };
-import openApiText from "../static/openapi.json" with { type: "text" };
-import privacyHtml from "../static/privacy.html" with { type: "text" };
-import styleCss from "../static/style.css" with { type: "text" };
+const readmeText = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+const adminCss = readFileSync(new URL("../static/admin.css", import.meta.url), "utf8");
+const adminCacheScript = readFileSync(new URL("../static/admin-cache.js", import.meta.url), "utf8");
+const adminHtml = readFileSync(new URL("../static/admin.html", import.meta.url), "utf8");
+const aboutHtml = readFileSync(new URL("../static/about.html", import.meta.url), "utf8");
+const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
+const authScript = readFileSync(new URL("../static/auth.js", import.meta.url), "utf8");
+const chatCss = readFileSync(new URL("../static/chat.css", import.meta.url), "utf8");
+const chatHtml = readFileSync(new URL("../static/chat.html", import.meta.url), "utf8");
+const chatScript = readFileSync(new URL("../static/chat.js", import.meta.url), "utf8");
+const companyLogoSvg = readFileSync(new URL("../static/company-logo.svg", import.meta.url), "utf8");
+const contactHtml = readFileSync(new URL("../static/contact.html", import.meta.url), "utf8");
+const developersHtml = readFileSync(new URL("../static/developers.html", import.meta.url), "utf8");
+const docsHtml = readFileSync(new URL("../static/docs.html", import.meta.url), "utf8");
+const indexHtml = readFileSync(new URL("../static/index.html", import.meta.url), "utf8");
+const llmsText = readFileSync(new URL("../static/llms.txt", import.meta.url), "utf8");
+const llmsFullText = readFileSync(new URL("../static/docs/llms-agents.md", import.meta.url), "utf8");
+const modelsCss = readFileSync(new URL("../static/models.css", import.meta.url), "utf8");
+const modelsHtml = readFileSync(new URL("../static/models.html", import.meta.url), "utf8");
+const modelsScript = readFileSync(new URL("../static/models.js", import.meta.url), "utf8");
+const openApiText = readFileSync(new URL("../static/openapi.json", import.meta.url), "utf8");
+const privacyHtml = readFileSync(new URL("../static/privacy.html", import.meta.url), "utf8");
+const styleCss = readFileSync(new URL("../static/style.css", import.meta.url), "utf8");
 
 /**
  * Linear equivalent of `html.replace(/<[^>]+>/g, " ")`: every run from a "<" to the next ">" that has
@@ -53,7 +55,7 @@ const stripHtmlTags = (html: string): string => {
   return text + html.slice(cursor);
 };
 
-Deno.test("static assets register frontend module dependencies", () => {
+test("static assets register frontend module dependencies", () => {
   for (const path of [
     "/admin.js",
     "/admin.css",
@@ -75,7 +77,7 @@ Deno.test("static assets register frontend module dependencies", () => {
   assert.match(chatScript, /from "\.\/toast\.js\?v=passport-design-20260922";/);
 });
 
-Deno.test("chat response stats use one conversation bar below the composer", () => {
+test("chat response stats use one conversation bar below the composer", () => {
   assert.equal((chatHtml.match(/\bdata-chat-stats\b/g) ?? []).length, 1);
   assert.match(chatHtml, /<\/form>\s*<div data-chat-stats role="status" aria-live="polite" aria-atomic="true" hidden><\/div>/);
   assert.doesNotMatch(chatHtml, /data-message-stats/);
@@ -90,7 +92,7 @@ Deno.test("chat response stats use one conversation bar below the composer", () 
   assert.doesNotMatch(chatCss, /\[data-message-stats\]/);
 });
 
-Deno.test("chat falls back to the loopback development principal without a token", () => {
+test("chat falls back to the loopback development principal without a token", () => {
   assert.match(chatScript, /import \{\n(?:.|\n)*?isLocalDevelopmentOrigin,\n(?:.|\n)*?\} from "\.\/auth\.js";/);
   assert.match(chatScript, /let localDevelopmentAuth = false;/);
   assert.match(chatScript, /if \(!token && !localDevelopmentAuth\) \{/);
@@ -98,13 +100,13 @@ Deno.test("chat falls back to the loopback development principal without a token
   assert.match(chatScript, /const authHeaders = \(token = ""\) => \{/);
 });
 
-Deno.test("public models page is registered", () => {
+test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
   assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=passport-design-20260922"><\/script>/);
 });
 
-Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
+test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
   const sharedAssetVersion = "passport-design-20260922";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
@@ -145,11 +147,9 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
     assert.doesNotMatch(primaryNav, /<a\b[^>]*\bdata-variant="primary"/, `${page.name} primary navigation must derive its active treatment from aria-current`);
 
     const links = [...primaryNav.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map((match) => ({
-      attributes: match[1] ?? "",
-      href: match[1]?.match(/\bhref="([^"]+)"/)?.[1] ?? "",
-      label: stripHtmlTags(match[2] ?? "")
-        .replace(/\s+/g, " ")
-        .trim(),
+      attributes: match[1],
+      href: /\bhref="([^"]+)"/.exec(match[1])?.[1] ?? "",
+      label: stripHtmlTags(match[2]).replace(/\s+/g, " ").trim(),
     }));
     assert.deepEqual(
       links.map(({ href, label }) => ({ href, label })),
@@ -181,7 +181,7 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
   );
 });
 
-Deno.test("public console styles share the light and dark design tokens without decorative Models blue", () => {
+test("public console styles share the light and dark design tokens without decorative Models blue", () => {
   const ruleBodies = (css: string, selector: string): string[] => {
     const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return [...css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g"))].map((match) => match[1]);
@@ -232,7 +232,7 @@ Deno.test("public console styles share the light and dark design tokens without 
   assert.match(styleCss, /--font-family:\s*ui-sans-serif/);
   assert.match(styleCss, /body\s*\{[^}]*font-size:\s*14px/);
 
-  const inputBlocks = [...styleCss.matchAll(/(?:^|\n)input,\n\s*textarea,\n\s*select\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
+  const inputBlocks = [...styleCss.matchAll(/(?:^|\n)input,\n\s*textarea,\n\s*select\s*\{([^}]*)\}/g)].map((match) => match[1]);
   const controlBlock = inputBlocks.find((block) => block.includes("min-height")) ?? "";
   assert.notEqual(controlBlock, "", "text controls must share one base rule");
   assert.doesNotMatch(controlBlock, /color-scheme/, "controls must inherit the OS scheme instead of pinning one");
@@ -269,7 +269,7 @@ Deno.test("public console styles share the light and dark design tokens without 
   assert.deepEqual(decorativeBlues, [], "models.css should use neutral shared-console colors");
 });
 
-Deno.test("published guidance documents endpoint-specific output caps and repository-local auth uploads", () => {
+test("published guidance documents endpoint-specific output caps and repository-local auth uploads", () => {
   for (const publishedText of [readmeText, llmsFullText]) {
     assert.match(publishedText, /`max_completion_tokens` is the OpenAI Chat Completions cap/);
     assert.match(publishedText, /`max_output_tokens` is the OpenAI Responses cap/);
@@ -288,10 +288,10 @@ Deno.test("published guidance documents endpoint-specific output caps and reposi
   assert.doesNotMatch(readmeText, /cd lib\/ai\.ubq\.fi/);
   assert.match(readmeText, /git rev-parse --show-toplevel/);
   assert.match(llmsFullText, /scripts\/upload-codex-auth\.ts/);
-  assert.match(llmsFullText, /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/);
+  assert.match(llmsFullText, /bun run upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/);
 });
 
-Deno.test("admin console every rendered tab declares an access requirement", () => {
+test("admin console every rendered tab declares an access requirement", () => {
   // `canAccessView` returns false for a view with no `VIEW_REQUIREMENTS` entry,
   // so a tab added to the markup without one is dead for every role.
   const requirements = /const VIEW_REQUIREMENTS = \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
@@ -306,16 +306,16 @@ Deno.test("admin console every rendered tab declares an access requirement", () 
   }
 });
 
-Deno.test("admin console tabs follow the approved operator order", () => {
+test("admin console tabs follow the approved operator order", () => {
   // The strip renders in DOM order and arrow-key traversal follows it, so this pins the approved operator order.
   const tabs = [...adminHtml.matchAll(/id="view-tab-([a-z-]+)"/g)].map((match) => match[1]);
   assert.deepEqual(tabs, ["analytics", "providers", "models", "defaults", "errors", "keys", "users", "kernel", "pubkeys", "supervisor"]);
 });
 
-Deno.test("models page labels provider counts as catalog entries, not inference availability", () => {
+test("models page labels provider counts as catalog entries, not inference availability", () => {
   assert.match(modelsHtml, /Model catalog/);
-  assert.match(modelsHtml, /Availability and quota vary by provider/);
-  assert.match(modelsHtml, /Cataloged text models and the providers that list them/);
+  assert.match(modelsHtml, /Availability and quota vary by\s+provider/);
+  assert.match(modelsHtml, /Cataloged text models and the providers that list\s+them/);
   assert.match(modelsHtml, /does not guarantee\s+inference availability or remaining quota/);
   assert.doesNotMatch(modelsHtml, /Live upstream catalog/);
   assert.match(modelsScript, /cataloged model/);
@@ -323,9 +323,9 @@ Deno.test("models page labels provider counts as catalog entries, not inference 
   assert.doesNotMatch(modelsScript, /available models/);
 });
 
-Deno.test("public brand logos are inline and inherit the page foreground", async () => {
+test("public brand logos are inline and inherit the page foreground", async () => {
   assert.match(styleCss, /\[data-logo\]\s*\{[^}]*color: inherit;/);
-  const sourcePath = companyLogoSvg.match(/<path\b[\s\S]*?\bd="([^"]+)"/)?.[1];
+  const sourcePath = /<path\b[\s\S]*?\bd="([^"]+)"/.exec(companyLogoSvg)?.[1];
   assert.ok(sourcePath, "the source logo must define a path");
 
   for (const [path, sourceHtml] of [
@@ -347,7 +347,7 @@ Deno.test("public brand logos are inline and inherit the page foreground", async
   }
 });
 
-Deno.test("public agent-readiness pages and crawl artifacts are registered", () => {
+test("public agent-readiness pages and crawl artifacts are registered", () => {
   for (const path of [
     "/developers",
     "/developers.html",
@@ -364,7 +364,7 @@ Deno.test("public agent-readiness pages and crawl artifacts are registered", () 
   }
 });
 
-Deno.test("admin analytics view places capacity history before current providers", () => {
+test("admin analytics view places capacity history before current providers", () => {
   const listIndex = adminHtml.indexOf('id="provider-capacity-list"');
   const chartIndex = adminHtml.indexOf('id="provider-capacity-chart"');
   assert.ok(chartIndex >= 0);
@@ -422,7 +422,7 @@ Deno.test("admin analytics view places capacity history before current providers
   assert.match(authScript, /credentials: init\?\.credentials \?\? "include"/);
 });
 
-Deno.test("admin error tab opens its view", () => {
+test("admin error tab opens its view", () => {
   assert.match(adminScript, /viewTabErrors\.addEventListener\("click", \(\) => setAdminView\("errors", \{ hashMode: "push", focusAuth: true \}\)\)/);
   assert.match(adminScript, /const loadId = \+\+errorsLoadId/);
   assert.match(adminScript, /if \(loadId !== errorsLoadId\) return/);
@@ -430,7 +430,7 @@ Deno.test("admin error tab opens its view", () => {
   assert.match(adminScript, /invalidateAdminErrors\("Target changed\. Sign in to load gateway errors\."\)/);
 });
 
-Deno.test("admin responses use a scoped IndexedDB stale cache", () => {
+test("admin responses use a scoped IndexedDB stale cache", () => {
   assert.match(adminCacheScript, /const DATABASE_NAME = "uos_ai\.admin-cache";/);
   assert.match(adminCacheScript, /store\.createIndex\(SCOPE_INDEX, "scope", \{ unique: false \}\)/);
   assert.match(adminCacheScript, /objectStore\(STORE_NAME\)\.get/);
@@ -467,19 +467,19 @@ Deno.test("admin responses use a scoped IndexedDB stale cache", () => {
   assert.match(adminScript, /clearAdminSnapshotScope\(\);/);
 });
 
-Deno.test("admin boot probes server auth mode without requiring a browser token", () => {
+test("admin boot probes server auth mode without requiring a browser token", () => {
   assert.doesNotMatch(adminScript, /if \(!token && !relaySessionActive && !isRemoteRelayOrigin\(\)\)/);
   assert.match(adminScript, /requestAuth\(token \? \{ Authorization: `Bearer \$\{token\}` \} : \{\}\)/);
   assert.match(adminScript, /resetAdminPrefetchState\("Checking admin session\.\.\."\)/);
 });
 
-Deno.test("expanded auth widget keeps its mobile toggle right-aligned", () => {
+test("expanded auth widget keeps its mobile toggle right-aligned", () => {
   assert.match(adminCss, /\[data-auth-widget\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(adminCss, /#auth-widget-toggle\s*\{[^}]*grid-column:\s*1;[^}]*justify-self:\s*end/);
   assert.match(adminCss, /#auth-widget-panel\s*\{[^}]*grid-column:\s*1/);
 });
 
-Deno.test("provider analytics graph reports inference 5xx buckets", () => {
+test("provider analytics graph reports inference 5xx buckets", () => {
   assert.match(adminScript, /label: "Errors \(5xx\)"/);
   assert.match(adminScript, /five_xx_buckets/);
   assert.match(adminScript, /marker\.dataset\.capacityInferenceError/);
@@ -491,14 +491,14 @@ Deno.test("provider analytics graph reports inference 5xx buckets", () => {
   assert.match(adminScript, /marker\.setAttribute\("tabindex", "0"\)/);
 });
 
-Deno.test("provider analytics graph preserves its SVG text aspect ratio", () => {
+test("provider analytics graph preserves its SVG text aspect ratio", () => {
   assert.match(adminScript, /preserveAspectRatio: "xMinYMin meet"/);
   assert.match(adminScript, /viewBox: `0 0 \$\{width\} \$\{height\}`,[\s\S]*?width,[\s\S]*?height,/);
   assert.match(adminCss, /\[data-capacity-chart-svg\]\s*\{[\s\S]*?height:\s*var\(--capacity-chart-height-px, 180px\)/);
   assert.doesNotMatch(adminCss, /\[data-capacity-chart-svg\]\s*\{[^}]*height:\s*clamp\(/);
 });
 
-Deno.test("provider analytics chart fills its column and follows the newest edge", () => {
+test("provider analytics chart fills its column and follows the newest edge", () => {
   assert.match(adminCss, /\[data-capacity-chart-body\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.doesNotMatch(adminCss, /\[data-capacity-chart-body\][^}]*minmax\((180|210)px/);
   assert.match(adminScript, /let capacityChartFollowsLatest = true;/);
@@ -507,13 +507,13 @@ Deno.test("provider analytics chart fills its column and follows the newest edge
   assert.match(adminScript, /view === "analytics"[\s\S]*?scheduleProviderCapacityChartResize\(\);/);
 });
 
-Deno.test("static assets register autonomous agent discovery documents", () => {
+test("static assets register autonomous agent discovery documents", () => {
   for (const path of ["/llms.txt", "/llms-full.txt", "/docs/llms-agents.md", "/openapi.json"]) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
   }
 });
 
-Deno.test("OpenAPI discovery contract describes the public inference API", () => {
+test("OpenAPI discovery contract describes the public inference API", () => {
   const document = JSON.parse(openApiText);
 
   assert.equal(document.openapi, "3.1.0");
@@ -627,7 +627,7 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(document.components.schemas.Image.properties.output_format, undefined);
 });
 
-Deno.test("published agent contracts distinguish bodyless catalog revalidation and conditional rate limits", () => {
+test("published agent contracts distinguish bodyless catalog revalidation and conditional rate limits", () => {
   const document = JSON.parse(openApiText);
   const developerText = stripHtmlTags(developersHtml).replace(/\s+/g, " ");
   const modelResponses = document.paths["/v1/models"].get.responses;
@@ -653,7 +653,7 @@ Deno.test("published agent contracts distinguish bodyless catalog revalidation a
   assert.match(llmsText, /honor `Retry-After` when present/);
 });
 
-Deno.test("agent discovery documents are served with useful media types", async () => {
+test("agent discovery documents are served with useful media types", async () => {
   const llms = await handleStaticAsset("/llms.txt");
   const llmsFull = await handleStaticAsset("/llms-full.txt");
   const markdown = await handleStaticAsset("/docs/llms-agents.md");
@@ -668,7 +668,7 @@ Deno.test("agent discovery documents are served with useful media types", async 
   assert.equal(openapi?.headers.get("content-type"), "application/json; charset=utf-8");
 });
 
-Deno.test("homepage content negotiation serves server-rendered HTML, Markdown, and explicit JSON", async () => {
+test("homepage content negotiation serves server-rendered HTML, Markdown, and explicit JSON", async () => {
   const generic = await handleRoot(new Request("https://ai.ubq.fi/", { headers: { Accept: "*/*" } }));
   const html = await handleRoot(new Request("https://ai.ubq.fi/", { headers: { Accept: "text/html" } }));
   const xhtml = await handleRoot(new Request("https://ai.ubq.fi/", { headers: { Accept: "application/xhtml+xml" } }));
@@ -694,7 +694,7 @@ Deno.test("homepage content negotiation serves server-rendered HTML, Markdown, a
   assert.equal((await unacceptable.json()).error.code, "not_acceptable");
 });
 
-Deno.test("public HEAD routes preserve GET metadata without a response body", async () => {
+test("public HEAD routes preserve GET metadata without a response body", async () => {
   const routes = [
     ["/", { Accept: "text/html" }],
     ["/index.html", {}],
@@ -717,14 +717,14 @@ Deno.test("public HEAD routes preserve GET metadata without a response body", as
   }
 });
 
-Deno.test("unknown public HEAD routes remain 404", async () => {
+test("unknown public HEAD routes remain 404", async () => {
   const response = await handler(new Request("https://ai.ubq.fi/not-a-real-public-route", { method: "HEAD" }));
 
   assert.equal(response.status, 404);
   assert.equal(await response.text(), "");
 });
 
-Deno.test("credentialed root responses retain content-negotiation Vary tokens", async () => {
+test("credentialed root responses retain content-negotiation Vary tokens", async () => {
   const response = await handler(
     new Request("https://ai.ubq.fi/", {
       headers: {
@@ -737,7 +737,7 @@ Deno.test("credentialed root responses retain content-negotiation Vary tokens", 
   assert.equal(response.headers.get("vary"), "Accept, Accept-Encoding, Origin");
 });
 
-Deno.test("JSON root advertises autonomous agent discovery documents", async () => {
+test("JSON root advertises autonomous agent discovery documents", async () => {
   const response = await handleRoot(new Request("https://ai.ubq.fi/", { headers: { Accept: "application/json" } }));
   const body = await response.json();
 
@@ -750,7 +750,7 @@ Deno.test("JSON root advertises autonomous agent discovery documents", async () 
   assert.equal(body.discovery.sitemap, "/sitemap.xml");
 });
 
-Deno.test("homepage metadata and agent guidance expose the canonical service identity", () => {
+test("homepage metadata and agent guidance expose the canonical service identity", () => {
   assert.match(indexHtml, /<html lang="en">/);
   assert.match(indexHtml, /<link rel="canonical" href="https:\/\/ai\.ubq\.fi\/" \/>/);
   assert.match(indexHtml, /<meta property="og:type" content="website" \/>/);
@@ -758,7 +758,7 @@ Deno.test("homepage metadata and agent guidance expose the canonical service ide
   for (const path of ["/developers", "/openapi.json", "/llms.txt", "/llms-full.txt"]) {
     assert.match(indexHtml, new RegExp(`href="${path}"`), `homepage should link ${path}`);
   }
-  const jsonLdText = indexHtml.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1]?.trim();
+  const jsonLdText = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(indexHtml)?.[1]?.trim();
   if (!jsonLdText) throw new Error("homepage should include JSON-LD");
   const jsonLd = JSON.parse(jsonLdText);
   assert.ok(jsonLd.some((entry: { "@type"?: string }) => entry["@type"] === "SoftwareApplication"));
@@ -767,7 +767,7 @@ Deno.test("homepage metadata and agent guidance expose the canonical service ide
   assert.match(llmsText, /https:\/\/ai\.ubq\.fi\/developers/);
 });
 
-Deno.test("trust pages and crawl artifacts are public, substantial, and well formed", async () => {
+test("trust pages and crawl artifacts are public, substantial, and well formed", async () => {
   for (const path of ["/developers", "/about", "/contact", "/privacy"]) {
     const response = await handleStaticAsset(path);
     assert.equal(response?.status, 200, `${path} should be public`);
@@ -793,7 +793,7 @@ Deno.test("trust pages and crawl artifacts are public, substantial, and well for
   assert.match(sitemapText, /<lastmod>2026-08-21<\/lastmod>/);
 });
 
-Deno.test("public delivery returns structured JSON errors and exposes rate-limit fields to browsers", async () => {
+test("public delivery returns structured JSON errors and exposes rate-limit fields to browsers", async () => {
   const missing = await handler(new Request("https://ai.ubq.fi/not-a-real-public-route"));
   assert.equal(missing.status, 404);
   assert.equal(missing.headers.get("content-type"), "application/json");
@@ -807,14 +807,14 @@ Deno.test("public delivery returns structured JSON errors and exposes rate-limit
   }
 });
 
-Deno.test("admin passkey sign-in uses discoverable credentials instead of a saved username", () => {
-  const loginCall = adminScript.match(/const result = await signInWithPasskey\(\{([\s\S]*?)\}\);/);
+test("admin passkey sign-in uses discoverable credentials instead of a saved username", () => {
+  const loginCall = /const result = await signInWithPasskey\(\{([\s\S]*?)\}\);/.exec(adminScript);
   assert.ok(loginCall);
   assert.doesNotMatch(loginCall[1], /handle:|useHandle:/);
   assert.match(loginCall[1], /baseUrl: getPasskeyBaseUrl\(\)/);
 });
 
-Deno.test("admin paid-provider wallet display never claims a balance the token endpoint cannot prove", () => {
+test("admin paid-provider wallet display never claims a balance the token endpoint cannot prove", () => {
   // OpenLux's only balance surface answers `unlimited_quota: true` for every
   // token and its granted/available/used totals do not track the real wallet
   // (a confirmed top-up moved them the wrong way), and inference responses carry

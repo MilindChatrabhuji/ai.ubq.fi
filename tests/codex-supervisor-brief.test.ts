@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { fetchCerebrasChatCompletions } from "../src/provider/cerebras.ts";
@@ -53,7 +54,7 @@ const threadRead = {
 const collectWith = async (pages: { read: unknown; first: unknown[]; recent: unknown[]; full?: unknown[] }): Promise<SupervisorBriefContext> =>
   await collectBriefTranscript(connectionFor(pages), SOURCE, "thread-1", new AbortController().signal);
 
-Deno.test("redactBriefText removes credential-shaped text", () => {
+test("redactBriefText removes credential-shaped text", () => {
   const result = redactBriefText(`Authorization: Bearer ${"a".repeat(40)}\nDEEPSEEK_API_KEY=${"b".repeat(32)}\nplain progress`);
   assert.ok(result.redactions >= 2);
   assert.equal(result.text.includes("a".repeat(40)), false);
@@ -62,7 +63,7 @@ Deno.test("redactBriefText removes credential-shaped text", () => {
   assert.match(result.text, /\[redacted\]/);
 });
 
-Deno.test("redactBriefText recognizes quoted JSON credential keys and real GitHub token prefixes", () => {
+test("redactBriefText recognizes quoted JSON credential keys and real GitHub token prefixes", () => {
   const canaries = [
     "ghp_syntheticcanary0000000000000001",
     "gho_syntheticcanary0000000000000002",
@@ -103,7 +104,7 @@ Deno.test("redactBriefText recognizes quoted JSON credential keys and real GitHu
   assert.match(result.text, /\[redacted\]/);
 });
 
-Deno.test("redactBriefText consumes a YAML single-quoted scalar across a doubled quote", () => {
+test("redactBriefText consumes a YAML single-quoted scalar across a doubled quote", () => {
   // YAML escapes a quote inside a single-quoted scalar by doubling it; a match
   // that stops at the first closing quote leaves the credential tail behind.
   const head = "zqalpha-zqbravo";
@@ -116,7 +117,7 @@ Deno.test("redactBriefText consumes a YAML single-quoted scalar across a doubled
   }
 });
 
-Deno.test("redactBriefText consumes every supported single-quoted credential form", () => {
+test("redactBriefText consumes every supported single-quoted credential form", () => {
   const head = "zqalpha-zqbravo";
   const tail = "zqcharlie-zqdelta";
   const forms = [
@@ -138,7 +139,7 @@ Deno.test("redactBriefText consumes every supported single-quoted credential for
   }
 });
 
-Deno.test("redactBriefText redacts adjacent assignments without trading a key for a secret tail", () => {
+test("redactBriefText redacts adjacent assignments without trading a key for a secret tail", () => {
   const head = "zqalpha-zqbravo";
   const tail = "zqcharlie-zqdelta";
   // A value ending in a literal backslash must not consume the next assignment's
@@ -153,7 +154,7 @@ Deno.test("redactBriefText redacts adjacent assignments without trading a key fo
   assert.equal(mixedLine.text, "[redacted] [redacted] [redacted]", "mixed quote forms on one line each collapse on their own");
 });
 
-Deno.test("redactBriefText does not expose the tail of an unterminated single-quoted scalar", () => {
+test("redactBriefText does not expose the tail of an unterminated single-quoted scalar", () => {
   const head = "zqalpha-zqbravo";
   const cases = [
     ["clipped before any closing quote", `client_secret: '${head} ${head}`],
@@ -166,7 +167,7 @@ Deno.test("redactBriefText does not expose the tail of an unterminated single-qu
   }
 });
 
-Deno.test("the brief's Cerebras payload carries no quoted-JSON or GitHub credential canaries", async () => {
+test("the brief's Cerebras payload carries no quoted-JSON or GitHub credential canaries", async () => {
   const classicTokens = [
     "ghp_syntheticcanary0000000000000011",
     "gho_syntheticcanary0000000000000012",
@@ -264,7 +265,7 @@ const heavyTurn = (index: number) => ({
   items: Array.from({ length: 12 }, (_value, item) => ({ type: "agentMessage", id: `a${index}-${item}`, text: "x".repeat(1_500) })),
 });
 
-Deno.test("brief transcript keeps visible progress, bounds the context, and omits private items", async () => {
+test("brief transcript keeps visible progress, bounds the context, and omits private items", async () => {
   const secretLine = `Authorization: Bearer ${"a".repeat(40)}`;
   const context = await collectWith({
     read: threadRead,
@@ -308,7 +309,7 @@ Deno.test("brief transcript keeps visible progress, bounds the context, and omit
   assert.ok(new TextEncoder().encode(prompt).length <= 48 * 1024);
 });
 
-Deno.test("a long ongoing turn keeps its opening request and its latest progress", async () => {
+test("a long ongoing turn keeps its opening request and its latest progress", async () => {
   const turnId = "turn-long";
   const openingItems = [
     { type: "userMessage", id: "u0", content: [{ type: "text", text: "Please implement the catch-me-up brief" }] },
@@ -333,7 +334,7 @@ Deno.test("a long ongoing turn keeps its opening request and its latest progress
   assert.equal(context.truncated, true, "item limits that discard records must be reported as truncation");
 });
 
-Deno.test("a stale projected history is extended by the fresh local rollout tail", () => {
+test("a stale projected history is extended by the fresh local rollout tail", () => {
   const threadId = "01a0c796-caac-7dc0-9446-bf13098203e7";
   const stale = [
     {
@@ -395,7 +396,7 @@ Deno.test("a stale projected history is extended by the fresh local rollout tail
   assert.equal(prompt.includes("deno task test"), false, "tool call inputs are never collected");
 });
 
-Deno.test("rollout tail reads stay inside the Codex home and inside the event size bound", () => {
+test("rollout tail reads stay inside the Codex home and inside the event size bound", () => {
   const home = "/Users/example/.codex";
   const threadId = "01a0c796-caac-7dc0-9446-bf13098203e7";
   assert.equal(
@@ -429,7 +430,7 @@ Deno.test("rollout tail reads stay inside the Codex home and inside the event si
   assert.ok(assembly.contextBytes <= 32 * 1024, "the model context stays inside its 32 KiB bound");
 });
 
-Deno.test("private assistant analysis never becomes a transcript event", () => {
+test("private assistant analysis never becomes a transcript event", () => {
   const message = (payload: Record<string, unknown>, text: string, second: number) =>
     JSON.stringify({
       timestamp: `2026-09-22T08:00:0${second}.000Z`,
@@ -452,7 +453,7 @@ Deno.test("private assistant analysis never becomes a transcript event", () => {
   );
 });
 
-Deno.test("a final-answer rollout item reaches the brief tail when projected history lags", () => {
+test("a final-answer rollout item reaches the brief tail when projected history lags", () => {
   const threadId = "01a0c9b9-c1b4-7871-8c3b-76d1fceb28a4";
   const jsonl = JSON.stringify({
     timestamp: "2026-09-22T08:00:00.000Z",
@@ -479,7 +480,7 @@ Deno.test("a final-answer rollout item reaches the brief tail when projected his
   );
 });
 
-Deno.test("rollout parsing and tail merging retain the newest bounded entries", () => {
+test("rollout parsing and tail merging retain the newest bounded entries", () => {
   const lines = Array.from({ length: 250 }, (_value, index) =>
     JSON.stringify({
       timestamp: new Date(1_790_000_000_000 + index * 1_000).toISOString(),
@@ -499,7 +500,7 @@ Deno.test("rollout parsing and tail merging retain the newest bounded entries", 
   assert.equal(turn.items[11].text, "event 249");
 });
 
-Deno.test("a secret crossing the old 4,000-character clip never reaches the prompt", () => {
+test("a secret crossing the old 4,000-character clip never reaches the prompt", () => {
   // The secret starts inside the old clip window: a premature clip left
   // "Bearer " plus 10 token characters, short of the 12-character redaction
   // pattern, so a partial secret could survive into the prompt.
@@ -535,14 +536,14 @@ Deno.test("a secret crossing the old 4,000-character clip never reaches the prom
   assert.equal(prompt.includes("Z".repeat(50)), false);
 });
 
-Deno.test("brief transcript reports a missing transcript instead of inventing progress", async () => {
+test("brief transcript reports a missing transcript instead of inventing progress", async () => {
   const context = await collectWith({ read: threadRead, first: [], recent: [] });
   assert.equal(context.transcriptAvailable, false);
   assert.equal(context.turns.length, 0);
   assert.equal(context.contextBytes, 0);
 });
 
-Deno.test("the summarizer request is a no-tools JSON-mode Cerebras gpt-oss call on untrusted data", async () => {
+test("the summarizer request is a no-tools JSON-mode Cerebras gpt-oss call on untrusted data", async () => {
   const context = await collectWith({
     read: threadRead,
     first: [{ id: "turn-0", status: "completed", items: [{ type: "userMessage", id: "u0", content: [{ type: "text", text: "Please fix the panel" }] }] }],
@@ -566,7 +567,7 @@ Deno.test("the summarizer request is a no-tools JSON-mode Cerebras gpt-oss call 
   assert.match(messages[1].content, /Please fix the panel/);
 });
 
-Deno.test("brief output parsing accepts only a grounded {about,status} object", () => {
+test("brief output parsing accepts only a grounded {about,status} object", () => {
   assert.deepEqual(parseSupervisorBriefOutput('{"about":"Panel refresh work","status":"Tests are running"}'), {
     about: "Panel refresh work",
     status: "Tests are running",
@@ -577,7 +578,7 @@ Deno.test("brief output parsing accepts only a grounded {about,status} object", 
   assert.equal(parseSupervisorBriefOutput(null), null);
 });
 
-Deno.test("the brief route stays behind admin auth in the real router", async () => {
+test("the brief route stays behind admin auth in the real router", async () => {
   const response = await handler(
     new Request("https://ai.ubq.fi/admin/codex/supervisor/brief", {
       method: "POST",

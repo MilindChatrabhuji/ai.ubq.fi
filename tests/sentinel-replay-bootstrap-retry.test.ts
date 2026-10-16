@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { openKv, type Kv, type KvKey } from "#kv";
 import assert from "node:assert/strict";
 import { runBootstrapBatch } from "../src/sentinel/replay-retention-bootstrap.ts";
 import { reclaimExpiredSentinelReplays } from "../src/sentinel/replay-retention.ts";
@@ -50,7 +52,7 @@ const manifestFor = (index: number): SentinelReplayManifest => ({
   chunk_count: 1,
   ciphertext_bytes: 100,
 });
-const manifestKey = (manifest: SentinelReplayManifest): Deno.KvKey => [
+const manifestKey = (manifest: SentinelReplayManifest): KvKey => [
   ...SENTINEL_REPLAY_MANIFEST_PREFIX,
   manifest.captured_at_ms,
   manifest.fingerprint,
@@ -69,18 +71,18 @@ const accountingFor = (manifest: SentinelReplayManifest): SentinelReplayAccounti
   status_expires_at_ms: manifest.captured_at_ms + SENTINEL_REPLAY_STATUS_TTL_MS,
   stage: 0,
 });
-const seedManifest = async (kv: Deno.Kv, manifest: SentinelReplayManifest, accounted: boolean): Promise<void> => {
+const seedManifest = async (kv: Kv, manifest: SentinelReplayManifest, accounted: boolean): Promise<void> => {
   await kv.set(manifestKey(manifest), manifest);
   await kv.set([...SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, 0], new Uint8Array(manifest.ciphertext_bytes));
   if (accounted) await kv.set(sentinelReplayAccountingKey(manifest.captured_at_ms, manifest.capture_id), accountingFor(manifest));
 };
-const runBatch = async (kv: Deno.Kv): Promise<SentinelReplayBudgetLedger> => {
+const runBatch = async (kv: Kv): Promise<SentinelReplayBudgetLedger> => {
   const state = await readLedger(kv, budget);
   if (state.kind === "corrupt") throw new Error("unexpected corrupt fixture ledger");
   return await runBootstrapBatch(kv, state.ledger, state.versionstamp, budget, now);
 };
-const finishSweep = async (kv: Deno.Kv): Promise<SentinelReplayBudgetLedger> => {
-  for (let pass = 0; pass < 20; pass += 1) {
+const finishSweep = async (kv: Kv): Promise<SentinelReplayBudgetLedger> => {
+  for (let pass = 0; pass < 200; pass += 1) {
     const ledger = await runBatch(kv);
     if (ledger.bootstrap_cursor === null) return ledger;
   }
@@ -97,193 +99,163 @@ const assertHistory = (ledger: SentinelReplayBudgetLedger): void => {
   for (const [key, value] of Object.entries(history)) assert.equal(ledger[key as keyof SentinelReplayBudgetLedger], value);
 };
 
-Deno.test({
-  name: "bootstrap retry: orphan chunks are reclaimed instead of being ignored",
-  ignore: typeof Deno.openKv !== "function",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    const orphanKey = [...SENTINEL_REPLAY_CHUNK_PREFIX, "orphan-bootstrap", 0] as Deno.KvKey;
-    try {
-      await kv.set(orphanKey, new Uint8Array([1, 2, 3]));
-      const ledger = await finishSweep(kv);
-      assert.equal(ledger.bootstrap_complete, true);
-      assert.equal(ledger.stored_bytes, 0);
-      assert.equal((await kv.get(orphanKey)).value, null);
-    } finally {
-      kv.close();
-    }
-  },
+test("bootstrap retry: orphan chunks are reclaimed instead of being ignored", async () => {
+  const kv = await openKv(":memory:");
+  const orphanKey = [...SENTINEL_REPLAY_CHUNK_PREFIX, "orphan-bootstrap", 0] as KvKey;
+  try {
+    await kv.set(orphanKey, new Uint8Array([1, 2, 3]));
+    const ledger = await finishSweep(kv);
+    assert.equal(ledger.bootstrap_complete, true);
+    assert.equal(ledger.stored_bytes, 0);
+    assert.equal((await kv.get(orphanKey)).value, null);
+  } finally {
+    kv.close();
+  }
 });
 
 for (const accounted of [false, true]) {
-  Deno.test({
-    name: `bootstrap retry: ${accounted ? "existing" : "materialized legacy"} charges rebuild once and preserve history`,
-    ignore: typeof Deno.openKv !== "function",
-    sanitizeResources: false,
-    sanitizeOps: false,
-    async fn() {
-      const kv = await Deno.openKv(":memory:");
-      const manifest = manifestFor(1);
-      const reserved: SentinelReplayAccountingRow = { ...accountingFor(manifestFor(2)), state: "reserved", bytes: 200 };
-      const status = {
-        version: 1,
-        request_id: "retry-status",
-        status: "disabled",
-        reason: "fixture",
-        captured_at_ms: now,
-        manifest_key: null,
-        fingerprint: null,
-        expires_at_ms: null,
-      };
-      const tombstone = { fingerprint: "e".repeat(64), reason: "fixture", expires_at_ms: now + SENTINEL_REPLAY_STATUS_TTL_MS };
-      const expected = {
-        stored_bytes: sentinelReplayManifestCharge(manifest),
-        reserved_bytes: reserved.bytes,
-        records: 1,
-        status_records: 2,
-        metadata_bytes: sentinelReplayStatusMetadataBytes(status) + sentinelReplayStatusMetadataBytes(tombstone),
-      };
-      try {
-        const initial = await readLedger(kv, budget);
-        if (initial.kind === "corrupt") throw new Error("unexpected corrupt fixture ledger");
-        await kv.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, { ...initial.ledger, ...history });
-        await seedManifest(kv, manifest, accounted);
-        await kv.set(sentinelReplayAccountingKey(reserved.created_at_ms, reserved.capture_id), reserved);
-        await kv.set([...SENTINEL_REPLAY_REQUEST_PREFIX, status.request_id], status);
-        await kv.set([...SENTINEL_REPLAY_EVICTION_PREFIX, tombstone.fingerprint], tombstone);
-        await kv.set(corruptKey, { invalid: true });
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          const failed = await finishSweep(kv);
-          assert.equal(failed.bootstrap_complete, false);
-          assert.equal(failed.bootstrap_cursor, null);
-          assert.equal(failed.accounting_error, "invalid_in_scope_row");
-          assert.deepEqual(liveCounters(failed), expected);
-          assertHistory(failed);
-        }
-        assert.deepEqual((await kv.get(sentinelReplayAccountingKey(manifest.captured_at_ms, manifest.capture_id))).value, accountingFor(manifest));
-        await kv.delete(corruptKey);
-        const recovered = await finishSweep(kv);
-        assert.equal(recovered.bootstrap_complete, true);
-        assert.equal(recovered.accounting_error, null);
-        assert.equal(recovered.over_budget, false);
-        assert.deepEqual(liveCounters(recovered), expected);
-        assertHistory(recovered);
-      } finally {
-        kv.close();
+  test(`bootstrap retry: ${accounted ? "existing" : "materialized legacy"} charges rebuild once and preserve history`, async () => {
+    const kv = await openKv(":memory:");
+    const manifest = manifestFor(1);
+    const reserved: SentinelReplayAccountingRow = { ...accountingFor(manifestFor(2)), state: "reserved", bytes: 200 };
+    const status = {
+      version: 1,
+      request_id: "retry-status",
+      status: "disabled",
+      reason: "fixture",
+      captured_at_ms: now,
+      manifest_key: null,
+      fingerprint: null,
+      expires_at_ms: null,
+    };
+    const tombstone = { fingerprint: "e".repeat(64), reason: "fixture", expires_at_ms: now + SENTINEL_REPLAY_STATUS_TTL_MS };
+    const expected = {
+      stored_bytes: sentinelReplayManifestCharge(manifest),
+      reserved_bytes: reserved.bytes,
+      records: 1,
+      status_records: 2,
+      metadata_bytes: sentinelReplayStatusMetadataBytes(status) + sentinelReplayStatusMetadataBytes(tombstone),
+    };
+    try {
+      const initial = await readLedger(kv, budget);
+      if (initial.kind === "corrupt") throw new Error("unexpected corrupt fixture ledger");
+      await kv.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, { ...initial.ledger, ...history });
+      await seedManifest(kv, manifest, accounted);
+      await kv.set(sentinelReplayAccountingKey(reserved.created_at_ms, reserved.capture_id), reserved);
+      await kv.set([...SENTINEL_REPLAY_REQUEST_PREFIX, status.request_id], status);
+      await kv.set([...SENTINEL_REPLAY_EVICTION_PREFIX, tombstone.fingerprint], tombstone);
+      await kv.set(corruptKey, { invalid: true });
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const failed = await finishSweep(kv);
+        assert.equal(failed.bootstrap_complete, false);
+        assert.equal(failed.bootstrap_cursor, null);
+        assert.equal(failed.accounting_error, "invalid_in_scope_row");
+        assert.deepEqual(liveCounters(failed), expected);
+        assertHistory(failed);
       }
-    },
+      assert.deepEqual((await kv.get(sentinelReplayAccountingKey(manifest.captured_at_ms, manifest.capture_id))).value, accountingFor(manifest));
+      await kv.delete(corruptKey);
+      const recovered = await finishSweep(kv);
+      assert.equal(recovered.bootstrap_complete, true);
+      assert.equal(recovered.accounting_error, null);
+      assert.equal(recovered.over_budget, false);
+      assert.deepEqual(liveCounters(recovered), expected);
+      assertHistory(recovered);
+    } finally {
+      kv.close();
+    }
   });
 }
 
-Deno.test({
-  name: "bootstrap retry: a restarted sweep preserves bounded cursor continuation",
-  ignore: typeof Deno.openKv !== "function",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    const manifests = Array.from({ length: BOOTSTRAP_BATCH_ENTRIES + 7 }, (_, index) => manifestFor(index + 1));
-    const expectedBytes = manifests.reduce((sum, manifest) => sum + sentinelReplayManifestCharge(manifest), 0);
-    try {
-      for (const manifest of manifests) await seedManifest(kv, manifest, false);
-      await kv.set(corruptKey, { invalid: true });
-      const failed = await finishSweep(kv);
-      assert.equal(failed.bootstrap_complete, false);
-      assert.equal(failed.records, manifests.length);
-      const partial = await runBatch(kv);
-      assert.equal(partial.bootstrap_complete, false);
-      assert.notEqual(partial.bootstrap_cursor, null);
-      assert.equal(partial.records, BOOTSTRAP_BATCH_ENTRIES);
-      const repeated = await finishSweep(kv);
-      assert.equal(repeated.bootstrap_complete, false);
-      assert.equal(repeated.records, manifests.length);
-      assert.equal(repeated.stored_bytes, expectedBytes);
-      await kv.delete(corruptKey);
-      const recovered = await finishSweep(kv);
-      assert.equal(recovered.bootstrap_complete, true);
-      assert.equal(recovered.records, manifests.length);
-      assert.equal(recovered.stored_bytes, expectedBytes);
-    } finally {
-      kv.close();
-    }
-  },
+test("bootstrap retry: a restarted sweep preserves bounded cursor continuation", async () => {
+  const kv = await openKv(":memory:");
+  const manifests = Array.from({ length: BOOTSTRAP_BATCH_ENTRIES + 7 }, (_, index) => manifestFor(index + 1));
+  const expectedBytes = manifests.reduce((sum, manifest) => sum + sentinelReplayManifestCharge(manifest), 0);
+  try {
+    for (const manifest of manifests) await seedManifest(kv, manifest, false);
+    await kv.set(corruptKey, { invalid: true });
+    const failed = await finishSweep(kv);
+    assert.equal(failed.bootstrap_complete, false);
+    assert.equal(failed.records, manifests.length);
+    const partial = await runBatch(kv);
+    assert.equal(partial.bootstrap_complete, false);
+    assert.notEqual(partial.bootstrap_cursor, null);
+    assert.equal(partial.records, BOOTSTRAP_BATCH_ENTRIES);
+    const repeated = await finishSweep(kv);
+    assert.equal(repeated.bootstrap_complete, false);
+    assert.equal(repeated.records, manifests.length);
+    assert.equal(repeated.stored_bytes, expectedBytes);
+    await kv.delete(corruptKey);
+    const recovered = await finishSweep(kv);
+    assert.equal(recovered.bootstrap_complete, true);
+    assert.equal(recovered.records, manifests.length);
+    assert.equal(recovered.stored_bytes, expectedBytes);
+  } finally {
+    kv.close();
+  }
 });
 
-Deno.test({
-  name: "bootstrap retry: stale ledger CAS cannot commit a rebuilt snapshot",
-  ignore: typeof Deno.openKv !== "function",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    const manifest = manifestFor(1);
-    try {
-      await seedManifest(kv, manifest, false);
-      await kv.set(corruptKey, { invalid: true });
-      await finishSweep(kv);
-      await kv.delete(corruptKey);
-      const stale = await readLedger(kv, budget);
-      if (stale.kind !== "ok") throw new Error("expected a persisted failed sweep");
-      const concurrent = { ...stale.ledger, expired_records: stale.ledger.expired_records + 1 };
-      const committed = await kv
-        .atomic()
-        .check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp: stale.versionstamp })
-        .set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, concurrent)
-        .commit();
-      if (!committed.ok) throw new Error("fixture CAS unexpectedly failed");
-      const conflict = await runBootstrapBatch(kv, stale.ledger, stale.versionstamp, budget, now);
-      assert.deepEqual(conflict, concurrent);
-      const persisted = await kv.get(SENTINEL_REPLAY_BUDGET_LEDGER_KEY);
-      assert.deepEqual(persisted.value, concurrent);
-      assert.equal(persisted.versionstamp, committed.versionstamp);
-      const recovered = await finishSweep(kv);
-      assert.equal(recovered.bootstrap_complete, true);
-      assert.equal(recovered.expired_records, concurrent.expired_records);
-      assert.equal(recovered.stored_bytes, sentinelReplayManifestCharge(manifest));
-      assert.equal(recovered.records, 1);
-    } finally {
-      kv.close();
-    }
-  },
+test("bootstrap retry: stale ledger CAS cannot commit a rebuilt snapshot", async () => {
+  const kv = await openKv(":memory:");
+  const manifest = manifestFor(1);
+  try {
+    await seedManifest(kv, manifest, false);
+    await kv.set(corruptKey, { invalid: true });
+    await finishSweep(kv);
+    await kv.delete(corruptKey);
+    const stale = await readLedger(kv, budget);
+    if (stale.kind !== "ok") throw new Error("expected a persisted failed sweep");
+    const concurrent = { ...stale.ledger, expired_records: stale.ledger.expired_records + 1 };
+    const committed = await kv
+      .atomic()
+      .check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp: stale.versionstamp })
+      .set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, concurrent)
+      .commit();
+    if (!committed.ok) throw new Error("fixture CAS unexpectedly failed");
+    const conflict = await runBootstrapBatch(kv, stale.ledger, stale.versionstamp, budget, now);
+    assert.deepEqual(conflict, concurrent);
+    const persisted = await kv.get(SENTINEL_REPLAY_BUDGET_LEDGER_KEY);
+    assert.deepEqual(persisted.value, concurrent);
+    assert.equal(persisted.versionstamp, committed.versionstamp);
+    const recovered = await finishSweep(kv);
+    assert.equal(recovered.bootstrap_complete, true);
+    assert.equal(recovered.expired_records, concurrent.expired_records);
+    assert.equal(recovered.stored_bytes, sentinelReplayManifestCharge(manifest));
+    assert.equal(recovered.records, 1);
+  } finally {
+    kv.close();
+  }
 });
 
-Deno.test({
-  name: "bootstrap retry: a recovered legacy charge expires and releases exactly once",
-  ignore: typeof Deno.openKv !== "function",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    const manifest = manifestFor(1);
-    const charge = sentinelReplayManifestCharge(manifest);
-    const accountingKey = sentinelReplayAccountingKey(manifest.captured_at_ms, manifest.capture_id);
-    try {
-      await seedManifest(kv, manifest, false);
-      await kv.set(corruptKey, { invalid: true });
-      await finishSweep(kv);
-      await finishSweep(kv);
-      await kv.delete(corruptKey);
-      const recovered = await finishSweep(kv);
-      assert.equal(recovered.stored_bytes, charge);
-      assert.equal(recovered.records, 1);
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        await reclaimExpiredSentinelReplays(kv, { now_ms: manifest.expires_at_ms + 1, budget_bytes: budget });
-        const state = await readLedger(kv, budget);
-        if (state.kind !== "ok") throw new Error("expected a persisted reclamation ledger");
-        const reclaimed = state.ledger;
-        assert.equal(reclaimed.stored_bytes, 0);
-        assert.equal(reclaimed.reserved_bytes, 0);
-        assert.equal(reclaimed.records, 0);
-        assert.equal(reclaimed.expired_bytes, charge);
-        assert.equal(reclaimed.expired_records, 1);
-        assert.equal((await kv.get(accountingKey)).value, null);
-        assert.equal((await kv.get(manifestKey(manifest))).value, null);
-        assert.equal((await kv.get([...SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, 0])).value, null);
-      }
-    } finally {
-      kv.close();
+test("bootstrap retry: a recovered legacy charge expires and releases exactly once", async () => {
+  const kv = await openKv(":memory:");
+  const manifest = manifestFor(1);
+  const charge = sentinelReplayManifestCharge(manifest);
+  const accountingKey = sentinelReplayAccountingKey(manifest.captured_at_ms, manifest.capture_id);
+  try {
+    await seedManifest(kv, manifest, false);
+    await kv.set(corruptKey, { invalid: true });
+    await finishSweep(kv);
+    await finishSweep(kv);
+    await kv.delete(corruptKey);
+    const recovered = await finishSweep(kv);
+    assert.equal(recovered.stored_bytes, charge);
+    assert.equal(recovered.records, 1);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await reclaimExpiredSentinelReplays(kv, { now_ms: manifest.expires_at_ms + 1, budget_bytes: budget });
+      const state = await readLedger(kv, budget);
+      if (state.kind !== "ok") throw new Error("expected a persisted reclamation ledger");
+      const reclaimed = state.ledger;
+      assert.equal(reclaimed.stored_bytes, 0);
+      assert.equal(reclaimed.reserved_bytes, 0);
+      assert.equal(reclaimed.records, 0);
+      assert.equal(reclaimed.expired_bytes, charge);
+      assert.equal(reclaimed.expired_records, 1);
+      assert.equal((await kv.get(accountingKey)).value, null);
+      assert.equal((await kv.get(manifestKey(manifest))).value, null);
+      assert.equal((await kv.get([...SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, 0])).value, null);
     }
-  },
+  } finally {
+    kv.close();
+  }
 });

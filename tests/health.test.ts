@@ -1,7 +1,11 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import type { Kv, KvEntryMaybe, KvKey, KvListOptions, KvListSelector } from "#kv";
+import { setKvForTest } from "../src/kv.ts";
 import assert from "node:assert/strict";
 import { sha256Hex } from "../src/utils.ts";
 
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyToString = (key: KvKey): string => JSON.stringify(key);
 
 let resetAuthCache = (): void => {};
 class HealthKvStore extends Map<string, unknown> {
@@ -14,27 +18,27 @@ const kvStore = new HealthKvStore();
 let atomicCommitCount = 0;
 
 const kvStub = {
-  get: (key: Deno.KvKey) => Promise.resolve({ key, value: kvStore.get(keyToString(key)) ?? null } as Deno.KvEntryMaybe<unknown>),
-  set: (key: Deno.KvKey, value: unknown) => {
+  get: (key: KvKey) => Promise.resolve({ key, value: kvStore.get(keyToString(key)) ?? null } as KvEntryMaybe<unknown>),
+  set: (key: KvKey, value: unknown) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
+  list: function* (_selector: KvListSelector, _options?: KvListOptions) {
     yield* [];
   },
   atomic: () => {
-    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+    const ops: { type: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
     const chain = {
       check: () => chain,
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ type: "delete", key });
         return chain;
       },
@@ -50,9 +54,9 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
+} as unknown as Kv;
 
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
+setKvForTest(kvStub);
 
 const { handleHealth, handleHealthProviders, handleHealthUpstream, setActiveUpstreamHealthTimeoutMsForTest } = await import("../src/health.ts");
 const { default: handler } = await import("../src/handler/index.ts");
@@ -106,9 +110,9 @@ const makeAuthPool = (...accounts: ReturnType<typeof makeAuthEntry>[]) => ({
   updated_at_ms: Date.now(),
 });
 
-const CODEX_AUTH_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
+const CODEX_AUTH_KEY: KvKey = ["ubq_ai", "codex_auth"];
 
-Deno.test("getJwtExpMs ignores non-string, empty, and malformed tokens", () => {
+test("getJwtExpMs ignores non-string, empty, and malformed tokens", () => {
   for (const token of [undefined, null, 42, {}, "", "not-a-jwt", "header.%%%.", "header.e30.signature.extra"] as unknown[]) {
     assert.doesNotThrow(() => {
       assert.equal(getJwtExpMs(token), null);
@@ -116,7 +120,7 @@ Deno.test("getJwtExpMs ignores non-string, empty, and malformed tokens", () => {
   }
 });
 
-Deno.test("passive provider health returns every Codex slot without contacting upstream", async () => {
+test("passive provider health returns every Codex slot without contacting upstream", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   const future = Math.floor(Date.now() / 1000) + 3600;
@@ -126,9 +130,9 @@ Deno.test("passive provider health returns every Codex slot without contacting u
   await recordMeteredProviderHealth("success", 200, () => 3_000);
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("/health/providers must not contact any upstream");
-  };
+  });
   try {
     const response = await handleHealthProviders();
     const text = await response.text();
@@ -162,17 +166,17 @@ Deno.test("passive provider health returns every Codex slot without contacting u
   }
 });
 
-Deno.test("passive provider health reports configured Cerebras without probing it", async () => {
+test("passive provider health reports configured Cerebras without probing it", async () => {
   const envKey = "CEREBRAS_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "cerebras-test-key");
+  const originalApiKey = process.env[envKey];
+  process.env[envKey] = "cerebras-test-key";
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   await recordCerebrasProviderHealth("success", 200, () => 4_000);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("passive Cerebras health must not probe an upstream");
-  };
+  });
   try {
     const response = await handleHealthProviders();
     const payload = (await response.json()) as {
@@ -185,22 +189,22 @@ Deno.test("passive provider health reports configured Cerebras without probing i
     assert.equal((await getCerebrasProviderHealth(() => 4_001)).state, "healthy");
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+    else process.env[envKey] = originalApiKey;
   }
 });
 
-Deno.test("passive provider health reports configured DeepSeek official without probing it", async () => {
+test("passive provider health reports configured DeepSeek official without probing it", async () => {
   const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.set(envKey, "deepseek-test-key");
+  const originalApiKey = process.env[envKey];
+  process.env[envKey] = "deepseek-test-key";
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   await recordDeepSeekProviderHealth("success", 200, () => 5_000);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("passive DeepSeek health must not probe an upstream");
-  };
+  });
   try {
     const response = await handleHealthProviders();
     const payload = (await response.json()) as {
@@ -213,15 +217,15 @@ Deno.test("passive provider health reports configured DeepSeek official without 
     assert.equal((await getDeepSeekProviderHealth(() => 5_001)).state, "healthy");
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, envKey);
+    else process.env[envKey] = originalApiKey;
   }
 });
 
-Deno.test("passive provider health reports DeepSeek as unconfigured without the official credential", async () => {
+test("passive provider health reports DeepSeek as unconfigured without the official credential", async () => {
   const envKey = "DEEPSEEK_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
-  Deno.env.delete(envKey);
+  const originalApiKey = process.env[envKey];
+  Reflect.deleteProperty(process.env, envKey);
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   try {
@@ -231,17 +235,17 @@ Deno.test("passive provider health reports DeepSeek as unconfigured without the 
     assert.equal(payload.deepseek?.configured, false);
     assert.equal(payload.deepseek.health?.state, "unknown");
   } finally {
-    if (originalApiKey !== undefined) Deno.env.set(envKey, originalApiKey);
+    if (originalApiKey !== undefined) process.env[envKey] = originalApiKey;
   }
 });
 
-Deno.test("admin provider health includes cached quota fields without an active refresh", async () => {
+test("admin provider health includes cached quota fields without an active refresh", async () => {
   kvStore.clear();
   kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("/admin/providers must not contact any upstream");
-  };
+  });
   try {
     const response = await handleHealthProviders({ includeQuota: true });
     const payload = (await response.json()) as {
@@ -256,11 +260,11 @@ Deno.test("admin provider health includes cached quota fields without an active 
   }
 });
 
-Deno.test("admin provider health exposes Surplus identity and honest quota availability", async () => {
+test("admin provider health exposes Surplus identity and honest quota availability", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
-  const originalApiKey = Deno.env.get("SURPLUS_API_KEY");
-  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  const originalApiKey = process.env.SURPLUS_API_KEY;
+  process.env.SURPLUS_API_KEY = "surplus-test-key";
   await recordSurplusProviderHealth("success", 200, () => 4_000);
   try {
     const response = await handleHealthProviders({ includeQuota: true });
@@ -279,12 +283,12 @@ Deno.test("admin provider health exposes Surplus identity and honest quota avail
     assert.equal(payload.surplus.quota?.available, false);
     assert.equal(payload.surplus.quota.source, "not_reported");
   } finally {
-    if (originalApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = originalApiKey;
   }
 });
 
-Deno.test("provider health persists a recovery immediately while retaining the last 429", async () => {
+test("provider health persists a recovery immediately while retaining the last 429", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   await recordCodexProviderHealth("recovering-account", "success", 200, () => 1_000);
@@ -297,7 +301,7 @@ Deno.test("provider health persists a recovery immediately while retaining the l
   assert.equal(health.last_success_at_ms, 3_000);
 });
 
-Deno.test("provider reachability and token refresh stay degraded until inference succeeds", async () => {
+test("provider reachability and token refresh stay degraded until inference succeeds", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   await recordCodexProviderHealth("reachable-only-account", "reachable", 200, () => 500);
@@ -323,7 +327,7 @@ Deno.test("provider reachability and token refresh stay degraded until inference
   assert.equal(recovered.last_success_at_ms, 4_000);
 });
 
-Deno.test("provider request IDs are bounded, normalized, and sampled without per-request writes", async () => {
+test("provider request IDs are bounded, normalized, and sampled without per-request writes", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   atomicCommitCount = 0;
@@ -346,7 +350,7 @@ Deno.test("provider request IDs are bounded, normalized, and sampled without per
   assert.equal(oversized.last_provider_request_id, null);
 });
 
-Deno.test("provider health coalesces identical quota observations without hiding a later transition", async () => {
+test("provider health coalesces identical quota observations without hiding a later transition", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   atomicCommitCount = 0;
@@ -364,7 +368,7 @@ Deno.test("provider health coalesces identical quota observations without hiding
   assert.equal(recovered.last_429_at_ms, 1_000);
 });
 
-Deno.test("provider health serializes success to 429 to success transitions", async () => {
+test("provider health serializes success to 429 to success transitions", async () => {
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   atomicCommitCount = 0;
@@ -382,16 +386,16 @@ Deno.test("provider health serializes success to 429 to success transitions", as
   assert.equal(atomicCommitCount, 3);
 });
 
-Deno.test("public health is passive release provenance with zero upstream and KV work", async () => {
+test("public health is passive release provenance with zero upstream and KV work", async () => {
   kvStore.clear();
   let fetchCalls = 0;
   let kvCalls = 0;
   const originalFetch = globalThis.fetch;
   const originalGet = kvStub.get.bind(kvStub);
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     throw new Error("public health must not fetch");
-  };
+  });
   (kvStub as { get: typeof kvStub.get }).get = (...args) => {
     kvCalls += 1;
     return originalGet(...args);
@@ -416,7 +420,7 @@ Deno.test("public health is passive release provenance with zero upstream and KV
   }
 });
 
-Deno.test("public health HEAD is release liveness without a response body", async () => {
+test("public health HEAD is release liveness without a response body", async () => {
   const response = await handler(new Request("https://ai.ubq.fi/health", { method: "HEAD" }));
 
   assert.equal(response.status, 200);
@@ -426,12 +430,12 @@ Deno.test("public health HEAD is release liveness without a response body", asyn
   assert.equal(await response.text(), "");
 });
 
-Deno.test("obsolete auth health route is not exposed", async () => {
+test("obsolete auth health route is not exposed", async () => {
   const response = await handler(new Request("https://ai.ubq.fi/health/auth"));
   assert.equal(response.status, 404);
 });
 
-Deno.test("detailed provider health and recheck routes require admin authentication", async () => {
+test("detailed provider health and recheck routes require admin authentication", async () => {
   for (const request of [
     new Request("https://ai.ubq.fi/health/providers"),
     new Request("https://ai.ubq.fi/health/upstream"),
@@ -445,7 +449,7 @@ Deno.test("detailed provider health and recheck routes require admin authenticat
   }
 });
 
-Deno.test("authenticated admin provider route is private and not cacheable", async () => {
+test("authenticated admin provider route is private and not cacheable", async () => {
   const token = "health-route-admin-token";
   const adminTokens = config.adminTokens as Set<string>;
   adminTokens.add(token);
@@ -464,18 +468,19 @@ Deno.test("authenticated admin provider route is private and not cacheable", asy
   }
 });
 
-Deno.test("active upstream health retains detailed failure diagnostics", async () => {
+test("active upstream health retains detailed failure diagnostics", async () => {
   kvStore.clear();
   kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response("temporary error", {
         status: 503,
         headers: { "Content-Type": "text/plain" },
       })
-    );
+    )
+  );
 
   try {
     const upstream = await handleHealthUpstream();
@@ -483,11 +488,13 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
 
     assert.equal(upstream.status, 503);
     assert.equal(upstreamPayload.status, 503);
-    const authBlock = upstreamPayload.auth as {
-      accounts?: { refresh_sha256?: string | null; native_owner_codex_home?: string | null }[];
-    } | undefined;
+    const authBlock = upstreamPayload.auth as
+      | {
+          accounts?: { refresh_sha256?: string | null; native_owner_codex_home?: string | null }[];
+        }
+      | undefined;
     assert.equal(authBlock?.accounts?.[0]?.refresh_sha256, await sha256Hex("refresh"));
-    assert.equal(authBlock?.accounts?.[0]?.native_owner_codex_home, null);
+    assert.equal(authBlock.accounts[0]?.native_owner_codex_home, null);
     assert.equal((upstreamPayload.probes as { codex?: { provider?: string; status?: number } } | undefined)?.codex?.provider, "chatgpt_codex");
     assert.equal((upstreamPayload.probes as { codex?: { status?: number } } | undefined)?.codex?.status, 503);
   } finally {
@@ -495,11 +502,11 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
   }
 });
 
-Deno.test("active upstream health bounds malformed Codex auth metadata", async () => {
+test("active upstream health bounds malformed Codex auth metadata", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     throw new Error("malformed auth health must not contact upstream");
-  };
+  });
   const malformedRecords: unknown[] = [
     { tokens: { access_token: "legacy-access-token", refresh_token: "legacy-refresh-token" } },
     {
@@ -536,15 +543,15 @@ Deno.test("active upstream health bounds malformed Codex auth metadata", async (
   }
 });
 
-Deno.test("active upstream health preserves the provider that finishes before the shared deadline", async () => {
-  const originalApiKey = Deno.env.get("METERED_API_KEY");
+test("active upstream health preserves the provider that finishes before the shared deadline", async () => {
+  const originalApiKey = process.env.METERED_API_KEY;
   const originalFetch = globalThis.fetch;
-  Deno.env.set("METERED_API_KEY", "metered-api-key");
+  process.env.METERED_API_KEY = "metered-api-key";
   setActiveUpstreamHealthTimeoutMsForTest(20);
 
   const restoreEnv = (key: string, value: string | undefined): void => {
-    if (value === undefined) Deno.env.delete(key);
-    else Deno.env.set(key, value);
+    if (value === undefined) Reflect.deleteProperty(process.env, key);
+    else process.env[key] = value;
   };
   const waitForAbort = (signal: AbortSignal | null | undefined): Promise<Response> =>
     new Promise<Response>((_resolve, reject) => {
@@ -564,7 +571,7 @@ Deno.test("active upstream health preserves the provider that finishes before th
     for (const stalledProvider of ["codex", "metered"] as const) {
       kvStore.clear();
       kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(Math.floor(Date.now() / 1000) + 3600)));
-      globalThis.fetch = (input, init) => {
+      globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(input instanceof Request ? input.url : input.toString());
         const isCodex = url.hostname === "chatgpt.com";
         if ((stalledProvider === "codex" && isCodex) || (stalledProvider === "metered" && !isCodex)) {
@@ -585,7 +592,7 @@ Deno.test("active upstream health preserves the provider that finishes before th
           );
         }
         throw new Error(`Unexpected Metered URL: ${url.href}`);
-      };
+      });
 
       const response = await handleHealthUpstream();
       const payload = (await response.json()) as {

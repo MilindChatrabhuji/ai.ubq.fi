@@ -2,5 +2,81 @@
   "name": "ai-ubq-fi",
   "version": "0.0.0",
   "private": true,
-  "description": "Root manifest for tooling discovery only; the lint toolchain lives in tools/lint/."
+  "description": "Bun TypeScript gateway for OpenAI-compatible and Codex-native APIs.",
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": "1.4.0"
+  },
+  "imports": {
+    "#http": "./src/runtime/http.ts",
+    "#kv": "./src/storage/kv.ts"
+  },
+  "scripts": {
+    "build": "bun --no-env-file run check",
+    "check": "bun --no-env-file --no-install scripts/patch-bun-types.ts && bun --no-env-file node_modules/typescript/bin/tsc --noEmit --project tsconfig.json",
+    "build:native": "sh -c 'set -e; case \"$(uname -s)\" in Linux) bun --no-env-file scripts/build-permissions.ts ;; esac; exec bun --no-env-file --no-install scripts/prepare-native-runtime.ts'",
+    "dev": "sh -c 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec bun --no-env-file --watch serve.ts --disable-admin-auth \"$@\"' --",
+    "dev:local": "sh -c 'if [ -z \"${CODEX_AUTH_JSON_B64:-}\" ]; then if [ -f \"$HOME/.codex/auth.json\" ]; then export CODEX_AUTH_JSON_B64=\"$(base64 < \"$HOME/.codex/auth.json\" | tr -d \"\\n\")\"; echo \"Loaded CODEX_AUTH_JSON_B64 from ~/.codex/auth.json\"; else echo \"No CODEX_AUTH_JSON_B64 and no ~/.codex/auth.json found. /v1/models will stay empty until a model snapshot is initialized.\"; fi; fi; if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec bun --no-env-file --watch serve.ts --disable-admin-auth \"$@\"' --",
+    "dev:play": "bun --no-env-file run dev:local",
+    "ubq-ai": "bun run scripts/ubq-ai.ts",
+    "admin:models": "sh -c 'BASE_URL=${BASE_URL:-http://localhost:8000}; admin_token=${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-}}; if [ -z \"$admin_token\" ] && ! case \"$BASE_URL\" in http://localhost*|http://127.*|http://\\[::1\\]*) true ;; *) false ;; esac; then echo \"DENO_DEPLOY_TOKEN_UBIQUITY_DAO (or DENO_DEPLOY_TOKEN) is required for non-loopback admin endpoints.\" >&2; exit 1; fi; curl -sS -H \"Authorization: Bearer $admin_token\" \"$BASE_URL/admin/codex/models\"'",
+    "admin:models:spark": "sh -c 'BASE_URL=${BASE_URL:-http://localhost:8000}; admin_token=${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-}}; if [ -z \"$admin_token\" ] && ! case \"$BASE_URL\" in http://localhost*|http://127.*|http://\\[::1\\]*) true ;; *) false ;; esac; then echo \"DENO_DEPLOY_TOKEN_UBIQUITY_DAO (or DENO_DEPLOY_TOKEN) is required for non-loopback admin endpoints.\" >&2; exit 1; fi; curl -sS -H \"Authorization: Bearer $admin_token\" \"$BASE_URL/admin/codex/models\" | jq -r \".data.models[]?.slug // empty | select(contains(\\\"-spark\\\"))\"'",
+    "models:coverage": "bun --no-env-file run scripts/model-coverage.ts",
+    "upload:auth": "bun run scripts/upload-codex-auth.ts",
+    "keys:create": "bun run scripts/ubq-ai.ts admin keys create",
+    "keys:list": "bun run scripts/ubq-ai.ts admin keys list",
+    "keys:revoke": "bun run scripts/ubq-ai.ts admin keys revoke",
+    "health:check": "bun --no-env-file run scripts/health-check.ts",
+    "kv:probe": "bun --no-env-file scripts/kv-migrate.ts probe",
+    "kv:export": "bun --no-env-file scripts/kv-migrate.ts export",
+    "kv:analyze": "bun --no-env-file scripts/kv-migrate.ts analyze",
+    "kv:import-local": "bun --no-env-file scripts/kv-migrate.ts import-local",
+    "kv:import-remote": "bun --no-env-file scripts/kv-migrate.ts import-remote",
+    "kv:import-http": "bun --no-env-file scripts/kv-migrate.ts import-http",
+    "kv:validate": "bun --no-env-file scripts/kv-migrate.ts validate",
+    "kv:incident-v2": "bun --no-env-file scripts/kv-migrate.ts incident-v2",
+    "kv:validate-http": "bun --no-env-file scripts/kv-migrate.ts validate-http",
+    "kv:convert": "bun --no-env-file src/kv-conversion/cli.ts",
+    "benchmark:run": "bun --no-env-file benchmarks/runner.ts",
+    "benchmark:summary": "bun --no-env-file benchmarks/summarize.ts",
+    "benchmark:fixture-revision": "bun --no-env-file benchmarks/fixture-revision.ts",
+    "test": "bun --no-env-file scripts/test-runner.ts main",
+    "test:vps": "bun --no-env-file scripts/test-runner.ts vps",
+    "test:measurement": "bun --no-env-file scripts/test-runner.ts measurement",
+    "test:stress": "bun --no-env-file scripts/test-runner.ts stress",
+    "test:e2e": "bun --no-env-file scripts/test-runner.ts e2e",
+    "sentinel:test-local": "bun --no-env-file scripts/test-runner.ts sentinel",
+    "benchmark:test": "bun --no-env-file scripts/test-runner.ts benchmark",
+    "test:deploy-guards": "bun --no-env-file scripts/test-runner.ts deploy-guards",
+    "test:quality": "bun --no-env-file scripts/test-runner.ts quality",
+    "format": "sh scripts/format.sh",
+    "format:check": "sh scripts/format.sh --check",
+    "fmt": "sh scripts/format.sh",
+    "lint": "sh scripts/lint.sh",
+    "lint:eslint": "sh scripts/lint.sh",
+    "knip": "sh scripts/knip.sh",
+    "size:check": "bun --no-env-file scripts/file-size-ratchet.ts",
+    "size:update": "bun --no-env-file scripts/file-size-ratchet.ts --update",
+    "verify": "sh scripts/verify.sh",
+    "prune:releases": "bun --no-env-file --no-install ops/prune-releases.ts",
+    "deploy:vps": "bun --no-env-file --no-install ops/deploy.ts",
+    "deploy:mac": "bun --no-env-file --no-install ops/deploy-mac.ts"
+  },
+  "dependencies": {
+    "@deno/kv": "0.14.0",
+    "@simplewebauthn/server": "13.2.2",
+    "@std/yaml": "npm:@jsr/std__yaml@1.0.9",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/node": "25.6.0",
+    "@types/ws": "8.18.1",
+    "typescript": "6.0.3",
+    "node-api-headers": "1.9.0"
+  },
+  "patchedDependencies": {
+    "@deno/kv@0.14.0": "src/storage/patches/deno-kv-0.14.0.patch"
+  }
 }

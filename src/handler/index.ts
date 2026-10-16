@@ -7,6 +7,12 @@ import {
   handleAdminApiKeysRevoke,
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
+  handleAdminClaudeCodeAccess,
+  handleAdminClaudeCodeAccountActive,
+  handleAdminClaudeCodeAuthDelete,
+  handleAdminClaudeCodeAuthGet,
+  handleAdminClaudeCodeAuthSet,
+  handleAdminClaudeCodeQuotaClear,
   handleAdminCodexAuth,
   handleAdminCodexBankedResetShadowDecisions,
   handleAdminCodexCacheScopeExperiment,
@@ -154,6 +160,12 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["POST"], path: "/admin/providers/selection", run: (req) => handleAdminProviderSelectionSet(req) },
   { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => handleProviderCapacity(req) },
   { methods: ["GET"], path: "/admin/providers/capacity/rollups", run: (req) => handleProviderCapacityRollups(req) },
+  { methods: ["GET", "POST"], path: "/admin/providers/claude-code/access", run: (req) => handleAdminClaudeCodeAccess(req) },
+  { methods: ["POST"], path: "/admin/providers/claude-code/accounts/active", run: (req) => handleAdminClaudeCodeAccountActive(req) },
+  { methods: ["GET"], path: "/admin/providers/claude-code/auth", run: () => handleAdminClaudeCodeAuthGet() },
+  { methods: ["POST"], path: "/admin/providers/claude-code/auth", run: (req) => handleAdminClaudeCodeAuthSet(req) },
+  { methods: ["DELETE"], path: "/admin/providers/claude-code/auth", run: (req) => handleAdminClaudeCodeAuthDelete(req) },
+  { methods: ["POST"], path: "/admin/providers/claude-code/quota/clear", run: (req) => handleAdminClaudeCodeQuotaClear(req) },
   { methods: ["GET"], path: "/admin/providers/quota-projection", run: (req) => handleAdminProvidersQuotaProjection(req) },
   { methods: ["POST"], path: "/admin/providers/quota-projection/backfill", run: (req) => handleAdminProvidersQuotaProjectionBackfill(req) },
   { methods: ["GET"], path: "/admin/prompt-cache-analytics", run: (req) => handleAdminPromptCacheAnalytics(req) },
@@ -308,10 +320,8 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   const uosResponse = await handleUosRoute(req, path);
   if (uosResponse) return withCors(uosResponse);
 
-  // The realtime voice relay owns its own decorations: a sideband upgrade must
-  // be returned exactly as `Deno.upgradeWebSocket` produced it, and `withCors`
-  // above would rebuild the response and drop its socket. The JSON arms apply
-  // both decorations themselves.
+  // The realtime voice relay decorates its own JSON responses. Actual WebSocket
+  // switching is handled by the separate authenticated transport entry point.
   const liveResponse = await handleLiveRoute(req, requestId);
   if (liveResponse) return liveResponse;
 
@@ -322,3 +332,5 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
 
   return await handleTerminalRoute(req, path, delivery, requestId, requestStartedAtMs, requestStartedAtMonotonicMs);
 }
+
+export { handleLiveUpgrade as upgradeHandler } from "../live/handler.ts";

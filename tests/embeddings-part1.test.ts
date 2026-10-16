@@ -1,3 +1,8 @@
+import { test, beforeEach, afterEach } from "bun:test";
+import type { KvKey } from "#kv";
+import { installHarness, cleanupHarness } from "./helpers/embeddings-harness.ts";
+beforeEach(installHarness);
+afterEach(cleanupHarness);
 // embeddings suite part: tests moved out of tests/embeddings.test.ts.
 
 import assert from "node:assert/strict";
@@ -5,7 +10,7 @@ import {
   EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS,
   EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS,
   EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS,
-  TestDimension,
+  type TestDimension,
   bumpKvVersion,
   embeddingsCacheGlobalIndexKey,
   embeddingsCacheKey,
@@ -32,7 +37,7 @@ import {
   withFetchMock,
 } from "./helpers/embeddings-harness.ts";
 
-Deno.test("embeddings: normalizes string input", async () => {
+test("embeddings: normalizes string input", async () => {
   resetVoyageRateLimit();
   const response = await withFetchMock(
     (url, bodyText, headers) => {
@@ -84,7 +89,7 @@ Deno.test("embeddings: normalizes string input", async () => {
   assert.equal(response.headers.get("x-uos-upstream"), "voyage");
 });
 
-Deno.test("uos embeddings: forwards synchronous query and document profiles", async () => {
+test("uos embeddings: forwards synchronous query and document profiles", async () => {
   const cases = [
     {
       inputType: "query" as const,
@@ -145,7 +150,7 @@ Deno.test("uos embeddings: forwards synchronous query and document profiles", as
   }
 });
 
-Deno.test("uos embeddings idempotency: replays the stored validated response without another Voyage call", async () => {
+test("uos embeddings idempotency: replays the stored validated response without another Voyage call", async () => {
   resetVoyageRateLimit();
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const input = `idempotency-replay-${crypto.randomUUID()}`;
@@ -173,7 +178,7 @@ Deno.test("uos embeddings idempotency: replays the stored validated response wit
   assert.equal(upstreamCalls, 1);
 });
 
-Deno.test("uos embeddings idempotency: same principal and key reject a different ordered request fingerprint", async () => {
+test("uos embeddings idempotency: same principal and key reject a different ordered request fingerprint", async () => {
   resetVoyageRateLimit();
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const usageContext = uosIdempotencyUsageContext("account-conflict");
@@ -197,7 +202,7 @@ Deno.test("uos embeddings idempotency: same principal and key reject a different
   assert.equal(upstreamCalls, 1);
 });
 
-Deno.test("uos embeddings idempotency: a concurrent replay cannot dispatch Voyage twice", async () => {
+test("uos embeddings idempotency: a concurrent replay cannot dispatch Voyage twice", async () => {
   resetVoyageRateLimit();
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const input = `idempotency-concurrent-${crypto.randomUUID()}`;
@@ -237,7 +242,7 @@ Deno.test("uos embeddings idempotency: a concurrent replay cannot dispatch Voyag
   assert.equal(upstreamCalls, 1);
 });
 
-Deno.test("uos embeddings idempotency: keyed requests fail before Voyage when durable KV is unavailable", async () => {
+test("uos embeddings idempotency: keyed requests fail before Voyage when durable KV is unavailable", async () => {
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const usageContext = uosIdempotencyUsageContext("account-no-kv");
   let upstreamCalls = 0;
@@ -255,7 +260,7 @@ Deno.test("uos embeddings idempotency: keyed requests fail before Voyage when du
   assert.equal(upstreamCalls, 0);
 });
 
-Deno.test("embeddings: quota dispatch failures release idempotency and promptly requeue jobs", async () => {
+test("embeddings: quota dispatch failures release idempotency and promptly requeue jobs", async () => {
   const { ApiKeyQuotaDispatchError } = await import("../src/api-key-policy.ts");
   const idempotencyKey = `embedding-quota-dispatch-${crypto.randomUUID()}`;
   const input = `quota-dispatch-${crypto.randomUUID()}`;
@@ -320,7 +325,7 @@ Deno.test("embeddings: quota dispatch failures release idempotency and promptly 
   );
 });
 
-Deno.test("uos embeddings idempotency: an outcome-unknown dispatch is durable and never sent again", async () => {
+test("uos embeddings idempotency: an outcome-unknown dispatch is durable and never sent again", async () => {
   resetVoyageRateLimit();
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const input = `idempotency-indeterminate-${crypto.randomUUID()}`;
@@ -346,7 +351,7 @@ Deno.test("uos embeddings idempotency: an outcome-unknown dispatch is durable an
   assert.equal(upstreamCalls, 1);
 });
 
-Deno.test("uos embeddings idempotency: an abandoned dispatched ledger fails closed without Voyage", async () => {
+test("uos embeddings idempotency: an abandoned dispatched ledger fails closed without Voyage", async () => {
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const input = `idempotency-abandoned-${crypto.randomUUID()}`;
   const principal = "account-abandoned";
@@ -388,7 +393,7 @@ Deno.test("uos embeddings idempotency: an abandoned dispatched ledger fails clos
   }
 });
 
-Deno.test("uos embeddings idempotency: confirmed HTTP failures re-arm the key for a later retry", async () => {
+test("uos embeddings idempotency: confirmed HTTP failures re-arm the key for a later retry", async () => {
   resetVoyageRateLimit();
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const input = `idempotency-explicit-retry-${crypto.randomUUID()}`;
@@ -420,7 +425,7 @@ Deno.test("uos embeddings idempotency: confirmed HTTP failures re-arm the key fo
   assert.equal(upstreamCalls, 4);
 });
 
-Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the published response generation", async () => {
+test("uos embeddings idempotency: an expired owner cannot overwrite the published response generation", async () => {
   resetVoyageRateLimit();
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const input = `idempotency-owner-generation-${crypto.randomUUID()}`;
@@ -469,7 +474,7 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
         assert.equal(typeof stored.response_chunk_count, "number");
 
         const publishedGeneration = stored.response_generation as string;
-        const publishedChunkKey: Deno.KvKey = [...responsePrefix, publishedGeneration, 0];
+        const publishedChunkKey: KvKey = [...responsePrefix, publishedGeneration, 0];
         const ledgerExpiresInMs = kvExpirations.get(keyToString(ledgerKey));
         const publishedChunkExpiresInMs = kvExpirations.get(keyToString(publishedChunkKey));
         assert.equal(ledgerExpiresInMs, EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS);
@@ -480,7 +485,7 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
 
         // A late write from the expired owner lands in its own generation and
         // cannot corrupt the response generation already published by CAS.
-        const expiredChunkKey: Deno.KvKey = [...responsePrefix, expiredGeneration, 0];
+        const expiredChunkKey: KvKey = [...responsePrefix, expiredGeneration, 0];
         await kvStub.set(expiredChunkKey, "late stale owner body", { expireIn: EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS });
         assert.equal(kvExpirations.get(keyToString(expiredChunkKey)), EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS);
 
@@ -493,7 +498,7 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
     assert.equal(upstreamCalls, 1);
   } finally {
     for (const rawKey of [...kvStore.keys()]) {
-      const key = JSON.parse(rawKey) as Deno.KvKey;
+      const key = JSON.parse(rawKey) as KvKey;
       if (keyHasPrefix(key, ledgerKey) || keyHasPrefix(key, responsePrefix)) {
         kvStore.delete(rawKey);
         kvExpirations.delete(rawKey);
@@ -502,7 +507,7 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
   }
 });
 
-Deno.test("uos embeddings idempotency: rejects an oversized stored response chunk count without reading chunks", async () => {
+test("uos embeddings idempotency: rejects an oversized stored response chunk count without reading chunks", async () => {
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const input = `idempotency-chunk-bound-${crypto.randomUUID()}`;
   const principal = "account-chunk-bound";
@@ -550,7 +555,7 @@ Deno.test("uos embeddings idempotency: rejects an oversized stored response chun
   }
 });
 
-Deno.test("uos embeddings idempotency: a malformed stored value is not mistaken for an absent CAS entry", async () => {
+test("uos embeddings idempotency: a malformed stored value is not mistaken for an absent CAS entry", async () => {
   const idempotencyKey = `embedding-job-${crypto.randomUUID()}`;
   const principal = "account-malformed-ledger";
   const ledgerKey = await uosEmbeddingsIdempotencyRecordKey(principal, idempotencyKey);
@@ -578,7 +583,7 @@ Deno.test("uos embeddings idempotency: a malformed stored value is not mistaken 
   }
 });
 
-Deno.test("uos embeddings: accepts every supported standard dimension with the canonical model", async () => {
+test("uos embeddings: accepts every supported standard dimension with the canonical model", async () => {
   const dimensions: TestDimension[] = [256, 512, 1024, 2048];
 
   await withFetchMock(
@@ -618,7 +623,7 @@ Deno.test("uos embeddings: accepts every supported standard dimension with the c
   );
 });
 
-Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
+test("uos embeddings: reject malformed synchronous fields", async () => {
   const requests: (() => Promise<Response>)[] = [
     () =>
       handleUosEmbeddings(
@@ -715,7 +720,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
   }
 });
 
-Deno.test("uos embeddings: rejects OpenAI model names without dispatching Voyage", async () => {
+test("uos embeddings: rejects OpenAI model names without dispatching Voyage", async () => {
   let upstreamCalls = 0;
   await withFetchMock(
     () => {
@@ -741,7 +746,7 @@ Deno.test("uos embeddings: rejects OpenAI model names without dispatching Voyage
   assert.equal(upstreamCalls, 0);
 });
 
-Deno.test("embedding jobs retain their strict Voyage float profile", async () => {
+test("embedding jobs retain their strict Voyage float profile", async () => {
   const requests = [
     { model: "text-embedding-3-small", input: "x", input_type: "document" },
     { model: "voyage-4-large", input: "x" },
@@ -774,7 +779,7 @@ Deno.test("embedding jobs retain their strict Voyage float profile", async () =>
   assert.equal(upstreamCalls, 0);
 });
 
-Deno.test("embeddings: serves cache hits without calling upstream", async () => {
+test("embeddings: serves cache hits without calling upstream", async () => {
   resetVoyageRateLimit();
   const model = "voyage-4-large";
   const input = `cache-hit-${crypto.randomUUID()}`;
@@ -807,10 +812,10 @@ Deno.test("embeddings: serves cache hits without calling upstream", async () => 
   }
 });
 
-Deno.test("embeddings cache: separates query, document, dimensions, encoding, and truncation profiles", async () => {
+test("embeddings cache: separates query, document, dimensions, encoding, and truncation profiles", async () => {
   const input = `profile-separation-${crypto.randomUUID()}`;
   const hash = await sha256Hex(input);
-  const oldIncompleteKey: Deno.KvKey = ["embeddings", "v1", "text-embedding-3-small", hash];
+  const oldIncompleteKey: KvKey = ["embeddings", "v1", "text-embedding-3-small", hash];
   kvStore.set(keyToString(oldIncompleteKey), {
     embedding: testVector(256, 99),
     created_at: new Date().toISOString(),
@@ -932,7 +937,7 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
   }
 });
 
-Deno.test("embeddings cache: ignores a cached vector with the wrong resolved dimension", async () => {
+test("embeddings cache: ignores a cached vector with the wrong resolved dimension", async () => {
   resetVoyageRateLimit();
   const input = `wrong-cache-length-${crypto.randomUUID()}`;
   const hash = await sha256Hex(input);
@@ -973,16 +978,16 @@ Deno.test("embeddings cache: ignores a cached vector with the wrong resolved dim
   }
 });
 
-Deno.test("embeddings: writes cache entries on upstream misses", async () => {
+test("embeddings: writes cache entries on upstream misses", async () => {
   resetVoyageRateLimit();
   const model = "voyage-4-large";
   const input = `cache-miss-${crypto.randomUUID()}`;
   const hash = await sha256Hex(input);
   const cacheProfileKey = embeddingsProfileKey();
   const cacheKey = embeddingsCacheKey(hash);
-  const byHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hash];
+  const byHashKey: KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hash];
   const fixedNowMs = 1_700_000_000_000;
-  const indexKey: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, fixedNowMs, hash];
+  const indexKey: KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, fixedNowMs, hash];
   kvStore.delete(keyToString(cacheKey));
   kvStore.delete(keyToString(byHashKey));
   kvStore.delete(keyToString(indexKey));
@@ -1020,7 +1025,7 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
   }
 });
 
-Deno.test("embeddings cache: retries cache write when atomic commit fails", async () => {
+test("embeddings cache: retries cache write when atomic commit fails", async () => {
   resetVoyageRateLimit();
   const model = "voyage-4-large";
   const cacheProfileKey = embeddingsProfileKey();
@@ -1028,8 +1033,8 @@ Deno.test("embeddings cache: retries cache write when atomic commit fails", asyn
   const hash = await sha256Hex(input);
   const cacheKey = embeddingsCacheKey(hash);
   const pointerMs = 1_700_000_000_000;
-  const byHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hash];
-  const indexKey: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, pointerMs, hash];
+  const byHashKey: KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hash];
+  const indexKey: KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, pointerMs, hash];
   kvStore.set(keyToString(byHashKey), pointerMs);
   kvStore.delete(keyToString(cacheKey));
   kvStore.delete(keyToString(indexKey));
@@ -1067,7 +1072,7 @@ Deno.test("embeddings cache: retries cache write when atomic commit fails", asyn
   }
 });
 
-Deno.test("embeddings cache: eviction cleans stale duplicate index keys without deleting embeddings", async () => {
+test("embeddings cache: eviction cleans stale duplicate index keys without deleting embeddings", async () => {
   resetVoyageRateLimit();
   const model = "voyage-4-large";
   const cacheProfileKey = embeddingsProfileKey();
@@ -1077,9 +1082,9 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   const pointerMs = nowMs - 1_000;
   const staleMs = nowMs - 2_000;
   const cacheKeyA = embeddingsCacheKey(hashA);
-  const byHashKeyA: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashA];
-  const indexKeyStale: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, staleMs, hashA];
-  const indexKeyActive: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, pointerMs, hashA];
+  const byHashKeyA: KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashA];
+  const indexKeyStale: KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, staleMs, hashA];
+  const indexKeyActive: KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, pointerMs, hashA];
   const globalIndexKeyStale = embeddingsCacheGlobalIndexKey(staleMs, cacheProfileKey, hashA);
   const globalIndexKeyActive = embeddingsCacheGlobalIndexKey(pointerMs, cacheProfileKey, hashA);
   kvStore.set(keyToString(byHashKeyA), pointerMs);
@@ -1100,8 +1105,8 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
     const hashOld = `old_${i}_${crypto.randomUUID().replace(/-/g, "")}`;
     const createdAtMs = nowMs - 100_000 - i;
     const cacheKeyOld = embeddingsCacheKey(hashOld);
-    const byHashKeyOld: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashOld];
-    const indexKeyOld: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, createdAtMs, hashOld];
+    const byHashKeyOld: KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashOld];
+    const indexKeyOld: KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, createdAtMs, hashOld];
     const globalIndexKeyOld = embeddingsCacheGlobalIndexKey(createdAtMs, cacheProfileKey, hashOld);
     kvStore.set(keyToString(cacheKeyOld), {
       embedding: testVector(1024),
@@ -1119,8 +1124,8 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   const inputB = `evict-${crypto.randomUUID()}`;
   const hashB = await sha256Hex(inputB);
   const cacheKeyB = embeddingsCacheKey(hashB);
-  const byHashKeyB: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashB];
-  const indexKeyB: Deno.KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, nowMs, hashB];
+  const byHashKeyB: KvKey = ["embeddings", "v2", "cache_index_by_hash", cacheProfileKey, hashB];
+  const indexKeyB: KvKey = ["embeddings", "v2", "cache_index", cacheProfileKey, nowMs, hashB];
   const globalIndexKeyB = embeddingsCacheGlobalIndexKey(nowMs, cacheProfileKey, hashB);
   kvStore.delete(keyToString(cacheKeyB));
   kvStore.delete(keyToString(byHashKeyB));
@@ -1180,7 +1185,7 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   }
 });
 
-Deno.test("embeddings cache: quota eviction frees entries owned by another profile", async () => {
+test("embeddings cache: quota eviction frees entries owned by another profile", async () => {
   resetVoyageRateLimit();
   const oldProfileKey = embeddingsProfileKey("document", 1024, "float", false);
   const newProfileKey = embeddingsProfileKey("query", 256, "float", false);
@@ -1189,8 +1194,8 @@ Deno.test("embeddings cache: quota eviction frees entries owned by another profi
 
   const oldHash = await sha256Hex(`old-document-profile-${crypto.randomUUID()}`);
   const oldCacheKey = embeddingsCacheKey(oldHash, "document", 1024, "float", false);
-  const oldByHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", oldProfileKey, oldHash];
-  const oldProfileIndexKey: Deno.KvKey = ["embeddings", "v2", "cache_index", oldProfileKey, oldCreatedAtMs, oldHash];
+  const oldByHashKey: KvKey = ["embeddings", "v2", "cache_index_by_hash", oldProfileKey, oldHash];
+  const oldProfileIndexKey: KvKey = ["embeddings", "v2", "cache_index", oldProfileKey, oldCreatedAtMs, oldHash];
   const oldGlobalIndexKey = embeddingsCacheGlobalIndexKey(oldCreatedAtMs, oldProfileKey, oldHash);
   kvStore.set(keyToString(oldCacheKey), {
     embedding: testVector(1024),
@@ -1203,8 +1208,8 @@ Deno.test("embeddings cache: quota eviction frees entries owned by another profi
   const input = `new-query-profile-${crypto.randomUUID()}`;
   const newHash = await sha256Hex(input);
   const newCacheKey = embeddingsCacheKey(newHash, "query", 256, "float", false);
-  const newByHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", newProfileKey, newHash];
-  const newProfileIndexKey: Deno.KvKey = ["embeddings", "v2", "cache_index", newProfileKey, newCreatedAtMs, newHash];
+  const newByHashKey: KvKey = ["embeddings", "v2", "cache_index_by_hash", newProfileKey, newHash];
+  const newProfileIndexKey: KvKey = ["embeddings", "v2", "cache_index", newProfileKey, newCreatedAtMs, newHash];
   const newGlobalIndexKey = embeddingsCacheGlobalIndexKey(newCreatedAtMs, newProfileKey, newHash);
   const originalNow = Date.now;
   Date.now = () => newCreatedAtMs;
@@ -1251,7 +1256,7 @@ Deno.test("embeddings cache: quota eviction frees entries owned by another profi
   }
 });
 
-Deno.test("embeddings: returns one data item per array input", async () => {
+test("embeddings: returns one data item per array input", async () => {
   resetVoyageRateLimit();
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -1277,7 +1282,7 @@ Deno.test("embeddings: returns one data item per array input", async () => {
   assert.equal(payload.data[1]?.index, 1);
 });
 
-Deno.test("embeddings: rejects non-string array inputs", async () => {
+test("embeddings: rejects non-string array inputs", async () => {
   const response = await handleUosEmbeddings(
     new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "POST",
@@ -1290,7 +1295,7 @@ Deno.test("embeddings: rejects non-string array inputs", async () => {
   assert.equal(payload.error?.param, "input");
 });
 
-Deno.test("embeddings: rejects too many inputs", async () => {
+test("embeddings: rejects too many inputs", async () => {
   const inputs = Array.from({ length: 129 }, (_, i) => `x${i}`);
   const response = await handleUosEmbeddings(
     new Request("https://ai.ubq.fi/uos/embeddings", {
@@ -1302,7 +1307,7 @@ Deno.test("embeddings: rejects too many inputs", async () => {
   assert.equal(response.status, 400);
 });
 
-Deno.test("embeddings: rejects too-large inputs", async () => {
+test("embeddings: rejects too-large inputs", async () => {
   const tooLarge = "a".repeat(20_001);
   const response = await handleUosEmbeddings(
     new Request("https://ai.ubq.fi/uos/embeddings", {
@@ -1314,7 +1319,7 @@ Deno.test("embeddings: rejects too-large inputs", async () => {
   assert.equal(response.status, 400);
 });
 
-Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings", async () => {
+test("embeddings: encoding_format=base64 returns base64 string embeddings", async () => {
   resetVoyageRateLimit();
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -1361,7 +1366,7 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
   assert.ok(Math.abs(view.getFloat32(4, true) + 0.5) < 1e-5);
 });
 
-Deno.test("uos embeddings: rejects fractional dimensions", async () => {
+test("uos embeddings: rejects fractional dimensions", async () => {
   const response = await handleUosEmbeddings(
     new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "POST",

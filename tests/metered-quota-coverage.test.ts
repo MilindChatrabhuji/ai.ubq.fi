@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { AtomicOperation, Kv, KvCommitError, KvCommitResult, KvEntry, KvEntryMaybe, KvKey, KvListIterator, KvListOptions, KvListSelector } from "#kv";
 import assert from "node:assert/strict";
 
 import {
@@ -40,13 +42,13 @@ import {
 } from "../src/paid-fallback/rollups.ts";
 import type { PaidFallbackRequestV3 } from "../src/types.ts";
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 
 type ReadBehavior = "value" | "null" | "throw";
 
 type StoredEntry = Readonly<{ value: unknown; versionstamp: string }>;
 
-type Mutation = { kind: "set"; key: Deno.KvKey; value: unknown; expireIn?: number } | { kind: "delete"; key: Deno.KvKey };
+type Mutation = { kind: "set"; key: KvKey; value: unknown; expireIn?: number } | { kind: "delete"; key: KvKey };
 
 /**
  * Small in-memory Deno.Kv substitute. `Deno.openKv` needs `--unstable-kv`, which
@@ -57,52 +59,52 @@ type Mutation = { kind: "set"; key: Deno.KvKey; value: unknown; expireIn?: numbe
 class MeteredKv {
   readonly stored = new Map<string, StoredEntry>();
   readonly ttlOf = new Map<string, number | undefined>();
-  readonly readLog: Deno.KvKey[] = [];
+  readonly readLog: KvKey[] = [];
   #readPlan = new Map<string, ReadBehavior[]>();
   #conflicts = new Set<string>();
   #nextVersion = 1;
 
-  seed(key: Deno.KvKey, value: unknown, expireIn?: number): void {
+  seed(key: KvKey, value: unknown, expireIn?: number): void {
     this.stored.set(encodeKey(key), { value, versionstamp: this.#stamp() });
     this.ttlOf.set(encodeKey(key), expireIn);
   }
 
-  value(key: Deno.KvKey): unknown {
+  value(key: KvKey): unknown {
     return this.stored.get(encodeKey(key))?.value ?? null;
   }
 
-  has(key: Deno.KvKey): boolean {
+  has(key: KvKey): boolean {
     return this.stored.has(encodeKey(key));
   }
 
-  planReads(key: Deno.KvKey, behaviors: readonly ReadBehavior[]): void {
+  planReads(key: KvKey, behaviors: readonly ReadBehavior[]): void {
     this.#readPlan.set(encodeKey(key), [...behaviors]);
   }
 
-  conflictOnSet(key: Deno.KvKey): void {
+  conflictOnSet(key: KvKey): void {
     this.#conflicts.add(encodeKey(key));
   }
 
-  get<T>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey): Promise<KvEntryMaybe<T>> {
     this.readLog.push(key);
     const plan = this.#readPlan.get(encodeKey(key));
     const behavior = plan?.shift();
     if (behavior === "throw") return Promise.reject(new Error(`kv read failed for ${encodeKey(key)}`));
-    if (behavior === "null") return Promise.resolve({ key, value: null, versionstamp: null } as Deno.KvEntryMaybe<T>);
+    if (behavior === "null") return Promise.resolve({ key, value: null, versionstamp: null } as KvEntryMaybe<T>);
     const entry = this.stored.get(encodeKey(key));
     return Promise.resolve({
       key,
       value: entry ? (entry.value as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  list<T>(selector: Deno.KvListSelector, options?: Deno.KvListOptions): Deno.KvListIterator<T> {
+  list<T>(selector: KvListSelector, options?: KvListOptions): KvListIterator<T> {
     const start = "start" in selector ? selector.start : undefined;
     const end = "end" in selector ? selector.end : undefined;
     const prefix = "prefix" in selector ? selector.prefix : undefined;
-    const last = (key: Deno.KvKey): unknown => key[key.length - 1];
-    const matches = (key: Deno.KvKey): boolean => {
+    const last = (key: KvKey): unknown => key[key.length - 1];
+    const matches = (key: KvKey): boolean => {
       if (prefix) return prefix.every((part, index) => Object.is(part, key[index]));
       if (start === undefined || end === undefined) return false;
       if (start.length !== end.length || key.length !== start.length) return false;
@@ -113,59 +115,59 @@ class MeteredKv {
       return value >= Number(last(start)) && value < Number(last(end));
     };
     const selected = [...this.stored.entries()]
-      .filter(([encoded]) => matches(JSON.parse(encoded) as Deno.KvKey))
+      .filter(([encoded]) => matches(JSON.parse(encoded) as KvKey))
       .sort((left, right) => {
-        const leftPart = last(JSON.parse(left[0]) as Deno.KvKey);
-        const rightPart = last(JSON.parse(right[0]) as Deno.KvKey);
+        const leftPart = last(JSON.parse(left[0]) as KvKey);
+        const rightPart = last(JSON.parse(right[0]) as KvKey);
         if (typeof leftPart === "number" && typeof rightPart === "number") return leftPart - rightPart;
         return String(leftPart).localeCompare(String(rightPart));
       })
       .slice(0, options?.limit ?? 1_000);
-    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<KvEntry<T>> {
       for (const [encoded, entry] of selected) {
-        yield { key: JSON.parse(encoded) as Deno.KvKey, value: entry.value as T, versionstamp: entry.versionstamp };
+        yield { key: JSON.parse(encoded) as KvKey, value: entry.value as T, versionstamp: entry.versionstamp };
       }
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvListIterator<T>;
     Object.defineProperty(iterator, "cursor", { get: () => "" });
     return iterator;
   }
 
-  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult | Deno.KvCommitError> {
-    if (this.#conflicts.has(encodeKey(key))) return Promise.resolve({ ok: false } as Deno.KvCommitError);
+  set(key: KvKey, value: unknown, options?: { expireIn?: number }): Promise<KvCommitResult | KvCommitError> {
+    if (this.#conflicts.has(encodeKey(key))) return Promise.resolve({ ok: false } as KvCommitError);
     const versionstamp = this.#stamp();
     this.stored.set(encodeKey(key), { value, versionstamp });
     this.ttlOf.set(encodeKey(key), options?.expireIn);
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.stored.delete(encodeKey(key));
     return Promise.resolve();
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: Deno.KvEntryMaybe<unknown>[] = [];
+  atomic(): AtomicOperation {
+    const checks: KvEntryMaybe<unknown>[] = [];
     const mutations: Mutation[] = [];
     const operation = {
-      check: (...entries: Deno.KvEntryMaybe<unknown>[]) => {
+      check: (...entries: KvEntryMaybe<unknown>[]) => {
         checks.push(...entries);
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => {
         mutations.push({ kind: "set", key, value, expireIn: options?.expireIn });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ kind: "delete", key });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         for (const check of checks) {
           const current = this.stored.get(encodeKey(check.key))?.versionstamp ?? null;
-          if (current !== check.versionstamp) return Promise.resolve({ ok: false } as Deno.KvCommitError);
+          if (current !== check.versionstamp) return Promise.resolve({ ok: false } as KvCommitError);
         }
         for (const mutation of mutations) {
-          if (mutation.kind === "set" && this.#conflicts.has(encodeKey(mutation.key))) return Promise.resolve({ ok: false } as Deno.KvCommitError);
+          if (mutation.kind === "set" && this.#conflicts.has(encodeKey(mutation.key))) return Promise.resolve({ ok: false } as KvCommitError);
         }
         const versionstamp = this.#stamp();
         for (const mutation of mutations) {
@@ -178,7 +180,7 @@ class MeteredKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   #stamp(): string {
@@ -187,17 +189,17 @@ class MeteredKv {
   }
 }
 
-const asKv = (kv: MeteredKv): Deno.Kv => kv as unknown as Deno.Kv;
+const asKv = (kv: MeteredKv): Kv => kv as unknown as Kv;
 
 const credentials = { apiKey: "metered-api-key" };
 
 const withEnv = (key: string, value: string | undefined): (() => void) => {
-  const previous = Deno.env.get(key);
-  if (value === undefined) Deno.env.delete(key);
-  else Deno.env.set(key, value);
+  const previous = process.env[key];
+  if (value === undefined) Reflect.deleteProperty(process.env, key);
+  else process.env[key] = value;
   return () => {
-    if (previous === undefined) Deno.env.delete(key);
-    else Deno.env.set(key, previous);
+    if (previous === undefined) Reflect.deleteProperty(process.env, key);
+    else process.env[key] = previous;
   };
 };
 
@@ -292,7 +294,7 @@ const balanceSample = (overrides: Partial<MeteredQuotaBalanceSample> = {}): Mete
 // Account fingerprint and window normalization
 // ---------------------------------------------------------------------------
 
-Deno.test("the account fingerprint is a stable non-secret digest of the configured key", async () => {
+test("the account fingerprint is a stable non-secret digest of the configured key", async () => {
   const fingerprint = await meterQuotaAccountFingerprint(credentials);
   assert.match(fingerprint ?? "", /^[0-9a-f]{16}$/);
   assert.equal(await meterQuotaAccountFingerprint(credentials), fingerprint);
@@ -300,14 +302,14 @@ Deno.test("the account fingerprint is a stable non-secret digest of the configur
   assert.equal((fingerprint ?? "").includes(credentials.apiKey), false);
 });
 
-Deno.test("the account fingerprint refuses missing, blank and whitespace keys", async () => {
+test("the account fingerprint refuses missing, blank and whitespace keys", async () => {
   assert.equal(await meterQuotaAccountFingerprint(null), null);
   assert.equal(await meterQuotaAccountFingerprint({ apiKey: "" }), null);
   assert.equal(await meterQuotaAccountFingerprint({ apiKey: "  " }), null);
   assert.equal(await meterQuotaAccountFingerprint({ apiKey: "before after" }), null);
 });
 
-Deno.test("the balance window accepts only published day counts", () => {
+test("the balance window accepts only published day counts", () => {
   assert.equal(normalizeMeteredQuotaBalanceWindowDays("7"), 7);
   assert.equal(normalizeMeteredQuotaBalanceWindowDays("30"), 30);
   assert.equal(normalizeMeteredQuotaBalanceWindowDays("365"), 365);
@@ -320,7 +322,7 @@ Deno.test("the balance window accepts only published day counts", () => {
 // Observation fetch
 // ---------------------------------------------------------------------------
 
-Deno.test("a Metered observation rejects invalid credentials before any request", async () => {
+test("a Metered observation rejects invalid credentials before any request", async () => {
   const calls: FetchCall[] = [];
   await assert.rejects(
     () => fetchMeteredQuotaObservation({ apiKey: "not valid" }, { fetcher: jsonFetcher(tokenUsageEnvelope(), calls) }),
@@ -329,7 +331,7 @@ Deno.test("a Metered observation rejects invalid credentials before any request"
   assert.equal(calls.length, 0);
 });
 
-Deno.test("a Metered observation request is a manual-redirect JSON GET with a combined deadline", async () => {
+test("a Metered observation request is a manual-redirect JSON GET with a combined deadline", async () => {
   const calls: FetchCall[] = [];
   await fetchMeteredQuotaObservation(credentials, { fetcher: jsonFetcher(tokenUsageEnvelope(), calls), now: () => 2_000_000 });
 
@@ -342,7 +344,7 @@ Deno.test("a Metered observation request is a manual-redirect JSON GET with a co
   assert.ok(calls[0]?.init?.signal instanceof AbortSignal);
 });
 
-Deno.test("a Metered observation reports every upstream transport fault", async () => {
+test("a Metered observation reports every upstream transport fault", async () => {
   await assert.rejects(
     () => fetchMeteredQuotaObservation(credentials, { fetcher: rawFetcher("rate limited", [], 429, "text/plain") }),
     /Metered account API returned HTTP 429/
@@ -357,7 +359,7 @@ Deno.test("a Metered observation reports every upstream transport fault", async 
   );
 });
 
-Deno.test("a Metered observation rejects envelopes that do not carry token usage", async () => {
+test("a Metered observation rejects envelopes that do not carry token usage", async () => {
   await assert.rejects(
     () => fetchMeteredQuotaObservation(credentials, { fetcher: jsonFetcher({ success: false, message: "bad key" }) }),
     /Metered account API returned an invalid envelope/
@@ -376,7 +378,7 @@ Deno.test("a Metered observation rejects envelopes that do not carry token usage
   );
 });
 
-Deno.test("a Metered observation rejects an invalid clock", async () => {
+test("a Metered observation rejects an invalid clock", async () => {
   await assert.rejects(
     () => fetchMeteredQuotaObservation(credentials, { fetcher: jsonFetcher(tokenUsageEnvelope()), now: () => -1 }),
     /Metered quota observation clock is invalid/
@@ -387,7 +389,7 @@ Deno.test("a Metered observation rejects an invalid clock", async () => {
   );
 });
 
-Deno.test("a Metered token usage observation keeps provider totals and neutral wallet fields", async () => {
+test("a Metered token usage observation keeps provider totals and neutral wallet fields", async () => {
   const result = await fetchMeteredQuotaObservation(credentials, {
     fetcher: jsonFetcher(tokenUsageEnvelope({ unlimited_quota: true, total_available: -53_413 }), [], 200),
     now: () => 2_000_000.9,
@@ -410,7 +412,7 @@ Deno.test("a Metered token usage observation keeps provider totals and neutral w
 // State transitions
 // ---------------------------------------------------------------------------
 
-Deno.test("token usage becomes a neutral provisional state with no spendable credit", () => {
+test("token usage becomes a neutral provisional state with no spendable credit", () => {
   const next = updateMeteredQuotaState(null, observation({ unlimited_quota: true, total_available: 9_000, total_granted: 10_000, total_used: 1_000 }));
 
   assert.equal(next.current_balance_quota, 0);
@@ -427,18 +429,18 @@ Deno.test("token usage becomes a neutral provisional state with no spendable cre
   assert.equal(next.latest_refill_id, null);
 });
 
-Deno.test("token usage supersedes a retained wallet state", () => {
+test("token usage supersedes a retained wallet state", () => {
   const next = updateMeteredQuotaState(walletState(), observation({ unlimited_quota: false, total_available: 1, total_granted: 2, total_used: 1 }));
   assert.equal(next.current_balance_quota, 0);
   assert.equal(next.latest_refill_id, null);
 });
 
-Deno.test("an incomplete token usage observation is rejected", () => {
+test("an incomplete token usage observation is rejected", () => {
   assert.throws(() => updateMeteredQuotaState(null, observation({ total_used: 5 })), /Metered token usage observation is incomplete/);
   assert.throws(() => updateMeteredQuotaState(null, observation({ unlimited_quota: true })), /Metered token usage observation is incomplete/);
 });
 
-Deno.test("a wallet observation without credit fields is rejected", () => {
+test("a wallet observation without credit fields is rejected", () => {
   assert.throws(
     () => updateMeteredQuotaState(null, observation({ balance_quota: null, used_quota: null, quota_per_credit: null })),
     /Metered wallet observation is incomplete/
@@ -446,7 +448,7 @@ Deno.test("a wallet observation without credit fields is rejected", () => {
   assert.throws(() => updateMeteredQuotaState(null, observation({ quota_per_credit: null })), /Metered wallet observation is incomplete/);
 });
 
-Deno.test("a first wallet observation without a refill keeps neutral refill metadata", () => {
+test("a first wallet observation without a refill keeps neutral refill metadata", () => {
   const next = updateMeteredQuotaState(null, observation({ latest_refill: null }));
 
   assert.equal(next.current_balance_quota, 50_000_000);
@@ -458,7 +460,7 @@ Deno.test("a first wallet observation without a refill keeps neutral refill meta
   assert.equal(next.confidence, "provisional");
 });
 
-Deno.test("an advanced wallet observation keeps prior refill metadata when no refill is reported", () => {
+test("an advanced wallet observation keeps prior refill metadata when no refill is reported", () => {
   const previous = walletState();
   const next = updateMeteredQuotaState(previous, observation({ balance_quota: 49_000_000, used_quota: 1_100_000, latest_refill: null }));
 
@@ -473,7 +475,7 @@ Deno.test("an advanced wallet observation keeps prior refill metadata when no re
 // Snapshot reads
 // ---------------------------------------------------------------------------
 
-Deno.test("a fresh cached wallet state answers without touching the network", async () => {
+test("a fresh cached wallet state answers without touching the network", async () => {
   const kv = new MeteredKv();
   const now = 10_000_000;
   kv.seed(
@@ -500,7 +502,7 @@ Deno.test("a fresh cached wallet state answers without touching the network", as
   assert.equal(snapshot.total_used, null);
 });
 
-Deno.test("a zero baseline reports no remaining percentage instead of dividing by zero", async () => {
+test("a zero baseline reports no remaining percentage instead of dividing by zero", async () => {
   const kv = new MeteredKv();
   const now = 12_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, walletState({ observed_at_ms: now, current_balance_quota: 0, post_refill_baseline_quota: 0 }));
@@ -514,7 +516,7 @@ Deno.test("a zero baseline reports no remaining percentage instead of dividing b
   assert.equal(snapshot.baseline_credits, 0);
 });
 
-Deno.test("a token usage snapshot carries no credit or percentage fields", async () => {
+test("a token usage snapshot carries no credit or percentage fields", async () => {
   const kv = new MeteredKv();
   const now = 13_000_000;
   kv.seed(
@@ -536,26 +538,26 @@ Deno.test("a token usage snapshot carries no credit or percentage fields", async
   assert.equal(snapshot.total_used, 52_868);
 });
 
-Deno.test("a cache peek without a KV or without retained state reports nothing", async () => {
+test("a cache peek without a KV or without retained state reports nothing", async () => {
   assert.equal(await getCachedMeteredQuotaSnapshot({ kv: null }), null);
 
   const kv = new MeteredKv();
   assert.equal(await getCachedMeteredQuotaSnapshot({ kv: asKv(kv), now: () => 1 }), null);
 });
 
-Deno.test("a cache peek reports a KV read failure instead of throwing", async () => {
+test("a cache peek reports a KV read failure instead of throwing", async () => {
   const kv = new MeteredKv();
   kv.planReads(METERED_QUOTA_STATE_KEY, ["throw"]);
 
   assert.equal(await getCachedMeteredQuotaSnapshot({ kv: asKv(kv), now: () => 1 }), null);
 });
 
-Deno.test("a snapshot request refuses unusable credentials or a missing KV", async () => {
+test("a snapshot request refuses unusable credentials or a missing KV", async () => {
   assert.equal(await getMeteredQuotaSnapshot({ apiKey: "bad key" }, { kv: null }), null);
   assert.equal(await getMeteredQuotaSnapshot(credentials, { kv: null }), null);
 });
 
-Deno.test("a snapshot request survives a failed cache read and still refreshes", async () => {
+test("a snapshot request survives a failed cache read and still refreshes", async () => {
   const kv = new MeteredKv();
   const now = 14_000_000;
   kv.planReads(METERED_QUOTA_STATE_KEY, ["throw"]);
@@ -573,7 +575,7 @@ Deno.test("a snapshot request survives a failed cache read and still refreshes",
   assert.equal(snapshot.total_used, 1_000);
 });
 
-Deno.test("a snapshot request survives a failed invalidation read and still refreshes", async () => {
+test("a snapshot request survives a failed invalidation read and still refreshes", async () => {
   const kv = new MeteredKv();
   const now = 15_000_000;
   kv.planReads(METERED_QUOTA_INVALIDATION_KEY, ["throw"]);
@@ -591,7 +593,7 @@ Deno.test("a snapshot request survives a failed invalidation read and still refr
   assert.equal(calls.length, 1);
 });
 
-Deno.test("a live lease serves the retained stale state immediately", async () => {
+test("a live lease serves the retained stale state immediately", async () => {
   const kv = new MeteredKv();
   const observedAt = Date.now() - METERED_QUOTA_FRESH_MS;
   const cached = walletState({ observed_at_ms: observedAt, current_balance_quota: 25_000_000 });
@@ -609,7 +611,7 @@ Deno.test("a live lease serves the retained stale state immediately", async () =
   assert.equal(snapshot.remaining_percent, 50);
 });
 
-Deno.test("a refused refresh commit keeps the stored state and serves it as stale", async () => {
+test("a refused refresh commit keeps the stored state and serves it as stale", async () => {
   const kv = new MeteredKv();
   const observedAt = Date.now() - METERED_QUOTA_FRESH_MS;
   const cached = walletState({ observed_at_ms: observedAt, current_balance_quota: 20_000_000 });
@@ -632,7 +634,7 @@ Deno.test("a refused refresh commit keeps the stored state and serves it as stal
   );
 });
 
-Deno.test("a held refresh lease makes the caller wait for retained state", async () => {
+test("a held refresh lease makes the caller wait for retained state", async () => {
   const kv = new MeteredKv();
   const observedAt = Date.now() - METERED_QUOTA_FRESH_MS;
   kv.seed(METERED_QUOTA_REFRESH_LEASE_KEY, { owner: "another-worker", lease_until_ms: Date.now() + 60_000 });
@@ -651,7 +653,7 @@ Deno.test("a held refresh lease makes the caller wait for retained state", async
   assert.equal(kv.value(METERED_QUOTA_STATE_KEY) === null, false);
 });
 
-Deno.test("a held refresh lease with no retained state gives up after the cold wait", async () => {
+test("a held refresh lease with no retained state gives up after the cold wait", async () => {
   const startedAt = Date.now();
   const kv = new MeteredKv();
   kv.seed(METERED_QUOTA_REFRESH_LEASE_KEY, { owner: "another-worker", lease_until_ms: Date.now() + 60_000 });
@@ -667,7 +669,7 @@ Deno.test("a held refresh lease with no retained state gives up after the cold w
   assert.equal(kv.readLog.filter((key) => encodeKey(key) === encodeKey(METERED_QUOTA_STATE_KEY)).length > 10, true);
 });
 
-Deno.test("a snapshot request reports no state when the lease read and the cold wait fail", async () => {
+test("a snapshot request reports no state when the lease read and the cold wait fail", async () => {
   const kv = new MeteredKv();
   kv.planReads(METERED_QUOTA_REFRESH_LEASE_KEY, ["throw"]);
   kv.planReads(METERED_QUOTA_STATE_KEY, ["null", "throw"]);
@@ -681,7 +683,7 @@ Deno.test("a snapshot request reports no state when the lease read and the cold 
   assert.equal(snapshot, null);
 });
 
-Deno.test("a stale cached state is served while the refresh lease is lost during the fetch", async () => {
+test("a stale cached state is served while the refresh lease is lost during the fetch", async () => {
   const kv = new MeteredKv();
   const observedAt = Date.now() - METERED_QUOTA_FRESH_MS;
   kv.seed(METERED_QUOTA_STATE_KEY, walletState({ observed_at_ms: observedAt, current_balance_quota: 20_000_000 }));
@@ -701,7 +703,7 @@ Deno.test("a stale cached state is served while the refresh lease is lost during
   assert.equal(snapshot.state.observed_at_ms, observedAt);
 });
 
-Deno.test("a refresh whose retained state disappears falls back to the cached state", async () => {
+test("a refresh whose retained state disappears falls back to the cached state", async () => {
   const kv = new MeteredKv();
   const observedAt = Date.now() - METERED_QUOTA_FRESH_MS;
   kv.seed(METERED_QUOTA_STATE_KEY, walletState({ observed_at_ms: observedAt, current_balance_quota: 30_000_000 }));
@@ -721,7 +723,7 @@ Deno.test("a refresh whose retained state disappears falls back to the cached st
   assert.equal(snapshot.state.current_balance_quota, 30_000_000);
 });
 
-Deno.test("a refresh that loses its lease with no retained state reports nothing", async () => {
+test("a refresh that loses its lease with no retained state reports nothing", async () => {
   const kv = new MeteredKv();
   kv.planReads(METERED_QUOTA_STATE_KEY, ["null", "null", "null"]);
 
@@ -737,7 +739,7 @@ Deno.test("a refresh that loses its lease with no retained state reports nothing
   assert.equal(snapshot, null);
 });
 
-Deno.test("a refresh keeps the lease it acquired and stores the observation with its retention TTL", async () => {
+test("a refresh keeps the lease it acquired and stores the observation with its retention TTL", async () => {
   const kv = new MeteredKv();
   const now = 16_000_000;
   const calls: FetchCall[] = [];
@@ -756,7 +758,7 @@ Deno.test("a refresh keeps the lease it acquired and stores the observation with
   assert.equal(calls.length, 1);
 });
 
-Deno.test("a failed refresh lease release never fails the answered snapshot", async () => {
+test("a failed refresh lease release never fails the answered snapshot", async () => {
   const kv = new MeteredKv();
   const now = 17_000_000;
   // Reads: 1 acquire probe, 2 lease re-check, 3 release probe.
@@ -773,7 +775,7 @@ Deno.test("a failed refresh lease release never fails the answered snapshot", as
   assert.equal(snapshot.total_used, 1_000);
 });
 
-Deno.test("a failed balance-history write never fails the answered snapshot", async () => {
+test("a failed balance-history write never fails the answered snapshot", async () => {
   const kv = new MeteredKv();
   const now = 18_000_000;
   const fingerprint = await meterQuotaAccountFingerprint(credentials);
@@ -792,7 +794,7 @@ Deno.test("a failed balance-history write never fails the answered snapshot", as
   assert.equal(kv.ttlOf.get(encodeKey(METERED_QUOTA_STATE_KEY)), METERED_QUOTA_RETENTION_MS);
 });
 
-Deno.test("a refresh failure with no cached state reports nothing", async () => {
+test("a refresh failure with no cached state reports nothing", async () => {
   const kv = new MeteredKv();
   const now = 19_000_000;
 
@@ -807,7 +809,7 @@ Deno.test("a refresh failure with no cached state reports nothing", async () => 
   assert.equal(kv.value(METERED_QUOTA_REFRESH_LEASE_KEY), null);
 });
 
-Deno.test("an aborted refresh rethrows instead of serving stale state", async () => {
+test("an aborted refresh rethrows instead of serving stale state", async () => {
   const kv = new MeteredKv();
   const now = 19_500_000;
   kv.seed(METERED_QUOTA_STATE_KEY, walletState({ observed_at_ms: now - METERED_QUOTA_FRESH_MS }));
@@ -831,7 +833,7 @@ Deno.test("an aborted refresh rethrows instead of serving stale state", async ()
 // Invalidation
 // ---------------------------------------------------------------------------
 
-Deno.test("invalidation records one retention-bounded marker", async () => {
+test("invalidation records one retention-bounded marker", async () => {
   const kv = new MeteredKv();
   await invalidateMeteredQuotaSnapshot({ kv: asKv(kv), now: () => 1_234.9 });
 
@@ -839,7 +841,7 @@ Deno.test("invalidation records one retention-bounded marker", async () => {
   assert.equal(kv.ttlOf.get(encodeKey(METERED_QUOTA_INVALIDATION_KEY)), METERED_QUOTA_RETENTION_MS);
 });
 
-Deno.test("invalidation without a KV or with an invalid clock is refused", async () => {
+test("invalidation without a KV or with an invalid clock is refused", async () => {
   await invalidateMeteredQuotaSnapshot({ kv: null });
 
   const kv = new MeteredKv();
@@ -847,7 +849,7 @@ Deno.test("invalidation without a KV or with an invalid clock is refused", async
   assert.equal(kv.has(METERED_QUOTA_INVALIDATION_KEY), false);
 });
 
-Deno.test("invalidation reports a refused KV commit", async () => {
+test("invalidation reports a refused KV commit", async () => {
   const kv = new MeteredKv();
   kv.conflictOnSet(METERED_QUOTA_INVALIDATION_KEY);
 
@@ -858,7 +860,7 @@ Deno.test("invalidation reports a refused KV commit", async () => {
 // Balance history
 // ---------------------------------------------------------------------------
 
-Deno.test("a balance sample is keyed by account and hour bucket", async () => {
+test("a balance sample is keyed by account and hour bucket", async () => {
   const kv = new MeteredKv();
   const state = walletState();
   await writeMeteredQuotaBalanceSample(asKv(kv), state, 3_600_000 + 900, "fingerprint-a");
@@ -875,7 +877,7 @@ Deno.test("a balance sample is keyed by account and hour bucket", async () => {
   });
 });
 
-Deno.test("a token usage balance sample keeps the provider totals and no percentage", async () => {
+test("a token usage balance sample keeps the provider totals and no percentage", async () => {
   const kv = new MeteredKv();
   const state = updateMeteredQuotaState(null, observation({ unlimited_quota: true, total_available: 9_000, total_granted: 10_000, total_used: 1_000 }));
   await writeMeteredQuotaBalanceSample(asKv(kv), state, 7_200_000, "fingerprint-a");
@@ -896,7 +898,7 @@ Deno.test("a token usage balance sample keeps the provider totals and no percent
   });
 });
 
-Deno.test("a balance sample refuses an invalid clock or a missing account fingerprint", async () => {
+test("a balance sample refuses an invalid clock or a missing account fingerprint", async () => {
   const kv = new MeteredKv();
 
   await writeMeteredQuotaBalanceSample(asKv(kv), walletState(), -1, "fingerprint-a");
@@ -904,7 +906,7 @@ Deno.test("a balance sample refuses an invalid clock or a missing account finger
   assert.equal(kv.stored.size, 0);
 });
 
-Deno.test("a balance sample never overwrites a newer observation in the same hour", async () => {
+test("a balance sample never overwrites a newer observation in the same hour", async () => {
   const kv = new MeteredKv();
   const key = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, "fingerprint-a", 3_600_000];
   const newest = balanceSample({ observed_at_ms: 3_600_900, balance_quota: 11 });
@@ -915,7 +917,7 @@ Deno.test("a balance sample never overwrites a newer observation in the same hou
   assert.deepEqual(kv.value(key), newest);
 });
 
-Deno.test("a persistently contended balance history write fails loudly", async () => {
+test("a persistently contended balance history write fails loudly", async () => {
   const kv = new MeteredKv();
   const key = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, "fingerprint-a", 3_600_000];
   kv.conflictOnSet(key);
@@ -926,14 +928,14 @@ Deno.test("a persistently contended balance history write fails loudly", async (
   );
 });
 
-Deno.test("a balance history read requires a KV and an account fingerprint", async () => {
+test("a balance history read requires a KV and an account fingerprint", async () => {
   assert.deepEqual(await readMeteredQuotaBalanceHistory(null, { sinceMs: 0, nowMs: 10, accountFingerprint: "fingerprint-a" }), []);
 
   const kv = new MeteredKv();
   assert.deepEqual(await readMeteredQuotaBalanceHistory(asKv(kv), { sinceMs: 0, nowMs: 10, accountFingerprint: null }), []);
 });
 
-Deno.test("a balance history read returns only this account's samples inside the window", async () => {
+test("a balance history read returns only this account's samples inside the window", async () => {
   const kv = new MeteredKv();
   const bucket = METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS;
   kv.seed([...METERED_QUOTA_BALANCE_HISTORY_PREFIX, "fingerprint-a", bucket], balanceSample({ bucket_start_at_ms: bucket, observed_at_ms: bucket + 10 }));
@@ -964,7 +966,7 @@ Deno.test("a balance history read returns only this account's samples inside the
   );
 });
 
-Deno.test("a balance history read honors the requested row limit", async () => {
+test("a balance history read honors the requested row limit", async () => {
   const kv = new MeteredKv();
   const bucket = METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS;
   for (let index = 1; index <= 4; index += 1) {
@@ -987,7 +989,7 @@ Deno.test("a balance history read honors the requested row limit", async () => {
   assert.equal(clamped.length, 4);
 });
 
-Deno.test("resampling rejects unusable bucket or limit values", () => {
+test("resampling rejects unusable bucket or limit values", () => {
   const samples = [balanceSample()];
   assert.deepEqual(resampleMeteredQuotaBalanceHistory(samples, 0, 10), []);
   assert.deepEqual(resampleMeteredQuotaBalanceHistory(samples, -1, 10), []);
@@ -996,7 +998,7 @@ Deno.test("resampling rejects unusable bucket or limit values", () => {
   assert.deepEqual(resampleMeteredQuotaBalanceHistory(samples, 3_600_000, -3), []);
 });
 
-Deno.test("resampling keeps the newest observation in each bucket and the latest buckets", () => {
+test("resampling keeps the newest observation in each bucket and the latest buckets", () => {
   const hour = METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS;
   const samples: MeteredQuotaBalanceSample[] = [
     balanceSample({ bucket_start_at_ms: hour, observed_at_ms: hour + 100, balance_quota: 1 }),
@@ -1025,7 +1027,7 @@ Deno.test("resampling keeps the newest observation in each bucket and the latest
   assert.equal(single[0]?.observed_at_ms, hour + 200);
 });
 
-Deno.test("resampling breaks an observation-time tie by the source bucket timestamp", () => {
+test("resampling breaks an observation-time tie by the source bucket timestamp", () => {
   const hour = METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS;
   const observedAt = hour * 5 + 30;
   const newerBucket = balanceSample({ bucket_start_at_ms: observedAt, observed_at_ms: observedAt, balance_quota: 1 });
@@ -1045,7 +1047,7 @@ Deno.test("resampling breaks an observation-time tie by the source bucket timest
 // Diagnostics
 // ---------------------------------------------------------------------------
 
-Deno.test("diagnostics report an unconfigured Metered account without touching the network", async () => {
+test("diagnostics report an unconfigured Metered account without touching the network", async () => {
   const restore = withEnv(METERED_API_KEY_ENV, "");
   try {
     const diagnostics = await getMeteredQuotaDiagnostics({ kv: null });
@@ -1076,7 +1078,7 @@ Deno.test("diagnostics report an unconfigured Metered account without touching t
   }
 });
 
-Deno.test("diagnostics report a configured account with no reachable snapshot", async () => {
+test("diagnostics report a configured account with no reachable snapshot", async () => {
   const restore = withEnv(METERED_API_KEY_ENV, credentials.apiKey);
   try {
     const diagnostics = await getMeteredQuotaDiagnostics({ kv: null });
@@ -1089,7 +1091,7 @@ Deno.test("diagnostics report a configured account with no reachable snapshot", 
   }
 });
 
-Deno.test("diagnostics describe a wallet snapshot with confidence and debit history", async () => {
+test("diagnostics describe a wallet snapshot with confidence and debit history", async () => {
   const restore = withEnv(METERED_API_KEY_ENV, credentials.apiKey);
   try {
     const kv = new MeteredKv();
@@ -1134,7 +1136,7 @@ Deno.test("diagnostics describe a wallet snapshot with confidence and debit hist
   }
 });
 
-Deno.test("diagnostics describe a refreshed token usage snapshot without wallet fields", async () => {
+test("diagnostics describe a refreshed token usage snapshot without wallet fields", async () => {
   const restore = withEnv(METERED_API_KEY_ENV, credentials.apiKey);
   try {
     const kv = new MeteredKv();
@@ -1205,7 +1207,7 @@ const settledRequestRow = (overrides: Partial<PaidFallbackRequestV3> = {}): Paid
   ...overrides,
 });
 
-Deno.test("the automatic backfill refuses an invalid clock", async () => {
+test("the automatic backfill refuses an invalid clock", async () => {
   const kv = new MeteredKv();
 
   await assert.rejects(() => runPaidFallbackBackfillV3(asKv(kv), { nowMs: -1 }), /Paid fallback automatic backfill clock is invalid/);
@@ -1213,7 +1215,7 @@ Deno.test("the automatic backfill refuses an invalid clock", async () => {
   assert.equal(kv.stored.size, 0);
 });
 
-Deno.test("a completed automatic backfill with no pending work is skipped", async () => {
+test("a completed automatic backfill with no pending work is skipped", async () => {
   const kv = new MeteredKv();
   kv.seed(paidFallbackBackfillStateV3Key(), { v: 1, completed_at_ms: 5 });
 
@@ -1227,7 +1229,7 @@ Deno.test("a completed automatic backfill with no pending work is skipped", asyn
   );
 });
 
-Deno.test("a completed automatic backfill runs again when a settled row is unmarked", async () => {
+test("a completed automatic backfill runs again when a settled row is unmarked", async () => {
   const kv = new MeteredKv();
   const nowMs = 4_000_000;
   kv.seed(paidFallbackBackfillStateV3Key(), { v: 1, completed_at_ms: 5 });
@@ -1265,7 +1267,7 @@ Deno.test("a completed automatic backfill runs again when a settled row is unmar
   assert.equal(kv.has(paidFallbackBackfillLeaseV3Key()), false);
 });
 
-Deno.test("a held automatic backfill lease reports the run as busy", async () => {
+test("a held automatic backfill lease reports the run as busy", async () => {
   const kv = new MeteredKv();
   const nowMs = 5_000_000;
   const row = settledRequestRow();
@@ -1278,7 +1280,7 @@ Deno.test("a held automatic backfill lease reports the run as busy", async () =>
   assert.equal((kv.value(paidFallbackRequestV3Key(row.key_id, row.request_id)) as PaidFallbackRequestV3).usage_rollup_at_ms, undefined);
 });
 
-Deno.test("a refused completion marker fails the automatic backfill loudly", async () => {
+test("a refused completion marker fails the automatic backfill loudly", async () => {
   const kv = new MeteredKv();
   const nowMs = 6_000_000;
   kv.conflictOnSet(paidFallbackBackfillStateV3Key());
@@ -1287,7 +1289,7 @@ Deno.test("a refused completion marker fails the automatic backfill loudly", asy
   assert.equal(kv.has(paidFallbackBackfillLeaseV3Key()), false);
 });
 
-Deno.test("an automatic backfill with existing rollups and no marked work is skipped", async () => {
+test("an automatic backfill with existing rollups and no marked work is skipped", async () => {
   const kv = new MeteredKv();
   kv.seed(paidFallbackBackfillStateV3Key(), { v: 1, completed_at_ms: 5 });
   kv.seed(
@@ -1312,7 +1314,7 @@ Deno.test("an automatic backfill with existing rollups and no marked work is ski
   assert.deepEqual(run, { kind: "skipped", requests: null, windows: null });
 });
 
-Deno.test("a contended automatic backfill lease reports the run as busy", async () => {
+test("a contended automatic backfill lease reports the run as busy", async () => {
   const kv = new MeteredKv();
   kv.conflictOnSet(paidFallbackBackfillLeaseV3Key());
 
@@ -1322,7 +1324,7 @@ Deno.test("a contended automatic backfill lease reports the run as busy", async 
   assert.equal(kv.has(paidFallbackBackfillLeaseV3Key()), false);
 });
 
-Deno.test("an unreadable lease during release still reports the completed backfill", async () => {
+test("an unreadable lease during release still reports the completed backfill", async () => {
   const kv = new MeteredKv();
   const nowMs = 8_000_000;
   // Reads: 1 lease acquire probe, 2 release probe.
@@ -1335,7 +1337,7 @@ Deno.test("an unreadable lease during release still reports the completed backfi
   assert.equal(kv.has(paidFallbackBackfillLeaseV3Key()), true);
 });
 
-Deno.test("a malformed reconciliation job message is dropped without touching the ledger", async () => {
+test("a malformed reconciliation job message is dropped without touching the ledger", async () => {
   const kv = new MeteredKv();
 
   assert.equal(await handlePaidFallbackReconciliationJobV3(null, asKv(kv)), 0);
@@ -1344,7 +1346,7 @@ Deno.test("a malformed reconciliation job message is dropped without touching th
   assert.equal(kv.stored.size, 0);
 });
 
-Deno.test("enqueueing due reconciliation jobs requires an available KV", async () => {
+test("enqueueing due reconciliation jobs requires an available KV", async () => {
   const kv = new MeteredKv();
 
   assert.equal(await enqueueDuePaidFallbackReconciliationJobsV3(9_000_000, null), 0);

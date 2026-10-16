@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -74,7 +75,7 @@ const assertValidBaseline = (): void => {
 // normalizePromptCacheCapabilities: envelope and provider guards
 // ---------------------------------------------------------------------------
 
-Deno.test("prompt cache capabilities reject every malformed envelope", () => {
+test("prompt cache capabilities reject every malformed envelope", () => {
   assertValidBaseline();
   const cases: readonly unknown[] = [
     null,
@@ -93,7 +94,7 @@ Deno.test("prompt cache capabilities reject every malformed envelope", () => {
   assert.equal(normalizePromptCacheCapabilities(false), false);
 });
 
-Deno.test("prompt cache capabilities reject an unidentifiable or duplicate provider", () => {
+test("prompt cache capabilities reject an unidentifiable or duplicate provider", () => {
   assert.equal(normalizePromptCacheCapabilities(capabilitiesWith({ id: "   ", controls: validControls() })), null);
   assert.equal(normalizePromptCacheCapabilities(capabilitiesWith({ id: 7, controls: validControls() })), null);
   assert.equal(normalizePromptCacheCapabilities(capabilitiesWith({ id: "a b", controls: validControls(), scope: {} })), null);
@@ -104,14 +105,14 @@ Deno.test("prompt cache capabilities reject an unidentifiable or duplicate provi
   });
 });
 
-Deno.test("a declared controls block that is not a plain object invalidates the provider", () => {
+test("a declared controls block that is not a plain object invalidates the provider", () => {
   for (const controls of ["catalog", 7, null, [validControls()]]) {
     assert.equal(normalizePromptCacheCapabilities(capabilitiesWith({ id: "codex_chatgpt", controls })), null);
   }
   assert.equal(normalizePromptCacheCapabilities(capabilitiesWith({ id: "codex_chatgpt", controls: { ...validControls(), extra: 1 } })), null);
 });
 
-Deno.test("controls require a known source, a safe timestamp and boolean switches", () => {
+test("controls require a known source, a safe timestamp and boolean switches", () => {
   const invalid: readonly Json[] = [
     { ...validControls(), source: "bogus" },
     { ...validControls(), source: undefined },
@@ -136,7 +137,7 @@ Deno.test("controls require a known source, a safe timestamp and boolean switche
   assert.deepEqual(accepted.providers[0]?.controls?.explicit_breakpoints, false);
 });
 
-Deno.test("an optional list control with a non-array or blank entry invalidates the whole record", () => {
+test("an optional list control with a non-array or blank entry invalidates the whole record", () => {
   const invalid: readonly Json[] = [
     { ...validControls(), modes: "implicit" },
     { ...validControls(), modes: ["implicit", 5] },
@@ -158,7 +159,7 @@ Deno.test("an optional list control with a non-array or blank entry invalidates 
   }
 });
 
-Deno.test("gateway-unsupported list values are dropped or invalidate an exhaustive declaration", () => {
+test("gateway-unsupported list values are dropped or invalidate an exhaustive declaration", () => {
   const droppedTtls = normalizePromptCacheCapabilities(capabilitiesWith({ id: "codex_chatgpt", controls: { ...validControls(), ttls: ["30m", "2h"] } }));
   assert.ok(droppedTtls !== null && droppedTtls !== false);
   assert.deepEqual(droppedTtls.providers[0]?.controls?.ttls, ["30m"]);
@@ -205,7 +206,7 @@ Deno.test("gateway-unsupported list values are dropped or invalidate an exhausti
 // normalizePromptCacheCapabilities: scope guards
 // ---------------------------------------------------------------------------
 
-Deno.test("scope evidence rejects unknown members, profiles and classifications", () => {
+test("scope evidence rejects unknown members, profiles and classifications", () => {
   const invalid: readonly Json[] = [
     { ...validScope(), probe_profile: "responses_implicit_v0" },
     { ...validScope(), account_slots: "private" },
@@ -226,7 +227,7 @@ Deno.test("scope evidence rejects unknown members, profiles and classifications"
   assert.equal(normalizePromptCacheCapabilities(capabilitiesWith({ id: "codex_chatgpt", scope: null })), null);
 });
 
-Deno.test("a scope without an effective model keeps the other verified fields", () => {
+test("a scope without an effective model keeps the other verified fields", () => {
   const scope = validScope();
   delete scope.effective_model;
   const normalized = normalizePromptCacheCapabilities(capabilitiesWithScope(scope));
@@ -251,7 +252,7 @@ Deno.test("a scope without an effective model keeps the other verified fields", 
 // compactPromptCacheCapabilities
 // ---------------------------------------------------------------------------
 
-Deno.test("compaction keeps controls providers and drops probe-only scope", () => {
+test("compaction keeps controls providers and drops probe-only scope", () => {
   assert.equal(compactPromptCacheCapabilities(false), false);
   assert.equal(compactPromptCacheCapabilities(null), null);
   assert.equal(compactPromptCacheCapabilities("bogus"), null);
@@ -271,7 +272,7 @@ Deno.test("compaction keeps controls providers and drops probe-only scope", () =
 // Snapshot lookup helpers
 // ---------------------------------------------------------------------------
 
-Deno.test("exact-slug lookup resolves every id spelling and rejects ambiguity", () => {
+test("exact-slug lookup resolves every id spelling and rejects ambiguity", () => {
   const bySlugModel: Record<string, unknown> = { slug: "gpt-5-codex" };
   const byIdModel: Record<string, unknown> = { id: "gpt-5-codex" };
   const byModelModel: Record<string, unknown> = { model: "gpt-5-codex" };
@@ -296,7 +297,7 @@ Deno.test("exact-slug lookup resolves every id spelling and rejects ambiguity", 
   assert.equal(getUniqueCodexModelBySlug(snapshotOf([{ slug: "   " }]), "gpt-5-codex"), null);
 });
 
-Deno.test("provider lookup reports absence instead of guessing", () => {
+test("provider lookup reports absence instead of guessing", () => {
   const withCache = snapshotOf([{ slug: "gpt-5-codex", prompt_cache: capabilitiesWithScope() }]);
   const provider = getCodexModelPromptCacheProvider(withCache, "gpt-5-codex", CODEX_CHATGPT_PROMPT_CACHE_PROVIDER);
   assert.deepEqual(provider, {
@@ -315,7 +316,7 @@ Deno.test("provider lookup reports absence instead of guessing", () => {
   assert.equal(getCodexModelPromptCacheProvider(snapshotOf([{ slug: "gpt-5-codex", prompt_cache: { version: 1, providers: [] } }]), "gpt-5-codex", "x"), null);
 });
 
-Deno.test("scope-experiment eligibility requires the exact plain-key control set", () => {
+test("scope-experiment eligibility requires the exact plain-key control set", () => {
   const eligible = snapshotOf([{ slug: "gpt-5-codex", prompt_cache: capabilitiesWithControls() }]);
   assert.equal(isCodexModelPromptCacheScopeExperimentEligible(eligible, "gpt-5-codex"), true);
 
@@ -343,7 +344,7 @@ Deno.test("scope-experiment eligibility requires the exact plain-key control set
   assert.equal(isCodexModelPromptCacheScopeExperimentEligible(explicitOnly, "gpt-5-codex"), true);
 });
 
-Deno.test("only a complete reproducible scope counts as concrete", () => {
+test("only a complete reproducible scope counts as concrete", () => {
   const scope = capabilitiesWithScope();
   const normalized = normalizePromptCacheCapabilities(scope);
   assert.ok(normalized !== null && normalized !== false);
@@ -366,7 +367,7 @@ Deno.test("only a complete reproducible scope counts as concrete", () => {
 // withCodexModelPromptCacheScope
 // ---------------------------------------------------------------------------
 
-Deno.test("scope attachment requires a unique model, a present provider and a valid scope", () => {
+test("scope attachment requires a unique model, a present provider and a valid scope", () => {
   const model: Record<string, unknown> = { slug: "gpt-5-codex", prompt_cache: capabilitiesWithControls() };
   const other: Record<string, unknown> = { slug: "other", prompt_cache: capabilitiesWithControls() };
   const snapshot = snapshotOf([model, other]);
@@ -413,7 +414,7 @@ Deno.test("scope attachment requires a unique model, a present provider and a va
 // mergePromptCacheCapabilities
 // ---------------------------------------------------------------------------
 
-Deno.test("prompt cache merge precedence covers false, absent and invalid sides", () => {
+test("prompt cache merge precedence covers false, absent and invalid sides", () => {
   assert.equal(mergePromptCacheCapabilities(capabilitiesWithScope(), false), false);
   assert.equal(mergePromptCacheCapabilities(null, null), null);
   assert.equal(mergePromptCacheCapabilities("bogus", "bogus"), null);
@@ -435,7 +436,7 @@ Deno.test("prompt cache merge precedence covers false, absent and invalid sides"
   assert.equal(mergedWithScope.providers.length, 1);
 });
 
-Deno.test("prompt cache merge keeps control-only and scope-only providers from both sides", () => {
+test("prompt cache merge keeps control-only and scope-only providers from both sides", () => {
   const previousOnly = capabilitiesWith({ id: "retired_provider", scope: validScope() });
   const nextOnly = capabilitiesWith({ id: "fresh_provider", controls: validControls() });
   const merged = mergePromptCacheCapabilities(previousOnly, nextOnly);
@@ -466,7 +467,7 @@ Deno.test("prompt cache merge keeps control-only and scope-only providers from b
 // mergeCodexModelPromptCacheCapabilities
 // ---------------------------------------------------------------------------
 
-Deno.test("model-level cache merge preserves evidence per matching slug only", () => {
+test("model-level cache merge preserves evidence per matching slug only", () => {
   const previous = snapshotOf([
     { slug: "gpt-5-codex", prompt_cache: capabilitiesWithScope() },
     { slug: "retired", prompt_cache: capabilitiesWithScope() },
@@ -488,7 +489,7 @@ Deno.test("model-level cache merge preserves evidence per matching slug only", (
   assert.equal(merged.models[4], "not-a-record");
 });
 
-Deno.test("model-level cache merge returns the same snapshot when nothing can be added", () => {
+test("model-level cache merge returns the same snapshot when nothing can be added", () => {
   const next = snapshotOf([{ slug: "gpt-5-codex" }]);
 
   assert.equal(mergeCodexModelPromptCacheCapabilities(next, null), next);
@@ -513,7 +514,7 @@ Deno.test("model-level cache merge returns the same snapshot when nothing can be
 // Version parsing and default model selection
 // ---------------------------------------------------------------------------
 
-Deno.test("client version parsing and comparison reject malformed versions", () => {
+test("client version parsing and comparison reject malformed versions", () => {
   assert.equal(compareCodexClientVersions("1.2.3", "1.2.4"), -1);
   assert.equal(compareCodexClientVersions("1.3.0", "1.2.9"), 1);
   assert.equal(compareCodexClientVersions(" 1.2.3 ", "1.2.3"), 0);
@@ -523,7 +524,7 @@ Deno.test("client version parsing and comparison reject malformed versions", () 
   assert.equal(compareCodexClientVersions("1.2.3-rc.4", "1.2.3"), null);
 });
 
-Deno.test("the default model comes from the first entry with a usable identifier", () => {
+test("the default model comes from the first entry with a usable identifier", () => {
   assert.equal(getCodexModelsSnapshotDefaultModel(null), null);
   assert.equal(getCodexModelsSnapshotDefaultModel(snapshotOf([])), null);
   assert.equal(getCodexModelsSnapshotDefaultModel(snapshotOf("none")), null);
@@ -537,7 +538,7 @@ Deno.test("the default model comes from the first entry with a usable identifier
 // normalizeCodexModelsPayload
 // ---------------------------------------------------------------------------
 
-Deno.test("payload envelopes accept a bare array and a data wrapper", () => {
+test("payload envelopes accept a bare array and a data wrapper", () => {
   const fromArray = normalizeCodexModelsPayload([{ slug: "gpt-5-codex" }]);
   assert.ok(fromArray);
   assert.equal(fromArray.source, "codex_cli");
@@ -551,7 +552,7 @@ Deno.test("payload envelopes accept a bare array and a data wrapper", () => {
   assert.equal(fromData.updated_at_ms, 7);
 });
 
-Deno.test("payload normalization refuses envelopes without a model list", () => {
+test("payload normalization refuses envelopes without a model list", () => {
   for (const value of [null, "nope", 42, [null], {}, { models: "none" }, { data: "none" }]) {
     assert.equal(normalizeCodexModelsPayload(value), null, `payload ${JSON.stringify(value)}`);
   }
@@ -561,7 +562,7 @@ Deno.test("payload normalization refuses envelopes without a model list", () => 
   assert.equal(normalizeCodexModelsPayload(["not-a-record"]), null);
 });
 
-Deno.test("payload normalization keeps the first entry per slug and drops unusable ones", () => {
+test("payload normalization keeps the first entry per slug and drops unusable ones", () => {
   const snapshot = normalizeCodexModelsPayload([
     { slug: "gpt-5-codex", display_name: "Codex" },
     { slug: "gpt-5-codex", display_name: "Duplicate" },
@@ -582,7 +583,7 @@ Deno.test("payload normalization keeps the first entry per slug and drops unusab
   assert.equal(snapshot.models[1]?.display_name, undefined);
 });
 
-Deno.test("overrides win only when they carry a value", () => {
+test("overrides win only when they carry a value", () => {
   const payload = { models: [{ slug: "gpt-5-codex" }], source: "upstream", client_version: "9.9.9", updated_at_ms: 5 };
 
   const untouched = normalizeCodexModelsPayload(payload, { source: "", clientVersion: "", updatedAtMs: null });
@@ -602,7 +603,7 @@ Deno.test("overrides win only when they carry a value", () => {
   assert.ok(noTimestamp.updated_at_ms > 0);
 });
 
-Deno.test("model entries normalize context windows, reasoning levels and cache evidence", () => {
+test("model entries normalize context windows, reasoning levels and cache evidence", () => {
   const snapshot = normalizeCodexModelsPayload([
     {
       slug: "gpt-5-codex",
@@ -660,7 +661,7 @@ Deno.test("model entries normalize context windows, reasoning levels and cache e
   assert.equal("default_reasoning_level" in blankLevel, false);
 });
 
-Deno.test("a hidden model is dropped unless the API still serves it", () => {
+test("a hidden model is dropped unless the API still serves it", () => {
   const snapshot = normalizeCodexModelsPayload([
     { slug: "hidden", visibility: " HIDE ", supported_in_api: false },
     { slug: "hidden-but-served", visibility: "hide", supported_in_api: true },
@@ -674,7 +675,7 @@ Deno.test("a hidden model is dropped unless the API still serves it", () => {
   );
 });
 
-Deno.test("a minimal controls record keeps only its required evidence", () => {
+test("a minimal controls record keeps only its required evidence", () => {
   const minimal = { source: "live_probe", verified_at_ms: 3 };
   const normalized = normalizePromptCacheCapabilities(capabilitiesWith({ id: "codex_chatgpt", controls: minimal }));
 
@@ -694,7 +695,7 @@ Deno.test("a minimal controls record keeps only its required evidence", () => {
   assert.deepEqual(compacted.providers[0]?.controls, minimal);
 });
 
-Deno.test("a provider entry must be a plain object with only id, controls and scope", () => {
+test("a provider entry must be a plain object with only id, controls and scope", () => {
   assert.equal(normalizePromptCacheCapabilities({ version: 1, providers: ["codex_chatgpt"] }), null);
   assert.equal(normalizePromptCacheCapabilities({ version: 1, providers: [null] }), null);
   assert.equal(normalizePromptCacheCapabilities({ version: 1, providers: [[{ id: "codex_chatgpt" }]] }), null);
@@ -707,7 +708,7 @@ Deno.test("a provider entry must be a plain object with only id, controls and sc
   assert.deepEqual(identityOnly, { version: 1, providers: [{ id: "codex_chatgpt" }] });
 });
 
-Deno.test("scope attachment leaves sibling providers untouched", () => {
+test("scope attachment leaves sibling providers untouched", () => {
   const sibling = { id: "second_provider", controls: validControls() };
   const model: Record<string, unknown> = {
     slug: "gpt-5-codex",
@@ -731,7 +732,7 @@ Deno.test("scope attachment leaves sibling providers untouched", () => {
   assert.deepEqual(cache.providers[1], sibling);
 });
 
-Deno.test("a profile-only provider merge keeps the provider identity", () => {
+test("a profile-only provider merge keeps the provider identity", () => {
   const merged = mergePromptCacheCapabilities(capabilitiesWith({ id: "codex_chatgpt" }), capabilitiesWith({ id: "codex_chatgpt" }));
 
   assert.ok(merged !== null && merged !== false);
