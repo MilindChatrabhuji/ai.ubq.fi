@@ -1071,7 +1071,11 @@ commit in the program, so at that time no production inference behaviour had cha
   complete "with no tool call, no non-empty assistant text and no refusal". The no-tool-call clause was written for the
   narration symptom that has now been retracted. The reasoning-only clause stands on its own: a completion whose only
   output is reasoning hands the client nothing, which the Cerebras route already failed closed for independently of any
-  narration claim.
+  narration claim. The no-tool-call clause is nonetheless required on its own merits, whatever motivated it:
+  `isAnswerBearingCompletion` in `src/upstream-wire.ts` counts a tool call as answer-bearing, and the stream relay fails
+  a completed terminal closed only when that predicate is false, so dropping the clause would fail every tool-call-only
+  turn - an ordinary agent step - closed as `empty_upstream_completion`. The retracted narration cases carried non-empty
+  assistant text, so they never depended on this clause.
 
 Reason for recording this: the correction above removes the motivation for one clause of one change, and a future reader
 deciding whether to deploy needs to know that the other two changes and most of the third rest on reproductions that
@@ -1081,8 +1085,8 @@ Reversal risk: deploying on the belief that the narration symptom is real, or re
 original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
 
 Next action if the program is to be deployed: re-derive G3's trigger from the surviving evidence alone - keep the
-reasoning-only and empty-output clauses, and justify or drop the no-tool-call clause on its own merits rather than on
-the invalidated frequency claim.
+reasoning-only and empty-output clauses, and keep the no-tool-call clause for as long as the completion-validity
+predicate treats a tool call as valid output. It rests on that predicate, not on the invalidated frequency claim.
 
 ## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
 
