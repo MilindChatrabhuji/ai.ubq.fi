@@ -126,8 +126,19 @@ export const proxyAdminChartSource = async (
   const fetcher = deps.fetch ?? fetch;
   const url = new URL(request.url);
   if (url.pathname === "/admin/errors") {
+    // Bun fetch decodes a compressed body but keeps the upstream
+    // Content-Encoding and Content-Length, so the remote Response is never
+    // forwarded: only its parsed overlay is re-serialized with fresh headers.
     const remote = await fetchRemoteChart(request, remoteOrigin, token, fetcher);
-    return remote ?? local;
+    if (!remote) return local;
+    let overlay: unknown;
+    try {
+      overlay = await remote.json();
+    } catch {
+      return local;
+    }
+    if (!isRecord(overlay) || !Array.isArray(overlay.five_xx_buckets)) return local;
+    return json(200, overlay, { "Cache-Control": "no-store" });
   }
   if (!local.ok) return local;
   let localPayload: unknown;

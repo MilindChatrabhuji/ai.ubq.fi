@@ -1,5 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { gzipSync } from "node:zlib";
 
 import { type ChartSourceProxyDeps, proxyAdminChartSource } from "../src/admin/chart-source-proxy.ts";
 import { createFetchMock } from "./helpers/fetch-mock.ts";
@@ -108,6 +109,74 @@ test("chart proxy serves the canonical five-xx overlay for the chart only", asyn
   );
   assert.deepEqual(seen, [{ method: "GET", url: "https://vps.example/admin/errors?limit=1" }]);
   assert.deepEqual(await response.json(), overlay);
+});
+
+test("chart proxy re-encodes a compressed five-xx overlay instead of forwarding its transfer headers", async () => {
+  const overlay = { object: "list", data: [{ status: 502, message: "upstream ".repeat(60) }], five_xx_buckets: [{ bucket_start_at_ms: 2_000, count: 9 }] };
+  const compressed = gzipSync(JSON.stringify(overlay));
+  const acceptEncodings: (string | null)[] = [];
+  // Cloudflare compresses JSON for the Accept-Encoding that Bun fetch always sends.
+  const upstream = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      acceptEncodings.push(request.headers.get("Accept-Encoding"));
+      return new Response(compressed, {
+        headers: { "Content-Type": "application/json", "Content-Encoding": "gzip", "Content-Length": String(compressed.byteLength) },
+      });
+    },
+  });
+  try {
+    const response = await proxyAdminChartSource(
+      new Request("http://localhost:7999/admin/errors?limit=1"),
+      jsonResponse({ object: "list", data: [], five_xx_buckets: [] }),
+      deps({ remoteOrigin: `http://127.0.0.1:${upstream.port}` })
+    );
+    assert.equal(acceptEncodings.length, 1);
+    assert.match(acceptEncodings[0] ?? "", /gzip/);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Content-Encoding"), null);
+    assert.notEqual(response.headers.get("Content-Length"), String(compressed.byteLength));
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    const text = await response.text();
+    const declaredLength = response.headers.get("Content-Length");
+    if (declaredLength !== null) assert.equal(Number(declaredLength), new TextEncoder().encode(text).byteLength);
+    assert.deepEqual(JSON.parse(text), overlay);
+  } finally {
+    await upstream.stop(true);
+  }
+});
+
+test("chart proxy drops stale decoded-body transfer headers from the five-xx overlay", async () => {
+  const overlay = { object: "list", data: [], five_xx_buckets: [{ bucket_start_at_ms: 2_000, count: 9 }] };
+  // Bun fetch hands back the decoded body but keeps the upstream encoding headers.
+  const decodedWithStaleHeaders = new Response(JSON.stringify(overlay), {
+    headers: { "Content-Type": "application/json", "Content-Encoding": "br", "Content-Length": "17" },
+  });
+  const response = await proxyAdminChartSource(
+    new Request("http://localhost:7999/admin/errors?limit=1"),
+    jsonResponse({ object: "list", data: [], five_xx_buckets: [] }),
+    deps({ fetch: createFetchMock(() => Promise.resolve(decodedWithStaleHeaders)) })
+  );
+  assert.equal(response.headers.get("Content-Encoding"), null);
+  assert.notEqual(response.headers.get("Content-Length"), "17");
+  assert.deepEqual(await response.json(), overlay);
+});
+
+test("chart proxy keeps the local five-xx overlay when the remote body is unusable", async () => {
+  for (const remote of [
+    new Response("not json", { status: 200, headers: { "Content-Type": "application/json" } }),
+    jsonResponse({ object: "list", data: [] }),
+    jsonResponse({ object: "list", data: [], five_xx_buckets: "9" }),
+  ]) {
+    const local = jsonResponse({ object: "list", data: [], five_xx_buckets: [{ bucket_start_at_ms: 1_000, count: 1 }] });
+    const response = await proxyAdminChartSource(
+      new Request("http://localhost:7999/admin/errors?limit=1"),
+      local,
+      deps({ fetch: createFetchMock(() => Promise.resolve(remote)) })
+    );
+    assert.equal(response, local);
+  }
 });
 
 test("chart proxy leaves the fuller errors view local", async () => {
