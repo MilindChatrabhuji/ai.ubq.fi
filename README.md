@@ -709,10 +709,12 @@ set as `DENO_DEPLOY_TOKEN` from the fallback chain `DENO_DEPLOY_TOKEN_UBIQUITY_D
 sign-in on `http://127.0.0.1:8000`. The injected token lives in the server process only — `.env` values are not
 re-exported to your shell, and the admin credential never flows into separate commands. `bun run dev:local` behaves
 the same way; `bun run admin:models` (and its `:spark` variant) use `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` or
-`DENO_DEPLOY_TOKEN` from your shell when set. A token is optional for a loopback `BASE_URL` (the default), but an
-exported token is still sent as `Authorization: Bearer ...`; unset both variables if the listener must receive no
-deployment credential. A non-loopback `BASE_URL` requires one, exactly like the loopback server itself, which has admin
-authentication disabled.
+`DENO_DEPLOY_TOKEN` from your shell when set. A token is optional when the parsed `BASE_URL` hostname is loopback
+(`localhost` in any case, `127.0.0.0/8`, or `::1` in any spelling, classified as the server classifies it; the default
+is `http://localhost:8000`), but an exported token is still sent as `Authorization: Bearer ...`; unset both variables
+if the listener must receive no deployment credential. A non-loopback `BASE_URL`, including a lookalike such as
+`http://localhost.example.com`, requires one, exactly like the loopback server itself, which has admin authentication
+disabled. Both tasks exit non-zero on an HTTP error rather than printing an empty result.
 
 The dev wrappers explicitly source `.env` before invoking Bun with `--no-env-file`; `dev:local` retains its existing optional native-auth seed. Direct commands below do not discover dotenv files, so export their intended credentials first. The named `application` export and explicit entry point use the receipt-preserving `node:http` server, not Bun's automatic default-export server startup.
 
