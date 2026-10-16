@@ -189,24 +189,53 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
 
   const loadProviders = async () => {
     if (!active) return;
+    if (providerController) providerController.abort();
+    const request = new AbortController();
+    providerController = request;
     const token = typeof getToken === "function" ? getToken() : "";
+    const selectionTarget = apiUrl("/admin/providers/selection");
+    const healthTarget = apiUrl("/admin/providers");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     try {
       const [selectionResponse, healthResponse] = await Promise.all([
-        fetch(apiUrl("/admin/providers/selection"), { headers, credentials: "include", cache: "no-store" }),
-        fetch(apiUrl("/admin/providers"), { headers, credentials: "include", cache: "no-store" }),
+        fetch(selectionTarget, {
+          headers,
+          credentials: "include",
+          cache: "no-store",
+          signal: request.signal,
+        }),
+        fetch(healthTarget, {
+          headers,
+          credentials: "include",
+          cache: "no-store",
+          signal: request.signal,
+        }),
       ]);
       const selection = selectionResponse.ok ? await selectionResponse.json().catch(() => null) : null;
       const healthSnapshot = healthResponse.ok ? await healthResponse.json().catch(() => null) : null;
+      const currentToken = typeof getToken === "function" ? getToken() : "";
+      if (
+        providerController !== request ||
+        request.signal.aborted ||
+        !active ||
+        selectionTarget !== apiUrl("/admin/providers/selection") ||
+        healthTarget !== apiUrl("/admin/providers") ||
+        token !== currentToken
+      ) {
+        return;
+      }
       if (selection) renderProviders(selection, healthSnapshot);
     } catch {
       // Best effort: the sessions panel already reports its own load state.
+    } finally {
+      if (providerController === request) providerController = null;
     }
   };
 
   let active = false;
   let timer = 0;
   let controller = null;
+  let providerController = null;
   let snapshot = null;
   const rows = new Map();
   const filters = { search: "", machine: "all", state: "active" };
@@ -785,6 +814,8 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     if (document.hidden) {
       if (controller) controller.abort();
       controller = null;
+      if (providerController) providerController.abort();
+      providerController = null;
       stopFollow("Follow stopped while the tab was hidden.");
       return;
     }
@@ -874,6 +905,8 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       timer = 0;
       if (controller) controller.abort();
       controller = null;
+      if (providerController) providerController.abort();
+      providerController = null;
       stopFollow();
       return;
     }
