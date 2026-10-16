@@ -315,6 +315,7 @@ const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Respon
       downstreamSignal: input.downstreamSignal,
     };
   }
+  recordLithosFailoverModel(input.usageContext, servedModel === input.modelRaw ? null : servedModel);
   return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal, servedModel };
 };
 
