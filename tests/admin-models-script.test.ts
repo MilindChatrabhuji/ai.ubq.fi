@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { runAdminModels } from "../scripts/admin-models.ts";
 
@@ -79,6 +80,42 @@ test("an exported admin token is sent to the parsed endpoint, with the UBIQUITY_
   assert.deepEqual(preferred.calls, [{ url: "http://localhost:8000/admin/codex/models", authorization: "Bearer dao-token" }]);
 });
 
+test("invalid admin tokens fail without appearing in output", async () => {
+  for (const token of ["deploy\ntoken", "deploy\u200btoken"]) {
+    const { calls, errors, run } = harness();
+    assert.equal(await run({ BASE_URL: "https://ai.ubq.fi", DENO_DEPLOY_TOKEN: token }), 1);
+    assert.equal(calls.length, 0);
+    assert.match(errors.join("\n"), /DENO_DEPLOY_TOKEN/);
+    assert.equal(errors.join("\n").includes(token), false);
+  }
+});
+
+test("loopback requests add their hostname to NO_PROXY while fetching", async () => {
+  const previousNoProxy = process.env.NO_PROXY;
+  const previousLowerNoProxy = process.env.no_proxy;
+  process.env.NO_PROXY = "";
+  process.env.no_proxy = "";
+  try {
+    let noProxy: string | undefined;
+    const result = await runAdminModels([], {
+      env: { BASE_URL: "http://LOCALHOST:8000" },
+      fetcher: async () => {
+        noProxy = process.env.NO_PROXY;
+        return Response.json({ ok: true, data: { models: [] } });
+      },
+      log: () => undefined,
+      error: () => undefined,
+    });
+    assert.equal(result, 0);
+    assert.equal(noProxy, "localhost");
+  } finally {
+    if (previousNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = previousNoProxy;
+    if (previousLowerNoProxy === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = previousLowerNoProxy;
+  }
+});
+
 test("admin:models prints the catalog body and :spark prints only spark slugs", async () => {
   const payload = { ok: true, data: { models: [{ slug: "gpt-6-astra" }, { slug: "gpt-6-astra-spark" }, { slug: null }, {}, { slug: "codex-spark-mini" }] } };
   const full = harness(() => Response.json(payload));
@@ -118,7 +155,7 @@ test("invalid BASE_URL values and unknown arguments fail before any request", as
 test("the script process rejects a lookalike loopback host without a token", async () => {
   for (const args of [[], ["--spark"]]) {
     const child = Bun.spawn([process.execPath, "--no-env-file", "scripts/admin-models.ts", ...args], {
-      cwd: new URL("..", import.meta.url).pathname,
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
       env: { PATH: process.env.PATH ?? "", BASE_URL: "http://localhost.example.com" },
       stdin: "ignore",
       stdout: "pipe",
