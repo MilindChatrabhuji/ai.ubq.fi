@@ -147,7 +147,9 @@ function joined(cohort: VpsJoinCohort): { results: VpsMetricEvent[]; pending: bo
     const terminal = terminals.get(event.id);
     return terminal ? [terminal] : [];
   });
-  const orphan = [...terminals.values()].some((event) => !accepted.has(event.id) && event.admissionStage !== "pre_admission");
+  // Only a terminal at or after windowStart can hide a lost admission of this window. Earlier terminals found by a
+  // backward slice belong to earlier requests; counting them would chase in-flight traffic back to the retention floor.
+  const orphan = [...terminals.values()].some((event) => event.at >= cohort.windowStart && !accepted.has(event.id) && event.admissionStage !== "pre_admission");
   return { results, pending: results.length !== members.length, orphan };
 }
 const sampleKey = (input: VpsJournalRequest) => `${canonicalVps(input.identity)}:${input.windowStart}:${input.windowEnd}`;

@@ -202,3 +202,49 @@ test("VPS joins: elapsed query budget checkpoints completed slices and yields co
   assert.equal(result.requestCount, 1);
   assert.ok(queries - beforeQueries <= 3, "resume does not restart from the completed first slice");
 });
+
+test("VPS joins: steady overlapping traffic with history beyond retention completes from its own neighbouring slices", async () => {
+  const history = 5 * 60 * 60_000,
+    every = 7_000,
+    duration = 13_000;
+  const rows: { at: number; line: string }[] = [];
+  let members = 0;
+  for (let at = start - history, index = 0; at < start + 10 * 60_000; at += every, index++) {
+    rows.push({ at, line: row(true, at, `steady-${index}`) }, { at: at + duration, line: row(false, at + duration, `steady-${index}`) });
+    if (at >= input.windowStart && at < input.windowEnd) members++;
+  }
+  rows.sort((left, right) => left.at - right.at);
+  const original = reader(rows.map((item) => item.line).join("\n"));
+  let reads = 0;
+  const source = {
+    ...original,
+    read: (from: number, to: number) => {
+      reads++;
+      return original.read(from, to);
+    },
+  };
+  const fixture = await metricsFixture(identity, source, () => start + 65_000);
+  assert.ok(history > fixture.options.retention.evidenceMaxAgeMs, "older traffic reaches past the retention floor");
+  const result = await fixture.metrics.sample(input);
+  assert.equal(result.coverage, "complete", "terminals before the window belong to earlier requests and cannot hold this cohort open");
+  assert.equal(result.requestCount, members);
+  assert.equal((await fixture.metrics.progress(input)).state, "complete");
+  assert.ok(reads <= 3, `the window, one backward slice for in-flight admissions and one terminal slice suffice; read ${reads}`);
+});
+
+test("VPS joins: sixty consecutive candidate windows of steady traffic complete within the evidence byte policy", async () => {
+  const lines: string[] = [];
+  for (let at = start - 30 * 60_000, index = 0; at < start + 32 * 60_000; at += 2_000, index++)
+    lines.push(row(true, at, `window-${index}`), row(false, at + 13_000, `window-${index}`));
+  lines.sort((left, right) => Number(JSON.parse(left).__REALTIME_TIMESTAMP) - Number(JSON.parse(right).__REALTIME_TIMESTAMP));
+  let now = start;
+  const fixture = await metricsFixture(identity, reader(lines.join("\n")), () => now);
+  for (let window = 0; window < 60; window++) {
+    now = start + (window + 2) * 30_000 + 5_000;
+    fixture.metrics.beginTick(now);
+    const result = await fixture.metrics.sample({ identity, windowStart: start + window * 30_000, windowEnd: start + (window + 1) * 30_000 });
+    assert.equal(result.coverage, "complete", `window ${window} must not be refused by accumulated backward history`);
+    assert.equal(result.requestCount, 15);
+  }
+  assert.ok((fixture.stored()?.byteLength ?? Infinity) <= fixture.options.retention.evidenceMaxBytes);
+});
