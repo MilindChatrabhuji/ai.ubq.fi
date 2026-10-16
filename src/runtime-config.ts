@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import {
   type CodexModelsSnapshot,
   compactPromptCacheCapabilities,
@@ -190,7 +191,7 @@ export const buildRuntimeConfig = (
   });
 };
 
-export const loadRuntimeConfig = async (kvOverride?: Deno.Kv | null, nowMs = Date.now()): Promise<RuntimeConfigV2 | null> => {
+export const loadRuntimeConfig = async (kvOverride?: Kv | null, nowMs = Date.now()): Promise<RuntimeConfigV2 | null> => {
   if (cachedRuntimeConfig && cachedRuntimeConfig.expires_at_ms > nowMs) return cachedRuntimeConfig.value;
   if (runtimeConfigLoadInFlight) return await runtimeConfigLoadInFlight;
   const stale = cachedRuntimeConfig?.value ?? null;

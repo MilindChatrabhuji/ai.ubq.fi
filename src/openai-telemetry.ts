@@ -28,6 +28,8 @@ export type UsageContext = Readonly<{
   paidFallbackEnabled?: boolean;
   idempotencyPrincipal?: string | null;
   requestId?: string;
+  /** Internal paid-attempt ledger identity; client correlation and request quota retain requestId. */
+  paidFallbackRequestId?: string;
   startedAtMs?: number;
   startedAtMonotonicMs?: number;
   downstreamSignal?: AbortSignal;
@@ -40,10 +42,10 @@ export type UsageContext = Readonly<{
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-export type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus";
+export type UpstreamProvider = "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus";
 export const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
-export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
+export type InferenceFallbackReason = "primary_quota_blocked" | "primary_subscriptions_unavailable" | "dynamic_paid_model";
 /**
  * Exact fallback reason for one failed hop of the `ubiquity/deepseek-v4.1-flash`
  * waterfall, so production traffic keeps the same per-hop evidence the
@@ -219,6 +221,7 @@ const withResponseTelemetryContext = (context: UsageContext | undefined, state: 
   paidFallbackEnabled: context?.paidFallbackEnabled,
   idempotencyPrincipal: context?.idempotencyPrincipal,
   requestId: context?.requestId,
+  paidFallbackRequestId: context?.paidFallbackRequestId,
   startedAtMs: context?.startedAtMs,
   startedAtMonotonicMs: context?.startedAtMonotonicMs,
   downstreamSignal: context?.downstreamSignal,
@@ -652,14 +655,9 @@ export type UsageTokens = Readonly<{
   outputTokens: number | null;
   totalTokens: number | null;
   status: UsageTelemetryStatus;
+  /** Exact Surplus charge in microcredits; null means a present malformed amount. */
+  buyerCostMicro?: number | null;
 }>;
-
-const normalizeTokenCount = (value: unknown): number | null => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const count = Math.trunc(value);
-  if (count < 0) return null;
-  return count;
-};
 
 type ParsedUsageToken = Readonly<{ value: number | null; invalid: boolean }>;
 
@@ -733,6 +731,7 @@ export const extractUsageTokens = (value: unknown): UsageTokens | null => {
     outputTokens: outputTokens.value,
     totalTokens: totalTokens.value,
     status,
+    ...(has("buyer_cost_micro") ? { buyerCostMicro: parseUsageToken(value.buyer_cost_micro, true).value } : {}),
   };
 };
 
@@ -796,18 +795,19 @@ export const promptCacheKeyPresent = (rawRecord: Record<string, unknown>): boole
  */
 export const extractChatUsageTokens = (value: unknown): UsageTokens | null => {
   if (!isRecord(value) || Array.isArray(value)) return null;
-  const inputTokens = normalizeTokenCount(value.prompt_tokens);
-  const outputTokens = normalizeTokenCount(value.completion_tokens);
-  const totalTokens = normalizeTokenCount(value.total_tokens);
-  if (inputTokens === null || outputTokens === null || totalTokens === null) return null;
-  const details = isRecord(value.prompt_tokens_details) && !Array.isArray(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
-  const cachedInputTokens = normalizeTokenCount(details?.cached_tokens);
-  return extractUsageTokens({
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    total_tokens: totalTokens,
-    ...(cachedInputTokens === null ? {} : { input_tokens_details: { cached_tokens: cachedInputTokens } }),
-  });
+  const responsesUsage: Record<string, unknown> = {};
+  for (const [chatKey, responsesKey] of [
+    ["prompt_tokens", "input_tokens"],
+    ["completion_tokens", "output_tokens"],
+    ["total_tokens", "total_tokens"],
+    ["prompt_tokens_details", "input_tokens_details"],
+    ["buyer_cost_micro", "buyer_cost_micro"],
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(value, chatKey)) responsesUsage[responsesKey] = value[chatKey];
+  }
+  // Preserve field presence and exact values for the shared strict parser:
+  // truncating a fractional counter can fabricate a measured cache miss.
+  return extractUsageTokens(responsesUsage);
 };
 
 export const recordRequestUsage = (

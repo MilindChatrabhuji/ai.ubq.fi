@@ -6,10 +6,15 @@ import { openaiError } from "./http.ts";
 import { type StreamDeadline } from "./inference-deadline.ts";
 import { readJsonBody } from "./request.ts";
 import { type RemovedProviderCircuitProbe } from "./provider/removed-provider-circuit.ts";
+import { fetchMeteredModels } from "./provider/metered.ts";
+import { loadProviderSelectionCached } from "./provider/selection.ts";
+import { validateOpenRouterPromptCacheRequestControl } from "./provider/openrouter-request-controls.ts";
+import { resolvePaidRoutingState } from "./paid-fallback/health.ts";
+import { DEEPSEEK_WATERFALL_PAID_MODEL_ID } from "./deepseek/waterfall.ts";
 import { isGatewayFailoverWarningItem } from "./responses-failover-stream.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { MessageContentItem, ResponseInputItem, ResponsesRequest } from "./types.ts";
-import { ActiveTransitionReason, RoutedResponsesUpstream, UsageContext, MeteredTransportLifecycle } from "./openai-telemetry.ts";
+import { type ActiveTransitionReason, type RoutedResponsesUpstream, type UsageContext, type MeteredTransportLifecycle } from "./openai-telemetry.ts";
 import {
   normalizeFunctionCallOutputItem,
   normalizeModelForCodex,
@@ -18,8 +23,8 @@ import {
   validatePromptCacheControls,
 } from "./input-normalization.ts";
 import {
-  CodexModelMetadata,
-  PassthroughToolSchemaKey,
+  type CodexModelMetadata,
+  type PassthroughToolSchemaKey,
   applyPassthroughToCodexRequest,
   buildIgnoredWarnings,
   getCodexModelMetadata,
@@ -31,7 +36,7 @@ import {
   resolveReasoningLabelFromParam,
   validateCodexModelAvailable,
 } from "./request-policy.ts";
-import { PreparedResponsesAttempt, ResponsesRouteAttempt } from "./responses-attempts.ts";
+import { type PreparedResponsesAttempt, type ResponsesRouteAttempt } from "./responses-attempts.ts";
 import {
   CODEX_RESPONSES_EXTENSION_KEYS,
   RESPONSES_ALLOWED_KEYS,
@@ -123,10 +128,19 @@ export const readResponsesRequest = async (
   return { ok: true, value: { rawBody, rawRecord: rawBody as Record<string, unknown> } };
 };
 
-export const validateResponsesRequestFields = (rawRecord: Record<string, unknown>, rawBody: ResponsesRequest): Response | null => {
-  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, CODEX_RESPONSES_EXTENSION_KEYS);
+export const validateResponsesRequestFields = (
+  rawRecord: Record<string, unknown>,
+  rawBody: ResponsesRequest,
+  providerExtensions?: ReadonlySet<string>
+): Response | null => {
+  const extensions = providerExtensions ? new Set([...CODEX_RESPONSES_EXTENSION_KEYS, ...providerExtensions]) : CODEX_RESPONSES_EXTENSION_KEYS;
+  const unknownKey = findUnknownKey(rawRecord, RESPONSES_ALLOWED_KEYS, extensions);
   if (unknownKey) {
     return openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error");
+  }
+  if (providerExtensions?.has("cache_control")) {
+    const invalidCacheControl = validateOpenRouterPromptCacheRequestControl(rawRecord);
+    if (invalidCacheControl) return invalidCacheControl;
   }
   const maxOutputTokens = rawRecord.max_output_tokens;
   if (
@@ -198,7 +212,11 @@ export const resolveResponsesStreamSettings = (
 
 export const resolveResponsesModel = async (
   rawRecord: Record<string, unknown>,
-  usageContext: UsageContext | undefined
+  usageContext: UsageContext | undefined,
+  options?: Readonly<{
+    allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+    deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
+  }>
 ): Promise<ResponsesStep<{ modelRaw: string; model: string; modelMetadata: CodexModelMetadata }>> => {
   const hasModel = Object.prototype.hasOwnProperty.call(rawRecord, "model");
   const rawModelValue = rawRecord.model;
@@ -221,7 +239,24 @@ export const resolveResponsesModel = async (
   // route untouched so existing Responses clients keep working; only the Chat
   // Completions route is redirected to the official provider.
   const modelMetadata = await getCodexModelMetadata(model, "responses");
-  const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
+  // Reuse the paid router's exact verified-hop gate before route availability
+  // rejects OpenLux's incomplete catalog. This internal context neither
+  // changes the public metadata nor authorizes a paid request by itself.
+  const verifiedOpenLuxResponses =
+    options?.deepSeekWaterfallPaidHop === "openlux" &&
+    model === DEEPSEEK_WATERFALL_PAID_MODEL_ID &&
+    resolvePaidRoutingState({
+      meteredCatalog: await fetchMeteredModels({ cachedOnly: true }),
+      surplusCatalog: null,
+      codexModelKnown: false,
+      endpointType: "openai-response",
+      requestUsesTools: false,
+      model,
+      selection: await loadProviderSelectionCached(),
+      allowedPaidProviders: options.allowedPaidProviders,
+      deepSeekWaterfallPaidHop: options.deepSeekWaterfallPaidHop,
+    }).paidProviders.includes("metered");
+  const modelAvailabilityError = verifiedOpenLuxResponses ? null : validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return { ok: false, response: modelAvailabilityError };
   const modelCapabilityError = temporaryFreeSurplusCapabilityError(model, rawRecord);
   if (modelCapabilityError) return { ok: false, response: modelCapabilityError };

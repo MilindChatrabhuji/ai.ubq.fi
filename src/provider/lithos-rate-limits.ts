@@ -55,13 +55,16 @@ export const lithosFailoverTargetAt = (modelRaw: string, nowMs: number): string 
   return null;
 };
 
-/** Opens (or extends) the refused rung's own window, inferred from its legal next target. */
-export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number, target: string): void => {
+/** Opens (or extends) the refused rung's own window, inferred from its legal next target unless supplied. */
+export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number, target: string, refusedRungOverride?: string): void => {
   const ladder = lithosFailoverLadderFor(modelRaw);
   const targetIndex = ladder.indexOf(target);
   const deadlineMs = nowMs + waitMs;
   if (targetIndex === -1 || !Number.isFinite(nowMs) || !Number.isFinite(waitMs) || waitMs <= 0 || !Number.isFinite(deadlineMs)) return;
-  const refusedRung = targetIndex === 0 ? modelRaw : ladder[targetIndex - 1];
+  const refusedRung = refusedRungOverride ?? (targetIndex === 0 ? modelRaw : ladder[targetIndex - 1]);
+  const refusedIndex = refusedRung === modelRaw ? -1 : ladder.indexOf(refusedRung);
+  if (refusedRung !== modelRaw && refusedIndex === -1) return;
+  if (refusedIndex >= targetIndex) return;
   const currentDeadlineMs = lithosFailoverWindows.get(refusedRung);
   const unexpiredDeadlineMs = currentDeadlineMs !== undefined && currentDeadlineMs > nowMs ? currentDeadlineMs : deadlineMs;
   lithosFailoverWindows.set(refusedRung, Math.max(deadlineMs, unexpiredDeadlineMs));
@@ -72,8 +75,8 @@ export const clearLithosFailoverWindows = (): void => {
   lithosFailoverWindows.clear();
 };
 
-/** Records the sibling that served a request whose own tier refused it. */
-export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {
+/** Records the final tier that served a request, or clears it when the requested tier served. */
+export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string | null): void => {
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;
 };
 
@@ -155,15 +158,20 @@ export const logLithosRateLimitWait = (fields: LithosRateLimitLogFields): void =
   }
 };
 
+const lithosRetryAbortError = (signal: AbortSignal): Error => {
+  const reason: unknown = signal.reason;
+  if (reason instanceof Error) return reason;
+  if (reason === undefined) return new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError");
+  const error = new Error("The request was aborted while waiting for the LithosAI rate limit to reset.", { cause: reason });
+  error.name = "AbortError";
+  return error;
+};
+
 /** Abort-aware sleep: an abandoned request never keeps waiting for a provider window. */
 export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): Promise<void> => {
   if (milliseconds <= 0) return Promise.resolve();
   if (signal.aborted) {
-    return Promise.reject(
-      signal.reason instanceof Error
-        ? signal.reason
-        : new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
-    );
+    return Promise.reject(lithosRetryAbortError(signal));
   }
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -172,11 +180,7 @@ export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): P
     }, milliseconds);
     function onAbort(): void {
       clearTimeout(timer);
-      reject(
-        signal.reason instanceof Error
-          ? signal.reason
-          : new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError")
-      );
+      reject(lithosRetryAbortError(signal));
     }
     signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -226,6 +230,9 @@ export const logLithosRateLimitFailover = (fields: LithosRateLimitLogFields): vo
 
 /** One refusal hint parsed from the vendor's own headers. */
 export type LithosRateLimitWait = Readonly<{ waitMs: number; source: string }>;
+
+/** True when the vendor explicitly forbids retrying the tier that returned these headers. */
+export const lithosRetryProhibited = (headers: Headers): boolean => headers.get("x-should-retry")?.trim().toLowerCase() === "false";
 
 const lithosIntegerHeader = (raw: string | null): number | null => {
   if (raw === null) return null;
@@ -294,7 +301,7 @@ const lithosRetryAfterMs = (raw: string | null, nowMs: number): number | null =>
  * because it is the whole header contract in one pure function.
  */
 export const lithosRateLimitWait = (headers: Headers, nowMs: number): LithosRateLimitWait | null => {
-  if (headers.get("x-should-retry")?.trim().toLowerCase() === "false") return null;
+  if (lithosRetryProhibited(headers)) return null;
   const retryAfterMs = lithosIntegerHeader(headers.get("retry-after-ms"));
   if (retryAfterMs !== null) return { waitMs: retryAfterMs, source: "retry-after-ms" };
   const retryAfter = lithosRetryAfterMs(headers.get("retry-after"), nowMs);

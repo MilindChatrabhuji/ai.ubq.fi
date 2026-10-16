@@ -1,3 +1,4 @@
+import type { KvKey } from "#kv";
 import { getKv } from "../kv.ts";
 import { getString, isRecord, sha256Hex } from "../utils.ts";
 
@@ -42,8 +43,8 @@ const unknownObservation = (metadataPresent: boolean, sessionIdHash: string | nu
   continuation_only_candidate: false,
 });
 
-const keyActivityKey = (keyIdHash: string): Deno.KvKey => [...CODEX_SESSION_ACTIVITY_PREFIX, "key", keyIdHash];
-const sessionActivityKey = (keyIdHash: string, sessionIdHash: string): Deno.KvKey => [...CODEX_SESSION_ACTIVITY_PREFIX, "session", keyIdHash, sessionIdHash];
+const keyActivityKey = (keyIdHash: string): KvKey => [...CODEX_SESSION_ACTIVITY_PREFIX, "key", keyIdHash];
+const sessionActivityKey = (keyIdHash: string, sessionIdHash: string): KvKey => [...CODEX_SESSION_ACTIVITY_PREFIX, "session", keyIdHash, sessionIdHash];
 
 const normalizeSessionRecord = (value: unknown): CodexSessionRecord | null => {
   if (!isRecord(value) || value.v !== 1) return null;
