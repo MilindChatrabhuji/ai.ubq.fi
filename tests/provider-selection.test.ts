@@ -15,6 +15,7 @@ import handler from "../src/handler/index.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { buildModelCatalogSnapshot, handleModels } from "../src/models/catalog.ts";
 import { RECORD_PROVIDER_IDS } from "../src/provider/health.ts";
+import { handleResponses } from "../src/responses-handler.ts";
 import {
   GATEWAY_PROVIDER_ID,
   GATEWAY_PROVIDER_PRESENTATION,
@@ -633,6 +634,39 @@ test("/v1/models hides the models of a switched-off provider", async () => {
     if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
     resetRuntimeConfigCacheForTest();
+  }
+});
+
+test("a switched-off Lithos provider leaves an explicit Responses id to availability checks", async () => {
+  const previousLithosKey = process.env.LITHOSAI_API_KEY;
+  const originalFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  process.env.LITHOSAI_API_KEY = "fixture-lithos-key";
+  globalThis.fetch = (_input: RequestInfo | URL) => {
+    upstreamCalls += 1;
+    return Promise.resolve(Response.json({}));
+  };
+  const kv = new SelectionKv();
+  seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
+  try {
+    await withKv(kv, async () => {
+      await storeProviderSelection(kv, ["deepseek"]);
+      const response = await handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: LITHOS_MODEL_IDS[0], input: "hi", stream: false }),
+        })
+      );
+      assert.equal(upstreamCalls, 0);
+      assert.equal(response.status, 404);
+      assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "model_not_found");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetRuntimeConfigCacheForTest();
+    if (previousLithosKey === undefined) delete process.env.LITHOSAI_API_KEY;
+    else process.env.LITHOSAI_API_KEY = previousLithosKey;
   }
 });
 
