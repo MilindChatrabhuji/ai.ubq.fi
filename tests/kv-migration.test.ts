@@ -43,11 +43,15 @@ const paidFallbackGateDueAtMs = (store: Map<string, unknown>): number => {
 
 type KvSetOptions = Readonly<{ expireIn?: number }>;
 
-const makeKvStub = (store: Map<string, unknown>, options: Readonly<{ onAtomicSet?: (key: KvKey, options?: KvSetOptions) => void }> = {}): Kv =>
+const makeKvStub = (
+  store: Map<string, unknown>,
+  options: Readonly<{ onSet?: (key: KvKey, options?: KvSetOptions) => void; onAtomicSet?: (key: KvKey, options?: KvSetOptions) => void }> = {}
+): Kv =>
   ({
     get: (key: KvKey) => Promise.resolve({ key, value: store.get(keyToString(key)) ?? null } as KvEntryMaybe<unknown>),
-    set: (key: KvKey, value: unknown) => {
+    set: (key: KvKey, value: unknown, setOptions?: KvSetOptions) => {
       store.set(keyToString(key), value);
+      options.onSet?.(key, setOptions);
       return Promise.resolve({ ok: true } as const);
     },
     delete: (key: KvKey) => {
@@ -178,6 +182,82 @@ test("KV migration classifies v2 incident state and skips the transient circuit"
   assert.equal(classifyKvMigrationKey(codexResetUsageKey("account-hash"), options).action, "import");
   assert.equal(classifyKvMigrationKey(codexResetUsageKey("account-hash"), options).group, "codex_reset_usage");
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
+});
+
+test("KV migration restores bounded TTLs and skips expired usage rows", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const freshKey = ["uos_ai", "api_key_usage", "v3", "window", "ttl-key", "policy", now] as const;
+  const expiredKey = ["uos_ai", "api_key_usage", "v3", "window", "expired-key", "policy", now - 1] as const;
+  let importedTtl: number | undefined;
+  const kv = makeKvStub(store, {
+    onSet: (_key, options) => {
+      importedTtl = options?.expireIn;
+    },
+  });
+
+  const fresh = await importKvMigrationLines(kv, [entryLine(freshKey, { window_reset_at_ms: now + 60_000 })], {
+    profile: "prod",
+    includeCache: false,
+    includeLegacy: false,
+    overwrite: true,
+    dryRun: false,
+  });
+  assert.equal(fresh.imported, 1);
+  assert.ok(importedTtl !== undefined && importedTtl > 0);
+
+  const expired = await importKvMigrationLines(
+    kv,
+    [entryLine(expiredKey, { window_reset_at_ms: now - API_KEY_USAGE_V3_RETENTION_MS - 1 })],
+    { profile: "prod", includeCache: false, includeLegacy: false, overwrite: true, dryRun: false }
+  );
+  assert.equal(expired.imported, 0);
+  assert.equal(expired.skipped, 1);
+  assert.equal(store.has(keyToString(expiredKey)), false);
+});
+
+test("KV migration reconciles an imported Kernel quota reservation aggregate", async () => {
+  const store = new Map<string, unknown>();
+  const now = Date.now();
+  const owner = "migration-reconcile-org";
+  const windowKey = ["uos_ai", "kernel_quota", "v2", "org_window", owner] as const;
+  const reservationKey = ["uos_ai", "kernel_quota", "v2", "org_reservation", owner, now, "request"] as const;
+  const window = {
+    v: 2,
+    scope: "org",
+    owner,
+    usage_requests: 0,
+    usage_reset_at_ms: now + 60_000,
+    applied_window_ms: 60_000,
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  const reservation = {
+    v: 2,
+    scope: "org",
+    owner,
+    request_id: "request",
+    route: "responses",
+    window_created_at_ms: now,
+    window_reset_at_ms: now + 60_000,
+    state: "reserved",
+    terminal_intent: null,
+    reserved_at_ms: now,
+    lease_expires_at_ms: now + 30_000,
+    committed_at_ms: null,
+    released_at_ms: null,
+    release_reason: null,
+  };
+
+  const result = await importKvMigrationLines(makeKvStub(store), [entryLine(reservationKey, reservation), entryLine(windowKey, window)], {
+    profile: "prod",
+    includeCache: false,
+    includeLegacy: false,
+    overwrite: true,
+    dryRun: false,
+  });
+  assert.equal(result.imported, 2);
+  assert.equal((store.get(keyToString(windowKey)) as { reserved_requests?: number }).reserved_requests, 1);
 });
 
 test("KV migration validates Kernel quota reservation aggregates", async () => {

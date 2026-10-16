@@ -1,8 +1,20 @@
 // KV migration types, prefix tables and validators, split out of src/kv_migration.ts.
 
 import type { Kv, KvKey } from "#kv";
+import { API_KEY_USAGE_V3_REQUEST_PREFIX, API_KEY_USAGE_V3_RETENTION_MS, API_KEY_USAGE_V3_WINDOW_PREFIX } from "../api-key-policy.ts";
 import { type KvEntryJson, toKey, toValue } from "../kv-conversion/profile-json.ts";
 import { CODEX_RESET_USAGE_PREFIX } from "../codex/reset-settings.ts";
+import {
+  KERNEL_ORG_RESERVATION_V2_PREFIX,
+  KERNEL_ORG_WINDOW_V2_PREFIX,
+  KERNEL_QUOTA_RESERVATION_RETENTION_MS,
+  KERNEL_REPO_RESERVATION_V2_PREFIX,
+  KERNEL_REPO_WINDOW_V2_PREFIX,
+  normalizeKernelQuotaReservationRowV2,
+  normalizeKernelQuotaWindowV2,
+} from "../kernel/quota-v2.ts";
+import { PAID_FALLBACK_REQUEST_LOG_RETENTION_MS } from "../paid-fallback/ledger-state.ts";
+import { isRecord } from "../utils.ts";
 
 export type KvMigrationProfile = "local" | "prod";
 export type KvMigrationDecisionAction = "import" | "skip" | "optional";
@@ -248,8 +260,110 @@ export const parseKvMigrationEntryLine = (line: string): { key: KvKey; value: un
 
 type KvMigrationImportEntry = Readonly<{ key: KvKey; value: unknown; raw: KvEntryJson }>;
 
+type MigrationExpireIn = number | null | "skip";
+
+const boundedMigrationExpireIn = (anchorMs: unknown, retentionMs: number, nowMs: number): MigrationExpireIn => {
+  if (typeof anchorMs !== "number" || !Number.isSafeInteger(anchorMs) || anchorMs < 0) return "skip";
+  const expiresAtMs = anchorMs + retentionMs;
+  if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= nowMs) return "skip";
+  return expiresAtMs - nowMs;
+};
+
+/**
+ * Profile NDJSON does not carry the source KV expiry metadata.  These rows are
+ * nevertheless bounded state, so restore the same anchored retention instead
+ * of turning an old source row into a permanent destination row.
+ */
+const migrationExpireIn = (key: KvKey, value: unknown, nowMs: number): MigrationExpireIn => {
+  const record = isRecord(value) ? value : null;
+  if (keyStartsWith(key, API_KEY_USAGE_V3_WINDOW_PREFIX)) {
+    return boundedMigrationExpireIn(record?.window_reset_at_ms, API_KEY_USAGE_V3_RETENTION_MS, nowMs);
+  }
+  if (keyStartsWith(key, API_KEY_USAGE_V3_REQUEST_PREFIX)) {
+    // V3 request rows predate the reset timestamp field.  Their admission
+    // timestamp still gives them a bounded retention window rather than a
+    // permanent lifetime when the source aggregate is not in this stream.
+    return boundedMigrationExpireIn(record?.window_reset_at_ms ?? record?.reserved_at_ms, API_KEY_USAGE_V3_RETENTION_MS, nowMs);
+  }
+  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "window"])) {
+    return boundedMigrationExpireIn(record?.window_reset_at_ms, PAID_FALLBACK_REQUEST_LOG_RETENTION_MS, nowMs);
+  }
+  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "request"]) || keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "pending"])) {
+    return boundedMigrationExpireIn(record?.created_at_ms, PAID_FALLBACK_REQUEST_LOG_RETENTION_MS, nowMs);
+  }
+  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "reconciliation_lease"])) {
+    return boundedMigrationExpireIn(record?.expires_at_ms, 0, nowMs);
+  }
+  if (keyStartsWith(key, KERNEL_REPO_WINDOW_V2_PREFIX) || keyStartsWith(key, KERNEL_ORG_WINDOW_V2_PREFIX)) {
+    return boundedMigrationExpireIn(record?.usage_reset_at_ms, KERNEL_QUOTA_RESERVATION_RETENTION_MS, nowMs);
+  }
+  if (keyStartsWith(key, KERNEL_REPO_RESERVATION_V2_PREFIX) || keyStartsWith(key, KERNEL_ORG_RESERVATION_V2_PREFIX)) {
+    return boundedMigrationExpireIn(record?.window_reset_at_ms, KERNEL_QUOTA_RESERVATION_RETENTION_MS, nowMs);
+  }
+  return null;
+};
+
+type KernelWindowIdentity =
+  | Readonly<{ scope: "repo"; owner: string; repo: string }>
+  | Readonly<{ scope: "org"; owner: string; repo: undefined }>;
+
+const kernelWindowIdentity = (key: KvKey): KernelWindowIdentity | null => {
+  if (keyStartsWith(key, KERNEL_REPO_WINDOW_V2_PREFIX) && key.length === KERNEL_REPO_WINDOW_V2_PREFIX.length + 2) {
+    const owner = key[KERNEL_REPO_WINDOW_V2_PREFIX.length];
+    const repo = key[KERNEL_REPO_WINDOW_V2_PREFIX.length + 1];
+    if (typeof owner === "string" && owner && typeof repo === "string" && repo) return { scope: "repo", owner, repo };
+  }
+  if (keyStartsWith(key, KERNEL_ORG_WINDOW_V2_PREFIX) && key.length === KERNEL_ORG_WINDOW_V2_PREFIX.length + 1) {
+    const owner = key[KERNEL_ORG_WINDOW_V2_PREFIX.length];
+    if (typeof owner === "string" && owner) return { scope: "org", owner, repo: undefined };
+  }
+  return null;
+};
+
+/** Adds the reservation aggregate to an imported legacy window when it was absent. */
+const reconcileImportedKernelWindows = async (kv: Kv, windowKeys: ReadonlyMap<string, KvKey>, nowMs: number): Promise<void> => {
+  for (const key of windowKeys.values()) {
+    const identity = kernelWindowIdentity(key);
+    if (!identity) continue;
+    const entry = await kv.get(key, { consistency: "strong" });
+    const window = normalizeKernelQuotaWindowV2(entry.value, identity.scope, identity.owner, identity.repo);
+    if (!window || (isRecord(entry.value) && Object.hasOwn(entry.value, "reserved_requests"))) continue;
+
+    const reservationPrefix =
+      identity.scope === "repo"
+        ? [...KERNEL_REPO_RESERVATION_V2_PREFIX, identity.owner, identity.repo, window.created_at_ms]
+        : [...KERNEL_ORG_RESERVATION_V2_PREFIX, identity.owner, window.created_at_ms];
+    let reservedRequests = 0;
+    for await (const reservationEntry of kv.list({ prefix: reservationPrefix }, { consistency: "strong" })) {
+      const requestId = reservationEntry.key.at(-1);
+      const reservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, identity.scope, identity.owner, identity.repo);
+      if (
+        typeof requestId === "string" &&
+        reservation !== null &&
+        reservation.request_id === requestId &&
+        reservation.window_created_at_ms === window.created_at_ms &&
+        reservation.state === "reserved"
+      ) {
+        reservedRequests += 1;
+      }
+    }
+    const reconciledWindow = { ...window, reserved_requests: reservedRequests };
+    const expireIn = Math.max(1, window.usage_reset_at_ms + KERNEL_QUOTA_RESERVATION_RETENTION_MS - nowMs);
+    const committed = await kv.atomic().check(entry).set(key, reconciledWindow, { expireIn }).commit();
+    if (!committed.ok) throw new Error(`kernel quota window changed during migration: ${JSON.stringify(key)}`);
+  }
+};
+
 /** Imports one parsed migration entry, or reports that it must be skipped. */
-const importKvMigrationEntry = async (kv: Kv | null, entry: KvMigrationImportEntry, options: KvMigrationImportOptions): Promise<"imported" | "skipped"> => {
+const importKvMigrationEntry = async (
+  kv: Kv | null,
+  entry: KvMigrationImportEntry,
+  options: KvMigrationImportOptions,
+  nowMs: number
+): Promise<"imported" | "skipped"> => {
+  const migrationTtl = migrationExpireIn(entry.key, entry.value, nowMs);
+  if (migrationTtl === "skip") return "skipped";
+  const setOptions = migrationTtl === null ? undefined : { expireIn: migrationTtl };
   if (kv && !options.overwrite) {
     const existing = await kv.get(entry.key);
     if (existing.value !== null) return "skipped";
@@ -257,13 +371,13 @@ const importKvMigrationEntry = async (kv: Kv | null, entry: KvMigrationImportEnt
     // read-then-set pair can otherwise import the same row twice when two
     // migration workers race with overwrite disabled.
     if (!options.dryRun) {
-      const committed = await kv.atomic().check(existing).set(entry.key, entry.value).commit();
+      const committed = await kv.atomic().check(existing).set(entry.key, entry.value, setOptions).commit();
       if (!committed.ok) return "skipped";
       return "imported";
     }
   }
   if (!options.dryRun && kv) {
-    await kv.set(entry.key, entry.value);
+    await kv.set(entry.key, entry.value, setOptions);
   }
   return "imported";
 };
@@ -275,6 +389,8 @@ export async function importKvMigrationLines(
 ): Promise<KvMigrationImportResult> {
   const counters: KvMigrationCounters = { total: 0, imported: 0, skipped: 0, optional: 0, errors: 0 };
   const byGroup = new Map<string, number>();
+  const migrationNowMs = Date.now();
+  const importedKernelWindows = new Map<string, KvKey>();
 
   for await (const line of lines) {
     if (!line.trim()) continue;
@@ -291,8 +407,23 @@ export async function importKvMigrationLines(
         counters.optional += 1;
         continue;
       }
-      if ((await importKvMigrationEntry(kv, entry, options)) === "skipped") counters.skipped += 1;
-      else counters.imported += 1;
+      const kernelWindow = kernelWindowIdentity(entry.key);
+      const imported = await importKvMigrationEntry(kv, entry, options, migrationNowMs);
+      if (imported === "skipped") counters.skipped += 1;
+      else {
+        counters.imported += 1;
+      }
+      if (kernelWindow && migrationExpireIn(entry.key, entry.value, migrationNowMs) !== "skip") {
+        importedKernelWindows.set(JSON.stringify(entry.key), entry.key);
+      }
+    } catch {
+      counters.errors += 1;
+    }
+  }
+
+  if (kv && !options.dryRun && importedKernelWindows.size > 0) {
+    try {
+      await reconcileImportedKernelWindows(kv, importedKernelWindows, migrationNowMs);
     } catch {
       counters.errors += 1;
     }

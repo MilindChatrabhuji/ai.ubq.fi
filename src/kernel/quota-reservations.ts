@@ -136,10 +136,20 @@ export const normalizeKernelQuotaReservationRowV2 = (
   )
     return null;
   if (
+    value.window_reset_at_ms <= value.window_created_at_ms ||
+    value.lease_expires_at_ms <= value.reserved_at_ms
+  )
+    return null;
+  if (
     (value.state === "reserved" && (value.committed_at_ms !== null || value.released_at_ms !== null || value.release_reason !== null)) ||
     (value.state === "committed" &&
       (value.committed_at_ms === null || value.released_at_ms !== null || value.release_reason !== null || terminalIntent === "released")) ||
-    (value.state === "released" && (value.committed_at_ms !== null || value.released_at_ms === null || !value.release_reason || terminalIntent === "committed"))
+    (value.state === "released" &&
+      (value.committed_at_ms !== null ||
+        value.released_at_ms === null ||
+        typeof value.release_reason !== "string" ||
+        value.release_reason.trim() === "" ||
+        terminalIntent === "committed"))
   )
     return null;
   return { ...value, terminal_intent: terminalIntent } as KernelQuotaReservationRowV2;
