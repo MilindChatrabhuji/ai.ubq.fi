@@ -1094,6 +1094,23 @@ predicate treats a tool call as valid output. It rests on that predicate, not on
 > paired real-client reproduction did observe one premature stop with outstanding work, so these invalid counts are not
 > evidence that the behaviour is absent either. See the entry at the top of this file.
 
+> **Qualified on 2026-10-16 (#603): the artifact conclusion is unverified, not established.** Two comparisons below do
+> not test the handoff's measurement as it was recorded, so they cannot show that it was an artifact. The text below is
+> kept as first written; read its "not reproducible" as "not reproduced".
+>
+> - **Window.** The handoff scopes its counts to the 2026-09-21 13:26–13:56 UTC window. The reconciliation table below
+>   counts "the two sessions" and never states that window, so it is not a like-for-like comparison: counts over a
+>   different span are not expected to equal the windowed ones, and "no column matches" does not show that the original
+>   measurement cannot be reconstructed.
+> - **Classifier.** The handoff defines promise-narration as a trailing assistant text that matches a forward-looking
+>   phrase _and_ ends the turn with no tool call after it. The two counterexamples below are followed by a tool call, so
+>   that classifier counts them as negatives, and the 805-of-1,053 figure measures the bare phrase match over all
+>   messages, not that classifier over turn endings. They show only that the phrase alone is not a discriminator.
+>
+> No recount applying the documented classifier inside the stated window is recorded, so the 154-of-292 and 24-of-67
+> counts are neither reproduced nor shown to be an artifact. They remain unverified and still must not be quoted as a
+> rate; the sampled turn endings below are examples, not a recount.
+
 The entry below and the terminal-truthfulness handoff both rest on an observed condition: a long-running agent
 "frequently believes its turn completed mid-task", quantified as 154 of 292 turns in one session and 24 of 67 in
 another. **Those reported counts are not reproducible from the recorded sessions.** It appears to be an artifact of how
@@ -1133,14 +1150,24 @@ Method note: the original count was never reproduced, so the defect is most like
 in the sessions. Any replacement measurement must state its unit (turn, message, or item), its window, and how it
 decides a turn was premature, and must show that the classifier does not fire on ordinary mid-task narration.
 
-## CORRECTION: the narration trigger is not context size - 2026-09-21
+## CORRECTION: context size is unconfirmed as the narration trigger - 2026-09-21
 
-The entry below reports that context size gates narration-without-action. **That is falsified.** It is retained for
+> **Qualified on 2026-10-16 (#603): unconfirmed, not falsified.** As first written, this entry was headed "the narration
+> trigger is not context size", headlined "That is falsified", labelled its first measurement "The disconfirming
+> measurement", concluded "Length alone therefore cannot be the trigger, which falsifies both" the trigger and the
+> onset, filed both under "Does not survive" (in "What survives, and what does not"), and called the trigger "a
+> falsified trigger". Its own time-controlled contrasts are non-significant (`p = 0.47` each), the only significant
+> contrast (`p = 0.016`) pools runs from different time windows (the first table's 8/28 against 0/18 gives that value),
+> and the original effect did not replicate on its own payload (`p = 0.14`). That supports "unconfirmed", not
+> "falsified": context size is not established as the trigger, and context length is not excluded as one either. Those
+> phrases are replaced with "unconfirmed" wording below; the measurements, tables and `p` values are unchanged.
+
+The entry below reports that context size gates narration-without-action. **That is unconfirmed.** It is retained for
 history, but the trigger section and the onset threshold must not be relied on. The reason is an external-validity
 failure in the experiment: every payload used to derive the curve repeated one identical filler block in every tool
 output, so "long context" and "degenerate repetitive context" were confounded and could not be separated.
 
-**The disconfirming measurement.** A second payload family was built with genuinely distinct tool outputs (20 rotating
+**The contrasting measurement.** A second payload family was built with genuinely distinct tool outputs (20 rotating
 result shapes plus per-index text, every output unique) and matched to the original on byte size and item count. Both
 were run against `deepseek-flash` at matched effort:
 
@@ -1149,8 +1176,9 @@ were run against `deepseek-flash` at matched effort:
 | repetitive (original) |              66,533 |     28 |        8 |    29% |
 | **varied (matched)**  |          **71,295** | **18** |    **0** | **0%** |
 
-The varied payload is _larger_ than the repetitive one and narrates _never_. Length alone therefore cannot be the
-trigger, which falsifies both "context size is the trigger" and the recorded onset of "between roughly 1k and 4k".
+The varied payload is _larger_ than the repetitive one and narrates _never_. If that contrast holds, length alone is not
+the trigger, which leaves both "context size is the trigger" and the recorded onset of "between roughly 1k and 4k"
+unconfirmed.
 
 **A controlled interleaved run, and its non-result.** To separate condition from time drift, the three conditions
 (repetitive ~66k, varied ~71k, small ~1k) were cycled round-robin inside a single time window, eight rounds:
@@ -1165,9 +1193,9 @@ Neither contrast is significant in this design (`p = 0.47` each). Pooling all ba
 contrast to `p = 0.016`, but that pool mixes runs from different time windows and the original effect did not replicate
 across batches on its own payload (5/10, then 1/10, `p = 0.14`).
 
-**What survives, and what does not.**
+**What survives, and what is unconfirmed.**
 
-- **Does not survive:** context size as the trigger; the onset threshold; the implication that long real sessions
+- **Unconfirmed:** context size as the trigger; the onset threshold; the implication that long real sessions
   narrate _because_ they are long. Real sessions are also full of varied content, so the synthetic confound may explain
   the original 154-of-292 observation as easily as the model does.
 - **Weakly survives:** that _some_ conditions produce narration at a low rate. The pooled repetitive cells total 8/28,
@@ -1177,8 +1205,8 @@ across batches on its own payload (5/10, then 1/10, `p = 0.14`).
   than first reported, because the DeepSeek rate it is measured against fell, but it has not been contradicted.
 
 Reason for recording at this length: the previous entry states a specific causal trigger with statistics behind it, and
-this repository treats that as load-bearing. Leaving a falsified trigger in place would be worse than the correction
-itself — a future reader would tune context budgets or payload shapes against a confound.
+this repository treats that as load-bearing. Leaving an unconfirmed trigger recorded as established would be worse than
+the correction itself — a future reader would tune context budgets or payload shapes against a confound.
 
 Reversal risk: acting on the size trigger, quoting the onset threshold, or treating repetitive context as a confirmed
 cause. Any of those propagates an experiment artifact.
@@ -1190,8 +1218,27 @@ time window. Both were missing here, and both are what caught it.
 
 > **Superseded.** The condition this entry measures - a model frequently believing its turn completed mid-task - is not
 > reproducible from the sessions it cites; see the measurement-artifact correction above. The context-size trigger and
-> onset threshold are separately falsified. Treat every rate here as an artifact. The gateway trustworthiness findings
+> onset threshold are separately unconfirmed. Treat every rate here as an artifact. The gateway trustworthiness findings
 > in the handoff are unaffected, since they rest on their own evidence.
+
+> **Qualified on 2026-10-16 (#603).** The note above first said the trigger and onset were "separately falsified"; the
+> correction above supports only "unconfirmed". Three conclusions below are also narrowed to what this entry's data
+> support; the measurements and tables are kept as first recorded.
+>
+> - **Model versus gateway.** The control does not traverse the same gateway path. Explicit DeepSeek ids take the
+>   Responses-to-Chat-Completions translation (`handleDeepSeekResponses`), while `gpt-reserve` is a trusted Codex id
+>   (`src/request-policy.ts`) served on the Codex Responses path. A defect specific to the DeepSeek translation route
+>   could drop tool calls on DeepSeek and spare `gpt-reserve` exactly as measured, so the data show a model-and-route
+>   difference and do not clear the gateway for the DeepSeek route. "A translation or transport defect in this gateway
+>   would not spare one provider and hit the other on an identical body" is unsupported; clearing the route needs a
+>   same-path control, such as the raw DeepSeek upstream on the same high-context bodies.
+> - **Pooled rate.** The six DeepSeek bands above 1k narrate 3 + 4 + 1 + 5 + 4 + 5 = 22 of 60 runs: 36.7% (37%), not
+>   the 38% recorded below. The Fisher exact `p = 0.025` of the 951-token band against those 60 runs is correct.
+> - **Effort.** `gpt-reserve` was measured only at `medium` and `max`, and the DeepSeek sweep ranged from 20% to 60%
+>   across four tiers. The supported conclusion is limited to the matched `max`-versus-`max` comparison (DeepSeek 5/10
+>   against `gpt-reserve` 0/10, `p = 0.033`): the difference persisted with effort held at `max`, subject to the route
+>   caveat above. At n = 10 per cell that comparison and the sweep are underpowered, so "reasoning effort is ruled out
+>   as the cause" is unsupported; effort is neither established nor excluded as a contributor.
 
 The investigation that produced the terminal-truthfulness work began with a model believing its turn completed mid-task:
 it narrates the next action in text and terminates without emitting the tool call it described. Earlier measurement
