@@ -26,7 +26,7 @@ import handler from "../src/handler/index.ts";
 const handlerSource = readFileSync(new URL("../src/handler/index.ts", import.meta.url), "utf8");
 import { resetOpenRouterModelsCacheForTest, type OpenRouterModelsSnapshot } from "../src/models/openrouter-models.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { buildModelCatalogSnapshot, handleModels, handlePublicModelCatalog } from "../src/models/catalog.ts";
+import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels, handlePublicModelCatalog } from "../src/models/catalog.ts";
 const openaiSource = readFileSync(new URL("../src/models/catalog.ts", import.meta.url), "utf8");
 import { CODEX_MODELS_KV_KEY, loadFullCodexModelsSnapshot } from "../src/codex/index.ts";
 import { buildRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
@@ -368,7 +368,7 @@ test("the model picker refuses to render without KV", async () => {
   });
 });
 
-test("catalog builder and public/admin handlers retain runtime ids and tiers when the optional full snapshot rejects", async () => {
+test("catalog builder, capabilities, and public/admin handlers retain runtime ids and tiers when the optional full snapshot rejects", async () => {
   const kv = new RejectingReadKv();
   kv.rejectedKeys.add(keyOf(CODEX_MODELS_KV_KEY));
   const runtime = buildRuntimeConfig({
@@ -407,6 +407,16 @@ test("catalog builder and public/admin handlers retain runtime ids and tiers whe
       assert.deepEqual(publicBody.data[0].supported_reasoning_levels, ["low", "ultra"]);
       assert.equal(publicBody.data[0].default_reasoning_effort, "ultra");
 
+      const capabilitiesResponse = await handleModelCapabilities();
+      assert.equal(capabilitiesResponse.status, 200);
+      const capabilitiesBody = await capabilitiesResponse.json();
+      assert.deepEqual(
+        capabilitiesBody.data.map((model: { id: string }) => model.id),
+        ["runtime-fallback"]
+      );
+      assert.deepEqual(capabilitiesBody.data[0].supported_reasoning_levels, ["low", "ultra"]);
+      assert.equal(capabilitiesBody.data[0].default_reasoning_effort, "ultra");
+
       const adminResponse = await handleAdminModelsCatalogGet();
       assert.equal(adminResponse.status, 200);
       const adminBody = await adminResponse.json();
@@ -421,7 +431,7 @@ test("catalog builder and public/admin handlers retain runtime ids and tiers whe
       assert.equal(adminRow.default_reasoning_effort, "ultra");
       assert.deepEqual(adminBody.data.whitelist.model_ids, ["runtime-fallback"]);
       assert.equal(adminBody.data.filter_active, true);
-      assert.equal(kv.reads.filter((read) => read.key === keyOf(CODEX_MODELS_KV_KEY) && read.consistency === "strong").length, 3);
+      assert.equal(kv.reads.filter((read) => read.key === keyOf(CODEX_MODELS_KV_KEY) && read.consistency === "strong").length, 4);
       assert.ok(kv.reads.some((read) => read.key === keyOf(RUNTIME_CONFIG_V2_KEY) && read.consistency === "strong"));
     });
   } finally {
