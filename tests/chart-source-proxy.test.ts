@@ -1,6 +1,8 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { type ChartSourceProxyDeps, proxyAdminChartSource } from "../src/admin/chart-source-proxy.ts";
+import { createFetchMock } from "./helpers/fetch-mock.ts";
 
 const jsonResponse = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -29,7 +31,7 @@ const deps = (overrides: Partial<ChartSourceProxyDeps>): ChartSourceProxyDeps =>
   ...overrides,
 });
 
-Deno.test("chart proxy leaves non-loopback admin responses local", async () => {
+test("chart proxy leaves non-loopback admin responses local", async () => {
   let calls = 0;
   const local = jsonResponse(capacityPayload("local", 7, 1_000));
   const response = await proxyAdminChartSource(
@@ -37,17 +39,17 @@ Deno.test("chart proxy leaves non-loopback admin responses local", async () => {
     local,
     deps({
       isLoopbackAdmin: () => false,
-      fetch: () => {
+      fetch: createFetchMock(() => {
         calls += 1;
         return Promise.resolve(jsonResponse(capacityPayload("remote", 0, 2_000)));
-      },
+      }),
     })
   );
   assert.equal(response, local);
   assert.equal(calls, 0);
 });
 
-Deno.test("chart proxy pushes the local history before reading the canonical chart", async () => {
+test("chart proxy pushes the local history before reading the canonical chart", async () => {
   const localPayload = capacityPayload("local", 7, 1_000);
   const remotePayload = capacityPayload("remote", 0, 2_000);
   const calls: { method: string; url: string; authorization: string | null; userAgent: string | null; body: string | null }[] = [];
@@ -58,7 +60,7 @@ Deno.test("chart proxy pushes the local history before reading the canonical cha
     request,
     jsonResponse(localPayload),
     deps({
-      fetch: (input, init) => {
+      fetch: createFetchMock((input, init) => {
         const headers = new Headers(init?.headers);
         calls.push({
           method: (init?.method ?? "GET").toUpperCase(),
@@ -69,7 +71,7 @@ Deno.test("chart proxy pushes the local history before reading the canonical cha
         });
         if (init?.method === "POST") return Promise.resolve(jsonResponse({ accepted: 1, host: "mac" }));
         return Promise.resolve(jsonResponse(remotePayload));
-      },
+      }),
     })
   );
   const body = (await response.json()) as typeof localPayload;
@@ -91,53 +93,53 @@ Deno.test("chart proxy pushes the local history before reading the canonical cha
   assert.deepEqual(body.ledger_growth, remotePayload.ledger_growth);
 });
 
-Deno.test("chart proxy serves the canonical five-xx overlay for the chart only", async () => {
+test("chart proxy serves the canonical five-xx overlay for the chart only", async () => {
   const overlay = { object: "list", data: [], five_xx_buckets: [{ bucket_start_at_ms: 2_000, count: 9 }] };
   const seen: { method: string; url: string }[] = [];
   const response = await proxyAdminChartSource(
     new Request("http://localhost:7999/admin/errors?limit=1"),
     jsonResponse({ object: "list", data: [], five_xx_buckets: [{ bucket_start_at_ms: 1_000, count: 1 }] }),
     deps({
-      fetch: (input, init) => {
+      fetch: createFetchMock((input, init) => {
         seen.push({ method: (init?.method ?? "GET").toUpperCase(), url: requestUrl(input) });
         return Promise.resolve(jsonResponse(overlay));
-      },
+      }),
     })
   );
   assert.deepEqual(seen, [{ method: "GET", url: "https://vps.example/admin/errors?limit=1" }]);
   assert.deepEqual(await response.json(), overlay);
 });
 
-Deno.test("chart proxy leaves the fuller errors view local", async () => {
+test("chart proxy leaves the fuller errors view local", async () => {
   let calls = 0;
   const local = jsonResponse({ object: "list", data: [], five_xx_buckets: [] });
   const response = await proxyAdminChartSource(
     new Request("http://localhost:7999/admin/errors?limit=200"),
     local,
     deps({
-      fetch: () => {
+      fetch: createFetchMock(() => {
         calls += 1;
         return Promise.resolve(jsonResponse({}));
-      },
+      }),
     })
   );
   assert.equal(response, local);
   assert.equal(calls, 0);
 });
 
-Deno.test("chart proxy falls back to local on a missing token or failed remote read", async () => {
+test("chart proxy falls back to local on a missing token or failed remote read", async () => {
   const local = jsonResponse(capacityPayload("local", 7, 1_000));
   const missingToken = await proxyAdminChartSource(new Request("http://localhost:7999/admin/providers/capacity"), local, deps({ token: null }));
   assert.equal(missingToken, local);
   const failed = await proxyAdminChartSource(
     new Request("http://localhost:7999/admin/providers/capacity"),
     local,
-    deps({ fetch: () => Promise.resolve(new Response("upstream unavailable", { status: 503 })) })
+    deps({ fetch: createFetchMock(() => Promise.resolve(new Response("upstream unavailable", { status: 503 }))) })
   );
   assert.equal(failed, local);
 });
 
-Deno.test("chart proxy still serves the union when only the push fails", async () => {
+test("chart proxy still serves the union when only the push fails", async () => {
   const localPayload = capacityPayload("local", 7, 1_000);
   const remotePayload = capacityPayload("remote", 0, 2_000);
   const methods: string[] = [];
@@ -145,16 +147,45 @@ Deno.test("chart proxy still serves the union when only the push fails", async (
     new Request("http://localhost:7999/admin/providers/capacity"),
     jsonResponse(localPayload),
     deps({
-      fetch: (_input, init) => {
+      fetch: createFetchMock((_input, init) => {
         const method = (init?.method ?? "GET").toUpperCase();
         methods.push(method);
         if (method === "POST") return Promise.resolve(new Response("push unavailable", { status: 503 }));
         return Promise.resolve(jsonResponse(remotePayload));
-      },
+      }),
     })
   );
   const body = (await response.json()) as typeof localPayload;
   assert.deepEqual(methods, ["POST", "GET"]);
   assert.deepEqual(body.sources, localPayload.sources);
   assert.deepEqual(body.history, remotePayload.history);
+});
+
+test("chart proxy reads the admin token from the Bun process environment", async () => {
+  const previous = process.env.DENO_DEPLOY_TOKEN;
+  try {
+    for (const [configured, expected] of [
+      ["env-token", "Bearer env-token"],
+      [" first-token,\nsecond-token ", "Bearer first-token"],
+    ] as const) {
+      process.env.DENO_DEPLOY_TOKEN = configured;
+      const authorizations: (string | null)[] = [];
+      const response = await proxyAdminChartSource(
+        new Request("http://localhost:7999/admin/errors?limit=1"),
+        jsonResponse({ object: "list", data: [], five_xx_buckets: [] }),
+        deps({
+          token: undefined,
+          fetch: createFetchMock((_input, init) => {
+            authorizations.push(new Headers(init?.headers).get("Authorization"));
+            return Promise.resolve(jsonResponse({ object: "list", data: [], five_xx_buckets: [{ bucket_start_at_ms: 2_000, count: 9 }] }));
+          }),
+        })
+      );
+      assert.deepEqual(authorizations, [expected]);
+      assert.deepEqual(((await response.json()) as { five_xx_buckets: unknown }).five_xx_buckets, [{ bucket_start_at_ms: 2_000, count: 9 }]);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.DENO_DEPLOY_TOKEN;
+    else process.env.DENO_DEPLOY_TOKEN = previous;
+  }
 });

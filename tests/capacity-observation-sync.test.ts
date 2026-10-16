@@ -1,5 +1,7 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
+import type { Kv, KvKey } from "#kv";
 import { handleCapacityObservationIngest } from "../src/admin/capacity-observation-sync.ts";
 import type { ProviderCapacityHistoryPoint } from "../src/provider/capacity-contract.ts";
 import {
@@ -68,26 +70,26 @@ const historyPoint = (bucketStartAtMs: number, sampledAtMs: number, usedPercent:
   ],
 });
 
-const createFakeKv = (): { kv: Deno.Kv; rows: Map<string, { key: Deno.KvKey; value: unknown }> } => {
-  const rows = new Map<string, { key: Deno.KvKey; value: unknown }>();
-  const keyId = (key: Deno.KvKey): string => JSON.stringify(key);
-  const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
+const createFakeKv = (): { kv: Kv; rows: Map<string, { key: KvKey; value: unknown }> } => {
+  const rows = new Map<string, { key: KvKey; value: unknown }>();
+  const keyId = (key: KvKey): string => JSON.stringify(key);
+  const matchesPrefix = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => key[index] === part);
   const fake = {
-    set(key: Deno.KvKey, value: unknown) {
+    set(key: KvKey, value: unknown) {
       rows.set(keyId(key), { key: [...key], value });
       return Promise.resolve({ ok: true, versionstamp: "1" });
     },
-    list({ prefix }: { prefix: Deno.KvKey }) {
+    list({ prefix }: { prefix: KvKey }) {
       const entries = [...rows.values()].filter((entry) => matchesPrefix(entry.key, prefix));
       return (function* () {
         for (const entry of entries) yield { key: entry.key, value: entry.value, versionstamp: "1" };
       })();
     },
   };
-  return { kv: fake as unknown as Deno.Kv, rows };
+  return { kv: fake as unknown as Kv, rows };
 };
 
-Deno.test("remote capacity host ids stay bounded lowercase labels", () => {
+test("remote capacity host ids stay bounded lowercase labels", () => {
   assert.equal(isRemoteCapacityHostId("mac"), true);
   assert.equal(isRemoteCapacityHostId("mac-1"), true);
   assert.equal(isRemoteCapacityHostId("Mac"), false);
@@ -95,7 +97,7 @@ Deno.test("remote capacity host ids stay bounded lowercase labels", () => {
   assert.equal(isRemoteCapacityHostId("a".repeat(33)), false);
 });
 
-Deno.test("remote capacity observations reject any malformed row", () => {
+test("remote capacity observations reject any malformed row", () => {
   const valid = historyPoint(0, 1_000, 7);
   assert.equal(parseRemoteCapacityObservations([valid])?.length, 1);
   assert.equal(parseRemoteCapacityObservations([]), null);
@@ -103,7 +105,7 @@ Deno.test("remote capacity observations reject any malformed row", () => {
   assert.equal(parseRemoteCapacityObservations([valid, { nope: true }]), null);
 });
 
-Deno.test("remote capacity observations persist in the analytics namespace", async () => {
+test("remote capacity observations persist in the analytics namespace", async () => {
   const { kv } = createFakeKv();
   const accepted = await storeRemoteCapacityObservations(kv, "mac", [historyPoint(0, 1_000, 7), historyPoint(900_000, 1_001_000, 0)], 2_000_000);
   assert.equal(accepted, 2);
@@ -114,7 +116,7 @@ Deno.test("remote capacity observations persist in the analytics namespace", asy
   );
 });
 
-Deno.test("remote capacity observations drop points outside the seven-day retention", async () => {
+test("remote capacity observations drop points outside the seven-day retention", async () => {
   const { kv } = createFakeKv();
   const nowMs = 8 * 24 * 60 * 60_000;
   const accepted = await storeRemoteCapacityObservations(kv, "mac", [historyPoint(0, 1_000, 7), historyPoint(nowMs - 60_000, nowMs - 59_000, 0)], nowMs);
@@ -124,14 +126,14 @@ Deno.test("remote capacity observations drop points outside the seven-day retent
   assert.equal(read[0]?.bucket_start_at_ms, nowMs - 60_000);
 });
 
-Deno.test("capacity history merge keeps the union and prefers the local duplicate", () => {
+test("capacity history merge keeps the union and prefers the local duplicate", () => {
   const merged = mergeCapacityHistory([historyPoint(0, 1_000, 7)], [historyPoint(0, 1_000, 99), historyPoint(900_000, 1_001_000, 0)]);
   assert.equal(merged.length, 2);
   assert.equal(merged.find((point) => point.sampled_at_ms === 1_000)?.sources[0]?.windows.primary?.used_percent, 7);
   assert.equal(merged.find((point) => point.sampled_at_ms === 1_001_000)?.sources[0]?.windows.primary?.used_percent, 0);
 });
 
-Deno.test("capacity observation ingest validates and stores a batch", async () => {
+test("capacity observation ingest validates and stores a batch", async () => {
   const { kv } = createFakeKv();
   const response = await handleCapacityObservationIngest(
     new Request("https://ai.ubq.fi/admin/providers/capacity/observations", {
@@ -146,7 +148,7 @@ Deno.test("capacity observation ingest validates and stores a batch", async () =
   assert.equal((await readRemoteCapacityObservations(kv, 1_002_000)).length, 1);
 });
 
-Deno.test("capacity observation ingest rejects invalid hosts and malformed rows", async () => {
+test("capacity observation ingest rejects invalid hosts and malformed rows", async () => {
   const { kv } = createFakeKv();
   const invalidHost = await handleCapacityObservationIngest(
     new Request("https://ai.ubq.fi/admin/providers/capacity/observations", {
