@@ -81,6 +81,18 @@ class SelectionKv {
   }
 }
 
+class DeferredSelectionKv extends SelectionKv {
+  readonly readStarted = Promise.withResolvers<void>();
+  readonly releaseRead = Promise.withResolvers<void>();
+
+  override async get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
+    const entry = await super.get<T>(key, options);
+    this.readStarted.resolve();
+    await this.releaseRead.promise;
+    return entry;
+  }
+}
+
 const withKv = async (kv: SelectionKv | null, run: () => Promise<void>): Promise<void> => {
   resetProviderSelectionCacheForTest();
   setKvForTest(kv as unknown as Kv | null);
@@ -236,6 +248,33 @@ test("the routing selection read is cached, primed by a save, and fails open", a
   unavailable.failReads = true;
   await withKv(unavailable, async () => {
     assert.equal(await loadProviderSelectionCached(), null, "with nothing cached a failed read is no filter, not an error");
+  });
+});
+
+test("an in-flight selection read cannot replace a cache primed by an admin save", async () => {
+  const kv = new DeferredSelectionKv();
+  kv.seedSelection(["openlux"]);
+  await withKv(kv, async () => {
+    const inFlightRead = loadProviderSelectionCached();
+    await kv.readStarted.promise;
+
+    const saved = await handleAdminProviderSelectionSet(
+      new Request("https://ai.ubq.fi/admin/providers/selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider_ids: ["cerebras"] }),
+      })
+    );
+    assert.equal(saved.status, 200);
+    const savedBody = (await saved.json()) as { provider_ids: string[]; updated_at_ms: number };
+    assert.deepEqual(savedBody.provider_ids, ["cerebras"]);
+
+    kv.releaseRead.resolve();
+    assert.deepEqual(await inFlightRead, { provider_ids: ["openlux"], updated_at_ms: 1_700_000_000_000 });
+    assert.deepEqual(await loadProviderSelectionCached(), {
+      provider_ids: ["cerebras"],
+      updated_at_ms: savedBody.updated_at_ms,
+    });
   });
 });
 
