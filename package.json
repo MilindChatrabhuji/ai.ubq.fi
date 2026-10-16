@@ -58,6 +58,7 @@
     "knip": "sh scripts/knip.sh",
     "size:check": "bun --no-env-file scripts/file-size-ratchet.ts",
     "size:update": "bun --no-env-file scripts/file-size-ratchet.ts --update",
+    "spec:drift": "bun --no-env-file --no-install scripts/check-openai-spec-drift.ts",
     "verify": "sh scripts/verify.sh",
     "prune:releases": "bun --no-env-file --no-install ops/prune-releases.ts",
     "deploy:vps": "bun --no-env-file --no-install ops/deploy.ts",
