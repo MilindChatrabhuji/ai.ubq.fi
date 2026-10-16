@@ -859,7 +859,12 @@ export const handleProviderCapacity = async (
   } catch {
     return json(
       200,
-      { ...withAnalyticsHistory(unavailableView(Date.now(), [], [], [], [])), claude_history: await claudeHistory, prompt_cache: await promptCache, ledger_growth: ledgerGrowth },
+      {
+        ...withAnalyticsHistory(unavailableView(Date.now(), [], [], [], [])),
+        claude_history: await claudeHistory,
+        prompt_cache: await promptCache,
+        ledger_growth: ledgerGrowth,
+      },
       { "Cache-Control": "no-store" }
     );
   }

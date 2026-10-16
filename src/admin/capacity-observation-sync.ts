@@ -4,6 +4,7 @@
 // analytics-only namespace and merges it into the admin chart response. The
 // operational history, leases, reset events, and routing keys are untouched.
 
+import type { Kv } from "#kv";
 import { json, openaiError } from "../http.ts";
 import { getKv } from "../kv.ts";
 import { isRemoteCapacityHostId, parseRemoteCapacityObservations, storeRemoteCapacityObservations } from "../provider/capacity-analytics.ts";
@@ -45,10 +46,7 @@ const readBoundedBody = async (request: Request): Promise<string | null> => {
  * any malformed observation rejects the whole batch instead of storing partial
  * evidence.
  */
-export const handleCapacityObservationIngest = async (
-  request: Request,
-  options: Readonly<{ kv?: Deno.Kv | null; now?: () => number }> = {}
-): Promise<Response> => {
+export const handleCapacityObservationIngest = async (request: Request, options: Readonly<{ kv?: Kv | null; now?: () => number }> = {}): Promise<Response> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return openaiError(503, "KV unavailable", "server_error");
   const body = await readBoundedBody(request);

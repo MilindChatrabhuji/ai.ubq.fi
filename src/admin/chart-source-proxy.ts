@@ -29,12 +29,14 @@ export type ChartSourceProxyDeps = Readonly<{
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+// DENO_DEPLOY_TOKEN keeps its historical name under Bun. Like config.ts, it
+// may hold a comma- or newline-separated list; the first entry is sent.
 const readAdminToken = (): string | null => {
   try {
-    const raw = Deno.env.get("DENO_DEPLOY_TOKEN");
-    const token = raw?.trim();
-    if (!token) return null;
-    return token;
+    const token = process.env.DENO_DEPLOY_TOKEN?.split(/[\n,]/g)
+      .map((entry) => entry.trim())
+      .find(Boolean);
+    return token ?? null;
   } catch {
     return null;
   }

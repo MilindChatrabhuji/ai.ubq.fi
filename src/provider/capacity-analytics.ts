@@ -5,6 +5,7 @@
 // the namespace separate makes the chart union additive and never changes a
 // local probe, lease, reset event, or routing decision.
 
+import type { Kv, KvKey } from "#kv";
 import { PROVIDER_CAPACITY_HISTORY_BUCKET_MS, PROVIDER_CAPACITY_HISTORY_RETENTION_MS, type ProviderCapacityHistoryPoint } from "./capacity-contract.ts";
 import { readStoredHistoryPoint } from "./capacity-parse.ts";
 
@@ -13,7 +14,7 @@ export const REMOTE_CAPACITY_OBSERVATION_PREFIX = ["uos_ai", "provider_capacity"
 /** Seven days of fifteen-minute points is at most 672 per host; this bound leaves headroom for a clock skew bucket. */
 export const MAX_REMOTE_CAPACITY_OBSERVATIONS = 4096;
 
-const remoteCapacityObservationKey = (host: string, bucketStartAtMs: number): Deno.KvKey => [...REMOTE_CAPACITY_OBSERVATION_PREFIX, host, bucketStartAtMs];
+const remoteCapacityObservationKey = (host: string, bucketStartAtMs: number): KvKey => [...REMOTE_CAPACITY_OBSERVATION_PREFIX, host, bucketStartAtMs];
 
 /** Host ids are bounded lowercase labels so a pushed row cannot widen the key space. */
 export const isRemoteCapacityHostId = (value: unknown): value is string => typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,31}$/.test(value);
@@ -32,7 +33,7 @@ export const parseRemoteCapacityObservations = (value: unknown): ProviderCapacit
 
 /** Writes only retention-eligible points and returns the accepted count. */
 export const storeRemoteCapacityObservations = async (
-  kv: Deno.Kv,
+  kv: Kv,
   host: string,
   points: readonly ProviderCapacityHistoryPoint[],
   nowMs: number
@@ -49,7 +50,7 @@ export const storeRemoteCapacityObservations = async (
 };
 
 /** Reads every retained pushed point. A failed scan reports no remote rows. */
-export const readRemoteCapacityObservations = async (kv: Deno.Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
+export const readRemoteCapacityObservations = async (kv: Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
   const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_HISTORY_RETENTION_MS);
   const newestBucketMs = nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
   const points: ProviderCapacityHistoryPoint[] = [];
