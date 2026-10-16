@@ -515,3 +515,32 @@ A refusal deadline belongs to the refused rung of the requested model ladder. Ne
 unexpired deadline, and selection chooses the highest eligible rung in the existing ladder. Each rung recovers at its
 own reset; preserve native deadline and caller-cancellation reasons, bounded opt-in waits, and the existing provider
 waterfall.
+
+## 2026-10-10 — Claude OpenRouter requests enable the five-minute prompt cache
+
+### Decision
+
+For OpenRouter Claude models, add request-root `cache_control: { type: "ephemeral" }` on the upstream wire when the
+client has not supplied a cache policy or explicit content/tool breakpoints. Preserve native Responses and Chat
+Completions, client input, explicit cache controls, reasoning effort, and provider routing. Keep this provider extension
+out of the public OpenAI request allowlists. Report effective cache policy and both provider cache-read and cache-write
+counts without inventing zeros for absent counters.
+
+### Why
+
+The gateway's native OpenRouter handlers forwarded Claude requests without a default automatic-cache policy. The public
+OpenAI request allowlists reject provider-specific root `cache_control`, so ordinary accepted client requests could not
+enable that policy. Adding the hint on the upstream payload makes the default effective while leaving request input and
+explicit controls intact.
+
+OpenRouter documents request-root automatic caching for both native Responses and Chat Completions:
+https://openrouter.ai/docs/guides/best-practices/prompt-caching. The default TTL is five minutes, and cache reads
+refresh it. Hits require matching input prefixes and do not discount generated output. Longer TTLs remain explicit
+choices.
+
+### Status and reversal risk
+
+Mock transport regressions cover streamed and buffered native requests, explicit controls, unrelated models, and missing
+usage counters. These tests verify payload preservation and cache accounting; they do not establish production cache
+hits or cost savings. Live cache acceptance remains a separate validation step. Removing the default leaves caching
+dependent on client controls; overriding explicit breakpoints could change the selected cache behavior.

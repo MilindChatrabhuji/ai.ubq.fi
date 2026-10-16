@@ -1,9 +1,11 @@
+import { test } from "bun:test";
+import { rmSync } from "node:fs";
 import { assertBaselinesRefusedByRunner, BASELINE_CONFIG_IDS, baselineAdapters } from "../registry.ts";
 import { referenceAdapter } from "../../adapter.ts";
 import { runBenchmarks } from "../../runner.ts";
 import { freshRunOptions } from "./helpers.ts";
 
-Deno.test("registry: exposes exactly A, B, D in stable order, all external", () => {
+test("registry: exposes exactly A, B, D in stable order, all external", () => {
   const adapters = baselineAdapters();
   const ids = adapters.map((a) => a.configId);
   if (ids.join(",") !== "A,B,D") throw new Error(`unexpected registry ${ids.join(",")}`);
@@ -15,7 +17,7 @@ Deno.test("registry: exposes exactly A, B, D in stable order, all external", () 
   }
 });
 
-Deno.test("registry: the runner refuses every baseline adapter", async () => {
+test("registry: the runner refuses every baseline adapter", async () => {
   const opts = freshRunOptions();
   try {
     for (const configId of ["A", "B", "D"]) {
@@ -34,11 +36,11 @@ Deno.test("registry: the runner refuses every baseline adapter", async () => {
       if (!refused) throw new Error(`config ${configId} was not refused by the runner`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("registry: mixed reference + baseline selection still refuses the live adapter", async () => {
+test("registry: mixed reference + baseline selection still refuses the live adapter", async () => {
   const opts = freshRunOptions();
   try {
     let refused = false;
@@ -55,11 +57,11 @@ Deno.test("registry: mixed reference + baseline selection still refuses the live
     }
     if (!refused) throw new Error("the external-inference refusal must win over hermetic configs");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("registry: gate assertion helper rejects the baselines", () => {
+test("registry: gate assertion helper rejects the baselines", () => {
   let threw = false;
   try {
     assertBaselinesRefusedByRunner(baselineAdapters());

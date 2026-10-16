@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/admin-auth-harness.ts";
 // Focused coverage for the durable API-key change audit: lifecycle actions,
 // actor attribution, secret omission, atomic append, bounded reads and the
 // retained interactions with existing reservation/deletion guards.
@@ -87,7 +90,10 @@ const storedRecord = (id: string): Record<string, unknown> | undefined =>
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 2));
 
-Deno.test("key lifecycle writes ordered audit events with safe fields and actor attribution", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("key lifecycle writes ordered audit events with safe fields and actor attribution", async () => {
   kvStore.clear();
 
   const id = await createKey({ name: "Audit key", usage_limit_requests: -1, expires_at_ms: -1 });
@@ -150,7 +156,7 @@ Deno.test("key lifecycle writes ordered audit events with safe fields and actor 
   assert.equal(/authorization|bearer|token_hash|prompt|"hash"|"error"/i.test(serialized), false);
 });
 
-Deno.test("finite and unlimited wire values round-trip through create, update and persisted readback", async () => {
+test("finite and unlimited wire values round-trip through create, update and persisted readback", async () => {
   kvStore.clear();
 
   const finiteId = await createKey({ name: "Finite", usage_limit_requests: 7, window_ms: 60_000, expires_at_ms: -1 });
@@ -186,9 +192,9 @@ Deno.test("finite and unlimited wire values round-trip through create, update an
   // An enabled unlimited paid-overflow cap keeps the -1 sentinel and the paid
   // overflow stays distinct from a disabled one.
   const originalFetch = globalThis.fetch;
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
-  globalThis.fetch = (input: RequestInfo | URL) => Promise.resolve(meteredMetadataResponse(urlOf(input)));
+  const originalMeteredKey = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-test-key";
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => Promise.resolve(meteredMetadataResponse(urlOf(input))));
   try {
     seedCodexSnapshot({
       source: "chatgpt_codex",
@@ -211,8 +217,8 @@ Deno.test("finite and unlimited wire values round-trip through create, update an
     assert.notEqual(storedRecord(disabledId)?.paid_fallback_limit_microcredits, -1);
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
   }
 
   const { body } = await listAudit();
@@ -221,7 +227,7 @@ Deno.test("finite and unlimited wire values round-trip through create, update an
   assert.equal(unlimitedEvent.changed.usage_limit_requests, -1);
 });
 
-Deno.test("an injected audit commit failure leaves key state and history unchanged", async () => {
+test("an injected audit commit failure leaves key state and history unchanged", async () => {
   kvStore.clear();
 
   setAtomicCommitsToFail(1);
@@ -242,7 +248,7 @@ Deno.test("an injected audit commit failure leaves key state and history unchang
   );
 });
 
-Deno.test("audit reads are bounded, paginate newest-first and validate the cursor", async () => {
+test("audit reads are bounded, paginate newest-first and validate the cursor", async () => {
   kvStore.clear();
   const ids: string[] = [];
   for (let index = 0; index < 5; index += 1) {
@@ -310,7 +316,7 @@ Deno.test("audit reads are bounded, paginate newest-first and validate the curso
   );
 });
 
-Deno.test("no-op patch and already-active unrevoke keep success without fabricating an event", async () => {
+test("no-op patch and already-active unrevoke keep success without fabricating an event", async () => {
   kvStore.clear();
   const id = await createKey({ name: "No-op key", usage_limit_requests: 5 });
   const before = (await listAudit()).body.data?.length ?? 0;
@@ -327,7 +333,7 @@ Deno.test("no-op patch and already-active unrevoke keep success without fabricat
   assert.equal(storedRecord(id)?.revoked_at_ms, null);
 });
 
-Deno.test("revoke, unrevoke and final delete audit commits fail closed without key or history changes", async () => {
+test("revoke, unrevoke and final delete audit commits fail closed without key or history changes", async () => {
   kvStore.clear();
   const id = await createKey({ name: "Atomic lifecycle", usage_limit_requests: 5, expires_at_ms: -1 });
 
@@ -365,7 +371,7 @@ Deno.test("revoke, unrevoke and final delete audit commits fail closed without k
   assert.equal((await listAudit()).body.data?.filter((event) => event.action === "revoke").length ?? 0, revokeEvents + 1);
 });
 
-Deno.test("blocked deletion and live reservations keep state and record no event", async () => {
+test("blocked deletion and live reservations keep state and record no event", async () => {
   kvStore.clear();
 
   const deleteGuardId = await createKey({ name: "Blocked delete", usage_limit_requests: 5, window_ms: 60_000 });
@@ -409,7 +415,7 @@ Deno.test("blocked deletion and live reservations keep state and record no event
   assert.equal(updatesAfter, updatesBefore);
 });
 
-Deno.test("the change-history route is authenticated and fails closed without KV", async () => {
+test("the change-history route is authenticated and fails closed without KV", async () => {
   kvStore.clear();
   const anonymous = await handler(new Request("https://ai.ubq.fi/admin/api-keys/changes", { method: "GET" }));
   assert.equal(anonymous.status, 401);

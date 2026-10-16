@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Prompt cache analytics optional telemetry queue, split out of src/prompt_cache_analytics.ts.
 
 import {
@@ -53,7 +54,7 @@ export type PromptCacheAnalyticsQueueEntry = Readonly<{
    * with `getKv()` at delivery time. Request, response and prompt data never
    * enter this field.
    */
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
 }>;
 
 const MODEL_HASH_PATTERN = /^(?:unknown|[a-f0-9]{64})$/;

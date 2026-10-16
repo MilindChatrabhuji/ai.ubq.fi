@@ -36,13 +36,13 @@ For app integrations, name the client credential `UOS_AI_TOKEN` or another gatew
 The gateway never forwards your client token upstream. It uses Codex CLI auth configured on the server.
 
 Administrators can upload a fresh Codex `auth.json` through the repository helper. Run these commands from an existing
-`ai.ubq.fi` checkout (the directory containing `deno.json` and `scripts/upload-codex-auth.ts`):
+`ai.ubq.fi` checkout (the directory containing `package.json` and `scripts/upload-codex-auth.ts`):
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
-deno task upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
-deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
+bun run upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
+bun run upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
 ```
 
 Treat `auth.json` as a secret because it contains refresh tokens. The helper sends it only to the authenticated admin
@@ -293,9 +293,7 @@ Input formats:
 - Array of message items:
 
 ```json
-[
-  { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Hello" }] }
-]
+[{ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Hello" }] }]
 ```
 
 - Array of content items (coalesced into user messages):
@@ -337,6 +335,25 @@ curl -sS https://ai.ubq.fi/v1/responses \
 
 When `stream` is `false`, the gateway buffers the upstream stream and returns the final `response` object. When `stream`
 is `true`, the upstream SSE stream is passed through.
+
+## OpenAI web tools through OpenRouter
+
+For OpenAI models routed through OpenRouter, both `/v1/chat/completions` and `/v1/responses` add `openrouter:web_search`
+and `openrouter:web_fetch` by default. This includes Pro and older OpenAI models; OpenRouter uses native provider search
+when available and a fallback engine otherwise. The model decides when to use the tools, and tool usage incurs the
+applicable OpenRouter charges. Enabling the tools does not impose a research duration.
+
+Caller-provided function tools and web-tool settings are preserved. Missing web tools are appended without duplicating
+OpenRouter or native web-tool entries. Send `"tools": []` or `"tool_choice": "none"` to opt out. Defaults are also
+omitted for required or forced tool choices, legacy `functions`/`function_call` requests, and `:batch` models. Other
+providers retain their existing behavior. No gateway-only request field is needed.
+
+For a long research request, select an available Pro model, choose its supported reasoning effort, and enable streaming.
+The gateway's OpenRouter route remains tied to the client connection and has a 30-minute deadline; it does not expose
+stored-response retrieval or a background research job API.
+
+See [OpenRouter web search](https://openrouter.ai/docs/guides/features/server-tools/web-search) and
+[web fetch](https://openrouter.ai/docs/guides/features/server-tools/web-fetch) for engine behavior and pricing.
 
 ## Embeddings
 
@@ -498,8 +515,9 @@ The Codex CLI compatibility extension `client_metadata` is accepted as a string 
 builds the upstream request. It remains separate from the official OpenAI request schema. The gateway generates its own
 upstream request metadata instead of forwarding client-supplied session identifiers.
 
-`store` is always set to `false` by the gateway. The following are ignored by the ChatGPT Codex subscription transport
-and will produce warnings when that transport handles the request:
+`store` is set to `false` on the ChatGPT Codex subscription transport. OpenRouter requests forward the caller's `store`
+field; OpenRouter's stateless Responses API rejects `store: true`. The following are ignored by the ChatGPT Codex
+subscription transport and will produce warnings when that transport handles the request:
 
 - `temperature` -> `temperature_ignored`
 - `max_tokens` -> `max_output_tokens_ignored` (the endpoint-specific output-cap fields above are handled separately)
@@ -627,9 +645,7 @@ responses normalized by the gateway:
 UOS, admin, or health/debug routes should still be parsed defensively by integrations that call them directly:
 
 ```ts
-const message = body?.error?.message ??
-  body?.detail ??
-  response.statusText;
+const message = body?.error?.message ?? body?.detail ?? response.statusText;
 ```
 
 Common status codes:

@@ -1,10 +1,10 @@
+import { mkdir, writeFile } from "node:fs/promises";
 // Bounded metadata-only price probe for the cost module. It fetches the
 // published rate sources (no completion requests, no paid inference), extracts
 // the DeepSeek V4.1 Flash records, cross-checks them against RATE_CARD in
 // cost.ts, and writes cost/price-snapshot-<date>.json plus a compact summary.
 //
-//   deno run --env-file=<repo>/.env --allow-env=SURPLUS_API_KEY,METERED_API_KEY,OPENROUTER_API_KEY \
-//     --allow-net=api.surplusintelligence.ai,api.openlux.ai,openrouter.ai --allow-write=benchmarks/provider-waterfall/cost \
+//   bun --env-file=<repo>/.env \
 //     benchmarks/provider-waterfall/cost-probe.ts
 
 import { RATE_CARD } from "./cost.ts";
@@ -24,7 +24,7 @@ const fetchJson = async (url: string, headers: Record<string, string>, timeoutMs
 
 const readEnv = (name: string): string | null => {
   try {
-    const value = Deno.env.get(name);
+    const value = process.env[name];
     return value?.trim() ? value : null;
   } catch {
     return null;
@@ -104,8 +104,8 @@ const main = async (): Promise<void> => {
   };
   const date = new Date().toISOString().slice(0, 10);
   const path = new URL(`cost/price-snapshot-${date}.json`, import.meta.url).pathname;
-  await Deno.mkdir(new URL("cost/", import.meta.url).pathname, { recursive: true });
-  await Deno.writeTextFile(path, JSON.stringify(snapshot, null, 1));
+  await mkdir(new URL("cost/", import.meta.url).pathname, { recursive: true });
+  await writeFile(path, JSON.stringify(snapshot, null, 1));
   console.log(`[cost-probe] wrote ${path}`);
   console.log(
     `[cost-probe] surplus available=${String(surplus.available)} openlux available=${String(openlux.available)} openrouter available=${String(openrouter.available)}`

@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 /**
  * Coverage tests for the Sentinel replay envelope and the client-observation
  * inspector.
@@ -196,7 +197,7 @@ const v1Trace = (attempt: SentinelUpstreamTrace["attempts"][number]): SentinelUp
     chunks_truncated: false,
   });
 
-Deno.test("the replay key decoder accepts only one canonical 32-byte key", () => {
+test("the replay key decoder accepts only one canonical 32-byte key", () => {
   const decoded = decodeSentinelReplayKey("A".repeat(43));
   assert.ok(decoded, "the canonical 43-character key must decode");
   assert.equal(decoded.byteLength, REPLAY_KEY_BYTES);
@@ -210,7 +211,7 @@ Deno.test("the replay key decoder accepts only one canonical 32-byte key", () =>
   assert.equal(decodeSentinelReplayKey(`${"A".repeat(42)}/A`), null);
 });
 
-Deno.test("the encoded envelope is a length-prefixed metadata frame followed by the exact body", () => {
+test("the encoded envelope is a length-prefixed metadata frame followed by the exact body", () => {
   const metadata = baseMetadata();
   const body: Uint8Array<ArrayBuffer> = encoder.encode("body-bytes");
   const encoded = encodePlaintext(metadata, body);
@@ -234,7 +235,7 @@ Deno.test("the encoded envelope is a length-prefixed metadata frame followed by 
   assert.deepEqual([...v2.body], [...body]);
 });
 
-Deno.test("envelope size faults are rejected before any metadata is interpreted", () => {
+test("envelope size faults are rejected before any metadata is interpreted", () => {
   assert.throws(() => decodePlaintext(new Uint8Array([0, 0, 0])), /Sentinel replay envelope size is invalid/);
   assert.throws(() => decodePlaintext(new Uint8Array(MAX_REPLAY_PLAINTEXT_BYTES + 1)), /Sentinel replay envelope size is invalid/);
 
@@ -270,7 +271,7 @@ Deno.test("envelope size faults are rejected before any metadata is interpreted"
   assert.throws(() => encodePlaintext(baseMetadata(), new Uint8Array(SENTINEL_REPLAY_MAX_BODY_BYTES + 1)), /Sentinel replay body is too large/);
 });
 
-Deno.test("plaintext metadata is accepted exactly when every version-3 field is in contract", () => {
+test("plaintext metadata is accepted exactly when every version-3 field is in contract", () => {
   const valid = decodeCandidate(baseMetadata());
   assert.equal((valid as SentinelReplayPlaintext).version, 3);
   assert.equal((decodeCandidate(baseV2Metadata()) as SentinelReplayPlaintext).version, REPLAY_PLAINTEXT_VERSION_V2);
@@ -351,7 +352,7 @@ Deno.test("plaintext metadata is accepted exactly when every version-3 field is 
   assert.throws(() => decodeCandidate(withVersion(1)), /Sentinel replay metadata is invalid/);
 });
 
-Deno.test("request settings are read back from the recorded body, or declared unavailable", () => {
+test("request settings are read back from the recorded body, or declared unavailable", () => {
   const recorded = requestSettingsFromBody(encoder.encode(JSON.stringify({ model: "gpt-5", stream: true })), "test-provider", true);
   assert.equal(recorded.source, "recorded_request_body");
   assert.equal(recorded.model_requested, "gpt-5");
@@ -380,7 +381,7 @@ Deno.test("request settings are read back from the recorded body, or declared un
   }
 });
 
-Deno.test("unavailable reasons and coverage follow the recorded trace and the observed downstream", () => {
+test("unavailable reasons and coverage follow the recorded trace and the observed downstream", () => {
   const complete = clientObservation();
   assert.deepEqual(replayUnavailableReasons(emptySentinelUpstreamTrace(), complete), ["upstream_trace_empty"]);
   assert.equal(replayCoverageFor(emptySentinelUpstreamTrace(), complete, ["upstream_trace_empty"]), "unavailable");
@@ -432,7 +433,7 @@ Deno.test("unavailable reasons and coverage follow the recorded trace and the ob
   assert.equal(replayCoverageFor(truncated, complete, truncatedReasons), "partial");
 });
 
-Deno.test("the crypto and framing helpers agree with their declared contracts", async () => {
+test("the crypto and framing helpers agree with their declared contracts", async () => {
   // splitChunks keeps the recorded chunk size and never returns zero chunks.
   assert.deepEqual(
     splitChunks(new Uint8Array(0)).map((chunk) => chunk.byteLength),
@@ -559,7 +560,7 @@ Deno.test("the crypto and framing helpers agree with their declared contracts", 
 
 const observedBody = (bytes: Uint8Array | null): Uint8Array<ArrayBuffer> => (bytes ?? new Uint8Array()) as Uint8Array<ArrayBuffer>;
 
-Deno.test("an accepted request is captured once, and a body the cap cannot carry is declared omitted", async () => {
+test("an accepted request is captured once, and a body the cap cannot carry is declared omitted", async () => {
   const request = new Request("https://ai.ubq.fi/v1/responses?after_ms=1", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json", "x-forwarded-for": CLIENT_ADDRESS },
@@ -634,7 +635,7 @@ Deno.test("an accepted request is captured once, and a body the cap cannot carry
   disposeSentinelUpstreamRecorder(null);
 });
 
-Deno.test("buffered responses are classified from their status, body and semantic markers", () => {
+test("buffered responses are classified from their status, body and semantic markers", () => {
   const json = (value: unknown): Uint8Array<ArrayBuffer> => encoder.encode(JSON.stringify(value)) as Uint8Array<ArrayBuffer>;
 
   const embeddingsQueued = inspectSentinelBufferedResponse(202, "application/json", json({ object: "embeddings.job", status: "queued" }));
@@ -709,7 +710,7 @@ Deno.test("buffered responses are classified from their status, body and semanti
   assert.equal(inspectSentinelBufferedResponse(200, "application/json", json([1, 2, 3])).terminal_type, "http.completed");
 });
 
-Deno.test("buffered response bodies are read once, under a bound, and never throw at the caller", async () => {
+test("buffered response bodies are read once, under a bound, and never throw at the caller", async () => {
   const inspect = inspectSentinelBufferedResponseBody;
   const ok = new Response(JSON.stringify({ error: { code: "upstream_error" } }), { status: 502, headers: { "content-type": "application/json" } });
   const observation = await inspect(ok);
@@ -741,7 +742,7 @@ Deno.test("buffered response bodies are read once, under a bound, and never thro
   assert.equal(streamed, null);
 });
 
-Deno.test("the SSE inspector accepts real frames and reports every framing fault", () => {
+test("the SSE inspector accepts real frames and reports every framing fault", () => {
   const hello = inspectSentinelSse(encoder.encode('data: {"type":"response.completed","response":{"id":"r"}}\n\ndata: [DONE]\n\n'));
   assert.equal(hello.stream, true);
   assert.equal(hello.completed, true);
@@ -818,7 +819,7 @@ Deno.test("the SSE inspector accepts real frames and reports every framing fault
   assert.equal(pending.framing_valid, false);
 });
 
-Deno.test("the client failure observation keeps the specific cause and the client-visible literals", () => {
+test("the client failure observation keeps the specific cause and the client-visible literals", () => {
   const cancelled = resolveSentinelClientFailureObservation(internalObservation({ terminal_type: "cancelled", failure_kind: "client_aborted", stream: true }));
   assert.equal(cancelled.failure_kind, null);
   assert.equal(cancelled.error_code, null);
@@ -879,7 +880,7 @@ Deno.test("the client failure observation keeps the specific cause and the clien
   assert.equal(carried.stream, true);
 });
 
-Deno.test("persistence and incident signal decisions follow the recorded terminal, not the status alone", () => {
+test("persistence and incident signal decisions follow the recorded terminal, not the status alone", () => {
   assert.equal(shouldPersistSentinelReplay(internalObservation({ terminal_type: "cancelled" })), false);
   assert.equal(
     shouldPersistSentinelReplay(internalObservation({ status: 200, completed: true, terminal_type: "response.completed", failure_kind: null })),

@@ -1,14 +1,10 @@
+import { KvU64 } from "#kv";
+import type { AtomicOperation, Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 // Shared harness for this suite, moved out of the original test file.
 
 import assert from "node:assert/strict";
 
-if (typeof Deno.KvU64 !== "function") {
-  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
-    constructor(readonly value: bigint) {}
-  } as typeof Deno.KvU64;
-}
-
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 
 /** Deterministic per-step cache telemetry cycles for these transport stubs. */
 const CACHE_READ_CYCLE = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560] as const;
@@ -45,14 +41,14 @@ const requestBodyText = (init?: RequestInit): string => {
   return body;
 };
 
-type AtomicWrite = Readonly<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }>;
+type AtomicWrite = Readonly<{ type: "set" | "delete"; key: KvKey; value?: unknown }>;
 
 class ExperimentKv {
   readonly values = new Map<string, unknown>();
   private readonly _revisions = new Map<string, number>();
   private _nextRevision = 1;
   atomicCalls = 0;
-  beforeGet: ((key: Deno.KvKey) => void | Promise<void>) | null = null;
+  beforeGet: ((key: KvKey) => void | Promise<void>) | null = null;
   afterAtomicCommit: ((writes: readonly AtomicWrite[]) => void) | null = null;
 
   clear(): void {
@@ -64,62 +60,62 @@ class ExperimentKv {
     this.afterAtomicCommit = null;
   }
 
-  put(key: Deno.KvKey, value: unknown): void {
+  put(key: KvKey, value: unknown): void {
     this._write(key, value);
   }
 
-  private _versionstamp(key: Deno.KvKey): string | null {
+  private _versionstamp(key: KvKey): string | null {
     const revision = this._revisions.get(encodeKey(key));
     return revision === undefined ? null : String(revision).padStart(20, "0");
   }
 
-  private _write(key: Deno.KvKey, value: unknown, revision = this._nextRevision++): void {
+  private _write(key: KvKey, value: unknown, revision = this._nextRevision++): void {
     const encoded = encodeKey(key);
     this.values.set(encoded, value);
     this._revisions.set(encoded, revision);
   }
 
-  private _remove(key: Deno.KvKey, _revision = this._nextRevision++): void {
+  private _remove(key: KvKey, _revision = this._nextRevision++): void {
     this.values.delete(encodeKey(key));
     this._revisions.delete(encodeKey(key));
   }
 
-  async get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  async get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     if (options) assert.equal(options.consistency, "strong");
     await this.beforeGet?.(key);
     return {
       key,
       value: (this.values.get(encodeKey(key)) ?? null) as T | null,
       versionstamp: this._versionstamp(key),
-    } as Deno.KvEntryMaybe<T>;
+    } as KvEntryMaybe<T>;
   }
 
-  set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, _options?: { expireIn?: number }): Promise<KvCommitResult> {
     this._write(key, value);
     const versionstamp = this._versionstamp(key);
     assert.ok(versionstamp, "a written key must expose a versionstamp");
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this._remove(key);
     return Promise.resolve();
   }
 
-  atomic(): Deno.AtomicOperation {
+  atomic(): AtomicOperation {
     this.atomicCalls += 1;
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const writes: AtomicWrite[] = [];
     const chain = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, _options?: { expireIn?: number }) => {
         writes.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         writes.push({ type: "delete", key });
         return chain;
       },
@@ -136,12 +132,11 @@ class ExperimentKv {
         return Promise.resolve({ ok: true, versionstamp: String(revision).padStart(20, "0") } as const);
       },
     };
-    return chain as unknown as Deno.AtomicOperation;
+    return chain as unknown as AtomicOperation;
   }
 }
 
 const kv = new ExperimentKv();
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
 
 const { setKvForTest } = await import("../../src/kv.ts");
 const { resetCodexAuthCacheForTest, CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, storeCodexModelsSnapshot } = await import("../../src/codex/index.ts");
@@ -170,11 +165,11 @@ const targetKeyParts = (model: string): readonly string[] => [
   "responses_implicit_input_text_keyed_cycle_isolated_v5",
   model,
 ];
-const evidenceKeyFor = (model: string): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "evidence", ...targetKeyParts(model)];
-const stateKeyFor = (model: string): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "state", ...targetKeyParts(model)];
+const evidenceKeyFor = (model: string): KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "evidence", ...targetKeyParts(model)];
+const stateKeyFor = (model: string): KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "state", ...targetKeyParts(model)];
 const evidenceKey = evidenceKeyFor(MODEL);
 const stateKey = stateKeyFor(MODEL);
-const leaseKey = (model: string): Deno.KvKey => [
+const leaseKey = (model: string): KvKey => [
   ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
   "cycle_lease",
   "codex_chatgpt",
@@ -183,7 +178,7 @@ const leaseKey = (model: string): Deno.KvKey => [
   "responses_implicit_input_text_keyed_cycle_isolated_v5",
   model,
 ];
-const campaignLeaseKey: Deno.KvKey = [
+const campaignLeaseKey: KvKey = [
   ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
   "campaign",
   "codex_chatgpt",
@@ -239,7 +234,7 @@ const modelRecord = (model: string, controls = cacheControls): Record<string, un
 
 const seed = (options: Readonly<{ models?: readonly string[]; defaultModel?: string }> = {}): void => {
   kv.clear();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   resetRuntimeConfigCacheForTest();
   const models = options.models ?? [MODEL];
@@ -268,9 +263,9 @@ const seedStage0Baseline = async (model: string): Promise<void> => {
   const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model }, { release: TELEMETRY_RELEASE });
   if (!counterKeys) throw new Error("missing Stage 0 counter keys");
   for (const route of counterKeys.routes) {
-    kv.put(route.completed, new Deno.KvU64(5_000n));
-    kv.put(route.reported, new Deno.KvU64(5_000n));
-    kv.put(route.cache_write_reported, new Deno.KvU64(5_000n));
+    kv.put(route.completed, new KvU64(5_000n));
+    kv.put(route.reported, new KvU64(5_000n));
+    kv.put(route.cache_write_reported, new KvU64(5_000n));
   }
 };
 
@@ -280,7 +275,7 @@ const seedStage0Baseline = async (model: string): Promise<void> => {
  * corresponding binding from the real baseline assertion.
  */
 const scopeBaselineFor = async (model = MODEL) => {
-  const inventory = await loadPromptCacheScopeTargetInventory({ kv: kv as unknown as Deno.Kv });
+  const inventory = await loadPromptCacheScopeTargetInventory({ kv: kv as unknown as Kv });
   if (inventory.status !== "ready") throw new Error("missing seeded target inventory");
   const target = inventory.targets.find((candidate) => candidate.provider === "codex_chatgpt" && candidate.model === model);
   const runtimeStamp = await runtimeVersionstamp();
@@ -399,3 +394,17 @@ export {
   waitForCodexHealth,
 };
 export type { AtomicWrite };
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  setKvForTest(kv as unknown as Kv);
+};
+export const resetHarness = (): void => {
+  kv.clear();
+  resetCodexAuthCacheForTest();
+  resetRuntimeConfigCacheForTest();
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  setKvForTest(null);
+};
