@@ -507,6 +507,41 @@ test("openrouter responses relays native events and records the terminal", async
   });
 });
 
+test("openrouter responses records a failed terminal as upstream provider health error", async () => {
+  await withServedCatalogue(async () => {
+    const kv = new CountingKv();
+    setKvForTest(kv as unknown as Kv);
+    resetProviderHealthThrottleForTest();
+    try {
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi", stream: true },
+        "vendor/beta",
+        streamUsageContext(createResponseTelemetryState()),
+        {
+          fetchResponses: () =>
+            Promise.resolve(
+              sseResponse([
+                `event: response.failed\ndata: ${JSON.stringify({ type: "response.failed", response: { id: "resp_1", status: "failed" } })}\n\n`,
+              ])
+            ),
+        }
+      );
+      assert.equal(response.status, 200);
+      await response.text();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const health = await getOpenRouterProviderHealth();
+      assert.equal(health.last_event, "upstream_error");
+      assert.equal(health.last_status, 200);
+      assert.equal(health.state, "degraded");
+    } finally {
+      setKvForTest(null);
+      resetProviderHealthThrottleForTest();
+    }
+  });
+});
+
 test("openrouter resolves a served id from a cold catalogue and stays cache-authoritative once warm", async () => {
   resetOpenRouterModelsCacheForTest();
   process.env.OPENROUTER_API_KEY = "fixture-openrouter-key";

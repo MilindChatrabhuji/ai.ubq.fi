@@ -342,7 +342,11 @@ export const streamOpenRouterResponses = (
       recordResponsesTerminal(event, usageContext);
       if (event.terminal) {
         recordStreamTerminal(usageContext);
-        recordOpenRouterResponseHealth(200, providerRequestId);
+        if (event.type === "error" || event.type === "response.failed") {
+          void recordOpenRouterProviderHealth("upstream_error", 200, Date.now, providerRequestId);
+        } else {
+          recordOpenRouterResponseHealth(200, providerRequestId);
+        }
         return;
       }
       if (openRouterResponsesEventIsSemantic(event)) {
