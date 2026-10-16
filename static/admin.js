@@ -9892,6 +9892,7 @@ const saveProviderSelection = async () => {
     return;
   }
   if (providerSelectionSaving || !providersHasUnsavedChanges() || providersSelectionIsEmpty()) return;
+  const saveLoadId = providerSelectionLoadId;
   providerSelectionSaving = true;
   providerSelectionSaveError = "";
   updateProvidersStatus();
@@ -9902,6 +9903,7 @@ const saveProviderSelection = async () => {
       body: JSON.stringify({ provider_ids: providersSelectedIds() }),
     });
     const payload = await response.json().catch(() => null);
+    if (saveLoadId !== providerSelectionLoadId) return;
     if (!response.ok) {
       providerSelectionSaving = false;
       providerSelectionSaveError = "Failed to save";

@@ -127,6 +127,56 @@ test("Claude credential actions stay within the existing provider entry and surv
   assert.deepEqual(calls, [1, 1, 1, 1], "each preserved action retains exactly one listener");
 });
 
+test("provider selection save ignores a response after the gateway target changes", async () => {
+  const saveSource = /const saveProviderSelection = async \(\) => \{[\s\S]*?\n\};/.exec(sourceText)?.[0] ?? "";
+  assert.notEqual(saveSource, "", "the provider-selection saver must stay discoverable");
+
+  type TestResponse = { ok: boolean; json: () => Promise<unknown> };
+  let resolveResponse: ((response: TestResponse) => void) | null = null;
+  const context = {
+    getAdminToken: () => "old-token",
+    hasAdminCredential: () => true,
+    providerSelectionSaving: false,
+    providersHasUnsavedChanges: () => true,
+    providersSelectionIsEmpty: () => false,
+    providerSelectionLoadId: 0,
+    providerSelectionSaveError: "",
+    providerSelection: new Set(["old-provider"]),
+    providersSavedSelection: new Set<string>(),
+    providerSelectionLoadedAt: 1,
+    providersSelectedIds: () => ["old-provider"],
+    providersSelectionFromIds: (ids: string[]) => new Set(ids),
+    apiUrl: (path: string) => path,
+    fetch: () =>
+      new Promise<TestResponse>((resolve) => {
+        resolveResponse = resolve;
+      }),
+    updateProvidersStatus: () => {},
+    renderProvidersPicker: () => {},
+    formatNumber: (value: number) => String(value),
+    toast: { error: () => {}, success: () => {} },
+    console,
+  };
+  runInNewContext(`${saveSource}\nglobalThis.saveProviderSelection = saveProviderSelection;`, context);
+  const save = (context as typeof context & { saveProviderSelection: () => Promise<void> }).saveProviderSelection;
+  const savePromise = save();
+
+  // This is the generation bump performed by invalidateProviderSelection when
+  // the base gateway changes, followed by the new target's loaded selection.
+  context.providerSelectionLoadId += 1;
+  context.providerSelectionSaving = false;
+  context.providerSelection = new Set(["new-provider"]);
+  context.providersSavedSelection = new Set(["new-provider"]);
+  context.providerSelectionLoadedAt = 2;
+  assert.ok(resolveResponse);
+  resolveResponse({ ok: true, json: async () => ({ provider_ids: ["old-provider"] }) });
+  await savePromise;
+
+  assert.deepEqual([...context.providerSelection], ["new-provider"]);
+  assert.deepEqual([...context.providersSavedSelection], ["new-provider"]);
+  assert.equal(context.providerSelectionLoadedAt, 2);
+});
+
 test("Claude credential disclosure uses the existing single-column body and wrapping form actions", () => {
   const html = readFileSync(new URL("../static/admin.html", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../static/style.css", import.meta.url), "utf8");
