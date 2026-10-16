@@ -152,6 +152,8 @@ test("empty-token local auth cancels a pending token check", async () => {
     tokenInput.dispatchEvent(new Event("input"));
     assert.equal(timers.size, 1, "empty-token input should cancel the pending auth check");
     await flushMicrotasks();
+    assert.equal(authRequests.length, 2, "empty-token input should probe local authentication");
+    assert.equal(authRequests[1], "", "local authentication should not send a stale token");
     assert.equal(authBadge.dataset.state, "ok", "local authentication should succeed before pending timers run");
 
     const pendingTimers = [...timers.values()];
