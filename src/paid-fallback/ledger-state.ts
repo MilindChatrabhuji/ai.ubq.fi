@@ -1,7 +1,8 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 // Paid-fallback ledger v3: state layer, split out of src/paid_fallback_ledger.ts.
 
 import { getKv } from "../kv.ts";
-import { PaidFallbackProvider, PaidFallbackProviderUsageV3, PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../types.ts";
+import { type PaidFallbackProvider, type PaidFallbackProviderUsageV3, type PaidFallbackRequestV3, type PaidFallbackWindowV3 } from "../types.ts";
 import { isRecord } from "../utils.ts";
 
 const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
@@ -51,22 +52,22 @@ export const isPaidFallbackWindowV3 = (value: unknown): value is PaidFallbackWin
   );
 };
 
-export const paidFallbackWindowV3Key = (keyId: string, resetAtMs: number): Deno.KvKey => [...PREFIX, "window", keyId, resetAtMs];
-export const paidFallbackRequestV3Key = (keyId: string, requestId: string): Deno.KvKey => [...PREFIX, "request", keyId, requestId];
-export const paidFallbackPendingV3Key = (keyId: string, requestId: string): Deno.KvKey => [...PREFIX, "pending", keyId, requestId];
-const paidFallbackWindowV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "window", keyId];
-const paidFallbackRequestV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "request", keyId];
-export const paidFallbackRequestV3GlobalPrefix: Deno.KvKey = [...PREFIX, "request"];
-const paidFallbackWindowV3GlobalPrefix: Deno.KvKey = [...PREFIX, "window"];
-const paidFallbackPendingV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "pending", keyId];
-const paidFallbackPendingV3GlobalPrefix: Deno.KvKey = [...PREFIX, "pending"];
-export const paidFallbackReconciliationGateV3Key = (): Deno.KvKey => [...PREFIX, "reconciliation_gate"];
-export const paidFallbackReconciliationLeaseV3Key = (keyId: string): Deno.KvKey => [...PREFIX, "reconciliation_lease", keyId];
-export const paidFallbackBackfillCursorV3Key = (): Deno.KvKey => [...PREFIX, "rollup_backfill_cursor"];
-export const paidFallbackBackfillWindowCursorV3Key = (): Deno.KvKey => [...PREFIX, "rollup_backfill_window_cursor"];
-export const paidFallbackBackfillLeaseV3Key = (): Deno.KvKey => [...PREFIX, "rollup_backfill_lease"];
-export const paidFallbackBackfillStateV3Key = (): Deno.KvKey => [...PREFIX, "rollup_backfill_state"];
-export const paidFallbackDeletionGuardV3Key = (keyId: string): Deno.KvKey => [...PREFIX, "deletion_guard", keyId];
+export const paidFallbackWindowV3Key = (keyId: string, resetAtMs: number): KvKey => [...PREFIX, "window", keyId, resetAtMs];
+export const paidFallbackRequestV3Key = (keyId: string, requestId: string): KvKey => [...PREFIX, "request", keyId, requestId];
+export const paidFallbackPendingV3Key = (keyId: string, requestId: string): KvKey => [...PREFIX, "pending", keyId, requestId];
+const paidFallbackWindowV3Prefix = (keyId: string): KvKey => [...PREFIX, "window", keyId];
+const paidFallbackRequestV3Prefix = (keyId: string): KvKey => [...PREFIX, "request", keyId];
+export const paidFallbackRequestV3GlobalPrefix: KvKey = [...PREFIX, "request"];
+const paidFallbackWindowV3GlobalPrefix: KvKey = [...PREFIX, "window"];
+const paidFallbackPendingV3Prefix = (keyId: string): KvKey => [...PREFIX, "pending", keyId];
+const paidFallbackPendingV3GlobalPrefix: KvKey = [...PREFIX, "pending"];
+export const paidFallbackReconciliationGateV3Key = (): KvKey => [...PREFIX, "reconciliation_gate"];
+export const paidFallbackReconciliationLeaseV3Key = (keyId: string): KvKey => [...PREFIX, "reconciliation_lease", keyId];
+export const paidFallbackBackfillCursorV3Key = (): KvKey => [...PREFIX, "rollup_backfill_cursor"];
+export const paidFallbackBackfillWindowCursorV3Key = (): KvKey => [...PREFIX, "rollup_backfill_window_cursor"];
+export const paidFallbackBackfillLeaseV3Key = (): KvKey => [...PREFIX, "rollup_backfill_lease"];
+export const paidFallbackBackfillStateV3Key = (): KvKey => [...PREFIX, "rollup_backfill_state"];
+export const paidFallbackDeletionGuardV3Key = (keyId: string): KvKey => [...PREFIX, "deletion_guard", keyId];
 
 type PaidFallbackPendingV3 = Readonly<{
   created_at_ms: number;
@@ -147,10 +148,10 @@ type AdmissionInput = Readonly<{
   // Present for real gateway admissions. It fences the immutable API-key
   // policy snapshot that authorized paid exposure; direct ledger tests may
   // omit it because they do not represent an API-key admission path.
-  policyCheck?: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>;
+  policyCheck?: Readonly<{ key: KvKey; versionstamp: string | null }>;
 }>;
 
-const resolveKv = async (kvOverride: Deno.Kv | null | undefined): Promise<Deno.Kv | null> => (kvOverride === undefined ? await getKv() : kvOverride);
+const resolveKv = async (kvOverride: Kv | null | undefined): Promise<Kv | null> => (kvOverride === undefined ? await getKv() : kvOverride);
 
 const isPaidFallbackReconciliationGate = (value: unknown): value is PaidFallbackReconciliationGateV3 =>
   value !== null &&
@@ -158,23 +159,23 @@ const isPaidFallbackReconciliationGate = (value: unknown): value is PaidFallback
   "next_due_at_ms" in value &&
   (value.next_due_at_ms === null || (typeof value.next_due_at_ms === "number" && Number.isSafeInteger(value.next_due_at_ms) && value.next_due_at_ms >= 0));
 
-const paidFallbackReconciliationGateDueNow = (entry: Deno.KvEntryMaybe<PaidFallbackReconciliationGateV3>, now: number): PaidFallbackReconciliationGateV3 => {
+const paidFallbackReconciliationGateDueNow = (entry: KvEntryMaybe<PaidFallbackReconciliationGateV3>, now: number): PaidFallbackReconciliationGateV3 => {
   const current = isPaidFallbackReconciliationGate(entry.value) ? entry.value.next_due_at_ms : null;
   return { next_due_at_ms: current === null ? now : Math.min(current, now) };
 };
 
-const paidFallbackReconciliationGateNeedsArm = (entry: Deno.KvEntryMaybe<PaidFallbackReconciliationGateV3>, now: number): boolean => {
+const paidFallbackReconciliationGateNeedsArm = (entry: KvEntryMaybe<PaidFallbackReconciliationGateV3>, now: number): boolean => {
   if (!isPaidFallbackReconciliationGate(entry.value)) return true;
   return entry.value.next_due_at_ms === null || entry.value.next_due_at_ms > now;
 };
 
 type PendingMarkerScan = Readonly<{
-  entries: readonly Deno.KvEntry<PaidFallbackPendingV3>[];
+  entries: readonly KvEntry<PaidFallbackPendingV3>[];
   earliest_due_at_ms: number | null;
 }>;
 
-const scanPaidFallbackPendingMarkers = async (kv: Deno.Kv): Promise<PendingMarkerScan> => {
-  const entries: Deno.KvEntry<PaidFallbackPendingV3>[] = [];
+const scanPaidFallbackPendingMarkers = async (kv: Kv): Promise<PendingMarkerScan> => {
+  const entries: KvEntry<PaidFallbackPendingV3>[] = [];
   let earliestDueAtMs: number | null = null;
   for await (const entry of kv.list<PaidFallbackPendingV3>({ prefix: paidFallbackPendingV3GlobalPrefix }, { consistency: "strong" })) {
     entries.push(entry);
@@ -185,7 +186,7 @@ const scanPaidFallbackPendingMarkers = async (kv: Deno.Kv): Promise<PendingMarke
   return { entries, earliest_due_at_ms: earliestDueAtMs };
 };
 
-export const recomputePaidFallbackReconciliationGateV3 = async (kv: Deno.Kv): Promise<number | null> => {
+export const recomputePaidFallbackReconciliationGateV3 = async (kv: Kv): Promise<number | null> => {
   const gateKey = paidFallbackReconciliationGateV3Key();
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const gateEntry = await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" });
@@ -205,7 +206,7 @@ const queueOptions = {
   backoffSchedule: [5_000, 30_000, 120_000, 600_000, 3_600_000, 21_600_000],
 } as const;
 
-const enqueuePaidFallbackReconciliationJob = async (kv: Deno.Kv, keyId: string, delay = 0): Promise<boolean> => {
+const enqueuePaidFallbackReconciliationJob = async (kv: Kv, keyId: string, delay = 0): Promise<boolean> => {
   const enqueue = (
     kv as unknown as {
       enqueue?: (message: PaidFallbackReconciliationJobV3, options?: unknown) => Promise<unknown>;
@@ -222,7 +223,7 @@ const enqueuePaidFallbackReconciliationJob = async (kv: Deno.Kv, keyId: string, 
   }
 };
 
-export const listPaidFallbackRequestsV3 = async (keyId: string, limit = 100, kvOverride?: Deno.Kv | null): Promise<readonly PaidFallbackRequestV3[]> => {
+export const listPaidFallbackRequestsV3 = async (keyId: string, limit = 100, kvOverride?: Kv | null): Promise<readonly PaidFallbackRequestV3[]> => {
   const kv = await resolveKv(kvOverride);
   if (!kv || !Number.isFinite(limit) || limit <= 0) return [];
   const requests: PaidFallbackRequestV3[] = [];
@@ -249,7 +250,7 @@ const emptyPaidFallbackProviderUsage = (): PaidFallbackProviderUsageV3 => ({
 export const getPaidFallbackProviderUsageV3 = async (
   keyId: string,
   windowResetAtMs: number,
-  kvOverride?: Deno.Kv | null
+  kvOverride?: Kv | null
 ): Promise<Readonly<Record<PaidFallbackProvider, PaidFallbackProviderUsageV3>>> => {
   const kv = await resolveKv(kvOverride);
   const usage: Record<PaidFallbackProvider, PaidFallbackProviderUsageV3> = {
@@ -282,7 +283,7 @@ export const getPaidFallbackWindowProjectionV3 = async (
   keyId: string,
   windowResetAtMs: number,
   limitMicrocredits: number,
-  kvOverride?: Deno.Kv | null
+  kvOverride?: Kv | null
 ): Promise<PaidFallbackWindowProjectionV3 | null> => {
   const kv = await resolveKv(kvOverride);
   if (!kv) return null;
@@ -331,7 +332,7 @@ export const getPaidFallbackWindowProjectionV3 = async (
   };
 };
 
-export const getPaidFallbackOutstandingV3 = async (keyId: string, kvOverride?: Deno.Kv | null): Promise<PaidFallbackOutstandingV3 | null> => {
+export const getPaidFallbackOutstandingV3 = async (keyId: string, kvOverride?: Kv | null): Promise<PaidFallbackOutstandingV3 | null> => {
   const kv = await resolveKv(kvOverride);
   if (!kv) return null;
   let pendingRequests = 0;
@@ -340,7 +341,7 @@ export const getPaidFallbackOutstandingV3 = async (keyId: string, kvOverride?: D
     if (entry.value.billing_state === "pending") pendingRequests += 1;
     if (entry.value.billing_state === "unresolved") unresolvedRequests += 1;
   }
-  const pendingMarkerKeys: Deno.KvKey[] = [];
+  const pendingMarkerKeys: KvKey[] = [];
   for await (const entry of kv.list<PaidFallbackPendingV3>({ prefix: paidFallbackPendingV3Prefix(keyId) }, { consistency: "strong" })) {
     pendingMarkerKeys.push(entry.key);
   }

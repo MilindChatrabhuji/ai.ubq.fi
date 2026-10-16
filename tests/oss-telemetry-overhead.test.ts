@@ -1,3 +1,6 @@
+import { test } from "bun:test";
+import { KvU64 } from "#kv";
+import type { Kv } from "#kv";
 import assert from "node:assert/strict";
 
 import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
@@ -19,11 +22,6 @@ import { CountingKv } from "./helpers/counting-kv.ts";
 // The counting KV applies atomic `sum` mutations with `new Deno.KvU64(...)`,
 // and the runtime global is not guaranteed to exist. Every existing suite that
 // writes counters installs this guard for the same reason.
-if (typeof Deno.KvU64 !== "function") {
-  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
-    constructor(readonly value: bigint) {}
-  } as typeof Deno.KvU64;
-}
 
 const RELEASE = "0123456789abcdef0123456789abcdef01234567";
 const NOW_MS = 1_800_000_000_000;
@@ -56,7 +54,7 @@ const event = (overrides: Partial<Parameters<typeof recordPromptCacheAnalytics>[
   ...overrides,
 });
 
-const options = (kv: CountingKv) => ({ kv: kv as unknown as Deno.Kv, release: RELEASE, now: () => NOW_MS });
+const options = (kv: CountingKv) => ({ kv: kv as unknown as Kv, release: RELEASE, now: () => NOW_MS });
 
 /** Fails like an optional telemetry sink whose storage is unavailable. */
 const failingSink =
@@ -101,9 +99,9 @@ const handlerTerminalEvent = () =>
   });
 
 const durableCounters = (kv: CountingKv): readonly (readonly [string, bigint])[] =>
-  [...kv.entries.entries()].map(([key, entry]) => [key, (entry.value as Deno.KvU64).value] as const).sort((left, right) => left[0].localeCompare(right[0]));
+  [...kv.entries.entries()].map(([key, entry]) => [key, (entry.value as KvU64).value] as const).sort((left, right) => left[0].localeCompare(right[0]));
 
-Deno.test("prompt-cache analytics sink fixture records on the counting KV", async () => {
+test("prompt-cache analytics sink fixture records on the counting KV", async () => {
   const kv = new CountingKv();
   const recorded = await recordPromptCacheAnalytics(handlerTerminalEvent(), options(kv));
   assert.equal(recorded.status, "recorded", `the fixture sink disposition must be recorded, observed ${recorded.status}/${recorded.reason}`);
@@ -115,7 +113,7 @@ Deno.test("prompt-cache analytics sink fixture records on the counting KV", asyn
   assert.equal(commits[0].atomicResult, "committed", "the fixture KV must commit the sink's atomic CAS plus sum mutations");
 });
 
-Deno.test("optional cache analytics: an inline delayed sink decides non-stream response latency", async () => {
+test("optional cache analytics: an inline delayed sink decides non-stream response latency", async () => {
   const kv = new CountingKv();
   const sinkResults: PromptCacheAnalyticsRecordResult[] = [];
   const startedAt = performance.now();
@@ -144,7 +142,7 @@ Deno.test("optional cache analytics: an inline delayed sink decides non-stream r
   );
 });
 
-Deno.test("optional cache analytics: a failing inline sink loses the sample in one attempt", async () => {
+test("optional cache analytics: a failing inline sink loses the sample in one attempt", async () => {
   const attempts = { count: 0 };
   const startedAt = performance.now();
   const response = await withTerminalRequestLog(providerResponse("complete"), {
@@ -161,7 +159,7 @@ Deno.test("optional cache analytics: a failing inline sink loses the sample in o
   assert.ok(elapsedMs < SINK_DELAY_MS, `a failing sink must not add sink latency, observed ${Math.round(elapsedMs)}ms`);
 });
 
-Deno.test("queued optional analytics leaves the non-stream response off the sink path and records the same counters", async () => {
+test("queued optional analytics leaves the non-stream response off the sink path and records the same counters", async () => {
   const kv = new CountingKv();
   const queuedResults: PromptCacheAnalyticsRecordResult[] = [];
   const sinkResults: boolean[] = [];
@@ -211,7 +209,7 @@ Deno.test("queued optional analytics leaves the non-stream response off the sink
   assert.deepEqual(durableCounters(kv), durableCounters(reference), "a queued sample applies exactly the counters a direct write applies");
 });
 
-Deno.test("optional telemetry queue charges entries and UTF-8 bytes until each write settles", async () => {
+test("optional telemetry queue charges entries and UTF-8 bytes until each write settles", async () => {
   const held = deferred();
   const entriesQueue = createOptionalTelemetryQueue<number>({
     write: () => held.promise,
@@ -271,7 +269,7 @@ Deno.test("optional telemetry queue charges entries and UTF-8 bytes until each w
   await bytesQueue.flush();
 });
 
-Deno.test("optional telemetry queue drops queued samples past its age ceiling", async () => {
+test("optional telemetry queue drops queued samples past its age ceiling", async () => {
   let nowMs = NOW_MS;
   const held = deferred();
   const queue = createOptionalTelemetryQueue<string>({
@@ -296,7 +294,7 @@ Deno.test("optional telemetry queue drops queued samples past its age ceiling", 
   await queue.flush();
 });
 
-Deno.test("optional telemetry queue bounds writer concurrency and coalesces concurrent flushes", async () => {
+test("optional telemetry queue bounds writer concurrency and coalesces concurrent flushes", async () => {
   let inFlight = 0;
   let peakInFlight = 0;
   const releases: (() => void)[] = [];
@@ -334,7 +332,7 @@ Deno.test("optional telemetry queue bounds writer concurrency and coalesces conc
   assert.equal(peakInFlight, 2);
 });
 
-Deno.test("optional telemetry queue dispatches an entry accepted while a completed drain retires", async () => {
+test("optional telemetry queue dispatches an entry accepted while a completed drain retires", async () => {
   const written: number[] = [];
   const queue = createOptionalTelemetryQueue<number>({
     write: (entry) => {
@@ -365,7 +363,7 @@ Deno.test("optional telemetry queue dispatches an entry accepted while a complet
   assert.equal(snapshot.drain_in_progress, false);
 });
 
-Deno.test("optional telemetry queue reports a failing sink without throwing or stalling the drain", async () => {
+test("optional telemetry queue reports a failing sink without throwing or stalling the drain", async () => {
   const attempts = { count: 0 };
   const queue = createOptionalTelemetryQueue<number>({
     write: () => {
@@ -401,7 +399,7 @@ Deno.test("optional telemetry queue reports a failing sink without throwing or s
   assert.equal(closedSnapshot.failed, 3);
 });
 
-Deno.test("queued optional analytics retains only sanitized metadata and never drops required evidence", async () => {
+test("queued optional analytics retains only sanitized metadata and never drops required evidence", async () => {
   const rawModel = "gpt-telemetry-secret-model-must-not-be-retained";
   const retained: PromptCacheAnalyticsQueueEntry[] = [];
   const queue = createOptionalTelemetryQueue<PromptCacheAnalyticsQueueEntry>({
@@ -466,7 +464,7 @@ Deno.test("queued optional analytics retains only sanitized metadata and never d
   assert.equal(closedQueue.snapshot().dropped_after_closed, 1);
 });
 
-Deno.test("optional telemetry queue bounds flush and close when a sink never settles", async () => {
+test("optional telemetry queue bounds flush and close when a sink never settles", async () => {
   const held = deferred();
   const queue = createOptionalTelemetryQueue<number>({
     write: () => held.promise,
@@ -524,7 +522,7 @@ Deno.test("optional telemetry queue bounds flush and close when a sink never set
   assert.equal(afterClose.shutdown_incomplete, true);
 });
 
-Deno.test("optional telemetry queue bounds an operation whose sink progresses slower than its wait bound", async () => {
+test("optional telemetry queue bounds an operation whose sink progresses slower than its wait bound", async () => {
   const queue = createOptionalTelemetryQueue<number>({
     write: async () => {
       await delay(40);
@@ -552,9 +550,9 @@ Deno.test("optional telemetry queue bounds an operation whose sink progresses sl
   assert.equal(settled.queued_entries, 6 - settled.delivered);
 });
 
-Deno.test("optional telemetry shutdown drains and closes the module queue", async () => {
+test("optional telemetry shutdown drains and closes the module queue", async () => {
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     assert.equal(optionalPromptCacheAnalyticsSnapshot(), null, "the module queue is created lazily");
     await flushOptionalPromptCacheAnalytics();
@@ -583,10 +581,10 @@ Deno.test("optional telemetry shutdown drains and closes the module queue", asyn
   }
 });
 
-Deno.test("optional telemetry close before lazy initialization is terminal", async () => {
+test("optional telemetry close before lazy initialization is terminal", async () => {
   const kv = new CountingKv();
   resetOptionalPromptCacheAnalyticsForTest();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     assert.equal(optionalPromptCacheAnalyticsSnapshot(), null, "no optional sample has created the module queue");
 
@@ -606,7 +604,7 @@ Deno.test("optional telemetry close before lazy initialization is terminal", asy
   }
 });
 
-Deno.test("optional telemetry close refuses a sample already resolving when close arrives", async () => {
+test("optional telemetry close refuses a sample already resolving when close arrives", async () => {
   resetOptionalPromptCacheAnalyticsForTest();
   try {
     // The sample suspends while it resolves its cohort hash, so the close lands

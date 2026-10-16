@@ -1,3 +1,5 @@
+import { command } from "./io.ts";
+import { mkdir } from "node:fs/promises";
 import { ensureCaddyIngressReady, healthServesRelease, reloadCaddyIngress } from "./deploy.ts";
 import {
   canonicalVps,
@@ -22,7 +24,7 @@ import {
   type VpsSettlement,
 } from "./vps-release-contract.ts";
 import { VpsOperationJournal, withVpsDeployLock } from "./vps-release-journal.ts";
-import { ImmutableVpsReleaseStore, VPS_UNIT_SHA256, type StoredVpsRelease, type VpsCommand } from "./vps-release-store.ts";
+import { ImmutableVpsReleaseStore, type StoredVpsRelease, type VpsCommand, type VpsPayloadPreparation } from "./vps-release-store.ts";
 
 export type VpsDriverDependencies = {
   root: string;
@@ -30,6 +32,7 @@ export type VpsDriverDependencies = {
   environment: "production" | "isolated";
   driverSha256: string;
   run: VpsCommand;
+  preparePayload?: VpsPayloadPreparation;
   fetch: typeof fetch;
   now: () => number;
   /** Real trusted review/CI/native merge observer; never a model boolean. */
@@ -39,9 +42,7 @@ export type VpsDriverDependencies = {
 };
 /** @public Standalone Sentinel's pinned VPS bridge uses this native command capability. */
 export async function runVpsCommand(program: string, args: string[], cwd: string): Promise<string> {
-  const result = await new Deno.Command(program, { args, cwd, signal: AbortSignal.timeout(240_000), stdout: "piped", stderr: "piped" }).output();
-  if (!result.success) throw new Error("VPS deployment command failed");
-  return new TextDecoder().decode(result.stdout).trim();
+  return command(program, args, { cwd });
 }
 const identity = (release: StoredVpsRelease): VpsIdentity => ({
   runtime: "vps",
@@ -71,7 +72,7 @@ export class VpsDeploymentDriver {
   private readonly _store: ImmutableVpsReleaseStore;
   private readonly _journal: VpsOperationJournal;
   constructor(private readonly _deps: VpsDriverDependencies) {
-    this._store = new ImmutableVpsReleaseStore(this._deps.root, this._deps.run);
+    this._store = new ImmutableVpsReleaseStore(this._deps.root, this._deps.run, this._deps.preparePayload);
     this._journal = new VpsOperationJournal(this._deps.root);
   }
   private _lock<T>(work: () => Promise<T>): Promise<T> {
@@ -100,7 +101,7 @@ export class VpsDeploymentDriver {
         identity: identity(previous),
         listenerPort: previous.port,
         launcherProfileSha256: previous.profile,
-        unitSha256: VPS_UNIT_SHA256,
+        unitSha256: await this._store.unitDigest(previous.sha),
       });
     });
   }
@@ -164,7 +165,8 @@ export class VpsDeploymentDriver {
       if (
         !sameVps(identity(actualPrior), expectedPrior.identity) ||
         actualPrior.profile !== expectedPrior.launcherProfileSha256 ||
-        actualPrior.port !== expectedPrior.listenerPort
+        actualPrior.port !== expectedPrior.listenerPort ||
+        (await this._store.unitDigest(actualPrior.sha)) !== expectedPrior.unitSha256
       )
         return refusal("prior_changed");
       for (const surface of ["loopback", "public"] as const) {
@@ -182,7 +184,7 @@ export class VpsDeploymentDriver {
       await this._command("git", ["merge-base", "--is-ancestor", expectedPrior.identity.gitSha, binding.revision]);
       if (binding.revision === expectedPrior.identity.gitSha) return refusal("candidate_equals_prior");
       await ensureCaddyIngressReady((program, args) => this._command(program, args), this._deps.root);
-      await Deno.mkdir(this._store.absolute(".data/releases"), { recursive: true, mode: 0o700 });
+      await mkdir(this._store.absolute(".data/releases"), { recursive: true, mode: 0o700 });
       const candidate = identity(await this._store.checkedRelease(binding.revision, true));
       const now = this._deps.now();
       return this._journal.write({
@@ -269,7 +271,8 @@ export class VpsDeploymentDriver {
   private async _restoreOwned(receipt: VpsReceipt, restart = true): Promise<VpsReceipt> {
     const selected = await this._store.selector();
     if (selected !== receipt.prior.target && selected !== `releases/${receipt.candidate.gitSha}`) return refusal("unrelated_current");
-    await this._store.checkedPreviousRelease(receipt.prior.identity.gitSha, receipt.prior.target);
+    const prior = await this._store.checkedPreviousRelease(receipt.prior.identity.gitSha, receipt.prior.target);
+    if (restart) await this._store.assertRollbackAllowed(prior, receipt.candidate.gitSha);
     if (selected !== receipt.prior.target) await this._store.selectRelease(receipt.prior.target);
     const priorReady = await this.sampleHealth(receipt.prior.identity, "loopback", receipt.prior.listenerPort)
       .then(isHealthyVps)

@@ -1,6 +1,13 @@
+import { acquireDeployLock } from "./deploy-lock.ts";
+import { assertBunConvertedStore } from "./assert-bun-store.ts";
+import { prepareBunRuntime } from "./bun-runtime.ts";
+import { command as runCommand } from "./io.ts";
+import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { missing } from "./io.ts";
+const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 // Run from the VPS repository root after the candidate's required CI has passed.
 import { pruneReleases } from "./release-retention.ts";
-import { ImmutableVpsReleaseStore } from "./vps-release-store.ts";
+import { ImmutableVpsReleaseStore, type VpsPayloadPreparation } from "./vps-release-store.ts";
 import { readVpsPins } from "./vps-release-journal.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
 
@@ -12,11 +19,7 @@ const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
  */
 export const PUBLIC_HEALTH_URL = "https://ai.ubq.fi/health";
 
-async function command(program: string, args: string[]): Promise<string> {
-  const result = await new Deno.Command(program, { args, signal: AbortSignal.timeout(240_000), stdout: "piped", stderr: "piped" }).output();
-  if (!result.success) throw new Error(`${program} failed: ${new TextDecoder().decode(result.stderr)}`);
-  return new TextDecoder().decode(result.stdout).trim();
-}
+const command = runCommand;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -101,7 +104,7 @@ async function assertDeployableCheckout(): Promise<string> {
  * repair the checkout mode, which would hide the real permission fault.
  */
 export async function ensureCaddyIngressReady(run: (program: string, args: string[]) => Promise<string> = command, root = canonicalRoot): Promise<void> {
-  const mode = (await Deno.stat(`${root}/ops/Caddyfile`)).mode ?? 0;
+  const mode = (await stat(`${root}/ops/Caddyfile`)).mode;
   // Caddy shares no group with this checkout, so only other-read exposes the
   // bind-mounted file to it.
   if ((mode & 0o004) === 0) {
@@ -137,11 +140,11 @@ type Release = { sha: string; path: string; archive: string; tree: string };
 type Previous = Release & { selector: string; port: number; profile: string };
 type Phase = "prepared" | "selected" | "candidate_ready" | "ingress_applied" | "rolled_back";
 type Recovery = { schema: 1; candidate: Release; previous: Previous | null; phase: Phase };
-const notFound = (error: unknown): boolean => error instanceof Deno.errors.NotFound;
+const notFound = (error: unknown): boolean => missing(error);
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.lstat(path);
+    await lstat(path);
     return true;
   } catch (error) {
     if (notFound(error)) return false;
@@ -152,16 +155,15 @@ async function exists(path: string): Promise<boolean> {
 // Compare every entry without following symlinks. Generated files have explicit
 // modes, so verification does not depend on a later deployment's umask.
 const releaseStore = new ImmutableVpsReleaseStore(canonicalRoot, (program, args) => command(program, args));
-const checkedRelease = (sha: string, create = false): Promise<Release> => releaseStore.checkedRelease(sha, create);
 const selector = (): Promise<string | null> => releaseStore.selector();
 const checkedPrevious = (selected: string): Promise<Previous> => releaseStore.checkedPrevious(selected);
 const checkedPreviousRelease = (sha: string, selected: string): Promise<Previous> => releaseStore.checkedPreviousRelease(sha, selected);
 
 async function readRecovery(): Promise<Recovery | null> {
   if (!(await exists(recoveryPath))) return null;
-  const stat = await Deno.lstat(recoveryPath);
-  if (!stat.isFile || stat.isSymlink || ((stat.mode ?? 0) & 0o777) !== 0o600) throw new Error("Deployment recovery receipt is unsafe");
-  const value: unknown = JSON.parse(await Deno.readTextFile(recoveryPath));
+  const stat = await lstat(recoveryPath);
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) throw new Error("Deployment recovery receipt is unsafe");
+  const value: unknown = JSON.parse(await readTextFile(recoveryPath));
   const validRelease = (item: unknown): boolean =>
     isRecord(item) &&
     typeof item.sha === "string" &&
@@ -182,7 +184,7 @@ async function readRecovery(): Promise<Recovery | null> {
         isRecord(value.previous) &&
         typeof value.previous.selector === "string" &&
         Number.isInteger(value.previous.port) &&
-        value.previous.profile === launcherFingerprint)
+        (value.previous.profile === launcherFingerprint || value.previous.profile === (await releaseStore.currentLauncherProfile())))
     )
   )
     throw new Error("Malformed deployment recovery receipt");
@@ -192,10 +194,10 @@ async function readRecovery(): Promise<Recovery | null> {
 async function saveRecovery(receipt: Recovery): Promise<void> {
   const temporary = `${recoveryPath}-${crypto.randomUUID()}`;
   try {
-    await Deno.writeTextFile(temporary, JSON.stringify(receipt) + "\n", { createNew: true, mode: 0o600 });
-    await Deno.rename(temporary, recoveryPath);
+    await writeFile(temporary, JSON.stringify(receipt) + "\n", { flag: "wx", mode: 0o600 });
+    await rename(temporary, recoveryPath);
   } finally {
-    if (await exists(temporary)) await Deno.remove(temporary);
+    if (await exists(temporary)) await rm(temporary);
   }
 }
 
@@ -261,6 +263,8 @@ async function startCandidate(candidate: Release, receipt: Recovery, state: Acti
 
 async function restorePrevious(receipt: Recovery, restartAttempted: boolean): Promise<void> {
   const previous = receipt.previous;
+  if (restartAttempted && previous?.profile === launcherFingerprint)
+    throw new Error("Cross-codec rollback requires stopped latest-state Bun-to-Deno conversion; refusing stale legacy state");
   await selectRelease(previous?.selector ?? null);
   // A refused daemon-reload leaves the prior listener running. Do not restart
   // either release through a definition systemd refused to load.
@@ -291,7 +295,7 @@ async function recoverFailedActivation(receipt: Recovery, restartAttempted: bool
 }
 
 async function activate(candidate: Release, selected: string | null, receipt: Recovery | null, fresh: boolean): Promise<void> {
-  const candidateSelected = selected !== null && (await Deno.realPath(".data/current")) === canonicalRoot + "/" + candidate.path;
+  const candidateSelected = selected !== null && (await realpath(".data/current")) === canonicalRoot + "/" + candidate.path;
   if (receipt === null) {
     await verifySelectedOnly(candidate, candidateSelected);
     return;
@@ -307,7 +311,7 @@ async function activate(candidate: Release, selected: string | null, receipt: Re
     receipt.phase = "ingress_applied";
     await saveRecovery(receipt);
     await assertPublicRelease(candidate.sha);
-    await Deno.remove(recoveryPath);
+    await rm(recoveryPath);
   } catch (error) {
     if (!state.ingressApplied) await recoverFailedActivation(receipt, state.restartAttempted);
     throw error;
@@ -317,20 +321,20 @@ async function activate(candidate: Release, selected: string | null, receipt: Re
 async function assertDataDirectories(): Promise<void> {
   for (const directory of [".data", ".data/releases"]) {
     if (await exists(directory)) {
-      const stat = await Deno.lstat(directory);
-      if (!stat.isDirectory || stat.isSymlink || (await Deno.realPath(directory)) !== canonicalRoot + "/" + directory)
+      const stat = await lstat(directory);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || (await realpath(directory)) !== canonicalRoot + "/" + directory)
         throw new Error("Deployment data directory is unsafe");
     }
   }
 }
 
-async function prepareCandidate(sha: string): Promise<void> {
+async function prepareCandidate(sha: string, preparePayload?: VpsPayloadPreparation): Promise<void> {
   const release = ".data/releases/" + sha;
   const selected = await selector();
   let receipt = await readRecovery();
   const present = await exists(release);
   if (receipt !== null && receipt.candidate.sha !== sha) throw new Error("Stale deployment recovery receipt belongs to another candidate");
-  if (present && receipt === null && (selected === null || (await Deno.realPath(".data/current")) !== canonicalRoot + "/" + release))
+  if (present && receipt === null && (selected === null || (await realpath(".data/current")) !== canonicalRoot + "/" + release))
     throw new Error("Existing unselected release has no deployment-owned recovery receipt");
   let previous: Previous | null = null;
   if (!present) {
@@ -340,7 +344,8 @@ async function prepareCandidate(sha: string): Promise<void> {
       await previousPublicIdentity(previous);
     }
   }
-  const candidate = await checkedRelease(sha, !present);
+  const candidateStore = new ImmutableVpsReleaseStore(canonicalRoot, (program, args) => command(program, args), preparePayload);
+  const candidate = await candidateStore.checkedRelease(sha, !present);
   if (!present) {
     receipt = { schema: 1, candidate, previous, phase: "prepared" };
     await saveRecovery(receipt);
@@ -348,21 +353,21 @@ async function prepareCandidate(sha: string): Promise<void> {
   await activate(candidate, selected, receipt, !present);
 }
 
-async function deploy(): Promise<void> {
-  let lock: Deno.FsFile | undefined;
+export async function deploy(preparePayload?: VpsPayloadPreparation): Promise<void> {
+  let releaseLock: (() => void) | undefined;
   try {
     // The canonical-root boundary stays before any Git subprocess: running Git in
     // an arbitrary checkout can execute configured helpers, so an unvalidated
     // directory is rejected first. The read-only checkout preflight then runs
     // before `.data` exists, and again under the deployment lock before the
     // candidate SHA is used.
-    const root = await Deno.realPath(".");
+    const root = await realpath(".");
     if (root !== canonicalRoot) throw new Error("Run from the canonical VPS repository root");
     await assertDeployableCheckout();
+    await assertBunConvertedStore(root);
     await assertDataDirectories();
-    await Deno.mkdir(".data/releases", { recursive: true, mode: 0o700 });
-    lock = await Deno.open(".data/deploy.lock", { create: true, write: true, mode: 0o600 });
-    await lock.lock(true);
+    await mkdir(".data/releases", { recursive: true, mode: 0o700 });
+    releaseLock = await acquireDeployLock();
     // Capture the candidate only after the lock: a deployment that waited for it
     // must not release a revision from before the wait.
     const sha = await assertDeployableCheckout();
@@ -373,7 +378,8 @@ async function deploy(): Promise<void> {
     // so correcting the fault can retry this same revision.
     await ensureCaddyIngressReady();
     const release = `.data/releases/${sha}`;
-    await prepareCandidate(sha);
+    await prepareBunRuntime(root);
+    await prepareCandidate(sha, preparePayload);
     // Retention runs only after both health checks prove the release is live, so
     // a pruning fault cannot turn a verified deployment into a failed one.
     let releasesPruned: number | "failed" = "failed";
@@ -383,9 +389,9 @@ async function deploy(): Promise<void> {
       console.error(`[deploy] Release retention was not applied: ${error instanceof Error ? error.message : String(error)}`);
     }
     console.log(JSON.stringify({ git_sha: sha, deployment_id: `vps-${sha}`, release, health_verified: true, releases_pruned: releasesPruned }));
-    Deno.exit(0);
+    return;
   } finally {
-    lock?.close();
+    releaseLock?.();
   }
 }
 

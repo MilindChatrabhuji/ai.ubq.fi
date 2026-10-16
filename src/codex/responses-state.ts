@@ -1,30 +1,31 @@
+import type { KvKey } from "#kv";
 // Codex Responses execution state and operations interface, split out of src/codex.ts.
 
 import { selectCodexRoutingAccountsStrong } from "./account-routing.ts";
 import { loadOverageUsageSettings } from "./overage-settings.ts";
-import { CODEX_ORIGINATOR, CodexAuthAccountEntry, CodexDispatchAccountEntry, CodexError, codexUserAgent, getAuthPoolEntry } from "./auth.ts";
+import { CODEX_ORIGINATOR, type CodexAuthAccountEntry, type CodexDispatchAccountEntry, CodexError, codexUserAgent, getAuthPoolEntry } from "./auth.ts";
 import {
-  CodexBankedResetConfig,
-  CodexBankedResetDependencies,
-  CodexBankedResetEvent,
-  CodexBankedResetTelemetryFields,
+  type CodexBankedResetConfig,
+  type CodexBankedResetDependencies,
+  type CodexBankedResetEvent,
+  type CodexBankedResetTelemetryFields,
   loadCodexBankedResetConfig,
 } from "./banked-reset.ts";
 import { evaluateCodexBankedResetPool } from "./banked-reset-pool.ts";
 import { unavailableCodexUsageResetProvider } from "./banked-reset-provider.ts";
 import { reconcileCodexBankedReset } from "./banked-reset-submission.ts";
 import {
-  CodexAttemptPhase,
-  CodexBankedResetCandidate,
+  type CodexAttemptPhase,
+  type CodexBankedResetCandidate,
   applyNativeSessionHeaders,
   awaitPendingCodexProbeTransitions,
   initialCodexSelectionResponse,
   requestedCodexModel,
 } from "./dispatch.ts";
 import type { CodexProviderDispatchCoordinator, FetchCodexResponsesOptions, PreparedCodexSubscriptionRequest } from "./dispatch.ts";
-import { CodexActiveAccountSnapshot, CodexProbeCircuit, RoutingAccount } from "./routing-state.ts";
+import { type CodexActiveAccountSnapshot, type CodexProbeCircuit, type RoutingAccount } from "./routing-state.ts";
 import { config } from "../config.ts";
-import { CodexAuthState } from "../types.ts";
+import { type CodexAuthState } from "../types.ts";
 
 export type CodexCredentialAttempt = { auth: CodexAuthState; routing: RoutingAccount };
 export type CodexAccountAttemptOutcome =
@@ -55,7 +56,7 @@ export type EvaluatedBlockedReset = Readonly<{
 }>;
 export type PreexistingBankedReset = Readonly<{ kind: "evaluated"; evaluated: EvaluatedBlockedReset } | { kind: "none" } | { kind: "blocked" }>;
 
-type BankedResetFence = { key: Deno.KvKey; isCurrent: (value: unknown) => boolean };
+type BankedResetFence = { key: KvKey; isCurrent: (value: unknown) => boolean };
 type BankedResetInput = {
   accountId: string;
   credentialVersion: string;
@@ -72,6 +73,7 @@ export type CodexResponseOperations = {
   noteCodexAuthFailure: (error: unknown) => void;
   decorateAuthWarning: (response: Response) => Response;
   freshFullCohortExhaustedProof: () => Promise<boolean>;
+  freshFullCohortUnavailableProof: () => Promise<boolean>;
   quotaBlockedOrRetryableResponse: (retryAtMs?: number | null) => Promise<Response>;
   authFailureResponse: (error: CodexError | null) => Response;
   ensureActiveRoutingAdmissionCurrent: (routing: RoutingAccount) => Promise<void>;
@@ -81,7 +83,7 @@ export type CodexResponseOperations = {
   activeSelectionFence: (candidate: CodexBankedResetCandidate) => BankedResetFence;
   activeSnapshotFence: (snapshot: CodexActiveAccountSnapshot) => BankedResetFence;
   ensurePostResetRetryAuthCurrent: (candidate: CodexBankedResetCandidate) => Promise<void>;
-  exactValueFence: (key: Deno.KvKey, expectedJson: string) => BankedResetFence;
+  exactValueFence: (key: KvKey, expectedJson: string) => BankedResetFence;
   resetFences: (
     candidate: CodexBankedResetCandidate,
     routingGeneration: number,
@@ -130,7 +132,7 @@ export type CodexResponseOperations = {
     trigger: "401" | "proactive"
   ) => Promise<Readonly<{ auth: CodexAuthState; routing: RoutingAccount }>>;
   classify429: (accountEntry: CodexAuthAccountEntry, routing: RoutingAccount, auth: CodexAuthState, response: Response) => Promise<Response>;
-  authorizePaidFallbackForCompleteQuotaEvidence: (response: Response) => Promise<Response>;
+  authorizePaidFallbackForCompleteCapacityEvidence: (response: Response) => Promise<Response>;
   persistVerifiedCapacityReset: (
     candidate: CodexBankedResetCandidate,
     record: NonNullable<Awaited<ReturnType<typeof reconcileCodexBankedReset>>>["record"]
@@ -191,7 +193,9 @@ export const createCodexResponseState = async (
   // routing evaluation reads a bounded, current value.
   await loadOverageUsageSettings(poolEntry.pool);
   const selected = await selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, Date.now(), requestedModel);
-  const terminalSelection = initialCodexSelectionResponse(selected);
+  // Current-invalid pools use the same fresh complete proof as mixed pools
+  // before they may authorize paid fallback.
+  const terminalSelection = selected.kind === "credentials_invalid" ? null : initialCodexSelectionResponse(selected);
   if (terminalSelection) return { kind: "terminal" as const, response: terminalSelection };
   const accountEntries: CodexDispatchAccountEntry[] =
     selected.kind === "eligible" ? selected.accounts.map((routing) => ({ ...poolEntry, auth: routing.auth, routing })) : [];

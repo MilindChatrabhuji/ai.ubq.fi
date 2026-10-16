@@ -1,11 +1,16 @@
+import { test, afterAll } from "bun:test";
+import { copyFile, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { join } from "node:path";
+import { buildPermissionsNative } from "../scripts/build-permissions.ts";
 /**
  * Acceptance tests for the fixed local Sentinel replay consumer.
  *
  * Every case invokes the real fixed command as a child process inside a
  * disposable snapshot: the source tree is copied into a temporary directory
  * under the checkout, the fixtures and trusted dispatch metadata are written
- * there, and the child runs with a fresh Deno cache, no configuration, no
- * remote access, and no application environment. The shared checkout source is
+ * there, and the child runs with a locked local dependencies, disabled dotenv discovery,
+ * read-only child confinement, and no application environment. The shared checkout source is
  * never mutated and no network or live API is contacted.
  */
 
@@ -22,56 +27,58 @@ import {
   SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES,
 } from "../src/sentinel/upstream-capture.ts";
 
-const REPO_ROOT = Deno.cwd();
+const REPO_ROOT = process.cwd();
 // Scratch lives under .data/, which git, Prettier and ESLint already ignore. A
 // snapshot abandoned by an interrupted run therefore can never be mistaken for
 // source by a repo-wide format, lint or dead-code gate.
 const SCRATCH_PARENT = `${REPO_ROOT}/.data`;
-await Deno.mkdir(SCRATCH_PARENT, { recursive: true });
-const SCRATCH_ROOT = await Deno.makeTempDir({ dir: SCRATCH_PARENT, prefix: "m06-sentinel-replay-consumer-" });
-const CACHE_ROOT = await Deno.makeTempDir({ dir: SCRATCH_ROOT, prefix: "deno-cache-" });
+await mkdir(SCRATCH_PARENT, { recursive: true });
+const SCRATCH_ROOT = await mkdtemp(join(SCRATCH_PARENT, "m06-sentinel-replay-consumer-"));
+const permissionsArtifact = await buildPermissionsNative(join(SCRATCH_ROOT, "permissions"));
+const DEPENDENCIES_ROOT = realpathSync(join(REPO_ROOT, "node_modules"));
 const SOURCE_ROOT = `${SCRATCH_ROOT}/source`;
 
-const decoder = new TextDecoder();
-
-globalThis.addEventListener("unload", () => {
-  try {
-    Deno.removeSync(SCRATCH_ROOT, { recursive: true });
-  } catch {
-    // Scratch cleanup is best effort; the snapshot stays outside shared source.
-  }
+afterAll(async () => {
+  await rm(SCRATCH_ROOT, { recursive: true, force: true });
 });
 
 const copyTree = async (source: string, destination: string): Promise<void> => {
-  await Deno.mkdir(destination, { recursive: true });
-  for await (const entry of Deno.readDir(source)) {
+  await mkdir(destination, { recursive: true });
+  for (const entry of await readdir(source, { withFileTypes: true })) {
     const from = `${source}/${entry.name}`;
     const to = `${destination}/${entry.name}`;
-    if (entry.isDirectory) await copyTree(from, to);
-    else if (entry.isFile) await Deno.copyFile(from, to);
+    if (entry.isDirectory()) await copyTree(from, to);
+    else if (entry.isFile()) await copyFile(from, to);
   }
 };
 
 await copyTree(`${REPO_ROOT}/src`, `${SOURCE_ROOT}/src`);
-await Deno.mkdir(`${SOURCE_ROOT}/scripts`, { recursive: true });
-await Deno.copyFile(`${REPO_ROOT}/scripts/replay.ts`, `${SOURCE_ROOT}/scripts/replay.ts`);
-await Deno.copyFile(`${REPO_ROOT}/scripts/replay-chat-stream.ts`, `${SOURCE_ROOT}/scripts/replay-chat-stream.ts`);
+await mkdir(`${SOURCE_ROOT}/scripts`, { recursive: true });
+await copyFile(`${REPO_ROOT}/scripts/replay.ts`, `${SOURCE_ROOT}/scripts/replay.ts`);
+await copyFile(`${REPO_ROOT}/scripts/replay-chat-stream.ts`, `${SOURCE_ROOT}/scripts/replay-chat-stream.ts`);
 await copyTree(`${REPO_ROOT}/tests/helpers`, `${SOURCE_ROOT}/tests/helpers`);
 
-const FIXED_ARGS = ["run", "--no-prompt", "--no-config", "--no-remote", "--allow-read=.", "scripts/replay.ts"];
+await copyFile(join(REPO_ROOT, "package.json"), join(SOURCE_ROOT, "package.json"));
+await copyFile(join(REPO_ROOT, "bun.lock"), join(SOURCE_ROOT, "bun.lock"));
+const FIXED_ARGS = ["--no-env-file", "--no-install", "run", "replay-child.ts"];
 
 type CaseFile = Readonly<{ path: string; content: string | Uint8Array }>;
 type ChildResult = Readonly<{ code: number; stdout: string; stderr: string }>;
 
 const materializeCase = async (files: readonly CaseFile[]): Promise<string> => {
-  const dir = await Deno.makeTempDir({ dir: SCRATCH_ROOT, prefix: "case-" });
+  const dir = await mkdtemp(join(SCRATCH_ROOT, "case-"));
   await copyTree(SOURCE_ROOT, dir);
   for (const file of files) {
     const target = `${dir}/${file.path}`;
-    await Deno.mkdir(target.slice(0, target.lastIndexOf("/")), { recursive: true });
-    if (typeof file.content === "string") await Deno.writeTextFile(target, file.content);
-    else await Deno.writeFile(target, file.content);
+    await mkdir(target.slice(0, target.lastIndexOf("/")), { recursive: true });
+    await writeFile(target, file.content);
   }
+  const launcher = [
+    'import { applyLinuxPermissions } from "./src/runtime/permissions-linux.ts";',
+    "applyLinuxPermissions(" + JSON.stringify({ read: [dir, DEPENDENCIES_ROOT], write: [] }) + ", " + JSON.stringify(permissionsArtifact) + ");",
+    'await import("./scripts/replay.ts");',
+  ].join("\n");
+  await writeFile(join(dir, "replay-child.ts"), launcher);
   return dir;
 };
 
@@ -80,25 +87,22 @@ const withCase = async <T>(files: readonly CaseFile[], fn: (dir: string) => Prom
   try {
     return await fn(dir);
   } finally {
-    await Deno.remove(dir, { recursive: true }).catch(() => {});
+    await rm(dir, { recursive: true }).catch(() => {});
   }
 };
 
-/** Invoke exactly the fixed command with a fresh cache and no application environment. */
+/** Invoke the real Bun consumer with no application environment or writable child paths. */
 const runFixedConsumer = async (dir: string): Promise<ChildResult> => {
-  const output = await new Deno.Command(Deno.execPath(), {
-    args: FIXED_ARGS,
+  const child = Bun.spawn([process.execPath, ...FIXED_ARGS], {
     cwd: dir,
-    clearEnv: true,
-    env: { DENO_DIR: CACHE_ROOT, DENO_NO_UPDATE_CHECK: "1" },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  return {
-    code: output.code,
-    stdout: decoder.decode(output.stdout),
-    stderr: decoder.decode(output.stderr),
-  };
+    env: {},
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+  });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  return { code, stdout, stderr };
 };
 
 const TEST_MARKER_PREFIX = "sentinel-replay-test:";
@@ -303,7 +307,7 @@ const chatReplayCase = (options: { trace: FixtureTrace; stream: boolean; request
     report: options.report,
   });
 
-Deno.test("a recorded DeepSeek chat stream is replayed through the real DeepSeek parser and validity rule", async () => {
+test("a recorded DeepSeek chat stream is replayed through the real DeepSeek parser and validity rule", async () => {
   const chunks = [chatChunk({ role: "assistant", content: "" }), chatChunk({ content: "hello" }), chatChunk({}, "stop"), "data: [DONE]\n\n"];
   await withCase(chatReplayCase({ trace: trace([attempt("deepseek", chunks, "eof")]), stream: true, report: true }), async (dir) => {
     const result = await runFixedConsumer(dir);
@@ -318,7 +322,7 @@ Deno.test("a recorded DeepSeek chat stream is replayed through the real DeepSeek
   });
 });
 
-Deno.test("a recorded DeepSeek empty completion is not replayed as a success", async () => {
+test("a recorded DeepSeek empty completion is not replayed as a success", async () => {
   // A tool-call-free, refusal-free, reasoning-only stop is exactly the
   // degenerate completion the gateway's own validity rule refuses.
   const chunks = [chatChunk({ role: "assistant", reasoning_content: "thinking only" }), chatChunk({}, "stop"), "data: [DONE]\n\n"];
@@ -332,7 +336,7 @@ Deno.test("a recorded DeepSeek empty completion is not replayed as a success", a
   });
 });
 
-Deno.test("an interrupted DeepSeek stream replays the real parser's premature EOF as the causal failure", async () => {
+test("an interrupted DeepSeek stream replays the real parser's premature EOF as the causal failure", async () => {
   const chunks = [chatChunk({ role: "assistant" }), chatChunk({ content: "partial" })];
   await withCase(chatReplayCase({ trace: trace([attempt("deepseek", chunks, "eof")]), stream: true, report: true }), async (dir) => {
     const result = await runFixedConsumer(dir);
@@ -344,7 +348,7 @@ Deno.test("an interrupted DeepSeek stream replays the real parser's premature EO
   });
 });
 
-Deno.test("a recorded DeepSeek HTTP error is replayed through the real transport and its mapping is not claimed", async () => {
+test("a recorded DeepSeek HTTP error is replayed through the real transport and its mapping is not claimed", async () => {
   const body = JSON.stringify({ error: { message: "rate limited", type: "rate_limit_error", code: "rate_limit_exceeded" } });
   await withCase(
     chatReplayCase({
@@ -364,7 +368,7 @@ Deno.test("a recorded DeepSeek HTTP error is replayed through the real transport
   );
 });
 
-Deno.test("a buffered DeepSeek completion is normalized and validated by the real gateway functions", async () => {
+test("a buffered DeepSeek completion is normalized and validated by the real gateway functions", async () => {
   await withCase(
     chatReplayCase({
       trace: trace([attempt("deepseek", [chatCompletion({ role: "assistant", content: "hello" }, "stop")], "eof", { content_type: "application/json" })]),
@@ -394,7 +398,7 @@ Deno.test("a buffered DeepSeek completion is normalized and validated by the rea
   );
 });
 
-Deno.test("a multi-attempt recorded chain is replayed in order through the real transports", async () => {
+test("a multi-attempt recorded chain is replayed in order through the real transports", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "hello"), itemDone("resp_fixture", "hello"), completed("resp_fixture", "hello")];
   await withCase(
     replayCase({
@@ -418,7 +422,7 @@ Deno.test("a multi-attempt recorded chain is replayed in order through the real 
   );
 });
 
-Deno.test("a recorded read failure is the causal failure only when the real parser observed it", async () => {
+test("a recorded read failure is the causal failure only when the real parser observed it", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "partial")];
   await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "read_error")]), stream: true }), async (dir) => {
     const result = await runFixedConsumer(dir);
@@ -427,7 +431,7 @@ Deno.test("a recorded read failure is the causal failure only when the real pars
   });
 });
 
-Deno.test("the structured report line is additive and never appears without the opt-in", async () => {
+test("the structured report line is additive and never appears without the opt-in", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "hello"), itemDone("resp_fixture", "hello"), completed("resp_fixture", "hello")];
   await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "cancelled")]), stream: true }), async (dir) => {
     const result = await runFixedConsumer(dir);
@@ -457,7 +461,7 @@ Deno.test("the structured report line is additive and never appears without the 
   );
 });
 
-Deno.test("fixed consumer replays a complete recorded codex stream through the owned response stream", async () => {
+test("fixed consumer replays a complete recorded codex stream through the owned response stream", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "hello"), itemDone("resp_fixture", "hello"), completed("resp_fixture", "hello")];
   await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "cancelled")]), stream: true }), async (dir) => {
     const result = await runFixedConsumer(dir);
@@ -467,7 +471,7 @@ Deno.test("fixed consumer replays a complete recorded codex stream through the o
   });
 });
 
-Deno.test("fixed consumer replays a complete recorded codex stream through the buffered converter", async () => {
+test("fixed consumer replays a complete recorded codex stream through the buffered converter", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "hello"), itemDone("resp_fixture", "hello"), completed("resp_fixture", "hello")];
   await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "cancelled")]), stream: false }), async (dir) => {
     const result = await runFixedConsumer(dir);
@@ -477,7 +481,7 @@ Deno.test("fixed consumer replays a complete recorded codex stream through the b
   });
 });
 
-Deno.test("fixed consumer accepts maximal padded timed v2 framing and rejects each exceeded shared bound", async () => {
+test("fixed consumer accepts maximal padded timed v2 framing and rejects each exceeded shared bound", async () => {
   const chunkBytes = SENTINEL_REPLAY_MAX_UPSTREAM_BYTES / SENTINEL_REPLAY_MAX_UPSTREAM_CHUNKS;
   const chunksPerAttempt = SENTINEL_REPLAY_MAX_UPSTREAM_CHUNKS / SENTINEL_REPLAY_MAX_UPSTREAM_ATTEMPTS;
   assert.equal(chunkBytes % 3, 1, "every separately encoded chunk must require base64 padding");
@@ -570,7 +574,7 @@ Deno.test("fixed consumer accepts maximal padded timed v2 framing and rejects ea
   }
 });
 
-Deno.test("fixed consumer preserves trusted marker order and emits no extra output", async () => {
+test("fixed consumer preserves trusted marker order and emits no extra output", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "x"), completed("resp_fixture", "x")];
   const ids = ["zeta", "alpha", "middle", "A.b:C_d"];
   await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "cancelled")]), stream: true, testIds: ids }), async (dir) => {
@@ -581,7 +585,7 @@ Deno.test("fixed consumer preserves trusted marker order and emits no extra outp
   });
 });
 
-Deno.test("recognized premature EOF before semantic output is reported as the causal failure", async () => {
+test("recognized premature EOF before semantic output is reported as the causal failure", async () => {
   const chunks = [created("resp_fixture"), inProgress("resp_fixture")];
   for (const stream of [true, false]) {
     await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "eof")]), stream }), async (dir) => {
@@ -593,7 +597,7 @@ Deno.test("recognized premature EOF before semantic output is reported as the ca
   }
 });
 
-Deno.test("recognized premature EOF after semantic output is reported as the causal failure", async () => {
+test("recognized premature EOF after semantic output is reported as the causal failure", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "partial"), itemDone("resp_fixture", "partial")];
   for (const stream of [true, false]) {
     await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "eof")]), stream }), async (dir) => {
@@ -605,7 +609,7 @@ Deno.test("recognized premature EOF after semantic output is reported as the cau
   }
 });
 
-Deno.test("premature EOF is never reported as success for a missing terminal", async () => {
+test("premature EOF is never reported as success for a missing terminal", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "partial")];
   for (const stream of [true, false]) {
     await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "eof")]), stream }), async (dir) => {
@@ -616,7 +620,7 @@ Deno.test("premature EOF is never reported as success for a missing terminal", a
   }
 });
 
-Deno.test("malformed and identity-changing events after semantic output are never the causal failure", async () => {
+test("malformed and identity-changing events after semantic output are never the causal failure", async () => {
   // The buffered converter maps every iterator failure to the same fixed 502
   // body and the owned stream maps it to the same fixed failure event, so the
   // exact converter text alone must never turn these into a premature EOF.
@@ -636,7 +640,7 @@ Deno.test("malformed and identity-changing events after semantic output are neve
   }
 });
 
-Deno.test("forged upstream synthetic-looking failures are never the causal failure", async () => {
+test("forged upstream synthetic-looking failures are never the causal failure", async () => {
   const forgedFailed = [
     created("resp_fixture"),
     sse({
@@ -664,7 +668,7 @@ Deno.test("forged upstream synthetic-looking failures are never the causal failu
   }
 });
 
-Deno.test("paid Surplus replay preserves the real provider normalization with a synthetic key", async () => {
+test("paid Surplus replay preserves the real provider normalization with a synthetic key", async () => {
   const chunks = [created("resp_surplus"), delta("resp_surplus", "surplus text"), completed("resp_surplus", "surplus text")];
   for (const stream of [true, false]) {
     await withCase(replayCase({ trace: trace([attempt("surplus", chunks, "cancelled")]), stream }), async (dir) => {
@@ -676,7 +680,7 @@ Deno.test("paid Surplus replay preserves the real provider normalization with a 
   }
 });
 
-Deno.test("paid Metered replay completes through the real provider fetch path", async () => {
+test("paid Metered replay completes through the real provider fetch path", async () => {
   const chunks = [
     created("resp_metered"),
     delta("resp_metered", "metered text"),
@@ -693,7 +697,7 @@ Deno.test("paid Metered replay completes through the real provider fetch path", 
   }
 });
 
-Deno.test("upstream-declared failures and empty completions stay unavailable", async () => {
+test("upstream-declared failures and empty completions stay unavailable", async () => {
   const declaredFailure = [
     created("resp_fixture"),
     sse({
@@ -721,7 +725,7 @@ Deno.test("upstream-declared failures and empty completions stay unavailable", a
   }
 });
 
-Deno.test("completed responses without real semantic output are never successful", async () => {
+test("completed responses without real semantic output are never successful", async () => {
   // The gateway rejects a committed response.completed with no semantic event
   // (prepareResponsesAttempt), and the actual converted output must also carry
   // completed status, response identity and semantic content reported by the
@@ -758,7 +762,7 @@ Deno.test("completed responses without real semantic output are never successful
   }
 });
 
-Deno.test("malformed recorded SSE is unavailable instead of the expected failure", async () => {
+test("malformed recorded SSE is unavailable instead of the expected failure", async () => {
   const chunks = [created("resp_fixture"), "data: {not-json}\n\n"];
   for (const stream of [true, false]) {
     await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "cancelled")]), stream }), async (dir) => {
@@ -768,7 +772,7 @@ Deno.test("malformed recorded SSE is unavailable instead of the expected failure
   }
 });
 
-Deno.test("truncated, empty, multi-attempt and unsupported attempts are unavailable", async () => {
+test("truncated, empty, multi-attempt and unsupported attempts are unavailable", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "x"), completed("resp_fixture", "x")];
   const cases: readonly (readonly [string, FixtureTrace])[] = [
     ["empty trace", trace([])],
@@ -789,7 +793,7 @@ Deno.test("truncated, empty, multi-attempt and unsupported attempts are unavaila
   }
 });
 
-Deno.test("unsupported request bodies and envelopes are unavailable", async () => {
+test("unsupported request bodies and envelopes are unavailable", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "x"), completed("resp_fixture", "x")];
   const fixtures = trace([attempt("chatgpt_codex", chunks, "cancelled")]);
   const bodies: readonly (readonly [string, string])[] = [
@@ -818,7 +822,7 @@ Deno.test("unsupported request bodies and envelopes are unavailable", async () =
   }
 });
 
-Deno.test("malformed, oversized, escaped and duplicate dispatch metadata are unavailable", async () => {
+test("malformed, oversized, escaped and duplicate dispatch metadata are unavailable", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "x"), completed("resp_fixture", "x")];
   const fixtures = JSON.stringify(trace([attempt("chatgpt_codex", chunks, "cancelled")]));
   const sixtyFiveIds = Array.from({ length: 65 }, (_value, index) => `id-${index}`);
@@ -897,7 +901,7 @@ Deno.test("malformed, oversized, escaped and duplicate dispatch metadata are una
   );
 });
 
-Deno.test("symlinked fixture files and symlinked ancestors are unavailable", async () => {
+test("symlinked fixture files and symlinked ancestors are unavailable", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "x"), completed("resp_fixture", "x")];
   const fixtures = JSON.stringify(trace([attempt("chatgpt_codex", chunks, "cancelled")]));
   const dispatch = metadata("fixtures/request.json", "fixtures/upstream.json", DEFAULT_IDS);
@@ -908,7 +912,7 @@ Deno.test("symlinked fixture files and symlinked ancestors are unavailable", asy
   ];
 
   await withCase(files, async (dir) => {
-    await Deno.symlink("real-request.json", `${dir}/fixtures/request.json`);
+    await symlink("real-request.json", `${dir}/fixtures/request.json`);
     assertUnavailable(await runFixedConsumer(dir), "symlinked request file");
   });
 
@@ -922,13 +926,13 @@ Deno.test("symlinked fixture files and symlinked ancestors are unavailable", asy
       { path: "fixtures/upstream.json", content: fixtures },
     ],
     async (dir) => {
-      await Deno.symlink("fixtures", `${dir}/linkdir`);
+      await symlink("fixtures", `${dir}/linkdir`);
       assertUnavailable(await runFixedConsumer(dir), "symlinked ancestor directory");
     }
   );
 });
 
-Deno.test("no request, upstream or secret-like canary bytes reach stdout or stderr", async () => {
+test("no request, upstream or secret-like canary bytes reach stdout or stderr", async () => {
   const canaryChunks = [created("resp_canary"), delta("resp_canary", CANARY), completed("resp_canary", CANARY)];
   const cleanTrace = trace([attempt("chatgpt_codex", canaryChunks, "cancelled")]);
   await withCase(

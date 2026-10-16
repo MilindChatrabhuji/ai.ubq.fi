@@ -1,10 +1,12 @@
+import type { Kv, KvEntryMaybe } from "#kv";
+import { readFileSync } from "node:fs";
 // Codex auth pool parsing, caching and loading, split out of src/codex.ts.
 
 import { config } from "../config.ts";
 import { markCodexSuccess, releaseCodexRoutingProbe } from "./account-routing.ts";
-import { RoutingAccount } from "./routing-state.ts";
+import { type RoutingAccount } from "./routing-state.ts";
 import { resetCodexAccountRoutingForTest } from "./capacity-routing.ts";
-import { CodexActiveAccountTransitionReason } from "./routing-state.ts";
+import { type CodexActiveAccountTransitionReason } from "./routing-state.ts";
 
 import { getKv } from "../kv.ts";
 import { recordCodexProviderHealth } from "../provider/health.ts";
@@ -18,6 +20,7 @@ const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
+export const CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE = "codex_subscriptions_unavailable";
 export const CODEX_UPSTREAM_DEGRADED_ERROR_CODE = "codex_upstream_degraded";
 export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
 export const CODEX_AUTH_REAUTH_MESSAGE = "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";
@@ -264,8 +267,8 @@ const codexAuthWarningForError = (error: unknown): string | null =>
     : null;
 
 type CodexAuthPoolEntry = {
-  kv: Deno.Kv | null;
-  entry: Deno.KvEntryMaybe<CodexAuthPoolState> | null;
+  kv: Kv | null;
+  entry: KvEntryMaybe<CodexAuthPoolState> | null;
   pool: CodexAuthPoolState;
 };
 
@@ -494,12 +497,12 @@ const loadAuthSeedFromEnv = (): CodexAuthState => {
 
 const loadAuthSeedFromDisk = (): CodexAuthState => {
   if (!config.isDeploy) {
-    const home = (Deno as unknown as { homeDir?: () => string | null }).homeDir?.() ?? Deno.env.get("HOME");
+    const home = process.env.HOME;
     if (!home) {
       throw new CodexError("Could not resolve home directory for ~/.codex/auth.json.", "codex_auth_invalid", 503);
     }
     try {
-      const raw = Deno.readTextFileSync(`${home}/.codex/auth.json`);
+      const raw = readFileSync(`${home}/.codex/auth.json`, "utf8");
       const parsed = JSON.parse(raw) as unknown;
       const tokenData = parseCodexAuthFromAuthJson(parsed);
       if (!tokenData) {
@@ -538,8 +541,8 @@ const poolFromSeed = (auth: CodexAuthState): CodexAuthPoolState => ({
 const loadedAuthPoolEntry = (
   pool: CodexAuthPoolState,
   generationAtStart: number,
-  kv: Deno.Kv | null,
-  entry: Deno.KvEntryMaybe<CodexAuthPoolState> | null
+  kv: Kv | null,
+  entry: KvEntryMaybe<CodexAuthPoolState> | null
 ): CodexAuthPoolEntry => {
   if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
     return { kv: null, entry: null, pool: cachedAuthPool };

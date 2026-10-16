@@ -1,3 +1,5 @@
+import { readdir, realpath, rm, stat } from "node:fs/promises";
+import { missing } from "./io.ts";
 /**
  * Release retention for the immutable deploy paths.
  *
@@ -35,9 +37,9 @@ export type ReleasePruneOptions = Readonly<{
 
 const realPathOrNull = async (path: string): Promise<string | null> => {
   try {
-    return await Deno.realPath(path);
+    return await realpath(path);
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return null;
+    if (missing(error)) return null;
     throw error;
   }
 };
@@ -64,13 +66,13 @@ export const pruneReleases = async (options: ReleasePruneOptions = {}): Promise<
   const pinned = new Set(pins.flatMap((pin) => [pin.candidate, pin.prior]));
 
   const releases: { name: string; path: string; modifiedAt: number }[] = [];
-  for await (const entry of Deno.readDir(store)) {
-    if (!entry.isDirectory || !RELEASE_NAME.test(entry.name)) continue;
+  for (const entry of await readdir(store, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !RELEASE_NAME.test(entry.name)) continue;
     const path = `${store}/${entry.name}`;
     // A name that resolves elsewhere was replaced by a link; leave it alone.
     if ((await realPathOrNull(path)) !== path) continue;
-    const stat = await Deno.stat(path);
-    releases.push({ name: entry.name, path, modifiedAt: stat.mtime?.getTime() ?? 0 });
+    const info = await stat(path);
+    releases.push({ name: entry.name, path, modifiedAt: info.mtime.getTime() });
   }
 
   releases.sort((left, right) => right.modifiedAt - left.modifiedAt || left.name.localeCompare(right.name));
@@ -83,7 +85,7 @@ export const pruneReleases = async (options: ReleasePruneOptions = {}): Promise<
       kept.push(release.name);
       continue;
     }
-    if (!options.dryRun) await Deno.remove(release.path, { recursive: true });
+    if (!options.dryRun) await rm(release.path, { recursive: true });
     removed.push(release.name);
   }
   return { removed, kept };

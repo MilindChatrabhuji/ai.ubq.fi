@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { type Kv } from "#kv";
 // Regression coverage for the capacity-exhausted banked-reset recovery fix
 // (merge fe8c8fa1, source 1ccfeb4e). A subscription whose quota exhaustion is
 // known only from a capacity observation must stay half-open: routing admits a
@@ -10,7 +12,7 @@ import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_AUTH_POOL_KV_KEY,
   CODEX_CAPACITY_ROUTING_MAX_AGE_MS,
-  CodexAuthPoolState,
+  type CodexAuthPoolState,
   RoutingKv,
   claimCodexRoutingProbe,
   codexCredentialVersion,
@@ -139,9 +141,9 @@ const markFreshStableQuotaBlock = async (kv: RoutingKv, now: number, slotOverrid
   return { account, freshDeadline, classBlock };
 };
 
-Deno.test("a capacity-exhausted subscription with no class circuit admits a bounded probe instead of a local dead end", async () => {
+test("a capacity-exhausted subscription with no class circuit admits a bounded probe instead of a local dead end", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -171,9 +173,9 @@ Deno.test("a capacity-exhausted subscription with no class circuit admits a boun
   }
 });
 
-Deno.test("a capacity exhaustion with a future reset deadline is the blocked cohort identity", async () => {
+test("a capacity exhaustion with a future reset deadline is the blocked cohort identity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -200,9 +202,9 @@ Deno.test("a capacity exhaustion with a future reset deadline is the blocked coh
   }
 });
 
-Deno.test("a successful claimed probe clears the stuck reset ambiguity", async () => {
+test("a successful claimed probe clears the stuck reset ambiguity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -230,9 +232,9 @@ Deno.test("a successful claimed probe clears the stuck reset ambiguity", async (
   }
 });
 
-Deno.test("a fresh stable 429 supersedes an absent observation so the reset fence can arm", async () => {
+test("a fresh stable 429 supersedes an absent observation so the reset fence can arm", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -253,9 +255,9 @@ Deno.test("a fresh stable 429 supersedes an absent observation so the reset fenc
   }
 });
 
-Deno.test("a fresh stable 429 supersedes an expired non-stable observation so the reset fence can arm", async () => {
+test("a fresh stable 429 supersedes an expired non-stable observation so the reset fence can arm", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -279,9 +281,9 @@ Deno.test("a fresh stable 429 supersedes an expired non-stable observation so th
   }
 });
 
-Deno.test("an unresolved prior observation keeps the reset fence conservative", async () => {
+test("an unresolved prior observation keeps the reset fence conservative", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -302,9 +304,9 @@ Deno.test("an unresolved prior observation keeps the reset fence conservative", 
   }
 });
 
-Deno.test("an expired stable observation stays lookup-only instead of arming a new reset fence", async () => {
+test("an expired stable observation stays lookup-only instead of arming a new reset fence", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -329,9 +331,9 @@ Deno.test("an expired stable observation stays lookup-only instead of arming a n
   }
 });
 
-Deno.test("a capacity observation that is not fresh never fabricates a probe identity", async () => {
+test("a capacity observation that is not fresh never fabricates a probe identity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -354,9 +356,9 @@ Deno.test("a capacity observation that is not fresh never fabricates a probe ide
   }
 });
 
-Deno.test("an overage-allowed account routes the capacity exhaustion as a bounded probe without materializing a block", async () => {
+test("an overage-allowed account routes the capacity exhaustion as a bounded probe without materializing a block", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   resetOverageUsageCacheForTest();
@@ -374,7 +376,7 @@ Deno.test("an overage-allowed account routes the capacity exhaustion as a bounde
     await seedCapacityObservation({ snapshotAtMs: now + 1, resetAtMs, usedPercent: 100 });
 
     // The operator explicitly allows overage for this subscription.
-    await writeOverageUsage(kv as unknown as Deno.Kv, await sha256Hex(auth.account_id), true);
+    await writeOverageUsage(kv as unknown as Kv, await sha256Hex(auth.account_id), true);
     resetOverageUsageCacheForTest();
     await loadOverageUsageSettings(singlePool, true);
     assert.equal(overageUsageAllowedSync(await routingAccountIdHash(auth.account_id)), true);
@@ -400,9 +402,9 @@ Deno.test("an overage-allowed account routes the capacity exhaustion as a bounde
   }
 });
 
-Deno.test("one subscription's overage allowance never changes its sibling's blocked identity", async () => {
+test("one subscription's overage allowance never changes its sibling's blocked identity", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   resetOverageUsageCacheForTest();
@@ -454,7 +456,7 @@ Deno.test("one subscription's overage allowance never changes its sibling's bloc
       ],
       now + 1
     );
-    await writeOverageUsage(kv as unknown as Deno.Kv, await sha256Hex("one"), true);
+    await writeOverageUsage(kv as unknown as Kv, await sha256Hex("one"), true);
     resetOverageUsageCacheForTest();
     await loadOverageUsageSettings(twoPool, true);
 

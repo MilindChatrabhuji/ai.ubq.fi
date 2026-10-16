@@ -1,4 +1,6 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { withRejectionTerminalLog, withTerminalRequestLog } from "../src/handler/terminal-log.ts";
 import { handleTerminalRoute } from "../src/handler/terminal-route.ts";
 import { setInferenceAdmissionControllerForTest } from "../src/handler/admission.ts";
@@ -72,7 +74,7 @@ const sampleEvents = async (events: readonly RequestEvent[]) => {
   return metrics.sample({ identity, windowStart: start, windowEnd: start + 30_000 });
 };
 
-Deno.test("terminal admission: actual authentication refusal is excluded with complete journal coverage", async () => {
+test("terminal admission: actual authentication refusal is excluded with complete journal coverage", async () => {
   const { response, events } = await captureEvents(() =>
     handleTerminalRoute(
       new Request("https://fixture.invalid/v1/responses", { method: "POST", body: "{}" }),
@@ -94,7 +96,7 @@ Deno.test("terminal admission: actual authentication refusal is excluded with co
   assert.equal(sample.requestCount, 0);
 });
 
-Deno.test("terminal admission: rejection wrapper preserves explicit stages and generic logger remains unknown", async () => {
+test("terminal admission: rejection wrapper preserves explicit stages and generic logger remains unknown", async () => {
   for (const admissionStage of ["pre_admission", "accepted"] as const) {
     const { events } = await captureEvents(() =>
       withRejectionTerminalLog(new Response("fixture rejection", { status: 401 }), "responses", {
@@ -118,7 +120,7 @@ Deno.test("terminal admission: rejection wrapper preserves explicit stages and g
   assert.equal((await sampleEvents(events)).coverage, "incomplete");
 });
 
-Deno.test("terminal admission: accepted cancellation remains in the real producer-reader cohort without dispatch", async () => {
+test("terminal admission: accepted cancellation remains in the real producer-reader cohort without dispatch", async () => {
   const token = "terminal-admission-fixture";
   const tokens = config.authTokens as Set<string>;
   assert.equal(tokens.has(token), false);
@@ -128,10 +130,10 @@ Deno.test("terminal admission: accepted cancellation remains in the real produce
   let dispatched = 0;
   tokens.add(token);
   setInferenceAdmissionControllerForTest(controller);
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     dispatched += 1;
     return Promise.reject(new Error("fixture must never dispatch"));
-  };
+  });
   try {
     const { response, events } = await captureEvents(
       () =>

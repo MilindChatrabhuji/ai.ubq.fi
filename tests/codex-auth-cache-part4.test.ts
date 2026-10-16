@@ -1,14 +1,19 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import { type Kv } from "#kv";
 // codex-auth-cache suite, part 4 of 4: tests moved out of tests/codex-auth-cache.test.ts.
 
 import assert from "node:assert/strict";
 import {
+  installHarness,
+  cleanupHarness,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
   CODEX_BANKED_RESET_LEASE_MS,
   CODEX_HALF_OPEN_LEASE_MS,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
-  CodexBankedResetConfig,
-  CodexUsageResetProvider,
+  type CodexBankedResetConfig,
+  type CodexUsageResetProvider,
   auth,
   bankedResetRequestOptions,
   config,
@@ -30,7 +35,7 @@ import {
   stableBankedResetRetryAfter,
 } from "./helpers/codex-auth-cache-harness.ts";
 
-Deno.test("a failed banked-reset probe gets a bounded retry and eventually reopens the account", async () => {
+test("a failed banked-reset probe gets a bounded retry and eventually reopens the account", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -45,7 +50,7 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     inferenceAccounts.push(accountId);
@@ -58,12 +63,12 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
         headers: { "Content-Type": "application/json", "Retry-After": delayedPropagationRetryAfter },
       })
     );
-  };
+  });
 
   const bankedReset = {
     config: liveBankedResetConfig(),
     provider: reset.provider,
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
     newOwnerToken: () => "owner-failed-probe",
   };
@@ -118,7 +123,7 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
   }
 });
 
-Deno.test("a stale verified reset recovers the existing account without another reset", async () => {
+test("a stale verified reset recovers the existing account without another reset", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -131,7 +136,7 @@ Deno.test("a stale verified reset recovers the existing account without another 
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(
       inferenceCalls <= 2
@@ -141,12 +146,12 @@ Deno.test("a stale verified reset recovers the existing account without another 
           })
         : new Response(JSON.stringify({ id: "recovered-stale-reset" }), { status: 200 })
     );
-  };
+  });
 
   const bankedReset = {
     config: liveBankedResetConfig(),
     provider: reset.provider,
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => fixedStartMs,
     newOwnerToken: () => "owner-stale-verified-reset",
   };
@@ -187,7 +192,7 @@ Deno.test("a stale verified reset recovers the existing account without another 
   }
 });
 
-Deno.test("all-blocked routing recovers an unknown reset while new submissions are disabled", async () => {
+test("all-blocked routing recovers an unknown reset while new submissions are disabled", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -201,7 +206,7 @@ Deno.test("all-blocked routing recovers an unknown reset while new submissions a
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(
       inferenceCalls === 1
@@ -211,7 +216,7 @@ Deno.test("all-blocked routing recovers an unknown reset while new submissions a
           })
         : new Response(JSON.stringify({ id: "recovered-after-unknown" }), { status: 200 })
     );
-  };
+  });
 
   const liveConfig = liveBankedResetConfig();
   const disabledConfig: CodexBankedResetConfig = { ...liveConfig, enabled: false, mode: "disabled" };
@@ -219,7 +224,7 @@ Deno.test("all-blocked routing recovers an unknown reset while new submissions a
     config: liveConfig,
     reloadConfig: () => (live ? liveConfig : disabledConfig),
     provider: reset.provider,
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => now,
     newOwnerToken: () => "owner-recovery",
   };
@@ -245,7 +250,7 @@ Deno.test("all-blocked routing recovers an unknown reset while new submissions a
   }
 });
 
-Deno.test("an all-blocked cohort with credit only on the inactive sibling elects it after the reset", async () => {
+test("an all-blocked cohort with credit only on the inactive sibling elects it after the reset", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -269,7 +274,7 @@ Deno.test("an all-blocked cohort with credit only on the inactive sibling elects
     assert.equal(bootstrapped.accounts[0]?.auth.account_id, "account-two");
     await seedStableBankedResetBlock("account-two");
 
-    globalThis.fetch = (input, init) => {
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = new Request(input, init);
       const accountId = request.headers.get("chatgpt-account-id") ?? "";
       if (request.url.endsWith("/backend-api/codex/responses")) {
@@ -289,7 +294,7 @@ Deno.test("an all-blocked cohort with credit only on the inactive sibling elects
         return Promise.resolve(Response.json({ code: "reset", windows_reset: 1 }));
       }
       throw new Error(`unexpected request ${request.method} ${request.url}`);
-    };
+    });
 
     const armed = await fetchCodexResponses({ input: "inactive-sibling-credit-arm" }, bankedResetRequestOptions("inactive-sibling-credit-arm"));
     assert.equal(armed.status, 429);
@@ -315,7 +320,7 @@ Deno.test("an all-blocked cohort with credit only on the inactive sibling elects
   }
 });
 
-Deno.test("a concurrent active switch during a verified reset prevents stale recovery inference", async () => {
+test("a concurrent active switch during a verified reset prevents stale recovery inference", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -327,7 +332,7 @@ Deno.test("a concurrent active switch during a verified reset prevents stale rec
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -335,7 +340,7 @@ Deno.test("a concurrent active switch during a verified reset prevents stale rec
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
       })
     );
-  };
+  });
   const provider: CodexUsageResetProvider = {
     ...baseReset.provider,
     verifyApplied: async () => {
@@ -355,7 +360,7 @@ Deno.test("a concurrent active switch during a verified reset prevents stale rec
         bankedReset: {
           config: liveBankedResetConfig(),
           provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-concurrent-active-switch",
         },
@@ -375,3 +380,6 @@ Deno.test("a concurrent active switch during a verified reset prevents stale rec
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
   }
 });
+
+beforeEach(installHarness);
+afterEach(cleanupHarness);
