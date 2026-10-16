@@ -564,10 +564,21 @@ DSH's `workspace-write` file sandbox permits writes only under the workspace roo
 `gpg: can't connect to the gpg-agent: Operation not permitted` while `GNUPGHOME` stayed at `~/.gnupg`. Committing
 therefore required a per-commit `danger-full-access` escalation.
 
-`~/bin/gpg-dsh` is installed and set as `gpg.program`. It uses the real homedir when that is genuinely writable and
-otherwise seeds a homedir under `$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg` (public keyring plus `private-keys-v1.d`),
-re-seeding when `pubring.kbx` changes. Interactive shells take the passthrough branch and are unaffected.
-`git config --global gpg.program ~/bin/gpg-dsh`.
+`~/bin/gpg-dsh` is installed from `ops/gpg-dsh.sh` and set as `gpg.program`. It uses the real homedir when that is
+genuinely writable (a probe file can be created there). Otherwise it signs from a homedir seeded under
+`$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
+Interactive shells take the passthrough branch and are unaffected.
+`install -m 0755 ops/gpg-dsh.sh ~/bin/gpg-dsh && git config --global gpg.program ~/bin/gpg-dsh`.
+
+Every seeded file invalidates the seed, not `pubring.kbx` alone. This entry first said the seed was refreshed only
+"when `pubring.kbx` changes", and the installed helper compared only that file's mtime and size. Deleting a secret key
+or changing its passphrase leaves `pubring.kbx` untouched, so the old private key stayed usable from the seed
+(corrected 2026-10-16, #587). Every sandboxed call now records the name and SHA-256 digest of each seeded file and
+compares that manifest with the one recorded when the seed was built. Any difference, including a deleted, added, or
+re-protected private key, stops the seed's `gpg-agent`, discards the seed, and rebuilds it before gpg runs. The
+manifest is written only after a complete copy, so an interrupted rebuild is rebuilt on the next call. The seed and
+its `dsh-gnupg` parent must be real directories owned by the caller and are forced to mode 0700; anything else fails
+closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
 
 Reason: the sandbox exposes no configuration hook for adding writable roots — `writableRoots` takes only the policy and
 hard-codes the three roots — so the only durable fix inside the existing policy is to put the signing homedir where the
@@ -576,8 +587,10 @@ than signing needs.
 
 Reversal risk: pointing `gpg.program` back at the real `gpg` restores the denial under `workspace-write`; copying the
 private key to a stable non-writable-root location such as `~/.local/share` looks persistent but is unwritable under the
-restricted policy and silently reintroduces the escalation. The fallback homedir is per-boot (`/var/folders`), which is
-intended: it is re-seeded from `~/.gnupg` on demand rather than becoming a second long-lived key store.
+restricted policy and silently reintroduces the escalation. The seed is not trusted to disappear by itself: `$TMPDIR`
+is not cleared at boot for every caller, and an unset `TMPDIR` falls back to `/tmp`. The manifest check on every call
+is what keeps the seed from becoming a second long-lived key store. Going back to a `pubring.kbx`-only trigger lets a
+deleted or re-protected secret key keep signing from the seed.
 
 ## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
 
