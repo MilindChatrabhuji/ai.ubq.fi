@@ -169,7 +169,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const badge = document.createElement("span");
       badge.dataset.providerHealthBadge = configured ? (state ?? "unknown") : "unknown";
       badge.textContent = configured
-        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.stale === true })}`
+        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.health?.stale === true })}`
         : "Not configured";
       badges.append(tier, badge);
       body.append(name, badges);
