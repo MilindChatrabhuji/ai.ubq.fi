@@ -639,13 +639,15 @@ test("/v1/models hides the models of a switched-off provider", async () => {
 
 test("a switched-off Lithos provider leaves an explicit Responses id to availability checks", async () => {
   const previousLithosKey = process.env.LITHOSAI_API_KEY;
+  const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
   const originalFetch = globalThis.fetch;
   let upstreamCalls = 0;
   process.env.LITHOSAI_API_KEY = "fixture-lithos-key";
-  globalThis.fetch = (_input: RequestInfo | URL) => {
+  Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
+  globalThis.fetch = ((_input: RequestInfo | URL, _init?: RequestInit) => {
     upstreamCalls += 1;
     return Promise.resolve(Response.json({}));
-  };
+  }) as typeof fetch;
   const kv = new SelectionKv();
   seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
   try {
@@ -655,7 +657,8 @@ test("a switched-off Lithos provider leaves an explicit Responses id to availabi
         new Request("https://ai.ubq.fi/v1/responses", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: LITHOS_MODEL_IDS[0], input: "hi", stream: false }),
+          // Kimi makes the Lithos ownership explicit for this provider-selection case.
+          body: JSON.stringify({ model: LITHOS_MODEL_IDS[4], input: "hi", stream: false }),
         })
       );
       assert.equal(upstreamCalls, 0);
@@ -667,6 +670,8 @@ test("a switched-off Lithos provider leaves an explicit Responses id to availabi
     resetRuntimeConfigCacheForTest();
     if (previousLithosKey === undefined) delete process.env.LITHOSAI_API_KEY;
     else process.env.LITHOSAI_API_KEY = previousLithosKey;
+    if (previousOpenRouterKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
+    else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
   }
 });
 
