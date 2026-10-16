@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { Kv } from "#kv";
 import assert from "node:assert/strict";
 import { config } from "../src/config.ts";
 import { parseCodexAuthFromAuthJson, parseCodexAuthPool, resetCodexAuthCacheForTest } from "../src/codex/auth.ts";
@@ -47,7 +49,7 @@ const fixture = async (run: () => Promise<void>): Promise<void> => {
   }
 };
 
-Deno.test("official access-only leaf stays out of managed uploads and donor candidates", async () => {
+test("official access-only leaf stays out of managed uploads and donor candidates", async () => {
   await fixture(async () => {
     const document = leaf();
     const parsed = parseExternalNativeCodexDocument(document);
@@ -67,7 +69,7 @@ Deno.test("official access-only leaf stays out of managed uploads and donor cand
   });
 });
 
-Deno.test("external leaf requires one access JWT with exact user and workspace claims", () => {
+test("external leaf requires one access JWT with exact user and workspace claims", () => {
   const valid = leaf();
   const tokens = valid.tokens as Record<string, unknown>;
   for (const changed of [
@@ -81,7 +83,7 @@ Deno.test("external leaf requires one access JWT with exact user and workspace c
 });
 
 for (const home of [PRIMARY, NAMED]) {
-  Deno.test(`external adoption preserves the sibling at fixed home ${home}`, async () => {
+  test(`external adoption preserves the sibling at fixed home ${home}`, async () => {
     await fixture(async () => {
       assert.deepEqual(nativeCodexConsumerHomes(), [PRIMARY, NAMED]);
       const pool = initialPool();
@@ -94,7 +96,7 @@ for (const home of [PRIMARY, NAMED]) {
   });
 }
 
-Deno.test("external adoption refuses valid managed accounts, user switches and generation rollback", async () => {
+test("external adoption refuses valid managed accounts, user switches and generation rollback", async () => {
   await fixture(async () => {
     const pool = initialPool();
     const valid = { ...pool, accounts: [managed(token(1800)), pool.accounts[1]] };
@@ -112,18 +114,21 @@ Deno.test("external adoption refuses valid managed accounts, user switches and g
   });
 });
 
-Deno.test("external native renewal adopts a new leaf with CAS and never calls refresh or OAuth", async () => {
+test("external native renewal adopts a new leaf with CAS and never calls refresh or OAuth", async () => {
   await fixture(async () => {
     const first = await planExternalNativeCodexAdoption(initialPool(), leaf(token(3600)), NAMED, Date.now(), false);
     const kv = new AuthKv(first);
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     let document = leaf(token(7200));
     let forbidden = 0;
     const previousFetch = globalThis.fetch;
-    globalThis.fetch = () => {
-      forbidden += 1;
-      return Promise.reject(new Error("OAuth forbidden"));
-    };
+    globalThis.fetch = Object.assign(
+      () => {
+        forbidden += 1;
+        return Promise.reject(new Error("OAuth forbidden"));
+      },
+      { preconnect: fetch.preconnect }
+    );
     setNativeCodexAuthHooksForTest({
       os: "darwin",
       getEnv: (name) => (name === "HOME" ? HOME : undefined),
@@ -134,7 +139,7 @@ Deno.test("external native renewal adopts a new leaf with CAS and never calls re
       },
     });
     try {
-      const next = await refreshAuthCoordinated({ kv: kv as unknown as Deno.Kv, entry: null, pool: first, auth: first.accounts[0] });
+      const next = await refreshAuthCoordinated({ kv: kv as unknown as Kv, entry: null, pool: first, auth: first.accounts[0] });
       assert.equal(next.access_token, (document.tokens as Record<string, unknown>).access_token);
       assert.equal(next.refresh_token, "");
       assert.deepEqual(kv.auth.accounts[1], first.accounts[1]);
@@ -150,16 +155,19 @@ Deno.test("external native renewal adopts a new leaf with CAS and never calls re
 });
 
 for (const source of ["missing", "managed"] as const) {
-  Deno.test(`fixed external-only entrypoint refuses initial unregistered ${source} file without provider calls or writes`, async () => {
+  test(`fixed external-only entrypoint refuses initial unregistered ${source} file without provider calls or writes`, async () => {
     await fixture(async () => {
       const pool = initialPool();
       const before = structuredClone(pool);
       let forbidden = 0;
       const originalFetch = globalThis.fetch;
-      globalThis.fetch = () => {
-        forbidden += 1;
-        return Promise.reject(new Error("Provider calls and OAuth forbidden"));
-      };
+      globalThis.fetch = Object.assign(
+        () => {
+          forbidden += 1;
+          return Promise.reject(new Error("Provider calls and OAuth forbidden"));
+        },
+        { preconnect: fetch.preconnect }
+      );
       try {
         await assert.rejects(
           runExternalNativeRepair(["--apply", "--json", "--auth-json", `${PRIMARY}/auth.json`, "--kv=/synthetic/explicit-kv"], {
@@ -196,7 +204,7 @@ for (const source of ["missing", "managed"] as const) {
   });
 }
 
-Deno.test("registered external repair refuses missing or managed files before peer collection", async () => {
+test("registered external repair refuses missing or managed files before peer collection", async () => {
   await fixture(async () => {
     const pool = await planExternalNativeCodexAdoption(initialPool(), leaf(), PRIMARY, Date.now(), false);
     const flags = { apply: true, authJson: `${PRIMARY}/auth.json`, kv: "/synthetic/kv", codexBaseUrl: "https://synthetic.invalid" };
@@ -216,7 +224,7 @@ Deno.test("registered external repair refuses missing or managed files before pe
   });
 });
 
-Deno.test("external repair rechecks leaf bytes and honors pool CAS without peers", async () => {
+test("external repair rechecks leaf bytes and honors pool CAS without peers", async () => {
   await fixture(async () => {
     const text = JSON.stringify(leaf());
     const local = { pool: initialPool(), versionstamp: "expected-version" };

@@ -1,3 +1,5 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
 // Integration coverage for the no-reset overage fallback: when a fully
 // exhausted cohort cannot redeem a banked reset, the default (resets-first)
 // behavior allows exactly one bounded overage probe for the active blocked
@@ -6,6 +8,8 @@
 
 import assert from "node:assert/strict";
 import {
+  installHarness,
+  cleanupHarness,
   auth,
   bankedResetRequestOptions,
   config,
@@ -46,7 +50,7 @@ const runBlockedRequest = async (
   resetCodexAccountRoutingForTest();
   resetOverageUsageCacheForTest();
   await seedStableBankedResetBlock("account-one");
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     if (request.url.endsWith("/backend-api/codex/responses")) {
@@ -62,7 +66,7 @@ const runBlockedRequest = async (
       return Promise.resolve(Response.json({ code: "reset", windows_reset: 1 }));
     }
     throw new Error(`unexpected request ${request.method} ${request.url}`);
-  };
+  });
   console.info = (...args: unknown[]) => logs.push(args.map(String).join(" "));
   try {
     const response = await fetchCodexResponses({ input: requestId }, bankedResetRequestOptions(requestId));
@@ -79,7 +83,7 @@ const runBlockedRequest = async (
   }
 };
 
-Deno.test("a blocked cohort with no redeemable credit falls back to exactly one bounded overage probe", async () => {
+test("a blocked cohort with no redeemable credit falls back to exactly one bounded overage probe", async () => {
   const { response, calls, logs } = await runBlockedRequest("overage-fallback-empty-inventory", () => Response.json({ available_count: 0, credits: [] }));
 
   assert.equal(response.status, 200);
@@ -97,7 +101,7 @@ Deno.test("a blocked cohort with no redeemable credit falls back to exactly one 
   );
 });
 
-Deno.test("a redeemable credit arms the live cohort and never falls back while arming is pending", async () => {
+test("a redeemable credit arms the live cohort and never falls back while arming is pending", async () => {
   const { response, calls, logs } = await runBlockedRequest("overage-fallback-arming-pending", () =>
     Response.json({
       available_count: 1,
@@ -122,3 +126,6 @@ Deno.test("a redeemable credit arms the live cohort and never falls back while a
   );
   assert.ok(logs.some((line) => line.includes("codex_banked_reset_preflight") && line.includes('"reason":"live_armed"')));
 });
+
+beforeEach(installHarness);
+afterEach(cleanupHarness);

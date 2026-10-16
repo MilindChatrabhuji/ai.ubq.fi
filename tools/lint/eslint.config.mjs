@@ -6,6 +6,7 @@ import eslint from "@eslint/js";
 import tsEslint from "typescript-eslint";
 import sonarjs from "eslint-plugin-sonarjs";
 import checkFile from "eslint-plugin-check-file";
+import globals from "globals";
 import path from "node:path";
 
 // DIVERGENCE: the stock template's boolean-variable naming rule is disabled in
@@ -24,6 +25,8 @@ export default tsEslint.config(
     // thousands of duplicate files.
     ignores: [
       "node_modules/**",
+      ".bun-cache/**",
+      ".tmp/**",
       "**/*.d.ts", // Trap 2.4: .deno-types.d.ts is generated and ~23k lines
       "eslint.config.mjs",
       "lib/**",
@@ -39,6 +42,17 @@ export default tsEslint.config(
       "logs/**",
       "benchmark-runs/**",
     ],
+  },
+  {
+    // Preserve first-party browser JavaScript checks after removing deno lint.
+    files: ["static/**/*.js"],
+    extends: [eslint.configs.recommended],
+    languageOptions: {
+      globals: globals.browser,
+    },
+    rules: {
+      "no-empty": ["error", { allowEmptyCatch: true }],
+    },
   },
   {
     files: ["**/*.ts"],
@@ -342,5 +356,43 @@ export default tsEslint.config(
     // -- both would delete the case under test.
     files: ["tests/codex-banked-reset-provider.test.ts"],
     rules: { "sonarjs/no-clear-text-protocols": "off" },
+  },
+  {
+    // DIVERGENCE: these compatibility decoders intentionally validate each
+    // legacy tag and container shape in one auditable dispatch function.
+    // Measured after the Bun migration: one complexity finding in each file;
+    // splitting the state machines would obscure the byte-ordering contract.
+    files: ["src/storage/key-compatibility.ts", "src/storage/value-compatibility.ts"],
+    rules: { "sonarjs/cognitive-complexity": "off" },
+  },
+  {
+    // DIVERGENCE: the native KV facade implements the generic SDK list method
+    // and Bun's synchronous close/dispose surface. Measured: one generic API
+    // finding here and 22 await/unbound-method findings in its contract test.
+    files: ["src/storage/native-kv.ts"],
+    rules: { "@typescript-eslint/no-unnecessary-type-parameters": "off" },
+  },
+  {
+    // DIVERGENCE: passkey responses cross an untrusted JSON boundary. The
+    // WebAuthn library's declaration narrows nested response fields more than
+    // malformed request bodies permit at runtime. Measured: three guards,
+    // each covered by rejection tests for unusable responses/attestations.
+    files: ["src/auth/passkeys.ts"],
+    rules: { "@typescript-eslint/no-unnecessary-condition": "off" },
+  },
+  {
+    files: ["tests/storage-bun-kv.test.ts"],
+    rules: {
+      "@typescript-eslint/await-thenable": "off",
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "@typescript-eslint/unbound-method": "off",
+    },
+  },
+  {
+    // DIVERGENCE: the upgrade callback depth is imposed by ws's event API.
+    // Measured: exactly two findings, both cleanup callbacks scoped to one
+    // accepted socket; extracting them would widen mutable socket ownership.
+    files: ["src/runtime/http-upgrade.ts"],
+    rules: { "sonarjs/no-nested-functions": "off" },
   }
 );

@@ -1,3 +1,6 @@
+import type { KvU64 } from "#kv";
+import type { AtomicOperation, Kv, KvCommitError, KvCommitResult, KvEntry, KvEntryMaybe, KvKey, KvListIterator, KvListOptions, KvListSelector } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -56,81 +59,81 @@ const WINDOW_MS = 60_000;
 
 type StoredEntry = Readonly<{ value: unknown; versionstamp: string }>;
 type SetOptions = Readonly<{ expireIn?: number }>;
-type PendingWrite = { type: "set"; key: Deno.KvKey; value: unknown; options?: SetOptions } | { type: "delete"; key: Deno.KvKey };
+type PendingWrite = { type: "set"; key: KvKey; value: unknown; options?: SetOptions } | { type: "delete"; key: KvKey };
 
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
-const startsWith = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => Object.is(part, key[index]));
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
+const startsWith = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => Object.is(part, key[index]));
 
-/** A deterministic Deno.Kv stand-in with CAS semantics and a commit-failure switch. */
+/** A deterministic Kv stand-in with CAS semantics and a commit-failure switch. */
 class MapKv {
   readonly store = new Map<string, StoredEntry>();
   readonly expireIn = new Map<string, number>();
   failCommits = false;
   #version = 0;
 
-  seed(key: Deno.KvKey, value: unknown): void {
+  seed(key: KvKey, value: unknown): void {
     this.store.set(encodeKey(key), { value, versionstamp: this.#nextVersionstamp() });
   }
 
-  value(key: Deno.KvKey): unknown {
+  value(key: KvKey): unknown {
     return this.store.get(encodeKey(key))?.value ?? null;
   }
 
-  get<T = unknown>(key: Deno.KvKey, _options?: SetOptions): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvKey, _options?: SetOptions): Promise<KvEntryMaybe<T>> {
     const entry = this.store.get(encodeKey(key));
-    return Promise.resolve({ key, value: (entry?.value ?? null) as T, versionstamp: entry?.versionstamp ?? null } as Deno.KvEntryMaybe<T>);
+    return Promise.resolve({ key, value: (entry?.value ?? null) as T, versionstamp: entry?.versionstamp ?? null } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown, options?: SetOptions): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, options?: SetOptions): Promise<KvCommitResult> {
     const versionstamp = this.#write(key, value);
     if (options?.expireIn !== undefined) this.expireIn.set(encodeKey(key), options.expireIn);
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.store.delete(encodeKey(key));
     this.expireIn.delete(encodeKey(key));
     return Promise.resolve();
   }
 
-  list<T = unknown>(selector: Deno.KvListSelector, options?: Deno.KvListOptions): Deno.KvListIterator<T> {
+  list<T = unknown>(selector: KvListSelector, options?: KvListOptions): KvListIterator<T> {
     const prefix = "prefix" in selector ? selector.prefix : [];
     const candidates: StoredEntry[] = [];
-    const keys: Deno.KvKey[] = [];
+    const keys: KvKey[] = [];
     for (const [encoded, entry] of this.store) {
-      const key = JSON.parse(encoded) as Deno.KvKey;
+      const key = JSON.parse(encoded) as KvKey;
       if (!startsWith(key, prefix)) continue;
       keys.push(key);
       candidates.push(entry);
     }
     const order = keys.map((_, index) => index).sort((left, right) => encodeKey(keys[left]).localeCompare(encodeKey(keys[right])));
     const limit = typeof options?.limit === "number" ? options.limit : Number.POSITIVE_INFINITY;
-    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<KvEntry<T>> {
       for (const index of order.slice(0, limit)) yield { key: keys[index], value: candidates[index].value as T, versionstamp: candidates[index].versionstamp };
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvListIterator<T>;
     Object.defineProperty(iterator, "cursor", { get: () => "" });
     return iterator;
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
     const writes: PendingWrite[] = [];
     const operation = {
-      check: (entry: { key: Deno.KvKey; versionstamp?: string | null }) => {
+      check: (entry: { key: KvKey; versionstamp?: string | null }) => {
         checks.push({ key: entry.key, versionstamp: entry.versionstamp ?? null });
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, options?: SetOptions) => {
+      set: (key: KvKey, value: unknown, options?: SetOptions) => {
         writes.push({ type: "set", key, value, options });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         writes.push({ type: "delete", key });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         const stale = checks.some((check) => (this.store.get(encodeKey(check.key))?.versionstamp ?? null) !== check.versionstamp);
-        if (this.failCommits || stale) return Promise.resolve({ ok: false } as Deno.KvCommitError);
+        if (this.failCommits || stale) return Promise.resolve({ ok: false } as KvCommitError);
         const versionstamp = this.#nextVersionstamp();
         for (const write of writes) {
           if (write.type === "delete") {
@@ -144,7 +147,7 @@ class MapKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   #nextVersionstamp(): string {
@@ -152,16 +155,16 @@ class MapKv {
     return String(this.#version).padStart(20, "0");
   }
 
-  #write(key: Deno.KvKey, value: unknown): string {
+  #write(key: KvKey, value: unknown): string {
     const versionstamp = this.#nextVersionstamp();
     this.store.set(encodeKey(key), { value, versionstamp });
     return versionstamp;
   }
 }
 
-const kv = (stub: MapKv): Deno.Kv => stub as unknown as Deno.Kv;
+const kv = (stub: MapKv): Kv => stub as unknown as Kv;
 
-const kvU64 = (value: bigint): Deno.KvU64 => ({ value }) as unknown as Deno.KvU64;
+const kvU64 = (value: bigint): KvU64 => ({ value }) as unknown as KvU64;
 
 /** Inventory errors are ordered by the KV listing, so compare them order-insensitively. */
 const sorted = (values: readonly string[]): string[] => [...values].sort((left, right) => left.localeCompare(right));
@@ -222,7 +225,7 @@ const requestRecord = (policy: ApiKeyPolicy, requestId: string, overrides: Parti
   ...overrides,
 });
 
-Deno.test("bounded counter handoff: seeds the baseline and V3 window from the legacy usage count", async () => {
+test("bounded counter handoff: seeds the baseline and V3 window from the legacy usage count", async () => {
   const stub = new MapKv();
   const policy = policyFor();
 
@@ -244,7 +247,7 @@ Deno.test("bounded counter handoff: seeds the baseline and V3 window from the le
   assert.equal(stub.expireIn.get(encodeKey(apiKeyUsageV3WindowKey(policy))), API_KEY_USAGE_V3_RETENTION_MS);
 });
 
-Deno.test("bounded counter handoff: a stored legacy counter outweighs the caller count and never lowers the window", async () => {
+test("bounded counter handoff: a stored legacy counter outweighs the caller count and never lowers the window", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV2Key(policy), kvU64(9n));
@@ -257,7 +260,7 @@ Deno.test("bounded counter handoff: a stored legacy counter outweighs the caller
   assert.equal((stub.value(apiKeyUsageV3WindowKey(policy)) as ApiKeyUsageWindowV3 | null)?.committed_requests, 12);
 });
 
-Deno.test("bounded counter handoff: reconcile updates apply only the legacy delta and count reconciliation runs", async () => {
+test("bounded counter handoff: reconcile updates apply only the legacy delta and count reconciliation runs", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   const seeded = await migrateBoundedCounterHandoff(kv(stub), policy, 4, NOW, true);
@@ -280,7 +283,7 @@ Deno.test("bounded counter handoff: reconcile updates apply only the legacy delt
   assert.equal((stub.value(apiKeyUsageV3WindowKey(policy)) as ApiKeyUsageWindowV3 | null)?.committed_requests, 10);
 });
 
-Deno.test("bounded counter handoff: an unreconciled update clears the reconciliation state", async () => {
+test("bounded counter handoff: an unreconciled update clears the reconciliation state", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   await migrateBoundedCounterHandoff(kv(stub), policy, 4, NOW, true);
@@ -293,7 +296,7 @@ Deno.test("bounded counter handoff: an unreconciled update clears the reconcilia
   assert.equal(baseline.reconciliation_runs, 0);
 });
 
-Deno.test("bounded counter handoff: rejects an out-of-range legacy V2 counter", async () => {
+test("bounded counter handoff: rejects an out-of-range legacy V2 counter", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV2Key(policy), kvU64(BigInt(Number.MAX_SAFE_INTEGER) + 1n));
@@ -302,7 +305,7 @@ Deno.test("bounded counter handoff: rejects an out-of-range legacy V2 counter", 
   assert.equal(stub.value(apiKeyUsageV3WindowKey(policy)), null);
 });
 
-Deno.test("bounded counter handoff: rejects a legacy V2 counter that is not a U64", async () => {
+test("bounded counter handoff: rejects a legacy V2 counter that is not a U64", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV2Key(policy), { value: "not-a-counter" });
@@ -310,7 +313,7 @@ Deno.test("bounded counter handoff: rejects a legacy V2 counter that is not a U6
   await assert.rejects(() => migrateBoundedCounterHandoff(kv(stub), policy, 5, NOW, false), /Legacy V2 API-key counter is invalid: key-alpha/);
 });
 
-Deno.test("bounded counter handoff: rejects a V3 window whose identity does not match the policy", async () => {
+test("bounded counter handoff: rejects a V3 window whose identity does not match the policy", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV3WindowKey(policy), windowRecord(policy, { policy_version: "v3:3600000" }));
@@ -319,7 +322,7 @@ Deno.test("bounded counter handoff: rejects a V3 window whose identity does not 
   assert.equal(stub.value(apiKeyUsageV2MigrationBaselineKey(policy)), null);
 });
 
-Deno.test("bounded counter handoff: rejects an unusable stored baseline", async () => {
+test("bounded counter handoff: rejects an unusable stored baseline", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV2MigrationBaselineKey(policy), { version: 1, key_id: policy.key_id });
@@ -328,7 +331,7 @@ Deno.test("bounded counter handoff: rejects an unusable stored baseline", async 
   await assert.rejects(() => migrateBoundedCounterHandoff(kv(stub), policy, 5, NOW, false), /Bounded counter handoff baseline is invalid: key-alpha/);
 });
 
-Deno.test("bounded counter handoff: rejects an existing baseline whose V3 window is missing", async () => {
+test("bounded counter handoff: rejects an existing baseline whose V3 window is missing", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV2MigrationBaselineKey(policy), baselineRecord(policy, { last_legacy_usage_requests: 2 }));
@@ -336,7 +339,7 @@ Deno.test("bounded counter handoff: rejects an existing baseline whose V3 window
   await assert.rejects(() => migrateBoundedCounterHandoff(kv(stub), policy, 5, NOW, false), /V3 API-key window is missing: key-alpha/);
 });
 
-Deno.test("bounded counter handoff: five lost commits fail closed instead of writing a partial seed", async () => {
+test("bounded counter handoff: five lost commits fail closed instead of writing a partial seed", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.failCommits = true;
@@ -345,7 +348,7 @@ Deno.test("bounded counter handoff: five lost commits fail closed instead of wri
   assert.equal(stub.value(apiKeyUsageV3WindowKey(policy)), null);
 });
 
-Deno.test("bounded counter handoff: a conflicting update commit fails closed as well", async () => {
+test("bounded counter handoff: a conflicting update commit fails closed as well", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV2MigrationBaselineKey(policy), baselineRecord(policy, { last_legacy_usage_requests: 2 }));
@@ -356,15 +359,15 @@ Deno.test("bounded counter handoff: a conflicting update commit fails closed as 
   assert.equal((stub.value(apiKeyUsageV2MigrationBaselineKey(policy)) as ApiKeyUsageV2MigrationBaseline | null)?.last_legacy_usage_requests, 2);
 });
 
-Deno.test("bounded counter handoff: a lost CAS retries and keeps the competing writer's higher count", async () => {
+test("bounded counter handoff: a lost CAS retries and keeps the competing writer's higher count", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   let raced = false;
   const racing = {
-    get: (key: Deno.KvKey, options?: SetOptions) => stub.get(key, options),
-    set: (key: Deno.KvKey, value: unknown, options?: SetOptions) => stub.set(key, value, options),
-    delete: (key: Deno.KvKey) => stub.delete(key),
-    list: (selector: Deno.KvListSelector, options?: Deno.KvListOptions) => stub.list(selector, options),
+    get: (key: KvKey, options?: SetOptions) => stub.get(key, options),
+    set: (key: KvKey, value: unknown, options?: SetOptions) => stub.set(key, value, options),
+    delete: (key: KvKey) => stub.delete(key),
+    list: (selector: KvListSelector, options?: KvListOptions) => stub.list(selector, options),
     atomic: () => {
       if (!raced) {
         raced = true;
@@ -373,7 +376,7 @@ Deno.test("bounded counter handoff: a lost CAS retries and keeps the competing w
       }
       return stub.atomic();
     },
-  } as unknown as Deno.Kv;
+  } as unknown as Kv;
 
   const handoff = await migrateBoundedCounterHandoff(racing, policy, 5, NOW, false);
 
@@ -382,7 +385,7 @@ Deno.test("bounded counter handoff: a lost CAS retries and keeps the competing w
   assert.equal((stub.value(apiKeyUsageV2MigrationBaselineKey(policy)) as ApiKeyUsageV2MigrationBaseline | null)?.last_legacy_usage_requests, 5);
 });
 
-Deno.test("baseline validation: accepts both reconciliation states and rejects every malformed field", () => {
+test("baseline validation: accepts both reconciliation states and rejects every malformed field", () => {
   const policy = policyFor();
   const valid = baselineRecord(policy);
   assert.deepEqual(normalizeApiKeyUsageV2MigrationBaseline(valid), valid);
@@ -409,7 +412,7 @@ Deno.test("baseline validation: accepts both reconciliation states and rejects e
   }
 });
 
-Deno.test("legacy usage helpers: only an unexpired, unrevoked record keeps its counter", () => {
+test("legacy usage helpers: only an unexpired, unrevoked record keeps its counter", () => {
   const active = { usage_requests: 7, usage_reset_at_ms: NOW + 1, revoked_at_ms: null } as ApiKeyRecord;
   assert.equal(currentLegacyUsage(active, NOW), 7);
   assert.equal(migrationPolicyNow(active, NOW), NOW);
@@ -422,7 +425,7 @@ Deno.test("legacy usage helpers: only an unexpired, unrevoked record keeps its c
   assert.equal(migrationPolicyNow({ ...revoked, usage_reset_at_ms: 0 } as ApiKeyRecord, NOW), 0);
 });
 
-Deno.test("countReconciledBoundedCounterBaselines: counts only reconciled, well-formed baselines", async () => {
+test("countReconciledBoundedCounterBaselines: counts only reconciled, well-formed baselines", async () => {
   const stub = new MapKv();
   const reconciled = policyFor({ key_id: "key-reconciled" });
   const pending = policyFor({ key_id: "key-pending" });
@@ -529,8 +532,8 @@ const kernelReservationRow = (
   ...overrides,
 });
 
-const legacyRepoLimitKey = (owner: string, repo: string): Deno.KvKey => ["ubq_ai", "kernel_auth", "limits", owner, repo];
-const legacyOrgLimitKey = (owner: string): Deno.KvKey => ["ubq_ai", "kernel_auth", "org_limits", owner];
+const legacyRepoLimitKey = (owner: string, repo: string): KvKey => ["ubq_ai", "kernel_auth", "limits", owner, repo];
+const legacyOrgLimitKey = (owner: string): KvKey => ["ubq_ai", "kernel_auth", "org_limits", owner];
 
 const legacyLimitRecord = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   usage_limit_requests: 25,
@@ -543,13 +546,13 @@ const legacyLimitRecord = (overrides: Record<string, unknown> = {}): Record<stri
   ...overrides,
 });
 
-Deno.test("kernel quota migration: an empty store reports zero migrated scopes", async () => {
+test("kernel quota migration: an empty store reports zero migrated scopes", async () => {
   const stub = new MapKv();
 
   assert.deepEqual(await migrateKernelQuotaV2(kv(stub), NOW), { repo: 0, org: 0 });
 });
 
-Deno.test("kernel quota migration: legacy repo and org limits become V2 policy and window rows", async () => {
+test("kernel quota migration: legacy repo and org limits become V2 policy and window rows", async () => {
   const stub = new MapKv();
   stub.seed(legacyRepoLimitKey("ubq", "repo-a"), legacyLimitRecord());
   stub.seed(legacyOrgLimitKey("ubq"), legacyLimitRecord({ usage_limit_requests: -1, usage_requests: 8 }));
@@ -596,7 +599,7 @@ Deno.test("kernel quota migration: legacy repo and org limits become V2 policy a
   assert.equal((stub.value(kernelOrgWindowKey("ubq")) as KernelWindowRow | null)?.usage_requests, 8);
 });
 
-Deno.test("kernel quota migration: an expired legacy window rolls forward with zero usage", async () => {
+test("kernel quota migration: an expired legacy window rolls forward with zero usage", async () => {
   const stub = new MapKv();
   stub.seed(legacyRepoLimitKey("ubq", "repo-b"), legacyLimitRecord({ usage_reset_at_ms: NOW - 1_000, usage_requests: 5 }));
 
@@ -608,7 +611,7 @@ Deno.test("kernel quota migration: an expired legacy window rolls forward with z
   assert.equal(window.applied_window_ms, WINDOW_MS);
 });
 
-Deno.test("kernel quota migration: a default-backed legacy row drops the redundant policy and uses the stored default window", async () => {
+test("kernel quota migration: a default-backed legacy row drops the redundant policy and uses the stored default window", async () => {
   const stub = new MapKv();
   stub.seed(DEFAULT_KERNEL_POLICY_LIMIT_KEY, -1);
   stub.seed(DEFAULT_KERNEL_POLICY_WINDOW_KEY, 30_000);
@@ -626,7 +629,7 @@ Deno.test("kernel quota migration: a default-backed legacy row drops the redunda
   assert.equal(stub.value(legacyRepoLimitKey("ubq", "repo-c")), null);
 });
 
-Deno.test("kernel quota migration: an unusable stored default falls back to the built-in limit and window", async () => {
+test("kernel quota migration: an unusable stored default falls back to the built-in limit and window", async () => {
   const stub = new MapKv();
   stub.seed(DEFAULT_KERNEL_POLICY_LIMIT_KEY, -5);
   stub.seed(DEFAULT_KERNEL_POLICY_WINDOW_KEY, 0);
@@ -649,7 +652,7 @@ Deno.test("kernel quota migration: an unusable stored default falls back to the 
   assert.equal(stub.value(kernelRepoPolicyKey("ubq", "repo-defaults")), null);
 });
 
-Deno.test("kernel quota migration: an existing V2 policy row only triggers deletion of the legacy row", async () => {
+test("kernel quota migration: an existing V2 policy row only triggers deletion of the legacy row", async () => {
   const stub = new MapKv();
   stub.seed(kernelRepoPolicyKey("ubq", "repo-d"), kernelPolicyRow("repo", "ubq", "repo-d"));
   stub.seed(kernelRepoWindowKey("ubq", "repo-d"), kernelWindowRow("repo", "ubq", "repo-d", { usage_requests: 11 }));
@@ -664,7 +667,7 @@ Deno.test("kernel quota migration: an existing V2 policy row only triggers delet
   assert.equal((stub.value(kernelRepoWindowKey("ubq", "repo-d")) as KernelWindowRow | null)?.updated_at_ms, NOW - 10_000);
 });
 
-Deno.test("kernel quota migration: a matching V2 window only raises its usage to the legacy high-water mark", async () => {
+test("kernel quota migration: a matching V2 window only raises its usage to the legacy high-water mark", async () => {
   const stub = new MapKv();
   stub.seed(kernelRepoWindowKey("ubq", "repo-e"), kernelWindowRow("repo", "ubq", "repo-e", { usage_requests: 4, created_at_ms: NOW - 500_000 }));
   stub.seed(legacyRepoLimitKey("ubq", "repo-e"), legacyLimitRecord({ usage_requests: 9 }));
@@ -689,7 +692,7 @@ Deno.test("kernel quota migration: a matching V2 window only raises its usage to
   });
 });
 
-Deno.test("kernel quota migration: string and unusable legacy numbers are coerced or defaulted", async () => {
+test("kernel quota migration: string and unusable legacy numbers are coerced or defaulted", async () => {
   const stub = new MapKv();
   stub.seed(
     legacyRepoLimitKey("ubq", "repo-f"),
@@ -713,7 +716,7 @@ Deno.test("kernel quota migration: string and unusable legacy numbers are coerce
   assert.equal(window.created_at_ms, NOW);
 });
 
-Deno.test("kernel quota migration: a malformed legacy value fails loudly and writes nothing", async () => {
+test("kernel quota migration: a malformed legacy value fails loudly and writes nothing", async () => {
   const stub = new MapKv();
   stub.seed(legacyRepoLimitKey("ubq", "repo-g"), { usage_limit_requests: 5, window_ms: 0 });
 
@@ -722,14 +725,14 @@ Deno.test("kernel quota migration: a malformed legacy value fails loudly and wri
   assert.notEqual(stub.value(legacyRepoLimitKey("ubq", "repo-g")), null);
 });
 
-Deno.test("kernel quota migration: a malformed legacy key fails loudly", async () => {
+test("kernel quota migration: a malformed legacy key fails loudly", async () => {
   const stub = new MapKv();
   stub.seed(["ubq_ai", "kernel_auth", "limits", "ubq"], legacyLimitRecord());
 
   await assert.rejects(() => migrateKernelQuotaV2(kv(stub), NOW), /legacy kernel quota key is malformed/);
 });
 
-Deno.test("kernel quota migration: a lost CAS aborts the migration instead of splitting a policy", async () => {
+test("kernel quota migration: a lost CAS aborts the migration instead of splitting a policy", async () => {
   const stub = new MapKv();
   stub.seed(legacyRepoLimitKey("ubq", "repo-h"), legacyLimitRecord());
   stub.failCommits = true;
@@ -738,7 +741,7 @@ Deno.test("kernel quota migration: a lost CAS aborts the migration instead of sp
   assert.notEqual(stub.value(legacyRepoLimitKey("ubq", "repo-h")), null);
 });
 
-Deno.test("API key usage V3 inventory: valid rows report counts and consistent reservation aggregates", async () => {
+test("API key usage V3 inventory: valid rows report counts and consistent reservation aggregates", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV3WindowKey(policy), windowRecord(policy, { committed_requests: 2, reserved_requests: 1 }));
@@ -751,7 +754,7 @@ Deno.test("API key usage V3 inventory: valid rows report counts and consistent r
   assert.deepEqual(await inspectApiKeyUsageV3(kv(stub), new Set([policy.key_id])), { windows: 1, requests: 2, errors: [] });
 });
 
-Deno.test("API key usage V3 inventory: reserved aggregates are cross-checked and complete terminal states pass", async () => {
+test("API key usage V3 inventory: reserved aggregates are cross-checked and complete terminal states pass", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   // Window aggregate disagrees with the single reserved request.
@@ -776,7 +779,7 @@ Deno.test("API key usage V3 inventory: reserved aggregates are cross-checked and
   ]);
 });
 
-Deno.test("API key usage V3 inventory: malformed window rows are rejected and orphaned windows are reported", async () => {
+test("API key usage V3 inventory: malformed window rows are rejected and orphaned windows are reported", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   // Key identity matches but the stored value's identity disagrees.
@@ -797,7 +800,7 @@ Deno.test("API key usage V3 inventory: malformed window rows are rejected and or
   assert.ok(inventory.errors.includes("API key usage V3 window is orphaned: key-orphan"));
 });
 
-Deno.test("API key usage V3 inventory: malformed and windowless request rows are reported", async () => {
+test("API key usage V3 inventory: malformed and windowless request rows are reported", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV3WindowKey(policy), windowRecord(policy));
@@ -824,7 +827,7 @@ Deno.test("API key usage V3 inventory: malformed and windowless request rows are
   assert.ok(inventory.errors.some((error) => error.startsWith("API key usage V3 request has no window:")));
 });
 
-Deno.test("kernel quota V2 inventory: consistent rows are counted without errors", async () => {
+test("kernel quota V2 inventory: consistent rows are counted without errors", async () => {
   const stub = new MapKv();
   stub.seed(kernelRepoPolicyKey("ubq", "repo-a"), kernelPolicyRow("repo", "ubq", "repo-a"));
   stub.seed(kernelOrgPolicyKey("ubq"), kernelPolicyRow("org", "ubq", undefined));
@@ -847,7 +850,7 @@ Deno.test("kernel quota V2 inventory: consistent rows are counted without errors
   });
 });
 
-Deno.test("kernel quota V2 inventory: malformed policy and window rows are reported with their scope", async () => {
+test("kernel quota V2 inventory: malformed policy and window rows are reported with their scope", async () => {
   const stub = new MapKv();
   // Repo policy with a bad owner and a value that fails validation.
   stub.seed(["uos_ai", "kernel_quota", "v2", "repo_policy", "ubq", "repo-bad"], { v: 2 });
@@ -875,7 +878,7 @@ Deno.test("kernel quota V2 inventory: malformed policy and window rows are repor
   });
 });
 
-Deno.test("kernel quota V2 inventory: malformed reservation rows are reported and identities checked", async () => {
+test("kernel quota V2 inventory: malformed reservation rows are reported and identities checked", async () => {
   const stub = new MapKv();
   const windowCreatedAtMs = NOW - 10_000;
   // Reserved row whose key does not carry a string request id.
@@ -900,7 +903,7 @@ Deno.test("kernel quota V2 inventory: malformed reservation rows are reported an
   assert.equal(inventory.errors.filter((error) => error.includes("kernel quota V2 reservation is malformed")).length, 4);
 });
 
-Deno.test("kernel quota V2 inventory: reserved aggregates and windowless reservations are cross-checked", async () => {
+test("kernel quota V2 inventory: reserved aggregates and windowless reservations are cross-checked", async () => {
   const stub = new MapKv();
   const windowCreatedAtMs = NOW - 10_000;
   // Window claims one reservation while two reserved rows exist.
@@ -920,7 +923,7 @@ Deno.test("kernel quota V2 inventory: reserved aggregates and windowless reserva
   ]);
 });
 
-Deno.test("kernel quota V2 inventory: a window without the reservation aggregate field is not cross-checked", async () => {
+test("kernel quota V2 inventory: a window without the reservation aggregate field is not cross-checked", async () => {
   const stub = new MapKv();
   const windowCreatedAtMs = NOW - 10_000;
   const window: Record<string, unknown> = kernelWindowRow("repo", "ubq", "repo-a", { created_at_ms: windowCreatedAtMs });
@@ -934,14 +937,14 @@ Deno.test("kernel quota V2 inventory: a window without the reservation aggregate
   assert.equal(inventory.repoWindows, 1);
 });
 
-Deno.test("kernel quota migration: a non-record legacy value fails as malformed", async () => {
+test("kernel quota migration: a non-record legacy value fails as malformed", async () => {
   const stub = new MapKv();
   stub.seed(legacyOrgLimitKey("ubq"), "not-a-record");
 
   await assert.rejects(() => migrateKernelQuotaV2(kv(stub), NOW), /legacy kernel quota value is malformed/);
 });
 
-Deno.test("kernel quota migration: a lost CAS while dropping a redundant legacy row aborts the migration", async () => {
+test("kernel quota migration: a lost CAS while dropping a redundant legacy row aborts the migration", async () => {
   const stub = new MapKv();
   stub.seed(kernelOrgPolicyKey("ubq"), kernelPolicyRow("org", "ubq", undefined));
   stub.seed(legacyOrgLimitKey("ubq"), legacyLimitRecord());
@@ -951,7 +954,7 @@ Deno.test("kernel quota migration: a lost CAS while dropping a redundant legacy 
   assert.notEqual(stub.value(legacyOrgLimitKey("ubq")), null);
 });
 
-Deno.test("API key usage V3 inventory: an unusable window value and an orphaned request are reported", async () => {
+test("API key usage V3 inventory: an unusable window value and an orphaned request are reported", async () => {
   const stub = new MapKv();
   const policy = policyFor();
   stub.seed(apiKeyUsageV3WindowKey(policy), { v: 3 });
@@ -1017,7 +1020,7 @@ const apiKeyHashRecord = (overrides: Partial<ApiKeyHashRecord> = {}): ApiKeyHash
   ...overrides,
 });
 
-Deno.test("strict api key pairs: a consistent id and hash row is paired", async () => {
+test("strict api key pairs: a consistent id and hash row is paired", async () => {
   const stub = new MapKv();
   const record = apiKeyRecord();
   stub.seed(apiKeyIdKey(record.id), record);
@@ -1031,7 +1034,7 @@ Deno.test("strict api key pairs: a consistent id and hash row is paired", async 
   assert.equal(inventory.pairs[0].hashRecord.usage_requests, 2);
 });
 
-Deno.test("strict api key pairs: unusable hash rows are reported and left unpaired", async () => {
+test("strict api key pairs: unusable hash rows are reported and left unpaired", async () => {
   const stub = new MapKv();
   // Key suffix is not a valid api-key hash.
   stub.seed([...API_KEY_HASH_PREFIX, "short"], apiKeyHashRecord());
@@ -1050,7 +1053,7 @@ Deno.test("strict api key pairs: unusable hash rows are reported and left unpair
   );
 });
 
-Deno.test("strict api key pairs: unusable id rows are reported individually", async () => {
+test("strict api key pairs: unusable id rows are reported individually", async () => {
   const stub = new MapKv();
   stub.seed(apiKeyHashKey(API_KEY_HASH), apiKeyHashRecord());
   // Key suffix is not an api-key id.
@@ -1074,7 +1077,7 @@ Deno.test("strict api key pairs: unusable id rows are reported individually", as
   );
 });
 
-Deno.test("strict api key pairs: a missing or inconsistent hash policy blocks the pair", async () => {
+test("strict api key pairs: a missing or inconsistent hash policy blocks the pair", async () => {
   const stub = new MapKv();
   const record = apiKeyRecord();
   stub.seed(apiKeyIdKey(record.id), record);
@@ -1097,7 +1100,7 @@ Deno.test("strict api key pairs: a missing or inconsistent hash policy blocks th
   );
 });
 
-Deno.test("strict api key pairs: a second id row claiming the same hash is inconsistent, not a duplicate reference", async () => {
+test("strict api key pairs: a second id row claiming the same hash is inconsistent, not a duplicate reference", async () => {
   const stub = new MapKv();
   stub.seed(apiKeyIdKey("key-alpha"), apiKeyRecord({ id: "key-alpha" }));
   stub.seed(apiKeyIdKey("key-beta"), apiKeyRecord({ id: "key-beta" }));

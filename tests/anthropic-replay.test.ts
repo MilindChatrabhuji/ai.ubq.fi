@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createAnthropicReplayStore } from "../src/provider/anthropic-replay.ts";
 
@@ -32,7 +33,7 @@ const fixture = (suffix = "turn1", summary = true) => {
   return { ...context, nativeBlocks, output };
 };
 
-Deno.test("Anthropic replay restores complete signed blocks and original order within authenticated history", () => {
+test("Anthropic replay restores complete signed blocks and original order within authenticated history", () => {
   const store = createAnthropicReplayStore();
   const receipt = fixture();
   assert.equal(store.remember(receipt), true);
@@ -45,7 +46,7 @@ Deno.test("Anthropic replay restores complete signed blocks and original order w
   ]);
 });
 
-Deno.test("Anthropic replay accepts official Codex nulls and removed status/annotations without private wire data", () => {
+test("Anthropic replay accepts official Codex nulls and removed status/annotations without private wire data", () => {
   const store = createAnthropicReplayStore();
   const receipt = fixture();
   assert.equal(store.remember(receipt), true);
@@ -59,14 +60,14 @@ Deno.test("Anthropic replay accepts official Codex nulls and removed status/anno
   assert.equal(JSON.stringify(receipt.output).includes("encrypted_content"), false);
 });
 
-Deno.test("Anthropic replay restores hidden thinking/redacted blocks when summaries were disabled", () => {
+test("Anthropic replay restores hidden thinking/redacted blocks when summaries were disabled", () => {
   const store = createAnthropicReplayStore();
   const receipt = fixture("hidden1", false);
   assert.equal(store.remember(receipt), true);
   assert.deepEqual(store.restore(receipt.output, context), [{ type: "native_assistant", blocks: receipt.nativeBlocks }]);
 });
 
-Deno.test("Anthropic replay never resolves another principal, provider, model or absent scope", () => {
+test("Anthropic replay never resolves another principal, provider, model or absent scope", () => {
   const store = createAnthropicReplayStore();
   for (const summary of [true, false]) {
     const receipt = fixture(`scope${Number(summary)}`, summary);
@@ -77,7 +78,7 @@ Deno.test("Anthropic replay never resolves another principal, provider, model or
   }
 });
 
-Deno.test("Anthropic replay rejects opaque or unknown reasoning and unknown native output IDs", () => {
+test("Anthropic replay rejects opaque or unknown reasoning and unknown native output IDs", () => {
   const store = createAnthropicReplayStore();
   assert.equal(store.restore([{ type: "reasoning", summary: [] }], context), null);
   assert.equal(store.restore([{ type: "reasoning", id: "rs_external", summary: [], encrypted_content: "opaque-upstream-content" }], context), null);
@@ -86,7 +87,7 @@ Deno.test("Anthropic replay rejects opaque or unknown reasoning and unknown nati
   assert.deepEqual(store.restore([ordinary], context), [{ type: "original", item: ordinary }]);
 });
 
-Deno.test("Anthropic replay falls back on tampered content, reordered/missing/duplicated output groups", () => {
+test("Anthropic replay falls back on tampered content, reordered/missing/duplicated output groups", () => {
   const store = createAnthropicReplayStore();
   const receipt = fixture();
   assert.equal(store.remember(receipt), true);
@@ -104,7 +105,7 @@ Deno.test("Anthropic replay falls back on tampered content, reordered/missing/du
     assert.equal(store.restore(input, context), null);
 });
 
-Deno.test("Anthropic replay clones retained and returned native blocks so callers cannot mutate receipts", () => {
+test("Anthropic replay clones retained and returned native blocks so callers cannot mutate receipts", () => {
   const store = createAnthropicReplayStore();
   const receipt = fixture();
   const original = structuredClone(receipt.nativeBlocks);
@@ -117,7 +118,7 @@ Deno.test("Anthropic replay clones retained and returned native blocks so caller
   assert.deepEqual(store.restore(receipt.output, context), [{ type: "native_assistant", blocks: original }]);
 });
 
-Deno.test("Anthropic replay expires receipts without extending TTL on reads, including hidden-summary turns", () => {
+test("Anthropic replay expires receipts without extending TTL on reads, including hidden-summary turns", () => {
   let at = 100;
   const store = createAnthropicReplayStore({ now: () => at, ttlMs: 10 });
   const receipt = fixture("expires1", false);
@@ -128,7 +129,7 @@ Deno.test("Anthropic replay expires receipts without extending TTL on reads, inc
   assert.equal(store.restore(receipt.output, context), null);
 });
 
-Deno.test("Anthropic replay bounds receipt count and evicts oldest without refreshing lookup order", () => {
+test("Anthropic replay bounds receipt count and evicts oldest without refreshing lookup order", () => {
   const store = createAnthropicReplayStore({ maxEntries: 2 });
   const first = fixture("old1");
   const second = fixture("old2");
@@ -142,7 +143,7 @@ Deno.test("Anthropic replay bounds receipt count and evicts oldest without refre
   assert.notEqual(store.restore(third.output, context), null);
 });
 
-Deno.test("Anthropic replay bounds retained bytes and refuses oversized individual receipts", () => {
+test("Anthropic replay bounds retained bytes and refuses oversized individual receipts", () => {
   const small = fixture("small1");
   const store = createAnthropicReplayStore({ maxBytes: 1700 });
   assert.equal(store.remember(small), true);
@@ -153,7 +154,7 @@ Deno.test("Anthropic replay bounds retained bytes and refuses oversized individu
   assert.equal(createAnthropicReplayStore({ maxEntryBytes: 100 }).remember(fixture()), false);
 });
 
-Deno.test("Anthropic replay rejects unsigned thinking, invalid tools, inconsistent public output and ID collisions", () => {
+test("Anthropic replay rejects unsigned thinking, invalid tools, inconsistent public output and ID collisions", () => {
   const store = createAnthropicReplayStore();
   const unsigned = fixture("unsigned1");
   unsigned.nativeBlocks[0].signature = "";
@@ -173,7 +174,7 @@ Deno.test("Anthropic replay rejects unsigned thinking, invalid tools, inconsiste
   assert.notEqual(store.restore(receipt.output, context), null);
 });
 
-Deno.test("Anthropic replay rejects excessive blocks, non-JSON numbers and circular native state", () => {
+test("Anthropic replay rejects excessive blocks, non-JSON numbers and circular native state", () => {
   const store = createAnthropicReplayStore();
   const receipt = fixture();
   assert.equal(store.remember({ ...receipt, nativeBlocks: Array.from({ length: 257 }, () => receipt.nativeBlocks[0]) }), false);
@@ -202,7 +203,7 @@ const chatFixture = (suffix = "chat1", summary = true) => {
   };
 };
 
-Deno.test("Anthropic Chat replay preserves exact original assistant and reasoning_details with Chat provenance", () => {
+test("Anthropic Chat replay preserves exact original assistant and reasoning_details with Chat provenance", () => {
   const store = createAnthropicReplayStore();
   const receipt = chatFixture();
   assert.equal(store.rememberChat(receipt), true);
@@ -215,7 +216,7 @@ Deno.test("Anthropic Chat replay preserves exact original assistant and reasonin
   assert.equal(JSON.stringify(receipt.output).includes("original-chat-signature"), false);
 });
 
-Deno.test("Anthropic Chat replay keeps original details when explicit summaries were disabled", () => {
+test("Anthropic Chat replay keeps original details when explicit summaries were disabled", () => {
   const store = createAnthropicReplayStore();
   const receipt = chatFixture("hiddenchat1", false);
   assert.equal(store.rememberChat(receipt), true);
@@ -225,7 +226,7 @@ Deno.test("Anthropic Chat replay keeps original details when explicit summaries 
   }
 });
 
-Deno.test("Anthropic Chat replay validates namespaced and freeform tool mapping without converting original wire fields", () => {
+test("Anthropic Chat replay validates namespaced and freeform tool mapping without converting original wire fields", () => {
   const store = createAnthropicReplayStore();
   const namespaced = chatFixture("namespace1");
   namespaced.assistant.tool_calls[0].function.name = "functions__read_file";
@@ -250,7 +251,7 @@ Deno.test("Anthropic Chat replay validates namespaced and freeform tool mapping 
   assert.deepEqual(store.restoreChat(custom.output, context), [{ type: "native_chat_assistant", message: custom.assistant }]);
 });
 
-Deno.test("Anthropic Chat replay shares expiry, byte/count bounds and clone isolation with Messages receipts", () => {
+test("Anthropic Chat replay shares expiry, byte/count bounds and clone isolation with Messages receipts", () => {
   let at = 100;
   const store = createAnthropicReplayStore({ now: () => at, ttlMs: 10, maxEntries: 1 });
   const chat = chatFixture("isolatedchat1", false);
@@ -270,7 +271,7 @@ Deno.test("Anthropic Chat replay shares expiry, byte/count bounds and clone isol
   assert.equal(createAnthropicReplayStore({ maxEntryBytes: 100 }).rememberChat(chatFixture()), false);
 });
 
-Deno.test("Anthropic Chat replay rejects unknown reasoning variants, malformed tools, tampering and partial groups", () => {
+test("Anthropic Chat replay rejects unknown reasoning variants, malformed tools, tampering and partial groups", () => {
   const store = createAnthropicReplayStore();
   const malformed = chatFixture("malformedchat1");
   malformed.assistant.reasoning_details[0].signature = "";
@@ -289,7 +290,7 @@ Deno.test("Anthropic Chat replay rejects unknown reasoning variants, malformed t
   assert.equal(store.restoreChat(altered, context), null);
 });
 
-Deno.test("Anthropic Chat replay preserves refusal and prefers canonical readable reasoning content", () => {
+test("Anthropic Chat replay preserves refusal and prefers canonical readable reasoning content", () => {
   const store = createAnthropicReplayStore();
   const receipt = chatFixture("prioritychat1");
   receipt.assistant.reasoning_details[0].text = "Original signed detail.";
@@ -303,7 +304,7 @@ Deno.test("Anthropic Chat replay preserves refusal and prefers canonical readabl
   assert.deepEqual(store.restoreChat(refused.output, context), [{ type: "native_chat_assistant", message: refused.assistant }]);
 });
 
-Deno.test("Anthropic Chat replay preserves provider reasoning spelling and its readable precedence", () => {
+test("Anthropic Chat replay preserves provider reasoning spelling and its readable precedence", () => {
   const store = createAnthropicReplayStore();
   const receipt = chatFixture("nativereasoning1");
   receipt.assistant.reasoning_details[0].text = "Original signed detail.";

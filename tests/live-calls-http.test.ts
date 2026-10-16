@@ -1,3 +1,6 @@
+import { test } from "bun:test";
+import { serveHttp, type NetAddr } from "#http";
+import { type Kv } from "#kv";
 import assert from "node:assert/strict";
 import { CountingKv } from "./helpers/counting-kv.ts";
 import { CODEX_REFRESH_TOKEN_URL } from "../src/codex/auth.ts";
@@ -9,7 +12,6 @@ import { sha256Base64Url } from "../src/utils.ts";
 // disposable in-memory KV, a seeded Codex auth pool, and one task-owned
 // loopback upstream standing in for the ChatGPT backend route. No production
 // data, no real upstream, and no paid provider is touched.
-const loopbackPermission = await Deno.permissions.query({ name: "net", host: "127.0.0.1" });
 
 const BOUNDARY = "codex-realtime-call-boundary";
 const ACCOUNT_A = "live-calls-http-account-a";
@@ -106,7 +108,7 @@ const startLiveCallsFixture = async (responder: LiveCallsResponder, options: Liv
   const originalInfo = console.info;
   const originalWarn = console.warn;
 
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   console.info = () => {};
@@ -124,37 +126,45 @@ const startLiveCallsFixture = async (responder: LiveCallsResponder, options: Liv
   // The refresh URL is a module constant, so the fixture redirects that exact
   // URL to a real loopback endpoint; no production refresh code or upstream
   // auth server is involved.
-  const refreshServer = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
+  const refreshServer = serveHttp({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
     const body = JSON.parse(await request.text()) as Record<string, unknown>;
     const call: RefreshCall = { url: request.url, refreshToken: typeof body.refresh_token === "string" ? body.refresh_token : null };
     refreshCalls.push(call);
     return activeRefreshResponder(call);
   });
-  const refreshEndpointUrl = `http://127.0.0.1:${(refreshServer.addr as Deno.NetAddr).port}/oauth/token`;
+  await refreshServer.ready;
+  const refreshEndpointUrl = `http://127.0.0.1:${(refreshServer.addr as NetAddr).port}/oauth/token`;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    let target: string;
-    if (typeof input === "string") target = input;
-    else if (input instanceof URL) target = input.href;
-    else target = input.url;
-    return originalFetch(target === CODEX_REFRESH_TOKEN_URL ? refreshEndpointUrl : input, init);
-  };
+  globalThis.fetch = Object.assign(
+    (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      let target: string;
+      if (typeof input === "string") target = input;
+      else if (input instanceof URL) target = input.href;
+      else target = input.url;
+      if (target === CODEX_REFRESH_TOKEN_URL) return originalFetch(refreshEndpointUrl, init);
+      if (new URL(target).hostname !== "127.0.0.1") return Promise.reject(new Error("Unmapped external URL refused by loopback HTTP fixture"));
+      return originalFetch(input, init);
+    },
+    { preconnect: originalFetch.preconnect }
+  );
 
-  const upstreamServer = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
+  const upstreamServer = serveHttp({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
     const bodyText = await request.text();
     const url = new URL(request.url);
     upstreamCalls.push({ method: request.method, path: url.pathname, search: url.search, headers: request.headers, bodyText });
     return activeResponder(request.headers.get("chatgpt-account-id"), bodyText);
   });
-  setLiveUpstreamBasesForTest({ callsBaseUrl: `http://127.0.0.1:${(upstreamServer.addr as Deno.NetAddr).port}`, sidebandBaseUrl: null });
+  await upstreamServer.ready;
+  setLiveUpstreamBasesForTest({ callsBaseUrl: `http://127.0.0.1:${(upstreamServer.addr as NetAddr).port}`, sidebandBaseUrl: null });
 
-  const gatewayServer = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));
+  const gatewayServer = serveHttp({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));
+  await gatewayServer.ready;
 
   let upstreamStopped = false;
   return {
     kv,
     token,
-    gatewayBaseUrl: `http://127.0.0.1:${(gatewayServer.addr as Deno.NetAddr).port}`,
+    gatewayBaseUrl: `http://127.0.0.1:${(gatewayServer.addr as NetAddr).port}`,
     upstreamCalls,
     refreshCalls,
     setResponder: (next) => {
@@ -172,17 +182,19 @@ const startLiveCallsFixture = async (responder: LiveCallsResponder, options: Liv
       await upstreamServer.shutdown();
     },
     close: async () => {
-      console.info = originalInfo;
-      console.warn = originalWarn;
-      (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
-      globalThis.fetch = originalFetch;
-      setLiveUpstreamBasesForTest({ callsBaseUrl: null, sidebandBaseUrl: null });
-      setKvForTest(null);
-      resetCodexAuthCacheForTest();
-      resetCodexAccountRoutingForTest();
-      await gatewayServer.shutdown();
-      await upstreamServer.shutdown();
-      await refreshServer.shutdown();
+      try {
+        await Promise.all([gatewayServer.shutdown(), upstreamServer.shutdown(), refreshServer.shutdown()]);
+      } finally {
+        console.info = originalInfo;
+        console.warn = originalWarn;
+        (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+        globalThis.fetch = originalFetch;
+        setLiveUpstreamBasesForTest({ callsBaseUrl: null, sidebandBaseUrl: null });
+        setKvForTest(null);
+        resetCodexAuthCacheForTest();
+        resetCodexAccountRoutingForTest();
+        kv.close();
+      }
     },
   };
 };
@@ -243,290 +255,230 @@ const errorPayload = async (response: Response): Promise<Record<string, unknown>
   return error as Record<string, unknown>;
 };
 
-Deno.test({
-  name: "POST /v1/live answers 413 for an oversize body with a declared Content-Length",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const fixture = await startLiveCallsFixture(() => acceptedAnswer());
-    try {
-      const response = await postLiveCall(fixture, { body: "x".repeat(LIVE_CALL_MAX_BODY_BYTES + 1) });
-      const error = await errorPayload(response);
-      assert.equal(response.status, 413, JSON.stringify(error));
-      assert.equal(error.message, `Live call creation bodies must be no larger than ${LIVE_CALL_MAX_BODY_BYTES} bytes.`);
-      assert.equal(fixture.upstreamCalls.length, 0, "an oversize body never reaches upstream");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
+test("POST /v1/live answers 413 for an oversize body with a declared Content-Length", async () => {
+  const fixture = await startLiveCallsFixture(() => acceptedAnswer());
+  try {
+    const response = await postLiveCall(fixture, { body: "x".repeat(LIVE_CALL_MAX_BODY_BYTES + 1) });
+    const error = await errorPayload(response);
+    assert.equal(response.status, 413, JSON.stringify(error));
+    assert.equal(error.message, `Live call creation bodies must be no larger than ${LIVE_CALL_MAX_BODY_BYTES} bytes.`);
+    assert.equal(fixture.upstreamCalls.length, 0, "an oversize body never reaches upstream");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
 
-Deno.test({
-  name: "POST /v1/live answers 413 for an oversize streamed body that declares no length",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const fixture = await startLiveCallsFixture(() => acceptedAnswer());
-    try {
-      // A streamed request body is chunked, so no `content-length` exists and
-      // only the read-time byte cap can decide this rejection.
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new Uint8Array(LIVE_CALL_MAX_BODY_BYTES + 2));
-          controller.close();
-        },
-      });
-      const response = await postLiveCall(fixture, { stream });
-      const error = await errorPayload(response);
-      assert.equal(response.status, 413, JSON.stringify(error));
-      assert.equal(error.message, `Live call creation bodies must be no larger than ${LIVE_CALL_MAX_BODY_BYTES} bytes.`);
-      assert.equal(fixture.upstreamCalls.length, 0, "an oversize body never reaches upstream");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
-
-Deno.test({
-  name: "POST /v1/live relays the multipart SDP offer as the backend JSON call and maps the call to its account",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const fixture = await startLiveCallsFixture(() => acceptedAnswer());
-    try {
-      const response = await postLiveCall(fixture);
-      const body = await response.text();
-      assert.equal(response.status, 201, body);
-      assert.equal(body, SDP_ANSWER);
-      assert.equal(response.headers.get("location"), `/v1/live/${CALL_ID}`);
-      assert.ok(response.headers.get("x-uos-request-id"), "the JSON arm carries the gateway request id");
-      assert.equal(response.headers.get("access-control-allow-origin"), "*");
-
-      const upstream = fixture.upstreamCalls.at(-1);
-      assert.ok(upstream, "the call reached the upstream");
-      assert.equal(fixture.upstreamCalls.length, 1);
-      assert.equal(upstream.method, "POST");
-      assert.equal(upstream.path, "/realtime/calls");
-      assert.equal(upstream.search, "?intent=quicksilver&architecture=avas");
-      assert.equal(upstream.headers.get("content-type"), "application/json");
-      assert.equal(upstream.headers.get("chatgpt-account-id"), ACCOUNT_A);
-      assert.equal(upstream.headers.get("authorization"), `Bearer ${ACCOUNT_A}-access-token`);
-      assert.notEqual(upstream.headers.get("authorization"), `Bearer ${fixture.token}`, "the client's own bearer token is never forwarded");
-      assert.equal(upstream.headers.get("originator"), "codex_cli_rs");
-      assert.match(upstream.headers.get("user-agent") ?? "", /^codex_cli_rs\//u);
-      assert.equal(upstream.headers.get("openai-alpha"), "quicksilver=v2");
-      assert.equal(upstream.headers.get("x-session-id"), "live-calls-http-session");
-      assert.equal(upstream.headers.get("session-id"), "live-calls-http-session");
-      assert.equal(upstream.headers.get("thread-id"), "live-calls-http-thread");
-      assert.equal(upstream.headers.get("x-codex-turn-metadata"), '{"thread_source":"user"}');
-      assert.equal(upstream.headers.get("x-oai-attestation"), "live-calls-http-attestation");
-
-      const relayed = JSON.parse(upstream.bodyText) as Record<string, unknown>;
-      assert.deepEqual(
-        Object.keys(relayed).sort((left, right) => left.localeCompare(right)),
-        ["sdp", "session"]
-      );
-      assert.equal(relayed.sdp, SDP_OFFER);
-      assert.deepEqual(relayed.session, SESSION);
-
-      const mapping = fixture.kv.entries.get(JSON.stringify(["uos_ai", "codex_live_calls", "v1", CALL_ID]))?.value;
-      assert.ok(mapping && typeof mapping === "object", "the call id is mapped to its creating account");
-      assert.equal((mapping as { account_id?: unknown }).account_id, ACCOUNT_A);
-      assert.equal((mapping as { principal_id?: unknown }).principal_id, PRINCIPAL, "the call is bound to its creating principal");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
-
-Deno.test({
-  name: "POST /v1/live answers 401 without client auth and never reaches upstream",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const fixture = await startLiveCallsFixture(() => acceptedAnswer());
-    try {
-      const response = await postLiveCall(fixture, { authorization: null });
-      const error = await errorPayload(response);
-      assert.equal(response.status, 401, JSON.stringify(error));
-      assert.equal(error.code, "invalid_api_key");
-      assert.equal(fixture.upstreamCalls.length, 0);
-    } finally {
-      await fixture.close();
-    }
-  },
-});
-
-Deno.test({
-  name: "POST /v1/live rejects a non-multipart body and a multipart body without a session part",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const fixture = await startLiveCallsFixture(() => acceptedAnswer());
-    try {
-      const jsonBody = await postLiveCall(fixture, { body: JSON.stringify({ sdp: SDP_OFFER, session: SESSION }), contentType: "application/json" });
-      const jsonError = await errorPayload(jsonBody);
-      assert.equal(jsonBody.status, 400, JSON.stringify(jsonError));
-      assert.equal(jsonError.type, "invalid_request_error");
-
-      const missingSession = await postLiveCall(fixture, {
-        body: `--${BOUNDARY}\r\nContent-Disposition: form-data; name="sdp"\r\n\r\n${SDP_OFFER}\r\n--${BOUNDARY}--\r\n`,
-      });
-      const missingError = await errorPayload(missingSession);
-      assert.equal(missingSession.status, 400, JSON.stringify(missingError));
-      assert.equal(missingError.param, "session");
-
-      const invalidSession = await postLiveCall(fixture, { body: realtimeCallBody(SDP_OFFER, "not-json") });
-      assert.equal(invalidSession.status, 400, await invalidSession.text());
-
-      assert.equal(fixture.upstreamCalls.length, 0, "no rejected body reaches upstream");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
-
-Deno.test({
-  name: "POST /v1/live answers 502 when the upstream call-creation route is unreachable",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const fixture = await startLiveCallsFixture(() => acceptedAnswer());
-    try {
-      await fixture.stopUpstream();
-      const response = await postLiveCall(fixture);
-      const error = await errorPayload(response);
-      assert.equal(response.status, 502, JSON.stringify(error));
-      assert.equal(error.code, "codex_upstream_unreachable");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
-
-Deno.test({
-  name: "POST /v1/live retries a credential failure once with the next eligible account",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    let fixture: LiveCallsFixture | null = null;
-    fixture = await startLiveCallsFixture(async (accountId) => {
-      if (accountId !== ACCOUNT_A) return acceptedAnswer();
-      // The failing account leaves the pool while its rejection is in flight,
-      // so the retry's strong reselection has exactly one eligible account.
-      await fixture?.setAuthPool([codexAccount(ACCOUNT_B, Date.now())]);
-      return Response.json({ detail: "credential expired" }, { status: 401 });
+test("POST /v1/live answers 413 for an oversize streamed body that declares no length", async () => {
+  const fixture = await startLiveCallsFixture(() => acceptedAnswer());
+  try {
+    // A streamed request body is chunked, so no `content-length` exists and
+    // only the read-time byte cap can decide this rejection.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(LIVE_CALL_MAX_BODY_BYTES + 2));
+        controller.close();
+      },
     });
-    try {
-      const response = await postLiveCall(fixture);
-      const body = await response.text();
-      assert.equal(response.status, 201, body);
-      assert.equal(body, SDP_ANSWER);
-      assert.equal(fixture.upstreamCalls.length, 2, "a 401 admits exactly one retry");
-      assert.equal(fixture.upstreamCalls[0]?.headers.get("chatgpt-account-id"), ACCOUNT_A);
-      assert.equal(fixture.upstreamCalls[1]?.headers.get("chatgpt-account-id"), ACCOUNT_B);
-      assert.equal(fixture.upstreamCalls[1]?.headers.get("authorization"), `Bearer ${ACCOUNT_B}-access-token`);
-      assert.equal(fixture.upstreamCalls[1]?.path, "/realtime/calls");
-      assert.equal(response.headers.get("location"), `/v1/live/${CALL_ID}`);
-      const mapping = fixture.kv.entries.get(JSON.stringify(["uos_ai", "codex_live_calls", "v1", CALL_ID]))?.value;
-      assert.equal((mapping as { account_id?: unknown } | undefined)?.account_id, ACCOUNT_B, "the call is mapped to the account that created it");
-      assert.equal((mapping as { principal_id?: unknown } | undefined)?.principal_id, PRINCIPAL, "the call stays bound to its creating principal");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
+    const response = await postLiveCall(fixture, { stream });
+    const error = await errorPayload(response);
+    assert.equal(response.status, 413, JSON.stringify(error));
+    assert.equal(error.message, `Live call creation bodies must be no larger than ${LIVE_CALL_MAX_BODY_BYTES} bytes.`);
+    assert.equal(fixture.upstreamCalls.length, 0, "an oversize body never reaches upstream");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
 
-Deno.test({
-  name: "POST /v1/live relays an upstream credential failure verbatim when no other account is eligible",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const fixture = await startLiveCallsFixture(() => Response.json({ detail: "credential expired" }, { status: 401 }));
-    try {
-      const response = await postLiveCall(fixture);
-      const body = await response.text();
-      assert.equal(response.status, 401, body);
-      assert.equal(body, '{"detail":"credential expired"}');
-      assert.equal(fixture.upstreamCalls.length, 1, "the reloaded pool still offers only the failed account");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
+test("POST /v1/live relays the multipart SDP offer as the backend JSON call and maps the call to its account", async () => {
+  const fixture = await startLiveCallsFixture(() => acceptedAnswer());
+  try {
+    const response = await postLiveCall(fixture);
+    const body = await response.text();
+    assert.equal(response.status, 201, body);
+    assert.equal(body, SDP_ANSWER);
+    assert.equal(response.headers.get("location"), `/v1/live/${CALL_ID}`);
+    assert.ok(response.headers.get("x-uos-request-id"), "the JSON arm carries the gateway request id");
+    assert.equal(response.headers.get("access-control-allow-origin"), "*");
 
-Deno.test({
-  name: "POST /v1/live refreshes the selected account's expired token before dispatch and leaves other accounts untouched",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const untouchedAccount = codexAccount(ACCOUNT_B, Date.now());
-    const fixture = await startLiveCallsFixture(() => acceptedAnswer(), { accounts: [expiredCodexAccount(ACCOUNT_A), untouchedAccount] });
-    try {
-      const response = await postLiveCall(fixture);
-      const body = await response.text();
-      assert.equal(response.status, 201, body);
-      assert.equal(body, SDP_ANSWER);
+    const upstream = fixture.upstreamCalls.at(-1);
+    assert.ok(upstream, "the call reached the upstream");
+    assert.equal(fixture.upstreamCalls.length, 1);
+    assert.equal(upstream.method, "POST");
+    assert.equal(upstream.path, "/realtime/calls");
+    assert.equal(upstream.search, "?intent=quicksilver&architecture=avas");
+    assert.equal(upstream.headers.get("content-type"), "application/json");
+    assert.equal(upstream.headers.get("chatgpt-account-id"), ACCOUNT_A);
+    assert.equal(upstream.headers.get("authorization"), `Bearer ${ACCOUNT_A}-access-token`);
+    assert.notEqual(upstream.headers.get("authorization"), `Bearer ${fixture.token}`, "the client's own bearer token is never forwarded");
+    assert.equal(upstream.headers.get("originator"), "codex_cli_rs");
+    assert.match(upstream.headers.get("user-agent") ?? "", /^codex_cli_rs\//u);
+    assert.equal(upstream.headers.get("openai-alpha"), "quicksilver=v2");
+    assert.equal(upstream.headers.get("x-session-id"), "live-calls-http-session");
+    assert.equal(upstream.headers.get("session-id"), "live-calls-http-session");
+    assert.equal(upstream.headers.get("thread-id"), "live-calls-http-thread");
+    assert.equal(upstream.headers.get("x-codex-turn-metadata"), '{"thread_source":"user"}');
+    assert.equal(upstream.headers.get("x-oai-attestation"), "live-calls-http-attestation");
 
-      const upstream = fixture.upstreamCalls.at(-1);
-      assert.ok(upstream, "the call reached the upstream");
-      assert.equal(upstream.headers.get("chatgpt-account-id"), ACCOUNT_A);
-      assert.equal(
-        upstream.headers.get("authorization"),
-        `Bearer ${REFRESH_ACCESS_TOKEN}`,
-        "the dispatch carries the refreshed credential instead of the expired bearer the routing read exposed"
-      );
-      assert.equal(fixture.refreshCalls.length, 1, "the expired account is refreshed exactly once");
-      assert.equal(fixture.refreshCalls[0]?.refreshToken, `${ACCOUNT_A}-refresh-token`, "the refresh re-read the selected account by identity");
+    const relayed = JSON.parse(upstream.bodyText) as Record<string, unknown>;
+    assert.deepEqual(
+      Object.keys(relayed).sort((left, right) => left.localeCompare(right)),
+      ["sdp", "session"]
+    );
+    assert.equal(relayed.sdp, SDP_OFFER);
+    assert.deepEqual(relayed.session, SESSION);
 
-      const storedPool = fixture.kv.entries.get(JSON.stringify(["ubq_ai", "codex_auth"]))?.value as { accounts?: CodexAuthState[] } | undefined;
-      const refreshed = storedPool?.accounts?.find((account) => account.account_id === ACCOUNT_A);
-      assert.equal(refreshed?.access_token, REFRESH_ACCESS_TOKEN, "the rotated credential is persisted under the same account identity");
-      assert.equal(refreshed.refresh_token, REFRESH_REFRESH_TOKEN);
-      const untouched = storedPool?.accounts?.find((account) => account.account_id === ACCOUNT_B);
-      assert.deepEqual(untouched, untouchedAccount, "an unrelated account's credential is left exactly as seeded");
+    const mapping = fixture.kv.entries.get(JSON.stringify(["uos_ai", "codex_live_calls", "v1", CALL_ID]))?.value;
+    assert.ok(mapping && typeof mapping === "object", "the call id is mapped to its creating account");
+    assert.equal((mapping as { account_id?: unknown }).account_id, ACCOUNT_A);
+    assert.equal((mapping as { principal_id?: unknown }).principal_id, PRINCIPAL, "the call is bound to its creating principal");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
 
-      const mapping = fixture.kv.entries.get(JSON.stringify(["uos_ai", "codex_live_calls", "v1", CALL_ID]))?.value;
-      assert.equal((mapping as { account_id?: unknown } | undefined)?.account_id, ACCOUNT_A, "the call keeps its creating account identity");
-      assert.equal((mapping as { principal_id?: unknown } | undefined)?.principal_id, PRINCIPAL, "the creator-principal binding is preserved");
-    } finally {
-      await fixture.close();
-    }
-  },
-});
+test("POST /v1/live answers 401 without client auth and never reaches upstream", async () => {
+  const fixture = await startLiveCallsFixture(() => acceptedAnswer());
+  try {
+    const response = await postLiveCall(fixture, { authorization: null });
+    const error = await errorPayload(response);
+    assert.equal(response.status, 401, JSON.stringify(error));
+    assert.equal(error.code, "invalid_api_key");
+    assert.equal(fixture.upstreamCalls.length, 0);
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
 
-Deno.test({
-  name: "POST /v1/live fails closed when the selected account disappears while its token is refreshing",
-  ignore: loopbackPermission.state !== "granted",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    let fixture: LiveCallsFixture | null = null;
-    fixture = await startLiveCallsFixture(() => acceptedAnswer(), { accounts: [expiredCodexAccount(ACCOUNT_A), codexAccount(ACCOUNT_B, Date.now())] });
-    fixture.setRefreshResponder(() => {
-      // The account leaves the pool while its refresh is in flight, so its
-      // rotated credential can never be persisted for it.
-      void fixture.setAuthPool([codexAccount(ACCOUNT_B, Date.now())]);
-      return Response.json({ access_token: REFRESH_ACCESS_TOKEN, refresh_token: REFRESH_REFRESH_TOKEN });
+test("POST /v1/live rejects a non-multipart body and a multipart body without a session part", async () => {
+  const fixture = await startLiveCallsFixture(() => acceptedAnswer());
+  try {
+    const jsonBody = await postLiveCall(fixture, { body: JSON.stringify({ sdp: SDP_OFFER, session: SESSION }), contentType: "application/json" });
+    const jsonError = await errorPayload(jsonBody);
+    assert.equal(jsonBody.status, 400, JSON.stringify(jsonError));
+    assert.equal(jsonError.type, "invalid_request_error");
+
+    const missingSession = await postLiveCall(fixture, {
+      body: `--${BOUNDARY}\r\nContent-Disposition: form-data; name="sdp"\r\n\r\n${SDP_OFFER}\r\n--${BOUNDARY}--\r\n`,
     });
-    try {
-      const response = await postLiveCall(fixture);
-      const error = await errorPayload(response);
-      assert.equal(response.status, 503, JSON.stringify(error));
-      assert.equal(error.code, "codex_auth_missing");
-      assert.equal(fixture.upstreamCalls.length, 0, "a disappeared account dispatches no credential at all");
-      assert.equal(fixture.refreshCalls.length, 1);
-    } finally {
-      await fixture.close();
-    }
-  },
-});
+    const missingError = await errorPayload(missingSession);
+    assert.equal(missingSession.status, 400, JSON.stringify(missingError));
+    assert.equal(missingError.param, "session");
+
+    const invalidSession = await postLiveCall(fixture, { body: realtimeCallBody(SDP_OFFER, "not-json") });
+    assert.equal(invalidSession.status, 400, await invalidSession.text());
+
+    assert.equal(fixture.upstreamCalls.length, 0, "no rejected body reaches upstream");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
+
+test("POST /v1/live answers 502 when the upstream call-creation route is unreachable", async () => {
+  const fixture = await startLiveCallsFixture(() => acceptedAnswer());
+  try {
+    await fixture.stopUpstream();
+    const response = await postLiveCall(fixture);
+    const error = await errorPayload(response);
+    assert.equal(response.status, 502, JSON.stringify(error));
+    assert.equal(error.code, "codex_upstream_unreachable");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
+
+test("POST /v1/live retries a credential failure once with the next eligible account", async () => {
+  let fixture: LiveCallsFixture | null = null;
+  fixture = await startLiveCallsFixture(async (accountId) => {
+    if (accountId !== ACCOUNT_A) return acceptedAnswer();
+    // The failing account leaves the pool while its rejection is in flight,
+    // so the retry's strong reselection has exactly one eligible account.
+    await fixture?.setAuthPool([codexAccount(ACCOUNT_B, Date.now())]);
+    return Response.json({ detail: "credential expired" }, { status: 401 });
+  });
+  try {
+    const response = await postLiveCall(fixture);
+    const body = await response.text();
+    assert.equal(response.status, 201, body);
+    assert.equal(body, SDP_ANSWER);
+    assert.equal(fixture.upstreamCalls.length, 2, "a 401 admits exactly one retry");
+    assert.equal(fixture.upstreamCalls[0]?.headers.get("chatgpt-account-id"), ACCOUNT_A);
+    assert.equal(fixture.upstreamCalls[1]?.headers.get("chatgpt-account-id"), ACCOUNT_B);
+    assert.equal(fixture.upstreamCalls[1]?.headers.get("authorization"), `Bearer ${ACCOUNT_B}-access-token`);
+    assert.equal(fixture.upstreamCalls[1]?.path, "/realtime/calls");
+    assert.equal(response.headers.get("location"), `/v1/live/${CALL_ID}`);
+    const mapping = fixture.kv.entries.get(JSON.stringify(["uos_ai", "codex_live_calls", "v1", CALL_ID]))?.value;
+    assert.equal((mapping as { account_id?: unknown } | undefined)?.account_id, ACCOUNT_B, "the call is mapped to the account that created it");
+    assert.equal((mapping as { principal_id?: unknown } | undefined)?.principal_id, PRINCIPAL, "the call stays bound to its creating principal");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
+
+test("POST /v1/live relays an upstream credential failure verbatim when no other account is eligible", async () => {
+  const fixture = await startLiveCallsFixture(() => Response.json({ detail: "credential expired" }, { status: 401 }));
+  try {
+    const response = await postLiveCall(fixture);
+    const body = await response.text();
+    assert.equal(response.status, 401, body);
+    assert.equal(body, '{"detail":"credential expired"}');
+    assert.equal(fixture.upstreamCalls.length, 1, "the reloaded pool still offers only the failed account");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
+
+test("POST /v1/live refreshes the selected account's expired token before dispatch and leaves other accounts untouched", async () => {
+  const untouchedAccount = codexAccount(ACCOUNT_B, Date.now());
+  const fixture = await startLiveCallsFixture(() => acceptedAnswer(), { accounts: [expiredCodexAccount(ACCOUNT_A), untouchedAccount] });
+  try {
+    const response = await postLiveCall(fixture);
+    const body = await response.text();
+    assert.equal(response.status, 201, body);
+    assert.equal(body, SDP_ANSWER);
+
+    const upstream = fixture.upstreamCalls.at(-1);
+    assert.ok(upstream, "the call reached the upstream");
+    assert.equal(upstream.headers.get("chatgpt-account-id"), ACCOUNT_A);
+    assert.equal(
+      upstream.headers.get("authorization"),
+      `Bearer ${REFRESH_ACCESS_TOKEN}`,
+      "the dispatch carries the refreshed credential instead of the expired bearer the routing read exposed"
+    );
+    assert.equal(fixture.refreshCalls.length, 1, "the expired account is refreshed exactly once");
+    assert.equal(fixture.refreshCalls[0]?.refreshToken, `${ACCOUNT_A}-refresh-token`, "the refresh re-read the selected account by identity");
+
+    const storedPool = fixture.kv.entries.get(JSON.stringify(["ubq_ai", "codex_auth"]))?.value as { accounts?: CodexAuthState[] } | undefined;
+    const refreshed = storedPool?.accounts?.find((account) => account.account_id === ACCOUNT_A);
+    assert.equal(refreshed?.access_token, REFRESH_ACCESS_TOKEN, "the rotated credential is persisted under the same account identity");
+    assert.equal(refreshed.refresh_token, REFRESH_REFRESH_TOKEN);
+    const untouched = storedPool?.accounts?.find((account) => account.account_id === ACCOUNT_B);
+    assert.deepEqual(untouched, untouchedAccount, "an unrelated account's credential is left exactly as seeded");
+
+    const mapping = fixture.kv.entries.get(JSON.stringify(["uos_ai", "codex_live_calls", "v1", CALL_ID]))?.value;
+    assert.equal((mapping as { account_id?: unknown } | undefined)?.account_id, ACCOUNT_A, "the call keeps its creating account identity");
+    assert.equal((mapping as { principal_id?: unknown } | undefined)?.principal_id, PRINCIPAL, "the creator-principal binding is preserved");
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);
+
+test("POST /v1/live fails closed when the selected account disappears while its token is refreshing", async () => {
+  let fixture: LiveCallsFixture | null = null;
+  fixture = await startLiveCallsFixture(() => acceptedAnswer(), { accounts: [expiredCodexAccount(ACCOUNT_A), codexAccount(ACCOUNT_B, Date.now())] });
+  fixture.setRefreshResponder(() => {
+    // The account leaves the pool while its refresh is in flight, so its
+    // rotated credential can never be persisted for it.
+    void fixture.setAuthPool([codexAccount(ACCOUNT_B, Date.now())]);
+    return Response.json({ access_token: REFRESH_ACCESS_TOKEN, refresh_token: REFRESH_REFRESH_TOKEN });
+  });
+  try {
+    const response = await postLiveCall(fixture);
+    const error = await errorPayload(response);
+    assert.equal(response.status, 503, JSON.stringify(error));
+    assert.equal(error.code, "codex_auth_missing");
+    assert.equal(fixture.upstreamCalls.length, 0, "a disappeared account dispatches no credential at all");
+    assert.equal(fixture.refreshCalls.length, 1);
+  } finally {
+    await fixture.close();
+  }
+}, 300_000);

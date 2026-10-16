@@ -176,7 +176,7 @@ The probe subsystem is fully implemented and deterministically tested:
   README).
 - Deterministic contract tests: `tests/harmony-probes.test.ts` plus
   `harmony-{adapter,classifier,conversation,parse,
-  render,tools-router,tools-schemas}.test.ts` — 120 passed, 0 failed
+render,tools-router,tools-schemas}.test.ts` — 120 passed, 0 failed
   (2026-08-29).
 - **Each of the 20 scenarios needs one live run before any Harmony-semantics claim is admissible** (mixed strictness
   rejection string, reasoning-field presence/shape, native Harmony translation, tool+format support, literal-boolean

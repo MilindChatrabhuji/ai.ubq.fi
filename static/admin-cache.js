@@ -3,6 +3,61 @@ const DATABASE_VERSION = 1;
 const STORE_NAME = "responses";
 const SCOPE_INDEX = "scope";
 
+/**
+ * @template Result
+ * @typedef {object} AdminSnapshotRequest
+ * @property {Result} [result]
+ * @property {unknown} [error]
+ * @property {((event: Event) => void) | null} [onsuccess]
+ * @property {((event: Event) => void) | null} [onerror]
+ */
+
+/**
+ * @typedef {object} AdminSnapshotCursor
+ * @property {() => unknown} delete
+ * @property {() => void} continue
+ */
+
+/**
+ * @typedef {object} AdminSnapshotStore
+ * @property {(key: string) => AdminSnapshotRequest<unknown>} [get]
+ * @property {(record: { id: string, scope: string, key: string, payload: unknown, savedAt: number }) => unknown} [put]
+ * @property {(name: string) => { openCursor(query: IDBValidKey | IDBKeyRange): AdminSnapshotRequest<AdminSnapshotCursor | null> }} [index]
+ * @property {{ contains(name: string): boolean }} [indexNames]
+ * @property {(name: string, path: string, options: { unique: boolean }) => unknown} [createIndex]
+ */
+
+/**
+ * @typedef {object} AdminSnapshotTransaction
+ * @property {(name: string) => AdminSnapshotStore} objectStore
+ * @property {unknown} [error]
+ * @property {((event: Event) => void) | null} [oncomplete]
+ * @property {((event: Event) => void) | null} [onabort]
+ * @property {((event: Event) => void) | null} [onerror]
+ */
+
+/**
+ * @typedef {object} AdminSnapshotDatabase
+ * @property {(name: string, mode: "readonly" | "readwrite") => AdminSnapshotTransaction} transaction
+ * @property {{ contains(name: string): boolean }} [objectStoreNames]
+ * @property {(name: string, options: { keyPath: string }) => AdminSnapshotStore} [createObjectStore]
+ */
+
+/**
+ * @typedef {AdminSnapshotRequest<AdminSnapshotDatabase> & {
+ *   transaction?: AdminSnapshotTransaction | null,
+ *   onupgradeneeded?: ((event: IDBVersionChangeEvent) => void) | null,
+ *   onblocked?: ((event: IDBVersionChangeEvent) => void) | null
+ * }} AdminSnapshotOpenRequest
+ */
+
+/**
+ * Optional capabilities match the existing failure paths and feature-specific fixtures.
+ * @typedef {object} AdminSnapshotEnvironment
+ * @property {{ open(name: string, version?: number): AdminSnapshotOpenRequest }} [indexedDB]
+ * @property {{ only(scope: string): IDBValidKey | IDBKeyRange }} [keyRange]
+ */
+
 const isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
 
 const requestResult = (request) =>
@@ -22,6 +77,7 @@ const transactionDone = (transaction) =>
  * Stores admin read responses only. Callers must provide a scoped, non-secret
  * principal fingerprint; raw tokens, cookies, and auth responses never enter
  * this database.
+ * @param {AdminSnapshotEnvironment} [environment]
  */
 export const createAdminSnapshotCache = ({
   indexedDB = globalThis.indexedDB,
@@ -75,7 +131,8 @@ export const createAdminSnapshotCache = ({
         record.key !== key ||
         !Number.isFinite(record.savedAt) ||
         !("payload" in record)
-      ) return null;
+      )
+        return null;
       return { payload: record.payload, savedAt: record.savedAt };
     } catch {
       return null;

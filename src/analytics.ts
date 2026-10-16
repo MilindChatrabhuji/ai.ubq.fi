@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { getKv } from "./kv.ts";
 import type { ApiKeyRequestLogRecord, PaidFallbackProvider } from "./types.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -109,7 +110,7 @@ const mutateApiKeyRequestLog = async (
   createdAtMs: number,
   requestId: string,
   mutate: (existing: ApiKeyRequestLogRecord | null) => ApiKeyRequestLogInput | ApiKeyRequestLogRecord | null,
-  kvOverride?: Deno.Kv | null
+  kvOverride?: Kv | null
 ): Promise<void> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv || !keyId.trim()) return;
@@ -130,7 +131,7 @@ const mutateApiKeyRequestLog = async (
   throw new Error(`paid fallback ledger changed concurrently: ${requestId}`);
 };
 
-export const recordApiKeyRequestLog = async (keyId: string, input: ApiKeyRequestLogInput, kvOverride?: Deno.Kv | null): Promise<void> => {
+export const recordApiKeyRequestLog = async (keyId: string, input: ApiKeyRequestLogInput, kvOverride?: Kv | null): Promise<void> => {
   const nowMs = Date.now();
   const requestId = text(input.id, 120, crypto.randomUUID());
   const createdAtMs = integer(input.created_at_ms, nowMs);
@@ -142,12 +143,12 @@ export const updateApiKeyRequestLog = async (
   createdAtMs: number,
   requestId: string,
   patch: ApiKeyRequestLogPatch,
-  kvOverride?: Deno.Kv | null
+  kvOverride?: Kv | null
 ): Promise<void> => {
   await mutateApiKeyRequestLog(keyId, createdAtMs, requestId, (existing) => (existing ? { ...existing, ...patch } : null), kvOverride);
 };
 
-export const listApiKeyRequestLogs = async (keyId: string, options: { limit?: number; kv?: Deno.Kv | null } = {}): Promise<ApiKeyRequestLogRecord[]> => {
+export const listApiKeyRequestLogs = async (keyId: string, options: { limit?: number; kv?: Kv | null } = {}): Promise<ApiKeyRequestLogRecord[]> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv || !keyId.trim()) return [];
   const limit = Math.max(1, Math.min(MAX_REQUEST_LOGS, Math.trunc(options.limit ?? 20)));

@@ -1,3 +1,8 @@
+import type { Stats } from "node:fs";
+import { acquireDeployLock } from "./deploy-lock.ts";
+import { lstat, mkdir, open, readFile, realpath, rename, rm, type FileHandle } from "node:fs/promises";
+import { missing } from "./io.ts";
+const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 import { canonicalVps, exactObject, parseVpsReceipt, sha256, gitSha, VPS_RECEIPT_MAX_BYTES, type VpsReceipt } from "./vps-release-contract.ts";
 
 export type VpsPin = { operationId: string; requestDigest: string; candidate: string; prior: string };
@@ -6,9 +11,9 @@ const unavailable = (): never => {
 };
 async function removeTemporary(path: string): Promise<void> {
   try {
-    await Deno.remove(path);
+    await rm(path);
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    if (!missing(error)) throw error;
   }
 }
 function terminalReceipt(receipt: VpsReceipt): boolean {
@@ -16,16 +21,16 @@ function terminalReceipt(receipt: VpsReceipt): boolean {
   return receipt.phase === "rolled_back" && receipt.settlement !== null;
 }
 export async function readVpsPins(path: string): Promise<VpsPin[]> {
-  let stat: Deno.FileInfo;
+  let stat: Stats;
   try {
-    stat = await Deno.lstat(path);
+    stat = await lstat(path);
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return [];
+    if (missing(error)) return [];
     return unavailable();
   }
-  if (!stat.isFile || stat.isSymlink || stat.size > VPS_RECEIPT_MAX_BYTES || ((stat.mode ?? 0) & 0o777) !== 0o600) return unavailable();
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > VPS_RECEIPT_MAX_BYTES || (stat.mode & 0o777) !== 0o600) return unavailable();
   try {
-    const value = exactObject(JSON.parse(await Deno.readTextFile(path)), ["schema", "pins"]);
+    const value = exactObject(JSON.parse(await readTextFile(path)), ["schema", "pins"]);
     if (value.schema !== 1 || !Array.isArray(value.pins) || value.pins.length > 256) return unavailable();
     const pins = value.pins.map((entry) => {
       const pin = exactObject(entry, ["operationId", "requestDigest", "candidate", "prior"]);
@@ -42,40 +47,37 @@ export async function writeVpsAtomic(path: string, value: unknown): Promise<void
   const text = canonicalVps(value) + "\n";
   if (new TextEncoder().encode(text).byteLength > VPS_RECEIPT_MAX_BYTES) return unavailable();
   const temporary = `${path}-${crypto.randomUUID()}`;
-  let file: Deno.FsFile | null = null;
+  let file: FileHandle | null = null;
   try {
-    file = await Deno.open(temporary, { write: true, createNew: true, mode: 0o600 });
-    const bytes = new TextEncoder().encode(text);
-    let offset = 0;
-    while (offset < bytes.length) offset += await file.write(bytes.subarray(offset));
+    file = await open(temporary, "wx", 0o600);
+    await file.writeFile(text, "utf8");
     await file.sync();
-    file.close();
+    await file.close();
     file = null;
-    await Deno.rename(temporary, path);
+    await rename(temporary, path);
   } finally {
-    file?.close();
+    await file?.close();
     await removeTemporary(temporary);
   }
 }
 
 /** The sole lock used by normal deploy, bound operations and manual pruning. */
 export async function withVpsDeployLock<T>(root: string, work: () => Promise<T>): Promise<T> {
-  await Deno.mkdir(`${root}/.data`, { recursive: true, mode: 0o700 });
-  const directory = await Deno.lstat(`${root}/.data`);
-  if (!directory.isDirectory || directory.isSymlink || (await Deno.realPath(`${root}/.data`)) !== `${root}/.data`) return unavailable();
+  await mkdir(`${root}/.data`, { recursive: true, mode: 0o700 });
+  const directory = await lstat(`${root}/.data`);
+  if (!directory.isDirectory() || directory.isSymbolicLink() || (await realpath(`${root}/.data`)) !== `${root}/.data`) return unavailable();
   const path = `${root}/.data/deploy.lock`;
   try {
-    const stat = await Deno.lstat(path);
-    if (!stat.isFile || stat.isSymlink) return unavailable();
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) return unavailable();
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    if (!missing(error)) throw error;
   }
-  const lock = await Deno.open(path, { create: true, write: true, mode: 0o600 });
+  const releaseLock = await acquireDeployLock(path);
   try {
-    await lock.lock(true);
     return await work();
   } finally {
-    lock.close();
+    releaseLock();
   }
 }
 
@@ -112,16 +114,16 @@ export class VpsOperationJournal {
   }
   async read(id: string): Promise<VpsReceipt | null> {
     const path = this.path(id);
-    let stat: Deno.FileInfo;
+    let stat: Stats;
     try {
-      stat = await Deno.lstat(path);
+      stat = await lstat(path);
     } catch (error) {
-      if (error instanceof Deno.errors.NotFound) return null;
+      if (missing(error)) return null;
       return unavailable();
     }
-    if (!stat.isFile || stat.isSymlink || stat.size > VPS_RECEIPT_MAX_BYTES || ((stat.mode ?? 0) & 0o777) !== 0o600) return unavailable();
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > VPS_RECEIPT_MAX_BYTES || (stat.mode & 0o777) !== 0o600) return unavailable();
     try {
-      const receipt = parseVpsReceipt(JSON.parse(await Deno.readTextFile(path)));
+      const receipt = parseVpsReceipt(JSON.parse(await readTextFile(path)));
       if (receipt.operationId !== id) return unavailable();
       return receipt;
     } catch {
@@ -131,9 +133,9 @@ export class VpsOperationJournal {
   async write(value: VpsReceipt): Promise<VpsReceipt> {
     const receipt = parseVpsReceipt(value);
     const directory = `${this.root}/.data/sentinel-releases`;
-    await Deno.mkdir(directory, { recursive: true, mode: 0o700 });
-    const stat = await Deno.lstat(directory);
-    if (!stat.isDirectory || stat.isSymlink || (await Deno.realPath(directory)) !== directory) return unavailable();
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const stat = await lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (await realpath(directory)) !== directory) return unavailable();
     const previous = await this.read(receipt.operationId);
     if (previous) {
       if (!isValidReceiptSuccessor(previous, receipt)) return unavailable();

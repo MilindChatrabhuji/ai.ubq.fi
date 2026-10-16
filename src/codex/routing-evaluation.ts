@@ -1,20 +1,20 @@
 // Codex routing account evaluation and accumulation, split out of src/codex_account_routing.ts.
 
 import { getString, isRecord } from "../utils.ts";
-import { CodexAuthPoolState, CodexAuthState } from "../types.ts";
+import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
 import { parseCodexAuthPool } from "./auth.ts";
 import {
-  CodexAccountRoutingState,
-  CodexActiveAccountSnapshot,
-  CodexActiveAccountTransitionReason,
-  CodexBlockedRoutingAccount,
-  CodexCapacityRoutingObservation,
-  CodexProbeCircuit,
-  CodexQuotaClass,
-  CodexQuotaClassBlock,
-  CodexRoutingSlot,
-  RouteSelection,
-  RoutingAccount,
+  type CodexAccountRoutingState,
+  type CodexActiveAccountSnapshot,
+  type CodexActiveAccountTransitionReason,
+  type CodexBlockedRoutingAccount,
+  type CodexCapacityRoutingObservation,
+  type CodexProbeCircuit,
+  type CodexQuotaClass,
+  type CodexQuotaClassBlock,
+  type CodexRoutingSlot,
+  type RouteSelection,
+  type RoutingAccount,
   isSafeMs,
 } from "./routing-state.ts";
 import {

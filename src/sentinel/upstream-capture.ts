@@ -621,7 +621,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
     const stream = new ReadableStream<Uint8Array>(
       {
         async pull(controller) {
-          let result: ReadableStreamReadResult<Uint8Array>;
+          let result: Awaited<ReturnType<typeof reader.read>>;
           try {
             result = await reader.read();
           } catch (error) {
