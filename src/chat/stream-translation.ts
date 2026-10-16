@@ -98,8 +98,12 @@ const completedPartRepeatsEmittedContent = (emittedParts: ReadonlyMap<string, st
     if (emitted !== undefined) return emitted === completed || emitted.startsWith(completed);
     return false;
   }
-  const emitted = [...emittedParts.values()].join("");
-  return emitted !== undefined && (emitted === completed || emitted.startsWith(completed));
+  // Without a position, infer a repeat only when the stream has one item-id entry;
+  // never let another part's content become this part's deduplication key.
+  const unpositioned = [...emittedParts.entries()].filter(([key]) => key.startsWith("item:"));
+  if (emittedParts.size !== 1 || unpositioned.length !== 1) return false;
+  const [, emitted] = unpositioned[0];
+  return emitted === completed || emitted.startsWith(completed);
 };
 
 export const reconcileChatContentPart = (
