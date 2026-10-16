@@ -2,6 +2,7 @@ import type { AtomicCheck, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKe
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
+import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin/index.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
 import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek/index.ts";
@@ -639,20 +640,18 @@ test("/v1/models hides the models of a switched-off provider", async () => {
 
 test("a switched-off Lithos provider leaves an explicit Responses id to availability checks", async () => {
   const previousLithosKey = process.env.LITHOSAI_API_KEY;
-  const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
   const originalFetch = globalThis.fetch;
   let upstreamCalls = 0;
-  process.env.LITHOSAI_API_KEY = "fixture-lithos-key";
-  Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
-  globalThis.fetch = ((_input: RequestInfo | URL, _init?: RequestInit) => {
+  process.env.LITHOSAI_API_KEY = "lith_sk_fixture";
+  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
     upstreamCalls += 1;
     return Promise.resolve(Response.json({}));
-  }) as typeof fetch;
+  });
   const kv = new SelectionKv();
   seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
   try {
     await withKv(kv, async () => {
-      await storeProviderSelection(kv, ["deepseek"]);
+      await storeProviderSelection(kv, ["codex"]);
       const response = await handleResponses(
         new Request("https://ai.ubq.fi/v1/responses", {
           method: "POST",
@@ -670,8 +669,6 @@ test("a switched-off Lithos provider leaves an explicit Responses id to availabi
     resetRuntimeConfigCacheForTest();
     if (previousLithosKey === undefined) delete process.env.LITHOSAI_API_KEY;
     else process.env.LITHOSAI_API_KEY = previousLithosKey;
-    if (previousOpenRouterKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
-    else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
   }
 });
 
