@@ -2,8 +2,10 @@
 
 import type { Kv, KvKey } from "#kv";
 import { API_KEY_USAGE_V3_REQUEST_PREFIX, API_KEY_USAGE_V3_RETENTION_MS, API_KEY_USAGE_V3_WINDOW_PREFIX } from "../api-key-policy.ts";
+import { API_KEY_REQUEST_LOG_RETENTION_MS } from "../analytics.ts";
 import { type KvEntryJson, toKey, toValue } from "../kv-conversion/profile-json.ts";
 import { CODEX_RESET_USAGE_PREFIX } from "../codex/reset-settings.ts";
+import { EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS, EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS } from "../embeddings/ledger.ts";
 import {
   KERNEL_ORG_RESERVATION_V2_PREFIX,
   KERNEL_ORG_WINDOW_V2_PREFIX,
@@ -297,14 +299,26 @@ const migrationExpireIn = (key: KvKey, value: unknown, nowMs: number): Migration
     // anchors both rows to that window rather than to admission time.
     return boundedMigrationExpireIn(apiKeyUsageV3RequestWindowResetAtMs(key), API_KEY_USAGE_V3_RETENTION_MS, nowMs);
   }
+  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "ledger"])) {
+    return boundedMigrationExpireIn(record?.created_at_ms, API_KEY_REQUEST_LOG_RETENTION_MS, nowMs);
+  }
   if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "window"])) {
     return boundedMigrationExpireIn(record?.window_reset_at_ms, PAID_FALLBACK_REQUEST_LOG_RETENTION_MS, nowMs);
   }
-  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "request"]) || keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "pending"])) {
+  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "request"])) {
     return boundedMigrationExpireIn(record?.created_at_ms, PAID_FALLBACK_REQUEST_LOG_RETENTION_MS, nowMs);
   }
+  // Pending markers are written without a TTL and remain the durable source
+  // of unresolved work until reconciliation removes them.
+  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "pending"])) return null;
   if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "reconciliation_lease"])) {
     return boundedMigrationExpireIn(record?.expires_at_ms, 0, nowMs);
+  }
+  // Response chunks carry no timestamp in their value, so retain only one
+  // bounded response lifetime instead of turning an unanchored row permanent.
+  if (keyStartsWith(key, ["embeddings", "idempotency", "v1", "response"])) return EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS;
+  if (keyStartsWith(key, ["embeddings", "idempotency", "v1"])) {
+    return boundedMigrationExpireIn(record?.updated_at_ms ?? record?.created_at_ms ?? nowMs, EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS, nowMs);
   }
   if (keyStartsWith(key, KERNEL_REPO_WINDOW_V2_PREFIX) || keyStartsWith(key, KERNEL_ORG_WINDOW_V2_PREFIX)) {
     return boundedMigrationExpireIn(record?.usage_reset_at_ms, KERNEL_QUOTA_RESERVATION_RETENTION_MS, nowMs);
