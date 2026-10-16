@@ -21,7 +21,7 @@ The public scripts are `bun run build`, `bun run test`, and `bun run verify`. Fo
 
 `bun run spec:drift` is the offline CI gate that compares the Chat and Responses request allowlists with the official OpenAI request schemas recorded in `scripts/openai-spec-pin.json` (one `openai/openai-openapi` commit and the SHA-256 of its `openapi.yaml`). `--verify-source` re-downloads that pinned file and checks its digest; `--repin <commit>` moves the pin to a newer official revision, after which the gate fails until the runtime allowlists in `src/openai-schema.ts` follow; `tests/openapi-runtime-contract.test.ts` then requires `static/openapi.json` to publish exactly those allowlists. Gateway compatibility extensions stay out of the official comparison.
 
-Isolated test children disable dotenv and auto-install, use sparse named environment profiles and disposable state, and require the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected. Do not invoke live or paid-provider checks as part of migration verification.
+Isolated test children disable dotenv and auto-install, use sparse named environment profiles and disposable state, and require the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected. The explicitly selected `test:e2e` segment keeps that boundary but admits exactly one destination, its `BASE_URL` origin (default `https://ai.ubq.fi`), through a destination-scoped relay; on Darwin only a host-loopback `BASE_URL` can be scoped, and any other origin fails closed. Do not invoke live or paid-provider checks as part of migration verification.
 
 TypeScript starts directly from verified immutable releases. Runtime/dependency/native artifacts must be prepared and manifest-bound before publication; launchers use `--no-env-file --no-install`, explicitly load the repository-root `.env`, and fail closed without downloading, installing, or compiling at startup. `build:native` prepares auxiliary native guard artifacts separately; it is not an application TypeScript compile step. Merging this source does not activate production or convert its database.
 
@@ -712,10 +712,12 @@ set as `DENO_DEPLOY_TOKEN` from the fallback chain `DENO_DEPLOY_TOKEN_UBIQUITY_D
 sign-in on `http://127.0.0.1:8000`. The injected token lives in the server process only — `.env` values are not
 re-exported to your shell, and the admin credential never flows into separate commands. `bun run dev:local` behaves
 the same way; `bun run admin:models` (and its `:spark` variant) use `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` or
-`DENO_DEPLOY_TOKEN` from your shell when set. A token is optional for a loopback `BASE_URL` (the default), but an
-exported token is still sent as `Authorization: Bearer ...`; unset both variables if the listener must receive no
-deployment credential. A non-loopback `BASE_URL` requires one, exactly like the loopback server itself, which has admin
-authentication disabled.
+`DENO_DEPLOY_TOKEN` from your shell when set. A token is optional when the parsed `BASE_URL` hostname is loopback
+(`localhost` in any case, `127.0.0.0/8`, or `::1` in any spelling, classified as the server classifies it; the default
+is `http://localhost:8000`), but an exported token is still sent as `Authorization: Bearer ...`; unset both variables
+if the listener must receive no deployment credential. A non-loopback `BASE_URL`, including a lookalike such as
+`http://localhost.example.com`, requires one, exactly like the loopback server itself, which has admin authentication
+disabled. Both tasks exit non-zero on an HTTP error rather than printing an empty result.
 
 The dev wrappers explicitly source `.env` before invoking Bun with `--no-env-file`; `dev:local` retains its existing optional native-auth seed. Direct commands below do not discover dotenv files, so export their intended credentials first. The named `application` export and explicit entry point use the receipt-preserving `node:http` server, not Bun's automatic default-export server startup.
 
