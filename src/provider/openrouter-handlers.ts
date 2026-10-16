@@ -280,8 +280,9 @@ export const handleOpenRouterResponses = async (
     recordStreamTerminalType(usageContext, "error");
     return openaiError(502, "OpenRouter returned an unusable body", "openrouter_upstream_invalid_response");
   }
-  const terminalType: ResponseStreamTerminalType =
-    payload.status === "incomplete" ? "response.incomplete" : payload.status === "failed" ? "response.failed" : "response.completed";
+  let terminalType: ResponseStreamTerminalType = "response.completed";
+  if (payload.status === "incomplete") terminalType = "response.incomplete";
+  else if (payload.status === "failed") terminalType = "response.failed";
   if (Array.isArray(payload.output) && payload.output.length > 0) markChatSemanticOutput(usageContext);
   await recordCompletionUsage(usageContext, extractUsageTokens(payload.usage), terminalType === "response.completed");
   recordStreamTerminalType(usageContext, terminalType);
