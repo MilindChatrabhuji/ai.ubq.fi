@@ -741,14 +741,23 @@ test("provider picker edits invalidate an in-flight roster refresh", () => {
     /const markProviderSelectionEdited = \(\) => \{\s*providerSelectionLoadId \+= 1;\s*\};/
   );
   assert.match(adminScript, /const loadId = \+\+providerSelectionLoadId;[\s\S]*?if \(loadId !== providerSelectionLoadId\) return false;/);
+  const loadStart = adminScript.indexOf("const loadProviderSelection = async (options = {}) => {");
+  const staleGuard = adminScript.indexOf("if (loadId !== providerSelectionLoadId) return false;", loadStart);
+  const serverSelection = adminScript.indexOf("providerSelection = new Set(providersSavedSelection);", loadStart);
+  assert.ok(loadStart >= 0 && staleGuard >= 0 && serverSelection > staleGuard, "stale loads must be fenced before applying server selection");
   const applyStart = adminScript.indexOf("const applyProvidersSelection = (mutate) => {");
   const changeStart = adminScript.indexOf('providersList.addEventListener("change", (event) => {', applyStart);
   const dropMissingStart = adminScript.indexOf('providersDropMissingBtn.addEventListener("click", () => {', changeStart);
-  assert.ok(applyStart >= 0 && changeStart > applyStart && dropMissingStart > changeStart, "provider picker handlers must stay discoverable");
+  const discardStart = adminScript.indexOf("const discardProviderChanges = () => {", dropMissingStart);
+  assert.ok(
+    applyStart >= 0 && changeStart > applyStart && dropMissingStart > changeStart && discardStart > dropMissingStart,
+    "provider picker handlers must stay discoverable"
+  );
   const marker = /markProviderSelectionEdited\(\);/;
   assert.match(adminScript.slice(applyStart, changeStart), marker);
   assert.match(adminScript.slice(changeStart, dropMissingStart), marker);
-  assert.match(adminScript.slice(dropMissingStart), marker);
+  assert.match(adminScript.slice(dropMissingStart, discardStart), marker);
+  assert.match(adminScript.slice(discardStart), marker);
 });
 
 test("the Providers tab renders a provider picker next to the Analytics tab", () => {

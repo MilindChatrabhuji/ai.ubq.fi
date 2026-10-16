@@ -10270,6 +10270,7 @@ const saveProviderSelection = async () => {
 
 const discardProviderChanges = () => {
   if (!providersHasUnsavedChanges()) return;
+  markProviderSelectionEdited();
   providerSelectionSaveError = "";
   providerSelection = new Set(providersSavedSelection);
   renderProvidersPicker();
