@@ -344,7 +344,7 @@ export const streamOpenRouterResponses = (
         recordStreamTerminal(usageContext);
         if (event.type === "error" || event.type === "response.failed") {
           void recordOpenRouterProviderHealth("upstream_error", 200, Date.now, providerRequestId);
-        } else {
+        } else if (event.type === "response.completed" || event.type === "response.incomplete") {
           recordOpenRouterResponseHealth(200, providerRequestId);
         }
         return;

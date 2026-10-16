@@ -509,6 +509,8 @@ test("openrouter responses relays native events and records the terminal", async
 
 test("openrouter responses records a failed terminal as upstream provider health error", async () => {
   await withServedCatalogue(async () => {
+    // Drain optional health writes from the preceding fixture before replacing it.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const kv = new CountingKv();
     setKvForTest(kv as unknown as Kv);
     resetProviderHealthThrottleForTest();
@@ -536,6 +538,9 @@ test("openrouter responses records a failed terminal as upstream provider health
       assert.equal(health.last_status, 200);
       assert.equal(health.state, "degraded");
     } finally {
+      // Health is recorded without delaying the response; do not replace the
+      // fixture while the terminal observation is still draining.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       setKvForTest(null);
       resetProviderHealthThrottleForTest();
     }
