@@ -1,5 +1,6 @@
 import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import { afterEach, beforeEach, test } from "bun:test";
 import assert from "node:assert/strict";
@@ -758,6 +759,29 @@ test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminScript, /providersMissingSelectionIds/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/selection"\), \{/);
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
+});
+
+test("a narrowed Codex subscription enables unchecking the filtered provider", () => {
+  const providerLogicStart = adminScript.indexOf("const providerRosterEntry");
+  const providerLogicEnd = adminScript.indexOf("/** Staged ids", providerLogicStart);
+  assert.ok(providerLogicStart >= 0 && providerLogicEnd > providerLogicStart);
+
+  const context = {
+    providerSelection: new Set(["codex-subscription"]),
+    providerRoster: [{ id: "codex", subscriptions: [{ id: "codex-subscription" }] }],
+  };
+  runInNewContext(
+    `${adminScript.slice(providerLogicStart, providerLogicEnd)}
+const visibleIds = new Set(["codex"]);
+globalThis.uncheckDisabled = [...visibleIds].filter((id) => isProviderChecked(id)).length === 0;`,
+    context
+  );
+
+  assert.equal((context as typeof context & { uncheckDisabled: boolean }).uncheckDisabled, false);
+  assert.match(
+    adminScript,
+    /const visibleChecked = \[\.\.\.providersVisibleIds\]\.filter\(\(id\) => isProviderChecked\(id\)\)\.length;/
+  );
 });
 
 test("admin metadata refresh forces every upstream and reports what is cached", async () => {

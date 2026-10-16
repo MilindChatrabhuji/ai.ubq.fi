@@ -9702,7 +9702,7 @@ const updateProvidersStatus = () => {
   const total = providerRoster.length;
   const selected = providerSelection.size;
   const visibleCount = providersVisibleIds.size;
-  const visibleChecked = [...providersVisibleIds].filter((id) => providerSelection.has(id)).length;
+  const visibleChecked = [...providersVisibleIds].filter((id) => isProviderChecked(id)).length;
   const unsaved = providersHasUnsavedChanges();
   const saving = providerSelectionSaving;
   const missingSelectionIds = providersMissingSelectionIds();
