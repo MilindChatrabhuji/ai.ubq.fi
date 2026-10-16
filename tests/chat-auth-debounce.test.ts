@@ -136,7 +136,8 @@ test("empty-token local auth cancels a pending token check", async () => {
   ];
 
   try {
-    await import("../static/chat.js");
+    const chatModule = "../static/chat.js?chat-auth-debounce";
+    await import(chatModule);
     await flushMicrotasks();
     const tokenInput = documentTarget.getElementById("token");
     const authBadge = documentTarget.getElementById("auth-badge");
