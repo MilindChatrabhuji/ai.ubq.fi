@@ -26,11 +26,18 @@ const isIpv4Loopback = (hostname) => {
   );
 };
 
+const isIpv6Loopback = (hostname) => hostname === "::1" || hostname === "0:0:0:0:0:0:0:1";
+
 export const isLocalDevelopmentOrigin = () => {
   const location = globalThis.location;
   if (!location || String(location.protocol ?? "").toLowerCase() !== "http:") return false;
   const hostname = String(location.hostname ?? "").toLowerCase();
-  return hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || isIpv4Loopback(hostname);
+  const unbracketedHostname = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  return (
+    unbracketedHostname === "localhost" ||
+    isIpv6Loopback(unbracketedHostname) ||
+    isIpv4Loopback(unbracketedHostname)
+  );
 };
 
 const normalizeBaseChoice = (value) => {
