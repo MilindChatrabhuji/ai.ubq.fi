@@ -273,15 +273,22 @@ const refillEventsFromHistory = (samples: readonly MeteredQuotaBalanceSample[], 
   return events;
 };
 
-const refillProjection = (
-  quota: MeteredQuotaRunwayView,
-  balanceQuota: number | null,
-  burnQuotaPerHour: number | null,
-  history: readonly MeteredQuotaBalanceSample[] | null,
-  nowMs: number
-): RefillProjection => {
-  const historyEvents = history === null ? [] : refillEventsFromHistory(history, nowMs);
-  const events = [...historyEvents];
+const mergeObservedRefillEvent = (events: RefillEvent[], observedRefillAtMs: number): void => {
+  // The history sample containing a refill can be a little later than the
+  // provider's completion timestamp. Replace that sample event rather than
+  // treating one refill as two closely-spaced refills.
+  let eventAmountQuota: number | null = null;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (Math.abs((events[index]?.atMs ?? 0) - observedRefillAtMs) <= HOUR_MS) {
+      eventAmountQuota = events[index]?.amountQuota ?? eventAmountQuota;
+      events.splice(index, 1);
+    }
+  }
+  events.push({ atMs: observedRefillAtMs, amountQuota: eventAmountQuota });
+};
+
+const refillEvents = (quota: MeteredQuotaRunwayView, history: readonly MeteredQuotaBalanceSample[] | null, nowMs: number): RefillEvent[] => {
+  const events: RefillEvent[] = history === null ? [] : refillEventsFromHistory(history, nowMs);
   const cycleStartIsRefill =
     quota.latest_refill_completed_at_ms !== null ||
     positiveFinite(quota.latest_refill_amount_credits) ||
@@ -290,20 +297,19 @@ const refillProjection = (
   const observedRefillTimes = [cycleStartIsRefill ? quota.cycle_started_at_ms : null, quota.latest_refill_completed_at_ms].filter(
     (atMs): atMs is number => nonNegativeFinite(atMs) && atMs <= nowMs
   );
-  for (const observedRefillAtMs of observedRefillTimes) {
-    // The history sample containing a refill can be a little later than the
-    // provider's completion timestamp. Replace that sample event rather than
-    // treating one refill as two closely-spaced refills.
-    let eventAmountQuota: number | null = null;
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      if (Math.abs((events[index]?.atMs ?? 0) - observedRefillAtMs) <= HOUR_MS) {
-        eventAmountQuota = events[index]?.amountQuota ?? eventAmountQuota;
-        events.splice(index, 1);
-      }
-    }
-    events.push({ atMs: observedRefillAtMs, amountQuota: eventAmountQuota });
-  }
+  for (const observedRefillAtMs of observedRefillTimes) mergeObservedRefillEvent(events, observedRefillAtMs);
   events.sort((left, right) => left.atMs - right.atMs);
+  return events;
+};
+
+const refillProjection = (
+  quota: MeteredQuotaRunwayView,
+  balanceQuota: number | null,
+  burnQuotaPerHour: number | null,
+  history: readonly MeteredQuotaBalanceSample[] | null,
+  nowMs: number
+): RefillProjection => {
+  const events = refillEvents(quota, history, nowMs);
 
   const observedAmountQuota =
     positiveFinite(quota.latest_refill_amount_credits) && positiveFinite(quota.quota_per_credit)
@@ -332,28 +338,28 @@ const refillProjection = (
     nextRefillAtMs: null,
   };
   if (balanceQuota === null || !positiveFinite(burnQuotaPerHour)) return unknown;
+  const noRefillTimeRemainingMs = Math.trunc((balanceQuota / burnQuotaPerHour) * HOUR_MS);
+  const noRefill: RefillProjection = {
+    ...unknown,
+    status: "exhausts_without_refill",
+    timeRemainingMs: noRefillTimeRemainingMs,
+    exhaustedAtMs: Math.trunc(nowMs + noRefillTimeRemainingMs),
+  };
   if (cadenceMs === null || amountQuota === null || !positiveFinite(rateQuotaPerHour)) {
-    return {
-      ...unknown,
-      status: history === null ? "unknown" : "exhausts_without_refill",
-    };
+    return history === null ? unknown : noRefill;
   }
 
   const latestEventAtMs = events.at(-1)?.atMs ?? null;
-  if (latestEventAtMs === null) return { ...unknown, status: history === null ? "unknown" : "exhausts_without_refill" };
+  if (latestEventAtMs === null) return history === null ? unknown : noRefill;
   let periodsUntilNext = 0;
   if (latestEventAtMs < nowMs) periodsUntilNext = Math.ceil((nowMs - latestEventAtMs) / cadenceMs);
   else if (latestEventAtMs === nowMs) periodsUntilNext = 1;
   const nextRefillAtMs = latestEventAtMs + periodsUntilNext * cadenceMs;
   const hoursUntilNextRefill = Math.max(0, (nextRefillAtMs - nowMs) / HOUR_MS);
   const balanceAtNextRefill = balanceQuota - burnQuotaPerHour * hoursUntilNextRefill;
-  const noRefillTimeRemainingMs = (balanceQuota / burnQuotaPerHour) * HOUR_MS;
   if (balanceAtNextRefill < 0) {
-    const exhaustedAtMs = Math.trunc(nowMs + noRefillTimeRemainingMs);
     return {
-      status: "exhausts_with_refill",
-      timeRemainingMs: Math.trunc(noRefillTimeRemainingMs),
-      exhaustedAtMs,
+      ...noRefill,
       amountCredits,
       cadenceMs,
       rateQuotaPerHour,
@@ -362,7 +368,7 @@ const refillProjection = (
   }
 
   const cycleBurnQuota = burnQuotaPerHour * (cadenceMs / HOUR_MS);
-  if (amountQuota >= cycleBurnQuota) {
+  if (rateQuotaPerHour >= burnQuotaPerHour) {
     return {
       status: "sustainable",
       timeRemainingMs: null,
