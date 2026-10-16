@@ -1,3 +1,6 @@
+import { test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import { referenceAdapter } from "../adapter.ts";
@@ -6,16 +9,16 @@ import { deriveReliability, finalsFromEvents, retrySummaryFromEvents, trailingIn
 import { runOne } from "../runner.ts";
 import { validateBenchmarkResult, validateTrajectoryEvent } from "../schemas.ts";
 
-const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
-const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
+const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
 function freshOptions() {
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const runsRoot = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const runsRoot = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   return { runsRoot };
 }
 
-Deno.test("reliability: derives evidence from a recorded reference trajectory", async () => {
+test("reliability: derives evidence from a recorded reference trajectory", async () => {
   const { runsRoot } = freshOptions();
   try {
     const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
@@ -39,11 +42,11 @@ Deno.test("reliability: derives evidence from a recorded reference trajectory", 
     assert.equal(typeof state_contract, "string");
     assert.equal(summary.guard_rejections, 0);
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("reliability: duplicate and retry counters derive deterministically from events", () => {
+test("reliability: duplicate and retry counters derive deterministically from events", () => {
   const events = [
     { type: "tool_call", at: "t", id: "a", tool: "filesystem.read", arguments: { path: "x" }, valid: true },
     { type: "tool_result", at: "t", id: "a", ok: true, output: "v" },
@@ -64,7 +67,7 @@ Deno.test("reliability: duplicate and retry counters derive deterministically fr
   assert.equal(summary.unverified_writes, 0);
 });
 
-Deno.test("reliability: finals and guard events drive final_accepted and false_completions", () => {
+test("reliability: finals and guard events drive final_accepted and false_completions", () => {
   const events = [
     { type: "model_response", at: "t", request_id: 1, content: "done" },
     { type: "guard", at: "t", kind: "false_completion", reason: "repeated", attempt: 2, phase: "completing" },
@@ -88,7 +91,7 @@ Deno.test("reliability: finals and guard events drive final_accepted and false_c
   assert.equal(summary.false_completions, 1);
 });
 
-Deno.test("reliability: trailing invalid streak is counted deterministically", () => {
+test("reliability: trailing invalid streak is counted deterministically", () => {
   const observations = [
     { seq: 1, tool: "filesystem.read", args: { path: "a" }, valid: true, result: { ok: true, output: "a" } },
     {
@@ -109,7 +112,7 @@ Deno.test("reliability: trailing invalid streak is counted deterministically", (
   assert.equal(trailingInvalidStreak(observations), 2);
 });
 
-Deno.test("reliability: the runner attaches a validated summary to every result", async () => {
+test("reliability: the runner attaches a validated summary to every result", async () => {
   const { runsRoot } = freshOptions();
   try {
     const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
@@ -126,11 +129,11 @@ Deno.test("reliability: the runner attaches a validated summary to every result"
     // The result record round-trips through the schema validator.
     validateBenchmarkResult(result);
   } finally {
-    Deno.removeSync(runsRoot, { recursive: true });
+    rmSync(runsRoot, { recursive: true });
   }
 });
 
-Deno.test("reliability: guard trajectory events validate and reject malformed attempts", () => {
+test("reliability: guard trajectory events validate and reject malformed attempts", () => {
   const event = {
     type: "guard",
     at: "2026-01-01T00:00:00.000Z",

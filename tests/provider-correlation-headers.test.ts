@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { PROVIDER_NATIVE_CORRELATION_HEADERS, scrubProviderNativeCorrelationHeaders } from "../src/handler/http.ts";
@@ -19,7 +20,7 @@ const READER_ACCEPTED_HEADERS = [
   "x-uos-provider-request-id",
 ] as const;
 
-Deno.test("provider native correlation header vocabulary stays complete and canonical", () => {
+test("provider native correlation header vocabulary stays complete and canonical", () => {
   const declared = new Set<string>(PROVIDER_NATIVE_CORRELATION_HEADERS);
   for (const header of READER_ACCEPTED_HEADERS) {
     assert.equal(declared.has(header), true, `${header} must be scrubbed`);
@@ -33,7 +34,7 @@ Deno.test("provider native correlation header vocabulary stays complete and cano
   assert.equal(declared.has("x-oneapi-request-id"), true);
 });
 
-Deno.test("scrubbing removes every provider native correlation header", () => {
+test("scrubbing removes every provider native correlation header", () => {
   const headers = new Headers();
   for (const header of PROVIDER_NATIVE_CORRELATION_HEADERS) headers.set(header, `provider-native-${header}`);
   headers.set("x-uos-warning", "kept");

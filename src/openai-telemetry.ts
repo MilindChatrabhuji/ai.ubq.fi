@@ -45,7 +45,7 @@ export type UsageContext = Readonly<{
 export type UpstreamProvider = "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus";
 export const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
-export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
+export type InferenceFallbackReason = "primary_quota_blocked" | "primary_subscriptions_unavailable" | "dynamic_paid_model";
 /**
  * Exact fallback reason for one failed hop of the `ubiquity/deepseek-v4.1-flash`
  * waterfall, so production traffic keeps the same per-hop evidence the

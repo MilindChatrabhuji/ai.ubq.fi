@@ -51,16 +51,16 @@ what a DeepSeek response _means_, and do we agree."
 
 ## Summary of deltas
 
-| # | Delta                                                             | Verdict                                          | Client-visible today?                             |
-| - | ----------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------- |
-| 1 | `finish_reason` interpreted by the vendor, discarded by us        | Fix via generalized G1                           | Yes — `length` and `insufficient_system_resource` |
-| 2 | Degenerate completion fails closed in the vendor, succeeds for us | Fix via generalized G3                           | Yes, when reachable                               |
-| 3 | Vendor always sends an output cap; we never do                    | Fix via generalized G5                           | Indirectly — it is why Delta 1 bites              |
-| 4 | `reasoning_content` replay scope differs                          | **Keep ours**; record the empirical boundary     | No — our rule matches all four probe outcomes     |
-| 5 | Vendor sends `thinking.type`, we send `reasoning_effort: none`    | **Keep ours**; re-probe on provider change       | No — measured equivalent                          |
-| 6 | Vendor subtracts cache reads; we relay them                       | **Keep ours**; do not "fix" toward the vendor    | No — different contracts by design                |
-| 7 | Request-shape differences with no behavioral delta                | Record only                                      | No                                                |
-| 8 | Thinking mode rejects `tool_choice` values we forward             | **Fix** — new finding, not in the original scope | Yes — HTTP 400                                    |
+| #   | Delta                                                             | Verdict                                          | Client-visible today?                             |
+| --- | ----------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------- |
+| 1   | `finish_reason` interpreted by the vendor, discarded by us        | Fix via generalized G1                           | Yes — `length` and `insufficient_system_resource` |
+| 2   | Degenerate completion fails closed in the vendor, succeeds for us | Fix via generalized G3                           | Yes, when reachable                               |
+| 3   | Vendor always sends an output cap; we never do                    | Fix via generalized G5                           | Indirectly — it is why Delta 1 bites              |
+| 4   | `reasoning_content` replay scope differs                          | **Keep ours**; record the empirical boundary     | No — our rule matches all four probe outcomes     |
+| 5   | Vendor sends `thinking.type`, we send `reasoning_effort: none`    | **Keep ours**; re-probe on provider change       | No — measured equivalent                          |
+| 6   | Vendor subtracts cache reads; we relay them                       | **Keep ours**; do not "fix" toward the vendor    | No — different contracts by design                |
+| 7   | Request-shape differences with no behavioral delta                | Record only                                      | No                                                |
+| 8   | Thinking mode rejects `tool_choice` values we forward             | **Fix** — new finding, not in the original scope | Yes — HTTP 400                                    |
 
 ## Delta 1 — `finish_reason` is interpreted by the vendor client and discarded by us
 
