@@ -242,7 +242,7 @@ test("shipped shared capacity list supports legacy singleton and distinct roster
     },
   };
   runInNewContext(
-    sourceText.slice(sourceText.indexOf("const renderProviderCapacityList ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
+    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
       "\nglobalThis.render = renderProviderCapacityList;",
     fixture
   );
@@ -263,6 +263,78 @@ test("shipped shared capacity list supports legacy singleton and distinct roster
   assert.equal((list.children[3] as CapacityRow).details.open, true);
   render(sources, a, []);
   assert.equal(list.children.length, 2, "an explicit empty roster does not resurrect a stale active projection");
+});
+
+test("shipped routing warnings describe only disabled capacity and paid fallback, not a false Claude paid-first route", () => {
+  const selection = new Set(["claude_code"]);
+  const fixture = {
+    providerSelection: selection,
+    providersSelectionIsEmpty: () => selection.size === 0,
+    providersMissingSelectionIds: () => [],
+    providerCodexSelection: () => ({ total: 2, selected: selection.has("codex") ? 2 : 0 }),
+    isProviderChecked: (id: string) => selection.has(id),
+    formatNumber: (value: number) => String(value),
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const providersRoutingWarnings ="), sourceText.indexOf("const providersHealthWarning =")) +
+      "\nglobalThis.warnings = providersRoutingWarnings;",
+    fixture
+  );
+  const warnings = (fixture as typeof fixture & { warnings: () => string[] }).warnings;
+  assert.deepEqual(Array.from(warnings()), [
+    "Codex is off; Codex subscription capacity stays unused.",
+    "Both paid tiers are off; no paid fallback is available after subscription routing.",
+  ]);
+  assert.doesNotMatch(warnings().join(" "), /requests start at the paid|outside the Codex roster/);
+  selection.add("codex");
+  assert.deepEqual(Array.from(warnings()), ["Both paid tiers are off; no paid fallback is available after subscription routing."]);
+  selection.add("surplus");
+  assert.deepEqual(Array.from(warnings()), []);
+  selection.clear();
+  assert.deepEqual(Array.from(warnings()), [], "an empty selection keeps its existing unfiltered semantics");
+});
+
+test("shipped capacity summary counts exactly displayed Claude roster or legacy rows without changing Codex chart inputs", () => {
+  const badges: string[] = [];
+  const chartSources: { source: string }[][] = [];
+  const fixture = {
+    latestProviderCapacityChartState: null,
+    providerCapacityBadge: new TestElement(),
+    providerCapacityUpdated: new TestElement(),
+    renderProviderCapacityChart: (_snapshot: unknown, sources: { source: string }[]) => chartSources.push(sources),
+    renderProviderCapacityList: () => {},
+    renderProviderCapacityLedger: () => {},
+    setBadge: (_element: unknown, _state: string, label: string) => badges.push(label),
+    formatCapacityTimestamp: () => "observed",
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
+      sourceText.slice(sourceText.indexOf("const unavailableCodexCapacitySource ="), sourceText.indexOf("const CAPACITY_CHART_SVG_NS =")) +
+      sourceText.slice(sourceText.indexOf("const renderProviderCapacity ="), sourceText.indexOf("const loadProviderCapacity =")) +
+      "\nglobalThis.render = renderProviderCapacity;",
+    fixture
+  );
+  const render = (fixture as typeof fixture & { render: (snapshot: unknown) => void }).render;
+  const codex = (state: string) => [1, 2].map((slot) => ({ source: "codex", slot, state }));
+  const account = (id: string, state: string) => ({ source: "claude_code", account_id: id, state });
+  const a = account("a", "available");
+  const b = account("b", "stale");
+  const snapshot = { sources: codex("unavailable"), claude: a, claude_accounts: [a, b], prompt_cache: { status: "ready" } };
+  const before = structuredClone(snapshot);
+  render(snapshot);
+  assert.equal(badges.at(-1), "Partial quota · 2 unavailable", "live Claude capacity cannot be summarized as wholly unavailable");
+  assert.deepEqual(snapshot, before, "summary presentation cannot fabricate a quota or mutate the snapshot");
+  render({ ...snapshot, sources: codex("available"), claude: account("old-active", "unavailable"), claude_accounts: [b] });
+  assert.equal(badges.at(-1), "Quota stale · 1 source", "do not append the active compatibility projection beside an explicit roster");
+  render({ ...snapshot, sources: codex("available"), claude: account("removed", "unavailable"), claude_accounts: [] });
+  assert.equal(badges.at(-1), "Up to date", "a present empty roster does not resurrect removed current evidence");
+  render({ sources: codex("unavailable"), claude: a, prompt_cache: { status: "ready" } });
+  assert.equal(badges.at(-1), "Partial quota · 2 unavailable", "old singleton servers retain truthful summary presentation");
+  render({ sources: codex("unavailable"), claude_accounts: [account("a", "unavailable")] });
+  assert.equal(badges.at(-1), "Quota unavailable");
+  render({});
+  assert.equal(badges.at(-1), "Quota unavailable", "missing evidence is not made available");
+  assert(chartSources.every((sources) => sources.length === 2 && sources.every((entry) => entry.source === "codex")));
 });
 
 test("current accepted quota access is reachable while its failed refresh attempt stays visible", () => {
