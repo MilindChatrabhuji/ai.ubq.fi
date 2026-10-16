@@ -25,6 +25,7 @@ import {
   recordRequestUsage,
   recordStreamTerminalType,
   type PromptCacheMode,
+  type ResponseStreamTerminalType,
   type UsageContext,
 } from "../openai-telemetry.ts";
 import { chatCompletionHasAnswerBearingOutput, providerRequestIdFromResponse, toOpenAiUpstreamErrorResponse } from "../upstream-wire.ts";
@@ -279,9 +280,11 @@ export const handleOpenRouterResponses = async (
     recordStreamTerminalType(usageContext, "error");
     return openaiError(502, "OpenRouter returned an unusable body", "openrouter_upstream_invalid_response");
   }
+  const terminalType: ResponseStreamTerminalType =
+    payload.status === "incomplete" ? "response.incomplete" : payload.status === "failed" ? "response.failed" : "response.completed";
   if (Array.isArray(payload.output) && payload.output.length > 0) markChatSemanticOutput(usageContext);
-  await recordCompletionUsage(usageContext, extractUsageTokens(payload.usage));
-  recordStreamTerminalType(usageContext, "response.completed");
+  await recordCompletionUsage(usageContext, extractUsageTokens(payload.usage), terminalType === "response.completed");
+  recordStreamTerminalType(usageContext, terminalType);
   return json(200, payload, { "x-uos-upstream": OPENROUTER_UPSTREAM_LABEL });
 };
 
