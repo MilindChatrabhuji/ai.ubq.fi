@@ -192,6 +192,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     if (providerController) providerController.abort();
     const request = new AbortController();
     providerController = request;
+    const loadId = ++providerLoadId;
     const token = typeof getToken === "function" ? getToken() : "";
     const selectionTarget = apiUrl("/admin/providers/selection");
     const healthTarget = apiUrl("/admin/providers");
@@ -215,6 +216,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const healthSnapshot = healthResponse.ok ? await healthResponse.json().catch(() => null) : null;
       const currentToken = typeof getToken === "function" ? getToken() : "";
       if (
+        loadId !== providerLoadId ||
         providerController !== request ||
         request.signal.aborted ||
         !active ||
@@ -236,6 +238,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
   let timer = 0;
   let controller = null;
   let providerController = null;
+  let providerLoadId = 0;
   let snapshot = null;
   const rows = new Map();
   const filters = { search: "", machine: "all", state: "active" };
@@ -816,6 +819,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       controller = null;
       if (providerController) providerController.abort();
       providerController = null;
+      providerLoadId += 1;
       stopFollow("Follow stopped while the tab was hidden.");
       return;
     }
@@ -907,6 +911,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       controller = null;
       if (providerController) providerController.abort();
       providerController = null;
+      providerLoadId += 1;
       stopFollow();
       return;
     }
