@@ -81,7 +81,7 @@ let cachedSelection: Readonly<{ value: ProviderSelection | null; expires_at_ms: 
 let selectionLoadInFlight: Promise<ProviderSelection | null> | null = null;
 /** Invalidates a read that began before a successful write primed the cache. */
 let selectionCacheGeneration = 0;
-/** Prevents a reset from letting an obsolete read clear a replacement load. */
+/** Prevents an invalidated read from clearing a replacement load. */
 let selectionLoadToken = 0;
 
 export const isSelectableProviderId = (value: unknown): value is SelectableProviderId => typeof value === "string" && selectableProviderIdSet.has(value.trim());
@@ -147,6 +147,8 @@ export const storeProviderSelection = async (kv: Kv, providerIds: readonly Provi
     return null;
   }
   selectionCacheGeneration += 1;
+  selectionLoadToken += 1;
+  selectionLoadInFlight = null;
   cachedSelection = { value: selection, expires_at_ms: selection.updated_at_ms + PROVIDER_SELECTION_CACHE_TTL_MS };
   return selection;
 };
