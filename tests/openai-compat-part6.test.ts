@@ -1,3 +1,8 @@
+import { test, beforeEach, afterEach } from "bun:test";
+import { runSequence } from "./helpers/sequence.ts";
+import { installHarness, cleanupHarness } from "./helpers/openai-compat-harness.ts";
+beforeEach(installHarness);
+afterEach(cleanupHarness);
 // openai-compat suite, part 6 of 12: tests moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
@@ -15,7 +20,7 @@ import {
   withTerminalRequestLog,
 } from "./helpers/openai-compat-harness.ts";
 
-Deno.test("openai: buffered Chat preserves final-only text alongside function calls", async () => {
+test("openai: buffered Chat preserves final-only text alongside function calls", async () => {
   const call = {
     id: "fc_final_text",
     type: "function_call",
@@ -59,7 +64,7 @@ Deno.test("openai: buffered Chat preserves final-only text alongside function ca
   assert.deepEqual(payload.choices[0]?.message?.tool_calls, [{ id: "call_final_text", type: "function", function: { name: "lookup", arguments: "{}" } }]);
 });
 
-Deno.test("openai: buffered Chat preserves final text from response.output", async () => {
+test("openai: buffered Chat preserves final text from response.output", async () => {
   const response = await withFetchMock(
     () =>
       sseResponse([
@@ -90,110 +95,112 @@ Deno.test("openai: buffered Chat preserves final text from response.output", asy
   assert.equal(payload.choices?.[0]?.message?.content, "Text supplied by response.output.");
 });
 
-Deno.test("openai: contentless response.completed fails Chat without success framing", async (t) => {
-  const usage = { input_tokens: 1642, output_tokens: 2048, total_tokens: 3690 };
-  const completed = `data: ${JSON.stringify({
-    type: "response.completed",
-    response: { id: "resp_empty", model: DEFAULT_TEST_MODEL, output: [], usage },
-  })}\n\n`;
+test("openai: contentless response.completed fails Chat without success framing", async () =>
+  runSequence(async (step) => {
+    const usage = { input_tokens: 1642, output_tokens: 2048, total_tokens: 3690 };
+    const completed = `data: ${JSON.stringify({
+      type: "response.completed",
+      response: { id: "resp_empty", model: DEFAULT_TEST_MODEL, output: [], usage },
+    })}\n\n`;
 
-  for (const stream of [false, true]) {
-    await t.step(stream ? "streamed" : "buffered", async () => {
-      const observedTerminalUsages: { completed: boolean; inputTokens: number | null }[] = [];
-      const response = await withFetchMock(
-        () => sseResponse([completed]),
-        () =>
-          handleChatCompletions(
-            new Request("https://ai.ubq.fi/v1/chat/completions", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                model: DEFAULT_TEST_MODEL,
-                stream,
-                reasoning_effort: "low",
-                max_completion_tokens: 2048,
-                messages: [{ role: "user", content: "contentless completion" }],
+    for (const stream of [false, true]) {
+      await step(stream ? "streamed" : "buffered", async () => {
+        const observedTerminalUsages: { completed: boolean; inputTokens: number | null }[] = [];
+        const response = await withFetchMock(
+          () => sseResponse([completed]),
+          () =>
+            handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  stream,
+                  reasoning_effort: "low",
+                  max_completion_tokens: 2048,
+                  messages: [{ role: "user", content: "contentless completion" }],
+                }),
               }),
-            }),
-            {
-              keyId: null,
-              kernelRepo: null,
-              kernelOrg: null,
-              onTerminalUsage: (terminalUsage, terminalCompleted) => {
-                observedTerminalUsages.push({
-                  completed: terminalCompleted,
-                  inputTokens: terminalUsage?.inputTokens ?? null,
-                });
-              },
-            }
-          )
-      );
+              {
+                keyId: null,
+                kernelRepo: null,
+                kernelOrg: null,
+                onTerminalUsage: (terminalUsage, terminalCompleted) => {
+                  observedTerminalUsages.push({
+                    completed: terminalCompleted,
+                    inputTokens: terminalUsage?.inputTokens ?? null,
+                  });
+                },
+              }
+            )
+        );
 
-      assert.equal(response.status, 502);
-      assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
-      assert.deepEqual(await response.json(), {
-        error: {
-          message: "Upstream response completed with no translated semantic output.",
-          type: "server_error",
-          code: "empty_upstream_completion",
-          param: null,
-        },
+        assert.equal(response.status, 502);
+        assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+        assert.deepEqual(await response.json(), {
+          error: {
+            message: "Upstream response completed with no translated semantic output.",
+            type: "server_error",
+            code: "empty_upstream_completion",
+            param: null,
+          },
+        });
+
+        const telemetry = getResponseTelemetry(response);
+        assert.equal(telemetry?.completed, false);
+        assert.equal(telemetry.semanticOutputObserved, false);
+        assert.equal(telemetry.outputTokenAllowance, 2048);
+        assert.deepEqual(telemetry.upstreamEventKinds, ["response.completed"]);
+        assert.equal(telemetry.streamTerminalType, "error");
+        assert.equal(telemetry.failureKind, "empty_upstream_completion");
+        assert.equal(telemetry.inputTokens, 1642);
+        assert.equal(telemetry.outputTokens, 2048);
+        assert.equal(telemetry.totalTokens, 3690);
+        assert.deepEqual(observedTerminalUsages, [{ completed: false, inputTokens: 1642 }]);
       });
+    }
+  }));
 
-      const telemetry = getResponseTelemetry(response);
-      assert.equal(telemetry?.completed, false);
-      assert.equal(telemetry.semanticOutputObserved, false);
-      assert.equal(telemetry.outputTokenAllowance, 2048);
-      assert.deepEqual(telemetry.upstreamEventKinds, ["response.completed"]);
-      assert.equal(telemetry.streamTerminalType, "error");
-      assert.equal(telemetry.failureKind, "empty_upstream_completion");
-      assert.equal(telemetry.inputTokens, 1642);
-      assert.equal(telemetry.outputTokens, 2048);
-      assert.equal(telemetry.totalTokens, 3690);
-      assert.deepEqual(observedTerminalUsages, [{ completed: false, inputTokens: 1642 }]);
-    });
-  }
-});
+test("openai: partial Chat output followed by failure is not an empty completion", async () =>
+  runSequence(async (step) => {
+    const events = [
+      `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial output" })}\n\n`,
+      `data: ${JSON.stringify({
+        type: "response.failed",
+        response: {
+          status: "failed",
+          output: [],
+          usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+        },
+      })}\n\n`,
+    ];
+    for (const stream of [false, true]) {
+      await step(stream ? "streamed" : "buffered", async () => {
+        const response = await withFetchMock(
+          () => sseResponse(events),
+          () =>
+            handleChatCompletions(
+              new Request("https://ai.ubq.fi/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: DEFAULT_TEST_MODEL,
+                  stream,
+                  messages: [{ role: "user", content: "partial then fail" }],
+                }),
+              })
+            )
+        );
+        const serialized = await response.text();
+        assert.match(serialized, /upstream_stream_error/);
+        assert.doesNotMatch(serialized, /empty_upstream_completion|data: \[DONE\]/);
+        assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+        assert.equal(getResponseTelemetry(response)?.completed, false);
+      });
+    }
+  }));
 
-Deno.test("openai: partial Chat output followed by failure is not an empty completion", async (t) => {
-  const events = [
-    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial output" })}\n\n`,
-    `data: ${JSON.stringify({
-      type: "response.failed",
-      response: {
-        status: "failed",
-        output: [],
-        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
-      },
-    })}\n\n`,
-  ];
-  for (const stream of [false, true]) {
-    await t.step(stream ? "streamed" : "buffered", async () => {
-      const response = await withFetchMock(
-        () => sseResponse(events),
-        () =>
-          handleChatCompletions(
-            new Request("https://ai.ubq.fi/v1/chat/completions", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                model: DEFAULT_TEST_MODEL,
-                stream,
-                messages: [{ role: "user", content: "partial then fail" }],
-              }),
-            })
-          )
-      );
-      const serialized = await response.text();
-      assert.match(serialized, /upstream_stream_error/);
-      assert.doesNotMatch(serialized, /empty_upstream_completion|data: \[DONE\]/);
-      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
-      assert.equal(getResponseTelemetry(response)?.completed, false);
-    });
-  }
-});
-
-Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free", async () => {
+test("openai: empty Chat terminal diagnostics are bounded and content-free", async () => {
   const secretPrompt = "private prompt that must not enter diagnostics";
   const secretEventPayload = "private provider output that must not enter diagnostics";
   const unknownEventType = "response.future_private_output";
@@ -326,136 +333,137 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
   }
 });
 
-Deno.test("openai: Chat refusal output remains semantic in buffered and streamed modes", async (t) => {
-  const refusalText = "I cannot help with that request.";
-  const refusalItem = {
-    id: "msg_refusal",
-    type: "message",
-    role: "assistant",
-    content: [{ type: "refusal", refusal: refusalText }],
-  };
-  const cases = [
-    {
-      name: "refusal delta and done",
-      events: [
-        `data: ${JSON.stringify({
-          type: "response.refusal.delta",
-          item_id: "msg_refusal",
-          output_index: 0,
-          content_index: 0,
-          delta: "I cannot ",
-        })}\n\n`,
-        `data: ${JSON.stringify({
-          type: "response.refusal.done",
-          item_id: "msg_refusal",
-          output_index: 0,
-          content_index: 0,
-          refusal: refusalText,
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "final response output refusal",
-      events: [`data: ${JSON.stringify({ type: "response.completed", response: { output: [refusalItem] } })}\n\n`],
-    },
-    {
-      name: "output-item-done refusal",
-      events: [
-        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "content-part-done refusal",
-      events: [
-        `data: ${JSON.stringify({
-          type: "response.content_part.done",
-          item_id: "msg_refusal",
-          output_index: 0,
-          content_index: 0,
-          part: { type: "refusal", refusal: refusalText },
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "response.output plus repeated output-item-done refusal",
-      events: [
-        `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "response.output plus repeated content-part-done refusal",
-      events: [
-        `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
-        `data: ${JSON.stringify({
-          type: "response.content_part.done",
-          item_id: "msg_refusal",
-          output_index: 0,
-          content_index: 0,
-          part: refusalItem.content[0],
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-  ];
+test("openai: Chat refusal output remains semantic in buffered and streamed modes", async () =>
+  runSequence(async (step) => {
+    const refusalText = "I cannot help with that request.";
+    const refusalItem = {
+      id: "msg_refusal",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "refusal", refusal: refusalText }],
+    };
+    const cases = [
+      {
+        name: "refusal delta and done",
+        events: [
+          `data: ${JSON.stringify({
+            type: "response.refusal.delta",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            delta: "I cannot ",
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "response.refusal.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            refusal: refusalText,
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "final response output refusal",
+        events: [`data: ${JSON.stringify({ type: "response.completed", response: { output: [refusalItem] } })}\n\n`],
+      },
+      {
+        name: "output-item-done refusal",
+        events: [
+          `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "content-part-done refusal",
+        events: [
+          `data: ${JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            part: { type: "refusal", refusal: refusalText },
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "response.output plus repeated output-item-done refusal",
+        events: [
+          `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: refusalItem })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "response.output plus repeated content-part-done refusal",
+        events: [
+          `data: ${JSON.stringify({ type: "response.output", output: [refusalItem] })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_refusal",
+            output_index: 0,
+            content_index: 0,
+            part: refusalItem.content[0],
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+    ];
 
-  for (const testCase of cases) {
-    for (const stream of [false, true]) {
-      await t.step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
-        const response = await withFetchMock(
-          () => sseResponse(testCase.events),
-          () =>
-            handleChatCompletions(
-              new Request("https://ai.ubq.fi/v1/chat/completions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  model: DEFAULT_TEST_MODEL,
-                  stream,
-                  messages: [{ role: "user", content: "refuse" }],
-                }),
-              })
-            )
-        );
-        assert.equal(response.status, 200);
-        if (!stream) {
-          const payload = (await response.json()) as {
-            choices?: { message?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }[];
-          };
-          assert.equal(payload.choices?.[0]?.message?.content, null);
-          assert.equal(payload.choices[0]?.message?.refusal, refusalText);
-          assert.equal(payload.choices[0]?.finish_reason, "stop");
-        } else {
-          const serialized = await response.text();
-          const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
-            .map((match) => match[1])
-            .filter((value) => value !== "[DONE]")
-            .map(
-              (value) =>
-                JSON.parse(value) as {
-                  choices?: { delta?: { refusal?: unknown }; finish_reason?: unknown }[];
-                }
-            );
-          const refusal = chunks
-            .map((chunk) => chunk.choices?.[0]?.delta?.refusal)
-            .filter((value): value is string => typeof value === "string")
-            .join("");
-          assert.equal(refusal, refusalText);
-          assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
-          assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
-        }
-        assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
-        assert.equal(getResponseTelemetry(response)?.completed, true);
-      });
+    for (const testCase of cases) {
+      for (const stream of [false, true]) {
+        await step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
+          const response = await withFetchMock(
+            () => sseResponse(testCase.events),
+            () =>
+              handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    stream,
+                    messages: [{ role: "user", content: "refuse" }],
+                  }),
+                })
+              )
+          );
+          assert.equal(response.status, 200);
+          if (!stream) {
+            const payload = (await response.json()) as {
+              choices?: { message?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }[];
+            };
+            assert.equal(payload.choices?.[0]?.message?.content, null);
+            assert.equal(payload.choices[0]?.message?.refusal, refusalText);
+            assert.equal(payload.choices[0]?.finish_reason, "stop");
+          } else {
+            const serialized = await response.text();
+            const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+              .map((match) => match[1])
+              .filter((value) => value !== "[DONE]")
+              .map(
+                (value) =>
+                  JSON.parse(value) as {
+                    choices?: { delta?: { refusal?: unknown }; finish_reason?: unknown }[];
+                  }
+              );
+            const refusal = chunks
+              .map((chunk) => chunk.choices?.[0]?.delta?.refusal)
+              .filter((value): value is string => typeof value === "string")
+              .join("");
+            assert.equal(refusal, refusalText);
+            assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+            assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+          }
+          assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+          assert.equal(getResponseTelemetry(response)?.completed, true);
+        });
+      }
     }
-  }
-});
+  }));
 
-Deno.test("openai: streamed Chat preserves final-only text alongside function calls", async () => {
+test("openai: streamed Chat preserves final-only text alongside function calls", async () => {
   const call = {
     id: "fc_stream_final_text",
     type: "function_call",
@@ -501,107 +509,314 @@ Deno.test("openai: streamed Chat preserves final-only text alongside function ca
   assert.match(text, /data: \[DONE\]/);
 });
 
-Deno.test("openai: Chat recovers completed output text without duplicating streamed deltas", async (t) => {
-  const completedText = '{"subjects":[{"title":"Recovered"}]}';
-  const finalOutput = [
-    {
-      id: "msg_done_text",
+test("openai: Chat recovers completed output text without duplicating streamed deltas", async () =>
+  runSequence(async (step) => {
+    const completedText = '{"subjects":[{"title":"Recovered"}]}';
+    const finalOutput = [
+      {
+        id: "msg_done_text",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: completedText }],
+      },
+    ];
+    const cases = [
+      {
+        name: "done-only text with empty terminal output",
+        events: [
+          `data: ${JSON.stringify({
+            type: "response.output_text.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            text: completedText,
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "output-item-done text with empty terminal output",
+        events: [
+          `data: ${JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: finalOutput[0],
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "content-part-done text with empty terminal output",
+        events: [
+          `data: ${JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            part: { type: "output_text", text: completedText, annotations: [] },
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "delta prefix plus repeated done and terminal text",
+        events: [
+          `data: ${JSON.stringify({
+            type: "response.output_text.delta",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            delta: completedText.slice(0, 12),
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "response.output_text.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            text: completedText,
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: finalOutput } })}\n\n`,
+        ],
+      },
+      {
+        name: "response.output plus repeated output-item-done text",
+        events: [
+          `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: finalOutput[0],
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+      {
+        name: "response.output plus repeated content-part-done text",
+        events: [
+          `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "response.content_part.done",
+            item_id: "msg_done_text",
+            output_index: 0,
+            content_index: 0,
+            part: finalOutput[0].content[0],
+          })}\n\n`,
+          `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
+        ],
+      },
+    ];
+
+    for (const testCase of cases) {
+      for (const stream of [false, true]) {
+        await step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
+          const response = await withFetchMock(
+            () => sseResponse(testCase.events),
+            () =>
+              handleChatCompletions(
+                new Request("https://ai.ubq.fi/v1/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: DEFAULT_TEST_MODEL,
+                    stream,
+                    messages: [{ role: "user", content: "subjects" }],
+                  }),
+                })
+              )
+          );
+          assert.equal(response.status, 200);
+          if (!stream) {
+            const payload = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
+            assert.equal(payload.choices?.[0]?.message?.content, completedText);
+            return;
+          }
+
+          const serialized = await response.text();
+          const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+            .map((match) => match[1])
+            .filter((value) => value !== "[DONE]")
+            .map(
+              (value) =>
+                JSON.parse(value) as {
+                  choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[];
+                }
+            );
+          const content = chunks
+            .map((chunk) => chunk.choices?.[0]?.delta?.content)
+            .filter((value): value is string => typeof value === "string")
+            .join("");
+          assert.equal(content, completedText);
+          assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+          assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+        });
+      }
+    }
+  }));
+
+test("openai: contentless native Responses and reasoning-only completions fail before success", async () =>
+  runSequence(async (step) => {
+    const cases = [
+      { variant: "empty", surfaces: ["responses"] as const },
+      { variant: "reasoning_only", surfaces: ["chat", "responses"] as const },
+    ] as const;
+
+    for (const testCase of cases) {
+      for (const surface of testCase.surfaces) {
+        for (const stream of [false, true]) {
+          await step(`${testCase.variant} ${surface} ${stream ? "streamed" : "buffered"}`, async () => {
+            const observations: boolean[] = [];
+            const observedInputTokens: (number | null)[] = [];
+            let fetches = 0;
+            const response = await withFetchMock(
+              () => {
+                fetches += 1;
+                const createdResponseId = `resp_${testCase.variant}`;
+                return sseResponse([
+                  `data: ${JSON.stringify({ type: "response.created", response: { id: createdResponseId } })}\n\n`,
+                  ...(testCase.variant === "reasoning_only"
+                    ? [
+                        `data: ${JSON.stringify({
+                          type: "response.reasoning_summary_text.delta",
+                          response_id: `resp_${testCase.variant}`,
+                          item_id: `reasoning_${testCase.variant}`,
+                          output_index: 0,
+                          summary_index: 0,
+                          delta: "hidden reasoning",
+                        })}\n\n`,
+                      ]
+                    : []),
+                  `data: ${JSON.stringify({
+                    type: "response.completed",
+                    response: {
+                      id: `resp_${testCase.variant}`,
+                      status: "completed",
+                      output:
+                        testCase.variant === "reasoning_only" ? [{ type: "reasoning", summary: [{ type: "summary_text", text: "hidden reasoning" }] }] : [],
+                      usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+                    },
+                  })}\n\n`,
+                ]);
+              },
+              () =>
+                surface === "chat"
+                  ? handleChatCompletions(
+                      new Request("https://ai.ubq.fi/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          model: DEFAULT_TEST_MODEL,
+                          stream,
+                          messages: [{ role: "user", content: "hello" }],
+                        }),
+                      }),
+                      {
+                        keyId: null,
+                        kernelRepo: null,
+                        kernelOrg: null,
+                        onTerminalUsage: (usage, completed) => {
+                          observations.push(completed);
+                          observedInputTokens.push(usage?.inputTokens ?? null);
+                        },
+                      }
+                    )
+                  : handleResponses(responsesRequest({ stream }), {
+                      keyId: null,
+                      kernelRepo: null,
+                      kernelOrg: null,
+                      onTerminalUsage: (usage, completed) => {
+                        observations.push(completed);
+                        observedInputTokens.push(usage?.inputTokens ?? null);
+                      },
+                    })
+            );
+            const releasedReasoningStream = testCase.variant === "reasoning_only" && stream;
+            if (releasedReasoningStream) {
+              assert.equal(response.status, 200);
+              assert.match(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+              const serialized = await response.text();
+              assert.match(serialized, /empty_upstream_completion/);
+              assert.doesNotMatch(serialized, /data: \[DONE\]/);
+            } else {
+              assert.equal(response.status, 502);
+              assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
+              const payload = (await response.json()) as { error?: { code?: string; type?: string; param?: unknown } };
+              assert.equal(payload.error?.code, "empty_upstream_completion");
+              assert.equal(payload.error.type, "server_error");
+              assert.equal(payload.error.param, null);
+            }
+            const telemetry = getResponseTelemetry(response);
+            assert.equal(telemetry?.completed, false);
+            assert.equal(telemetry.failureKind, "empty_upstream_completion");
+            assert.equal(telemetry.semanticOutputObserved, false);
+            assert.equal(telemetry.inputTokens, 3);
+            assert.equal(telemetry.outputTokens, 4);
+            assert.equal(telemetry.totalTokens, 7);
+            assert.deepEqual(observations, [false]);
+            assert.deepEqual(observedInputTokens, [3]);
+            assert.equal(fetches, 1);
+          });
+        }
+      }
+    }
+  }));
+
+test("openai: native Responses preserves a refusal-only terminal", async () =>
+  runSequence(async (step) => {
+    const refusalItem = {
+      id: "msg_native_refusal",
       type: "message",
       role: "assistant",
-      content: [{ type: "output_text", text: completedText }],
-    },
-  ];
-  const cases = [
-    {
-      name: "done-only text with empty terminal output",
-      events: [
-        `data: ${JSON.stringify({
-          type: "response.output_text.done",
-          item_id: "msg_done_text",
-          output_index: 0,
-          content_index: 0,
-          text: completedText,
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "output-item-done text with empty terminal output",
-      events: [
-        `data: ${JSON.stringify({
-          type: "response.output_item.done",
-          output_index: 0,
-          item: finalOutput[0],
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "content-part-done text with empty terminal output",
-      events: [
-        `data: ${JSON.stringify({
-          type: "response.content_part.done",
-          item_id: "msg_done_text",
-          output_index: 0,
-          content_index: 0,
-          part: { type: "output_text", text: completedText, annotations: [] },
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "delta prefix plus repeated done and terminal text",
-      events: [
-        `data: ${JSON.stringify({
-          type: "response.output_text.delta",
-          item_id: "msg_done_text",
-          output_index: 0,
-          content_index: 0,
-          delta: completedText.slice(0, 12),
-        })}\n\n`,
-        `data: ${JSON.stringify({
-          type: "response.output_text.done",
-          item_id: "msg_done_text",
-          output_index: 0,
-          content_index: 0,
-          text: completedText,
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: finalOutput } })}\n\n`,
-      ],
-    },
-    {
-      name: "response.output plus repeated output-item-done text",
-      events: [
-        `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
-        `data: ${JSON.stringify({
-          type: "response.output_item.done",
-          output_index: 0,
-          item: finalOutput[0],
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-    {
-      name: "response.output plus repeated content-part-done text",
-      events: [
-        `data: ${JSON.stringify({ type: "response.output", output: finalOutput })}\n\n`,
-        `data: ${JSON.stringify({
-          type: "response.content_part.done",
-          item_id: "msg_done_text",
-          output_index: 0,
-          content_index: 0,
-          part: finalOutput[0].content[0],
-        })}\n\n`,
-        `data: ${JSON.stringify({ type: "response.completed", response: { output: [] } })}\n\n`,
-      ],
-    },
-  ];
-
-  for (const testCase of cases) {
+      status: "completed",
+      content: [{ type: "refusal", refusal: "Request declined." }],
+    };
     for (const stream of [false, true]) {
-      await t.step(`${testCase.name} (${stream ? "streamed" : "buffered"})`, async () => {
+      await step(stream ? "streamed" : "buffered", async () => {
         const response = await withFetchMock(
-          () => sseResponse(testCase.events),
+          () =>
+            sseResponse([
+              `data: ${JSON.stringify({
+                type: "response.completed",
+                response: { id: "resp_native_refusal", status: "completed", output: [refusalItem] },
+              })}\n\n`,
+            ]),
+          () => handleResponses(responsesRequest({ stream }))
+        );
+        assert.equal(response.status, 200);
+        if (stream) {
+          assert.match(await response.text(), /Request declined\./);
+        } else {
+          const payload = (await response.json()) as { output?: unknown };
+          assert.deepEqual(payload.output, [refusalItem]);
+        }
+      });
+    }
+  }));
+
+test("openai: Chat concatenates multiple finalized message items", async () =>
+  runSequence(async (step) => {
+    const items = [
+      {
+        id: "msg_first",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "First. " }],
+      },
+      {
+        id: "msg_second",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Second." }],
+      },
+    ];
+    const events = [
+      ...items.map((item, outputIndex) => `data: ${JSON.stringify({ type: "response.output_item.done", output_index: outputIndex, item })}\n\n`),
+      `data: ${JSON.stringify({ type: "response.completed", response: { output: items } })}\n\n`,
+    ];
+
+    for (const stream of [false, true]) {
+      await step(stream ? "streamed" : "buffered", async () => {
+        const response = await withFetchMock(
+          () => sseResponse(events),
           () =>
             handleChatCompletions(
               new Request("https://ai.ubq.fi/v1/chat/completions", {
@@ -610,7 +825,7 @@ Deno.test("openai: Chat recovers completed output text without duplicating strea
                 body: JSON.stringify({
                   model: DEFAULT_TEST_MODEL,
                   stream,
-                  messages: [{ role: "user", content: "subjects" }],
+                  messages: [{ role: "user", content: "two messages" }],
                 }),
               })
             )
@@ -618,235 +833,33 @@ Deno.test("openai: Chat recovers completed output text without duplicating strea
         assert.equal(response.status, 200);
         if (!stream) {
           const payload = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
-          assert.equal(payload.choices?.[0]?.message?.content, completedText);
-          return;
+          assert.equal(payload.choices?.[0]?.message?.content, "First. Second.");
+        } else {
+          const serialized = await response.text();
+          const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
+            .map((match) => match[1])
+            .filter((value) => value !== "[DONE]")
+            .map(
+              (value) =>
+                JSON.parse(value) as {
+                  choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[];
+                }
+            );
+          const content = chunks
+            .map((chunk) => chunk.choices?.[0]?.delta?.content)
+            .filter((value): value is string => typeof value === "string")
+            .join("");
+          assert.equal(content, "First. Second.");
+          assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
+          assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
         }
-
-        const serialized = await response.text();
-        const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
-          .map((match) => match[1])
-          .filter((value) => value !== "[DONE]")
-          .map(
-            (value) =>
-              JSON.parse(value) as {
-                choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[];
-              }
-          );
-        const content = chunks
-          .map((chunk) => chunk.choices?.[0]?.delta?.content)
-          .filter((value): value is string => typeof value === "string")
-          .join("");
-        assert.equal(content, completedText);
-        assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
-        assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
+        assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
+        assert.equal(getResponseTelemetry(response)?.completed, true);
       });
     }
-  }
-});
+  }));
 
-Deno.test("openai: contentless native Responses and reasoning-only completions fail before success", async (t) => {
-  const cases = [
-    { variant: "empty", surfaces: ["responses"] as const },
-    { variant: "reasoning_only", surfaces: ["chat", "responses"] as const },
-  ] as const;
-
-  for (const testCase of cases) {
-    for (const surface of testCase.surfaces) {
-      for (const stream of [false, true]) {
-        await t.step(`${testCase.variant} ${surface} ${stream ? "streamed" : "buffered"}`, async () => {
-          const observations: boolean[] = [];
-          const observedInputTokens: (number | null)[] = [];
-          let fetches = 0;
-          const response = await withFetchMock(
-            () => {
-              fetches += 1;
-              const createdResponseId = `resp_${testCase.variant}`;
-              return sseResponse([
-                `data: ${JSON.stringify({ type: "response.created", response: { id: createdResponseId } })}\n\n`,
-                ...(testCase.variant === "reasoning_only"
-                  ? [
-                      `data: ${JSON.stringify({
-                        type: "response.reasoning_summary_text.delta",
-                        response_id: `resp_${testCase.variant}`,
-                        item_id: `reasoning_${testCase.variant}`,
-                        output_index: 0,
-                        summary_index: 0,
-                        delta: "hidden reasoning",
-                      })}\n\n`,
-                    ]
-                  : []),
-                `data: ${JSON.stringify({
-                  type: "response.completed",
-                  response: {
-                    id: `resp_${testCase.variant}`,
-                    status: "completed",
-                    output: testCase.variant === "reasoning_only" ? [{ type: "reasoning", summary: [{ type: "summary_text", text: "hidden reasoning" }] }] : [],
-                    usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
-                  },
-                })}\n\n`,
-              ]);
-            },
-            () =>
-              surface === "chat"
-                ? handleChatCompletions(
-                    new Request("https://ai.ubq.fi/v1/chat/completions", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        model: DEFAULT_TEST_MODEL,
-                        stream,
-                        messages: [{ role: "user", content: "hello" }],
-                      }),
-                    }),
-                    {
-                      keyId: null,
-                      kernelRepo: null,
-                      kernelOrg: null,
-                      onTerminalUsage: (usage, completed) => {
-                        observations.push(completed);
-                        observedInputTokens.push(usage?.inputTokens ?? null);
-                      },
-                    }
-                  )
-                : handleResponses(responsesRequest({ stream }), {
-                    keyId: null,
-                    kernelRepo: null,
-                    kernelOrg: null,
-                    onTerminalUsage: (usage, completed) => {
-                      observations.push(completed);
-                      observedInputTokens.push(usage?.inputTokens ?? null);
-                    },
-                  })
-          );
-          const releasedReasoningStream = testCase.variant === "reasoning_only" && stream;
-          if (releasedReasoningStream) {
-            assert.equal(response.status, 200);
-            assert.match(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
-            const serialized = await response.text();
-            assert.match(serialized, /empty_upstream_completion/);
-            assert.doesNotMatch(serialized, /data: \[DONE\]/);
-          } else {
-            assert.equal(response.status, 502);
-            assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
-            const payload = (await response.json()) as { error?: { code?: string; type?: string; param?: unknown } };
-            assert.equal(payload.error?.code, "empty_upstream_completion");
-            assert.equal(payload.error.type, "server_error");
-            assert.equal(payload.error.param, null);
-          }
-          const telemetry = getResponseTelemetry(response);
-          assert.equal(telemetry?.completed, false);
-          assert.equal(telemetry.failureKind, "empty_upstream_completion");
-          assert.equal(telemetry.semanticOutputObserved, false);
-          assert.equal(telemetry.inputTokens, 3);
-          assert.equal(telemetry.outputTokens, 4);
-          assert.equal(telemetry.totalTokens, 7);
-          assert.deepEqual(observations, [false]);
-          assert.deepEqual(observedInputTokens, [3]);
-          assert.equal(fetches, 1);
-        });
-      }
-    }
-  }
-});
-
-Deno.test("openai: native Responses preserves a refusal-only terminal", async (t) => {
-  const refusalItem = {
-    id: "msg_native_refusal",
-    type: "message",
-    role: "assistant",
-    status: "completed",
-    content: [{ type: "refusal", refusal: "Request declined." }],
-  };
-  for (const stream of [false, true]) {
-    await t.step(stream ? "streamed" : "buffered", async () => {
-      const response = await withFetchMock(
-        () =>
-          sseResponse([
-            `data: ${JSON.stringify({
-              type: "response.completed",
-              response: { id: "resp_native_refusal", status: "completed", output: [refusalItem] },
-            })}\n\n`,
-          ]),
-        () => handleResponses(responsesRequest({ stream }))
-      );
-      assert.equal(response.status, 200);
-      if (stream) {
-        assert.match(await response.text(), /Request declined\./);
-      } else {
-        const payload = (await response.json()) as { output?: unknown };
-        assert.deepEqual(payload.output, [refusalItem]);
-      }
-    });
-  }
-});
-
-Deno.test("openai: Chat concatenates multiple finalized message items", async (t) => {
-  const items = [
-    {
-      id: "msg_first",
-      type: "message",
-      role: "assistant",
-      content: [{ type: "output_text", text: "First. " }],
-    },
-    {
-      id: "msg_second",
-      type: "message",
-      role: "assistant",
-      content: [{ type: "output_text", text: "Second." }],
-    },
-  ];
-  const events = [
-    ...items.map((item, outputIndex) => `data: ${JSON.stringify({ type: "response.output_item.done", output_index: outputIndex, item })}\n\n`),
-    `data: ${JSON.stringify({ type: "response.completed", response: { output: items } })}\n\n`,
-  ];
-
-  for (const stream of [false, true]) {
-    await t.step(stream ? "streamed" : "buffered", async () => {
-      const response = await withFetchMock(
-        () => sseResponse(events),
-        () =>
-          handleChatCompletions(
-            new Request("https://ai.ubq.fi/v1/chat/completions", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                model: DEFAULT_TEST_MODEL,
-                stream,
-                messages: [{ role: "user", content: "two messages" }],
-              }),
-            })
-          )
-      );
-      assert.equal(response.status, 200);
-      if (!stream) {
-        const payload = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
-        assert.equal(payload.choices?.[0]?.message?.content, "First. Second.");
-      } else {
-        const serialized = await response.text();
-        const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
-          .map((match) => match[1])
-          .filter((value) => value !== "[DONE]")
-          .map(
-            (value) =>
-              JSON.parse(value) as {
-                choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[];
-              }
-          );
-        const content = chunks
-          .map((chunk) => chunk.choices?.[0]?.delta?.content)
-          .filter((value): value is string => typeof value === "string")
-          .join("");
-        assert.equal(content, "First. Second.");
-        assert.equal(chunks.filter((chunk) => chunk.choices?.[0]?.finish_reason === "stop").length, 1);
-        assert.equal(serialized.match(/data: \[DONE\]/g)?.length, 1);
-      }
-      assert.equal(getResponseTelemetry(response)?.semanticOutputObserved, true);
-      assert.equal(getResponseTelemetry(response)?.completed, true);
-    });
-  }
-});
-
-Deno.test("openai: native Responses preserve files and key while omitting unsupported cache controls", async () => {
+test("openai: native Responses preserve files and key while omitting unsupported cache controls", async () => {
   let recordedBody: Record<string, unknown> | null = null;
   const response = await withFetchMock(
     (_url, bodyText) => {
@@ -905,7 +918,7 @@ Deno.test("openai: native Responses preserve files and key while omitting unsupp
   });
 });
 
-Deno.test("openai: cache usage parser retains observed values and marks malformed fields invalid", () => {
+test("openai: cache usage parser retains observed values and marks malformed fields invalid", () => {
   assert.deepEqual(
     extractUsageTokens({
       input_tokens: 10,

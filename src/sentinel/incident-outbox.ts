@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 import { getKv } from "../kv.ts";
 import { isRecord, sha256Hex } from "../utils.ts";
 export const SENTINEL_INCIDENT_CAPTURE_REF_PREFIX = ["uos_ai", "sentinel_incident", "v1", "capture_ref"] as const;
@@ -9,7 +10,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 
 export type SentinelIncidentCaptureReference = Readonly<{
   version: 1;
-  manifest_key: Deno.KvKey;
+  manifest_key: KvKey;
 }>;
 
 export type SentinelIncidentFailureEvent = Readonly<{
@@ -21,7 +22,7 @@ export type SentinelIncidentFailureEvent = Readonly<{
   ready_at_ms: number | null;
   capture_status: "pending" | "stored" | "duplicate" | "unavailable";
   capture_fingerprint: string | null;
-  manifest_key: Deno.KvKey | null;
+  manifest_key: KvKey | null;
 }>;
 
 type EnvironmentReader = Readonly<{ get(name: string): string | undefined }>;
@@ -38,7 +39,7 @@ export type SentinelIncidentDependencies = Readonly<{
 const safeEnvironment: EnvironmentReader = {
   get(name) {
     try {
-      const value = Deno.env.get(name)?.trim();
+      const value = process.env[name]?.trim();
       if (!value) return undefined;
       return value;
     } catch {
@@ -84,13 +85,13 @@ export const isSentinelProductionRuntime = (environment: EnvironmentReader = saf
 
 const defaultRandomUuid = (): string => crypto.randomUUID();
 
-const incidentEventKey = (incidentId: string): Deno.KvKey => [...SENTINEL_INCIDENT_EVENT_PREFIX, incidentId];
+const incidentEventKey = (incidentId: string): KvKey => [...SENTINEL_INCIDENT_EVENT_PREFIX, incidentId];
 
 export const createSentinelIncidentFailureEvent = async (
-  kv: Deno.Kv,
+  kv: Kv,
   observedAtMs: number,
   dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {}
-): Promise<Deno.KvEntry<SentinelIncidentFailureEvent>> => {
+): Promise<KvEntry<SentinelIncidentFailureEvent>> => {
   if (!positiveInteger(observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
   const incidentId = `provider-${(dependencies.randomUuid ?? defaultRandomUuid)().toLowerCase()}`;
   if (!isSentinelIncidentId(incidentId)) throw new Error("Sentinel incident UUID is invalid");
@@ -112,7 +113,7 @@ export const createSentinelIncidentFailureEvent = async (
 };
 
 export const recordSentinelProviderDegradation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   observedAtMs: number,
   dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {}
 ): Promise<string> => {
@@ -136,11 +137,10 @@ export const recordSentinelProviderDegradation = async (
   return incidentId;
 };
 
-type IncidentCaptureCompletion =
-  Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: Deno.KvKey }> | Readonly<{ status: "unavailable" }>;
+type IncidentCaptureCompletion = Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: KvKey }> | Readonly<{ status: "unavailable" }>;
 
 export const readySentinelIncidentFailureEvent = (
-  entry: Deno.KvEntry<SentinelIncidentFailureEvent>,
+  entry: KvEntry<SentinelIncidentFailureEvent>,
   readyAtMs: number,
   capture: IncidentCaptureCompletion
 ): SentinelIncidentFailureEvent => {
@@ -171,8 +171,8 @@ export const readySentinelIncidentFailureEvent = (
 };
 
 export const completeSentinelIncidentFailureEvent = async (
-  kv: Deno.Kv,
-  entry: Deno.KvEntry<SentinelIncidentFailureEvent>,
+  kv: Kv,
+  entry: KvEntry<SentinelIncidentFailureEvent>,
   readyAtMs: number,
   capture: IncidentCaptureCompletion
 ): Promise<boolean> => {
@@ -185,7 +185,7 @@ export const completeSentinelIncidentFailureEvent = async (
   return committed.ok;
 };
 
-export const linkSentinelReplayToIncident = async (kv: Deno.Kv, incidentId: string, fingerprint: string, manifestKey: Deno.KvKey): Promise<void> => {
+export const linkSentinelReplayToIncident = async (kv: Kv, incidentId: string, fingerprint: string, manifestKey: KvKey): Promise<void> => {
   if (!isSentinelIncidentId(incidentId) || !/^[0-9a-f]{64}$/.test(fingerprint)) {
     throw new Error("Sentinel incident capture reference is invalid");
   }
@@ -197,17 +197,17 @@ export const linkSentinelReplayToIncident = async (kv: Deno.Kv, incidentId: stri
 };
 
 export const createSentinelIncidentFailureEventFromEnvironment = async (
-  kv: Deno.Kv,
+  kv: Kv,
   observedAtMs: number,
   environment: EnvironmentReader = safeEnvironment
-): Promise<Deno.KvEntry<SentinelIncidentFailureEvent> | null> =>
+): Promise<KvEntry<SentinelIncidentFailureEvent> | null> =>
   isSentinelProductionRuntime(environment) ? await createSentinelIncidentFailureEvent(kv, observedAtMs) : null;
 
 export const recordSentinelProviderDegradationFromEnvironment = async (
   observedAtMs: number,
   dependencies: Readonly<{
     environment?: EnvironmentReader;
-    kv?: Deno.Kv;
+    kv?: Kv;
     randomUuid?: () => string;
   }> = {}
 ): Promise<boolean> => {
@@ -407,7 +407,7 @@ export const sentinelIncidentClassification = (input: { endpoint: string; method
 export const sentinelIncidentFingerprint = (input: { endpoint: string; method: string; observation: SentinelIncidentIndexObservation }): Promise<string> =>
   sha256Hex(sentinelIncidentClassification(input));
 
-const indexRowKey = (fingerprint: string): Deno.KvKey => [...SENTINEL_INCIDENT_INDEX_PREFIX, fingerprint];
+const indexRowKey = (fingerprint: string): KvKey => [...SENTINEL_INCIDENT_INDEX_PREFIX, fingerprint];
 
 /** Bounded latest-observation classification accepted by the index writer. */
 export type SentinelIncidentIndexClassification = Readonly<{
@@ -491,7 +491,7 @@ const newIndexRow = (
  * the latest classification.
  */
 const nextSentinelIncidentIndexRow = (
-  entry: Deno.KvEntryMaybe<SentinelIncidentIndexRow>,
+  entry: KvEntryMaybe<SentinelIncidentIndexRow>,
   input: Readonly<{
     endpoint: string;
     method: string;
@@ -529,7 +529,7 @@ const nextSentinelIncidentIndexRow = (
  * monotonic. Later observations never retag evidence or revision metadata.
  */
 export const recordSentinelIncidentIndexObservation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{
     endpoint: string;
     method: string;
@@ -539,7 +539,7 @@ export const recordSentinelIncidentIndexObservation = async (
     classification?: SentinelIncidentIndexClassification;
   }>,
   dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {}
-): Promise<Deno.KvEntry<SentinelIncidentIndexRow>> => {
+): Promise<KvEntry<SentinelIncidentIndexRow>> => {
   if (!positiveInteger(input.observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
   const fingerprint = await sentinelIncidentFingerprint(input);
   const key = indexRowKey(fingerprint);
@@ -566,7 +566,7 @@ type SentinelIncidentIndexEvidenceBinding = Readonly<{
   captureId: string;
   gitSha: string | null;
   referenceFingerprint: string;
-  manifestKey: Deno.KvKey;
+  manifestKey: KvKey;
   manifestVersionstamp: string | null;
   capturedAtMs: number;
   digest: string;
@@ -587,12 +587,12 @@ const isSentinelIncidentIndexEvidenceBinding = (indexFingerprint: string, input:
 
 /** One bounded CAS attempt; returns null when the attempt lost the race. */
 const commitSentinelIncidentIndexEvidence = async (
-  kv: Deno.Kv,
-  key: Deno.KvKey,
+  kv: Kv,
+  key: KvKey,
   input: SentinelIncidentIndexEvidenceBinding,
   reference: SentinelIncidentCaptureReference,
   remainingMs: number
-): Promise<Deno.KvEntry<SentinelIncidentIndexRow> | null> => {
+): Promise<KvEntry<SentinelIncidentIndexRow> | null> => {
   const entry = await kv.get<SentinelIncidentIndexRow>(key);
   if (entry.value === null) throw new Error("Sentinel incident index record is missing");
   if (!isSentinelIncidentIndexRow(entry.value)) throw new Error("Sentinel incident index record is invalid");
@@ -633,10 +633,10 @@ const commitSentinelIncidentIndexEvidence = async (
  * manifest; ref/evidence/index are one transaction, no non-atomic pairing.
  */
 export const bindSentinelIncidentIndexEvidence = async (
-  kv: Deno.Kv,
+  kv: Kv,
   indexFingerprint: string,
   input: SentinelIncidentIndexEvidenceBinding
-): Promise<Deno.KvEntry<SentinelIncidentIndexRow>> => {
+): Promise<KvEntry<SentinelIncidentIndexRow>> => {
   if (!isSentinelIncidentIndexEvidenceBinding(indexFingerprint, input)) {
     throw new Error("Sentinel incident index evidence binding is invalid");
   }
@@ -659,7 +659,7 @@ export const bindSentinelIncidentIndexEvidence = async (
  * bound is reached by following the non-null cursor, never silently dropped.
  */
 export const listSentinelIncidentIndexRows = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ incidentId?: string; cursor?: string; limit?: number }> = {}
 ): Promise<Readonly<{ rows: SentinelIncidentIndexRow[]; cursor: string | null }>> => {
   const limit = options.limit ?? SENTINEL_INCIDENT_INDEX_DEFAULT_PAGE_LIMIT;

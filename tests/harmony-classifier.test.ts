@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -44,28 +45,28 @@ const responseFor = (content: string | null, overrides: Partial<NormalizedAssist
   ...overrides,
 });
 
-Deno.test("the contract pattern is anchored and case-insensitive", () => {
+test("the contract pattern is anchored and case-insensitive", () => {
   assert.ok(BOOTSTRAP_CLASSIFIER_BOOLEAN_PATTERN.test("true"));
   assert.ok(BOOTSTRAP_CLASSIFIER_BOOLEAN_PATTERN.test("false"));
   assert.ok(BOOTSTRAP_CLASSIFIER_BOOLEAN_PATTERN.test("TRUE"));
   assert.ok(BOOTSTRAP_CLASSIFIER_BOOLEAN_PATTERN.test("False"));
 });
 
-Deno.test("accepts full-string literals after trimming", () => {
+test("accepts full-string literals after trimming", () => {
   assert.deepEqual(parseBootstrapClassifierVerdict("true"), { verdict: "true", raw: "true" });
   assert.deepEqual(parseBootstrapClassifierVerdict("false"), { verdict: "false", raw: "false" });
   assert.deepEqual(parseBootstrapClassifierVerdict("  TRUE  "), { verdict: "true", raw: "TRUE" });
   assert.deepEqual(parseBootstrapClassifierVerdict("False\n"), { verdict: "false", raw: "False" });
 });
 
-Deno.test("rejects prose, wrappers and JSON-encoded answers", () => {
+test("rejects prose, wrappers and JSON-encoded answers", () => {
   for (const value of ["true.", " true false", '{"true": true}', '{"answer":true}', "yes", "TRUE-ish", "tru"]) {
     const verdict = parseBootstrapClassifierVerdict(value);
     assert.equal(verdict.verdict, "unknown", `expected unknown for ${JSON.stringify(value)}`);
   }
 });
 
-Deno.test("rejects empty, whitespace and non-string values", () => {
+test("rejects empty, whitespace and non-string values", () => {
   assert.equal(parseBootstrapClassifierVerdict("").verdict, "unknown");
   assert.equal(parseBootstrapClassifierVerdict("   ").verdict, "unknown");
   assert.equal(parseBootstrapClassifierVerdict(null).verdict, "unknown");
@@ -73,7 +74,7 @@ Deno.test("rejects empty, whitespace and non-string values", () => {
   assert.equal(parseBootstrapClassifierVerdict(42).verdict, "unknown");
 });
 
-Deno.test("classifier request is zero-tool, unwrapped and small", () => {
+test("classifier request is zero-tool, unwrapped and small", () => {
   const body = buildBootstrapClassifierRequest({
     observation: OBSERVATION,
     decisionDefinition: "Decide progress. Answer true or false.",
@@ -98,7 +99,7 @@ Deno.test("classifier request is zero-tool, unwrapped and small", () => {
   assert.equal(messages[2].content, JSON.stringify(OBSERVATION));
 });
 
-Deno.test("classifier request compares reasoning effort medium", () => {
+test("classifier request compares reasoning effort medium", () => {
   const body = buildBootstrapClassifierRequest({
     observation: OBSERVATION,
     decisionDefinition: "x",
@@ -108,7 +109,7 @@ Deno.test("classifier request compares reasoning effort medium", () => {
   assert.match(system, /Reasoning: medium/);
 });
 
-Deno.test("verdictFromBootstrapResponse handles refusals, tool calls and missing content as unknown", () => {
+test("verdictFromBootstrapResponse handles refusals, tool calls and missing content as unknown", () => {
   assert.deepEqual(verdictFromBootstrapResponse(responseFor(null, { refusal: "I cannot do that." })), {
     verdict: "unknown",
     raw: null,
@@ -121,7 +122,7 @@ Deno.test("verdictFromBootstrapResponse handles refusals, tool calls and missing
   assert.equal(noContent.verdict, "unknown");
 });
 
-Deno.test("verdictFromBootstrapResponse accepts literal true and false content only", () => {
+test("verdictFromBootstrapResponse accepts literal true and false content only", () => {
   assert.equal(verdictFromBootstrapResponse(responseFor("true")).verdict, "true");
   assert.equal(verdictFromBootstrapResponse(responseFor("False")).verdict, "false");
   assert.equal(verdictFromBootstrapResponse(responseFor("true.")).verdict, "unknown");

@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Embeddings job API and runner, extracted from src/openai.ts.
 
 // Embeddings HTTP handlers and job runner, extracted from src/openai.ts.
@@ -7,7 +8,14 @@ import { json, openaiError } from "../http.ts";
 import { getKv } from "../kv.ts";
 import { readJsonBody } from "../request.ts";
 import { getString, isRecord, sha256Hex } from "../utils.ts";
-import { UsageContext, UsageTokens, recordCompletionUsage, recordErrorUsage, recordRequestUsage, runWithResponseTelemetry } from "../openai-telemetry.ts";
+import {
+  type UsageContext,
+  type UsageTokens,
+  recordCompletionUsage,
+  recordErrorUsage,
+  recordRequestUsage,
+  runWithResponseTelemetry,
+} from "../openai-telemetry.ts";
 import { formatErrorSnippet } from "../upstream-wire.ts";
 import {
   EMBEDDINGS_MAX_INPUTS_PER_REQUEST,
@@ -28,11 +36,11 @@ import {
 import {
   EMBEDDINGS_JOB_LOCK_MS,
   EMBEDDINGS_JOB_TTL_MS,
-  EmbeddingsEncodingFormat,
-  EmbeddingsJobInputRecord,
-  EmbeddingsJobLookupRecord,
-  EmbeddingsJobRecord,
-  VoyageEmbeddingsDimension,
+  type EmbeddingsEncodingFormat,
+  type EmbeddingsJobInputRecord,
+  type EmbeddingsJobLookupRecord,
+  type EmbeddingsJobRecord,
+  type VoyageEmbeddingsDimension,
   embeddingsJobInputKey,
   embeddingsJobKey,
   embeddingsJobLookupKey,
@@ -70,13 +78,13 @@ const buildEmbeddingsJobBody = (job: EmbeddingsJobRecord, result: Record<string,
 });
 
 const loadEmbeddingsVectorsFromCache = async (
-  kv: Deno.Kv,
+  kv: Kv,
   cacheProfileKey: string,
   hashesByIndex: string[],
   dimensions: VoyageEmbeddingsDimension
 ): Promise<(number[] | null)[]> => {
   const uniqueHashes = Array.from(new Set(hashesByIndex));
-  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
+  const cacheKeyFor = (hash: string): KvKey => embeddingsCacheKey(cacheProfileKey, hash);
   const entries = await Promise.all(uniqueHashes.map((hash) => kv.get<{ embedding?: unknown }>(cacheKeyFor(hash)).catch(() => null)));
   const vectorsByHash = new Map<string, number[]>();
   for (const [i, hash] of uniqueHashes.entries()) {
@@ -104,7 +112,7 @@ const buildOpenAiEmbeddingsResult = (
   usage: { prompt_tokens: usageTotalTokens, total_tokens: usageTotalTokens },
 });
 
-const reserveVoyageBudgetForJob = async (kv: Deno.Kv, tokens: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
+const reserveVoyageBudgetForJob = async (kv: Kv, tokens: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const reserved = await tryReserveVoyageBudget(kv, tokens);
     if (reserved.ok) return reserved;
@@ -114,7 +122,7 @@ const reserveVoyageBudgetForJob = async (kv: Deno.Kv, tokens: number): Promise<{
   return { ok: false, wait_ms: 1000 };
 };
 
-const updateEmbeddingsJobRecord = async (kv: Deno.Kv, jobKey: Deno.KvKey, lookupKey: Deno.KvKey, job: EmbeddingsJobRecord): Promise<void> => {
+const updateEmbeddingsJobRecord = async (kv: Kv, jobKey: KvKey, lookupKey: KvKey, job: EmbeddingsJobRecord): Promise<void> => {
   await kv
     .atomic()
     .set(jobKey, job, { expireIn: EMBEDDINGS_JOB_TTL_MS })
@@ -122,19 +130,19 @@ const updateEmbeddingsJobRecord = async (kv: Deno.Kv, jobKey: Deno.KvKey, lookup
     .commit();
 };
 
-const deleteEmbeddingsJobInputs = async (kv: Deno.Kv, tokenHash: string, cacheProfileKey: string, jobId: string, uniqueHashes: string[]): Promise<void> => {
+const deleteEmbeddingsJobInputs = async (kv: Kv, tokenHash: string, cacheProfileKey: string, jobId: string, uniqueHashes: string[]): Promise<void> => {
   await Promise.allSettled(uniqueHashes.map((hash) => kv.delete(embeddingsJobInputKey(tokenHash, cacheProfileKey, jobId, hash))));
 };
 
 export const runEmbeddingsJobAttempt = async (params: {
   reqId: string;
-  kv: Deno.Kv;
+  kv: Kv;
   apiKey: string;
   tokenSeed: string;
   tokenHash: string;
-  jobKey: Deno.KvKey;
-  jobLookupKey: Deno.KvKey;
-  jobEntry: Deno.KvEntryMaybe<EmbeddingsJobRecord>;
+  jobKey: KvKey;
+  jobLookupKey: KvKey;
+  jobEntry: KvEntryMaybe<EmbeddingsJobRecord>;
   job: EmbeddingsJobRecord;
   deadlineMs: number;
   usageContext?: UsageContext;
@@ -172,7 +180,7 @@ export const runEmbeddingsJobAttempt = async (params: {
   const cacheProfileKey = locked.cache_profile_key;
   const hashesByIndex = locked.input_hashes;
   const uniqueHashes = Array.from(new Set(hashesByIndex));
-  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
+  const cacheKeyFor = (hash: string): KvKey => embeddingsCacheKey(cacheProfileKey, hash);
 
   let currentJob: EmbeddingsJobRecord = locked;
   let queueRetryAfterMs: number | null = null;

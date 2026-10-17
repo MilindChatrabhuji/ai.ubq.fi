@@ -1,3 +1,9 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import type { Kv, KvKey } from "#kv";
+import { installHarness, cleanupHarness } from "./helpers/embeddings-harness.ts";
+beforeEach(installHarness);
+afterEach(cleanupHarness);
 // Coverage suite for the Voyage embeddings transport, request parsing, cache maintenance,
 // and the embeddings job runner's failure paths.
 
@@ -62,8 +68,8 @@ const errorOf = async (response: Response): Promise<ErrorFields> => {
 const VOYAGE_API_KEY_KV = ["uos_ai", "voyage_api_key"] as const;
 
 /** `src/embeddings/ledger.ts` cache keys, addressed by the resolved profile key. */
-const cacheKeyFor = (cacheProfileKey: string, hash: string): Deno.KvKey => ["embeddings", "v2", "cache", cacheProfileKey, hash];
-const globalIndexKeyFor = (createdAtMs: number, cacheProfileKey: string, hash: string): Deno.KvKey => [
+const cacheKeyFor = (cacheProfileKey: string, hash: string): KvKey => ["embeddings", "v2", "cache", cacheProfileKey, hash];
+const globalIndexKeyFor = (createdAtMs: number, cacheProfileKey: string, hash: string): KvKey => [
   "embeddings",
   "v2",
   "cache_index_global",
@@ -93,22 +99,18 @@ const jobRequest = (body: string | Record<string, unknown>): Request =>
 const jobPayload = async (response: Response): Promise<Record<string, unknown>> => (await response.json()) as Record<string, unknown>;
 
 const withDeniedKv = async <T>(fn: () => Promise<T>): Promise<T> => {
-  const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
-  const installed = denoWithKv.openKv;
-  denoWithKv.openKv = undefined;
   setKvForTest(null);
   try {
     return await fn();
   } finally {
-    denoWithKv.openKv = installed;
     setKvForTest(kvStub);
   }
 };
 
-const delegateKv = (overrides: Record<string, unknown>): Deno.Kv => ({ ...(kvStub as unknown as Record<string, unknown>), ...overrides }) as unknown as Deno.Kv;
+const delegateKv = (overrides: Record<string, unknown>): Kv => ({ ...(kvStub as unknown as Record<string, unknown>), ...overrides }) as unknown as Kv;
 
 /** A commit that reports success without applying anything, to exercise the read-back guard. */
-const nonPersistingKv = (): Deno.Kv =>
+const nonPersistingKv = (): Kv =>
   delegateKv({
     atomic: () => {
       const chain = {
@@ -121,7 +123,7 @@ const nonPersistingKv = (): Deno.Kv =>
     },
   });
 
-const withKv = async <T>(kv: Deno.Kv, fn: () => Promise<T>): Promise<T> => {
+const withKv = async <T>(kv: Kv, fn: () => Promise<T>): Promise<T> => {
   setKvForTest(kv);
   try {
     return await fn();
@@ -130,7 +132,7 @@ const withKv = async <T>(kv: Deno.Kv, fn: () => Promise<T>): Promise<T> => {
   }
 };
 
-Deno.test("embeddings request parsing rejects every malformed field for both contracts", async () => {
+test("embeddings request parsing rejects every malformed field for both contracts", async () => {
   const syncCases: readonly (readonly [Record<string, unknown>, string, string | undefined])[] = [
     [{ model: "voyage-4-large", input: 7 }, "input must be a string or an array of strings", "input"],
     [{ model: "voyage-4-large", input: ["ok", 7] }, "input must be a string or an array of strings", "input"],
@@ -193,7 +195,7 @@ Deno.test("embeddings request parsing rejects every malformed field for both con
   });
 });
 
-Deno.test("embeddings token estimation chunks inputs by item and token budget", () => {
+test("embeddings token estimation chunks inputs by item and token budget", () => {
   assert.equal(estimateTokens(""), 0);
   assert.equal(estimateTokens("abcd"), 1);
   assert.equal(estimateTokens("abcde"), 2);
@@ -214,7 +216,7 @@ Deno.test("embeddings token estimation chunks inputs by item and token budget", 
   );
 });
 
-Deno.test("voyage rate limiting reserves, refuses and recovers from a lost commit", async () => {
+test("voyage rate limiting reserves, refuses and recovers from a lost commit", async () => {
   const kv = kvStub;
   resetVoyageRateLimit();
   const reserved = await tryReserveVoyageBudget(kv, 10);
@@ -252,7 +254,7 @@ Deno.test("voyage rate limiting reserves, refuses and recovers from a lost commi
   resetVoyageRateLimit();
 });
 
-Deno.test("embeddings sleep helpers honor aborts and deadlines", async () => {
+test("embeddings sleep helpers honor aborts and deadlines", async () => {
   let resumed = false;
   const pending = sleep(1).then(() => {
     resumed = true;
@@ -273,7 +275,7 @@ Deno.test("embeddings sleep helpers honor aborts and deadlines", async () => {
   assert.equal(await sleeping, false);
 });
 
-Deno.test("embeddings job token seeds prefer stable principals", () => {
+test("embeddings job token seeds prefer stable principals", () => {
   assert.equal(resolveEmbeddingsJobTokenSeed("job-1", null), "job-1");
   assert.equal(resolveEmbeddingsJobTokenSeed("job-1", "bearer-token"), "bearer-token");
   assert.equal(resolveEmbeddingsJobTokenSeed("job-1", "bearer-token", { keyId: "key-9", kernelRepo: null, kernelOrg: null }), "uos_api_key_id:key-9");
@@ -283,16 +285,16 @@ Deno.test("embeddings job token seeds prefer stable principals", () => {
   );
 });
 
-Deno.test("voyage environment and API key lookups fail closed", async () => {
+test("voyage environment and API key lookups fail closed", async () => {
   // The test runtime grants env access only to the fixed allowlist, so an unlisted
   // variable raises a permission error that the helper must swallow.
   assert.equal(getEnv("HOME"), undefined);
-  const priorEnvKey = Deno.env.get("VOYAGEAI_API_KEY");
+  const priorEnvKey = process.env.VOYAGEAI_API_KEY;
   try {
-    Deno.env.set("VOYAGEAI_API_KEY", "  env-voyage-key  ");
+    process.env.VOYAGEAI_API_KEY = "  env-voyage-key  ";
     assert.equal(await readVoyageApiKey(null), "env-voyage-key");
     assert.equal(await readVoyageApiKey(kvStub), "env-voyage-key");
-    Deno.env.delete("VOYAGEAI_API_KEY");
+    Reflect.deleteProperty(process.env, "VOYAGEAI_API_KEY");
     assert.equal(await readVoyageApiKey(null), null);
 
     kvStore.set(keyToString(VOYAGE_API_KEY_KV), "   ");
@@ -300,12 +302,12 @@ Deno.test("voyage environment and API key lookups fail closed", async () => {
     kvStore.set(keyToString(VOYAGE_API_KEY_KV), "  kv-voyage-key  ");
     assert.equal(await readVoyageApiKey(kvStub), "kv-voyage-key");
   } finally {
-    if (priorEnvKey === undefined) Deno.env.delete("VOYAGEAI_API_KEY");
-    else Deno.env.set("VOYAGEAI_API_KEY", priorEnvKey);
+    if (priorEnvKey === undefined) Reflect.deleteProperty(process.env, "VOYAGEAI_API_KEY");
+    else process.env.VOYAGEAI_API_KEY = priorEnvKey;
   }
 });
 
-Deno.test("embeddings cache writes recover from quota errors and abandon unusable ones", async () => {
+test("embeddings cache writes recover from quota errors and abandon unusable ones", async () => {
   resetStore();
   const profile = embeddingsProfileKey("document", 1024, "float", true);
   const vector = testVector(1024);
@@ -354,7 +356,7 @@ Deno.test("embeddings cache writes recover from quota errors and abandon unusabl
   assert.equal(kvStore.has(keyToString(cacheKeyFor(profile, "hash-after-legacy"))), true);
 });
 
-Deno.test("float embeddings encode to base64 as little-endian float32", () => {
+test("float embeddings encode to base64 as little-endian float32", () => {
   assert.equal(floatEmbeddingToBase64([1]), "AACAPw==");
   assert.equal(floatEmbeddingToBase64([0, -2.5]), "AAAAAAAAIMA=");
   const pairBytes = Uint8Array.from(atob(floatEmbeddingToBase64([0, -2.5])), (character) => character.charCodeAt(0));
@@ -371,7 +373,7 @@ Deno.test("float embeddings encode to base64 as little-endian float32", () => {
   assert.equal(view.getFloat32(79_996, true), 9_999);
 });
 
-Deno.test("embeddings job input records validate, encrypt and decrypt", async () => {
+test("embeddings job input records validate, encrypt and decrypt", async () => {
   assert.equal(normalizeEmbeddingsJobInputRecord(null), null);
   assert.equal(normalizeEmbeddingsJobInputRecord({}), null);
   assert.equal(normalizeEmbeddingsJobInputRecord({ v: 2, iv_b64: "a", data_b64: "b", created_at_ms: 1 }), null);
@@ -389,7 +391,7 @@ Deno.test("embeddings job input records validate, encrypt and decrypt", async ()
   assert.equal(await decryptEmbeddingsJobInput("seed-one", { ...encrypted, iv_b64: "!!!", data_b64: "abc" }), null);
 });
 
-Deno.test("voyage transport reports upstream status, payload and abort failures", async () => {
+test("voyage transport reports upstream status, payload and abort failures", async () => {
   const baseParams = {
     apiKey: "voyage-test-key",
     model: "voyage-4-large" as const,
@@ -499,17 +501,19 @@ Deno.test("voyage transport reports upstream status, payload and abort failures"
   // A past deadline aborts the in-flight request through the internal timeout.
   const originalFetch = globalThis.fetch;
   let observedAbort = false;
-  globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit) =>
-    new Promise<Response>((_resolve, reject) => {
-      const signal = init?.signal;
-      const onAbort = () => {
-        observedAbort = true;
-        const reason = signal?.reason;
-        reject(reason instanceof Error ? reason : new Error("aborted"));
-      };
-      if (signal?.aborted) onAbort();
-      else signal?.addEventListener("abort", onAbort);
-    });
+  globalThis.fetch = createFetchMock(
+    (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = () => {
+          observedAbort = true;
+          const reason = signal?.reason;
+          reject(reason instanceof Error ? reason : new Error("aborted"));
+        };
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort);
+      })
+  );
   try {
     await assert.rejects(fetchVoyageEmbeddings({ ...baseParams, deadlineMs: Date.now() - 1 }), (error: Error) => {
       assert.equal(error.name, "AbortError");
@@ -521,7 +525,7 @@ Deno.test("voyage transport reports upstream status, payload and abort failures"
   }
 });
 
-Deno.test("embedding job create rejects malformed bodies, missing KV and missing provider keys", async () => {
+test("embedding job create rejects malformed bodies, missing KV and missing provider keys", async () => {
   resetStore();
   const invalidJson = await handleEmbeddingsJobCreate(jobRequest("{"), "coverage-token");
   assert.equal(invalidJson.status, 400);
@@ -557,7 +561,7 @@ Deno.test("embedding job create rejects malformed bodies, missing KV and missing
   assert.equal((await errorOf(readBackFailed)).message, "Embeddings job could not be persisted.");
 });
 
-Deno.test("embedding job get reports missing jobs, mismatched profiles and unavailable KV", async () => {
+test("embedding job get reports missing jobs, mismatched profiles and unavailable KV", async () => {
   resetStore();
   const unknown = await handleEmbeddingsJobGet(new Request("https://ai.ubq.fi/uos/embedding-jobs/embjob_missing"), "coverage-token", "embjob_missing");
   assert.equal(unknown.status, 404);
@@ -593,7 +597,7 @@ const queuedJob = async (authToken: string, input: string | string[]): Promise<{
 const pollJob = (jobId: string, authToken: string): Promise<Response> =>
   handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), authToken, jobId);
 
-Deno.test("embedding job polling fails closed when inputs or results disappear", async () => {
+test("embedding job polling fails closed when inputs or results disappear", async () => {
   const authToken = `coverage-inputs-${crypto.randomUUID()}`;
   resetVoyageRateLimit();
   resetStore();
@@ -654,7 +658,7 @@ Deno.test("embedding job polling fails closed when inputs or results disappear",
   assert.equal((evictedPayload.error as { code?: string }).code, "embeddings_job_result_missing");
 });
 
-Deno.test("embedding job polling reports upstream failures and count mismatches", async () => {
+test("embedding job polling reports upstream failures and count mismatches", async () => {
   const authToken = `coverage-upstream-${crypto.randomUUID()}`;
   resetVoyageRateLimit();
   resetStore();
@@ -681,7 +685,7 @@ Deno.test("embedding job polling reports upstream failures and count mismatches"
   assert.match(String((badRequestPayload.error as { message?: string }).message), /Embeddings upstream request failed/);
 });
 
-Deno.test("embedding job polling serves a cached completion and refuses queued jobs without a provider key", async () => {
+test("embedding job polling serves a cached completion and refuses queued jobs without a provider key", async () => {
   const authToken = `coverage-cached-${crypto.randomUUID()}`;
   resetVoyageRateLimit();
   resetStore();
@@ -716,7 +720,7 @@ Deno.test("embedding job polling serves a cached completion and refuses queued j
   assert.match((await errorOf(noProvider)).message ?? "", /VOYAGEAI_API_KEY/);
 });
 
-Deno.test("embeddings cache entries are addressed by the resolved profile", () => {
+test("embeddings cache entries are addressed by the resolved profile", () => {
   const profile = embeddingsProfileKey("query", 512, "base64", false);
   assert.match(profile, /voyage-profile-v2/);
   assert.notEqual(profile, embeddingsProfileKey("document", 512, "base64", false));
@@ -728,23 +732,23 @@ Deno.test("embeddings cache entries are addressed by the resolved profile", () =
   assert.equal(isValidEmbeddingVector("nope", 512), false);
 });
 
-Deno.test("embeddings KV access is memoized for the harness stub", async () => {
+test("embeddings KV access is memoized for the harness stub", async () => {
   const kv = await getKv();
   assert.equal(kv === kvStub, true);
 });
 
 /** Fails every atomic commit that writes the Voyage rate-limit row, mimicking a lost CAS. */
-const rateLimitStuckKv = (): Deno.Kv =>
+const rateLimitStuckKv = (): Kv =>
   delegateKv({
     atomic: () => {
-      const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+      const ops: { type: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
       const chain = {
         check: () => chain,
-        set: (key: Deno.KvKey, value: unknown) => {
+        set: (key: KvKey, value: unknown) => {
           ops.push({ type: "set", key, value });
           return chain;
         },
-        delete: (key: Deno.KvKey) => {
+        delete: (key: KvKey) => {
           ops.push({ type: "delete", key });
           return chain;
         },
@@ -761,7 +765,7 @@ const rateLimitStuckKv = (): Deno.Kv =>
     },
   });
 
-const alwaysThrowingCommitKv = (message: string): Deno.Kv =>
+const alwaysThrowingCommitKv = (message: string): Kv =>
   delegateKv({
     atomic: () => {
       const chain = {
@@ -776,7 +780,7 @@ const alwaysThrowingCommitKv = (message: string): Deno.Kv =>
     },
   });
 
-Deno.test("embeddings cache writes treat a negative by-hash pointer as a miss", async () => {
+test("embeddings cache writes treat a negative by-hash pointer as a miss", async () => {
   resetStore();
   const profile = embeddingsProfileKey("document", 1024, "float", true);
   const vector = testVector(1024);
@@ -788,7 +792,7 @@ Deno.test("embeddings cache writes treat a negative by-hash pointer as a miss", 
   assert.equal(kvStore.has(keyToString(cacheKeyFor(profile, "hash-negative"))), true);
 });
 
-Deno.test("embeddings cache writes abandon a ledger that always rejects commits", async () => {
+test("embeddings cache writes abandon a ledger that always rejects commits", async () => {
   resetStore();
   const profile = embeddingsProfileKey("document", 1024, "float", true);
   const vector = testVector(1024);
@@ -801,7 +805,7 @@ Deno.test("embeddings cache writes abandon a ledger that always rejects commits"
   assert.equal(kvStore.has(keyToString(cacheKeyFor(profile, "hash-evictable"))), true);
 });
 
-Deno.test("voyage rate limiting tolerates unusable state and a permanently stuck ledger", async () => {
+test("voyage rate limiting tolerates unusable state and a permanently stuck ledger", async () => {
   resetVoyageRateLimit();
   kvStore.set(keyToString(VOYAGE_RATE_LIMIT_KEY), { window_start_ms: 1, requests: "many", tokens: 0 });
   assert.deepEqual(await tryReserveVoyageBudget(kvStub, 4), { ok: true });
@@ -820,7 +824,7 @@ Deno.test("voyage rate limiting tolerates unusable state and a permanently stuck
   resetVoyageRateLimit();
 });
 
-Deno.test("embedding job creation requeues when the rate-limit ledger is stuck", async () => {
+test("embedding job creation requeues when the rate-limit ledger is stuck", async () => {
   const authToken = `coverage-stuck-${crypto.randomUUID()}`;
   resetVoyageRateLimit();
   resetStore();
@@ -839,7 +843,7 @@ Deno.test("embedding job creation requeues when the rate-limit ledger is stuck",
   resetVoyageRateLimit();
 });
 
-Deno.test("voyage transport ignores unusable Retry-After values", async () => {
+test("voyage transport ignores unusable Retry-After values", async () => {
   const baseParams = {
     apiKey: "voyage-test-key",
     model: "voyage-4-large" as const,
@@ -865,17 +869,17 @@ Deno.test("voyage transport ignores unusable Retry-After values", async () => {
 });
 
 /** Every cache-entry commit reports a lost CAS, so the create-index retry loop exhausts. */
-const refusingCacheCommitKv = (): Deno.Kv =>
+const refusingCacheCommitKv = (): Kv =>
   delegateKv({
     atomic: () => {
-      const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+      const ops: { type: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
       const chain = {
         check: () => chain,
-        set: (key: Deno.KvKey, value: unknown) => {
+        set: (key: KvKey, value: unknown) => {
           ops.push({ type: "set", key, value });
           return chain;
         },
-        delete: (key: Deno.KvKey) => {
+        delete: (key: KvKey) => {
           ops.push({ type: "delete", key });
           return chain;
         },
@@ -892,7 +896,7 @@ const refusingCacheCommitKv = (): Deno.Kv =>
     },
   });
 
-Deno.test("embeddings cache writes give up after repeated create-index CAS losses", async () => {
+test("embeddings cache writes give up after repeated create-index CAS losses", async () => {
   resetStore();
   const profile = embeddingsProfileKey("document", 1024, "float", true);
   const vector = testVector(1024);

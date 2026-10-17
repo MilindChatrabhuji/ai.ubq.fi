@@ -10,8 +10,7 @@ body[data-page="admin"] [data-shell] {
   max-width: 1600px;
   min-height: 100svh;
   grid-template-rows: auto minmax(0, 1fr);
-  padding: calc(20px + env(safe-area-inset-top)) clamp(16px, 3vw, 40px)
-    calc(88px + env(safe-area-inset-bottom));
+  padding: calc(20px + env(safe-area-inset-top)) clamp(16px, 3vw, 40px) calc(88px + env(safe-area-inset-bottom));
   gap: 18px;
 }
 
@@ -525,6 +524,7 @@ body[data-page="admin"] [data-capacity-chart-figure] {
 
 body[data-page="admin"] [data-capacity-chart-header] {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 14px;
@@ -764,6 +764,48 @@ body[data-page="admin"] [data-capacity-series] {
 body[data-page="admin"] [data-capacity-series="available-capacity"] {
   stroke: var(--accent);
   stroke-width: 2;
+}
+
+body[data-page="admin"] [data-capacity-series="claude-five-hour"] {
+  stroke: var(--success);
+  stroke-width: 2;
+}
+
+body[data-page="admin"] [data-capacity-series="claude-seven-day"] {
+  stroke: var(--muted);
+  stroke-dasharray: 5 3;
+  stroke-width: 2;
+}
+
+body[data-page="admin"] [data-capacity-claude-point="claude-five-hour"] {
+  fill: var(--success);
+}
+
+body[data-page="admin"] [data-capacity-claude-point="claude-seven-day"] {
+  fill: var(--muted);
+}
+
+body[data-page="admin"] [data-capacity-legend-item="claude-five-hour"] [data-capacity-legend-swatch] {
+  border-top-color: var(--success);
+}
+
+body[data-page="admin"] [data-capacity-legend-item="claude-seven-day"] [data-capacity-legend-swatch] {
+  border-top-color: var(--muted);
+  border-top-style: dashed;
+}
+
+body[data-page="admin"] [data-capacity-claude-filter] {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+body[data-page="admin"] [data-capacity-claude-filter] select {
+  min-width: 0;
+  max-width: 100%;
 }
 
 body[data-page="admin"] [data-capacity-cache-bucket] {
@@ -1625,6 +1667,7 @@ body[data-page="admin"] [data-auth-title] {
 
 body[data-page="admin"] [data-auth-meta] {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1642,6 +1685,8 @@ body[data-page="admin"] [data-auth-label] {
 }
 
 body[data-page="admin"] [data-auth-value] {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--text);

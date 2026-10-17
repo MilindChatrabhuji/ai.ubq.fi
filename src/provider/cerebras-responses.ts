@@ -6,12 +6,7 @@ import { json, openaiError } from "../http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
 import { isRecord } from "../utils.ts";
 import { cerebrasProviderHint, parseStreamField } from "../request-policy.ts";
-import {
-  cerebrasUpstreamModelFor,
-  fetchCerebrasChatCompletions,
-  getCerebrasProviderRequestId,
-  normalizeCerebrasProviderRequestId,
-} from "./cerebras.ts";
+import { cerebrasUpstreamModelFor, fetchCerebrasChatCompletions, getCerebrasProviderRequestId, normalizeCerebrasProviderRequestId } from "./cerebras.ts";
 import {
   cerebrasReasoningEffortRefusal,
   readCerebrasChatCompletion,
@@ -145,8 +140,11 @@ const recordCerebrasResponsesTerminal = (
   if (terminalType === "response.completed") {
     recordStreamTerminal(usageContext);
     recordCerebrasResponseHealth(upstreamStatus, providerRequestId);
+  } else if (terminalType === "response.incomplete") {
+    recordCerebrasFailureKind(usageContext, "incomplete_response");
+    recordCerebrasResponseHealth(upstreamStatus, providerRequestId);
   } else {
-    recordCerebrasFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+    recordCerebrasFailureKind(usageContext, "upstream_error");
     void recordCerebrasProviderHealth("upstream_error", upstreamStatus, Date.now, providerRequestId);
   }
 };

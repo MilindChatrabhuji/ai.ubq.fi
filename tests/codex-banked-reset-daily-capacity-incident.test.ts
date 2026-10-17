@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { type Kv } from "#kv";
 // Mock reproduction of the 2026-10-05 capacity-only banked-reset incident and
 // its final shipped contract: 5e4f516b/219217a8 materialize a blocked cohort
 // identity plus a durable class-block fence from a capacity-100% observation
@@ -15,7 +17,7 @@ import assert from "node:assert/strict";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_AUTH_POOL_KV_KEY,
-  CodexAuthPoolState,
+  type CodexAuthPoolState,
   RoutingKv,
   codexCredentialVersion,
   getCodexQuotaBlockFence,
@@ -93,9 +95,9 @@ const routingSlot = async (auth: RoutingAuth, overrides: Record<string, unknown>
   ...overrides,
 });
 
-Deno.test("a capacity-100% class yields a blocked cohort identity, and only materialization arms its fence", async () => {
+test("a capacity-100% class yields a blocked cohort identity, and only materialization arms its fence", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   resetProviderSelectionCacheForTest();
   try {
@@ -164,7 +166,7 @@ Deno.test("a capacity-100% class yields a blocked cohort identity, and only mate
   }
 });
 
-Deno.test("a capacity-blocked live episode arms without spending and then consumes exactly once", async () => {
+test("a capacity-blocked live episode arms without spending and then consumes exactly once", async () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const reset = candidate({ accountId: "incident-account-a", routingGeneration: 7 });
@@ -205,23 +207,23 @@ Deno.test("a capacity-blocked live episode arms without spending and then consum
   assert.equal(await accountDayCount(kv, "incident-account-a", utcDay(clock.nowMs)), 1);
 });
 
-Deno.test("two accounts may each redeem once per UTC day, and one account's second episode is refused", async () => {
+test("two accounts may each redeem once per UTC day, and one account's second episode is refused", async () => {
   const kv = new MemoryKv();
   const clock = new TestClock();
   const day = utcDay(clock.nowMs);
   const provider = new FakeCodexUsageResetProvider();
   const configured = liveIncidentConfig();
   const deps = dependencies(kv, provider, clock, configured);
-  const accountAFirst = candidate({ accountId: "incident-account-a" });
+  const accountFirst = candidate({ accountId: "incident-account-a" });
   const accountB = candidate({ accountId: "incident-account-b", requestId: "incident-account-b" });
   // A second, distinct quota window for account A later the same UTC day
   // (a new quota generation, so the window ledger alone would allow it).
-  const accountASecond = candidate({ accountId: "incident-account-a", requestId: "incident-account-a-second", quotaResetAtMs: clock.nowMs + 120_000 });
-  await seedFences(kv, accountAFirst);
+  const accountSecond = candidate({ accountId: "incident-account-a", requestId: "incident-account-a-second", quotaResetAtMs: clock.nowMs + 120_000 });
+  await seedFences(kv, accountFirst);
   await seedFences(kv, accountB);
-  await seedFences(kv, accountASecond);
+  await seedFences(kv, accountSecond);
 
-  const first = await attemptCodexBankedReset(accountAFirst, deps);
+  const first = await attemptCodexBankedReset(accountFirst, deps);
   assert.equal(first.kind, "verified");
   assert.equal(await accountDayCount(kv, "incident-account-a", day), 1);
 
@@ -232,7 +234,7 @@ Deno.test("two accounts may each redeem once per UTC day, and one account's seco
   assert.equal(await accountDayCount(kv, "incident-account-a", day), 1);
   assert.equal(await accountDayCount(kv, "incident-account-b", day), 1);
 
-  const refused = await attemptCodexBankedReset(accountASecond, deps);
+  const refused = await attemptCodexBankedReset(accountSecond, deps);
   assert.equal(refused.kind, "skipped");
   assert.equal(refused.reason, "account_day_limit_reached");
   assert.equal(await accountDayCount(kv, "incident-account-a", day), 1);
@@ -250,7 +252,7 @@ Deno.test("two accounts may each redeem once per UTC day, and one account's seco
   assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
 });
 
-Deno.test("the live banked-reset policy requires an exact per-account daily cap of one for a terminal provider", async () => {
+test("the live banked-reset policy requires an exact per-account daily cap of one for a terminal provider", async () => {
   // The parser fails closed: the retired global variable is not read, and an
   // absent new cap leaves live submissions disabled until an explicit 1.
   const declared = parseCodexBankedResetConfig((key) => (key === "CODEX_BANKED_RESET_MODE" ? "live" : undefined));

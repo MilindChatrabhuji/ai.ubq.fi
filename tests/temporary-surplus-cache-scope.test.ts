@@ -1,3 +1,5 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { fetchTemporaryFreeSurplusRoutedResponses } from "../src/paid-fallback/health.ts";
 import { createResponseTelemetryState, type UsageContext } from "../src/openai-telemetry.ts";
@@ -5,10 +7,10 @@ import { restoreAnthropicChatReplay } from "../src/provider/anthropic-replay.ts"
 
 const model = "claude-opus-5.5";
 
-Deno.test("temporary Surplus routing forwards authenticated replay scope and records the selected native cache policy", async () => {
-  const previousKey = Deno.env.get("SURPLUS_API_KEY");
+test("temporary Surplus routing forwards authenticated replay scope and records the selected native cache policy", async () => {
+  const previousKey = process.env.SURPLUS_API_KEY;
   const previousFetch = globalThis.fetch;
-  Deno.env.set("SURPLUS_API_KEY", "surplus-scoped-replay-test-key");
+  process.env.SURPLUS_API_KEY = "surplus-scoped-replay-test-key";
   try {
     for (const fixture of [
       { scope: "temporary-principal-a", keyId: "temporary-key-a", principal: "temporary-principal-a", explicit: false },
@@ -35,7 +37,7 @@ Deno.test("temporary Surplus routing forwards authenticated replay scope and rec
           : "use the tool",
       };
       let calls = 0;
-      globalThis.fetch = (input, init) => {
+      globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit) => {
         let url: string;
         if (typeof input === "string") url = input;
         else if (input instanceof URL) url = input.href;
@@ -71,7 +73,7 @@ Deno.test("temporary Surplus routing forwards authenticated replay scope and rec
             },
           })
         );
-      };
+      });
       const routed = await fetchTemporaryFreeSurplusRoutedResponses(body, { model, usageContext });
       assert.equal(calls, 1);
       assert.equal(routed.provider, "surplus");
@@ -86,7 +88,7 @@ Deno.test("temporary Surplus routing forwards authenticated replay scope and rec
     }
   } finally {
     globalThis.fetch = previousFetch;
-    if (previousKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", previousKey);
+    if (previousKey === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = previousKey;
   }
 });
