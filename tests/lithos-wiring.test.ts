@@ -995,6 +995,7 @@ test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own win
       const telemetry = getResponseTelemetry(chat.result);
       if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
       assert.equal(telemetry.rateLimitWaitMs, 120, "the absorbed window is reported");
+      assert.equal(telemetry.rateLimitFailoverModel, null, "the requested tier served after the absorbed window");
     } finally {
       clearLithosFailoverWindows();
     }
@@ -1397,7 +1398,7 @@ test("lithos wiring: a streamed refusal on both tiers is absorbed by the vendor'
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
       assert.equal(telemetry.rateLimitWaitMs, 60, "the absorbed window is reported on the streamed terminal");
-      assert.equal(telemetry.rateLimitFailoverModel, LITHOS_BASE_MODEL);
+      assert.equal(telemetry.rateLimitFailoverModel, null, "the requested tier served after the absorbed window");
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
       clearLithosFailoverWindows();

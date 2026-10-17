@@ -4,6 +4,18 @@ import { isAbsolute } from "node:path";
 import { digest, fileDigest } from "./io.ts";
 
 export type CutoverReaderReceipt = Readonly<{ path: string; sha256: string }>;
+export type CutoverReaderGate =
+  Readonly<{ kind: "accepted"; receipt: CutoverReaderReceipt }> | Readonly<{ kind: "owner-waived"; receipt: CutoverReaderReceipt }>;
+type GateBinding = CutoverReaderReceipt & Readonly<{ kind: CutoverReaderGate["kind"] }>;
+
+/** A missing receipt, an extra alternative or an unknown kind never selects a waiver. */
+export function cutoverReaderGateBinding(value: unknown): GateBinding {
+  const gate = object(value, ["kind", "receipt"]);
+  if (gate.kind !== "accepted" && gate.kind !== "owner-waived") return refused();
+  const receipt = object(gate.receipt, ["path", "sha256"]);
+  if (typeof receipt.path !== "string" || !isAbsolute(receipt.path) || receipt.path.length > 4096 || /\p{Cc}/u.test(receipt.path)) return refused();
+  return { kind: gate.kind, path: receipt.path, sha256: hash(receipt.sha256) };
+}
 
 const evidenceNames = [
   "positive-baseline",
@@ -152,4 +164,87 @@ export async function verifyCutoverReaderAcceptance(receipt: CutoverReaderReceip
     const file = await lstat(proof.path);
     if (!file.isFile() || file.isSymbolicLink() || (await fileDigest(proof.path)) !== proof.sha256) return refused();
   }
+}
+
+type BoundFields = Readonly<{ [key: string]: string | number | BoundFields }>;
+const exactBinding = (value: unknown, expected: BoundFields): void => {
+  const actual = object(value, Object.keys(expected));
+  for (const [key, field] of Object.entries(expected)) {
+    if (typeof field === "object") exactBinding(actual[key], field);
+    else if (actual[key] !== field) refused();
+  }
+};
+const privateRecord = async (receipt: CutoverReaderReceipt): Promise<unknown> => {
+  const info = await lstat(receipt.path);
+  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid?.() || (info.mode & 0o777) !== 0o600 || info.size > 65_536) return refused();
+  const bytes = await readFile(receipt.path);
+  if (digest(bytes) !== hash(receipt.sha256)) return refused();
+  return JSON.parse(bytes.toString()) as unknown;
+};
+const instant = (value: unknown): number => {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT.*Z$/.test(value) || !Number.isFinite(Date.parse(value))) return refused();
+  return Date.parse(value);
+};
+
+/** This is an operator-recorded user waiver, never an external reader success or signature. */
+const verifyOwnerWaiver = async (receipt: CutoverReaderReceipt, artifact: CapturedCutoverArtifact): Promise<void> => {
+  const waiver = object(await privateRecord(receipt), ["schemaVersion", "scope", "status", "gateway", "runtime", "instruction", "issuedAt", "expiresAt"]);
+  if (
+    waiver.schemaVersion !== "uos-first-bun-cutover-reader-waiver-v1" ||
+    waiver.scope !== "external-Sentinel-reader-only" ||
+    waiver.status !== "owner-waived" ||
+    instant(waiver.issuedAt) > Date.now() ||
+    instant(waiver.expiresAt) <= Date.now()
+  )
+    return refused();
+  const manifest = artifact.manifest;
+  if (manifest.schema !== 3 || manifest.platform !== "linux" || manifest.architecture !== "arm64") return refused();
+  exactBinding(waiver.gateway, {
+    repository: "ubiquity/ai.ubq.fi",
+    gitSha: artifact.revision,
+    artifactId: artifact.artifactId,
+    artifactZipSha256: artifact.archiveSha256,
+    releaseManifestSha256: artifact.manifestSha256,
+    sourceTreeSha256: manifest.source_tree_sha256,
+    dependencyLockSha256: manifest.dependency_lock_sha256,
+    dependencyTreeSha256: manifest.dependency_tree_sha256,
+    permissionsTreeSha256: manifest.permissions_tree_sha256,
+    nativeKv: {
+      treeSha256: manifest.native_kv.tree_sha256,
+      artifactSha256: manifest.native_kv.artifact_sha256,
+      provenanceSha256: manifest.native_kv.provenance_sha256,
+      inputsSha256: manifest.native_kv.inputs_sha256,
+    },
+  });
+  exactBinding(waiver.runtime, {
+    name: "bun",
+    version: "1.4.0",
+    platform: "linux",
+    architecture: "arm64",
+    archiveSha256: manifest.runtime.archiveSha256,
+    binarySha256: manifest.runtime.binarySha256,
+  });
+  const instruction = cutoverReaderGateBinding({ kind: "owner-waived", receipt: waiver.instruction });
+  const record = object(await privateRecord(instruction), ["v", "status", "scope", "source", "instructions", "note"]);
+  if (
+    record.v !== 1 ||
+    record.status !== "owner-instruction-record" ||
+    record.scope !== "external-Sentinel-reader-only" ||
+    record.source !== "user messages in this task" ||
+    typeof record.note !== "string" ||
+    !record.note.length ||
+    !Array.isArray(record.instructions) ||
+    record.instructions.length === 0 ||
+    record.instructions.length > 32 ||
+    record.instructions.some((line) => typeof line !== "string" || !line.trim() || line.length > 4096 || /\p{Cc}/u.test(line))
+  )
+    return refused();
+};
+
+/** Explicit private input selects exactly one truthful gate; accepted parsing stays unchanged. */
+export async function verifyCutoverReaderGate(value: unknown, artifact: CapturedCutoverArtifact): Promise<CutoverReaderGate["kind"]> {
+  const binding = cutoverReaderGateBinding(value);
+  if (binding.kind === "accepted") await verifyCutoverReaderAcceptance(binding, artifact);
+  else await verifyOwnerWaiver(binding, artifact);
+  return binding.kind;
 }

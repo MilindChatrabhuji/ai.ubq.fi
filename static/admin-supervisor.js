@@ -169,7 +169,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const badge = document.createElement("span");
       badge.dataset.providerHealthBadge = configured ? (state ?? "unknown") : "unknown";
       badge.textContent = configured
-        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.stale === true })}`
+        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.health?.stale === true })}`
         : "Not configured";
       badges.append(tier, badge);
       body.append(name, badges);
@@ -187,6 +187,10 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     providersList.replaceChildren(...rows);
   };
 
+  const markProvidersUnavailable = () => {
+    providersList.textContent = "Provider health unavailable; previous observations cleared.";
+  };
+
   const loadProviders = async () => {
     if (!active) return;
     const token = typeof getToken === "function" ? getToken() : "";
@@ -198,9 +202,10 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       ]);
       const selection = selectionResponse.ok ? await selectionResponse.json().catch(() => null) : null;
       const healthSnapshot = healthResponse.ok ? await healthResponse.json().catch(() => null) : null;
-      if (selection) renderProviders(selection, healthSnapshot);
+      if (selection && healthSnapshot) renderProviders(selection, healthSnapshot);
+      else markProvidersUnavailable();
     } catch {
-      // Best effort: the sessions panel already reports its own load state.
+      markProvidersUnavailable();
     }
   };
 

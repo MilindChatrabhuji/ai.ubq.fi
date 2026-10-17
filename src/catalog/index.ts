@@ -184,6 +184,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
 };
 
 const meteredCatalogResponse = async (selection: ProviderSelection | null): Promise<Response | null> => {
+  warmOpenRouterModels();
   const [[metered, surplus], claude] = await Promise.all([enabledPaidCatalogSources(selection, { force: true }), enabledClaudeCatalog(selection)]);
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   const openRouterModels = isProviderEnabled("openrouter", selection) ? openRouterCodexModels() : [];

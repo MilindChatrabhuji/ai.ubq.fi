@@ -1,6 +1,7 @@
 import type { KvKey } from "#kv";
 import { getKv } from "../kv.ts";
 import { isRecord } from "../utils.ts";
+import { currentClaudeCodeAccountEntry, type ClaudeCodeAccountBinding } from "./claude-code-accounts.ts";
 
 export const PROVIDER_HEALTH_KEY_PREFIX = ["uos_ai", "provider_health", "v1"] as const;
 export const PROVIDER_HEALTH_HEARTBEAT_WRITE_INTERVAL_MS = 60_000;
@@ -148,20 +149,24 @@ const persistProviderHealth = async (
   event: ProviderHealthEvent,
   status: number | null,
   observedAtMs: number,
-  providerRequestId: string | null
+  providerRequestId: string | null,
+  binding?: ClaudeCodeAccountBinding
 ): Promise<void> => {
   try {
     if (shouldThrottleObservation(provider, identity, event, status, providerRequestId, observedAtMs)) return;
     const kv = await getKv();
     if (!kv) return;
+    const accountEntry = binding ? await currentClaudeCodeAccountEntry(kv, binding) : null;
+    if (binding && !accountEntry) return;
     const observation = {
       event,
       status,
       observed_at_ms: observedAtMs,
       provider_request_id: providerRequestId,
     } satisfies ProviderHealthObservation;
-    const commit = await kv
-      .atomic()
+    const operation = kv.atomic();
+    if (accountEntry) operation.check(accountEntry);
+    const commit = await operation
       .set(providerHealthKey(provider, identity, "current"), observation)
       .set(providerHealthKey(provider, identity, historyRecordFor(event)), observation)
       .commit();
@@ -180,7 +185,8 @@ const recordProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null,
   now: () => number,
-  providerRequestId: string | null
+  providerRequestId: string | null,
+  binding?: ClaudeCodeAccountBinding
 ): Promise<void> => {
   const queueKey = `${provider}:${identity}`;
   const current = providerTransitionQueues.get(queueKey);
@@ -198,7 +204,7 @@ const recordProviderHealth = (
   // event or the first available correlation ID is appended in arrival order.
   const tail = (current?.tail ?? Promise.resolve())
     .catch(() => {})
-    .then(() => persistProviderHealth(provider, identity, event, status, observedAtMs, normalizedRequestId));
+    .then(() => persistProviderHealth(provider, identity, event, status, observedAtMs, normalizedRequestId, binding));
   providerTransitionQueues.set(queueKey, { event, status, providerRequestId: normalizedRequestId, tail });
   void tail.finally(() => {
     if (providerTransitionQueues.get(queueKey)?.tail === tail) providerTransitionQueues.delete(queueKey);
@@ -260,8 +266,18 @@ export const recordClaudeCodeProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null = null,
   now: () => number = Date.now,
-  providerRequestId: string | null = null
-): Promise<void> => recordProviderHealth("claude_code", "default", event, status, now, providerRequestId);
+  providerRequestId: string | null = null,
+  binding?: ClaudeCodeAccountBinding
+): Promise<void> =>
+  recordProviderHealth(
+    "claude_code",
+    binding ? `${binding.account_id}:${binding.account_cohort_id}:${binding.evidence_generation}` : "default",
+    event,
+    status,
+    now,
+    providerRequestId,
+    binding
+  );
 
 const unknownView = (): ProviderHealthView => ({
   state: "unknown",
@@ -348,7 +364,15 @@ export const getDeepSeekProviderHealth = (now: () => number = Date.now): Promise
 
 export const getLithosProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("lithos", "default", now);
 
-export const getClaudeCodeProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("claude_code", "default", now);
+export const getClaudeCodeProviderHealth = async (now: () => number = Date.now, binding?: ClaudeCodeAccountBinding): Promise<ProviderHealthView> => {
+  const view = await readProviderHealth(
+    "claude_code",
+    binding ? `${binding.account_id}:${binding.account_cohort_id}:${binding.evidence_generation}` : "default",
+    now
+  );
+  const kv = await getKv();
+  return binding && (!kv || !(await currentClaudeCodeAccountEntry(kv, binding))) ? unknownView() : view;
+};
 
 export const resetProviderHealthThrottleForTest = (): void => {
   lastHeartbeatWriteAtMs.clear();

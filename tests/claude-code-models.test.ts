@@ -9,7 +9,15 @@ import {
   storeClaudeCodeStoredCredential,
   storeClaudeCodeWorkspaceState,
 } from "../src/provider/claude-code-credentials.ts";
-import { discoverClaudeCodeModels, fetchClaudeCodeModels, resetClaudeCodeModelsCacheForTest } from "../src/provider/claude-code-models.ts";
+import {
+  claudeCodeReasoningLevels,
+  discoverClaudeCodeModels,
+  fetchClaudeCodeModels,
+  resetClaudeCodeModelsCacheForTest,
+} from "../src/provider/claude-code-models.ts";
+import { resolveClaudeCodeAccount, updateClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
+import { buildClaudeCodeRequest } from "../src/provider/claude-code.ts";
+import { claudeCodeCodexModels } from "../src/catalog/models.ts";
 import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
 import { handleAdminModelsCatalogGet, handleAdminProviderSelectionGet } from "../src/admin/codex.ts";
 import { handleAdminClaudeCodeAuthSet } from "../src/admin/claude-code.ts";
@@ -100,6 +108,88 @@ test("Claude discovery follows every cursor and preserves only observed model me
   );
   assert.equal(snapshot.models[0]?.context_window_tokens, 123456);
   assert.equal(snapshot.models[1]?.context_window_tokens, undefined);
+});
+
+test("observed reasoning, context and output capabilities are preserved without model-name tier guesses", async () => {
+  const source = {
+    ...record("claude-capability-fixture"),
+    max_input_tokens: 123456,
+    max_tokens: 8192,
+    capabilities: {
+      effort: { supported: true, low: { supported: true }, high: { supported: false }, future_native: { supported: true }, none: { supported: true } },
+      thinking: { types: { adaptive: { supported: true }, disabled: { supported: false } } },
+      image_input: { supported: true },
+      pdf_input: { supported: false },
+    },
+  };
+  const snapshot = await discoverClaudeCodeModels(credential, null, { fetcher: () => Promise.resolve(Response.json({ data: [source], has_more: false })) });
+  const model = snapshot.models[0];
+  assert(model);
+  assert.deepEqual(claudeCodeReasoningLevels(model), ["low", "future_native"]);
+  assert.equal(model.max_output_tokens, 8192);
+  assert.equal(model.supports_image_input, true);
+  assert.equal(model.supports_pdf_input, false);
+  const native = claudeCodeCodexModels([model])[0];
+  assert.equal(Object.hasOwn(native, "default_reasoning_level"), false);
+  assert.deepEqual(native.supported_reasoning_levels, [
+    { effort: "low", description: "low" },
+    { effort: "future_native", description: "future_native" },
+  ]);
+  const body = { model: model.id, input: "fixture", reasoning: { effort: "future_native" }, max_output_tokens: 321 };
+  assert.equal(buildClaudeCodeRequest(body), null, "direct native effort needs exact current model proof");
+  const built = buildClaudeCodeRequest(body, { nativeReasoningEfforts: model.supported_reasoning_levels });
+  assert.deepEqual(built?.body.output_config, { effort: "future_native" });
+  assert.equal(built.body.max_tokens, 321, "explicit output controls are never trimmed");
+  assert.equal(buildClaudeCodeRequest({ ...body, reasoning: { effort: "high" } }, { nativeReasoningEfforts: model.supported_reasoning_levels }), null);
+});
+
+test("effort and adaptive capability flags are independent and false/unknown cannot create presets", async () => {
+  for (const capabilities of [
+    undefined,
+    { effort: { supported: true, high: { supported: true } } },
+    { thinking: { types: { adaptive: { supported: true } } } },
+  ]) {
+    const snapshot = await discoverClaudeCodeModels(credential, null, {
+      fetcher: () => Promise.resolve(Response.json({ data: [{ ...record("claude-capability-unknown"), capabilities }], has_more: false })),
+    });
+    const model = snapshot.models[0];
+    assert(model);
+    assert.deepEqual(claudeCodeReasoningLevels(model), []);
+  }
+});
+
+test("concurrent account model discovery stays bound to each exact credential/workspace cohort", async () => {
+  const kv = kvFixture();
+  await storeClaudeCodeStoredCredential(kv, { secret: credential.secret });
+  const first = await resolveClaudeCodeAccount(kv);
+  assert(first);
+  const second = await updateClaudeCodeAccount(kv, { createNew: true, credential: { ...first.credential, secret: "sk-ant-oat-fixture-other-models" } });
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const firstRead = fetchClaudeCodeModels({
+    kv,
+    accountBinding: first,
+    fetcher: async () => {
+      await pending;
+      return page(["claude-first-account"]);
+    },
+  });
+  const secondRead = await fetchClaudeCodeModels({ kv, accountBinding: second, fetcher: () => Promise.resolve(page(["claude-second-account"])) });
+  release?.();
+  assert.equal((await firstRead)?.models[0]?.id, "claude-first-account");
+  assert.equal(secondRead?.models[0]?.id, "claude-second-account");
+  const rotated = await updateClaudeCodeAccount(kv, {
+    accountId: second.account_id,
+    credential: { ...second.credential, secret: "sk-ant-oat-fixture-replacement-models" },
+  });
+  assert.notEqual(rotated.account_cohort_id, second.account_cohort_id);
+  assert.equal(await fetchClaudeCodeModels({ kv, accountBinding: second, fetcher: () => Promise.reject(new Error("must not call")) }), null);
+  assert.equal(
+    (await fetchClaudeCodeModels({ kv, accountBinding: first, fetcher: () => Promise.reject(new Error("cached first account")) }))?.models[0]?.id,
+    "claude-first-account"
+  );
 });
 
 test("Claude discovery refuses malformed, incomplete, looping and failed pages", async () => {
