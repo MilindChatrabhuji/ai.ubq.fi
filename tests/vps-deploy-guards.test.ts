@@ -571,6 +571,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   }
   const prefix = "#!/bin/sh\nset -eu\nfixture_root=" + quote(root) + "\nfixture_log=" + quote(root + "/.data/trace") + "\n";
   // activate saves candidate_ready immediately before invoking this reload command.
+  // The injected stop models process death after that receipt is persisted, not a graceful shutdown.
   const scripts = {
     cc: prefix + 'PATH=/usr/bin:/bin exec /usr/bin/cc "$@"\n',
     git:
@@ -590,7 +591,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
         ' "-n systemctl restart ai-ubq-fi.service") exec ' +
           quote(process.execPath) +
           ' --no-env-file --no-install "$fixture_root/control-client.ts" restart ;;',
-        ' "-n systemctl reload caddy") if [ -f "$fixture_root/stop-after-candidate-ready" ]; then rm "$fixture_root/stop-after-candidate-ready"; kill -TERM "$PPID"; exit 143; fi; exec ' +
+        ' "-n systemctl reload caddy") if [ -f "$fixture_root/stop-after-candidate-ready" ]; then rm "$fixture_root/stop-after-candidate-ready"; kill -KILL "$PPID"; exit 137; fi; exec ' +
           quote(process.execPath) +
           ' --no-env-file --no-install "$fixture_root/control-client.ts" reload ;;',
         ' *) printf "unexpected fixture sudo arguments\\n" >&2; exit 74 ;;',
