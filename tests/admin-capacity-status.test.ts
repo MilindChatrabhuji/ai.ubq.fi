@@ -173,8 +173,9 @@ test("provider selection save ignores a response after the gateway target change
   context.providerSelection = new Set(["new-provider"]);
   context.providersSavedSelection = new Set(["new-provider"]);
   context.providerSelectionLoadedAt = 2;
-  assert.ok(resolveResponse);
-  resolveResponse({ ok: true, json: async () => ({ provider_ids: ["old-provider"] }) });
+  const resolveSaveResponse = resolveResponse;
+  if (!resolveSaveResponse) throw new Error("the save request did not reach the test fetch");
+  resolveSaveResponse({ ok: true, json: async () => ({ provider_ids: ["old-provider"] }) });
   await savePromise;
 
   assert.deepEqual([...context.providerSelection], ["new-provider"]);
