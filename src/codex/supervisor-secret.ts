@@ -393,6 +393,9 @@ const scalarValueRule: Rule = (text) => scalarValueSpans(text, credentialKeys(te
 /** The order the token and scalar rules have always run in, each on the output of the rules before it. */
 const PREVIOUS_ORDER: readonly Rule[] = [...TOKEN_RULES, previousQuotedRule, scalarValueRule];
 
+/** Everything one order of the rules removed, and how many separate spans its steps found. */
+type Removal = { mask: RedactionSpan[]; count: number };
+
 /**
  * Apply each rule to the text redacted so far, starting from `mask`, and
  * return everything removed as spans on the original text. A marker stands in
@@ -400,22 +403,24 @@ const PREVIOUS_ORDER: readonly Rule[] = [...TOKEN_RULES, previousQuotedRule, sca
  * runs on through a marker that replaced whitespace, and a scalar ends at a
  * later quote when a marker replaced the one it would have stopped at.
  */
-const sequentialMask = (text: string, mask: readonly RedactionSpan[], rules: readonly Rule[]): RedactionSpan[] => {
+const sequentialMask = (text: string, mask: readonly RedactionSpan[], rules: readonly Rule[]): Removal => {
   let current = [...mask];
+  let count = 0;
   let rendering = render(text, current);
   for (const rule of rules) {
     const found = rule(rendering.text);
     if (found.length === 0) continue;
+    count += mergeSpans(found).length;
     const spans = found.map((span) => ({ start: sourceRange(rendering, span.start).start, end: sourceRange(rendering, span.end - 1).end }));
     current = mergeSpans([...current, ...spans]);
     rendering = render(text, current);
   }
-  return current;
+  return { mask: current, count };
 };
 
 /**
- * Replace credential-shaped spans with a marker and report how many separate
- * spans were removed. A replacement can hide a key from a later rule, and it
+ * Replace credential-shaped spans with a marker and report how many were
+ * removed. A replacement can hide a key from a later rule, and it
  * can also let a later rule's value run on through its marker, so no single
  * order of the rules removes everything. The spans of three orders are merged
  * on the original text before anything is replaced:
@@ -425,14 +430,22 @@ const sequentialMask = (text: string, mask: readonly RedactionSpan[], rules: rea
  * - the previous order of the token and scalar rules;
  * - the same order after the first pass the bracketed rule made before.
  *
- * The result removes everything any one of them would.
+ * The result removes everything any one of them would. The count is the one
+ * the rules have always reported, each step of the last order counting the
+ * separate spans it found, plus one for each span only another order found.
  */
 export const redactSupervisorSecrets = (text: string): { text: string; redactions: number } => {
   const keys = credentialKeys(text);
   const tokens = TOKEN_RULES.flatMap((rule) => rule(text));
   const everyRule = [...tokens, ...quotedValueSpans(text, keys), ...scalarValueSpans(text, keys), ...bracketedValueSpans(text, keys)];
-  const previousOrder = sequentialMask(text, [], PREVIOUS_ORDER);
-  const afterBracketedValues = sequentialMask(text, previousBracketedComponents(text), PREVIOUS_ORDER);
-  const mask = mergeSpans([...everyRule, ...previousOrder, ...afterBracketedValues]);
-  return { text: render(text, mask).text, redactions: mask.length };
+  const previousOrder = sequentialMask(text, [], PREVIOUS_ORDER).mask;
+  const components = previousBracketedComponents(text);
+  const afterBracketedValues = sequentialMask(text, components, PREVIOUS_ORDER);
+  const mask = mergeSpans([...everyRule, ...previousOrder, ...afterBracketedValues.mask]);
+  let next = 0;
+  const added = mask.filter((span) => {
+    while (next < afterBracketedValues.mask.length && afterBracketedValues.mask[next].end <= span.start) next += 1;
+    return next === afterBracketedValues.mask.length || afterBracketedValues.mask[next].start >= span.end;
+  }).length;
+  return { text: render(text, mask).text, redactions: components.length + afterBracketedValues.count + added };
 };
