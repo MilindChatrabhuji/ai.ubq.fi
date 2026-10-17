@@ -190,7 +190,7 @@ const meteredCatalogResponse = async (selection: ProviderSelection | null): Prom
   const deepSeekEnabled = isProviderEnabled("deepseek", selection);
   const lithosEnabled = isProviderEnabled("lithos", selection);
   const cerebrasEnabled = isProviderEnabled("cerebras", selection);
-  const openRouterEnabled = isProviderEnabled("openrouter", selection);
+  const openRouterEnabled = isProviderEnabled("openrouter", selection) && readOpenRouterApiKey() !== null;
   const deepSeekWaterfallEnabled = deepSeekWaterfallCatalogEnabled(selection);
   const openRouterModels = openRouterEnabled ? openRouterCodexModels() : [];
   const configured = [
