@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvKey } from "#kv";
 /**
  * Shared retention schema for capture-owned storage accounting.
  *
@@ -38,7 +39,13 @@ export const SENTINEL_REPLAY_CLEAN_TARGET_RATIO = 0.9;
 export const SENTINEL_REPLAY_STAGING_BATCH_CHUNKS = 12;
 export const EVICTION_BATCH_RECORDS = 16;
 export const EVICTION_MAX_CHUNK_DELETES = 512;
-export const BOOTSTRAP_BATCH_ENTRIES = 32;
+// One legacy materialization adds two CAS checks plus the ledger fence. Bun's
+// native atomic backend accepts at most ten checks, so four rows (nine checks)
+// is the largest portable batch.
+export const BOOTSTRAP_BATCH_ENTRIES = 4;
+// Owner rows (accounting + manifest) one bootstrap batch may read while indexing
+// chunk owners. Fixed, so a batch's owner reads never grow with retained captures.
+export const BOOTSTRAP_OWNER_SCAN_ENTRIES = 64;
 export const RESERVATION_REAP_LIMIT = 8;
 export const STATUS_PRUNE_BATCH = 16;
 export const CAS_ATTEMPTS = 5;
@@ -109,10 +116,10 @@ export type SentinelReplayBudgetLedger = Readonly<{
 }>;
 
 export type SentinelReplayPublication = Readonly<{
-  ledger_key: Deno.KvKey;
+  ledger_key: KvKey;
   ledger_versionstamp: string | null;
   ledger: SentinelReplayBudgetLedger;
-  accounting_key: Deno.KvKey;
+  accounting_key: KvKey;
   accounting_versionstamp: string | null;
   accounting: SentinelReplayAccountingRow;
   /**
@@ -120,12 +127,12 @@ export type SentinelReplayPublication = Readonly<{
    * is checked with the ledger so the accounted metadata delta always describes
    * the row that was really replaced, never a row written by someone else.
    */
-  status_key: Deno.KvKey;
+  status_key: KvKey;
   status_versionstamp: string | null;
 }>;
 
 export type SentinelReplayAdmission =
-  | Readonly<{ ok: true; accounting_key: Deno.KvKey; accounting: SentinelReplayAccountingRow; charge: number }>
+  | Readonly<{ ok: true; accounting_key: KvKey; accounting: SentinelReplayAccountingRow; charge: number }>
   | Readonly<{ ok: false; reason: typeof SENTINEL_REPLAY_STORAGE_FULL_REASON | typeof SENTINEL_REPLAY_ACCOUNTING_REASON }>;
 
 export type SentinelReplayRetentionStatus = Readonly<{
@@ -181,13 +188,9 @@ export const sentinelReplayMetadataReserve = (budgetBytes: number): number =>
 /** Payload admissions may use at most this much of the budget. */
 export const sentinelReplayPayloadBudgetBytes = (budgetBytes: number): number => Math.max(0, budgetBytes - sentinelReplayMetadataReserve(budgetBytes));
 
-export const sentinelReplayAccountingKey = (capturedAtMs: number, captureId: string): Deno.KvKey => [
-  ...SENTINEL_REPLAY_ACCOUNTING_PREFIX,
-  capturedAtMs,
-  captureId,
-];
+export const sentinelReplayAccountingKey = (capturedAtMs: number, captureId: string): KvKey => [...SENTINEL_REPLAY_ACCOUNTING_PREFIX, capturedAtMs, captureId];
 
-export const sentinelReplayManifestKey = (manifest: SentinelReplayManifest): Deno.KvKey => [
+export const sentinelReplayManifestKey = (manifest: SentinelReplayManifest): KvKey => [
   ...SENTINEL_REPLAY_MANIFEST_PREFIX,
   manifest.captured_at_ms,
   manifest.fingerprint,
@@ -195,9 +198,9 @@ export const sentinelReplayManifestKey = (manifest: SentinelReplayManifest): Den
 ];
 
 /** The bounded eviction tombstone an owner lookup consults when a manifest is gone. */
-export const sentinelReplayEvictionKey = (fingerprint: string): Deno.KvKey => [...SENTINEL_REPLAY_EVICTION_PREFIX, fingerprint];
+export const sentinelReplayEvictionKey = (fingerprint: string): KvKey => [...SENTINEL_REPLAY_EVICTION_PREFIX, fingerprint];
 
-export const sentinelReplayRequestStatusKey = (requestId: string): Deno.KvKey => [...SENTINEL_REPLAY_REQUEST_PREFIX, requestId];
+export const sentinelReplayRequestStatusKey = (requestId: string): KvKey => [...SENTINEL_REPLAY_REQUEST_PREFIX, requestId];
 
 /** Conservative charge for a retained manifest; legacy rows predate stored_bytes. */
 export const sentinelReplayManifestCharge = (manifest: SentinelReplayManifest): number => {
@@ -289,10 +292,10 @@ export const isAccountingRow = (value: unknown): value is SentinelReplayAccounti
 };
 
 /** The key shape must agree with the row it holds before anything derived is touched. */
-export const accountingKeyMatches = (key: Deno.KvKey, row: SentinelReplayAccountingRow): boolean =>
+export const accountingKeyMatches = (key: KvKey, row: SentinelReplayAccountingRow): boolean =>
   key.length === SENTINEL_REPLAY_ACCOUNTING_PREFIX.length + 2 && key[3] === "accounting" && key[4] === row.created_at_ms && key[5] === row.capture_id;
 
-export const manifestKeyMatches = (key: Deno.KvKey, manifest: SentinelReplayManifest): boolean =>
+export const manifestKeyMatches = (key: KvKey, manifest: SentinelReplayManifest): boolean =>
   key.length === SENTINEL_REPLAY_MANIFEST_PREFIX.length + 3 &&
   key[3] === "manifest" &&
   key[4] === manifest.captured_at_ms &&
@@ -330,7 +333,7 @@ type LedgerState =
   | Readonly<{ kind: "ok"; ledger: SentinelReplayBudgetLedger; versionstamp: string }>
   | Readonly<{ kind: "corrupt"; versionstamp: string | null }>;
 
-export const readLedger = async (kv: Deno.Kv, budgetBytes: number): Promise<LedgerState> => {
+export const readLedger = async (kv: Kv, budgetBytes: number): Promise<LedgerState> => {
   const entry = await kv.get<SentinelReplayBudgetLedger>(SENTINEL_REPLAY_BUDGET_LEDGER_KEY);
   if (entry.value === null) return { kind: "absent", ledger: emptyLedger(budgetBytes), versionstamp: null };
   if (!isLedger(entry.value)) return { kind: "corrupt", versionstamp: entry.versionstamp };
@@ -342,7 +345,7 @@ export const withBudget = (ledger: SentinelReplayBudgetLedger, budgetBytes: numb
 
 /** Public read-only snapshot for the admin surface and tests; `null` means corrupt. */
 export const readSentinelReplayLedgerSnapshot = async (
-  kv: Deno.Kv,
+  kv: Kv,
   budgetBytes?: number
 ): Promise<Readonly<{ ledger: SentinelReplayBudgetLedger; versionstamp: string | null }> | null> => {
   const budget = Math.max(64 * 1_024, Math.trunc(budgetBytes ?? sentinelReplayBudgetBytes()));
@@ -351,9 +354,9 @@ export const readSentinelReplayLedgerSnapshot = async (
   return { ledger: withBudget(state.ledger, budget), versionstamp: state.versionstamp };
 };
 
-export const deleteChunkBatch = async (kv: Deno.Kv, captureId: string, limit: number): Promise<Readonly<{ deleted: number; remaining: number }>> => {
+export const deleteChunkBatch = async (kv: Kv, captureId: string, limit: number): Promise<Readonly<{ deleted: number; remaining: number }>> => {
   if (limit <= 0) return { deleted: 0, remaining: 1 };
-  const keys: Deno.KvKey[] = [];
+  const keys: KvKey[] = [];
   for await (const entry of kv.list({ prefix: [...SENTINEL_REPLAY_CHUNK_PREFIX, captureId] }, { limit: limit + 1 })) keys.push(entry.key);
   const batch = keys.slice(0, limit);
   for (const key of batch) {
@@ -363,7 +366,7 @@ export const deleteChunkBatch = async (kv: Deno.Kv, captureId: string, limit: nu
   return { deleted: batch.length, remaining: keys.length - batch.length };
 };
 
-export const countChunks = async (kv: Deno.Kv, captureId: string): Promise<number> => {
+export const countChunks = async (kv: Kv, captureId: string): Promise<number> => {
   const prefix = [...SENTINEL_REPLAY_CHUNK_PREFIX, captureId];
   for await (const entry of kv.list({ prefix }, { limit: 1 })) {
     // Only a row that really sits under this capture's chunk prefix proves the
@@ -375,11 +378,11 @@ export const countChunks = async (kv: Deno.Kv, captureId: string): Promise<numbe
 
 /** One atomic commit: the row change and the ledger delta it describes. */
 export const commitAccountingMutation = async (
-  kv: Deno.Kv,
-  key: Deno.KvKey,
+  kv: Kv,
+  key: KvKey,
   rowVersionstamp: string | null,
   mutate: (ledger: SentinelReplayBudgetLedger) => SentinelReplayBudgetLedger,
-  applyRow: (operation: Deno.AtomicOperation) => Deno.AtomicOperation,
+  applyRow: (operation: AtomicOperation) => AtomicOperation,
   budgetBytes: number
 ): Promise<boolean> => {
   const state = await readLedger(kv, budgetBytes);
@@ -398,7 +401,7 @@ export const commitAccountingMutation = async (
 };
 
 /** Current retention status for the admin surface; `unavailable` is never reported as zero. */
-export const readSentinelReplayRetentionStatus = async (kv: Deno.Kv, budgetBytes?: number): Promise<SentinelReplayRetentionStatus> => {
+export const readSentinelReplayRetentionStatus = async (kv: Kv, budgetBytes?: number): Promise<SentinelReplayRetentionStatus> => {
   const budget = Math.max(64 * 1_024, Math.trunc(budgetBytes ?? sentinelReplayBudgetBytes()));
   try {
     const state = await readLedger(kv, budget);

@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { rmSync } from "node:fs";
 import { adapterD, assertControlModelApproved, CONTROL_MODEL_PLACEHOLDER, createBaselineD } from "../adapter-d.ts";
 import { BaselineAdapterError } from "../errors.ts";
 import type { ChatTransport } from "../transport.ts";
@@ -13,14 +15,14 @@ function configuredD(transport: ChatTransport) {
   return createBaselineD({ model: CONTROL_MODEL, baseUrl: "https://control.invalid/v1", apiKey: null, transport });
 }
 
-Deno.test("D: implements the BenchmarkAdapter contract and is refused by default", () => {
+test("D: implements the BenchmarkAdapter contract and is refused by default", () => {
   if (adapterD.configId !== "D") throw new Error(`configId must be D, got ${adapterD.configId}`);
   if (adapterD.name !== "strong-control") throw new Error(`unexpected name ${adapterD.name}`);
   if (!adapterD.requiresExternalInference) throw new Error("D must require external inference");
   if (typeof adapterD.run !== "function") throw new Error("run must be a function");
 });
 
-Deno.test("D: default instance refuses to run (unapproved control model, no transport)", async () => {
+test("D: default instance refuses to run (unapproved control model, no transport)", async () => {
   const opts = freshRunOptions();
   try {
     const { result } = await runOne(nav001(), adapterD, opts);
@@ -32,11 +34,11 @@ Deno.test("D: default instance refuses to run (unapproved control model, no tran
       throw new Error(`unexpected refusal text: ${detail}`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("D: configured fake transport completes nav-001 under the control model", async () => {
+test("D: configured fake transport completes nav-001 under the control model", async () => {
   const opts = freshRunOptions();
   try {
     const fake = scriptedTransport([{ toolCalls: [FIND, READ, PATCH] }, { content: "strong control done" }], (step) =>
@@ -57,11 +59,11 @@ Deno.test("D: configured fake transport completes nav-001 under the control mode
     }
     if (fake.requests[0].model !== CONTROL_MODEL) throw new Error("request body must carry the control model");
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("D: a mismatched upstream model is rejected deterministically", async () => {
+test("D: a mismatched upstream model is rejected deterministically", async () => {
   const opts = freshRunOptions();
   try {
     const fake = scriptedTransport([{ content: "done" }], (step) => controlCompletionBody(step, "someone-elses-model"));
@@ -74,11 +76,11 @@ Deno.test("D: a mismatched upstream model is rejected deterministically", async 
       throw new Error(`expected the model mismatch message, got ${result.failure_detail}`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("D: control model approval gate stays closed for the placeholder", () => {
+test("D: control model approval gate stays closed for the placeholder", () => {
   // The approved name must pass: assertControlModelApproved returns void, so passing means not throwing.
   assertControlModelApproved(CONTROL_MODEL);
   let threw = false;

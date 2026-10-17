@@ -6,5 +6,19 @@
   "printWidth": 160,
   "htmlWhitespaceSensitivity": "strict",
   "plugins": [],
-  "useTabs": false
+  "useTabs": false,
+  "overrides": [
+    {
+      "files": ["*.json", "*.jsonc", "*.md", "*.js", "*.cjs", "*.css", "*.html", "*.yml", "*.yaml"],
+      "options": {
+        "printWidth": 120
+      }
+    },
+    {
+      "files": "*.md",
+      "options": {
+        "proseWrap": "preserve"
+      }
+    }
+  ]
 }

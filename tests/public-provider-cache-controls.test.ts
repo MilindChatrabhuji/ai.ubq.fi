@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { handleChatCompletions } from "../src/chat/envelope.ts";
@@ -32,14 +35,14 @@ const routes = [
 ] as const;
 
 const withCatalogue = async (run: (kv: CountingKv) => Promise<void>): Promise<void> => {
-  const previousKey = Deno.env.get("OPENROUTER_API_KEY");
+  const previousKey = process.env.OPENROUTER_API_KEY;
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetProviderSelectionCacheForTest();
   resetProviderHealthThrottleForTest();
   resetOpenRouterModelsCacheForTest();
-  Deno.env.set("OPENROUTER_API_KEY", "fixture-key");
-  setOpenRouterModelsFetchForTest((() => Promise.resolve(Response.json({ data: [{ id: CLAUDE_MODEL }, { id: "vendor/alpha" }] }))) as typeof fetch);
+  process.env.OPENROUTER_API_KEY = "fixture-key";
+  setOpenRouterModelsFetchForTest(createFetchMock(() => Promise.resolve(Response.json({ data: [{ id: CLAUDE_MODEL }, { id: "vendor/alpha" }] }))));
   try {
     await fetchOpenRouterModels();
     await run(kv);
@@ -49,22 +52,22 @@ const withCatalogue = async (run: (kv: CountingKv) => Promise<void>): Promise<vo
     resetProviderHealthThrottleForTest();
     setOpenRouterModelsFetchForTest(null);
     resetOpenRouterModelsCacheForTest();
-    if (previousKey === undefined) Deno.env.delete("OPENROUTER_API_KEY");
-    else Deno.env.set("OPENROUTER_API_KEY", previousKey);
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previousKey;
   }
 };
 
 const requestFor = (path: string, body: Record<string, unknown>): Request =>
   new Request(`https://ai.ubq.fi${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-Deno.test("public Claude OpenRouter routes preserve an explicit native cache policy through validation", async () => {
+test("public Claude OpenRouter routes preserve an explicit native cache policy through validation", async () => {
   await withCatalogue(async () => {
     const originalFetch = globalThis.fetch;
     try {
       for (const route of routes) {
         const policy = { type: "ephemeral", ttl: "1h" };
         let calls = 0;
-        globalThis.fetch = (url, init) => {
+        globalThis.fetch = createFetchMock((url: RequestInfo | URL, init?: RequestInit) => {
           calls += 1;
           assert.equal(requestUrl(url), route.endpoint);
           const body = requestBody(init);
@@ -89,7 +92,7 @@ Deno.test("public Claude OpenRouter routes preserve an explicit native cache pol
                   }
             )
           );
-        };
+        });
         const response = await route.handler(
           requestFor(route.path, { model: CLAUDE_MODEL, ...route.input, cache_control: policy, prompt_cache_key: "caller-key" })
         );
@@ -104,16 +107,16 @@ Deno.test("public Claude OpenRouter routes preserve an explicit native cache pol
   });
 });
 
-Deno.test("Claude's native cache extension never widens official schemas or other provider routes", async () => {
+test("Claude's native cache extension never widens official schemas or other provider routes", async () => {
   assert.equal(new Set<string>(CHAT_COMPLETIONS_REQUEST_KEYS).has("cache_control"), false);
   assert.equal(new Set<string>(RESPONSES_REQUEST_KEYS).has("cache_control"), false);
   await withCatalogue(async (kv) => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
-    globalThis.fetch = () => {
+    globalThis.fetch = createFetchMock(() => {
       calls += 1;
       throw new Error("invalid provider extensions must never dispatch");
-    };
+    });
     try {
       for (const route of routes) {
         for (const model of ["vendor/alpha", "gpt-5-fixture", "claude-opus-5.5", "~anthropic/claude-unlisted"]) {
@@ -136,14 +139,14 @@ Deno.test("Claude's native cache extension never widens official schemas or othe
   });
 });
 
-Deno.test("public Claude cache policies reject malformed native controls before transport", async () => {
+test("public Claude cache policies reject malformed native controls before transport", async () => {
   await withCatalogue(async () => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
-    globalThis.fetch = () => {
+    globalThis.fetch = createFetchMock(() => {
       calls += 1;
       throw new Error("malformed cache policies must never dispatch");
-    };
+    });
     try {
       for (const route of routes) {
         for (const [control, param] of [
@@ -164,13 +167,13 @@ Deno.test("public Claude cache policies reject malformed native controls before 
   });
 });
 
-Deno.test("public Cerebras Responses retains its documented cache-routing key at the actual Chat transport", async () => {
+test("public Cerebras Responses retains its documented cache-routing key at the actual Chat transport", async () => {
   await withCatalogue(async () => {
     const originalFetch = globalThis.fetch;
-    const previousKey = Deno.env.get("CEREBRAS_API_KEY");
-    Deno.env.set("CEREBRAS_API_KEY", "fixture-cerebras-key");
+    const previousKey = process.env.CEREBRAS_API_KEY;
+    process.env.CEREBRAS_API_KEY = "fixture-cerebras-key";
     let calls = 0;
-    globalThis.fetch = (url, init) => {
+    globalThis.fetch = createFetchMock((url: RequestInfo | URL, init?: RequestInit) => {
       calls += 1;
       assert.equal(requestUrl(url), CEREBRAS_CHAT_COMPLETIONS_URL);
       const body = requestBody(init);
@@ -185,7 +188,7 @@ Deno.test("public Cerebras Responses retains its documented cache-routing key at
           usage: { prompt_tokens: 100, completion_tokens: 1, total_tokens: 101, prompt_tokens_details: { cached_tokens: 90 } },
         })
       );
-    };
+    });
     try {
       const response = await handleResponses(
         requestFor("/v1/responses", {
@@ -202,8 +205,8 @@ Deno.test("public Cerebras Responses retains its documented cache-routing key at
       assert.equal(calls, 1);
     } finally {
       globalThis.fetch = originalFetch;
-      if (previousKey === undefined) Deno.env.delete("CEREBRAS_API_KEY");
-      else Deno.env.set("CEREBRAS_API_KEY", previousKey);
+      if (previousKey === undefined) delete process.env.CEREBRAS_API_KEY;
+      else process.env.CEREBRAS_API_KEY = previousKey;
     }
   });
 });

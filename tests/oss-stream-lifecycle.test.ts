@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { DEEPSEEK_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
 import { iterateDeepSeekChatCompletionStream } from "../src/deepseek/stream.ts";
@@ -247,7 +248,7 @@ const providerRelayFixture = (wire: "chat" | "responses") => {
 };
 
 for (const wire of ["chat", "responses"] as const) {
-  Deno.test(`Provider ${wire} relay disposes DONE before terminal and usage settlement`, async () => {
+  test(`Provider ${wire} relay disposes DONE before terminal and usage settlement`, async () => {
     const fixture = providerRelayFixture(wire);
     const output = fixture.response.text();
     try {
@@ -283,7 +284,7 @@ for (const wire of ["chat", "responses"] as const) {
     }
   });
 
-  Deno.test(`Provider ${wire} cancellation during DONE disposal returns the iterator only once`, async () => {
+  test(`Provider ${wire} cancellation during DONE disposal returns the iterator only once`, async () => {
     const fixture = providerRelayFixture(wire);
     const body = fixture.response.body;
     assert.ok(body);
@@ -320,7 +321,7 @@ for (const wire of ["chat", "responses"] as const) {
   });
 }
 
-Deno.test("Responses proxy releases an in-flight upstream read when its reader cancels", async () => {
+test("Responses proxy releases an in-flight upstream read when its reader cancels", async () => {
   const probe = probeUpstream();
   const reader = proxyResponsesStream(probe.stream).getReader();
   const abandonedRead = reader.read();
@@ -341,7 +342,7 @@ Deno.test("Responses proxy releases an in-flight upstream read when its reader c
   }
 });
 
-Deno.test("Responses proxy cancels an upstream stream that was never read", async () => {
+test("Responses proxy cancels an upstream stream that was never read", async () => {
   const probe = probeUpstream();
   const reader = proxyResponsesStream(probe.stream).getReader();
   try {
@@ -355,7 +356,7 @@ Deno.test("Responses proxy cancels an upstream stream that was never read", asyn
   }
 });
 
-Deno.test("Responses proxy stops an eager upstream producer while its reader is idle", async () => {
+test("Responses proxy stops an eager upstream producer while its reader is idle", async () => {
   const probe = probeUpstream((pullIndex) => bytes(deltaFrame(`chunk-${pullIndex}`)));
   const reader = proxyResponsesStream(probe.stream).getReader();
   try {
@@ -377,7 +378,7 @@ Deno.test("Responses proxy stops an eager upstream producer while its reader is 
   }
 });
 
-Deno.test("Owned Responses stream stops an eager upstream producer while its consumer is idle", async () => {
+test("Owned Responses stream stops an eager upstream producer while its consumer is idle", async () => {
   const probe = probeUpstream((pullIndex) => bytes(deltaFrame(`chunk-${pullIndex}`)));
   const body = createOwnedResponsesStream({
     initial: [],
@@ -402,7 +403,7 @@ Deno.test("Owned Responses stream stops an eager upstream producer while its con
   }
 });
 
-Deno.test("Responses proxy forwards one terminal, cancels once, and never replays its upstream", async () => {
+test("Responses proxy forwards one terminal, cancels once, and never replays its upstream", async () => {
   // Typed with the gap the pull index can land on, so the sentinel check below
   // stays an honest runtime guard rather than a comparison the types disprove.
   const frames: (string | undefined)[] = [deltaFrame("committed"), completedFrame(), deltaFrame("post-terminal")];
@@ -430,7 +431,7 @@ Deno.test("Responses proxy forwards one terminal, cancels once, and never replay
   }
 });
 
-Deno.test("Responses preflight propagates caller cancellation into a pending first read", async () => {
+test("Responses preflight propagates caller cancellation into a pending first read", async () => {
   const controller = new AbortController();
   const probe = probeUpstream();
   const preflight = preflightResponsesStream(probe.stream, controller.signal);
@@ -456,7 +457,7 @@ Deno.test("Responses preflight propagates caller cancellation into a pending fir
   }
 });
 
-Deno.test("Owned Responses stream aborts a parked upstream read when its consumer cancels", async () => {
+test("Owned Responses stream aborts a parked upstream read when its consumer cancels", async () => {
   const upstreamAbort = new AbortController();
   const probe = probeUpstream();
   const body = createOwnedResponsesStream({
@@ -487,7 +488,7 @@ Deno.test("Owned Responses stream aborts a parked upstream read when its consume
   }
 });
 
-Deno.test("SSE keepalive forwards cancellation and keeps one pending upstream read", async () => {
+test("SSE keepalive forwards cancellation and keeps one pending upstream read", async () => {
   const probe = probeUpstream((pullIndex) => (pullIndex === 1 ? bytes(deltaFrame("first")) : null));
   const reader = withSseKeepalive(probe.stream, { intervalMs: 5 }).getReader();
   try {
@@ -511,7 +512,7 @@ Deno.test("SSE keepalive forwards cancellation and keeps one pending upstream re
   }
 });
 
-Deno.test("Responses precommit buffer refuses an unbounded eager producer and releases its iterator", async () => {
+test("Responses precommit buffer refuses an unbounded eager producer and releases its iterator", async () => {
   let produced = 0;
   let released = false;
   // A producing iterator with no asynchronous work of its own: an
@@ -557,7 +558,7 @@ Deno.test("Responses precommit buffer refuses an unbounded eager producer and re
   }
 });
 
-Deno.test("Responses precommit character budget refuses events past its cap without buffering them", () => {
+test("Responses precommit character budget refuses events past its cap without buffering them", () => {
   const chunk = responseEventFromValue({ type: "response.in_progress", pad: "x".repeat(1024 * 1024) });
   const buffered: ResponsesStreamEvent[] = [];
   let chars = 0;

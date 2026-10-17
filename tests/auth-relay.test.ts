@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { isTrustedAuthRelayClientOrigin, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "../static/auth-relay.js";
@@ -10,7 +11,7 @@ import { parseTrustedAuthRelayOrigin as parseTrustedServerAuthRelayOrigin } from
  */
 const clearTextOrigin = (origin: string): string => origin.replace(/^https:/, "http:");
 
-Deno.test("auth relay identifies approved Deno relay client origins", () => {
+test("auth relay identifies approved Deno relay client origins", () => {
   for (const origin of [
     "https://ai-ubq-fi.ubiquity-dao.deno.net",
     "https://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
@@ -30,7 +31,7 @@ Deno.test("auth relay identifies approved Deno relay client origins", () => {
   assert.equal(isTrustedAuthRelayClientOrigin("https://example.com"), false);
 });
 
-Deno.test("auth relay rejects local development origins", () => {
+test("auth relay rejects local development origins", () => {
   for (const hostname of ["localhost", "127.0.0.1", "[::1]"]) {
     assert.equal(parseTrustedAuthRelayOrigin(`http://${hostname}:8000`), "");
     assert.equal(parseTrustedAuthRelayOrigin(`https://${hostname}`), "");
@@ -39,7 +40,7 @@ Deno.test("auth relay rejects local development origins", () => {
   }
 });
 
-Deno.test("auth relay accepts canonical and owned Deno organization origins", () => {
+test("auth relay accepts canonical and owned Deno organization origins", () => {
   assert.equal(parseTrustedAuthRelayOrigin("https://ai.ubq.fi"), "https://ai.ubq.fi");
   assert.equal(parseTrustedAuthRelayOrigin("https://ai-ubq-fi.deno.dev"), "https://ai-ubq-fi.deno.dev");
   assert.equal(parseTrustedServerAuthRelayOrigin("https://ai.ubq.fi"), "https://ai.ubq.fi");
@@ -60,7 +61,7 @@ Deno.test("auth relay accepts canonical and owned Deno organization origins", ()
   }
 });
 
-Deno.test("auth relay rejects untrusted or malformed origins", () => {
+test("auth relay rejects untrusted or malformed origins", () => {
   for (const origin of [
     "https://example.com",
     "https://app.other-org.deno.net",
@@ -84,7 +85,7 @@ Deno.test("auth relay rejects untrusted or malformed origins", () => {
   }
 });
 
-Deno.test("auth relay only accepts the passkey login action", () => {
+test("auth relay only accepts the passkey login action", () => {
   assert.equal(parseAuthRelayAction("passkey-login"), "passkey-login");
   assert.equal(parseAuthRelayAction("token"), "");
   assert.equal(parseAuthRelayAction(null), "");

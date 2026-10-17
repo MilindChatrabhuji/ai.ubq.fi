@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 // Embeddings HTTP handlers and job runner, extracted from src/openai.ts.
 
 import { ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
@@ -8,8 +9,8 @@ import { isRecord, sha256Hex } from "../utils.ts";
 import { downstreamSignalFor } from "../openai.ts";
 import { apiKeyQuotaDispatchErrorResponse } from "../upstream-wire.ts";
 import {
-  UsageContext,
-  UsageTokens,
+  type UsageContext,
+  type UsageTokens,
   recordCompletionUsage,
   recordErrorUsage,
   recordRequestUsage,
@@ -22,7 +23,7 @@ import {
   EMBEDDINGS_MAX_INPUTS_PER_REQUEST,
   EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES,
   EMBEDDINGS_TIMEOUT_MS,
-  EmbeddingsIdempotencyLease,
+  type EmbeddingsIdempotencyLease,
   VOYAGE_RATE_LIMIT_TPM,
   acquireEmbeddingsIdempotencyLease,
   buildEmbeddingsIdempotencyFingerprint,
@@ -58,7 +59,7 @@ export const withVoyageUpstreamHeader = (response: Response): Response => {
   });
 };
 
-const handleEmbeddingsRequest = async (req: Request, usageContext?: UsageContext, options: Readonly<{ kv?: Deno.Kv | null }> = {}): Promise<Response> => {
+const handleEmbeddingsRequest = async (req: Request, usageContext?: UsageContext, options: Readonly<{ kv?: Kv | null }> = {}): Promise<Response> => {
   const requestId = crypto.randomUUID();
   const startedAtMs = Date.now();
   const downstreamSignal = downstreamSignalFor(req, usageContext);
@@ -157,7 +158,7 @@ const handleEmbeddingsRequest = async (req: Request, usageContext?: UsageContext
   }
 
   const cacheProfileKey = profile.cache_profile_key;
-  const cacheKeyFor = (hash: string): Deno.KvKey => embeddingsCacheKey(cacheProfileKey, hash);
+  const cacheKeyFor = (hash: string): KvKey => embeddingsCacheKey(cacheProfileKey, hash);
   const vectorsByIndex: (number[] | null)[] = Array.from({ length: inputs.length }, () => null);
 
   let voyageTotalTokens = 0;
@@ -436,5 +437,5 @@ const handleEmbeddingsRequest = async (req: Request, usageContext?: UsageContext
   return await completeEmbeddingsResponse();
 };
 
-export const handleUosEmbeddings = async (req: Request, usageContext?: UsageContext, options: Readonly<{ kv?: Deno.Kv | null }> = {}): Promise<Response> =>
+export const handleUosEmbeddings = async (req: Request, usageContext?: UsageContext, options: Readonly<{ kv?: Kv | null }> = {}): Promise<Response> =>
   await runWithResponseTelemetry(usageContext, async (context) => withVoyageUpstreamHeader(await handleEmbeddingsRequest(req, context, options)));

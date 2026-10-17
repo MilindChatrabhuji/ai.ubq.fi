@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   BUFFERED_INFERENCE_DEADLINE_MS,
@@ -15,7 +16,7 @@ import {
 /** The wall-clock budget one inference attempt owns, in milliseconds. */
 const INFERENCE_BUDGET_MS = 30 * 60_000;
 
-Deno.test("inference deadlines pin the documented per-attempt budget", () => {
+test("inference deadlines pin the documented per-attempt budget", () => {
   assert.equal(OPENAI_DEFAULT_REQUEST_TIMEOUT_MS, 10 * 60_000);
   assert.equal(OPENAI_FLEX_REQUEST_TIMEOUT_MS, 15 * 60_000);
   assert.equal(STREAM_FIRST_EVENT_DEADLINE_MS, INFERENCE_BUDGET_MS);
@@ -27,7 +28,7 @@ Deno.test("inference deadlines pin the documented per-attempt budget", () => {
   assert.equal(STREAM_FAILOVER_RESERVE_MS, 15_000);
 });
 
-Deno.test("inference signal propagates downstream cancellation", () => {
+test("inference signal propagates downstream cancellation", () => {
   const controller = new AbortController();
   const signal = createInferenceSignal(controller.signal);
   const reason = new DOMException("client disconnected", "AbortError");
@@ -38,7 +39,7 @@ Deno.test("inference signal propagates downstream cancellation", () => {
   assert.equal(signal.reason, reason);
 });
 
-Deno.test("inference signal enforces its deadline", async () => {
+test("inference signal enforces its deadline", async () => {
   const signal = createInferenceSignal(new AbortController().signal, 1);
 
   await new Promise<void>((resolve) => {
@@ -55,7 +56,7 @@ Deno.test("inference signal enforces its deadline", async () => {
   assert.equal(signal.reason?.name, "TimeoutError");
 });
 
-Deno.test("failover attempts share one pre-header deadline", async () => {
+test("failover attempts share one pre-header deadline", async () => {
   const request = new AbortController();
   const shared = createStreamFirstEventDeadline(request.signal, 80);
   const primary = createStreamSemanticDeadline(shared.signal, 30);
@@ -89,7 +90,7 @@ Deno.test("failover attempts share one pre-header deadline", async () => {
   shared.clear();
 });
 
-Deno.test("clearing a selected attempt leaves it available after the shared deadline", async () => {
+test("clearing a selected attempt leaves it available after the shared deadline", async () => {
   const request = new AbortController();
   const shared = createStreamFirstEventDeadline(request.signal, 20);
   const selected = createStreamSemanticDeadline(shared.signal, Math.ceil(shared.remainingMs()));

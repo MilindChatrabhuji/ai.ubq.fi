@@ -17,7 +17,7 @@
  *
  * Usage (from the repository root):
  *
- *   deno run --allow-read --allow-write=benchmark-runs --allow-run=sh,git \
+ *   bun --no-env-file \
  *     benchmarks/compare.ts [--tasks=*] [--runs=benchmark-runs]
  *
  * Output is deterministic JSON on stdout (plus a short human summary).
@@ -42,7 +42,7 @@ import { referenceAdapter } from "./adapter.ts";
 import { loadTasks, selectTasks } from "./manifest.ts";
 import { finalsFromEvents, observationsFromEvents } from "./reliability.ts";
 import { runOne } from "./runner.ts";
-import { BENCHMARK_ROOT, BENCHMARK_SCHEMA_VERSION, DEFAULT_RUNS_ROOT, TaskManifest, TrajectoryEvent } from "./schemas.ts";
+import { BENCHMARK_ROOT, BENCHMARK_SCHEMA_VERSION, DEFAULT_RUNS_ROOT, type TaskManifest, type TrajectoryEvent } from "./schemas.ts";
 
 const TAIL_TURNS: Readonly<Record<ContextBudgetKind, number>> = { short: 2, medium: 4, large: 8 };
 
@@ -311,10 +311,10 @@ export function parseCompareArgs(argv: string[]): { taskSelectors: string[]; run
 }
 
 if (import.meta.main) {
-  const parsed = parseCompareArgs(Deno.args);
+  const parsed = parseCompareArgs(process.argv.slice(2));
   if ("help" in parsed) {
-    console.log("usage: deno run --allow-read --allow-write=benchmark-runs --allow-run=sh,git " + "benchmarks/compare.ts [--tasks=*] [--runs=benchmark-runs]");
-    Deno.exit(0);
+    console.log("usage: bun --no-env-file " + "benchmarks/compare.ts [--tasks=*] [--runs=benchmark-runs]");
+    process.exit(0);
   }
   const tasks = loadTasks(`${BENCHMARK_ROOT}/tasks`);
   const selected = selectTasks(tasks, parsed.taskSelectors);

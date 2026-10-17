@@ -6,7 +6,7 @@ import { getString, isRecord, sha256Base64Url } from "../utils.ts";
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }

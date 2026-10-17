@@ -144,6 +144,8 @@ const readFollowUpdate = async (
     let items = turn.items;
     let enriched = false;
     let entries = extractFollowEntries(turn.id, items);
+    let selectableEntries = entries;
+    let lastIndex = entries.length > 0 ? entries[entries.length - 1].index : startIndex;
     const missingContent = entries.some((entry) => entry.text.length === 0);
     if (missingContent) {
       try {
@@ -153,13 +155,20 @@ const readFollowUpdate = async (
           items = fullTurn.items;
           enriched = true;
           entries = extractFollowEntries(turn.id, items);
+          selectableEntries = entries;
+          lastIndex = entries.length > 0 ? entries[entries.length - 1].index : startIndex;
+        } else {
+          // A summary item with no text is not a new revision when its full
+          // view was unavailable; leave any previously rendered output alone.
+          selectableEntries = entries.filter((entry) => entry.text.length > 0);
         }
       } catch {
-        // Summary entries are still honest; the UI keeps them as recorded output.
+        // Do not emit empty summary entries: they would replace known output
+        // in the follow panel with its "no recorded output" placeholder.
+        selectableEntries = entries.filter((entry) => entry.text.length > 0);
       }
     }
-    const emitted = selectFollowUpdates(entries, startIndex, revisions);
-    const lastIndex = entries.length > 0 ? entries[entries.length - 1].index : startIndex;
+    const emitted = selectFollowUpdates(selectableEntries, startIndex, revisions);
     return { entries: emitted, cursor: `${turn.id}:${lastIndex}`, turnId: turn.id, turnStatus: turn.status, enriched };
   } finally {
     await connection.close();

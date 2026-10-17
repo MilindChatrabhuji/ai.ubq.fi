@@ -125,16 +125,13 @@ type RedeemResetResult =
 
 interface CodexUsageResetProvider {
   readInventory(input: ResetAccountContext, signal: AbortSignal): Promise<ResetInventory>;
-  redeem(
-    input: ResetAccountContext & { idempotencyKey: string },
-    signal: AbortSignal,
-  ): Promise<RedeemResetResult>;
+  redeem(input: ResetAccountContext & { idempotencyKey: string }, signal: AbortSignal): Promise<RedeemResetResult>;
   lookup(
     input: ResetAccountContext & {
       idempotencyKey: string;
       providerReceiptId: string | null;
     },
-    signal: AbortSignal,
+    signal: AbortSignal
   ): Promise<RedeemResetResult>;
   verifyApplied(input: ResetAccountContext, signal: AbortSignal): Promise<boolean>;
 }
@@ -179,12 +176,7 @@ behavior in tests and documentation.
 Suggested state:
 
 ```ts
-type CodexResetRedemptionState =
-  | "claimed"
-  | "submitted"
-  | "unknown"
-  | "verified"
-  | "rejected";
+type CodexResetRedemptionState = "claimed" | "submitted" | "unknown" | "verified" | "rejected";
 
 type CodexResetRedemptionRecord = Readonly<{
   v: 1;
