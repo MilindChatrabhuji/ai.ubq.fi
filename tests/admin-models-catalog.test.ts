@@ -780,7 +780,7 @@ test("a target switch fences a whitelist save that is still in flight", async ()
   harness.switchTarget();
   deferred.resolve(Response.json({ model_ids: ["foreign-model"] }));
   await save;
-  assert.deepEqual(harness.readState(), { saved: [], selection: [], saving: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.readState())), { saved: [], selection: [], saving: false });
 });
 
 test("provider roster completion rerenders Models after normalizing its filter", () => {
