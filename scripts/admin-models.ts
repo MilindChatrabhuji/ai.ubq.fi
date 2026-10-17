@@ -93,9 +93,11 @@ export const runAdminModels = async (args: readonly string[], options: AdminMode
     logError(`Unknown argument '${unknown}'. Supported arguments: ${SPARK_FLAG}`);
     return 1;
   }
-  const endpoint = resolveEndpoint(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const endpoint = resolveEndpoint(env);
   if ("error" in endpoint) {
-    logError(endpoint.error);
+    const token = firstSet(env.DENO_DEPLOY_TOKEN_UBIQUITY_DAO, env.DENO_DEPLOY_TOKEN) ?? "";
+    logError(redactToken(endpoint.error, token));
     return 1;
   }
 
