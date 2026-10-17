@@ -473,6 +473,7 @@ test("openai: DeepSeek official Chat Completions adapter streams natively and st
 
       await step("keeps a producing stream alive past the buffered deadline", async () => {
         const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+        const originalTimeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
         const bufferedDeadline = new AbortController();
         const deadlineTimer = setTimeout(() => bufferedDeadline.abort(new DOMException("buffered deadline", "TimeoutError")), 20);
         const firstFrame = `data: ${JSON.stringify(streamChunk({ content: "first" }))}\n\n`;
@@ -491,9 +492,9 @@ test("openai: DeepSeek official Chat Completions adapter streams natively and st
           },
         });
 
-        (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = (milliseconds) =>
-          milliseconds === BUFFERED_INFERENCE_DEADLINE_MS ? bufferedDeadline.signal : originalTimeout(milliseconds);
         try {
+          (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = (milliseconds) =>
+            milliseconds === BUFFERED_INFERENCE_DEADLINE_MS ? bufferedDeadline.signal : originalTimeout(milliseconds);
           const response = await withFetchMock(
             () => new Response(upstream, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
             () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: true }))
@@ -505,7 +506,7 @@ test("openai: DeepSeek official Chat Completions adapter streams natively and st
           // first-event watchdog becomes renewable inactivity instead.
         } finally {
           clearTimeout(deadlineTimer);
-          (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = originalTimeout;
+          if (originalTimeoutDescriptor !== undefined) Object.defineProperty(AbortSignal, "timeout", originalTimeoutDescriptor);
         }
       });
 
