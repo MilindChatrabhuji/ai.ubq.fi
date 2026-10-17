@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import {
   beginCodexCacheScopeExperiment,
   CodexCacheScopeExperimentError,
@@ -91,13 +92,7 @@ const requirePersistedState = (value: unknown, state: ExperimentState): Experime
   return persisted;
 };
 
-const persistIntermediate = async (
-  kv: Deno.Kv,
-  state: ExperimentState,
-  cycleOwner: string,
-  cycle: CycleEvidence,
-  nextState: ExperimentState
-): Promise<void> => {
+const persistIntermediate = async (kv: Kv, state: ExperimentState, cycleOwner: string, cycle: CycleEvidence, nextState: ExperimentState): Promise<void> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const [stateEntry, evidenceEntry, cycleEntry, campaignEntry] = await Promise.all([
       kv.get<ExperimentState>(stateKey(state.target), { consistency: "strong" }),
@@ -161,7 +156,7 @@ const finalizeResult = (
 });
 
 const finalize = async (
-  kv: Deno.Kv,
+  kv: Kv,
   state: ExperimentState,
   cycleOwner: string,
   outcome: "completed" | "inconclusive" | "failed",
@@ -224,7 +219,7 @@ const assertRequestBodyStable = (body: Record<string, unknown>, expectedBody: st
  * binding the caller must use next, plus the reason the cycle stops, if any.
  */
 const refreshMidCycleSession = async (
-  kv: Deno.Kv,
+  kv: Kv,
   state: ExperimentState,
   cycleOwner: string,
   binding: PromptCacheScopeTargetBinding,
@@ -265,7 +260,7 @@ const validateSampleSignal = (
 };
 
 const runCycle = async (
-  kv: Deno.Kv,
+  kv: Kv,
   state: ExperimentState,
   cycleOwner: string,
   cycleNumber: number,
@@ -362,7 +357,7 @@ const promotionInconclusiveReason = (reason: PromotionFailureReason): Inconclusi
 type ScopePromotion = Readonly<{ status: "promoted" }> | Readonly<{ status: "inconclusive"; reason: InconclusiveReason }>;
 
 /** Publishes one concrete scope against the campaign's exact catalog revision. */
-const promoteScope = async (kv: Deno.Kv, state: ExperimentState, cycleOwner: string, scope: ConcreteScopeObservation): Promise<ScopePromotion> => {
+const promoteScope = async (kv: Kv, state: ExperimentState, cycleOwner: string, scope: ConcreteScopeObservation): Promise<ScopePromotion> => {
   const promotion = await promoteCodexPromptCacheScope(kv, {
     model: state.target.model,
     scope: {
@@ -386,7 +381,7 @@ const promoteScope = async (kv: Deno.Kv, state: ExperimentState, cycleOwner: str
 type PromotionReceipt = { promoted: boolean };
 
 const promoteResolvedScope = async (
-  kv: Deno.Kv,
+  kv: Kv,
   state: ExperimentState,
   cycleOwner: string,
   scope: ConcreteScopeObservation,
@@ -401,7 +396,7 @@ const promoteResolvedScope = async (
 };
 
 const promotePendingScope = async (
-  kv: Deno.Kv,
+  kv: Kv,
   state: ExperimentState,
   cycleOwner: string,
   receipt: PromotionReceipt
@@ -417,7 +412,7 @@ type CycleCompletion =
 
 /** Runs one fixed cycle, persists it, and reports whether only promotion is left. */
 const completeCycle = async (
-  kv: Deno.Kv,
+  kv: Kv,
   state: ExperimentState,
   cycleOwner: string,
   initialSession: CodexCacheScopeExperimentSession
@@ -468,7 +463,7 @@ const experimentFailure = (error: unknown): Error => {
   return new PromptCacheScopeExperimentFailedError(error instanceof Error ? error.message : "Prompt-cache scope experiment cycle failed.");
 };
 
-const handleCycleFailure = async (kv: Deno.Kv, state: ExperimentState, cycleOwner: string, error: unknown, promotionSucceeded: boolean): Promise<Error> => {
+const handleCycleFailure = async (kv: Kv, state: ExperimentState, cycleOwner: string, error: unknown, promotionSucceeded: boolean): Promise<Error> => {
   if (error instanceof PromptCacheScopeExperimentBusyError || error instanceof PromptCacheScopeExperimentUnavailableError) return error;
   if (!promotionSucceeded) {
     try {
@@ -484,7 +479,7 @@ const handleCycleFailure = async (kv: Deno.Kv, state: ExperimentState, cycleOwne
 /** Fences the Stage 0 attestation before any OAuth-mutating campaign lease. */
 const prepareCampaignRun = async (
   telemetryBaseline: PromptCacheScopeExperimentTelemetryBaseline
-): Promise<Readonly<{ kv: Deno.Kv; session: CodexCacheScopeExperimentSession; binding: PromptCacheScopeTargetBinding }>> => {
+): Promise<Readonly<{ kv: Kv; session: CodexCacheScopeExperimentSession; binding: PromptCacheScopeTargetBinding }>> => {
   const kv = await getKv();
   if (!kv) {
     throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiments require Deno KV.");

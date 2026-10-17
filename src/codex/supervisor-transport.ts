@@ -1,3 +1,4 @@
+import { loadWebSocketModule } from "#http";
 import type WebSocket from "ws";
 
 /**
@@ -48,8 +49,6 @@ type SupervisorSocketOptions = {
 const WS_READY_STATE_OPEN = 1;
 const WS_READY_STATE_CLOSED = 3;
 
-const WS_PACKAGE_SPECIFIER = "ws";
-
 type SupervisorWebSocketConstructor = new (url: string, options: SupervisorSocketOptions) => WebSocket;
 
 const isSupervisorWebSocketConstructor = (value: unknown): value is SupervisorWebSocketConstructor => typeof value === "function";
@@ -63,11 +62,11 @@ let webSocketConstructor: SupervisorWebSocketConstructor | null = null;
  * `WS_NO_BUFFER_UTIL` from the environment while the module is being evaluated;
  * repository tests import the handler under a strict env allowlist, so the
  * runtime load belongs inside the connection path that actually needs it. The
- * bare specifier resolves through the pinned `ws` import-map alias in deno.json.
+ * shared runtime loader resolves the installed pinned package without Bun replacement.
  */
 const loadWebSocketConstructor = async (): Promise<SupervisorWebSocketConstructor> => {
   if (webSocketConstructor) return webSocketConstructor;
-  const module: unknown = await import(WS_PACKAGE_SPECIFIER);
+  const module: unknown = await loadWebSocketModule();
   const candidate = isRecord(module) ? module.default : undefined;
   if (!isSupervisorWebSocketConstructor(candidate)) throw new Error("ws module did not expose a WebSocket constructor");
   webSocketConstructor = candidate;

@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { openKv, type Kv } from "#kv";
 import assert from "node:assert/strict";
 import { config } from "../src/config.ts";
 import { setKvForTest } from "../src/kv.ts";
@@ -26,7 +28,6 @@ const { default: handler } = await import("../src/handler/index.ts");
 
 const SUPER_ADMIN_TOKEN = "sentinel-replay-export-super-admin-token";
 const INCIDENT_ID = "provider-12345678-1234-4abc-8def-1234567890ab";
-const kvAvailable = typeof Deno.openKv === "function";
 
 const encoder = new TextEncoder();
 
@@ -84,6 +85,7 @@ const UPSTREAM_CHUNK_BYTES = 64 * 1_024;
  */
 const REPLAY_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Object.freeze({
   chatgpt_codex: "https://recorded-upstream.invalid/codex/responses",
+  claude_code: "https://recorded-upstream.invalid/anthropic/v1/messages",
   surplus: "https://recorded-upstream.invalid/surplus/v1/responses",
   metered: "https://recorded-upstream.invalid/metered/v1/responses",
   cerebras: "https://recorded-upstream.invalid/cerebras/v1/chat/completions",
@@ -155,8 +157,9 @@ const assertReplayedUpstream = async (trace: SentinelUpstreamTrace, expected: Ui
   assert.ok(reader, `${label}: the replay must expose a body stream`);
   let offset = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value }: { done?: boolean; value?: Uint8Array<ArrayBuffer> } = await reader.read();
     if (done) break;
+    assert.ok(value);
     const expectedLength = Math.min(UPSTREAM_CHUNK_BYTES, expected.byteLength - offset);
     assert.equal(value.byteLength, expectedLength, `${label}: replayed boundary at ${offset}`);
     assertBytesEqual(value, expected.subarray(offset, offset + expectedLength), `${label}: replayed bytes at ${offset}`);
@@ -198,20 +201,17 @@ const firstCapture = (body: { data: ExportedSentinelReplayCapture[] }): Exported
   return capture;
 };
 
-/** Simulates a runtime with no Deno KV available, without touching the filesystem. */
+/** Simulates an unavailable KV binding, without touching the filesystem. */
 const runWithoutKv = async <T>(fn: () => Promise<T>): Promise<T> => {
-  const descriptor = Object.getOwnPropertyDescriptor(Deno, "openKv");
   try {
-    Object.defineProperty(Deno, "openKv", { value: undefined, configurable: true });
     setKvForTest(null);
     return await fn();
   } finally {
-    if (descriptor) Object.defineProperty(Deno, "openKv", descriptor);
     setKvForTest(null);
   }
 };
 
-Deno.test("anonymous replay-captures requests are rejected before any storage access", async () => {
+test("anonymous replay-captures requests are rejected before any storage access", async () => {
   await runWithoutKv(async () => {
     const anonymous = await handler(new Request(exportUrl({ after_ms: "0", before_ms: "1" })));
     assert.equal(anonymous.status, 401);
@@ -233,126 +233,114 @@ Deno.test("anonymous replay-captures requests are rejected before any storage ac
   });
 });
 
-Deno.test({
-  name: "an authenticated admin passkey reaches the replay export",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const now = Date.now();
-    const userId = "sentinel-replay-passkey-user";
-    const handle = "sentinel-replay-passkey-handle";
-    const sessionToken = "sentinel-replay-passkey-session-token";
-    await kv.set(passkeyUserKey(userId), {
-      id: userId,
-      handle,
-      is_admin: true,
-      credential_ids: ["sentinel-replay-credential"],
-      created_at_ms: now,
-      updated_at_ms: now,
-    });
-    await kv.set(passkeyHandleKey(handle), userId);
-    await kv.set(passkeySessionKey(sessionToken), {
-      token: sessionToken,
-      user_id: userId,
-      created_at_ms: now,
-      expires_at_ms: now + 3_600_000,
-    });
-    try {
-      const response = await handler(
-        new Request(exportUrl({ after_ms: "0", before_ms: "1" }), {
-          headers: { Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(sessionToken)}` },
-        })
-      );
-      // The former super-admin gate is gone: an admin passkey session now
-      // reads the same bounded export a token admin reads.
-      assert.equal(response.status, 200);
-      const payload = (await response.json()) as { data?: unknown };
-      assert.equal(Array.isArray(payload.data), true);
-    } finally {
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+test("an authenticated admin passkey reaches the replay export", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const now = Date.now();
+  const userId = "sentinel-replay-passkey-user";
+  const handle = "sentinel-replay-passkey-handle";
+  const sessionToken = "sentinel-replay-passkey-session-token";
+  await kv.set(passkeyUserKey(userId), {
+    id: userId,
+    handle,
+    is_admin: true,
+    credential_ids: ["sentinel-replay-credential"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  });
+  await kv.set(passkeyHandleKey(handle), userId);
+  await kv.set(passkeySessionKey(sessionToken), {
+    token: sessionToken,
+    user_id: userId,
+    created_at_ms: now,
+    expires_at_ms: now + 3_600_000,
+  });
+  try {
+    const response = await handler(
+      new Request(exportUrl({ after_ms: "0", before_ms: "1" }), {
+        headers: { Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(sessionToken)}` },
+      })
+    );
+    // The former super-admin gate is gone: an admin passkey session now
+    // reads the same bounded export a token admin reads.
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as { data?: unknown };
+    assert.equal(Array.isArray(payload.data), true);
+  } finally {
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test({
-  name: "replay-captures export returns encrypted captures that decrypt to exact synthetic bytes",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const adminTokens = config.adminTokens as Set<string>;
-    adminTokens.add(SUPER_ADMIN_TOKEN);
-    try {
-      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-      const nowMs = 1_700_000_000_000;
-      const exactBytes: Uint8Array<ArrayBuffer> = encoder.encode(
-        JSON.stringify({
-          model: "gpt-5.6-sol",
-          stream: false,
-          messages: [{ role: "user", content: "synthetic replay bytes for export round trip" }],
-        })
-      );
-      const input = syntheticInput(exactBytes, "synthetic-export-request-id");
-      const stored = expectStored(
-        await persistEncryptedSentinelReplay(input, failureObservation(), {
-          kv,
-          keyBytes,
-          now: () => nowMs,
-          randomUuid: () => "synthetic-capture-1",
-          randomBytes: twelveByteIv,
-        })
-      );
+test("replay-captures export returns encrypted captures that decrypt to exact synthetic bytes", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+    const nowMs = 1_700_000_000_000;
+    const exactBytes: Uint8Array<ArrayBuffer> = encoder.encode(
+      JSON.stringify({
+        model: "gpt-5.6-sol",
+        stream: false,
+        messages: [{ role: "user", content: "synthetic replay bytes for export round trip" }],
+      })
+    );
+    const input = syntheticInput(exactBytes, "synthetic-export-request-id");
+    const stored = expectStored(
+      await persistEncryptedSentinelReplay(input, failureObservation(), {
+        kv,
+        keyBytes,
+        now: () => nowMs,
+        randomUuid: () => "synthetic-capture-1",
+        randomBytes: twelveByteIv,
+      })
+    );
 
-      const response = await handler(new Request(exportUrl({ after_ms: "0", before_ms: String(nowMs + 1) }), { headers: superAdminHeaders }));
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get("Cache-Control"), "no-store");
-      const body = (await response.json()) as {
-        data: ExportedSentinelReplayCapture[];
-        cursor: string | null;
-      };
-      assert.equal(body.data.length, 1);
-      assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
-      assert.equal(body.data[0]?.manifest.algorithm, "AES-256-GCM");
-      assert.equal(body.data[0]?.manifest.compression, "gzip");
-      // The exported manifest is exactly the frozen wire schema: the additive
-      // retention-accounting fields never leave the store.
-      assert.deepEqual(Object.keys(body.data[0]?.manifest ?? {}), [
-        "version",
-        "capture_id",
-        "fingerprint",
-        "case_group_digest",
-        "captured_at_ms",
-        "expires_at_ms",
-        "algorithm",
-        "compression",
-        "iv",
-        "chunk_count",
-        "ciphertext_bytes",
-      ]);
-      // The exported payload is encrypted only: no plaintext bytes may appear.
-      assert.equal(body.data[0]?.chunks.join("").includes("synthetic replay bytes for export round trip"), false);
+    const response = await handler(new Request(exportUrl({ after_ms: "0", before_ms: String(nowMs + 1) }), { headers: superAdminHeaders }));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    const body = (await response.json()) as {
+      data: ExportedSentinelReplayCapture[];
+      cursor: string | null;
+    };
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+    assert.equal(body.data[0]?.manifest.algorithm, "AES-256-GCM");
+    assert.equal(body.data[0]?.manifest.compression, "gzip");
+    // The exported manifest is exactly the frozen wire schema: the additive
+    // retention-accounting fields never leave the store.
+    assert.deepEqual(Object.keys(body.data[0]?.manifest ?? {}), [
+      "version",
+      "capture_id",
+      "fingerprint",
+      "case_group_digest",
+      "captured_at_ms",
+      "expires_at_ms",
+      "algorithm",
+      "compression",
+      "iv",
+      "chunk_count",
+      "ciphertext_bytes",
+    ]);
+    // The exported payload is encrypted only: no plaintext bytes may appear.
+    assert.equal(body.data[0]?.chunks.join("").includes("synthetic replay bytes for export round trip"), false);
 
-      const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
-      assert.equal(plaintext.endpoint, input.endpoint);
-      assert.equal(plaintext.method, input.method);
-      assert.equal(plaintext.content_type, input.content_type);
-      assert.equal(plaintext.request_id, input.request_id);
-      assert.equal(plaintext.git_sha, input.git_sha);
-      assert.equal(plaintext.deno_revision, input.deno_revision);
-      assert.deepEqual([...plaintext.body], [...exactBytes]);
-      assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(exactBytes));
-    } finally {
-      adminTokens.delete(SUPER_ADMIN_TOKEN);
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+    const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
+    assert.equal(plaintext.endpoint, input.endpoint);
+    assert.equal(plaintext.method, input.method);
+    assert.equal(plaintext.content_type, input.content_type);
+    assert.equal(plaintext.request_id, input.request_id);
+    assert.equal(plaintext.git_sha, input.git_sha);
+    assert.equal(plaintext.deno_revision, input.deno_revision);
+    assert.deepEqual([...plaintext.body], [...exactBytes]);
+    assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(exactBytes));
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
 /**
@@ -370,98 +358,22 @@ const CAPTURE_BOUND_CASES: readonly Readonly<{ label: string; byteLength: number
 ];
 
 for (const boundCase of CAPTURE_BOUND_CASES) {
-  Deno.test({
-    name: `replay capture exports and replays an upstream capture at ${boundCase.label}`,
-    ignore: !kvAvailable,
-    sanitizeResources: false,
-    sanitizeOps: false,
-    async fn() {
-      const kv = await Deno.openKv(":memory:");
-      setKvForTest(kv);
-      const adminTokens = config.adminTokens as Set<string>;
-      adminTokens.add(SUPER_ADMIN_TOKEN);
-      try {
-        const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-        const nowMs = 1_400_000_000_000;
-        const requestId = `synthetic-envelope-${boundCase.byteLength}-request`;
-        const upstreamBytes = patternedBytes(boundCase.byteLength);
-        const expectedChunks = Math.ceil(boundCase.byteLength / UPSTREAM_CHUNK_BYTES);
-        const trace = await recordUpstreamTrace(upstreamBytes, UPSTREAM_CHUNK_BYTES);
-        assert.equal(trace.attempts[0]?.chunks_base64.length, expectedChunks, `${boundCase.label}: recorded chunk count`);
-        assert.equal(trace.bytes_truncated, false, `${boundCase.label}: recorded byte truncation`);
-        assert.equal(trace.chunks_truncated, false, `${boundCase.label}: recorded chunk truncation`);
-        assert.equal(trace.attempts_truncated, false, `${boundCase.label}: recorded attempt truncation`);
-
-        const input: AcceptedSentinelReplayInput = {
-          ...syntheticInput(encoder.encode(JSON.stringify({ model: "gpt-5.6-sol", stream: false })), requestId),
-          upstream: trace,
-        };
-        const stored = expectStored(
-          await persistEncryptedSentinelReplay(
-            input,
-            failureObservation(),
-            { kv, keyBytes, now: () => nowMs, randomUuid: () => `synthetic-envelope-capture-${boundCase.byteLength}`, randomBytes: twelveByteIv },
-            retainedBodyObservation()
-          )
-        );
-
-        const response = await handler(new Request(exportUrl({ request_id: requestId }), { headers: superAdminHeaders }));
-        assert.equal(response.status, 200);
-        const body = (await response.json()) as { data: ExportedSentinelReplayCapture[] };
-        assert.equal(body.data.length, 1);
-        assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
-        const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
-
-        // A capture the recorder accepted must stay exactly the capture the
-        // envelope bound admits: no truncation flag and no unavailable reason
-        // may appear, so incompleteness is never silently dropped.
-        assert.deepEqual(plaintext.unavailable, [], `${boundCase.label}: unavailable evidence`);
-        assert.equal(plaintext.capture_status, "ready", `${boundCase.label}: capture status`);
-        assert.equal(plaintext.replay_coverage, "full", `${boundCase.label}: replay coverage`);
-        assert.equal(plaintext.upstream.attempts_truncated, false, `${boundCase.label}: decrypted attempt truncation`);
-        assert.equal(plaintext.upstream.bytes_truncated, false, `${boundCase.label}: decrypted byte truncation`);
-        assert.equal(plaintext.upstream.chunks_truncated, false, `${boundCase.label}: decrypted chunk truncation`);
-        assert.equal(plaintext.upstream.attempts.length, 1);
-        assert.equal(plaintext.upstream.attempts[0]?.chunks_base64.length, expectedChunks, `${boundCase.label}: decrypted chunk count`);
-
-        // Byte preservation: the accepted request body and the recorded upstream
-        // bytes are reconstructed from the encrypted export alone, and the
-        // replay transport must hand back every original chunk boundary.
-        assert.equal(plaintext.body_bytes, input.body.byteLength, `${boundCase.label}: recorded body length`);
-        assertBytesEqual(plaintext.body, input.body, `${boundCase.label}: request body`);
-        await assertReplayedUpstream(plaintext.upstream, upstreamBytes, boundCase.label);
-      } finally {
-        adminTokens.delete(SUPER_ADMIN_TOKEN);
-        kv.close();
-        setKvForTest(null);
-      }
-    },
-  });
-}
-
-Deno.test({
-  name: "replay capture marks an upstream capture over the advertised 4 MiB bound as explicitly incomplete",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
+  test(`replay capture exports and replays an upstream capture at ${boundCase.label}`, async () => {
+    const kv = await openKv(":memory:");
     setKvForTest(kv);
     const adminTokens = config.adminTokens as Set<string>;
     adminTokens.add(SUPER_ADMIN_TOKEN);
     try {
       const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-      const nowMs = 1_410_000_000_000;
-      const requestId = "synthetic-over-limit-envelope-request";
-      // One full 64 KiB chunk beyond the advertised bound: the recorder keeps
-      // exactly the bound and permanently flags the dropped bytes.
-      const upstreamBytes = patternedBytes(SENTINEL_UPSTREAM_MAX_BYTES + UPSTREAM_CHUNK_BYTES);
-      const retainedChunks = Math.ceil(SENTINEL_UPSTREAM_MAX_BYTES / UPSTREAM_CHUNK_BYTES);
+      const nowMs = 1_400_000_000_000;
+      const requestId = `synthetic-envelope-${boundCase.byteLength}-request`;
+      const upstreamBytes = patternedBytes(boundCase.byteLength);
+      const expectedChunks = Math.ceil(boundCase.byteLength / UPSTREAM_CHUNK_BYTES);
       const trace = await recordUpstreamTrace(upstreamBytes, UPSTREAM_CHUNK_BYTES);
-      assert.equal(trace.attempts[0]?.chunks_base64.length, retainedChunks);
-      assert.equal(trace.bytes_truncated, true);
-      assert.equal(trace.chunks_truncated, false);
-      assert.equal(trace.attempts_truncated, false);
+      assert.equal(trace.attempts[0]?.chunks_base64.length, expectedChunks, `${boundCase.label}: recorded chunk count`);
+      assert.equal(trace.bytes_truncated, false, `${boundCase.label}: recorded byte truncation`);
+      assert.equal(trace.chunks_truncated, false, `${boundCase.label}: recorded chunk truncation`);
+      assert.equal(trace.attempts_truncated, false, `${boundCase.label}: recorded attempt truncation`);
 
       const input: AcceptedSentinelReplayInput = {
         ...syntheticInput(encoder.encode(JSON.stringify({ model: "gpt-5.6-sol", stream: false })), requestId),
@@ -471,7 +383,7 @@ Deno.test({
         await persistEncryptedSentinelReplay(
           input,
           failureObservation(),
-          { kv, keyBytes, now: () => nowMs, randomUuid: () => "synthetic-over-limit-envelope-capture", randomBytes: twelveByteIv },
+          { kv, keyBytes, now: () => nowMs, randomUuid: () => `synthetic-envelope-capture-${boundCase.byteLength}`, randomBytes: twelveByteIv },
           retainedBodyObservation()
         )
       );
@@ -483,335 +395,375 @@ Deno.test({
       assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
       const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
 
-      // The over-limit loss is itself evidence, never a silent success: the
-      // capture is flagged, classified incomplete and reported as partial.
-      assert.equal(plaintext.upstream.bytes_truncated, true);
-      assert.deepEqual(plaintext.unavailable, ["upstream_trace_truncated"]);
-      assert.equal(plaintext.capture_status, "incomplete");
-      assert.equal(plaintext.replay_coverage, "partial");
+      // A capture the recorder accepted must stay exactly the capture the
+      // envelope bound admits: no truncation flag and no unavailable reason
+      // may appear, so incompleteness is never silently dropped.
+      assert.deepEqual(plaintext.unavailable, [], `${boundCase.label}: unavailable evidence`);
+      assert.equal(plaintext.capture_status, "ready", `${boundCase.label}: capture status`);
+      assert.equal(plaintext.replay_coverage, "full", `${boundCase.label}: replay coverage`);
+      assert.equal(plaintext.upstream.attempts_truncated, false, `${boundCase.label}: decrypted attempt truncation`);
+      assert.equal(plaintext.upstream.bytes_truncated, false, `${boundCase.label}: decrypted byte truncation`);
+      assert.equal(plaintext.upstream.chunks_truncated, false, `${boundCase.label}: decrypted chunk truncation`);
+      assert.equal(plaintext.upstream.attempts.length, 1);
+      assert.equal(plaintext.upstream.attempts[0]?.chunks_base64.length, expectedChunks, `${boundCase.label}: decrypted chunk count`);
 
-      const attempt = plaintext.upstream.attempts[0];
-      assert.ok(attempt);
-      assert.equal(attempt.chunks_base64.length, retainedChunks);
-      let offset = 0;
-      for (const chunk of attempt.chunks_base64) {
-        const decoded = decodeStandardBase64(chunk);
-        assertBytesEqual(decoded, upstreamBytes.subarray(offset, offset + decoded.byteLength), `retained upstream prefix at ${offset}`);
-        offset += decoded.byteLength;
-      }
-      assert.equal(offset, SENTINEL_UPSTREAM_MAX_BYTES, "exactly the advertised bound is retained");
-
-      // The replay transport refuses truncated evidence instead of replaying a
-      // prefix as if it were the whole capture.
-      assert.throws(
-        () => createRecordedUpstreamReplay(plaintext.upstream, REPLAY_ROUTES),
-        (error: unknown) => error instanceof Error && error.message === "Sentinel recorded upstream trace is truncated"
-      );
+      // Byte preservation: the accepted request body and the recorded upstream
+      // bytes are reconstructed from the encrypted export alone, and the
+      // replay transport must hand back every original chunk boundary.
+      assert.equal(plaintext.body_bytes, input.body.byteLength, `${boundCase.label}: recorded body length`);
+      assertBytesEqual(plaintext.body, input.body, `${boundCase.label}: request body`);
+      await assertReplayedUpstream(plaintext.upstream, upstreamBytes, boundCase.label);
     } finally {
       adminTokens.delete(SUPER_ADMIN_TOKEN);
       kv.close();
       setKvForTest(null);
     }
-  },
-});
+  });
+}
 
-Deno.test({
-  name: "replay capture still rejects an upstream trace beyond the bounded capture contract",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const adminTokens = config.adminTokens as Set<string>;
-    adminTokens.add(SUPER_ADMIN_TOKEN);
-    try {
-      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-      const requestId = "synthetic-out-of-contract-request";
-      // One chunk over the frozen capture chunk bound: the derived envelope
-      // bound must not widen the evidence contract the recorder enforces.
-      const oversizedTrace: SentinelUpstreamTrace = {
-        version: 1,
-        attempts: [
-          {
-            provider: "cerebras",
-            status: 200,
-            content_type: "application/json",
-            chunks_base64: Array.from({ length: SENTINEL_UPSTREAM_MAX_CHUNKS + 1 }, () => "AA=="),
-            terminal: "eof",
-          },
-        ],
-        attempts_truncated: false,
-        bytes_truncated: false,
-        chunks_truncated: false,
-      };
-      const input: AcceptedSentinelReplayInput = {
-        ...syntheticInput(encoder.encode(JSON.stringify({ model: "gpt-5.6-sol" })), requestId),
-        upstream: oversizedTrace,
-      };
-      await assert.rejects(
-        persistEncryptedSentinelReplay(input, failureObservation(), {
-          kv,
-          keyBytes,
-          now: () => 1_450_000_000_000,
-          randomUuid: () => "synthetic-out-of-contract-capture",
-          randomBytes: twelveByteIv,
-        }),
-        /Sentinel upstream trace has too many chunks/
-      );
+test("replay capture marks an upstream capture over the advertised 4 MiB bound as explicitly incomplete", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+    const nowMs = 1_410_000_000_000;
+    const requestId = "synthetic-over-limit-envelope-request";
+    // One full 64 KiB chunk beyond the advertised bound: the recorder keeps
+    // exactly the bound and permanently flags the dropped bytes.
+    const upstreamBytes = patternedBytes(SENTINEL_UPSTREAM_MAX_BYTES + UPSTREAM_CHUNK_BYTES);
+    const retainedChunks = Math.ceil(SENTINEL_UPSTREAM_MAX_BYTES / UPSTREAM_CHUNK_BYTES);
+    const trace = await recordUpstreamTrace(upstreamBytes, UPSTREAM_CHUNK_BYTES);
+    assert.equal(trace.attempts[0]?.chunks_base64.length, retainedChunks);
+    assert.equal(trace.bytes_truncated, true);
+    assert.equal(trace.chunks_truncated, false);
+    assert.equal(trace.attempts_truncated, false);
 
-      // The rejected trace persisted nothing and stayed fail-closed.
-      const response = await handler(new Request(exportUrl({ request_id: requestId }), { headers: superAdminHeaders }));
-      assert.equal(response.status, 200);
-      const body = (await response.json()) as { data: unknown[] };
-      assert.deepEqual(body.data, []);
-    } finally {
-      adminTokens.delete(SUPER_ADMIN_TOKEN);
-      kv.close();
-      setKvForTest(null);
+    const input: AcceptedSentinelReplayInput = {
+      ...syntheticInput(encoder.encode(JSON.stringify({ model: "gpt-5.6-sol", stream: false })), requestId),
+      upstream: trace,
+    };
+    const stored = expectStored(
+      await persistEncryptedSentinelReplay(
+        input,
+        failureObservation(),
+        { kv, keyBytes, now: () => nowMs, randomUuid: () => "synthetic-over-limit-envelope-capture", randomBytes: twelveByteIv },
+        retainedBodyObservation()
+      )
+    );
+
+    const response = await handler(new Request(exportUrl({ request_id: requestId }), { headers: superAdminHeaders }));
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { data: ExportedSentinelReplayCapture[] };
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+    const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
+
+    // The over-limit loss is itself evidence, never a silent success: the
+    // capture is flagged, classified incomplete and reported as partial.
+    assert.equal(plaintext.upstream.bytes_truncated, true);
+    assert.deepEqual(plaintext.unavailable, ["upstream_trace_truncated"]);
+    assert.equal(plaintext.capture_status, "incomplete");
+    assert.equal(plaintext.replay_coverage, "partial");
+
+    const attempt = plaintext.upstream.attempts[0];
+    assert.ok(attempt);
+    assert.equal(attempt.chunks_base64.length, retainedChunks);
+    let offset = 0;
+    for (const chunk of attempt.chunks_base64) {
+      const decoded = decodeStandardBase64(chunk);
+      assertBytesEqual(decoded, upstreamBytes.subarray(offset, offset + decoded.byteLength), `retained upstream prefix at ${offset}`);
+      offset += decoded.byteLength;
     }
-  },
+    assert.equal(offset, SENTINEL_UPSTREAM_MAX_BYTES, "exactly the advertised bound is retained");
+
+    // The replay transport refuses truncated evidence instead of replaying a
+    // prefix as if it were the whole capture.
+    assert.throws(
+      () => createRecordedUpstreamReplay(plaintext.upstream, REPLAY_ROUTES),
+      (error: unknown) => error instanceof Error && error.message === "Sentinel recorded upstream trace is truncated"
+    );
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test({
-  name: "replay-captures export paginates multiple captures with an exhaustible cursor",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const adminTokens = config.adminTokens as Set<string>;
-    adminTokens.add(SUPER_ADMIN_TOKEN);
-    try {
-      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-      const nowMs = 1_600_000_000_000;
-      const requestIds: string[] = [];
-      for (let index = 1; index <= 3; index += 1) {
-        const requestId = `synthetic-pagination-request-${index}`;
-        requestIds.push(requestId);
-        const bytes: Uint8Array<ArrayBuffer> = encoder.encode(
-          JSON.stringify({
-            model: "gpt-5.6-sol",
-            seq: index,
-            content: `synthetic pagination capture ${index}`,
-          })
-        );
-        const result = expectStored(
-          await persistEncryptedSentinelReplay(syntheticInput(bytes, requestId), failureObservation(), {
-            kv,
-            keyBytes,
-            now: () => nowMs + index * 1_000,
-            randomUuid: () => `synthetic-pagination-capture-${index}`,
-            randomBytes: twelveByteIv,
-          })
-        );
-        assert.equal(result.manifest.capture_id, `synthetic-pagination-capture-${index}`, requestId);
-      }
+test("replay capture still rejects an upstream trace beyond the bounded capture contract", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+    const requestId = "synthetic-out-of-contract-request";
+    // One chunk over the frozen capture chunk bound: the derived envelope
+    // bound must not widen the evidence contract the recorder enforces.
+    const oversizedTrace: SentinelUpstreamTrace = {
+      version: 1,
+      attempts: [
+        {
+          provider: "cerebras",
+          status: 200,
+          content_type: "application/json",
+          chunks_base64: Array.from({ length: SENTINEL_UPSTREAM_MAX_CHUNKS + 1 }, () => "AA=="),
+          terminal: "eof",
+        },
+      ],
+      attempts_truncated: false,
+      bytes_truncated: false,
+      chunks_truncated: false,
+    };
+    const input: AcceptedSentinelReplayInput = {
+      ...syntheticInput(encoder.encode(JSON.stringify({ model: "gpt-5.6-sol" })), requestId),
+      upstream: oversizedTrace,
+    };
+    await assert.rejects(
+      persistEncryptedSentinelReplay(input, failureObservation(), {
+        kv,
+        keyBytes,
+        now: () => 1_450_000_000_000,
+        randomUuid: () => "synthetic-out-of-contract-capture",
+        randomBytes: twelveByteIv,
+      }),
+      /Sentinel upstream trace has too many chunks/
+    );
 
-      const collected: ExportedSentinelReplayCapture[] = [];
-      const pageCapturedAt: number[] = [];
-      let cursor: string | null = null;
-      let pages = 0;
-      for (;;) {
-        const params: Record<string, string> = {
-          after_ms: "0",
-          before_ms: String(nowMs + 10_000),
-        };
-        if (cursor !== null) params.cursor = cursor;
-        const response = await handler(new Request(exportUrl(params), { headers: superAdminHeaders }));
-        assert.equal(response.status, 200);
-        const body = (await response.json()) as {
-          data: ExportedSentinelReplayCapture[];
-          cursor: string | null;
-        };
-        for (const capture of body.data) {
-          collected.push(capture);
-          pageCapturedAt.push(capture.manifest.captured_at_ms);
-        }
-        cursor = body.cursor;
-        pages += 1;
-        assert.ok(pages <= 10, "pagination must terminate");
-        if (cursor === null) break;
-      }
-
-      assert.equal(collected.length, 3);
-      assert.equal(new Set(collected.map((capture) => capture.manifest.fingerprint)).size, 3);
-      assert.deepEqual(
-        pageCapturedAt,
-        [...pageCapturedAt].sort((left, right) => left - right)
-      );
-      const decryptedRequestIds = new Set<string>();
-      for (const capture of collected) {
-        const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
-        decryptedRequestIds.add(plaintext.request_id);
-      }
-      assert.deepEqual([...decryptedRequestIds].sort(compareStrings), [...requestIds].sort(compareStrings));
-    } finally {
-      adminTokens.delete(SUPER_ADMIN_TOKEN);
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+    // The rejected trace persisted nothing and stayed fail-closed.
+    const response = await handler(new Request(exportUrl({ request_id: requestId }), { headers: superAdminHeaders }));
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { data: unknown[] };
+    assert.deepEqual(body.data, []);
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test({
-  name: "replay-captures export scopes to a linked incident and stays encrypted",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const adminTokens = config.adminTokens as Set<string>;
-    adminTokens.add(SUPER_ADMIN_TOKEN);
-    try {
-      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-      const nowMs = 1_500_000_000_000;
+test("replay-captures export paginates multiple captures with an exhaustible cursor", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+    const nowMs = 1_600_000_000_000;
+    const requestIds: string[] = [];
+    for (let index = 1; index <= 3; index += 1) {
+      const requestId = `synthetic-pagination-request-${index}`;
+      requestIds.push(requestId);
       const bytes: Uint8Array<ArrayBuffer> = encoder.encode(
         JSON.stringify({
           model: "gpt-5.6-sol",
-          content: "incident-linked synthetic capture",
+          seq: index,
+          content: `synthetic pagination capture ${index}`,
         })
       );
-      const stored = expectStored(
-        await persistEncryptedSentinelReplay(syntheticInput(bytes, "synthetic-incident-request"), failureObservation(), {
+      const result = expectStored(
+        await persistEncryptedSentinelReplay(syntheticInput(bytes, requestId), failureObservation(), {
           kv,
           keyBytes,
-          now: () => nowMs,
-          randomUuid: () => "synthetic-incident-capture",
+          now: () => nowMs + index * 1_000,
+          randomUuid: () => `synthetic-pagination-capture-${index}`,
           randomBytes: twelveByteIv,
         })
       );
-      const manifestKey = stored.manifest_key;
-      assert.ok(manifestKey, "a stored capture must expose its manifest key");
-      await linkSentinelReplayToIncident(kv, INCIDENT_ID, stored.manifest.fingerprint, manifestKey);
+      assert.equal(result.manifest.capture_id, `synthetic-pagination-capture-${index}`, requestId);
+    }
 
-      const response = await handler(
-        new Request(
-          exportUrl({
-            after_ms: "0",
-            before_ms: String(nowMs + 1),
-            incident_id: INCIDENT_ID,
-          }),
-          { headers: superAdminHeaders }
-        )
-      );
+    const collected: ExportedSentinelReplayCapture[] = [];
+    const pageCapturedAt: number[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    for (;;) {
+      const params: Record<string, string> = {
+        after_ms: "0",
+        before_ms: String(nowMs + 10_000),
+      };
+      if (cursor !== null) params.cursor = cursor;
+      const response = await handler(new Request(exportUrl(params), { headers: superAdminHeaders }));
       assert.equal(response.status, 200);
       const body = (await response.json()) as {
         data: ExportedSentinelReplayCapture[];
         cursor: string | null;
       };
-      assert.equal(body.data.length, 1);
-      assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
-      // The incident listing emits the same frozen manifest schema; a strict
-      // consumer rejects unknown keys.
-      assert.deepEqual(Object.keys(body.data[0]?.manifest ?? {}), [
-        "version",
-        "capture_id",
-        "fingerprint",
-        "case_group_digest",
-        "captured_at_ms",
-        "expires_at_ms",
-        "algorithm",
-        "compression",
-        "iv",
-        "chunk_count",
-        "ciphertext_bytes",
-      ]);
-      const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
-      assert.equal(plaintext.request_id, "synthetic-incident-request");
-      assert.deepEqual([...plaintext.body], [...bytes]);
-
-      // An incident listing for a foreign incident ID yields an empty page,
-      // never another incident's capture.
-      const foreign = await handler(
-        new Request(
-          exportUrl({
-            after_ms: "0",
-            before_ms: String(nowMs + 1),
-            incident_id: "provider-00000000-0000-4000-8000-000000000000",
-          }),
-          { headers: superAdminHeaders }
-        )
-      );
-      assert.equal(foreign.status, 200);
-      const foreignBody = (await foreign.json()) as { data: unknown[]; cursor: string | null };
-      assert.deepEqual(foreignBody.data, []);
-    } finally {
-      adminTokens.delete(SUPER_ADMIN_TOKEN);
-      kv.close();
-      setKvForTest(null);
+      for (const capture of body.data) {
+        collected.push(capture);
+        pageCapturedAt.push(capture.manifest.captured_at_ms);
+      }
+      cursor = body.cursor;
+      pages += 1;
+      assert.ok(pages <= 10, "pagination must terminate");
+      if (cursor === null) break;
     }
-  },
+
+    assert.equal(collected.length, 3);
+    assert.equal(new Set(collected.map((capture) => capture.manifest.fingerprint)).size, 3);
+    assert.deepEqual(
+      pageCapturedAt,
+      [...pageCapturedAt].sort((left, right) => left - right)
+    );
+    const decryptedRequestIds = new Set<string>();
+    for (const capture of collected) {
+      const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
+      decryptedRequestIds.add(plaintext.request_id);
+    }
+    assert.deepEqual([...decryptedRequestIds].sort(compareStrings), [...requestIds].sort(compareStrings));
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test({
-  name: "replay-captures export resolves a request id without any time parameters",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const adminTokens = config.adminTokens as Set<string>;
-    adminTokens.add(SUPER_ADMIN_TOKEN);
-    try {
-      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-      const nowMs = Date.now();
-      const bytes: Uint8Array<ArrayBuffer> = encoder.encode(JSON.stringify({ model: "gpt-5.6-sol", content: "request-id-only synthetic capture" }));
-      const stored = expectStored(
-        await persistEncryptedSentinelReplay(syntheticInput(bytes, "synthetic-request-id-only"), failureObservation(), {
-          kv,
-          keyBytes,
-          now: () => nowMs,
-          randomUuid: () => "synthetic-request-id-capture",
-          randomBytes: twelveByteIv,
-        })
-      );
+test("replay-captures export scopes to a linked incident and stays encrypted", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+    const nowMs = 1_500_000_000_000;
+    const bytes: Uint8Array<ArrayBuffer> = encoder.encode(
+      JSON.stringify({
+        model: "gpt-5.6-sol",
+        content: "incident-linked synthetic capture",
+      })
+    );
+    const stored = expectStored(
+      await persistEncryptedSentinelReplay(syntheticInput(bytes, "synthetic-incident-request"), failureObservation(), {
+        kv,
+        keyBytes,
+        now: () => nowMs,
+        randomUuid: () => "synthetic-incident-capture",
+        randomBytes: twelveByteIv,
+      })
+    );
+    const manifestKey = stored.manifest_key;
+    assert.ok(manifestKey, "a stored capture must expose its manifest key");
+    await linkSentinelReplayToIncident(kv, INCIDENT_ID, stored.manifest.fingerprint, manifestKey);
 
-      // Exactly the request id, no after_ms/before_ms: the point lookup must
-      // still resolve the capture and report its status.
-      const response = await handler(new Request(exportUrl({ request_id: "synthetic-request-id-only" }), { headers: superAdminHeaders }));
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get("Cache-Control"), "no-store");
-      const body = (await response.json()) as {
-        data: ExportedSentinelReplayCapture[];
-        cursor: string | null;
-        capture_status: { status: string; reason: string | null };
-      };
-      assert.equal(body.cursor, null);
-      // This fixture is request-only (`syntheticInput` carries no recorded
-      // upstream attempt) on a 502 provider failure, so the capture is
-      // truthfully incomplete: the missing upstream evidence is asserted
-      // through the decrypted `unavailable` reason below, while the status row
-      // itself only classifies the capture.
-      assert.equal(body.capture_status.status, "incomplete");
-      assert.equal(body.capture_status.reason, null);
-      assert.equal(body.data.length, 1);
-      assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
-      const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
-      assert.equal(plaintext.request_id, "synthetic-request-id-only");
-      assert.deepEqual([...plaintext.body], [...bytes]);
-      assert.equal(plaintext.unavailable?.includes("upstream_trace_empty"), true);
+    const response = await handler(
+      new Request(
+        exportUrl({
+          after_ms: "0",
+          before_ms: String(nowMs + 1),
+          incident_id: INCIDENT_ID,
+        }),
+        { headers: superAdminHeaders }
+      )
+    );
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as {
+      data: ExportedSentinelReplayCapture[];
+      cursor: string | null;
+    };
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+    // The incident listing emits the same frozen manifest schema; a strict
+    // consumer rejects unknown keys.
+    assert.deepEqual(Object.keys(body.data[0]?.manifest ?? {}), [
+      "version",
+      "capture_id",
+      "fingerprint",
+      "case_group_digest",
+      "captured_at_ms",
+      "expires_at_ms",
+      "algorithm",
+      "compression",
+      "iv",
+      "chunk_count",
+      "ciphertext_bytes",
+    ]);
+    const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
+    assert.equal(plaintext.request_id, "synthetic-incident-request");
+    assert.deepEqual([...plaintext.body], [...bytes]);
 
-      // Related fail-closed boundaries stay intact: a malformed request id is
-      // still refused, and the lookup modes remain mutually exclusive.
-      const malformed = await handler(new Request(exportUrl({ request_id: "not a request id" }), { headers: superAdminHeaders }));
-      assert.equal(malformed.status, 400);
-      const bothModes = await handler(
-        new Request(exportUrl({ request_id: "synthetic-request-id-only", incident_id: INCIDENT_ID }), { headers: superAdminHeaders })
-      );
-      assert.equal(bothModes.status, 400);
-    } finally {
-      adminTokens.delete(SUPER_ADMIN_TOKEN);
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+    // An incident listing for a foreign incident ID yields an empty page,
+    // never another incident's capture.
+    const foreign = await handler(
+      new Request(
+        exportUrl({
+          after_ms: "0",
+          before_ms: String(nowMs + 1),
+          incident_id: "provider-00000000-0000-4000-8000-000000000000",
+        }),
+        { headers: superAdminHeaders }
+      )
+    );
+    assert.equal(foreign.status, 200);
+    const foreignBody = (await foreign.json()) as { data: unknown[]; cursor: string | null };
+    assert.deepEqual(foreignBody.data, []);
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test("replay-captures export rejects malformed interval, limit, cursor, and incident parameters", async () => {
+test("replay-captures export resolves a request id without any time parameters", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+    const nowMs = Date.now();
+    const bytes: Uint8Array<ArrayBuffer> = encoder.encode(JSON.stringify({ model: "gpt-5.6-sol", content: "request-id-only synthetic capture" }));
+    const stored = expectStored(
+      await persistEncryptedSentinelReplay(syntheticInput(bytes, "synthetic-request-id-only"), failureObservation(), {
+        kv,
+        keyBytes,
+        now: () => nowMs,
+        randomUuid: () => "synthetic-request-id-capture",
+        randomBytes: twelveByteIv,
+      })
+    );
+
+    // Exactly the request id, no after_ms/before_ms: the point lookup must
+    // still resolve the capture and report its status.
+    const response = await handler(new Request(exportUrl({ request_id: "synthetic-request-id-only" }), { headers: superAdminHeaders }));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    const body = (await response.json()) as {
+      data: ExportedSentinelReplayCapture[];
+      cursor: string | null;
+      capture_status: { status: string; reason: string | null };
+    };
+    assert.equal(body.cursor, null);
+    // This fixture is request-only (`syntheticInput` carries no recorded
+    // upstream attempt) on a 502 provider failure, so the capture is
+    // truthfully incomplete: the missing upstream evidence is asserted
+    // through the decrypted `unavailable` reason below, while the status row
+    // itself only classifies the capture.
+    assert.equal(body.capture_status.status, "incomplete");
+    assert.equal(body.capture_status.reason, null);
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+    const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
+    assert.equal(plaintext.request_id, "synthetic-request-id-only");
+    assert.deepEqual([...plaintext.body], [...bytes]);
+    assert.equal(plaintext.unavailable?.includes("upstream_trace_empty"), true);
+
+    // Related fail-closed boundaries stay intact: a malformed request id is
+    // still refused, and the lookup modes remain mutually exclusive.
+    const malformed = await handler(new Request(exportUrl({ request_id: "not a request id" }), { headers: superAdminHeaders }));
+    assert.equal(malformed.status, 400);
+    const bothModes = await handler(
+      new Request(exportUrl({ request_id: "synthetic-request-id-only", incident_id: INCIDENT_ID }), { headers: superAdminHeaders })
+    );
+    assert.equal(bothModes.status, 400);
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    kv.close();
+    setKvForTest(null);
+  }
+});
+
+test("replay-captures export rejects malformed interval, limit, cursor, and incident parameters", async () => {
   await runWithoutKv(async () => {
     const adminTokens = config.adminTokens as Set<string>;
     adminTokens.add(SUPER_ADMIN_TOKEN);
@@ -836,9 +788,9 @@ Deno.test("replay-captures export rejects malformed interval, limit, cursor, and
   });
 });
 
-Deno.test("replay-captures export fails closed when the storage read fails instead of succeeding empty", async () => {
+test("replay-captures export fails closed when the storage read fails instead of succeeding empty", async () => {
   const request = new Request(exportUrl({ after_ms: "0", before_ms: "1" }));
-  const brokenKv = { list: null } as unknown as Deno.Kv;
+  const brokenKv = { list: null } as unknown as Kv;
   const interval = await handleAdminSentinelReplayCaptures(request, {
     getKv: () => Promise.resolve(brokenKv),
     listEncryptedSentinelReplays: () => {

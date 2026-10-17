@@ -56,7 +56,7 @@ const stateLabel = (session) => {
   if (session.waitingOnApproval) flags.push("approval");
   if (session.waitingOnUserInput) flags.push("input");
   const unknownFlags = (Array.isArray(session.activeFlags) ? session.activeFlags : []).filter(
-    (flag) => !/approval|user.?input|input.?request|needsinput/i.test(flag),
+    (flag) => !/approval|user.?input|input.?request|needsinput/i.test(flag)
   );
   for (const flag of unknownFlags) flags.push(flag);
   return flags.length > 0 ? `${base} · waiting on ${flags.join(", ")}` : base;
@@ -148,9 +148,8 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     const entries = Array.isArray(selection?.data?.providers) ? selection.data.providers : [];
     if (entries.length === 0) return;
     const rows = entries.map((entry) => {
-      const health = typeof entry?.health_key === "string" && entry.health_key
-        ? healthSnapshot?.[entry.health_key]
-        : null;
+      const health =
+        typeof entry?.health_key === "string" && entry.health_key ? healthSnapshot?.[entry.health_key] : null;
       const configured = health ? health.configured !== false : entry.configured === true;
       const state = health ? (typeof health.state === "string" ? health.state : health.health?.state) : null;
       const row = document.createElement("div");
@@ -170,7 +169,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const badge = document.createElement("span");
       badge.dataset.providerHealthBadge = configured ? (state ?? "unknown") : "unknown";
       badge.textContent = configured
-        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.stale === true })}`
+        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.health?.stale === true })}`
         : "Not configured";
       badges.append(tier, badge);
       body.append(name, badges);
@@ -188,6 +187,10 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     providersList.replaceChildren(...rows);
   };
 
+  const markProvidersUnavailable = () => {
+    providersList.textContent = "Provider health unavailable; previous observations cleared.";
+  };
+
   const loadProviders = async () => {
     if (!active) return;
     const token = typeof getToken === "function" ? getToken() : "";
@@ -199,9 +202,10 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       ]);
       const selection = selectionResponse.ok ? await selectionResponse.json().catch(() => null) : null;
       const healthSnapshot = healthResponse.ok ? await healthResponse.json().catch(() => null) : null;
-      if (selection) renderProviders(selection, healthSnapshot);
+      if (selection && healthSnapshot) renderProviders(selection, healthSnapshot);
+      else markProvidersUnavailable();
     } catch {
-      // Best effort: the sessions panel already reports its own load state.
+      markProvidersUnavailable();
     }
   };
 
@@ -291,13 +295,13 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
         lines.push(
           `${source.name} is unavailable: ${
             source.reason ?? "unknown reason"
-          }. Its rows below are persisted metadata, not live state.`,
+          }. Its rows below are persisted metadata, not live state.`
         );
       } else if (source.kind === "local" && source.metadata && source.metadata.available === false) {
         lines.push(
           `${source.name}: persisted branch and token usage are unavailable (${
             source.metadata.reason ?? "metadata unavailable"
-          }); other fields still come from its live session list.`,
+          }); other fields still come from its live session list.`
         );
       }
     }
@@ -323,9 +327,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
         if (reset) parts.push(`· resets ${reset}`);
         if (typeof source.quota?.resetCreditsAvailable === "number" && source.quota.resetCreditsAvailable > 0) {
           parts.push(
-            `· ${source.quota.resetCreditsAvailable} reset credit${
-              source.quota.resetCreditsAvailable === 1 ? "" : "s"
-            }`,
+            `· ${source.quota.resetCreditsAvailable} reset credit${source.quota.resetCreditsAvailable === 1 ? "" : "s"}`
           );
         }
         lines.push(`${source.name} · ${parts.join(" ")}`);
@@ -427,8 +429,8 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     }
     if (path) setText(path, text(session.cwd) ?? "cwd unavailable");
     if (model) {
-      const bits = [session.model, session.effort, session.sourceKind].filter((value) =>
-        typeof value === "string" && value.length > 0
+      const bits = [session.model, session.effort, session.sourceKind].filter(
+        (value) => typeof value === "string" && value.length > 0
       );
       setText(model, bits.length > 0 ? bits.join(" · ") : "model unavailable");
     }
@@ -463,8 +465,8 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     }
   };
 
-  const visibleSessions =
-    () => (snapshot ? snapshot.sessions.filter((session) => matchesFilters(session, filters)) : []);
+  const visibleSessions = () =>
+    snapshot ? snapshot.sessions.filter((session) => matchesFilters(session, filters)) : [];
 
   const render = () => {
     const sessions = visibleSessions();
@@ -490,7 +492,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     empty.hidden = sessions.length > 0;
     if (sessions.length === 0) {
       empty.textContent = snapshot
-        ? filters.search ? "No session matches the current search." : "No session matches the current filters."
+        ? filters.search
+          ? "No session matches the current search."
+          : "No session matches the current filters."
         : "Waiting for the first sample.";
     }
   };
@@ -572,7 +576,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     const turn = followTurnStatus ? `turn ${followTurnStatus}` : "turn status unknown";
     setFollowStatus(
       `Recorded output · ${turn} · updated ${age}. Updates as Codex records output, not a token-level stream.`,
-      "ok",
+      "ok"
     );
     if (stickToBottom) followLog.scrollTop = followLog.scrollHeight;
   };
@@ -585,7 +589,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
     }
     if (dataLines.length === 0) return;
-    let payload = null;
+    let payload;
     try {
       payload = JSON.parse(dataLines.join("\n"));
     } catch {
@@ -757,7 +761,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       setBadge("ok", `Sampled ${formatClock(snapshot.sampledAtMs)}`);
       setText(
         updated,
-        `Last sampled ${formatClock(snapshot.sampledAtMs)} · refreshes every 15s while this tab is visible`,
+        `Last sampled ${formatClock(snapshot.sampledAtMs)} · refreshes every 15s while this tab is visible`
       );
       if (followKey && !snapshot.sessions.some((session) => `${session.sourceId}:${session.id}` === followKey)) {
         stopFollow("Selected session left the sampled inventory.");
@@ -816,7 +820,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
         },
         () => {
           button.textContent = "Copy failed";
-        },
+        }
       );
       return;
     }

@@ -254,13 +254,15 @@ export const codexAuthCandidateFromAuthJson = (value: unknown, source: CodexAuth
 export const codexAuthCandidatesFromPool = (value: unknown, source: CodexAuthCandidateSource): readonly CodexAuthCandidate[] => {
   const pool = parseCodexAuthPool(value);
   if (!pool) return [];
-  return pool.accounts.map((account) => ({
-    source,
-    account_id: account.account_id,
-    access_token: account.access_token,
-    refresh_token: account.refresh_token,
-    updated_at_ms: account.updated_at_ms,
-  }));
+  return pool.accounts
+    .filter((account) => account.native_owner?.auth_mode !== "chatgptAuthTokens")
+    .map((account) => ({
+      source,
+      account_id: account.account_id,
+      access_token: account.access_token,
+      refresh_token: account.refresh_token,
+      updated_at_ms: account.updated_at_ms,
+    }));
 };
 
 /** A stable identity for de-duplicating the same credential seen from several sources. */

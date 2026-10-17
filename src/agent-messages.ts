@@ -1,3 +1,4 @@
+import type { KvEntry, KvKey, KvListOptions, KvListSelector } from "#kv";
 import { authenticateClient } from "./auth/index.ts";
 import { json, openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
@@ -25,11 +26,11 @@ type AgentMessageRecord = Readonly<{
   created_at_ms: number;
 }>;
 
-type AgentMessagesKvListIterator<T> = AsyncIterableIterator<Deno.KvEntry<T>> & { readonly cursor: string };
+type AgentMessagesKvListIterator<T> = AsyncIterableIterator<KvEntry<T>> & { readonly cursor: string };
 
 type AgentMessagesKv = Readonly<{
-  set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => Promise<unknown>;
-  list: <T>(selector: Deno.KvListSelector, options?: Deno.KvListOptions) => AgentMessagesKvListIterator<T>;
+  set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => Promise<unknown>;
+  list: <T>(selector: KvListSelector, options?: KvListOptions) => AgentMessagesKvListIterator<T>;
 }>;
 
 type AgentMessagesDeps = Readonly<{
@@ -191,7 +192,7 @@ export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesD
 
   const prefix = ["agent_messages", authResult.method.owner, authResult.method.repo, authResult.method.state_id];
 
-  const options: Deno.KvListOptions = { limit: query.scanLimit };
+  const options: KvListOptions = { limit: query.scanLimit };
   if (query.cursor) {
     options.cursor = query.cursor;
   }
