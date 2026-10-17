@@ -97,7 +97,8 @@ export const runAdminModels = async (args: readonly string[], options: AdminMode
   const endpoint = resolveEndpoint(env);
   if ("error" in endpoint) {
     const token = firstSet(env.DENO_DEPLOY_TOKEN_UBIQUITY_DAO, env.DENO_DEPLOY_TOKEN) ?? "";
-    logError(redactToken(endpoint.error, token));
+    const safeError = redactToken(endpoint.error, token);
+    logError(safeError);
     return 1;
   }
 
@@ -113,11 +114,13 @@ export const runAdminModels = async (args: readonly string[], options: AdminMode
     body = await response.text();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logError(`Request failed: ${redactToken(message, endpoint.token)}`);
+    const safeMessage = redactToken(message, endpoint.token);
+    logError(`Request failed: ${safeMessage}`);
     return 1;
   }
   if (!response.ok) {
-    const detail = body ? `: ${redactToken(body, endpoint.token)}` : "";
+    const safeBody = redactToken(body, endpoint.token);
+    const detail = safeBody ? `: ${safeBody}` : "";
     logError(`Admin models request failed with HTTP ${response.status}${detail}`);
     return 1;
   }
