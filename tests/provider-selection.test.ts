@@ -8,7 +8,7 @@ import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, 
 import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek/index.ts";
 import { DEEPSEEK_WATERFALL_MODEL_ID, deepSeekWaterfallCatalogEnabled } from "../src/deepseek/waterfall.ts";
 import { handleHealthProviders } from "../src/health.ts";
-import { LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
+import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
 import { readOpenRouterApiKey } from "../src/provider/openrouter.ts";
 import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/models/codex-models-whitelist.ts";
 import { resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } from "../src/models/openrouter-models.ts";
@@ -641,10 +641,11 @@ test("/v1/models hides the models of a switched-off provider", async () => {
 test("a switched-off Lithos provider leaves an explicit Responses id to availability checks", async () => {
   const previousLithosKey = process.env.LITHOSAI_API_KEY;
   const originalFetch = globalThis.fetch;
-  let upstreamCalls = 0;
+  let lithosUpstreamCalls = 0;
   process.env.LITHOSAI_API_KEY = "lith_sk_fixture";
-  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
-    upstreamCalls += 1;
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === LITHOS_CHAT_COMPLETIONS_URL) lithosUpstreamCalls += 1;
     return Promise.resolve(Response.json({}));
   });
   const kv = new SelectionKv();
@@ -660,7 +661,8 @@ test("a switched-off Lithos provider leaves an explicit Responses id to availabi
           body: JSON.stringify({ model: LITHOS_MODEL_IDS[4], input: "hi", stream: false }),
         })
       );
-      assert.equal(upstreamCalls, 0);
+      // Availability may probe ordinary model discovery; direct Lithos dispatch must not occur.
+      assert.equal(lithosUpstreamCalls, 0);
       assert.equal(response.status, 404);
       assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "model_not_found");
     });
