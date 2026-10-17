@@ -226,9 +226,10 @@ const responseFormatOf = (body: Record<string, unknown>): ProbeRequestSummary["r
 };
 
 const summarizeRawBody = (body: Record<string, unknown>): ProbeRequestSummary => {
-  const tools = summarizeRawTools(body.tools);
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  const roles = projectedMessageRoles(body);
+  const projected = projectCerebrasRequest(body);
+  const tools = summarizeRawTools(projected.tools);
+  const messages = Array.isArray(projected.messages) ? projected.messages : [];
+  const roles = messages.map(rawMessageRole);
   return {
     style: "generic",
     model: typeof body.model === "string" ? body.model : "?",
