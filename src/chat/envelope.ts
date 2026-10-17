@@ -115,7 +115,20 @@ const parseChatCompletionsEnvelope = async (
   // read for its documented semantics (it selects thinking mode) and is not
   // forwarded verbatim: `projectDeepSeekRequest` owns the wire translation.
   const selection = await loadProviderSelectionCached();
-  const isDeepSeekRoute = isProviderEnabled("deepseek", selection) && deepSeekUpstreamModelFor(getString(rawRecord.model)?.trim() ?? "") !== null;
+  const requestedDeepSeekModel = deepSeekUpstreamModelFor(getString(rawRecord.model)?.trim() ?? "");
+  const deepSeekEnabled = isProviderEnabled("deepseek", selection);
+  if (requestedDeepSeekModel !== null && !deepSeekEnabled && Object.prototype.hasOwnProperty.call(rawRecord, "thinking")) {
+    return {
+      ok: false,
+      response: openaiError(
+        400,
+        "The DeepSeek `thinking` extension requires the DeepSeek provider to be enabled; remove `thinking` or enable provider `deepseek`.",
+        "invalid_request_error",
+        { param: "thinking" }
+      ),
+    };
+  }
+  const isDeepSeekRoute = deepSeekEnabled && requestedDeepSeekModel !== null;
   const providerExtensions = isDeepSeekRoute ? DEEPSEEK_CHAT_EXTENSION_KEYS : await openRouterPromptCacheRequestExtensions(rawRecord);
   const unknownKey = findUnknownKey(rawRecord, CHAT_COMPLETIONS_ALLOWED_KEYS, providerExtensions);
   if (unknownKey) {
