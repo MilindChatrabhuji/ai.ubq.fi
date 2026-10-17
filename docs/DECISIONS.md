@@ -1053,6 +1053,21 @@ Acceptance ran against the deployed releases, not the branch:
 - three normal completions still return `status: completed` with `incomplete_details: null`, so it does not over-fire;
 - authenticated inference through the public route succeeds, and `gpt-reserve` serves on both hosts.
 
+> **Qualified on 2026-10-16 (#608): acceptance of this release is unverified against `AGENTS.md`.** `AGENTS.md` accepts
+> a deployment only when a direct Mac-to-VPS authenticated inference request succeeds and `/health` returns the full Git
+> SHA and `vps-<full-git-sha>` in both its body and identity headers. That rule was already in `AGENTS.md` at
+> `2207a757fb6f8c362e18cbf890d59ee191d53e26`. Neither observation is recorded for this release:
+>
+> - The authenticated inference above went through the public `https://ai.ubq.fi` route. That does not show a direct
+>   Mac-to-VPS authenticated inference request succeeding.
+> - The identity table names each host's release and identity, but not where they were read. It does not record that the
+>   VPS `/health` returned `2207a757fb6f8c362e18cbf890d59ee191d53e26` and
+>   `vps-2207a757fb6f8c362e18cbf890d59ee191d53e26` in both its body and identity headers.
+>
+> The bullets above are kept as first written. They show the fix behaving as intended on both hosts; they do not show that
+> the release met the repository's acceptance rule. This note adds no new observation, and nothing in this repository
+> supplies the missing ones. Read the status line above as "deployed to both surfaces, acceptance unverified".
+
 The retracted premise is now moot in one direction: the deployed G3 is narration-independent by construction - it fires
 only when a would-be completion carries no assistant text, no refusal and no tool call, so it cannot act on the
 retracted symptom. Worth revisiting before any future change: the changelog wording that described it as a "no tool
@@ -1085,9 +1100,19 @@ survived the retraction.
 Reversal risk: deploying on the belief that the narration symptom is real, or reverting the whole program because its
 original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
 
-Next action if the program is to be deployed: re-derive G3's trigger from the surviving evidence alone - keep the
-reasoning-only and empty-output clauses, and keep the no-tool-call clause for as long as the completion-validity
-predicate treats a tool call as valid output. It rests on that predicate, not on the invalidated frequency claim.
+**Post-deployment follow-up (updated 2026-10-16, #608).** This entry first ended with a pre-deployment next action: "if
+the program is to be deployed", re-derive G3's trigger from the surviving evidence alone. The program was deployed on
+2026-09-21, so that next action is historical. The G3 bullet above now carries the re-derivation, and it keeps every
+clause of the deployed trigger: the reasoning-only and empty-output clauses stand on the surviving evidence, and the
+no-tool-call clause rests on the completion-validity predicate, not on the invalidated frequency claim. What remains
+after deployment:
+
+- Before any future change to G3, revise the changelog wording that calls it a "no tool call" guard (see above). Keep the
+  no-tool-call clause for as long as `isAnswerBearingCompletion` counts a tool call as answer-bearing output; re-derive
+  the trigger if that predicate changes.
+- Do not cite this entry as an accepted deployment under `AGENTS.md`. The missing acceptance observations were not
+  recorded while `2207a757fb` ran, and both surfaces moved to `3661bcfd13` on 2026-09-22 (see "Buffered-terminal fix
+  deployed to both surfaces" below).
 
 ## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
 
