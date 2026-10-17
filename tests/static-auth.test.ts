@@ -131,7 +131,7 @@ test("local development auth recognizes IPv6 loopback origins", () => {
   assert.equal(isLocalDevelopmentOrigin(), true);
   restoreIpv6Loopback();
 
-  const restoreBracketedIpv6Loopback = setGlobal("location", { protocol: "http:", hostname: "[::1]" });
+  const restoreBracketedIpv6Loopback = setGlobal("location", new URL("http://[::1]:8000"));
   assert.equal(isLocalDevelopmentOrigin(), true);
   restoreBracketedIpv6Loopback();
 
