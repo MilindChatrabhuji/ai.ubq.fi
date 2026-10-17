@@ -13,6 +13,22 @@ import { MeteredError } from "./provider/metered.ts";
 import { SurplusError } from "./provider/surplus.ts";
 import { type ResponseStreamTerminalType, type UpstreamProvider } from "./openai-telemetry.ts";
 
+type RefusalResponseOrigin = "gateway_deadline" | "upstream";
+const refusalResponseOrigins = new WeakMap<Response, RefusalResponseOrigin>();
+
+/** Keep local-vs-provider refusal provenance out of the client-visible wire. */
+export const markGatewayDeadlineResponse = (response: Response): Response => {
+  refusalResponseOrigins.set(response, "gateway_deadline");
+  return response;
+};
+
+export const markUpstreamRefusalResponse = (response: Response): Response => {
+  refusalResponseOrigins.set(response, "upstream");
+  return response;
+};
+
+export const refusalResponseOrigin = (response: Response): RefusalResponseOrigin | null => refusalResponseOrigins.get(response) ?? null;
+
 export const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   const raw = error instanceof Error ? error.message : String(error);
   const trimmed = raw.trim();
@@ -606,7 +622,8 @@ export const toLithosErrorResponse = (error: unknown): Response => {
       type: "server_error",
     });
   }
-  return withUpstreamProviderHeader(response, "lithos");
+  const translated = withUpstreamProviderHeader(response, "lithos");
+  return translated.status === 504 ? markGatewayDeadlineResponse(translated) : translated;
 };
 
 /**
@@ -750,10 +767,11 @@ export const toLithosUpstreamErrorResponse = async (upstream: Response, signal?:
     "[ai.ubq.fi] lithos_upstream_error",
     JSON.stringify({ status: upstream.status, code, message: detail.message ?? null, request: bodyDiagnostic ?? null })
   );
-  return openaiError(upstream.status, detail.message ?? "LithosAI upstream returned an error.", code, {
+  const response = openaiError(upstream.status, detail.message ?? "LithosAI upstream returned an error.", code, {
     type: lithosUpstreamErrorType(upstream.status),
     headers,
   });
+  return upstream.status === 504 ? markUpstreamRefusalResponse(response) : response;
 };
 const diagnosticReasoningLabel = (value: unknown): string => {
   if (typeof value !== "string") return "absent";
