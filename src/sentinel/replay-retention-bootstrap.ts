@@ -11,9 +11,10 @@ import type { Kv, KvEntry, KvKey } from "#kv";
  *
  * A chunk key names only its capture, while owner keys lead with a timestamp,
  * so a chunk's owner has no point lookup. Chunks are judged against a
- * process-local index of owner capture ids, filled in fixed slices of
- * BOOTSTRAP_OWNER_SCAN_ENTRIES rows per batch, so owner reads stay bounded per
- * batch and linear over the sweep instead of one full scan per chunk. An
+ * process-local index of owner capture ids for the current sweep, filled in
+ * the background in fixed slices of BOOTSTRAP_OWNER_SCAN_ENTRIES rows, so each
+ * owner read stays bounded, the reads stay linear over the sweep instead of
+ * one full scan per chunk, and a batch waits for the index only briefly. An
  * ownerless chunk is deleted only in a commit that also checks the ledger
  * versionstamp its batch read, so an owner published after that read keeps
  * its payload.
@@ -30,6 +31,7 @@ import { isSentinelReplayManifest } from "./replay-read.ts";
 import {
   accountingKeyMatches,
   BOOTSTRAP_BATCH_ENTRIES,
+  BOOTSTRAP_OWNER_INDEX_WAIT_MS,
   BOOTSTRAP_OWNER_SCAN_ENTRIES,
   commitAccountingMutation,
   counter,
@@ -203,11 +205,18 @@ const bootstrapLegacyDelta = async (kv: Kv, key: KvKey, value: unknown, delta: B
 };
 
 /**
- * Capture ids of every valid accounting row and manifest. While the ledger is
- * incomplete no capture gains its first owner: admission requires completed
- * accounting, and publication and this sweep's manifest phase add rows only for
- * a capture that already has one. So an index filled while the ledger stayed
- * incomplete holds every owner that existed when a batch read that ledger.
+ * Capture ids of every valid accounting row and manifest, for one sweep. While
+ * the ledger is incomplete no capture gains its first owner: admission requires
+ * completed accounting, and publication and this sweep's manifest phase add
+ * rows only for a capture that already has one. Each sweep carries the random
+ * id its first batch stamped (`bootstrap_sweep`), so an index filled at any
+ * point of a sweep holds every owner that existed when a later batch of that
+ * same sweep read its ledger, whichever cursor either was at, and it never
+ * serves another sweep, not even one started after the ledger was deleted. No
+ * index is built for an id until a ledger carries it: a batch that reaches the
+ * chunk phase while stamping a new id commits the id first, and then runs one
+ * more pass, so a small store still finishes in one call and the stamping
+ * commit never waits on a fill.
  *
  * A batch can still outlive that read: another caller may finish the sweep, and
  * an admission may then reserve and stage a capture this index never saw. Every
@@ -217,29 +226,45 @@ const bootstrapLegacyDelta = async (kv: Kv, key: KvKey, value: unknown, delta: B
  * The same check makes the batch's own ledger commit fail, so the failed delete
  * never persists as an invalid row.
  *
- * A partial index is filled by one batch at a time. A complete one is only
- * read from then on, so concurrent batches share it: were it taken by one slow
- * batch, the fill commits of batches starting fresh indexes meanwhile would
- * keep failing that batch's deletes and commit. Either is reused only for the
- * exact chunk cursor it was retained at: the one a batch committed, or the one
- * a batch began from when its commit lost to another ledger write that left
- * that cursor in place. Cursor equality is the only identity check, so a
- * second handle that re-sweeps to the same cursor after an external ledger
- * reset could reuse an index that predates owners admitted in between. No
- * runtime path deletes the ledger, and production shares one handle per
- * process.
+ * A handle fills at most one index at a time, in the background: one slice of
+ * BOOTSTRAP_OWNER_SCAN_ENTRIES rows after another, from the first batch that
+ * needs it until both owner prefixes are read. Its progress therefore depends
+ * neither on further requests nor on any batch's commit, and concurrent batches
+ * share it instead of each starting their own. A batch waits for it at most
+ * BOOTSTRAP_OWNER_INDEX_WAIT_MS, and otherwise judges no chunk and writes no
+ * ledger. The index lives in memory, so a restarted process starts one new
+ * fill. A complete index is only read.
+ *
+ * Restoring an older copy of the ledger alone, rather than of the whole store,
+ * brings back a sweep id a running process may still hold an index for, so
+ * restart every process after such a restore.
  */
-type ChunkOwnerIndex = { cursor: string | null; prefix: number; scan: string | undefined; read: number; owners: Set<string> };
+type ChunkOwnerIndex = {
+  readonly sweep: string;
+  /** A stand-in for a sweep whose chunk phase a commit on this handle has passed: it never fills. */
+  readonly retired: boolean;
+  prefix: number;
+  scan: string | undefined;
+  readonly owners: Set<string>;
+  filled: Promise<void>;
+  failure: Readonly<{ error: unknown }> | null;
+};
 const chunkOwnerIndexes = new WeakMap<Kv, ChunkOwnerIndex>();
 const ownerIndexPrefixes = (): readonly KvKey[] => [SENTINEL_REPLAY_ACCOUNTING_PREFIX, SENTINEL_REPLAY_MANIFEST_PREFIX];
 const isOwnerIndexComplete = (index: ChunkOwnerIndex): boolean => index.prefix >= ownerIndexPrefixes().length;
+const emptyChunkOwnerIndex = (sweep: string, retired: boolean): ChunkOwnerIndex => ({
+  sweep,
+  retired,
+  prefix: 0,
+  scan: undefined,
+  owners: new Set<string>(),
+  filled: Promise.resolve(),
+  failure: null,
+});
 
-/** Take a partial index, share a complete one; one held for another cursor stays, so a stale ledger read cannot discard it. */
-const takeChunkOwnerIndex = (kv: Kv, cursor: string | null): ChunkOwnerIndex | null => {
-  const index = chunkOwnerIndexes.get(kv);
-  if (index === undefined || cursor === null || index.cursor !== cursor) return null;
-  if (!isOwnerIndexComplete(index)) chunkOwnerIndexes.delete(kv);
-  return index;
+/** Hold no owner index on this handle. A fill still running for one stops before its next slice. */
+export const forgetChunkOwnerIndex = (kv: Kv): void => {
+  chunkOwnerIndexes.delete(kv);
 };
 
 const ownerCaptureId = (prefix: KvKey, { key, value }: KvEntry<unknown>): string | null => {
@@ -266,40 +291,69 @@ const advanceChunkOwnerIndex = async (kv: Kv, index: ChunkOwnerIndex): Promise<b
     } else {
       index.scan = iterator.cursor;
     }
-    index.read += read;
     budget -= read;
   }
   return index.prefix >= ownerPrefixes.length;
 };
 
+/** One bounded slice after another, for as long as this handle still holds the index. */
+const fillChunkOwnerIndex = async (kv: Kv, index: ChunkOwnerIndex): Promise<void> => {
+  let complete = false;
+  while (!complete && chunkOwnerIndexes.get(kv) === index) complete = await advanceChunkOwnerIndex(kv, index);
+};
+
+/**
+ * Hold a new index for this sweep, replacing one held for another, and start
+ * filling it. A failed fill is dropped, so the next batch that needs an index
+ * starts another, and the batches waiting on it see the error.
+ */
+const startChunkOwnerIndex = (kv: Kv, sweep: string): ChunkOwnerIndex => {
+  const index = emptyChunkOwnerIndex(sweep, false);
+  chunkOwnerIndexes.set(kv, index);
+  index.filled = fillChunkOwnerIndex(kv, index).catch((error: unknown) => {
+    index.failure = { error };
+    if (chunkOwnerIndexes.get(kv) === index) chunkOwnerIndexes.delete(kv);
+  });
+  return index;
+};
+
+/** Resolve once `settled` does or `ms` have passed, whichever is first. */
+const settledWithin = async (settled: Promise<void>, ms: number): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const elapsed = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  try {
+    await Promise.race([settled, elapsed]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const chunkRemains = async (kv: Kv, cursor: string | null): Promise<boolean> =>
   (await kv.list({ prefix: SENTINEL_REPLAY_CHUNK_PREFIX }, { cursor: cursor ?? undefined, limit: 1 }).next()).done !== true;
 
-/** Fill the owner index by one bounded slice before any chunk is judged; an exhausted chunk prefix needs none. */
+/**
+ * The owner index a chunk page is judged against. A chunk prefix with nothing
+ * left needs none. Otherwise the page waits for the sweep's index, and is not
+ * ready while the sweep's id is not durable yet, while that index is still
+ * filling after the bounded wait, or when the sweep's chunk phase is already
+ * past on this handle.
+ */
 const prepareChunkOwners = async (
   kv: Kv,
-  index: ChunkOwnerIndex | null,
+  sweep: string | null,
   cursor: string | null
 ): Promise<Readonly<{ ready: boolean; index: ChunkOwnerIndex | null }>> => {
-  const owners = index ?? ((await chunkRemains(kv, cursor)) ? { cursor: null, prefix: 0, scan: undefined, read: 0, owners: new Set<string>() } : null);
-  return { ready: owners === null || (await advanceChunkOwnerIndex(kv, owners)), index: owners };
-};
-
-/** Both indexes scan the same owner rows in key order, so the prefix and row count reached order their progress. */
-const hasReadAsFar = (left: ChunkOwnerIndex, right: ChunkOwnerIndex): boolean =>
-  left.prefix > right.prefix || (left.prefix === right.prefix && left.read >= right.read);
-
-/**
- * Keep the index for one durable chunk-phase cursor. Concurrent batches on one
- * handle each fill their own index, so one already held for the same cursor
- * that has read as far is kept rather than replaced by a shorter one.
- */
-const retainChunkOwnerIndex = (kv: Kv, owners: ChunkOwnerIndex | null, cursor: string | null): void => {
-  if (owners === null || cursor === null || bootstrapPrefixes()[parseCursor(cursor).index] !== SENTINEL_REPLAY_CHUNK_PREFIX) return;
   const held = chunkOwnerIndexes.get(kv);
-  if (held !== undefined && held !== owners && held.cursor === cursor && hasReadAsFar(held, owners)) return;
-  owners.cursor = cursor;
-  chunkOwnerIndexes.set(kv, owners);
+  if (sweep !== null && held?.sweep === sweep && isOwnerIndexComplete(held)) return { ready: true, index: held };
+  if (!(await chunkRemains(kv, cursor))) return { ready: true, index: null };
+  if (sweep === null) return { ready: false, index: null };
+  const current = chunkOwnerIndexes.get(kv);
+  const index = current?.sweep === sweep ? current : startChunkOwnerIndex(kv, sweep);
+  if (!index.retired && !isOwnerIndexComplete(index)) await settledWithin(index.filled, BOOTSTRAP_OWNER_INDEX_WAIT_MS);
+  if (index.failure !== null) throw index.failure.error;
+  return isOwnerIndexComplete(index) ? { ready: true, index } : { ready: false, index: null };
 };
 
 /**
@@ -365,12 +419,12 @@ const bootstrapEntryDelta = async (
 };
 
 /** Outcome of sweeping one bootstrap prefix within the remaining entry budget. */
-type BootstrapSweep = Readonly<{ delta: BootstrapDelta; scanned: number; cursor: string | null; exhausted: boolean; owners: ChunkOwnerIndex | null }>;
+type BootstrapSweep = Readonly<{ delta: BootstrapDelta; scanned: number; cursor: string | null; exhausted: boolean }>;
 
 /**
  * Sweep one prefix up to `budget` entries. `exhausted` means the sweep consumed
- * its whole budget mid-prefix, or is still filling the chunk owner index, so
- * the caller must resume from `cursor` at the same prefix instead of advancing.
+ * its whole budget mid-prefix, or is still waiting for the chunk owner index,
+ * so the caller must resume from `cursor` at the same prefix instead of advancing.
  */
 const sweepBootstrapPrefix = async (
   kv: Kv,
@@ -379,14 +433,14 @@ const sweepBootstrapPrefix = async (
   budget: number,
   delta: BootstrapDelta,
   budgetBytes: number,
-  index: ChunkOwnerIndex | null,
+  sweep: string | null,
   ledgerVersionstamp: string | null
 ): Promise<BootstrapSweep> => {
-  let owners = index;
+  let owners: ChunkOwnerIndex | null = null;
   if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) {
     // Judge no chunk until every owner is indexed; the cursor stays here meanwhile.
-    const prepared = await prepareChunkOwners(kv, owners, cursor);
-    if (!prepared.ready) return { delta, scanned: 0, cursor, exhausted: true, owners: prepared.index };
+    const prepared = await prepareChunkOwners(kv, sweep, cursor);
+    if (!prepared.ready) return { delta, scanned: 0, cursor, exhausted: true };
     owners = prepared.index;
   }
   const iterator = kv.list({ prefix }, { cursor: cursor ?? undefined, limit: budget });
@@ -394,35 +448,77 @@ const sweepBootstrapPrefix = async (
   for await (const entry of iterator) {
     scanned += 1;
     delta = await bootstrapEntryDelta(kv, prefix, entry, delta, budgetBytes, owners, ledgerVersionstamp);
-    if (scanned >= budget) return { delta, scanned, cursor: iterator.cursor, exhausted: true, owners };
+    if (scanned >= budget) return { delta, scanned, cursor: iterator.cursor, exhausted: true };
   }
-  return { delta, scanned, cursor: null, exhausted: false, owners };
-};
-
-/** After a committed batch: keep its index for a chunk-phase cursor; a sweep past that phase judges no chunk again, so none stays held. */
-const settleChunkOwnerIndex = (kv: Kv, owners: ChunkOwnerIndex | null, cursor: string | null, phase: number): void => {
-  if (phase > bootstrapPrefixes().indexOf(SENTINEL_REPLAY_CHUNK_PREFIX)) chunkOwnerIndexes.delete(kv);
-  else retainChunkOwnerIndex(kv, owners, cursor);
+  return { delta, scanned, cursor: null, exhausted: false };
 };
 
 /**
- * Return the ledger that won after this batch's commit lost. A loss (a skip
- * reason, a concurrent batch, a fill-only rewrite) that left the sweep where
- * this batch began keeps the owners it indexed, so contention cannot keep
- * restarting the index from empty.
+ * After a committed batch: a finished sweep leaves no index held, and a sweep
+ * past its chunk phase judges no chunk again, so its index gives way to a
+ * stand-in that keeps a batch still at an older chunk cursor from refilling it.
  */
-const afterLostCommit = async (
-  kv: Kv,
-  ledger: SentinelReplayBudgetLedger,
-  owners: ChunkOwnerIndex | null,
-  budgetBytes: number
-): Promise<SentinelReplayBudgetLedger> => {
-  const reread = await readLedger(kv, budgetBytes);
-  if (reread.kind === "corrupt") return ledger;
-  if (!reread.ledger.bootstrap_complete && reread.ledger.bootstrap_cursor === ledger.bootstrap_cursor) {
-    retainChunkOwnerIndex(kv, owners, ledger.bootstrap_cursor);
+const settleChunkOwnerIndex = (kv: Kv, sweep: string, phase: number): void => {
+  const prefixes = bootstrapPrefixes();
+  if (phase >= prefixes.length) {
+    forgetChunkOwnerIndex(kv);
+    return;
   }
-  return withBudget(reread.ledger, budgetBytes);
+  const held = chunkOwnerIndexes.get(kv);
+  if (phase > prefixes.indexOf(SENTINEL_REPLAY_CHUNK_PREFIX) && !(held?.sweep === sweep && held.retired)) {
+    chunkOwnerIndexes.set(kv, emptyChunkOwnerIndex(sweep, true));
+  }
+};
+
+/** The id of the sweep in flight, or null for a sweep not started yet or one stamped before sweeps had ids. */
+const durableSweep = (ledger: SentinelReplayBudgetLedger): string | null => (ledger.bootstrap_cursor === null ? null : (ledger.bootstrap_sweep ?? null));
+
+/**
+ * Commit the batch's ledger and materialized accounting rows, each checked
+ * against what the batch read. Returns the new ledger versionstamp, or null
+ * when another write won.
+ */
+const commitBootstrapBatch = async (kv: Kv, versionstamp: string | null, delta: BootstrapDelta, next: SentinelReplayBudgetLedger): Promise<string | null> => {
+  fault("commit");
+  let operation = kv.atomic().check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp });
+  for (const materialization of delta.materializations) {
+    operation = operation
+      .check({ key: materialization.accounting_key, versionstamp: null })
+      .check({ key: materialization.manifest_key, versionstamp: materialization.manifest_versionstamp })
+      .set(materialization.accounting_key, materialization.row);
+  }
+  const committed = await operation.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, next).commit();
+  return committed.ok ? committed.versionstamp : null;
+};
+
+/** A batch that stamped a new id and stopped at the chunk phase, its entries unspent, did so only to make that id durable. */
+const stampedBeforeChunks = (durable: string | null, phase: number, scanned: number): boolean =>
+  durable === null && bootstrapPrefixes()[phase] === SENTINEL_REPLAY_CHUNK_PREFIX && scanned < BOOTSTRAP_BATCH_ENTRIES;
+
+/** Sweep from the cursor, prefix by prefix, until the batch's entries are spent, a prefix is left mid-way, or every prefix is done. */
+const sweepBootstrapBatch = async (
+  kv: Kv,
+  from: string | null,
+  sweep: string | null,
+  versionstamp: string | null,
+  budgetBytes: number
+): Promise<Readonly<{ delta: BootstrapDelta; scanned: number; index: number; inner: string | null }>> => {
+  let { index, inner } = parseCursor(from);
+  const prefixes = bootstrapPrefixes();
+  let delta = emptyDelta();
+  let scanned = 0;
+  while (index < prefixes.length && scanned < BOOTSTRAP_BATCH_ENTRIES) {
+    const swept = await sweepBootstrapPrefix(kv, prefixes[index], inner, BOOTSTRAP_BATCH_ENTRIES - scanned, delta, budgetBytes, sweep, versionstamp);
+    delta = swept.delta;
+    scanned += swept.scanned;
+    if (swept.exhausted) {
+      // Keep this prefix and its cursor: the next pass resumes exactly here.
+      return { delta, scanned, index, inner: swept.cursor };
+    }
+    index += 1;
+    inner = null;
+  }
+  return { delta, scanned, index, inner };
 };
 
 /**
@@ -438,31 +534,22 @@ export const runBootstrapBatch = async (
   budgetBytes: number,
   nowMs: number
 ): Promise<SentinelReplayBudgetLedger> => {
-  let { index, inner } = parseCursor(ledger.bootstrap_cursor);
-  const prefixes = bootstrapPrefixes();
+  // A batch that starts a sweep, or continues one stamped before sweeps had
+  // ids, stamps a new id, and judges no chunk until a ledger carries it.
+  const durable = durableSweep(ledger);
   // A fresh sweep clears the sticky error so a removed corrupt row can resolve it.
   let error = ledger.bootstrap_cursor === null ? null : ledger.accounting_error;
   // A failed full sweep retained its deltas. Rebuild live counters on restart;
   // cursor continuations still accumulate, and cumulative history stays intact.
   const live = ledger.bootstrap_cursor === null && ledger.accounting_error !== null ? emptyDelta() : ledger;
-  let delta = emptyDelta();
-  let scanned = 0;
-  let owners = takeChunkOwnerIndex(kv, ledger.bootstrap_cursor);
-  while (index < prefixes.length && scanned < BOOTSTRAP_BATCH_ENTRIES) {
-    const sweep = await sweepBootstrapPrefix(kv, prefixes[index], inner, BOOTSTRAP_BATCH_ENTRIES - scanned, delta, budgetBytes, owners, versionstamp);
-    owners = sweep.owners;
-    delta = sweep.delta;
-    scanned += sweep.scanned;
-    if (sweep.exhausted) {
-      // Keep this prefix and its cursor: the next pass resumes exactly here.
-      inner = sweep.cursor;
-      break;
-    }
-    index += 1;
-    inner = null;
-  }
-  const complete = index >= prefixes.length;
+  const { delta, scanned, index, inner } = await sweepBootstrapBatch(kv, ledger.bootstrap_cursor, durable, versionstamp, budgetBytes);
+  const complete = index >= bootstrapPrefixes().length;
+  const cursor = complete ? null : `${index}|${inner ?? ""}`;
+  // Still waiting for its sweep's owner index, the batch scanned and moved
+  // nothing, so it writes no ledger that could cost a judging batch its commit.
+  if (scanned === 0 && durable !== null && cursor === ledger.bootstrap_cursor) return ledger;
   if (delta.invalid) error = "invalid_in_scope_row";
+  const sweep = durable ?? crypto.randomUUID();
   const next: SentinelReplayBudgetLedger = {
     ...ledger,
     budget_bytes: budgetBytes,
@@ -472,25 +559,21 @@ export const runBootstrapBatch = async (
     status_records: live.status_records + delta.status_records,
     metadata_bytes: live.metadata_bytes + delta.metadata_bytes,
     bootstrap_complete: complete && error === null,
-    bootstrap_cursor: complete ? null : `${index}|${inner ?? ""}`,
+    bootstrap_cursor: cursor,
+    bootstrap_sweep: sweep,
     accounting_error: error,
     over_budget: live.stored_bytes + delta.stored_bytes > sentinelReplayPayloadBudgetBytes(budgetBytes),
     last_warning_at_ms: live.stored_bytes + delta.stored_bytes > sentinelReplayPayloadBudgetBytes(budgetBytes) ? nowMs : ledger.last_warning_at_ms,
   };
-  fault("commit");
-  let operation = kv.atomic().check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp });
-  for (const materialization of delta.materializations) {
-    operation = operation
-      .check({ key: materialization.accounting_key, versionstamp: null })
-      .check({ key: materialization.manifest_key, versionstamp: materialization.manifest_versionstamp })
-      .set(materialization.accounting_key, materialization.row);
+  const committed = await commitBootstrapBatch(kv, versionstamp, delta, next);
+  if (committed !== null) {
+    settleChunkOwnerIndex(kv, sweep, index);
+    // With the id now durable, one more pass may judge chunks in this same call.
+    return stampedBeforeChunks(durable, index, scanned) ? await runBootstrapBatch(kv, next, committed, budgetBytes, nowMs) : next;
   }
-  const committed = await operation.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, next).commit();
-  if (committed.ok) {
-    settleChunkOwnerIndex(kv, owners, next.bootstrap_cursor, index);
-    return next;
-  }
-  return await afterLostCommit(kv, ledger, owners, budgetBytes);
+  // Another write won. The owner index belongs to the sweep, not to this batch, so it stays as it was.
+  const reread = await readLedger(kv, budgetBytes);
+  return reread.kind === "corrupt" ? ledger : withBudget(reread.ledger, budgetBytes);
 };
 
 /**
@@ -506,7 +589,7 @@ export const bootstrapBeforeMutation = async (kv: Kv, budgetBytes: number, nowMs
   const ledger = withBudget(state.ledger, budgetBytes);
   if (ledger.bootstrap_complete) {
     // Admissions may create owners from here on, so no earlier index can be trusted again.
-    chunkOwnerIndexes.delete(kv);
+    forgetChunkOwnerIndex(kv);
     return ledger;
   }
   const bootstrapped = await runBootstrapBatch(kv, ledger, state.versionstamp, budgetBytes, nowMs);

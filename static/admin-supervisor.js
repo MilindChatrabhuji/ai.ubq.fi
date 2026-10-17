@@ -162,6 +162,14 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       markProvidersUnavailable();
       return;
     }
+    const selectedProviderIds = Array.isArray(selection?.data?.selection?.provider_ids)
+      ? selection.data.selection.provider_ids
+          .filter((id) => typeof id === "string" && id.trim().length > 0)
+          .map((id) => id.trim())
+      : [];
+    // An empty (including blank-only) selection is deliberately no filter:
+    // every provider remains routable, just as it does on the inference path.
+    const filterActive = selection?.data?.filter_active === true && selectedProviderIds.length > 0;
     const rows = entries.map((entry) => {
       const health =
         typeof entry?.health_key === "string" && entry.health_key ? healthSnapshot?.[entry.health_key] : null;
@@ -169,6 +177,10 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       if (health) configured = health.configured !== false;
       else if (healthUnavailable) configured = entry.configured !== false;
       const state = health ? (typeof health.state === "string" ? health.state : health.health?.state) : null;
+      const routingEnabled =
+        !filterActive ||
+        selectedProviderIds.includes(entry.id) ||
+        (entry.id === "codex" && selectedProviderIds.some((id) => id.startsWith("codex:")));
       const row = document.createElement("div");
       row.dataset.providerEntry = "";
       row.dataset.providerId = entry.id;
@@ -183,6 +195,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const tier = document.createElement("span");
       tier.dataset.providerTierBadge = entry.tier;
       tier.textContent = entry.tier_label ?? entry.tier;
+      const activation = document.createElement("span");
+      activation.dataset.providerActivationBadge = routingEnabled ? "selected" : "disabled";
+      activation.textContent = routingEnabled ? "Routing selected" : "Routing disabled";
       const badge = document.createElement("span");
       badge.dataset.providerHealthBadge = configured ? (state ?? "unknown") : "unknown";
       if (!configured) badge.textContent = "Not configured";
@@ -193,7 +208,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
           stale: health?.health?.stale === true,
         })}`;
       }
-      badges.append(tier, badge);
+      badges.append(tier, activation, badge);
       body.append(name, badges);
       const detail = document.createElement("span");
       detail.dataset.providerDetail = "";
