@@ -1,7 +1,7 @@
 import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import type { AtomicCheck, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import { afterEach, beforeEach, test } from "bun:test";
 import assert from "node:assert/strict";
 
@@ -50,19 +50,60 @@ const keyOf = (key: KvKey): string => JSON.stringify(key);
 /** Minimal Kv stand-in: the whitelist paths only read and write one key. */
 class WhitelistKv {
   readonly values = new Map<string, unknown>();
+  private readonly _versions = new Map<string, string>();
+  private _revision = 1;
+
+  private _version(key: KvKey): string | null {
+    return this.values.has(keyOf(key)) ? (this._versions.get(keyOf(key)) ?? "00000000000000000001") : null;
+  }
+
+  atomic() {
+    const checks: AtomicCheck[] = [];
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (...entries: AtomicCheck[]) => {
+        checks.push(...entries);
+        return operation;
+      },
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => {
+          this.values.set(keyOf(key), value);
+          this._versions.set(keyOf(key), String(this._revision).padStart(20, "0"));
+        });
+        return operation;
+      },
+      delete: (key: KvKey) => {
+        writes.push(() => {
+          this.values.delete(keyOf(key));
+          this._versions.delete(keyOf(key));
+        });
+        return operation;
+      },
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
+        if (checks.some((entry) => entry.versionstamp !== this._version(entry.key))) return Promise.resolve({ ok: false });
+        this._revision++;
+        for (const write of writes) write();
+        return Promise.resolve({ ok: true, versionstamp: String(this._revision).padStart(20, "0") });
+      },
+    };
+    return operation;
+  }
 
   get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
-      versionstamp: stored === undefined ? null : "00000000000000000001",
+      versionstamp: this._version(key),
     } as KvEntryMaybe<T>);
   }
 
   set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+    this._revision++;
+    const versionstamp = String(this._revision).padStart(20, "0");
+    this._versions.set(keyOf(key), versionstamp);
+    return Promise.resolve({ ok: true, versionstamp });
   }
 
   storedWhitelist(): CodexModelsWhitelist | null {
@@ -686,6 +727,14 @@ test("the Models tab renders checkbox tools instead of a free-text whitelist", (
   assert.match(modelsScript, /cerebras: "Cerebras"/);
 });
 
+test("the Remove-missing control stays visible when an empty catalog leaves saved ids missing", () => {
+  const status = /const updateModelsStatus = \(\) => \{([\s\S]*?)\n\};\n\nconst renderModelsPicker/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(status, "", "the Models status updater must stay discoverable");
+  assert.match(status, /const missing = modelsMissingIds\(\);/);
+  assert.match(status, /modelsDropMissingBtn\.disabled = saving \|\| missing\.length === 0;/);
+  assert.match(status, /modelsDropMissingBtn\.hidden = missing\.length === 0;/);
+});
+
 test("provider roster completion rerenders Models after normalizing its filter", () => {
   const completion = /const loadProviderSelection = async \(options = \{\}\) => \{([\s\S]*?)\n\};\n\nconst saveProviderSelection/.exec(adminScript)?.[1] ?? "";
   assert.notEqual(completion, "", "the provider-selection loader must stay discoverable");
@@ -852,4 +901,13 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
 
 test("admin metadata refresh is registered as an operator POST route", () => {
   assert.match(handlerSource, /\{ methods: \["POST"\], path: "\/admin\/models\/refresh", run: \(\) => handleAdminModelsRefresh\(\) \}/);
+});
+
+test("admin metadata refresh confirms before replacing a staged model selection", () => {
+  const refreshSource = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.notEqual(refreshSource, "", "refreshModelsMetadata must stay declared");
+  assert.match(
+    refreshSource,
+    /if \(modelsHasUnsavedChanges\(\) && !globalThis\.confirm\("Discard the unsaved model selection and reload\?"\)\) return;\s+await loadModelsWhitelist\(\{ force: true \}\);/
+  );
 });

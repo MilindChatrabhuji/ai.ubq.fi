@@ -75,8 +75,8 @@ export const clearLithosFailoverWindows = (): void => {
   lithosFailoverWindows.clear();
 };
 
-/** Records the sibling that served a request whose own tier refused it. */
-export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {
+/** Records the final tier that served a request, or clears it when the requested tier served. */
+export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string | null): void => {
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;
 };
 

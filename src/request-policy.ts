@@ -91,7 +91,7 @@ import type { ResponseInputItem } from "./types.ts";
 import { fetchMeteredModels } from "./provider/metered.ts";
 import { fetchSurplusModels } from "./provider/surplus.ts";
 import { isSurplusClaudeModel } from "./provider/surplus-claude-request.ts";
-import { fetchClaudeCodeModels } from "./provider/claude-code-models.ts";
+import { fetchClaudeCodeModels, claudeCodeReasoningLevels } from "./provider/claude-code-models.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import { countExplicitPromptCacheBreakpoints } from "./openai-telemetry.ts";
 
@@ -191,7 +191,7 @@ export const getCodexModelMetadata = async (model: string, route: "chat.completi
     // cannot remove that route, but only this credential's observed IDs add it.
     const subscriptionRecord = {
       slug: model,
-      supported_reasoning_levels: claudeModel.supports_disabled_thinking === true ? ["none"] : [],
+      supported_reasoning_levels: claudeCodeReasoningLevels(claudeModel),
       ...(claudeModel.supports_disabled_thinking === true ? { default_reasoning_level: "none" } : {}),
     };
     return {

@@ -222,14 +222,17 @@ export const planCodexAuthRepair = (
 /**
  * Applies a plan to the pool. Only selected accounts are replaced, matched by
  * account id, so slot order, the other account, and every unrelated KV entry
- * are left untouched. Returns null when the pool could not represent the
- * result, which callers must treat as "write nothing".
+ * are left untouched. The expiry is checked again here because the plan may
+ * have spent time in candidate assessment. Returns null when a selected
+ * candidate is no longer usable or the pool could not represent the result;
+ * callers must treat either case as "write nothing".
  *
  * Each replaced account carries the caller's `nowMs` so a repair is
  * reproducible in tests; the shared `upsertCodexAuthAccount` helper owns the
  * pool-level timestamp, exactly as it does for a gateway refresh.
  */
 export const applyCodexAuthPlan = (pool: CodexAuthPoolState, plan: CodexAuthRepairPlan, nowMs: number): CodexAuthPoolState | null => {
+  if (plan.selections.some((selection) => selection.access_exp_ms !== null && selection.access_exp_ms <= nowMs)) return null;
   let next: CodexAuthPoolState | null = pool;
   for (const selection of plan.selections) {
     if (!next) return null;

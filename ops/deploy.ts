@@ -240,10 +240,22 @@ async function assertUnselectedRecovery(selected: string | null, receipt: Recove
   }
 }
 
-async function assertSelectedRecovery(candidate: Release, receipt: Recovery): Promise<void> {
-  if (receipt.phase === "rolled_back" || !(await ready(candidate.sha, 7999, 1)))
-    throw new Error("Selected recovery candidate identity is ambiguous; refusing destructive recovery");
-  if (receipt.previous !== null) await verifyPreviousRecovery(receipt.previous);
+/**
+ * Returns whether the selected candidate already serves its exact identity, so a
+ * retry resumes at ingress without another restart. A first deployment has no
+ * earlier listener or public identity to protect, and its unit can only start
+ * this verified selected candidate, so an unready one is restarted rather than
+ * refused. With a previous release, an unready candidate stays ambiguous.
+ */
+async function selectedRecoveryServes(candidate: Release, receipt: Recovery): Promise<boolean> {
+  if (receipt.phase !== "rolled_back") {
+    if (await ready(candidate.sha, 7999, 1)) {
+      if (receipt.previous !== null) await verifyPreviousRecovery(receipt.previous);
+      return true;
+    }
+    if (receipt.previous === null) return false;
+  }
+  throw new Error("Selected recovery candidate identity is ambiguous; refusing destructive recovery");
 }
 
 async function startCandidate(candidate: Release, receipt: Recovery, state: ActivationState): Promise<void> {
@@ -261,22 +273,39 @@ async function startCandidate(candidate: Release, receipt: Recovery, state: Acti
   await saveRecovery(receipt);
 }
 
+/**
+ * A first deployment has no earlier release to restore. Before the gateway
+ * restart nothing ran from the candidate, so clearing its selector restores the
+ * original state exactly. After a restart attempt the unit can only run this
+ * candidate: clearing the selector would not stop it and would only break the
+ * unit's next start, so the candidate stays selected, unaccepted and resumable
+ * by the same SHA.
+ */
+async function restoreFirstDeployment(receipt: Recovery, restartAttempted: boolean): Promise<void> {
+  if (restartAttempted) {
+    console.error("[deploy] First deployment has no previous release; the unaccepted candidate stays selected for a same-SHA retry");
+    return;
+  }
+  if ((await selector()) !== null) await selectRelease(null);
+  receipt.phase = "rolled_back";
+  await saveRecovery(receipt);
+}
+
 async function restorePrevious(receipt: Recovery, restartAttempted: boolean): Promise<void> {
   const previous = receipt.previous;
-  if (restartAttempted && previous?.profile === launcherFingerprint)
+  if (previous === null) return restoreFirstDeployment(receipt, restartAttempted);
+  if (restartAttempted && previous.profile === launcherFingerprint)
     throw new Error("Cross-codec rollback requires stopped latest-state Bun-to-Deno conversion; refusing stale legacy state");
-  await selectRelease(previous?.selector ?? null);
+  await selectRelease(previous.selector);
   // A refused daemon-reload leaves the prior listener running. Do not restart
   // either release through a definition systemd refused to load.
-  if (restartAttempted && previous !== null) {
+  if (restartAttempted) {
     await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
     if (!(await ready(previous.sha, previous.port))) throw new Error("Previous listener restoration failed");
     await previousPublicIdentity(previous);
   }
-  if (previous !== null) {
-    receipt.phase = "rolled_back";
-    await saveRecovery(receipt);
-  }
+  receipt.phase = "rolled_back";
+  await saveRecovery(receipt);
 }
 
 async function verifySelectedOnly(candidate: Release, selected: boolean): Promise<void> {
@@ -301,11 +330,14 @@ async function activate(candidate: Release, selected: string | null, receipt: Re
     return;
   }
   if (JSON.stringify(receipt.candidate) !== JSON.stringify(candidate)) throw new Error("Stale or changed deployment recovery receipt");
-  if (candidateSelected) await assertSelectedRecovery(candidate, receipt);
-  else await assertUnselectedRecovery(selected, receipt, fresh);
-  const state = { restartAttempted: false, ingressApplied: receipt.phase === "ingress_applied" };
+  const candidateServes = candidateSelected && (await selectedRecoveryServes(candidate, receipt));
+  if (!candidateSelected) await assertUnselectedRecovery(selected, receipt, fresh);
+  // A candidate that is already selected may have been restarted by an earlier
+  // run, so recovery must treat it as possibly running even when this run issues
+  // no restart: clearing or swapping its selector alone cannot stop it.
+  const state = { restartAttempted: candidateSelected, ingressApplied: receipt.phase === "ingress_applied" };
   try {
-    if (!candidateSelected) await startCandidate(candidate, receipt, state);
+    if (!candidateServes) await startCandidate(candidate, receipt, state);
     await reloadCaddyIngress();
     state.ingressApplied = true;
     receipt.phase = "ingress_applied";
