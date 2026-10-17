@@ -532,18 +532,21 @@ const runLithosDispatch = async (
 const dispatchLithosUpstreamResult = async (
   req: Request,
   body: Record<string, unknown>,
-  canonicalModel: string,
+  modelRaw: string,
   usageContext: UsageContext | undefined,
   streamed: boolean
 ): Promise<LithosDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
+  // Keep the upstream attempt identity canonical while letting the rate-limit
+  // seam apply the same case-insensitive lookup to the client's spelling.
+  const canonicalModel = lithosUpstreamModelFor(modelRaw) ?? modelRaw.trim();
   // A tier whose window is open is served by the ladder target it points at
   // without asking the saturated tier again, and that decision is announced
   // exactly like a per-request failover. A deeper target resumes mid-ladder, so
   // its own refusal advances further down rather than restarting at the top.
-  const ladder = lithosFailoverLadderFor(canonicalModel);
-  const stickyTarget = lithosFailoverTargetAt(canonicalModel, Date.now());
+  const ladder = lithosFailoverLadderFor(modelRaw);
+  const stickyTarget = lithosFailoverTargetAt(modelRaw, Date.now());
   const stickyIndex = stickyTarget === null ? -1 : ladder.indexOf(stickyTarget);
   if (stickyTarget !== null) {
     logLithosRateLimitFailover({
@@ -615,7 +618,7 @@ export const handleLithosChatCompletions = async (
     reasoning,
   });
 
-  const dispatched = await dispatchLithosUpstreamResult(req, lithosBody, upstreamModel, usageContext, clientWantsStream);
+  const dispatched = await dispatchLithosUpstreamResult(req, lithosBody, modelRaw, usageContext, clientWantsStream);
   if ("pending" in dispatched) {
     // Same deferred absorb as the Responses route: the Chat stream opens now,
     // keepalives hold the client, and the vendor's window is spent behind it.
@@ -853,7 +856,7 @@ export const handleLithosResponses = async (
   });
 
   const createdAtSeconds = Math.floor(Date.now() / 1000);
-  const dispatched = await dispatchLithosUpstreamResult(req, chatBody, upstreamModel, usageContext, clientWantsStream);
+  const dispatched = await dispatchLithosUpstreamResult(req, chatBody, modelRaw, usageContext, clientWantsStream);
   if ("pending" in dispatched) {
     // The streamed route opens its SSE response now and its keepalive frames
     // hold the client while the vendor's own window passes behind it. The
