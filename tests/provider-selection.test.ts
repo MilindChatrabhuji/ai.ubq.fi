@@ -1,3 +1,5 @@
+import type { AtomicCheck, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin/index.ts";
@@ -8,6 +10,7 @@ import { handleHealthProviders } from "../src/health.ts";
 import { LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
 import { readOpenRouterApiKey } from "../src/provider/openrouter.ts";
 import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/models/codex-models-whitelist.ts";
+import { resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } from "../src/models/openrouter-models.ts";
 import handler from "../src/handler/index.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { buildModelCatalogSnapshot, handleModels } from "../src/models/catalog.ts";
@@ -44,29 +47,70 @@ import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/ru
 // The model-listing path reads discovery credentials from the environment.
 // Clearing them keeps these tests on the credential-gated providers they own,
 // and keeps discovery from reaching a network the test task does not allow.
-Deno.env.delete("METERED_API_KEY");
-Deno.env.delete("SURPLUS_API_KEY");
+delete process.env.METERED_API_KEY;
+delete process.env.SURPLUS_API_KEY;
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
-/** Minimal Deno.Kv stand-in: the selection paths only read and write one key. */
+/** Versioned KV stand-in for selection and account-discovery bootstrap. */
 class SelectionKv {
   readonly values = new Map<string, unknown>();
+  private readonly _versions = new Map<string, string>();
+  private _revision = 1;
   failReads = false;
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  private _version(key: KvKey): string | null {
+    return this.values.has(keyOf(key)) ? (this._versions.get(keyOf(key)) ?? "00000000000000000001") : null;
+  }
+
+  atomic() {
+    const checks: AtomicCheck[] = [];
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (...entries: AtomicCheck[]) => {
+        checks.push(...entries);
+        return operation;
+      },
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => {
+          this.values.set(keyOf(key), value);
+          this._versions.set(keyOf(key), String(this._revision).padStart(20, "0"));
+        });
+        return operation;
+      },
+      delete: (key: KvKey) => {
+        writes.push(() => {
+          this.values.delete(keyOf(key));
+          this._versions.delete(keyOf(key));
+        });
+        return operation;
+      },
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
+        if (checks.some((entry) => entry.versionstamp !== this._version(entry.key))) return Promise.resolve({ ok: false });
+        this._revision++;
+        for (const write of writes) write();
+        return Promise.resolve({ ok: true, versionstamp: String(this._revision).padStart(20, "0") });
+      },
+    };
+    return operation;
+  }
+
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     if (this.failReads) return Promise.reject(new Error("KV read failed"));
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
-      versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+      versionstamp: this._version(key),
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+    this._revision++;
+    const versionstamp = String(this._revision).padStart(20, "0");
+    this._versions.set(keyOf(key), versionstamp);
+    return Promise.resolve({ ok: true, versionstamp });
   }
 
   storedSelection(): unknown {
@@ -80,7 +124,7 @@ class SelectionKv {
 
 const withKv = async (kv: SelectionKv | null, run: () => Promise<void>): Promise<void> => {
   resetProviderSelectionCacheForTest();
-  setKvForTest(kv as unknown as Deno.Kv | null);
+  setKvForTest(kv as unknown as Kv | null);
   try {
     await run();
   } finally {
@@ -119,14 +163,14 @@ const listModelIds = async (): Promise<string[]> => {
 
 // ── Module contract ──────────────────────────────────────────────────────────
 
-Deno.test("provider selection normalizes to the roster order without duplicates", () => {
+test("provider selection normalizes to the roster order without duplicates", () => {
   assert.deepEqual(normalizeSelectedProviderIds(["openlux", "codex", "openlux"]), ["codex", "openlux"]);
   assert.deepEqual(normalizeSelectedProviderIds([" codex "]), ["codex"]);
   assert.deepEqual(normalizeSelectedProviderIds(["unknown", "surplus"]), ["surplus"]);
   assert.deepEqual(normalizeSelectedProviderIds([1, null, {}]), []);
 });
 
-Deno.test("a stored provider selection keeps its known ids and drops retired ones", () => {
+test("a stored provider selection keeps its known ids and drops retired ones", () => {
   assert.deepEqual(normalizeProviderSelection({ provider_ids: ["surplus", "retired"], updated_at_ms: 5 }), {
     provider_ids: ["surplus"],
     updated_at_ms: 5,
@@ -137,7 +181,7 @@ Deno.test("a stored provider selection keeps its known ids and drops retired one
   assert.equal(normalizeProviderSelection(null), null);
 });
 
-Deno.test("an empty or absent selection keeps every provider eligible", () => {
+test("an empty or absent selection keeps every provider eligible", () => {
   for (const provider of SELECTABLE_PROVIDER_IDS) {
     assert.equal(isProviderEnabled(provider, null), true, `${provider}: absent selection is no filter`);
     assert.equal(isProviderEnabled(provider, { provider_ids: [], updated_at_ms: 1 }), true, `${provider}: empty selection is no filter`);
@@ -150,7 +194,7 @@ Deno.test("an empty or absent selection keeps every provider eligible", () => {
   assert.equal(providerSelectionIsActive({ provider_ids: [], updated_at_ms: 1 }), false);
 });
 
-Deno.test("a subscription selection narrows the Codex tier instead of switching it off", async () => {
+test("a subscription selection narrows the Codex tier instead of switching it off", async () => {
   const first = codexSubscriptionSelectionId(await codexSubscriptionHash("account-one"));
   const second = codexSubscriptionSelectionId(await codexSubscriptionHash("account-two"));
   assert.notEqual(first, second);
@@ -173,7 +217,7 @@ Deno.test("a subscription selection narrows the Codex tier instead of switching 
   assert.equal(isProviderEnabled("codex", { provider_ids: ["surplus"], updated_at_ms: 1 }), false);
 });
 
-Deno.test("the codex umbrella absorbs subscription ids so storage stays unambiguous", () => {
+test("the codex umbrella absorbs subscription ids so storage stays unambiguous", () => {
   const subscription = codexSubscriptionSelectionId("a".repeat(64));
   const other = codexSubscriptionSelectionId("b".repeat(64));
   assert.deepEqual(normalizeSelectedProviderIds([other, "codex", subscription]), ["codex"]);
@@ -186,7 +230,7 @@ Deno.test("the codex umbrella absorbs subscription ids so storage stays unambigu
   });
 });
 
-Deno.test("a catalog row keeps only the providers that are still active", () => {
+test("a catalog row keeps only the providers that are still active", () => {
   const entries = [
     { id: "codex-only", providers: [{ id: "codex" }] },
     { id: "shared", providers: [{ id: "codex" }, { id: "surplus" }] },
@@ -209,12 +253,12 @@ Deno.test("a catalog row keeps only the providers that are still active", () => 
   );
 });
 
-Deno.test("the routing selection read is cached, primed by a save, and fails open", async () => {
+test("the routing selection read is cached, primed by a save, and fails open", async () => {
   const kv = new SelectionKv();
   await withKv(kv, async () => {
-    assert.equal(await loadProviderSelection(kv as unknown as Deno.Kv), null, "an absent selection reads as no filter");
+    assert.equal(await loadProviderSelection(kv as unknown as Kv), null, "an absent selection reads as no filter");
 
-    const stored = await storeProviderSelection(kv as unknown as Deno.Kv, ["openlux"]);
+    const stored = await storeProviderSelection(kv as unknown as Kv, ["openlux"]);
     assert.ok(stored, "a save must persist a selection");
     assert.deepEqual(stored.provider_ids, ["openlux"]);
     assert.deepEqual(kv.storedSelection(), { provider_ids: ["openlux"], updated_at_ms: stored.updated_at_ms });
@@ -246,6 +290,7 @@ const catalogFixture = () => ({
     { id: "deepseek-flash", providers: [{ id: "deepseek" as const, owned_by: "deepseek", supported_endpoints: ["/v1/chat/completions", "/v1/responses"] }] },
   ],
   sources: {
+    claude_code: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
     codex: { status: "available" as const, count: 1, updated_at_ms: 1 },
     openlux: { status: "unavailable" as const, count: 0, updated_at_ms: null },
     surplus: { status: "available" as const, count: 2, updated_at_ms: 2 },
@@ -258,7 +303,7 @@ const catalogFixture = () => ({
   },
 });
 
-Deno.test("admin provider picker reports the roster, catalog counts, and the saved selection", async () => {
+test("admin provider picker reports the roster, catalog counts, and the saved selection", async () => {
   const kv = new SelectionKv();
   kv.seedSelection(["surplus"]);
   await withKv(kv, async () => {
@@ -310,9 +355,9 @@ Deno.test("admin provider picker reports the roster, catalog counts, and the sav
   });
 });
 
-Deno.test("every selectable provider carries a complete presentation and a health key the view reports", async () => {
-  const previousDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
-  Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+test("every selectable provider carries a complete presentation and a health key the view reports", async () => {
+  const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
   try {
     await withKv(new SelectionKv(), async () => {
       const catalog = await buildModelCatalogSnapshot();
@@ -387,8 +432,8 @@ Deno.test("every selectable provider carries a complete presentation and a healt
       assert.equal(fallback.health_key, "future-provider");
     });
   } finally {
-    if (previousDeepSeekKey === undefined) Deno.env.delete("DEEPSEEK_API_KEY");
-    else Deno.env.set("DEEPSEEK_API_KEY", previousDeepSeekKey);
+    if (previousDeepSeekKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = previousDeepSeekKey;
   }
 });
 
@@ -422,7 +467,7 @@ const seedCodexAuthPool = (kv: SelectionKv): void => {
   resetCodexAuthCacheForTest();
 };
 
-Deno.test("admin provider picker lists each configured Codex subscription under its opaque id", async () => {
+test("admin provider picker lists each configured Codex subscription under its opaque id", async () => {
   const kv = new SelectionKv();
   seedCodexAuthPool(kv);
   try {
@@ -461,7 +506,7 @@ Deno.test("admin provider picker lists each configured Codex subscription under 
   }
 });
 
-Deno.test("an empty saved provider selection is reported as no filter", async () => {
+test("an empty saved provider selection is reported as no filter", async () => {
   await withKv(new SelectionKv(), async () => {
     const response = await handleAdminProviderSelectionGet({ buildCatalog: () => Promise.resolve(catalogFixture()) });
     const body = await response.json();
@@ -470,7 +515,7 @@ Deno.test("an empty saved provider selection is reported as no filter", async ()
   });
 });
 
-Deno.test("the provider picker refuses to render without KV", async () => {
+test("the provider picker refuses to render without KV", async () => {
   await withKv(null, async () => {
     const response = await handleAdminProviderSelectionGet({
       buildCatalog: () => Promise.reject(new Error("the catalog must not be built without KV")),
@@ -479,7 +524,7 @@ Deno.test("the provider picker refuses to render without KV", async () => {
   });
 });
 
-Deno.test("saving a provider selection canonicalizes it and rejects unknown ids", async () => {
+test("saving a provider selection canonicalizes it and rejects unknown ids", async () => {
   const kv = new SelectionKv();
   await withKv(kv, async () => {
     const response = await handleAdminProviderSelectionSet(
@@ -519,7 +564,7 @@ Deno.test("saving a provider selection canonicalizes it and rejects unknown ids"
   });
 });
 
-Deno.test("the provider picker routes are registered and stay behind admin auth", async () => {
+test("the provider picker routes are registered and stay behind admin auth", async () => {
   const unauthenticated = await handler(new Request("https://ai.ubq.fi/admin/providers/selection"));
   assert.equal(unauthenticated.status, 401, "an unauthenticated selection read reaches the admin gate instead of 404");
   const unknown = await handler(new Request("https://ai.ubq.fi/admin/providers/selection-unknown"));
@@ -528,17 +573,19 @@ Deno.test("the provider picker routes are registered and stay behind admin auth"
 
 // ── Model listing enforcement ────────────────────────────────────────────────
 
-Deno.test("/v1/models hides the models of a switched-off provider", async () => {
-  Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
-  Deno.env.set("CEREBRAS_API_KEY", "fixture-cerebras-key");
+test("/v1/models hides the models of a switched-off provider", async () => {
+  resetOpenRouterModelsCacheForTest();
+  setOpenRouterModelsFetchForTest(() => Promise.resolve(Response.json({ data: [] })));
+  process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
+  process.env.CEREBRAS_API_KEY = "fixture-cerebras-key";
   // This test owns every credential-gated provider, so it configures the
   // LithosAI key itself instead of leaving the row set to the ambient
   // environment.
-  Deno.env.set("LITHOSAI_API_KEY", "fixture-lithos-key");
+  process.env.LITHOSAI_API_KEY = "fixture-lithos-key";
   // Same ownership for the OpenRouter upstream: this test configures its key
   // rather than inheriting the ambient environment
-  const previousOpenRouterKey = Deno.env.get("OPENROUTER_API_KEY");
-  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+  const previousOpenRouterKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "fixture-openrouter-key";
   const kv = new SelectionKv();
   seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
   try {
@@ -578,16 +625,18 @@ Deno.test("/v1/models hides the models of a switched-off provider", async () => 
       assert.deepEqual(await listModelIds(), ["gpt-5.6-sol"], "switched-off credential-gated providers contribute no rows");
     });
   } finally {
-    Deno.env.delete("DEEPSEEK_API_KEY");
-    Deno.env.delete("CEREBRAS_API_KEY");
-    Deno.env.delete("LITHOSAI_API_KEY");
-    if (previousOpenRouterKey === undefined) Deno.env.delete("OPENROUTER_API_KEY");
-    else Deno.env.set("OPENROUTER_API_KEY", previousOpenRouterKey);
+    setOpenRouterModelsFetchForTest(null);
+    resetOpenRouterModelsCacheForTest();
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
+    delete process.env.LITHOSAI_API_KEY;
+    if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
     resetRuntimeConfigCacheForTest();
   }
 });
 
-Deno.test("/v1/models still applies the model whitelist on top of the provider selection", async () => {
+test("/v1/models still applies the model whitelist on top of the provider selection", async () => {
   const kv = new SelectionKv();
   seedCodexSnapshot(kv, ["gpt-5.6-sol", "gpt-5.6-terra"]);
   kv.values.set(keyOf([...CODEX_MODELS_WHITELIST_KV_KEY]), { model_ids: ["gpt-5.6-terra"], updated_at_ms: 1_700_000_000_000 });
@@ -602,7 +651,7 @@ Deno.test("/v1/models still applies the model whitelist on top of the provider s
   }
 });
 
-Deno.test("the gateway identity joins the selection like any provider", async () => {
+test("the gateway identity joins the selection like any provider", async () => {
   const kv = new SelectionKv();
   await withKv(kv, async () => {
     const response = await handleAdminProviderSelectionSet(
@@ -619,7 +668,7 @@ Deno.test("the gateway identity joins the selection like any provider", async ()
   });
 });
 
-Deno.test("an active selection without the gateway identity switches the waterfall route off", () => {
+test("an active selection without the gateway identity switches the waterfall route off", () => {
   const withGateway = { provider_ids: ["ubiquity", "openrouter"] as SelectableProviderId[], updated_at_ms: 1 };
   const withoutGateway = { provider_ids: ["openrouter"] as SelectableProviderId[], updated_at_ms: 1 };
   assert.equal(isProviderEnabled(GATEWAY_PROVIDER_ID, withGateway), true);
@@ -627,7 +676,7 @@ Deno.test("an active selection without the gateway identity switches the waterfa
   assert.equal(deepSeekWaterfallCatalogEnabled(withoutGateway), false, "the route leaves when its identity is unchecked");
 });
 
-Deno.test("the public catalog drops the gateway route while its identity is off", () => {
+test("the public catalog drops the gateway route while its identity is off", () => {
   const entries = [
     { id: "ubiquity/deepseek-v4.1-flash", providers: [{ id: "ubiquity" }, { id: "openrouter" }] },
     { id: "some-other", providers: [{ id: "openrouter" }] },

@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { handleAdminPromptCacheAnalytics } from "../src/admin/index.ts";
 import type { PromptCacheAnalyticsView } from "../src/cache/prompt-analytics.ts";
-import adminScript from "../static/admin.js" with { type: "text" };
+const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
 
 const readyView = (groupBy: readonly string[]): PromptCacheAnalyticsView => ({
   status: "ready",
@@ -37,7 +39,7 @@ const readyView = (groupBy: readonly string[]): PromptCacheAnalyticsView => ({
   ],
 });
 
-Deno.test("prompt-cache analytics admin API validates a bounded group_by before reading KV", async () => {
+test("prompt-cache analytics admin API validates a bounded group_by before reading KV", async () => {
   const reads: unknown[] = [];
   const response = await handleAdminPromptCacheAnalytics(new Request("https://ai.ubq.fi/admin/prompt-cache-analytics?group_by=provider,route"), (input) => {
     reads.push(input);
@@ -66,7 +68,7 @@ Deno.test("prompt-cache analytics admin API validates a bounded group_by before 
   }
 });
 
-Deno.test("prompt-cache analytics admin API preserves an explicit unavailable state", async () => {
+test("prompt-cache analytics admin API preserves an explicit unavailable state", async () => {
   const unavailable = await handleAdminPromptCacheAnalytics(new Request("https://ai.ubq.fi/admin/prompt-cache-analytics?group_by=key_presence"), (input) =>
     Promise.resolve({ ...readyView(input.groupBy ?? []), status: "unavailable", buckets: [] })
   );
@@ -82,7 +84,7 @@ Deno.test("prompt-cache analytics admin API preserves an explicit unavailable st
   assert.doesNotMatch(await failed.text(), new RegExp(secret));
 });
 
-Deno.test("admin bundle omits the standalone prompt-cache analytics section", () => {
+test("admin bundle omits the standalone prompt-cache analytics section", () => {
   assert.doesNotMatch(adminScript, /Prompt-cache analytics/);
   assert.doesNotMatch(adminScript, /promptCacheAnalytics/);
   assert.doesNotMatch(adminScript, /\/admin\/prompt-cache-analytics/);

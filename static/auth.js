@@ -179,7 +179,7 @@ const requestJson = async (baseUrl, path, init) => {
   const endpoint = buildBackendUrl(path, baseUrl);
   const res = await fetch(endpoint, { ...init, credentials: init?.credentials ?? "include" });
   const text = await res.text();
-  let body = null;
+  let body;
   try {
     body = text ? JSON.parse(text) : null;
   } catch {

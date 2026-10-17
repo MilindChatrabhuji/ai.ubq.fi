@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 // Per-account daily redemption cap coverage (hard cutover from the retired
 // global daily cap, fix for the 2026-10-05 two-expiring-credits incident).
 // Each account owns its own UTC-day submission budget at
@@ -29,7 +30,7 @@ const utcDay = (nowMs: number): string => new Date(nowMs).toISOString().slice(0,
 const accountDayCount = async (kv: MemoryKv, accountId: string, day: string): Promise<number | null> =>
   (await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(accountId), day))).value?.submission_count ?? null;
 
-Deno.test("two different accounts can each redeem once in the same UTC day", async () => {
+test("two different accounts can each redeem once in the same UTC day", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -51,7 +52,7 @@ Deno.test("two different accounts can each redeem once in the same UTC day", asy
   assert.equal(await accountDayCount(kv, "day-account-b", day), 1);
 });
 
-Deno.test("an account's second redemption in the same UTC day is refused with zero consume calls", async () => {
+test("an account's second redemption in the same UTC day is refused with zero consume calls", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -81,7 +82,7 @@ Deno.test("an account's second redemption in the same UTC day is refused with ze
   assert.equal(refusedRecord?.state, "claimed");
 });
 
-Deno.test("per-window exact-once still prevents a re-spend of the same window", async () => {
+test("per-window exact-once still prevents a re-spend of the same window", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
@@ -101,12 +102,13 @@ Deno.test("per-window exact-once still prevents a re-spend of the same window", 
   assert.equal(await accountDayCount(kv, "day-account-a", utcDay(clock.nowMs)), 1);
 });
 
-Deno.test("live mode requires an exact per-account daily cap of one and shadow never spends", async () => {
+test("live mode requires an exact per-account daily cap of one and shadow never spends", async () => {
   // The parser reads only the new environment variable; the retired global
   // variable is not read at all.
-  const declared = parseCodexBankedResetConfig((key) =>
-    key === "CODEX_BANKED_RESET_MODE" ? "live" : key === "CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY" ? "2" : undefined
-  );
+  const declared = parseCodexBankedResetConfig((key) => {
+    if (key === "CODEX_BANKED_RESET_MODE") return "live";
+    return key === "CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY" ? "2" : undefined;
+  });
   assert.equal(declared.mode, "live");
   assert.equal(declared.maxPerAccountPerDay, 2);
   const retired = parseCodexBankedResetConfig((key) => (key === "CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY" ? "0" : undefined));
@@ -145,7 +147,7 @@ Deno.test("live mode requires an exact per-account daily cap of one and shadow n
   assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), utcDay(clock.nowMs)))).value, null);
 });
 
-Deno.test("a pre-existing nonzero legacy global_day record no longer blocks another account", async () => {
+test("a pre-existing nonzero legacy global_day record no longer blocks another account", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();

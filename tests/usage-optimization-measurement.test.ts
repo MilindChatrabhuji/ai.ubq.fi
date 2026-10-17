@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv } from "#kv";
+import { test } from "bun:test";
+import { setKvForTest } from "../src/kv.ts";
 import assert from "node:assert/strict";
 import { classifyKvKey, CountingKv, type KvMeasurementContext, type KvOperationBudget } from "./helpers/counting-kv.ts";
 
@@ -91,8 +95,8 @@ const settleBackgroundWork = async (commandCount: () => number): Promise<void> =
 
 const restoreEnvironment = (saved: ReadonlyMap<string, string | undefined>): void => {
   for (const [key, value] of saved) {
-    if (value === undefined) Deno.env.delete(key);
-    else Deno.env.set(key, value);
+    if (value === undefined) Reflect.deleteProperty(process.env, key);
+    else process.env[key] = value;
   }
 };
 
@@ -102,25 +106,22 @@ const budgetFor = (budgets: KvOperationBudget[], scenario: string): KvOperationB
   return budget;
 };
 
-Deno.test("usage optimization fixture records per-auth KV commands, atomic commits, and Codex wire bytes", async () => {
+test("usage optimization fixture records per-auth KV commands, atomic commits, and Codex wire bytes", async () => {
   const savedEnvironment = new Map<string, string | undefined>([
-    ["UOS_AI_TOKEN", Deno.env.get("UOS_AI_TOKEN")],
-    ["DENO_DEPLOY_TOKEN", Deno.env.get("DENO_DEPLOY_TOKEN")],
+    ["UOS_AI_TOKEN", process.env.UOS_AI_TOKEN],
+    ["DENO_DEPLOY_TOKEN", process.env.DENO_DEPLOY_TOKEN],
   ]);
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;
   const originalWarn = console.warn;
   const originalError = console.error;
-  const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
-  const originalOpenKv = denoWithKv.openKv;
   const kv = new CountingKv();
   let queuedReplies: UpstreamReply[] = [];
   let fetchCalls = 0;
   let onFetch: (() => void) | null = null;
 
-  Deno.env.set("UOS_AI_TOKEN", UOS_ALLOWLIST_TOKEN);
-  Deno.env.set("DENO_DEPLOY_TOKEN", ADMIN_ALLOWLIST_TOKEN);
-  denoWithKv.openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
+  process.env.UOS_AI_TOKEN = UOS_ALLOWLIST_TOKEN;
+  process.env.DENO_DEPLOY_TOKEN = ADMIN_ALLOWLIST_TOKEN;
   console.info = (...args: unknown[]): void => {
     if (args[0] === "[usage-optimization] operation-byte-budget") originalInfo(...args);
   };
@@ -128,8 +129,7 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
   console.error = (): void => {};
 
   try {
-    const { setKvForTest } = await import("../src/kv.ts");
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     const { default: handler } = await import("../src/handler/index.ts");
     const { sha256Base64Url } = await import("../src/utils.ts");
     const { RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../src/runtime-config.ts");
@@ -137,7 +137,7 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     const { resetApiKeyPolicyCacheForTest } = await import("../src/api-key-policy.ts");
     const { resetProviderHealthThrottleForTest } = await import("../src/provider/health.ts");
 
-    globalThis.fetch = async (input, init): Promise<Response> => {
+    globalThis.fetch = createFetchMock(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       let url: string;
       if (typeof input === "string") url = input;
       else if (input instanceof URL) url = input.toString();
@@ -152,7 +152,7 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
       if (reply.waitFor) await reply.waitFor;
       kv.recordUpstreamResponseBytes(reply.responseBytes);
       return new Response(reply.body, { status: reply.status ?? 200, headers: reply.headers });
-    };
+    });
 
     const runtime = () => ({
       version: 2,
@@ -433,7 +433,7 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     console.info = originalInfo;
     console.warn = originalWarn;
     console.error = originalError;
-    denoWithKv.openKv = originalOpenKv;
+    setKvForTest(null);
     restoreEnvironment(savedEnvironment);
   }
 });

@@ -1,29 +1,51 @@
+import type { Kv, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { attemptClaudeCodeSubscription } from "../src/paid-fallback/claude-code-route.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { CLAUDE_CODE_QUOTA_KV_KEY, loadClaudeCodeQuotaState } from "../src/provider/claude-code-quota.ts";
+import { claudeCodeQuotaKey, clearClaudeCodeQuotaGuards, loadClaudeCodeQuotaState } from "../src/provider/claude-code-quota.ts";
+import { resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
+import { resetClaudeCodeCredentialCacheForTest, resolveClaudeCodeWorkspace } from "../src/provider/claude-code-credentials.ts";
 
 type JsonRecord = Record<string, unknown>;
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 class RouteKv {
   readonly values = new Map<string, unknown>();
 
-  get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  atomic() {
+    const writes: (() => void)[] = [];
+    const operation = {
+      check: (..._entries: unknown[]) => operation,
+      set: (key: KvKey, value: unknown) => {
+        writes.push(() => this.values.set(keyOf(key), value));
+        return operation;
+      },
+      commit: () => {
+        for (const write of writes) {
+          write();
+        }
+        return Promise.resolve({ ok: true, versionstamp: "00000000000000000002" });
+      },
+    };
+    return operation;
+  }
+
+  get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const stored = this.values.get(keyOf(key));
     return Promise.resolve({
       key,
       value: (stored ?? null) as T | null,
       versionstamp: stored === undefined ? null : "00000000000000000001",
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.values.set(keyOf(key), value);
-    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as Deno.KvCommitResult);
+    return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as KvCommitResult);
   }
 }
 
@@ -76,7 +98,8 @@ const withRouteKv = async (run: (kv: RouteKv) => Promise<void>): Promise<void> =
   const kv = new RouteKv();
   resetProviderSelectionCacheForTest();
   resetProviderHealthThrottleForTest();
-  setKvForTest(kv as unknown as Deno.Kv);
+  resetClaudeCodeCredentialCacheForTest();
+  setKvForTest(kv as unknown as Kv);
   try {
     await run(kv);
   } finally {
@@ -84,7 +107,7 @@ const withRouteKv = async (run: (kv: RouteKv) => Promise<void>): Promise<void> =
   }
 };
 
-Deno.test("an eligible owner request is served by the subscription with the documented headers and defaults", async () => {
+test("an eligible owner request is served by the subscription with the documented headers and defaults", async () => {
   await withRouteKv(async () => {
     captured.length = 0;
     const routed = await attemptClaudeCodeSubscription(
@@ -102,6 +125,8 @@ Deno.test("an eligible owner request is served by the subscription with the docu
     assert.equal(request.headers.get("anthropic-version"), "2023-06-01");
     assert.equal(request.headers.get("anthropic-beta"), "oauth-2025-04-20");
     assert.equal(request.headers.get("x-api-key"), null);
+    const system = (request.body.system ?? []) as { text?: string }[];
+    assert.equal(system[0]?.text, "You are Claude Code, Anthropic's official CLI for Claude.");
     assert.equal(request.body.model, model);
     assert.equal(request.body.max_tokens, 32_000);
     assert.equal(request.body.stream, true);
@@ -110,7 +135,7 @@ Deno.test("an eligible owner request is served by the subscription with the docu
   });
 });
 
-Deno.test("an ineligible request never reaches the subscription transport", async () => {
+test("an ineligible request never reaches the subscription transport", async () => {
   await withRouteKv(async () => {
     captured.length = 0;
     const noToken = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup({}), fetcher });
@@ -129,7 +154,7 @@ Deno.test("an ineligible request never reaches the subscription transport", asyn
   });
 });
 
-Deno.test("a durable subscription rejection falls through and blocks the tier until the reset margin", async () => {
+test("a durable subscription rejection falls through and blocks the tier until the reset margin", async () => {
   await withRouteKv(async (kv) => {
     captured.length = 0;
     const nowSeconds = Math.trunc(Date.now() / 1_000);
@@ -148,11 +173,13 @@ Deno.test("a durable subscription rejection falls through and blocks the tier un
     const rejected = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher: rejection });
     assert.equal(rejected, null, "a rejected subscription never serves the request itself");
     assert.equal(captured.length, 0);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
     assert(quota, "the durable window block is persisted");
     assert.equal(quota.block_window, "5h");
     assert(quota.blocked_until_ms !== null && quota.blocked_until_ms > Date.now() + 3_600_000, "the reset margin is added to the upstream reset");
-    assert(kv.values.has(keyOf([...CLAUDE_CODE_QUOTA_KV_KEY])));
+    assert(kv.values.has(keyOf(claudeCodeQuotaKey(account))));
 
     const second = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher });
     assert.equal(second, null);
@@ -160,7 +187,7 @@ Deno.test("a durable subscription rejection falls through and blocks the tier un
   });
 });
 
-Deno.test("a local request-build failure falls through without recording an upstream health event", async () => {
+test("a local lossless-build refusal cannot authorize paid continuation or an upstream health event", async () => {
   await withRouteKv(async (kv) => {
     captured.length = 0;
     const rejected = await attemptClaudeCodeSubscription(
@@ -169,7 +196,9 @@ Deno.test("a local request-build failure falls through without recording an upst
       { model, input: "hello", previous_response_id: "resp_123" },
       { model, usageContext, env: envLookup(env), fetcher }
     );
-    assert.equal(rejected, null);
+    assert(rejected);
+    assert.equal(rejected.response.status, 400);
+    assert.equal((await rejected.response.json()).error.code, "claude_code_request_invalid");
     assert.equal(captured.length, 0, "the transport must not run for a local build failure");
     assert.deepEqual(
       [...kv.values.keys()].filter((key) => key.includes("provider_health")),
@@ -179,7 +208,7 @@ Deno.test("a local request-build failure falls through without recording an upst
   });
 });
 
-Deno.test("a transient rate limit falls through with a short cooldown and no durable block", async () => {
+test("a transient rate limit retains its original failure without authorizing paid continuation", async () => {
   await withRouteKv(async (kv) => {
     const transient = (): Promise<Response> =>
       Promise.resolve(
@@ -189,10 +218,200 @@ Deno.test("a transient rate limit falls through with a short cooldown and no dur
         })
       );
     const rejected = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(env), fetcher: transient });
-    assert.equal(rejected, null);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Deno.Kv);
+    assert(rejected);
+    assert.equal(rejected.response.status, 429);
+    assert.deepEqual(await rejected.response.json(), { type: "error", error: { type: "rate_limit_error" } });
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
     assert(quota, "the transient outcome is still recorded");
     assert.equal(quota.blocked_until_ms, null, "a generic 429 never becomes durable exhaustion");
     assert(quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());
+  });
+});
+
+const workspacesBody = (id = "wrkspc_01ErorW3iFLRvQy55cpNWtEt", name = "Default"): string =>
+  JSON.stringify({
+    data: [
+      { id, type: "workspace", name, created_at: "2026-02-02T22:25:14.167463Z", archived_at: null },
+      { id: "wrkspc_01FBEp5VyCHs7ghEnJqk6giF", type: "workspace", name: "Claude Code", created_at: "2025-03-22T10:01:42Z", archived_at: null },
+    ],
+    has_more: false,
+  });
+
+test("a CLAUDE_API_KEY credential travels as x-api-key without the OAuth beta or a Bearer header", async () => {
+  await withRouteKv(async () => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    const routed = await attemptClaudeCodeSubscription({ model, input: "hello", stream: false }, { model, usageContext, env: envLookup(apiKeyEnv), fetcher });
+    assert(routed, "the subscription route must serve this request");
+    assert.equal(captured.length, 1);
+    const request = captured[0];
+    assert.equal(request.headers.get("x-api-key"), "sk-ant-usr-1A6exampleBwAA");
+    assert.equal(request.headers.get("authorization"), null);
+    assert.equal(request.headers.get("anthropic-beta"), null);
+    const apiKeySystem = (request.body.system ?? []) as { text?: string }[];
+    assert.equal(
+      apiKeySystem.some((block) => block.text === "You are Claude Code, Anthropic's official CLI for Claude."),
+      false,
+      "an API key request must stay a plain API request"
+    );
+    assert.equal(request.headers.get("anthropic-version"), "2023-06-01");
+    assert.equal(request.headers.get("anthropic-workspace-id"), null, "no workspace header until one is known or required");
+  });
+});
+
+test("an organization-scoped key discovers the workspace once and the retry carries the header", async () => {
+  await withRouteKv(async (kv) => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    const discovery: { count: number } = { count: 0 };
+    const requireWorkspaceFetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = requestUrl(input);
+      captured.push({ url, headers: new Headers(init?.headers), body: jsonBody(init) });
+      if (url.endsWith("/v1/organizations/workspaces")) {
+        discovery.count += 1;
+        return Promise.resolve(new Response(workspacesBody(), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      const workspaceId = new Headers(init?.headers).get("anthropic-workspace-id");
+      if (!workspaceId) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                message:
+                  "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          )
+        );
+      }
+      return Promise.resolve(new Response(sse(successEvents()), { status: 200, headers: { "content-type": "text/event-stream", "request-id": "req_ws" } }));
+    };
+
+    const routed = await attemptClaudeCodeSubscription(
+      { model, input: "hello", stream: true },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: requireWorkspaceFetcher }
+    );
+    assert(routed, "the discovered workspace must let the retry serve the request");
+    assert.equal(discovery.count, 1, "discovery runs once for the deployment");
+    const messages = captured.filter((entry) => entry.url.endsWith("/v1/messages"));
+    assert.equal(messages.length, 2, "the first rejection is retried exactly once");
+    assert.equal(messages[0].headers.get("anthropic-workspace-id"), null);
+    assert.equal(messages[1].headers.get("anthropic-workspace-id"), "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
+    const stored = await resolveClaudeCodeWorkspace(kv as unknown as Kv);
+    assert.equal(stored?.id, "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
+    assert.equal(stored.source, "discovered");
+
+    captured.length = 0;
+    const second = await attemptClaudeCodeSubscription(
+      { model, input: "again", stream: true },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: requireWorkspaceFetcher }
+    );
+    assert(second, "the cached workspace serves the next request");
+    assert.equal(discovery.count, 1, "the workspace lookup is cached in KV");
+    assert.equal(captured.filter((entry) => entry.url.endsWith("/v1/messages")).length, 1);
+    assert.equal(captured[0].headers.get("anthropic-workspace-id"), "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
+  });
+});
+
+test("the workspace discovery retry keeps the single-use dispatch reservation to one claim", async () => {
+  await withRouteKv(async () => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    let reservations = 0;
+    const requireWorkspaceFetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = requestUrl(input);
+      captured.push({ url, headers: new Headers(init?.headers), body: jsonBody(init) });
+      if (url.endsWith("/v1/organizations/workspaces")) {
+        return Promise.resolve(new Response(workspacesBody(), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      const workspaceId = new Headers(init?.headers).get("anthropic-workspace-id");
+      if (!workspaceId) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                message:
+                  "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } }
+          )
+        );
+      }
+      return Promise.resolve(new Response(sse(successEvents()), { status: 200, headers: { "content-type": "text/event-stream", "request-id": "req_ws" } }));
+    };
+    const routed = await attemptClaudeCodeSubscription(
+      { model, input: "hello", stream: true },
+      {
+        model,
+        env: envLookup(apiKeyEnv),
+        fetcher: requireWorkspaceFetcher,
+        usageContext: {
+          ...usageContext,
+          beforeProviderDispatch: () => {
+            reservations += 1;
+            return Promise.resolve(undefined);
+          },
+        },
+      }
+    );
+    assert(routed, "the retry must serve the request");
+    assert.equal(reservations, 1, "the retry reuses the request's single pre-transport reservation");
+    assert.equal(captured.filter((entry) => entry.url.endsWith("/v1/messages")).length, 2, "two transports ran for the discovery retry");
+  });
+});
+
+test("a billing rejection becomes an operator-visible configuration state and skips the transport until cleared", async () => {
+  await withRouteKv(async (kv) => {
+    captured.length = 0;
+    const apiKeyEnv = { CLAUDE_API_KEY: "sk-ant-usr-1A6exampleBwAA", CLAUDE_CODE_ALLOWED_KEY_IDS: "owner-key" };
+    const billingFetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      captured.push({ url: requestUrl(input), headers: new Headers(init?.headers), body: jsonBody(init) });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        )
+      );
+    };
+    const rejected = await attemptClaudeCodeSubscription(
+      { model, input: "hello" },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
+    );
+    assert.equal(rejected?.response.status, 400, "billing failure is preserved, not paid-fallback authority");
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
+    assert(quota?.last_error?.message);
+    assert.equal(quota.last_error.kind, "billing_blocked");
+    assert(quota.last_error.message.includes("credit balance"));
+    assert(quota.blocked_until_ms === null, "a billing rejection is not quota exhaustion");
+    assert(quota.cooldown_until_ms !== null && quota.cooldown_until_ms > Date.now());
+
+    const callsAfterFirst = captured.length;
+    const second = await attemptClaudeCodeSubscription({ model, input: "hello" }, { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher });
+    assert.equal(second?.response.status, 400);
+    assert.equal(captured.length, callsAfterFirst, "the configuration cooldown keeps the tier from hammering the upstream");
+
+    await clearClaudeCodeQuotaGuards(kv as unknown as Kv, account);
+    const afterClear = await attemptClaudeCodeSubscription(
+      { model, input: "hello" },
+      { model, usageContext, env: envLookup(apiKeyEnv), fetcher: billingFetcher }
+    );
+    assert.equal(afterClear?.response.status, 400, "the original failure remains, but the tier was retried");
+    assert.equal(captured.length, callsAfterFirst + 1, "clearing the guards retries the tier immediately");
   });
 });

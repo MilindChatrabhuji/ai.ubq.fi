@@ -1,3 +1,4 @@
+import type { KvKey } from "#kv";
 // Upstream addresses, header construction, and the call-id to account mapping
 // for the `/v1/live` realtime voice relay.
 //
@@ -112,7 +113,7 @@ export const parseLiveCallIdFromLocation = (location: string): string | null => 
 /** The gateway-local `Location` for a created call; the upstream origin never leaks. */
 export const liveCallLocation = (callId: string): string => `/v1/live/${encodeURIComponent(callId)}`;
 
-export const liveCallAccountKey = (callId: string): Deno.KvKey => [...LIVE_CALL_ACCOUNT_KV_PREFIX, callId];
+export const liveCallAccountKey = (callId: string): KvKey => [...LIVE_CALL_ACCOUNT_KV_PREFIX, callId];
 
 /** The account that created a call and the authenticated principal it was created for. */
 export type LiveCallMapping = Readonly<{ accountId: string; principalId: string | null }>;
@@ -156,5 +157,19 @@ export const readLiveCallMapping = async (callId: string): Promise<LiveCallMappi
     return { accountId, principalId: getString(entry.value.principal_id) };
   } catch {
     return null;
+  }
+};
+
+/** Retires a call after the upstream says that it no longer exists. */
+export const retireLiveCallMapping = async (callId: string): Promise<void> => {
+  const kv = await getKv();
+  if (!kv) return;
+  try {
+    await kv.delete(liveCallAccountKey(callId));
+  } catch (error) {
+    console.warn(
+      "[ai.ubq.fi] live_call_account_mapping_retire_failed",
+      JSON.stringify({ call_id: callId, reason: error instanceof Error ? error.name : "unknown" })
+    );
   }
 };
