@@ -165,6 +165,32 @@ test("openrouter buffered Responses fails an empty completion closed without mas
   });
 });
 
+test("openrouter buffered Responses preserves failed upstream terminals without answer output", async () => {
+  await withServedCatalogue(async () => {
+    const telemetry = createResponseTelemetryState();
+    const payload = {
+      id: "resp_failed",
+      object: "response",
+      status: "failed",
+      error: { code: "upstream_error", message: "provider failed" },
+      output: [],
+      usage: { input_tokens: 2, output_tokens: 0, total_tokens: 2 },
+    };
+    const response = await handleOpenRouterResponses(
+      new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+      { model: "vendor/beta", input: "hi" },
+      "vendor/beta",
+      streamUsageContext(telemetry),
+      { fetchResponses: () => Promise.resolve(jsonResponse(payload)) }
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), payload);
+    assert.equal(telemetry.completed, false);
+    assert.equal(telemetry.streamTerminalType, "response.failed");
+  });
+});
+
 const dispatchCases = [
   { path: "/v1/chat/completions", body: { messages: [{ role: "user", content: "hi" }] }, handle: handleOpenRouterChatCompletions },
   { path: "/v1/responses", body: { input: "hi" }, handle: handleOpenRouterResponses },
