@@ -380,8 +380,16 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       cleanupFailures.push(error);
     }
     try {
-      const settled = await Promise.allSettled(helperServers.splice(0).map((server) => Promise.resolve().then(() => server.shutdown())));
-      cleanupFailures.push(...settled.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])));
+      const settled = await Promise.allSettled(
+        helperServers.splice(0).map((server) => {
+          try {
+            return server.shutdown();
+          } catch (error) {
+            return Promise.reject(error);
+          }
+        })
+      );
+      for (const result of settled) if (result.status === "rejected") cleanupFailures.push(result.reason);
     } catch (error) {
       cleanupFailures.push(error);
     } finally {
