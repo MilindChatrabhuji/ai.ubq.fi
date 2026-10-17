@@ -190,7 +190,8 @@ const meteredCatalogResponse = async (selection: ProviderSelection | null): Prom
   const deepSeekEnabled = isProviderEnabled("deepseek", selection);
   const lithosEnabled = isProviderEnabled("lithos", selection);
   const cerebrasEnabled = isProviderEnabled("cerebras", selection);
-  const openRouterEnabled = isProviderEnabled("openrouter", selection) && readOpenRouterApiKey() !== null;
+  const openRouterSelectionEnabled = isProviderEnabled("openrouter", selection);
+  const openRouterEnabled = openRouterSelectionEnabled && readOpenRouterApiKey() !== null;
   const deepSeekWaterfallEnabled = deepSeekWaterfallCatalogEnabled(selection);
   const openRouterModels = openRouterEnabled ? openRouterCodexModels() : [];
   const configured = [
@@ -213,7 +214,7 @@ const meteredCatalogResponse = async (selection: ProviderSelection | null): Prom
   if (deepSeekWaterfallEnabled) rows = withDeepSeekWaterfallModel(rows);
   if (lithosEnabled) rows = withLithosModels(rows);
   if (cerebrasEnabled) rows = withCerebrasModels(rows);
-  if (openRouterEnabled) rows = withOpenRouterModels(rows);
+  if (openRouterSelectionEnabled) rows = withOpenRouterModels(rows);
   rows = rows.filter((model, index, models) => models.findIndex((candidate) => candidate.slug === model.slug) === index);
   // Without a stored body this route still answers the versioned catalog a
   // Codex client selects from, so the operator whitelist narrows it here too.
