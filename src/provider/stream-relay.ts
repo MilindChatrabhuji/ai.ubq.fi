@@ -18,7 +18,7 @@ import {
   recordTerminalUsage,
 } from "../openai-telemetry.ts";
 import { EMPTY_UPSTREAM_COMPLETION_MESSAGE, markChatSemanticOutput } from "../chat/stream-translation.ts";
-import { chatChunkHasAnswerBearingOutput, isAnswerBearingCompletion, refusalResponseOrigin } from "../upstream-wire.ts";
+import { chatChunkHasAnswerBearingOutput, isAnswerBearingCompletion, isGatewayDeadlineResponse } from "../upstream-wire.ts";
 import { getString, isRecord } from "../utils.ts";
 
 export type ProviderStreamFrame = DeepSeekStreamFrame;
@@ -175,14 +175,13 @@ export const relayChatCompletionStream = (
     if (closed) return;
     closed = true;
     const detail = await readUpstreamStreamRefusal(refusal);
-    const origin = refusalResponseOrigin(refusal);
     // A wait the caller abandoned - a client cancellation, or the gateway's own
     // deadline - is not a provider refusal: it keeps its own terminal and emits
     // no error frame, exactly like a stream interrupted mid-read. An upstream
     // 504 is a refusal when the inference signal is still live. Explicit
     // provenance also covers a per-attempt gateway timeout while that signal
     // remains live, and prevents a late signal abort from hiding a provider 504.
-    if (detail.status === 499 || (detail.status === 504 && (origin === "gateway_deadline" || (origin === null && requestSignal.aborted)))) {
+    if (detail.status === 499 || isGatewayDeadlineResponse(refusal, requestSignal)) {
       settleTerminal(detail.status === 499 ? "cancelled" : "deadline");
       if (detail.status === 499) adapter.recordCancellation(usageContext);
       else adapter.recordTransportFailure(usageContext, new Error("The gateway deadline passed while waiting for the provider retry window."), "deadline");
@@ -452,12 +451,11 @@ export const relayResponsesStream = (
       return;
     }
     const detail = await readUpstreamStreamRefusal(refusal);
-    const origin = refusalResponseOrigin(refusal);
     // The caller's own cancellation or deadline keeps its terminal and emits no
     // error frame; only a provider refusal travels as one. An upstream 504 is a
     // refusal when the inference signal is still live. Explicit provenance also
     // distinguishes an attempt deadline from a provider response.
-    if (detail.status === 499 || (detail.status === 504 && (origin === "gateway_deadline" || (origin === null && requestSignal.aborted)))) {
+    if (detail.status === 499 || isGatewayDeadlineResponse(refusal, requestSignal)) {
       settleTerminal(detail.status === 499 ? "cancelled" : "deadline");
       if (detail.status === 499) adapter.recordCancellation(usageContext);
       else adapter.recordTransportFailure(usageContext, new Error("The gateway deadline passed while waiting for the provider retry window."), "deadline");

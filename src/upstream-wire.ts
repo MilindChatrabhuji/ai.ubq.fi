@@ -13,21 +13,31 @@ import { MeteredError } from "./provider/metered.ts";
 import { SurplusError } from "./provider/surplus.ts";
 import { type ResponseStreamTerminalType, type UpstreamProvider } from "./openai-telemetry.ts";
 
-type RefusalResponseOrigin = "gateway_deadline" | "upstream";
+const GATEWAY_DEADLINE_ORIGIN = "gateway_deadline";
+type RefusalResponseOrigin = typeof GATEWAY_DEADLINE_ORIGIN | "upstream";
 const refusalResponseOrigins = new WeakMap<Response, RefusalResponseOrigin>();
 
 /** Keep local-vs-provider refusal provenance out of the client-visible wire. */
-export const markGatewayDeadlineResponse = (response: Response): Response => {
-  refusalResponseOrigins.set(response, "gateway_deadline");
+const markGatewayDeadlineResponse = (response: Response): Response => {
+  refusalResponseOrigins.set(response, GATEWAY_DEADLINE_ORIGIN);
   return response;
 };
 
-export const markUpstreamRefusalResponse = (response: Response): Response => {
+const markUpstreamRefusalResponse = (response: Response): Response => {
   refusalResponseOrigins.set(response, "upstream");
   return response;
 };
 
-export const refusalResponseOrigin = (response: Response): RefusalResponseOrigin | null => refusalResponseOrigins.get(response) ?? null;
+/**
+ * A status-only 504 is still treated as a local deadline for an already
+ * aborted request, while an explicitly marked upstream refusal wins over a
+ * later abort of that signal.
+ */
+export const isGatewayDeadlineResponse = (response: Response, requestSignal: AbortSignal): boolean => {
+  if (response.status !== 504) return false;
+  const origin = refusalResponseOrigins.get(response);
+  return origin === GATEWAY_DEADLINE_ORIGIN || (origin === undefined && requestSignal.aborted);
+};
 
 export const formatErrorSnippet = (error: unknown, maxLen = 280): string => {
   const raw = error instanceof Error ? error.message : String(error);
