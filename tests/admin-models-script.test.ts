@@ -90,6 +90,22 @@ test("invalid admin tokens fail without appearing in output", async () => {
   }
 });
 
+test("request errors redact a valid admin token", async () => {
+  const token = "deploy-token";
+  const errors: string[] = [];
+  const result = await runAdminModels([], {
+    env: { BASE_URL: "https://ai.ubq.fi", DENO_DEPLOY_TOKEN: token },
+    fetcher: async () => {
+      throw new Error(`Header 'Authorization' has invalid value: 'Bearer ${token}'`);
+    },
+    log: () => undefined,
+    error: (message) => errors.push(message),
+  });
+  assert.equal(result, 1);
+  assert.equal(errors.join("\n").includes(token), false);
+  assert.match(errors.join("\n"), /Request failed/);
+});
+
 test("loopback requests add their hostname to NO_PROXY while fetching", async () => {
   const previousNoProxy = process.env.NO_PROXY;
   const previousLowerNoProxy = process.env.no_proxy;
