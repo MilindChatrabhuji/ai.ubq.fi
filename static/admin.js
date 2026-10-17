@@ -10087,7 +10087,11 @@ const updateProvidersStatus = () => {
   const total = providerRoster.length;
   const selected = providerSelection.size;
   const visibleCount = providersVisibleIds.size;
-  const visibleChecked = [...providersVisibleIds].filter((id) => providerSelection.has(id)).length;
+  // A narrowed Codex tier stores subscription ids, not `codex`, so its row is
+  // checked without being full: Uncheck shown counts every checked row, while
+  // Check shown stays enabled until each shown row is fully selected.
+  const visibleChecked = [...providersVisibleIds].filter((id) => isProviderChecked(id)).length;
+  const visibleFull = [...providersVisibleIds].filter((id) => providerSelection.has(id)).length;
   const unsaved = providersHasUnsavedChanges();
   const saving = providerSelectionSaving;
   const missingSelectionIds = providersMissingSelectionIds();
@@ -10134,7 +10138,7 @@ const updateProvidersStatus = () => {
 
   updateProviderTierFilterChips();
 
-  providersCheckAllBtn.disabled = saving || visibleCount === 0 || visibleChecked === visibleCount;
+  providersCheckAllBtn.disabled = saving || visibleCount === 0 || visibleFull === visibleCount;
   providersUncheckAllBtn.disabled = saving || visibleChecked === 0;
   providersInvertBtn.disabled = saving || visibleCount === 0;
   const scoped = providersFilterIsActive();
