@@ -113,7 +113,7 @@ export function isJevCompactionRequest(req: Request): boolean {
   // request take the ordinary provider route. Unset by default; a denied
   // environment read keeps the interception enabled.
   try {
-    if (Deno.env.get("JEV_COMPACTION_DISABLED") === "1") return false;
+    if (process.env.JEV_COMPACTION_DISABLED === "1") return false;
   } catch {
     // keep interception enabled
   }
@@ -457,7 +457,9 @@ function timedOutError(timeoutMs: number): Error {
  * every path. Transport failures are re-thrown with a fixed, non-secret
  * message.
  */
-export function createJevTimeoutFetch(baseFetch: typeof fetch, timeoutMs = JEV_TIMEOUT_MS): typeof fetch {
+type JevFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export function createJevTimeoutFetch(baseFetch: JevFetch, timeoutMs = JEV_TIMEOUT_MS): JevFetch {
   return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const controller = new AbortController();
     const external = init?.signal ?? null;
@@ -548,7 +550,7 @@ export type JevCompactionDeps = {
   /** Test seam: replaces the HTTP asker entirely. */
   asker?: JevAsker;
   /** Test seam: replaces the Jev transport fetch. */
-  fetch?: typeof fetch;
+  fetch?: JevFetch;
   /** Resolved provider credential seam; `null` forces the explicit missing-key failure. */
   apiKey?: string | null;
   /** Test seam: replaces the hybrid residue pass entirely. */
@@ -608,6 +610,12 @@ function resolveResidue(deps: JevCompactionDeps): CompactionResidue | undefined 
   return hybridResidueEnabled() ? runHybridResiduePass : undefined;
 }
 
+function unavailableAskerResponse(error: unknown): Response {
+  const kind = error instanceof CompactionUnavailable ? error.kind : "jev-failed";
+  logCompaction({ outcome: "failed", kind, detail: failureLogDetail(kind, error instanceof Error ? error.message : "") });
+  return failureResponse(kind);
+}
+
 /**
  * Handles one recognized compaction request end to end. The body is read only
  * here (the normal route is never parsed), Jev work is bounded by the caller
@@ -627,9 +635,7 @@ export async function handleJevResponsesCompaction(req: Request, deps: JevCompac
   try {
     asker = deps.asker ?? askerForTest ?? defaultAsker(deps);
   } catch (error) {
-    const kind = error instanceof CompactionUnavailable ? error.kind : "jev-failed";
-    logCompaction({ outcome: "failed", kind, detail: failureLogDetail(kind, error instanceof Error ? error.message : "") });
-    return failureResponse(kind);
+    return unavailableAskerResponse(error);
   }
   let outcome: CompactionOutcome;
   try {

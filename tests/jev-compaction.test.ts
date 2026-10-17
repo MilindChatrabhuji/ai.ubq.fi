@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   buildCompactionResponse,
@@ -80,7 +81,7 @@ const compactionRequest = (input: unknown[], stream = true, extraHeaders: Record
     body: JSON.stringify(body(input, stream)),
   });
 
-Deno.test("jev compaction predicate is header-only and exact", async () => {
+test("jev compaction predicate is header-only and exact", async () => {
   const unmarked = new Request("http://127.0.0.1:7999/v1/responses", { method: "POST", body: JSON.stringify(body(transcript())) });
   assert.equal(isJevCompactionRequest(unmarked), false);
   assert.equal(await unmarked.text(), JSON.stringify(body(transcript())), "an unmarked request body must stay unread");
@@ -103,7 +104,7 @@ Deno.test("jev compaction predicate is header-only and exact", async () => {
   assert.equal(await marked.text(), JSON.stringify(body(transcript())), "the predicate must not consume the body");
 });
 
-Deno.test("renderer applies Jev decisions verbatim and degrades dropped content to bounded provenance", async () => {
+test("renderer applies Jev decisions verbatim and degrades dropped content to bounded provenance", async () => {
   const verdicts = {
     t1: { keepCall: 0.1, keepResult: 0.1 },
     t2: { keepCall: 0.9, keepResult: 0.1 },
@@ -135,7 +136,7 @@ Deno.test("renderer applies Jev decisions verbatim and degrades dropped content 
   assert.ok((parsed.output?.[0]?.content?.[0]?.text ?? "").includes(KEPT_MARKER));
 });
 
-Deno.test("renderer marks kept calls and never rewrites kept text", () => {
+test("renderer marks kept calls and never rewrites kept text", () => {
   const parsed = parseCodexInput(transcript());
   assert.ok(parsed, "the synthetic transcript must parse");
   const calls = collectToolCalls(parsed.messages, 6);
@@ -163,7 +164,7 @@ const largeTranscript = (textChars: number, resultChars: number): unknown[] => {
   return input;
 };
 
-Deno.test("floor-bound summary ships for a roughly 1.5-million-token input that cannot shrink further", async () => {
+test("floor-bound summary ships for a roughly 1.5-million-token input that cannot shrink further", async () => {
   const verdicts = { t1: { keepCall: 0.1, keepResult: 0.1 } };
   const input = largeTranscript(5_100_000, 3_000_000);
   const requestTokens = estimateTokens(JSON.stringify(input));
@@ -177,7 +178,7 @@ Deno.test("floor-bound summary ships for a roughly 1.5-million-token input that 
   assert.match(outcome.headers["x-jev-compaction"] ?? "", /calls_dropped=1/);
 });
 
-Deno.test("a floor that is not measurably smaller than its input still fails closed", async () => {
+test("a floor that is not measurably smaller than its input still fails closed", async () => {
   const verdicts = { t1: { keepCall: 0.1, keepResult: 0.1 } };
   const input = largeTranscript(3_900_000, 250_000);
   await assert.rejects(
@@ -186,7 +187,7 @@ Deno.test("a floor that is not measurably smaller than its input still fails clo
   );
 });
 
-Deno.test("compaction fails closed on malformed input, no candidates and no reduction", async () => {
+test("compaction fails closed on malformed input, no candidates and no reduction", async () => {
   await assert.rejects(
     () => buildCompactionResponse({ model: "deepseek-flash" }, decisionAsker({}), { stream: true }),
     (error: unknown) => error instanceof CompactionUnavailable && error.kind === "missing-input"
@@ -202,7 +203,7 @@ Deno.test("compaction fails closed on malformed input, no candidates and no redu
   );
 });
 
-Deno.test("compaction fails closed on Jev error or a partial decision set", async () => {
+test("compaction fails closed on Jev error or a partial decision set", async () => {
   await assert.rejects(
     () => buildCompactionResponse(body(transcript()), throwAsker("Jev request failed (500): upstream"), { stream: true }),
     (error: unknown) => error instanceof CompactionUnavailable && error.kind === "jev-failed"
@@ -213,7 +214,7 @@ Deno.test("compaction fails closed on Jev error or a partial decision set", asyn
   );
 });
 
-Deno.test("compaction fails closed on an oversized summary", async () => {
+test("compaction fails closed on an oversized summary", async () => {
   const oversized = [
     text("user", `Goal: ${"x".repeat(SUMMARY_CHAR_CAP + 1_000)}`),
     call("old", "echo old"),
@@ -232,7 +233,7 @@ Deno.test("compaction fails closed on an oversized summary", async () => {
   );
 });
 
-Deno.test("compaction fits kept results under the cap by dropping the lowest relevance first", async () => {
+test("compaction fits kept results under the cap by dropping the lowest relevance first", async () => {
   const chunk = 360_000;
   const fitting = [
     text("user", "Goal: keep the release evidence."),
@@ -265,7 +266,7 @@ Deno.test("compaction fits kept results under the cap by dropping the lowest rel
   assert.ok(summary.includes("[tool result old_a — truncated"), "the lowest-relevance result must be fitted away");
 });
 
-Deno.test("windowed decisions keep local state when a long transcript degrades the global fit", async () => {
+test("windowed decisions keep local state when a long transcript degrades the global fit", async () => {
   const messages: Message[] = [];
   for (let index = 0; index < 400; index += 1) {
     messages.push({ role: "assistant", text: "", toolUses: [{ tool_use_id: `call_${index}`, tool: "exec_command", input: { cmd: `command ${index}` } }] });
@@ -290,7 +291,7 @@ Deno.test("windowed decisions keep local state when a long transcript degrades t
   }
 });
 
-Deno.test("short transcripts keep the single global state path", async () => {
+test("short transcripts keep the single global state path", async () => {
   const messages: Message[] = [
     { role: "user", text: "Goal.", toolUses: [] },
     { role: "assistant", text: "", toolUses: [{ tool_use_id: "call_a", tool: "exec_command", input: { cmd: "one" } }] },
@@ -311,7 +312,7 @@ Deno.test("short transcripts keep the single global state path", async () => {
   assert.equal(result.stats.stateStage, "full");
 });
 
-Deno.test("fitState drops the oldest merged call runs instead of failing on very long sessions", () => {
+test("fitState drops the oldest merged call runs instead of failing on very long sessions", () => {
   const messages: Message[] = [{ role: "user", text: "Goal: keep the current state.", toolUses: [] }];
   for (let index = 0; index < 400; index += 1) {
     messages.push({ role: "assistant", text: "", toolUses: [{ tool_use_id: `call_${index}`, tool: "exec_command", input: { cmd: `command ${index}` } }] });
@@ -324,7 +325,7 @@ Deno.test("fitState drops the oldest merged call runs instead of failing on very
   assert.equal(fitted.stage, "old call runs left out");
 });
 
-Deno.test("gateway handler fails closed without a credential and on caller cancellation", async () => {
+test("gateway handler fails closed without a credential and on caller cancellation", async () => {
   const missingKey = await handleJevResponsesCompaction(compactionRequest(transcript()), { apiKey: null });
   assert.equal(missingKey.status, 503);
   const failure = (await missingKey.json()) as { error: { code?: string; message?: string } };
@@ -337,7 +338,7 @@ Deno.test("gateway handler fails closed without a credential and on caller cance
   assert.equal(cancelledBody.error?.code, "request_cancelled");
 });
 
-Deno.test("gateway handler answers a marked request through the injected asker", async () => {
+test("gateway handler answers a marked request through the injected asker", async () => {
   const verdicts = { t1: { keepCall: 0.1, keepResult: 0.1 }, t2: { keepCall: 0.1, keepResult: 0.1 }, t3: { keepCall: 0.1, keepResult: 0.1 } };
   const response = await handleJevResponsesCompaction(compactionRequest(transcript()), { apiKey: "test-key", asker: decisionAsker(verdicts) });
   assert.equal(response.status, 200);
@@ -348,7 +349,7 @@ Deno.test("gateway handler answers a marked request through the injected asker",
   assert.ok(textBody.includes(KEPT_MARKER));
 });
 
-Deno.test("completion telemetry marks a local success without inventing usage", async () => {
+test("completion telemetry marks a local success without inventing usage", async () => {
   const verdicts = { t1: { keepCall: 0.1, keepResult: 0.1 } };
   const response = await handleJevResponsesCompaction(compactionRequest(transcript()), { apiKey: "test-key", asker: decisionAsker(verdicts) });
   assert.equal(response.status, 200);
@@ -373,7 +374,7 @@ Deno.test("completion telemetry marks a local success without inventing usage", 
   assert.equal(getResponseTelemetry(refused), null, "a failed compaction must not claim completion");
 });
 
-Deno.test("test asker seam routes a handler compaction through the injected asker", async () => {
+test("test asker seam routes a handler compaction through the injected asker", async () => {
   const verdicts = {
     t1: { keepCall: 0.1, keepResult: 0.1 },
     t2: { keepCall: 0.1, keepResult: 0.1 },
