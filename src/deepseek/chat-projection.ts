@@ -346,6 +346,9 @@ const appendMessageItem = (
   if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
     return failure("input.role", `input role '${role}' is not supported`);
   }
+  // A user turn starts a new reasoning scope; do not carry reasoning without a
+  // message across it to a later assistant or tool turn.
+  if (role === "user") pending.reasoning = "";
   const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
@@ -353,7 +356,6 @@ const appendMessageItem = (
     message.reasoning_content = pending.reasoning;
     pending.reasoning = "";
   }
-  if (role === "user") pending.reasoning = "";
   // DeepSeek, like OpenAI Chat, has no developer role.
   messages.push(message);
   return { ok: true, value: undefined };

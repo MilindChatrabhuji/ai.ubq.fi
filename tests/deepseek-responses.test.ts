@@ -489,6 +489,7 @@ test("deepseek responses: clears reasoning at a user-turn boundary", () => {
   );
   const reasoningItems = reasoningOnly.output as Record<string, unknown>[];
   assert.equal(reasoningItems.length, 1);
+  assert.deepEqual(reasoningItems.map((item) => item.type), ["reasoning"]);
   const body = toDeepSeekResponsesChatBody(
     { input: [...reasoningItems, { type: "message", role: "user", content: "new question" }, { type: "message", role: "assistant", content: "new answer" }] },
     "deepseek-flash",
