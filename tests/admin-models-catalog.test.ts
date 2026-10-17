@@ -792,6 +792,11 @@ test("the Providers tab renders a provider picker next to the Analytics tab", ()
   assert.match(adminHtml, /The waterfall order itself never changes/);
 });
 
+test("stale Codex subscriptions do not promise paid fallback", () => {
+  const routingWarnings = /const providersRoutingWarnings = \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(routingWarnings, /if \(!isProviderChecked\("codex"\) && missing\.length === 0\)/);
+});
+
 test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminHtml, /Each configured Codex subscription is selectable on its own/);
   assert.match(adminScript, /list\.dataset\.providerSubscriptions = ""/);
