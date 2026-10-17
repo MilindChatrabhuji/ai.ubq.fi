@@ -211,6 +211,28 @@ test("chat projection: tool call and tool result items round-trip", () => {
   assert.deepEqual(messagesOf([{ type: "function_call_output", output: "42" }]), []);
 });
 
+test("chat projection: merged tool calls retain intervening reasoning", () => {
+  assert.deepEqual(
+    messagesOf([
+      { type: "reasoning", summary: [{ type: "summary_text", text: "A" }] },
+      { type: "function_call", name: "first", arguments: "{}", call_id: "call_a" },
+      { type: "reasoning", summary: [{ type: "summary_text", text: "B" }] },
+      { type: "function_call", name: "second", arguments: "{}", call_id: "call_b" },
+    ]),
+    [
+      {
+        role: "assistant",
+        content: null,
+        reasoning_content: "AB",
+        tool_calls: [
+          { id: "call_a", type: "function", function: { name: "first", arguments: "{}" } },
+          { id: "call_b", type: "function", function: { name: "second", arguments: "{}" } },
+        ],
+      },
+    ]
+  );
+});
+
 test("chat projection: replayed reasoning is carried onto the following assistant turn", () => {
   // Both the summary and the content parts are read, and a direct text is appended.
   const carried = messagesOf([
