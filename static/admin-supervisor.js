@@ -156,7 +156,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     providersList.replaceChildren(item);
   };
 
-  const renderProviders = (selection, healthSnapshot) => {
+  const renderProviders = (selection, healthSnapshot, healthUnavailable = false) => {
     const entries = Array.isArray(selection?.data?.providers) ? selection.data.providers : [];
     if (entries.length === 0) {
       markProvidersUnavailable();
@@ -165,7 +165,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     const rows = entries.map((entry) => {
       const health =
         typeof entry?.health_key === "string" && entry.health_key ? healthSnapshot?.[entry.health_key] : null;
-      const configured = health ? health.configured !== false : entry.configured === true;
+      let configured = entry.configured === true;
+      if (health) configured = health.configured !== false;
+      else if (healthUnavailable) configured = entry.configured !== false;
       const state = health ? (typeof health.state === "string" ? health.state : health.health?.state) : null;
       const row = document.createElement("div");
       row.dataset.providerEntry = "";
@@ -183,9 +185,14 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       tier.textContent = entry.tier_label ?? entry.tier;
       const badge = document.createElement("span");
       badge.dataset.providerHealthBadge = configured ? (state ?? "unknown") : "unknown";
-      badge.textContent = configured
-        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.health?.stale === true })}`
-        : "Not configured";
+      if (!configured) badge.textContent = "Not configured";
+      else if (healthUnavailable) badge.textContent = "Health unknown · refresh failed";
+      else {
+        badge.textContent = `Health ${providerStateLabel({
+          state: state ?? "unknown",
+          stale: health?.health?.stale === true,
+        })}`;
+      }
       badges.append(tier, badge);
       body.append(name, badges);
       const detail = document.createElement("span");
@@ -240,6 +247,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
         return;
       }
       if (selection && healthSnapshot) renderProviders(selection, healthSnapshot);
+      else if (selection) renderProviders(selection, null, true);
       else markProvidersUnavailable();
     } catch {
       if (id !== providersLoadId || !active) return;
