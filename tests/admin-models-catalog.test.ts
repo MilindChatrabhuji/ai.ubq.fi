@@ -811,6 +811,8 @@ test("each Codex subscription is selectable under the Codex provider", () => {
 });
 
 test("provider serialization preserves a missing Codex subscription after Surplus is unchecked", () => {
+  const missingSelectionSource = /const providersMissingSelectionIds = \(\) => \{[\s\S]*?\n\};/.exec(adminScript)?.[0] ?? "";
+  assert.notEqual(missingSelectionSource, "", "missing provider selections must stay discoverable");
   const serializer = /const providersSelectedIds = \(\) => \{[\s\S]*?\n\};/.exec(adminScript)?.[0] ?? "";
   assert.notEqual(serializer, "", "the provider-selection serializer must stay discoverable");
 
@@ -830,18 +832,11 @@ test("provider serialization preserves a missing Codex subscription after Surplu
     providerSubscriptionSelected: (subscriptionId: string) =>
       providerSelection.has("codex") || providerSelection.has(subscriptionId),
     providersSelectionIsEmpty: () => providerSelection.size === 0,
-    providersMissingSelectionIds: () => {
-      const known = new Set([
-        ...providerRoster.filter((entry) => entry.selectable !== false).map((entry) => entry.id),
-        ...(providerRoster.find((entry) => entry.id === "codex")?.subscriptions ?? []).map((entry) => entry.id),
-      ]);
-      return [...providerSelection].filter((id) => !known.has(id)).sort();
-    },
   };
 
   // Model the staged edit: the saved missing subscription remains while Surplus is unchecked.
   providerSelection.delete("surplus");
-  runInNewContext(`${serializer}\nglobalThis.serialize = providersSelectedIds;`, context);
+  runInNewContext(`${missingSelectionSource}\n${serializer}\nglobalThis.serialize = providersSelectedIds;`, context);
 
   const runtime = context as typeof context & { serialize: () => string[] };
   assert.deepEqual([...runtime.serialize()], [removedSubscription]);
