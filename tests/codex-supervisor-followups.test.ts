@@ -78,6 +78,7 @@ test("follow retains a completed entry that falls outside a sampled update batch
   const second = selectFollowUpdates(completed, 0, revisions);
   assert.equal(second.length, FOLLOW_MAX_ENTRIES);
   assert.equal(second.some((entry) => entry.key === "turn-gap:c0"), false, "the completed entry is outside this oversized update batch");
+  assert.equal(revisions.get("turn-gap:c0"), followEntryRevision(partial[0]), "a dropped revision must remain uncommitted");
 
   const [delivered] = selectFollowUpdates(completed, count - 1, revisions);
   assert.ok(delivered);
