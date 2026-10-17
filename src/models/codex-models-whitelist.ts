@@ -1,9 +1,13 @@
 import type { Kv } from "#kv";
+import { DEEPSEEK_WATERFALL_LEGACY_MODEL_ID, DEEPSEEK_WATERFALL_MODEL_ID } from "../deepseek/waterfall.ts";
 import { getString, isRecord } from "../utils.ts";
 
 // ── KV key ───────────────────────────────────────────────────────────────────
 
 export const CODEX_MODELS_WHITELIST_KV_KEY = ["uos_ai", "codex_models_whitelist"] as const;
+
+/** Preserve a saved pre-rename synthetic selection across the versionless rename. */
+const canonicalWhitelistModelId = (id: string): string => (id === DEEPSEEK_WATERFALL_LEGACY_MODEL_ID ? DEEPSEEK_WATERFALL_MODEL_ID : id);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,7 +32,7 @@ export const normalizeCodexModelsWhitelist = (value: unknown): CodexModelsWhitel
     if (!id) return null;
     const trimmed = id.trim();
     if (!trimmed) return null;
-    modelIds.push(trimmed);
+    modelIds.push(canonicalWhitelistModelId(trimmed));
   }
   if (typeof value.updated_at_ms !== "number" || !Number.isSafeInteger(value.updated_at_ms) || value.updated_at_ms <= 0) return null;
   return { model_ids: modelIds, updated_at_ms: value.updated_at_ms };
@@ -48,9 +52,10 @@ export const normalizeWhitelistModelIds = (rawIds: readonly unknown[]): string[]
     const id = getString(raw);
     if (!id) continue;
     const trimmed = id.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    modelIds.push(trimmed);
+    const modelId = canonicalWhitelistModelId(trimmed);
+    if (!modelId || seen.has(modelId)) continue;
+    seen.add(modelId);
+    modelIds.push(modelId);
   }
   return modelIds;
 };
