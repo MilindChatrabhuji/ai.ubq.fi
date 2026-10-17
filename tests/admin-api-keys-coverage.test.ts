@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/admin-auth-harness.ts";
 // Coverage suite for the admin API key mutation handlers, the API key create/list handlers,
 // and the Sentinel incident index admin route.
 
@@ -148,7 +152,10 @@ const removeSeededReservations = (key: SeededKey): void => {
   }
 };
 
-Deno.test("admin API key update rejects every malformed field and non-strict records", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("admin API key update rejects every malformed field and non-strict records", async () => {
   kvStore.clear();
   const key = seedApiKey();
 
@@ -199,7 +206,7 @@ Deno.test("admin API key update rejects every malformed field and non-strict rec
   assert.equal(storedRecord(key).name, "Renamed");
 });
 
-Deno.test("admin API key update answers a no-op patch from the live V3 aggregate", async () => {
+test("admin API key update answers a no-op patch from the live V3 aggregate", async () => {
   kvStore.clear();
   const key = seedApiKey();
   seedUsageWindow(key, 3);
@@ -216,7 +223,7 @@ Deno.test("admin API key update answers a no-op patch from the live V3 aggregate
   assert.equal(storedRecord(key).name, "Coverage key");
 });
 
-Deno.test("admin API key update fails closed on a broken quota ledger and reports commit conflicts", async () => {
+test("admin API key update fails closed on a broken quota ledger and reports commit conflicts", async () => {
   kvStore.clear();
   const key = seedApiKey();
   // The reclaim pass only collects a policy from a valid expired reservation; the
@@ -248,7 +255,7 @@ Deno.test("admin API key update fails closed on a broken quota ledger and report
   assert.equal(storedRecord(unmigrated).name, "Coverage key");
 });
 
-Deno.test("admin API key revoke validates input, preserves the first revocation and reports conflicts", async () => {
+test("admin API key revoke validates input, preserves the first revocation and reports conflicts", async () => {
   kvStore.clear();
   const invalidJson = await handleAdminApiKeysRevoke(adminRequest("/admin/api-keys/revoke", "{"));
   assert.equal(invalidJson.status, 400);
@@ -295,7 +302,7 @@ Deno.test("admin API key revoke validates input, preserves the first revocation 
   assert.equal(storedRecord(racing).revoked_at_ms, null);
 });
 
-Deno.test("admin API key unrevoke validates input, honors the deletion guard and clears revocation", async () => {
+test("admin API key unrevoke validates input, honors the deletion guard and clears revocation", async () => {
   kvStore.clear();
   const invalidJson = await handleAdminApiKeysUnrevoke(adminRequest("/admin/api-keys/unrevoke", "{"));
   assert.equal(invalidJson.status, 400);
@@ -347,7 +354,7 @@ Deno.test("admin API key unrevoke validates input, honors the deletion guard and
   assert.equal(storedRecord(racing).revoked_at_ms, racing.record.revoked_at_ms);
 });
 
-Deno.test("admin API key delete validates state and fails closed when paid fallback state cannot be read", async () => {
+test("admin API key delete validates state and fails closed when paid fallback state cannot be read", async () => {
   kvStore.clear();
   const invalidJson = await handleAdminApiKeysDelete(adminRequest("/admin/api-keys", "{", "DELETE"));
   assert.equal(invalidJson.status, 400);
@@ -393,15 +400,10 @@ Deno.test("admin API key delete validates state and fails closed when paid fallb
   assert.equal(kvStore.has(keyToString([...KEY_HASH_PREFIX, broken.hash])), false);
 });
 
-Deno.test("admin API key handlers report a missing KV store", async () => {
+test("admin API key handlers report a missing KV store", async () => {
   kvStore.clear();
   const key = seedApiKey();
-  // setKvForTest(null) alone is not enough: getKv() then falls back to
-  // Deno.openKv, which this harness stubs with an in-memory store. Deny the open
-  // call as well so the handlers really observe an unavailable KV.
-  const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
-  const originalOpenKv = denoWithKv.openKv;
-  denoWithKv.openKv = () => Promise.reject(new Error("kv unavailable"));
+  // The explicit null fixture prevents disk fallback and makes KV unavailable.
   setKvForTest(null);
   try {
     const cases = [
@@ -419,14 +421,13 @@ Deno.test("admin API key handlers report a missing KV store", async () => {
       assert.match((await payloadOf(response)).error?.message ?? "", /Deno KV is not available/);
     }
   } finally {
-    denoWithKv.openKv = originalOpenKv;
     setKvForTest(kvStub);
   }
   const restored = await handleAdminApiKeysUpdate(adminRequest("/admin/api-keys", { id: key.id, name: "Restored" }));
   assert.equal(restored.status, 200);
 });
 
-Deno.test("admin API key create validates its fields and reports persistence failures", async () => {
+test("admin API key create validates its fields and reports persistence failures", async () => {
   kvStore.clear();
   const invalidJson = await handleAdminApiKeysCreate(adminRequest("/admin/api-keys", "{"));
   assert.equal(invalidJson.status, 400);
@@ -468,7 +469,7 @@ Deno.test("admin API key create validates its fields and reports persistence fai
   assert.equal((await payloadOf(failed)).error?.message, "Failed to persist API key");
 });
 
-Deno.test("retired API-key banked reset settings are rejected without mutation", async () => {
+test("retired API-key banked reset settings are rejected without mutation", async () => {
   kvStore.clear();
 
   const created = await handleAdminApiKeysCreate(adminRequest("/admin/api-keys", { name: "Retired setting", banked_resets_enabled: false }));
@@ -484,10 +485,10 @@ Deno.test("retired API-key banked reset settings are rejected without mutation",
   assert.deepEqual(storedRecord(key), before);
 });
 
-Deno.test("admin API key create reports an unusable Metered pricing response", async () => {
+test("admin API key create reports an unusable Metered pricing response", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.reject(new Error("metered pricing is unreachable"));
+  globalThis.fetch = createFetchMock(() => Promise.reject(new Error("metered pricing is unreachable")));
   try {
     // Without a paid provider credential the initialization fails before any
     // metadata request, which is the closed behavior the create route reports.
@@ -509,8 +510,8 @@ Deno.test("admin API key create reports an unusable Metered pricing response", a
 
   // A configured paid provider with no initialized Codex model catalog also
   // fails closed instead of storing an enabled key with no priced models.
-  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-coverage-key");
+  const originalMeteredKey = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-coverage-key";
   try {
     const response = await handleAdminApiKeysCreate(
       adminRequest("/admin/api-keys", { name: "No catalog", paid_fallback_enabled: true, paid_fallback_limit_credits: 5 })
@@ -520,12 +521,12 @@ Deno.test("admin API key create reports an unusable Metered pricing response", a
     assert.equal(payload.error?.code, "metered_pricing_invalid");
     assert.match(payload.error.message ?? "", /Codex model catalog is initialized/);
   } finally {
-    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalMeteredKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalMeteredKey;
   }
 });
 
-Deno.test("admin API key paid fallback history validates the key id and limit", async () => {
+test("admin API key paid fallback history validates the key id and limit", async () => {
   kvStore.clear();
   const key = seedApiKey();
   const blank = await handleAdminApiKeysPaidFallbacks(new Request("https://ai.ubq.fi/admin/api-keys/%20/paid-fallbacks"), " ");
@@ -549,26 +550,26 @@ Deno.test("admin API key paid fallback history validates the key id and limit", 
   assert.deepEqual(await listed.json(), { object: "list", data: [] });
 });
 
-Deno.test("admin API key paid fallback history reports a ledger read failure", async () => {
+test("admin API key paid fallback history reports a ledger read failure", async () => {
   kvStore.clear();
   const failingKv = {
     get: () => Promise.resolve({ key: [], value: { id: "broken" }, versionstamp: "00000000000000000001" }),
     list: () => {
       throw new Error("ledger unavailable");
     },
-  } as unknown as Deno.Kv;
+  } as unknown as Kv;
   const response = await handleAdminApiKeysPaidFallbacks(new Request("https://ai.ubq.fi/admin/api-keys/broken/paid-fallbacks"), "broken", failingKv);
   assert.equal(response.status, 500);
   assert.equal((await payloadOf(response)).error?.message, "Failed to load paid fallbacks");
 });
 
-Deno.test("estimateJsonSize reports non-serializable values as null", () => {
+test("estimateJsonSize reports non-serializable values as null", () => {
   // Byte length of the UTF-8 JSON text {"model_ids":["gpt-5"]}.
   assert.equal(estimateJsonSize({ model_ids: ["gpt-5"] }), 23);
   assert.equal(estimateJsonSize({ value: 1n }), null);
 });
 
-Deno.test("Sentinel incident index rejects malformed pagination and unknown query keys", async () => {
+test("Sentinel incident index rejects malformed pagination and unknown query keys", async () => {
   const unavailableIndex = () => Promise.reject(new Error("must not be reached"));
   const cases = [
     "https://ai.ubq.fi/admin/sentinel/incidents?limit=0",
@@ -601,7 +602,7 @@ Deno.test("Sentinel incident index rejects malformed pagination and unknown quer
   assert.deepEqual(seen, [{ incidentId: undefined, limit: 20, cursor: undefined }]);
 });
 
-Deno.test("Sentinel incident index fails closed when its storage or reader is unavailable", async () => {
+test("Sentinel incident index fails closed when its storage or reader is unavailable", async () => {
   const noKv = await handleAdminSentinelIncidents(new Request("https://ai.ubq.fi/admin/sentinel/incidents?limit=1"), { getKv: () => Promise.resolve(null) });
   assert.equal(noKv.status, 503);
   assert.equal((await payloadOf(noKv)).error?.code, "sentinel_incidents_unavailable");
@@ -630,7 +631,7 @@ const sentinelRow = (overrides: Partial<SentinelIncidentIndexRow> = {}): Sentine
   ...overrides,
 });
 
-Deno.test("Sentinel incident index projects rows onto the frozen wire contract", async () => {
+test("Sentinel incident index projects rows onto the frozen wire contract", async () => {
   const relied: { rows: SentinelIncidentIndexRow[]; cursor: string | null } = { rows: [sentinelRow()], cursor: "next-page" };
   const response = await handleAdminSentinelIncidents(
     new Request("https://ai.ubq.fi/admin/sentinel/incidents?limit=5&cursor=abc&incident_id=provider-2f1c4a4e-5b6d-4c7e-8f90-1a2b3c4d5e6f"),
@@ -690,7 +691,7 @@ Deno.test("Sentinel incident index projects rows onto the frozen wire contract",
   assert.equal(classPayload.data[1]?.provenance.endpoint, "https://ai.ubq.fi/");
 });
 
-Deno.test("Sentinel incident index rejects an unvalidated evidence reference", async () => {
+test("Sentinel incident index rejects an unvalidated evidence reference", async () => {
   const response = await handleAdminSentinelIncidents(new Request("https://ai.ubq.fi/admin/sentinel/incidents"), {
     listSentinelIncidentIndexRows: () => Promise.resolve({ rows: [sentinelRow({ evidence_ref: { ref: "https://evil.test/1", digest: null } })], cursor: null }),
   });
@@ -698,7 +699,7 @@ Deno.test("Sentinel incident index rejects an unvalidated evidence reference", a
   assert.equal((await payloadOf(response)).error?.code, "sentinel_incidents_unavailable");
 });
 
-Deno.test("Sentinel incident index reads the durable KV index through its default dependencies", async () => {
+test("Sentinel incident index reads the durable KV index through its default dependencies", async () => {
   kvStore.clear();
   // The KV-backed reader validates the canonical row shape, which carries an
   // empty context sample.

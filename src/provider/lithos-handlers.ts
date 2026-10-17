@@ -26,9 +26,9 @@ import {
 } from "./lithos-streams.ts";
 import { isRecord } from "../utils.ts";
 import {
-  ResponseStreamTerminalType,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type UsageContext,
+  type UsageTokens,
   extractChatUsageTokens,
   recordAttemptedProvider,
   recordCompletionUsage,
@@ -315,6 +315,7 @@ const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Respon
       downstreamSignal: input.downstreamSignal,
     };
   }
+  recordLithosFailoverModel(input.usageContext, servedModel === input.modelRaw ? null : servedModel);
   return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal, servedModel };
 };
 
@@ -405,9 +406,7 @@ const lithosDispatchPass = async (
     attempt: progressed.attempt,
     ...lithosRateLimitSnapshot(attempt.headers),
   });
-  const noRetryModels = lithosRetryProhibited(attempt.headers)
-    ? new Set([...progressed.noRetryModels, progressed.attemptModel])
-    : progressed.noRetryModels;
+  const noRetryModels = lithosRetryProhibited(attempt.headers) ? new Set([...progressed.noRetryModels, progressed.attemptModel]) : progressed.noRetryModels;
   const eligible = { ...progressed, noRetryModels };
   // A refusal with a window deepens later requests to the next eligible ladder
   // tier; the target is re-derived per refusal, so fast refusing deepens it to

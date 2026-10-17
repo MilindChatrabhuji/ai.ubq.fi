@@ -1,3 +1,4 @@
+import type { KvKey } from "#kv";
 // Codex Responses execution helpers, split out of src/codex.ts.
 
 import { ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
@@ -29,7 +30,8 @@ import {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
-  CodexAuthAccountEntry,
+  CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE,
+  type CodexAuthAccountEntry,
   CodexError,
   codexAuthWarningForError,
   codexRoutingErrors,
@@ -43,10 +45,10 @@ import {
 } from "./auth.ts";
 import { awaitWithoutCancellingSharedWork, getValidAuth, refreshAuthCoordinated, sameCodexCredentials } from "./auth-refresh.ts";
 import {
-  CodexBankedResetConfig,
-  CodexBankedResetDependencies,
-  CodexBankedResetEvent,
-  CodexBankedResetTelemetryFields,
+  type CodexBankedResetConfig,
+  type CodexBankedResetDependencies,
+  type CodexBankedResetEvent,
+  type CodexBankedResetTelemetryFields,
   loadCodexBankedResetConfig,
   reportCodexBankedResetEvent,
 } from "./banked-reset.ts";
@@ -55,9 +57,10 @@ import { createUpstreamCodexUsageResetProvider } from "./banked-reset-provider.t
 import { reconcileCodexBankedReset } from "./banked-reset-submission.ts";
 import {
   CodexActiveAccountFenceError,
-  CodexAttemptPhase,
-  CodexBankedResetCandidate,
+  type CodexAttemptPhase,
+  type CodexBankedResetCandidate,
   CodexBankedResetRetryFenceError,
+  cancelResponseBody,
   codexErrorClass,
   codexStatusClass,
   fetchCodexResponseWithAuth,
@@ -73,17 +76,17 @@ import {
   parseCodexAccountRoutingState,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
   CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
-  CodexAccountRoutingState,
-  CodexActiveAccountSnapshot,
-  CodexBlockedRoutingAccount,
-  RoutingAccount,
+  type CodexAccountRoutingState,
+  type CodexActiveAccountSnapshot,
+  type CodexBlockedRoutingAccount,
+  type RoutingAccount,
   isCodexActiveAccountSelectionCurrent,
 } from "./routing-state.ts";
 import { config } from "../config.ts";
 import { getKv } from "../kv.ts";
 import { recordProviderCapacityResetEvent, triggerProviderCapacitySample } from "../provider/capacity-events.ts";
-import { SentinelUpstreamRecorder } from "../sentinel/upstream-capture.ts";
-import { CodexAuthState } from "../types.ts";
+import { type SentinelUpstreamRecorder } from "../sentinel/upstream-capture.ts";
+import { type CodexAuthState } from "../types.ts";
 import { sha256Hex } from "../utils.ts";
 import type {
   CodexResetCohortSnapshot,
@@ -92,6 +95,23 @@ import type {
   PendingOverageFallback,
   PreexistingBankedReset,
 } from "./responses-state.ts";
+
+const hasExhaustedBlockedCohort = (
+  pool: Awaited<ReturnType<typeof selectCodexRoutingAccountsStrong>>
+): pool is Extract<Awaited<ReturnType<typeof selectCodexRoutingAccountsStrong>>, { kind: "quota_blocked" }> =>
+  pool.kind === "quota_blocked" && pool.fullCohortExhausted && pool.blockedAccounts.length > 0;
+
+const observedCapacityResetDeadline = (
+  observation: Awaited<ReturnType<typeof loadCodexCapacityRoutingObservations>>[number] | undefined,
+  requestedModel: string | null,
+  nowMs: number
+): number | null => {
+  if (observation?.state !== "available") return null;
+  if (!capacityObservationIsFresh(observation, nowMs)) return null;
+  if (capacityHeadroomForObservation(observation, requestedModel) !== 0) return null;
+  const resetAtMs = observation.windows.primary?.reset_at_ms ?? null;
+  return resetAtMs === null || !Number.isSafeInteger(resetAtMs) || resetAtMs <= nowMs ? null : resetAtMs;
+};
 
 /** Outcomes whose reason proves no banked reset could be redeemed this episode. */
 const OVERAGE_FALLBACK_REASONS: ReadonlySet<string> = new Set([
@@ -187,10 +207,35 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     }
   });
 
-  const quotaBlockedOrRetryableResponse = (ctx.quotaBlockedOrRetryableResponse = async (retryAtMs: number | null = null): Promise<Response> =>
-    (await ctx.freshFullCohortExhaustedProof())
-      ? routingErrorResponse(429, "All configured Codex accounts are quota-blocked; retry after their next reset.", CODEX_QUOTA_BLOCKED_ERROR_CODE, retryAtMs)
-      : routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable", retryAtMs));
+  const freshFullCohortUnavailableProof = (ctx.freshFullCohortUnavailableProof = async (): Promise<boolean> => {
+    try {
+      const currentPoolEntry = await getAuthPoolEntry(true, true);
+      const currentSelection = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
+      return (currentSelection.kind === "quota_blocked" || currentSelection.kind === "credentials_invalid") && currentSelection.fullCohortUnavailable === true;
+    } catch {
+      return false;
+    }
+  });
+
+  const subscriptionsUnavailableResponse = (): Response =>
+    routingErrorResponse(
+      503,
+      "No Codex subscription can serve the requested model: quota is exhausted or current credentials are invalid.",
+      CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE
+    );
+
+  const quotaBlockedOrRetryableResponse = (ctx.quotaBlockedOrRetryableResponse = async (retryAtMs: number | null = null): Promise<Response> => {
+    if (await ctx.freshFullCohortExhaustedProof()) {
+      return routingErrorResponse(
+        429,
+        "All configured Codex accounts are quota-blocked; retry after their next reset.",
+        CODEX_QUOTA_BLOCKED_ERROR_CODE,
+        retryAtMs
+      );
+    }
+    if (await ctx.freshFullCohortUnavailableProof()) return subscriptionsUnavailableResponse();
+    return routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable", retryAtMs);
+  });
 
   const authFailureResponse = (ctx.authFailureResponse = (error: CodexError | null): Response => {
     const response = routingErrorResponse(
@@ -277,7 +322,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     }
   });
 
-  const exactValueFence = (ctx.exactValueFence = (key: Deno.KvKey, expectedJson: string) => ({
+  const exactValueFence = (ctx.exactValueFence = (key: KvKey, expectedJson: string) => ({
     key,
     isCurrent: (value: unknown): boolean => JSON.stringify(value ?? null) === expectedJson,
   }));
@@ -463,13 +508,11 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
           const blockedClass = quotaClass(ctx.requestedModel ?? null);
           const currentSlot = existing?.slots.at(slot);
           const currentBlock = currentSlot ? quotaBlockForClass(withLegacyQuotaClassMap(currentSlot), blockedClass) : null;
-          if (currentBlock !== null && currentBlock.blocked_until_ms > nowMs) continue;
+          const blockedUntilMs = currentBlock?.blocked_until_ms;
+          if (blockedUntilMs !== undefined && blockedUntilMs > nowMs) continue;
           const observation = observations.find((candidate) => candidate.account_id_hash === identity.accountIdHash);
-          if (!observation || observation.state !== "available") continue;
-          if (!capacityObservationIsFresh(observation, nowMs)) continue;
-          if (capacityHeadroomForObservation(observation, ctx.requestedModel) !== 0) continue;
-          const resetAtMs = observation.windows.primary?.reset_at_ms ?? null;
-          if (resetAtMs === null || !Number.isSafeInteger(resetAtMs) || resetAtMs <= nowMs) continue;
+          const resetAtMs = observedCapacityResetDeadline(observation, ctx.requestedModel, nowMs);
+          if (resetAtMs === null) continue;
           const account: RoutingAccount = {
             auth,
             slot,
@@ -498,7 +541,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
       return wrote;
     };
     let routedPool = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
-    if (routedPool.kind === "quota_blocked" && routedPool.fullCohortExhausted && routedPool.blockedAccounts.length) {
+    if (hasExhaustedBlockedCohort(routedPool)) {
       const materialized = await materializeCapacityQuotaBlocks();
       if (materialized) {
         routedPool = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
@@ -521,7 +564,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     if (!blockedAccounts.length) {
       await materializeCapacityQuotaBlocks();
       const refreshed = await selectCodexRoutingAccountsStrong(currentPoolEntry.pool, currentPoolEntry.pool.accounts, Date.now(), ctx.requestedModel);
-      if (refreshed.kind === "quota_blocked" && refreshed.fullCohortExhausted && refreshed.blockedAccounts.length) {
+      if (hasExhaustedBlockedCohort(refreshed)) {
         routedPool = refreshed;
         blockedAccounts = refreshed.blockedAccounts;
       } else {
@@ -804,9 +847,18 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     return disposition.response;
   });
 
-  const authorizePaidFallbackForCompleteQuotaEvidence = (ctx.authorizePaidFallbackForCompleteQuotaEvidence = async (response: Response): Promise<Response> => {
+  const authorizePaidFallbackForCompleteCapacityEvidence = (ctx.authorizePaidFallbackForCompleteCapacityEvidence = async (
+    response: Response
+  ): Promise<Response> => {
     if (response.status === 429 && (await ctx.freshFullCohortExhaustedProof())) {
       codexRoutingErrors.set(response, CODEX_QUOTA_BLOCKED_ERROR_CODE);
+    } else if ((response.status === 401 || response.status === 429) && (await ctx.freshFullCohortUnavailableProof())) {
+      if (response.status === 401) {
+        codexRoutingErrors.set(response, CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE);
+        return response;
+      }
+      cancelResponseBody(response);
+      return ctx.decorateAuthWarning(subscriptionsUnavailableResponse());
     }
     return response;
   });
@@ -843,6 +895,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     noteCodexAuthFailure,
     decorateAuthWarning,
     freshFullCohortExhaustedProof,
+    freshFullCohortUnavailableProof,
     quotaBlockedOrRetryableResponse,
     authFailureResponse,
     ensureActiveRoutingAdmissionCurrent,
@@ -867,7 +920,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
     fetchAttempt,
     refreshAfter401,
     classify429,
-    authorizePaidFallbackForCompleteQuotaEvidence,
+    authorizePaidFallbackForCompleteCapacityEvidence,
     persistVerifiedCapacityReset,
   });
 };

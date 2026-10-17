@@ -20,11 +20,11 @@ import { type PreparedResponsesStream, prepareResponsesStreamForCommit } from ".
 import { getString, isRecord } from "../utils.ts";
 import type { ChatCompletionRequest, MessageContentItem, ResponseInputItem } from "../types.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
+  type UsageTokens,
   attachResponseTelemetry,
   classifyPreHeaderFailure,
   classifyStreamFailure,
@@ -45,7 +45,7 @@ import {
   streamErrorResponse,
   streamPreflightFailureResponse,
   supportsReasoningProgressRelease,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "../openai-telemetry.ts";
 import { normalizeChatMessage, normalizeModelForCodex, validatePromptCacheControls } from "../input-normalization.ts";
 import {
@@ -56,9 +56,9 @@ import {
 } from "./stream-translation.ts";
 import { logRedactedUpstreamError, toOpenAiUpstreamErrorResponse, toPreHeaderErrorResponse } from "../upstream-wire.ts";
 import {
-  CodexModelMetadata,
-  CodexModelReasoning,
-  PassthroughToolSchemaKey,
+  type CodexModelMetadata,
+  type CodexModelReasoning,
+  type PassthroughToolSchemaKey,
   applyPassthroughToCodexRequest,
   buildIgnoredWarnings,
   getCodexModelMetadata,

@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 // Kernel quota v2 reservations and settlement, split out of src/kernel_quota_v2.ts.
 
 import { openaiError } from "../http.ts";
@@ -14,16 +15,16 @@ import {
   KERNEL_QUOTA_SETTLEMENT_RETRY_MS,
   KERNEL_REPO_RESERVATION_V2_PREFIX,
   KERNEL_REPO_WINDOW_V2_PREFIX,
-  KernelDefaultWindowCutoverDecision,
-  KernelDefaultWindowCutoverGuard,
-  KernelDefaultWindowCutoverV2,
-  KernelQuotaPolicyStateDecision,
-  KernelQuotaPolicyV2,
-  KernelQuotaReservation,
-  KernelQuotaReservationDecision,
-  KernelQuotaReservationRowV2,
-  KernelQuotaScope,
-  KernelQuotaWindowV2,
+  type KernelDefaultWindowCutoverDecision,
+  type KernelDefaultWindowCutoverGuard,
+  type KernelDefaultWindowCutoverV2,
+  type KernelQuotaPolicyStateDecision,
+  type KernelQuotaPolicyV2,
+  type KernelQuotaReservation,
+  type KernelQuotaReservationDecision,
+  type KernelQuotaReservationRowV2,
+  type KernelQuotaScope,
+  type KernelQuotaWindowV2,
   MAX_KV_RETRIES,
   hasLiveKernelReservations,
   kernelOrgPolicyKey,
@@ -49,15 +50,15 @@ const kernelQuotaUnavailable = (message = "Kernel quota is unavailable"): Kernel
 });
 
 const readKernelQuotaPolicyState = async (
-  kv: Deno.Kv,
+  kv: Kv,
   owner: string,
   repo: string
 ): Promise<
   Readonly<{
     limit_scope: KernelQuotaScope;
     has_policy: boolean;
-    repo_entry: Deno.KvEntryMaybe<KernelQuotaPolicyV2>;
-    org_entry: Deno.KvEntryMaybe<KernelQuotaPolicyV2>;
+    repo_entry: KvEntryMaybe<KernelQuotaPolicyV2>;
+    org_entry: KvEntryMaybe<KernelQuotaPolicyV2>;
   }>
 > => {
   const [repoEntry, orgEntry] = await Promise.all([
@@ -84,7 +85,7 @@ const readKernelQuotaPolicyState = async (
 export const resolveKernelQuotaPolicyState = async (
   owner: string,
   repo: string,
-  options: Readonly<{ kv?: Deno.Kv | null }> = {}
+  options: Readonly<{ kv?: Kv | null }> = {}
 ): Promise<KernelQuotaPolicyStateDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -100,12 +101,12 @@ export const resolveKernelQuotaPolicyState = async (
 const kernelReservationRetentionMs = (windowResetAtMs: number, nowMs: number): number =>
   Math.max(1, windowResetAtMs + KERNEL_QUOTA_RESERVATION_RETENTION_MS - nowMs);
 
-const kernelReservationKey = (scope: KernelQuotaScope, owner: string, repo: string | undefined, windowCreatedAtMs: number, requestId: string): Deno.KvKey =>
+const kernelReservationKey = (scope: KernelQuotaScope, owner: string, repo: string | undefined, windowCreatedAtMs: number, requestId: string): KvKey =>
   scope === "repo"
     ? kernelRepoReservationKey(owner, kernelRepoPart(repo), windowCreatedAtMs, requestId)
     : kernelOrgReservationKey(owner, windowCreatedAtMs, requestId);
 
-const kernelReservationWindowPrefix = (scope: KernelQuotaScope, owner: string, repo: string | undefined, windowCreatedAtMs: number): Deno.KvKey =>
+const kernelReservationWindowPrefix = (scope: KernelQuotaScope, owner: string, repo: string | undefined, windowCreatedAtMs: number): KvKey =>
   scope === "repo"
     ? [...KERNEL_REPO_RESERVATION_V2_PREFIX, owner, kernelRepoPart(repo), windowCreatedAtMs]
     : [...KERNEL_ORG_RESERVATION_V2_PREFIX, owner, windowCreatedAtMs];
@@ -161,7 +162,7 @@ const kernelReservationMatchesRequest = (
  * disagrees with the listing is malformed rather than merely unknown.
  */
 const requireKernelReservationRow = (
-  key: Deno.KvKey,
+  key: KvKey,
   value: unknown,
   scope: KernelQuotaScope,
   owner: string,
@@ -183,8 +184,8 @@ const requireKernelReservationRow = (
  * update the same window atomically, while lease-only row updates do not.
  */
 export const reconcileKernelQuotaWindowReservations = async (
-  kv: Deno.Kv,
-  entry: Deno.KvEntryMaybe<KernelQuotaWindowV2>,
+  kv: Kv,
+  entry: KvEntryMaybe<KernelQuotaWindowV2>,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined
@@ -256,7 +257,7 @@ const settledKernelReservationRow = (
       };
 
 const recordKernelReservationTerminalIntentUnlocked = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -293,7 +294,7 @@ const recordKernelReservationTerminalIntentUnlocked = async (
  * was written, null when it was already settled, "retry" on a lost compare-and-set.
  */
 const attemptRecordKernelReservationTerminalIntent = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -314,7 +315,7 @@ const attemptRecordKernelReservationTerminalIntent = async (
 };
 
 const recordKernelReservationTerminalIntent = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -347,7 +348,7 @@ const recordKernelReservationTerminalIntent = async (
   });
 
 const settleKernelReservationUnlocked = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -397,7 +398,7 @@ const settleKernelReservationUnlocked = async (
 };
 
 const settleKernelReservation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -427,7 +428,7 @@ const settleKernelReservation = async (
 };
 
 const renewKernelReservation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -479,7 +480,7 @@ type KernelQuotaTimerSlots = {
 };
 
 const kernelReservationContext = (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -615,7 +616,7 @@ const kernelReservationContext = (
  * every attempt loses its compare-and-set the caller moves on to the next row.
  */
 const settleExpiredKernelReservation = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -645,7 +646,7 @@ const settleExpiredKernelReservation = async (
 };
 
 const reclaimExpiredKernelReservationUnlocked = async (
-  kv: Deno.Kv,
+  kv: Kv,
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
@@ -680,11 +681,7 @@ const normalizeKernelDefaultWindowCutoverV2 = (value: unknown): KernelDefaultWin
 };
 
 /** Owner and repo encoded in a listed window key, validated against the scope. */
-const kernelWindowScopeTarget = (
-  scope: KernelQuotaScope,
-  key: Deno.KvKey,
-  prefix: readonly string[]
-): Readonly<{ owner: string; repo: string | undefined }> => {
+const kernelWindowScopeTarget = (scope: KernelQuotaScope, key: KvKey, prefix: readonly string[]): Readonly<{ owner: string; repo: string | undefined }> => {
   const ownerPart = key[prefix.length];
   if (typeof ownerPart !== "string" || !ownerPart) throw new Error("Kernel quota window key is malformed");
   const repoPart = key[prefix.length + 1];
@@ -694,7 +691,7 @@ const kernelWindowScopeTarget = (
 };
 
 /** True when the scope has an explicit policy, which supersedes the defaults. */
-const kernelScopeHasPolicy = async (kv: Deno.Kv, scope: KernelQuotaScope, owner: string, repo: string | undefined): Promise<boolean> => {
+const kernelScopeHasPolicy = async (kv: Kv, scope: KernelQuotaScope, owner: string, repo: string | undefined): Promise<boolean> => {
   const policyEntry = await kv.get<KernelQuotaPolicyV2>(kernelScopedPolicyKey(scope, owner, repo), { consistency: "strong" });
   if (policyEntry.value === null) return false;
   if (!normalizeKernelQuotaPolicyV2(policyEntry.value, scope, owner, repo)) {
@@ -704,7 +701,7 @@ const kernelScopeHasPolicy = async (kv: Deno.Kv, scope: KernelQuotaScope, owner:
 };
 
 /** True when the scope window holds reservations that have not yet expired. */
-const kernelWindowHasLiveReservations = async (kv: Deno.Kv, scope: KernelQuotaScope, owner: string, repo: string | undefined): Promise<boolean> => {
+const kernelWindowHasLiveReservations = async (kv: Kv, scope: KernelQuotaScope, owner: string, repo: string | undefined): Promise<boolean> => {
   const windowKey = kernelScopedWindowKey(scope, owner, repo);
   for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
     const nowMs = Date.now();
@@ -717,7 +714,7 @@ const kernelWindowHasLiveReservations = async (kv: Deno.Kv, scope: KernelQuotaSc
   throw new Error("Kernel quota reservations changed concurrently");
 };
 
-const hasLiveDefaultBackedKernelReservations = async (kv: Deno.Kv): Promise<boolean> => {
+const hasLiveDefaultBackedKernelReservations = async (kv: Kv): Promise<boolean> => {
   for (const scope of ["repo", "org"] as const) {
     const prefix = scope === "repo" ? KERNEL_REPO_WINDOW_V2_PREFIX : KERNEL_ORG_WINDOW_V2_PREFIX;
     for await (const listedEntry of kv.list<KernelQuotaWindowV2>({ prefix }, { consistency: "strong" })) {
@@ -732,7 +729,7 @@ const hasLiveDefaultBackedKernelReservations = async (kv: Deno.Kv): Promise<bool
   return false;
 };
 
-export const releaseKernelDefaultWindowCutover = async (kv: Deno.Kv, guard: KernelDefaultWindowCutoverGuard): Promise<void> => {
+export const releaseKernelDefaultWindowCutover = async (kv: Kv, guard: KernelDefaultWindowCutoverGuard): Promise<void> => {
   try {
     await kv.atomic().check(guard.entry).delete(guard.key).commit();
   } catch (error) {
@@ -741,9 +738,9 @@ export const releaseKernelDefaultWindowCutover = async (kv: Deno.Kv, guard: Kern
 };
 
 export const acquireKernelDefaultWindowCutover = async (
-  kv: Deno.Kv,
-  expectedLimitEntry: Deno.KvEntryMaybe<number>,
-  expectedWindowEntry: Deno.KvEntryMaybe<number>
+  kv: Kv,
+  expectedLimitEntry: KvEntryMaybe<number>,
+  expectedWindowEntry: KvEntryMaybe<number>
 ): Promise<KernelDefaultWindowCutoverDecision> => {
   let guard: KernelDefaultWindowCutoverGuard | null = null;
   try {
@@ -780,7 +777,7 @@ export const acquireKernelDefaultWindowCutover = async (
     }
     guard = {
       key: KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY,
-      entry: acquiredEntry as Deno.KvEntry<KernelDefaultWindowCutoverV2>,
+      entry: acquiredEntry as KvEntry<KernelDefaultWindowCutoverV2>,
     };
     if (await hasLiveDefaultBackedKernelReservations(kv)) {
       await releaseKernelDefaultWindowCutover(kv, guard);

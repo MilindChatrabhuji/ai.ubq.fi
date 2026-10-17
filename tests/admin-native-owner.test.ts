@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import handler from "../src/handler/index.ts";
 import { config } from "../src/config.ts";
@@ -49,7 +52,7 @@ const fixture = async (
   let forbiddenCalls = 0;
   let nativeReads = 0;
   let nativeRefreshes = 0;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (!url.pathname.endsWith("/models")) {
       forbiddenCalls += 1;
@@ -59,7 +62,7 @@ const fixture = async (
     return Promise.resolve(
       new Response(JSON.stringify({ models: [{ slug: "gpt-6.1-sol", display_name: "Validated model" }] }), { headers: { "Content-Type": "application/json" } })
     );
-  };
+  });
   setNativeCodexAuthHooksForTest({
     codexHome: "/synthetic/uos791",
     readAuth: () => {
@@ -71,7 +74,7 @@ const fixture = async (
       return Promise.reject(new Error("Native refreshes are forbidden"));
     },
   });
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   resetRuntimeConfigCacheForTest();
   cacheCodexAuthPool(pool);
@@ -107,7 +110,7 @@ const fixture = async (
 };
 
 for (const malformedOwner of [false, true]) {
-  Deno.test(`authenticated native-owner upload returns ${malformedOwner ? 503 : 409} without replacing state`, async () => {
+  test(`authenticated native-owner upload returns ${malformedOwner ? 503 : 409} without replacing state`, async () => {
     await fixture(malformedOwner, async ({ kv, pool, upload }) => {
       const unauthorized = await upload(auth("native-account", 3), false);
       assert.equal(unauthorized.status, 401);
@@ -132,7 +135,7 @@ for (const malformedOwner of [false, true]) {
   });
 }
 
-Deno.test("authenticated equal-token upload retains native ownership and the sibling", async () => {
+test("authenticated equal-token upload retains native ownership and the sibling", async () => {
   await fixture(false, async ({ kv, pool, upload }) => {
     const response = await upload(pool.accounts[0]);
     assert.equal(response.status, 200);
@@ -144,11 +147,11 @@ Deno.test("authenticated equal-token upload retains native ownership and the sib
   });
 });
 
-Deno.test("authenticated upload still propagates unknown persistence errors", async () => {
+test("authenticated upload still propagates unknown persistence errors", async () => {
   await fixture(false, async ({ kv, upload }) => {
     const failure = new Error("synthetic storage failure");
     const originalGet = kv.get.bind(kv);
-    kv.get = <T>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> => (key === CODEX_AUTH_POOL_KV_KEY ? Promise.reject(failure) : originalGet<T>(key));
+    kv.get = <T>(key: KvKey): Promise<KvEntryMaybe<T>> => (key === CODEX_AUTH_POOL_KV_KEY ? Promise.reject(failure) : originalGet<T>(key));
     await assert.rejects(upload(auth("native-account", 3)), (error: unknown) => error === failure);
   });
 });

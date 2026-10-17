@@ -8,8 +8,8 @@
  * and which ids does nothing describe?
  *
  * Usage:
- *   deno task models:coverage
- *   deno task models:coverage -- --base-url=http://127.0.0.1:8000
+ *   bun run models:coverage
+ *   bun run models:coverage -- --base-url=http://127.0.0.1:8000
  *
  * It reads the live catalog over HTTP and the OpenRouter payload directly, and it
  * reuses the gateway's own matcher for the "could enrichment close this gap?"
@@ -117,7 +117,7 @@ const readBaseUrl = (args: readonly string[]): string => {
   const fromArgs = argValue(args, "base-url");
   if (fromArgs) return withoutTrailingSlash(fromArgs);
   try {
-    return withoutTrailingSlash(Deno.env.get("BASE_URL") ?? DEFAULT_BASE_URL);
+    return withoutTrailingSlash(process.env.BASE_URL ?? DEFAULT_BASE_URL);
   } catch {
     return DEFAULT_BASE_URL;
   }
@@ -136,7 +136,7 @@ const table = (rows: readonly (readonly string[])[], widths: readonly number[]):
   );
 
 const main = async (): Promise<void> => {
-  const baseUrl = readBaseUrl(Deno.args);
+  const baseUrl = readBaseUrl(process.argv.slice(2));
   const [catalogPayload, openRouterPayload] = await Promise.all([fetchJson(`${baseUrl}/uos/models/catalog`), fetchJson(OPENROUTER_MODELS_URL)]);
   const catalog = parseCatalog(catalogPayload);
   if (!catalog) throw new Error("the catalog response was not a uos.model_catalog payload");
