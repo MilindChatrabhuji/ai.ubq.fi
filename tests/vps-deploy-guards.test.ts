@@ -19,6 +19,8 @@ const FIXTURE_PARENT = fileURLToPath(new URL("../.cleanup-evidence/vps-deploy-gu
 const CHILD_TIMEOUT_MS = 30_000;
 const PREFLIGHT_TIMEOUT_MS = 15_000;
 const FIXTURE_IDENTITY = { name: "vps-deploy-guards-fixture", email: "vps-deploy-guards-fixture@example.invalid" } as const;
+const SUPPORTED_LEGACY_LAUNCHER = await readFile(new URL("./fixtures/vps-legacy-launcher.txt", import.meta.url), "utf8");
+const SUPPORTED_LEGACY_UNIT = await readFile(new URL("./fixtures/vps-legacy-unit.txt", import.meta.url), "utf8");
 
 // Every dedicated profile executes its fixture capabilities; no availability skips.
 const fixtureHostPath = process.env.PATH ?? "/usr/bin:/bin";
@@ -233,7 +235,7 @@ const hash = async (b: Uint8Array): Promise<string> =>
     .join("");
 const calls = async (f: Fixture): Promise<string[]> => (await readFile(f.root + "/.data/trace", "utf8")).trim().split("\n");
 // `bootstrap` is a first deployment: no earlier release, selector or listener exists.
-type Profile = "current" | "unknown" | "env-port" | "legacy" | "bootstrap";
+type Profile = "current" | "unknown" | "env-port" | "legacy" | "legacy-supported" | "bootstrap";
 type Active = { options: DeployOptions; sha: string; oldSha: string; publicHealth: () => Promise<Response> };
 const write = (root: string, path: string, source: string): Promise<void> => writeFile(root + "/" + path, source);
 const archivePrevious = async (f: Fixture, sha: string, preparePayload: VpsPayloadPreparation): Promise<void> => {
@@ -290,6 +292,10 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       '// Keep the database and secrets in the repository root across code updates.\nconst root = new URL("../", import.meta.url);\nDeno.chdir(root);\n// Resolve the symlink once: static assets and lazy imports must stay on this release.\nconst releasePath = await Deno.realPath(new URL(".data/current", root));\nconst release = new URL(`file://${releasePath}/`);\nconst { config, runtimeGitSha } = await import(new URL("src/config.ts", release).href);\nconst { initializeKv } = await import(new URL("src/kv.ts", release).href);\nif (config.isDeploy) throw new Error("The VPS entrypoint cannot run in Deno Deploy");\nif (!config.adminTokens.size) throw new Error("DENO_DEPLOY_TOKEN must configure administrator authentication");\nif (Deno.env.get("DENO_TIMELINE") !== "production") throw new Error("The VPS service requires the production timeline");\n\nconst gitSha = runtimeGitSha();\nif (!/^[0-9a-f]{40}$/.test(gitSha) || !releasePath.endsWith(`/releases/${gitSha}`)) {\n  throw new Error("The immutable release does not match its Git identity");\n}\n\nconst database = new URL(".data/kv.sqlite3", root);\nif (!(await Deno.stat(database)).isFile) {\n  throw new Error("Migrate the production KV database before starting the service");\n}\nconst kv = await Deno.openKv(database.pathname);\ninitializeKv(kv);\n\nconst { default: handler } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");\nconst server = Deno.serve({ hostname: "127.0.0.1", port: 8001, onListen: handler.onListen }, handler.fetch);\nlet stopping = false;\nconst shutdown = () => {\n  if (stopping) return;\n  stopping = true;\n  console.log("[ai.ubq.fi] Draining requests before shutdown");\n  void server.shutdown();\n};\nDeno.addSignalListener("SIGTERM", shutdown);\nDeno.addSignalListener("SIGINT", shutdown);\nconsole.log(`[ai.ubq.fi] VPS serving Git revision ${gitSha}`);\nawait server.finished;\nkv.close();\nDeno.exit(0);\n';
     assert.equal(await hash(new TextEncoder().encode(oldLauncher)), "fde18debbfe01ba17716d34d0e8de2415ec92de75b7d9e3804e4e5cdb627e8ea");
   }
+  if (profile === "legacy-supported") {
+    oldLauncher = SUPPORTED_LEGACY_LAUNCHER.replace("port: 7999", "port: 8001");
+    assert.equal(await hash(new TextEncoder().encode(oldLauncher)), "043e36ae688bdcff5d6f8d78ef9f9830fbe27920fa2d0381fe3de638fdbda1cc");
+  }
   await write(root, "scripts/serve-vps.ts", oldLauncher);
   await write(
     root,
@@ -319,6 +325,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   await copyOps(root + "/ops");
   for (const name of ["launch-service.ts", "launch-vps.sh"])
     await write(root, "ops/" + name, await readFile(new URL("../ops/" + name, import.meta.url), "utf8"));
+  if (profile === "legacy-supported") await write(root, "ops/ai-ubq-fi.service", SUPPORTED_LEGACY_UNIT);
   await writePackage(root, { "#kv": "./src/storage/kv.ts", "#http": "./fixture-http.ts" });
   await write(
     root,
@@ -347,6 +354,10 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       stderr: "piped",
     });
     assert.equal(link.code, 0, decode(link.stderr));
+    if (profile === "legacy-supported") {
+      await write(root, "ops/ai-ubq-fi.service", await readFile(new URL("../ops/ai-ubq-fi.service", import.meta.url), "utf8"));
+      await runFixtureGit(f.root, f.env, ["add", "--", "ops/ai-ubq-fi.service"]);
+    }
   }
   const fixtureKv = await openKv(root + "/.data/kv-bun.sqlite3");
   await fixtureKv.set(["fixture"], "positive");
@@ -553,12 +564,13 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   // ports, so the release ports can now be handed to the real children.
   await closeReservations();
   try {
-    if (profile !== "bootstrap") await start(profile === "legacy");
+    if (profile !== "bootstrap") await start(profile === "legacy" || profile === "legacy-supported");
   } catch (error) {
     await f.dispose();
     throw error;
   }
   const prefix = "#!/bin/sh\nset -eu\nfixture_root=" + quote(root) + "\nfixture_log=" + quote(root + "/.data/trace") + "\n";
+  // activate saves candidate_ready immediately before invoking this reload command.
   const scripts = {
     cc: prefix + 'PATH=/usr/bin:/bin exec /usr/bin/cc "$@"\n',
     git:
@@ -578,7 +590,9 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
         ' "-n systemctl restart ai-ubq-fi.service") exec ' +
           quote(process.execPath) +
           ' --no-env-file --no-install "$fixture_root/control-client.ts" restart ;;',
-        ' "-n systemctl reload caddy") exec ' + quote(process.execPath) + ' --no-env-file --no-install "$fixture_root/control-client.ts" reload ;;',
+        ' "-n systemctl reload caddy") if [ -f "$fixture_root/stop-after-candidate-ready" ]; then rm "$fixture_root/stop-after-candidate-ready"; kill -TERM "$PPID"; exit 143; fi; exec ' +
+          quote(process.execPath) +
+          ' --no-env-file --no-install "$fixture_root/control-client.ts" reload ;;',
         ' *) printf "unexpected fixture sudo arguments\\n" >&2; exit 74 ;;',
         "esac",
       ].join("\n") +
@@ -696,6 +710,7 @@ const snapshot = async (root: string): Promise<string> => {
   await walk(root);
   return hash(new TextEncoder().encode(JSON.stringify(entries)));
 };
+const recoveryPhase = async (f: Fixture): Promise<unknown> => JSON.parse(await readFile(f.root + "/.data/deploy-recovery.json", "utf8")).phase;
 const withLauncher = (name: string, run: (f: Fixture, active: Active) => Promise<void>, profile: Profile = "current"): void => {
   test(name, async () => {
     const f = await createFixture({ branch: "development", tracking: "match", relocate: true });
@@ -743,6 +758,44 @@ withLauncher("VPS actual rollback and persistent/cleared same-SHA retry preserve
   assert.equal(trace.filter((line) => line === RESTART_COMMAND).length, 5);
   console.log(JSON.stringify({ proof: "same_sha_actual_recovery", candidate: a.sha, previous: a.oldSha, snapshot: saved, trace }));
 });
+withLauncher("VPS same-SHA retry restores the previous release after an interrupted candidate-ready run", async (f, a) => {
+  await write(f.root, "stop-after-candidate-ready", "fault\n");
+  const interrupted = await runDeployFixture(f, a.options);
+  assert.notEqual(interrupted.code, 0);
+  assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+  assert.equal(await recoveryPhase(f), "candidate_ready");
+
+  const before = (await calls(f)).filter((line) => line === RESTART_COMMAND).length;
+  await write(f.root, "reload-refused", "fault\n");
+  const retry = await runDeployFixture(f, a.options);
+  assert.notEqual(retry.code, 0);
+  assert.match(retry.stderr, /fixture reload refused/);
+  assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, before + 1);
+  assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.oldSha);
+  assert.equal(await identity(await a.publicHealth()), a.oldSha);
+  assert.equal(await recoveryPhase(f), "rolled_back");
+
+  await rm(f.root + "/reload-refused");
+  const accepted = await runDeployFixture(f, a.options);
+  assert.equal(accepted.code, 0, accepted.stderr);
+  assert.equal(await identity(await a.publicHealth()), a.sha);
+  assert.equal(await pathExists(f.root + "/.data/deploy-recovery.json"), false);
+});
+withLauncher("VPS legacy same-SHA retry refuses cross-codec rollback after an interrupted candidate-ready run", async (f, a) => {
+  await write(f.root, "stop-after-candidate-ready", "fault\n");
+  const interrupted = await runDeployFixture(f, a.options);
+  assert.notEqual(interrupted.code, 0);
+  assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+  assert.equal(await recoveryPhase(f), "candidate_ready");
+
+  await write(f.root, "reload-refused", "fault\n");
+  const retry = await runDeployFixture(f, a.options);
+  assert.notEqual(retry.code, 0);
+  assert.match(retry.stderr, /Cross-codec rollback/);
+  assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+  assert.equal(await recoveryPhase(f), "candidate_ready");
+  assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, 1);
+}, "legacy-supported");
 withLauncher("VPS post-ingress failure retains candidate and retries without restart", async (f, a) => {
   await write(f.root, "public-refused", "fault\n");
   const first = await runDeployFixture(f, a.options);
@@ -904,7 +957,6 @@ withLauncher("VPS selected immutable release retries without restart and refuses
   assert.match(refused.stderr, /not ready/);
   assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, 1);
 });
-const recoveryPhase = async (f: Fixture): Promise<unknown> => JSON.parse(await readFile(f.root + "/.data/deploy-recovery.json", "utf8")).phase;
 const assertUnaccepted = (run: FixtureRun, error: RegExp): void => {
   assert.notEqual(run.code, 0);
   assert.match(run.stderr, error);
