@@ -164,3 +164,127 @@ test("re-pinning records the new revision and then gates the runtime against it"
   assert.match(errors.join("\n"), /extra locally: /);
   assert.equal(await runSpecDriftCheck(["--repin", "not-a-commit"], { log: () => undefined, error: () => undefined }), 2);
 });
+
+const quiet = { log: () => undefined, error: () => undefined };
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+};
+
+test("CI verifies the pin against its commit-addressed official source, not only against the repository copy", async () => {
+  const workflow = await Bun.file(new URL("../.github/workflows/deno-deploy.yml", import.meta.url)).text();
+  const driftRuns = workflow
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("run:") && line.includes("spec:drift"))
+    .map((line) => line.slice("run:".length).trim());
+  assert.deepEqual(driftRuns, ["bun --no-env-file --no-install run spec:drift --verify-source"]);
+});
+
+test("fetching the pinned source retries a transient failure, then verifies what it received", async () => {
+  const attempts: string[] = [];
+  const delays: number[] = [];
+  globalThis.fetch = Object.assign(
+    (input: RequestInfo | URL): Promise<Response> => {
+      attempts.push(requestUrl(input));
+      if (attempts.length === 1) return Promise.reject(new TypeError("fetch failed: connection reset"));
+      if (attempts.length === 2) return Promise.resolve(new Response("busy", { status: 503, statusText: "Service Unavailable" }));
+      return Promise.resolve(new Response(SYNTHETIC_SPEC, { status: 200 }));
+    },
+    { preconnect: originalFetch.preconnect }
+  );
+  const errors: string[] = [];
+  const exitCode = await runSpecDriftCheck(["--verify-source"], {
+    sleep: (milliseconds) => {
+      delays.push(milliseconds);
+      return Promise.resolve();
+    },
+    log: () => undefined,
+    error: (line) => errors.push(line),
+  });
+  const pin = await readOpenAiSpecPin();
+  assert.deepEqual(attempts, [pin.source, pin.source, pin.source]);
+  assert.equal(delays.length, 2);
+  // The synthetic document is not the pinned revision, so the third, successful fetch is refused on its digest.
+  assert.equal(exitCode, 1);
+  assert.match(errors.join("\n"), /digest mismatch/);
+});
+
+test("fetching the pinned source gives up after bounded attempts and does not retry a permanent refusal", async () => {
+  let attempts = 0;
+  globalThis.fetch = Object.assign(
+    (): Promise<Response> => {
+      attempts += 1;
+      return Promise.reject(new TypeError("fetch failed: network unreachable"));
+    },
+    { preconnect: originalFetch.preconnect }
+  );
+  const sleep = (): Promise<void> => Promise.resolve();
+  await assert.rejects(runSpecDriftCheck(["--verify-source"], { ...quiet, sleep }), /network unreachable/);
+  assert.equal(attempts, 3);
+
+  attempts = 0;
+  globalThis.fetch = Object.assign(
+    (): Promise<Response> => {
+      attempts += 1;
+      return Promise.resolve(new Response("missing", { status: 404, statusText: "Not Found" }));
+    },
+    { preconnect: originalFetch.preconnect }
+  );
+  await assert.rejects(runSpecDriftCheck(["--verify-source"], { ...quiet, sleep }), /404 Not Found/);
+  assert.equal(attempts, 1);
+});
+
+test("a malformed invocation is a usage error, never a silent fall back to the offline gate", async () => {
+  forbidNetwork();
+  const invocations: readonly (readonly string[])[] = [
+    ["verify-source"],
+    ["--spec"],
+    ["--spec="],
+    ["--spec", "--verify-source"],
+    ["--repin"],
+    ["--verify-source=yes"],
+    ["--verify-source", "--verify-source"],
+    ["--spec", "a.yaml", "--spec", "b.yaml"],
+    ["--spec", "copy.yaml", "--verify-source"],
+    ["--unknown"],
+  ];
+  for (const args of invocations) {
+    const errors: string[] = [];
+    const read: string[] = [];
+    const exitCode = await runSpecDriftCheck(args, {
+      readSpec: (location) => {
+        read.push(location);
+        return Promise.resolve(SYNTHETIC_SPEC);
+      },
+      log: () => undefined,
+      error: (line) => errors.push(line),
+    });
+    assert.equal(exitCode, 2, `${JSON.stringify(args)} must be a usage error`);
+    assert.ok(errors.length > 0, `${JSON.stringify(args)} must say what is wrong`);
+    assert.deepEqual(read, [], `${JSON.stringify(args)} must not read a specification`);
+  }
+});
+
+test("re-pinning reads only the commit's own source, so a local file cannot be recorded under the official URL", async () => {
+  forbidNetwork();
+  let written: OpenAiSpecPin | null = null;
+  const read: string[] = [];
+  const errors: string[] = [];
+  const exitCode = await runSpecDriftCheck(["--repin", COMMIT, "--spec", "local-edit.yaml"], {
+    readSpec: (location) => {
+      read.push(location);
+      return Promise.resolve(SYNTHETIC_SPEC);
+    },
+    writePin: (pin) => {
+      written = pin;
+      return Promise.resolve();
+    },
+    log: () => undefined,
+    error: (line) => errors.push(line),
+  });
+  assert.equal(exitCode, 2);
+  assert.deepEqual(read, []);
+  assert.equal(written, null);
+  assert.match(errors.join("\n"), /--repin/);
+});
