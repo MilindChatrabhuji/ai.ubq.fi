@@ -31,10 +31,14 @@ export const isTrustedAuthRelayClientOrigin = (value) => {
   try {
     const url = new URL(String(value ?? ""));
     const hostname = url.hostname.toLowerCase();
-    return url.protocol === "https:" && !url.port && url.origin === String(value ?? "").replace(/\/+$/g, "") &&
+    return (
+      url.protocol === "https:" &&
+      !url.port &&
+      url.origin === String(value ?? "").replace(/\/+$/g, "") &&
       (hostname === "ai-ubq-fi.deno.dev" ||
         new RegExp(`^ai-ubq-fi-${DENO_PREVIEW_SUFFIX}\\.deno\\.dev$`).test(hostname) ||
-        isTrustedDenoApplicationHost(hostname));
+        isTrustedDenoApplicationHost(hostname))
+    );
   } catch {
     return false;
   }

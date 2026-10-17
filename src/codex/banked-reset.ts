@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 import { readCodexResetUsage as readBankedResetUsage } from "./reset-settings.ts";
 import {
   type CodexUsageResetProvider,
@@ -25,18 +26,18 @@ export const CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS = 30_000;
 export const CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS = 5_000;
 const MAX_CAS_ATTEMPTS = 4;
 
-export const codexResetRedemptionKey = (accountIdHash: string, quotaGeneration: string): Deno.KvKey => [
+export const codexResetRedemptionKey = (accountIdHash: string, quotaGeneration: string): KvKey => [
   ...CODEX_RESET_REDEMPTION_KV_PREFIX,
   accountIdHash,
   quotaGeneration,
 ];
 
 /** Retained for rollback and audit only; never enforced after the per-account cutover. */
-export const codexResetGlobalDailyKey = (day: string): Deno.KvKey => [...CODEX_RESET_GLOBAL_DAILY_KV_PREFIX, day];
+export const codexResetGlobalDailyKey = (day: string): KvKey => [...CODEX_RESET_GLOBAL_DAILY_KV_PREFIX, day];
 
-export const codexResetAccountDailyKey = (accountIdHash: string, day: string): Deno.KvKey => [...CODEX_RESET_ACCOUNT_DAILY_KV_PREFIX, accountIdHash, day];
+export const codexResetAccountDailyKey = (accountIdHash: string, day: string): KvKey => [...CODEX_RESET_ACCOUNT_DAILY_KV_PREFIX, accountIdHash, day];
 
-export const codexResetShadowDecisionKey = (episodeHash: string): Deno.KvKey => [...CODEX_RESET_SHADOW_DECISION_KV_PREFIX, episodeHash];
+export const codexResetShadowDecisionKey = (episodeHash: string): KvKey => [...CODEX_RESET_SHADOW_DECISION_KV_PREFIX, episodeHash];
 
 export type CodexBankedResetMode = "disabled" | "shadow" | "live";
 
@@ -49,7 +50,7 @@ export type CodexBankedResetConfig = Readonly<{
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }
@@ -104,9 +105,9 @@ export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => parseCod
  * caller. Reset settings are owned by the account, never by an API key.
  */
 const readUsageGate = async (
-  kv: Deno.Kv,
+  kv: Kv,
   accountIdHash: string
-): Promise<Readonly<{ kind: "allowed"; entries: readonly Deno.KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "failure"; code: string }>> => {
+): Promise<Readonly<{ kind: "allowed"; entries: readonly KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "failure"; code: string }>> => {
   let usage: Awaited<ReturnType<typeof readBankedResetUsage>>;
   try {
     usage = await readBankedResetUsage(kv, accountIdHash);
@@ -193,7 +194,7 @@ export type CodexBankedResetCandidate = Readonly<{
 }>;
 
 export type CodexBankedResetFence = Readonly<{
-  key: Deno.KvKey;
+  key: KvKey;
   isCurrent: (value: unknown) => boolean;
 }>;
 
@@ -203,7 +204,7 @@ export type CodexBankedResetDependencies = Readonly<{
   reloadConfig?: () => CodexBankedResetConfig;
   provider: CodexUsageResetProvider;
   /** `undefined` uses the production KV accessor; explicit null fails closed. */
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   now?: () => number;
   newOwnerToken?: () => string;
   hash?: (value: string) => Promise<string>;

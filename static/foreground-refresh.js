@@ -10,15 +10,13 @@
 /**
  * @param {() => void} refresh
  * @param {ForegroundRefreshOptions} [options]
+ * @returns {() => void}
  */
 export const bindForegroundRefresh = (
   refresh,
-  {
-    windowTarget = globalThis,
-    documentTarget = globalThis.document,
-    delayMs = 100,
-  } = {},
+  { windowTarget = globalThis, documentTarget = globalThis.document, delayMs = 100 } = {}
 ) => {
+  /** @type {ReturnType<typeof setTimeout> | null} */
   let timer = null;
 
   /** @param {Event} event */

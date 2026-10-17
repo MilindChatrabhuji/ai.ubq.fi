@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 // Codex-catalog wiring for the OpenRouter upstream: its served catalogue
 // contributes rows to the versioned catalog before the operator whitelist, so
 // an id the operator enabled keeps the upstream's snapshot metadata while a row
@@ -14,23 +17,23 @@ const fetchUrl = (input: RequestInfo | URL): string => {
   return input.url;
 };
 
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyToString = (key: KvKey): string => JSON.stringify(key);
 const kvStore = new Map<string, { value: unknown; versionstamp: string }>();
 let versionCounter = 0;
 const nextVersion = (): string => String(++versionCounter).padStart(20, "0");
-const entryFor = (key: Deno.KvKey): Deno.KvEntryMaybe<unknown> => {
+const entryFor = (key: KvKey): KvEntryMaybe<unknown> => {
   const stored = kvStore.get(keyToString(key));
   return stored ? { key, value: stored.value, versionstamp: stored.versionstamp } : { key, value: null, versionstamp: null };
 };
 
 /** Minimal Deno.Kv stand-in: the catalog paths read, write and checkpoint keys. */
 const kvStub = {
-  get: (key: Deno.KvKey) => Promise.resolve(entryFor(key)),
-  set: (key: Deno.KvKey, value: unknown) => {
+  get: (key: KvKey) => Promise.resolve(entryFor(key)),
+  set: (key: KvKey, value: unknown) => {
     kvStore.set(keyToString(key), { value, versionstamp: nextVersion() });
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
@@ -38,21 +41,21 @@ const kvStub = {
     // The catalog paths never list KV in this test; the empty iteration keeps
     // the stub's async-iterator shape without inventing entries.
     await Promise.resolve();
-    for (const entry of [] as Deno.KvEntry<unknown>[]) yield entry;
+    for (const entry of [] as KvEntry<unknown>[]) yield entry;
   },
   atomic: () => {
-    const checks: Deno.KvEntryMaybe<unknown>[] = [];
-    const ops: { key: Deno.KvKey; value?: unknown; remove?: boolean }[] = [];
+    const checks: KvEntryMaybe<unknown>[] = [];
+    const ops: { key: KvKey; value?: unknown; remove?: boolean }[] = [];
     const chain = {
-      check: (entry: Deno.KvEntryMaybe<unknown>) => {
+      check: (entry: KvEntryMaybe<unknown>) => {
         checks.push(entry);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         ops.push({ key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ key, remove: true });
         return chain;
       },
@@ -69,7 +72,7 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
+} as unknown as Kv;
 
 const { handleCodexCatalogModels } = await import("../src/catalog/index.ts");
 const { buildDeepSeekWaterfallCodexRecord } = await import("../src/catalog/models.ts");
@@ -111,14 +114,14 @@ const PROVIDER_KEY_ENVS = ["DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "CEREBRAS_API
 
 /** Run with every ambient provider credential cleared, then restore it. */
 const withoutProviderKeys = async (run: () => Promise<void>): Promise<void> => {
-  const saved = PROVIDER_KEY_ENVS.map((name) => [name, Deno.env.get(name)] as const);
-  for (const [name] of saved) Deno.env.delete(name);
+  const saved = PROVIDER_KEY_ENVS.map((name) => [name, process.env[name]] as const);
+  for (const [name] of saved) Reflect.deleteProperty(process.env, name);
   try {
     await run();
   } finally {
     for (const [name, value] of saved) {
-      if (value === undefined) Deno.env.delete(name);
-      else Deno.env.set(name, value);
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
+      else process.env[name] = value;
     }
   }
 };
@@ -145,19 +148,18 @@ const servedCatalogue = async (): Promise<void> => {
 };
 
 /** The upstream Codex catalog for a version: one id the operator could enable and one hidden id. */
-const upstreamCodexCatalogFetch =
-  (): typeof fetch =>
-  (input): Promise<Response> => {
+const upstreamCodexCatalogFetch = (): typeof fetch =>
+  createFetchMock((input: RequestInfo | URL): Promise<Response> => {
     const version = new URL(fetchUrl(input)).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(
       Response.json({ models: [{ slug: `gpt-${version}` }, { slug: `hidden-${version}` }] }, { headers: { "Content-Type": "application/json" } })
     );
-  };
+  });
 
 /** Seed KV, the served catalogue and the OpenRouter credential, then run one case. */
 const withFixture = async (whitelistModelIds: readonly string[], run: () => Promise<void>): Promise<void> => {
-  const originalKey = Deno.env.get("OPENROUTER_API_KEY");
-  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+  const originalKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "fixture-openrouter-key";
   resetOpenRouterModelsCacheForTest();
   try {
     await withoutProviderKeys(async () => {
@@ -170,8 +172,8 @@ const withFixture = async (whitelistModelIds: readonly string[], run: () => Prom
     resetOpenRouterModelsCacheForTest();
     resetProviderSelectionCacheForTest();
     resetRuntimeConfigCacheForTest();
-    if (originalKey === undefined) Deno.env.delete("OPENROUTER_API_KEY");
-    else Deno.env.set("OPENROUTER_API_KEY", originalKey);
+    if (originalKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
+    else process.env.OPENROUTER_API_KEY = originalKey;
   }
 };
 
@@ -193,15 +195,14 @@ const seedPooledAccounts = (): void => {
 };
 
 /** The pooled upstream: only account A advertises the daybreak id. */
-const pooledCodexCatalogFetch =
-  (): typeof fetch =>
-  (_input, init): Promise<Response> => {
+const pooledCodexCatalogFetch = (): typeof fetch =>
+  createFetchMock((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const accountId = new Headers(init?.headers).get("ChatGPT-Account-ID");
     const models = accountId === "pool-account-a" ? [{ slug: "gpt-daybreak-blue-latest" }, { slug: "pooled-shared" }] : [{ slug: "pooled-shared" }];
     return Promise.resolve(Response.json({ models }, { headers: { "Content-Type": "application/json" } }));
-  };
+  });
 
-Deno.test("codex catalog: the versioned catalog advertises the pooled union narrowed by the operator whitelist", async () => {
+test("codex catalog: the versioned catalog advertises the pooled union narrowed by the operator whitelist", async () => {
   await withFixture(["pooled-shared"], async () => {
     seedPooledAccounts();
     const originalFetch = globalThis.fetch;
@@ -227,7 +228,7 @@ Deno.test("codex catalog: the versioned catalog advertises the pooled union narr
   });
 });
 
-Deno.test("codex catalog: OpenRouter rows follow the operator whitelist and keep their snapshot metadata", async () => {
+test("codex catalog: OpenRouter rows follow the operator whitelist and keep their snapshot metadata", async () => {
   await withFixture(["gpt-0.100.0", "vendor/beta"], async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = upstreamCodexCatalogFetch();
@@ -254,7 +255,7 @@ Deno.test("codex catalog: OpenRouter rows follow the operator whitelist and keep
   });
 });
 
-Deno.test("codex catalog: an empty whitelist is no filter and OpenRouter rows still list", async () => {
+test("codex catalog: an empty whitelist is no filter and OpenRouter rows still list", async () => {
   await withFixture([], async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = upstreamCodexCatalogFetch();
@@ -272,12 +273,12 @@ Deno.test("codex catalog: an empty whitelist is no filter and OpenRouter rows st
   });
 });
 
-Deno.test("codex catalog: an active whitelist filters a fresh stored-catalog hit instead of short-circuiting", async () => {
+test("codex catalog: an active whitelist filters a fresh stored-catalog hit instead of short-circuiting", async () => {
   await withFixture(["gpt-0.100.0"], async () => {
     kvStore.set(keyToString([...PROVIDER_SELECTION_KV_KEY]), { value: { provider_ids: ["codex"], updated_at_ms: 1 }, versionstamp: nextVersion() });
     resetProviderSelectionCacheForTest();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.reject(new Error("a fresh stored-catalog hit must not reach upstream"));
+    globalThis.fetch = createFetchMock(() => Promise.reject(new Error("a fresh stored-catalog hit must not reach upstream")));
     try {
       const stored = await storeCodexCatalog(kvStub, {
         clientVersion: "0.100.0",
@@ -303,7 +304,7 @@ Deno.test("codex catalog: an active whitelist filters a fresh stored-catalog hit
   });
 });
 
-Deno.test("codex catalog: served-byte ETags change when OpenRouter enriches an unchanged upstream catalog", async () => {
+test("codex catalog: served-byte ETags change when OpenRouter enriches an unchanged upstream catalog", async () => {
   await withFixture([], async () => {
     // The gateway identity is checked so the synthetic route stays assembled;
     // this test owns the OpenRouter enrichment behavior, not the route gate.
@@ -313,7 +314,7 @@ Deno.test("codex catalog: served-byte ETags change when OpenRouter enriches an u
     });
     resetProviderSelectionCacheForTest();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.reject(new Error("a fresh catalog must not reach upstream"));
+    globalThis.fetch = createFetchMock(() => Promise.reject(new Error("a fresh catalog must not reach upstream")));
     try {
       const body = JSON.stringify({ models: [{ slug: "gpt-stored" }] });
       resetOpenRouterModelsCacheForTest();

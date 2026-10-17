@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import type { HarmonyTransport } from "../src/harmony/adapter.ts";
@@ -68,7 +69,7 @@ const evidence = (outcome: { events: readonly HarnessEvent[] }) => ({
   finals: outcome.events.filter((e): e is Extract<HarnessEvent, { type: "final" }> => e.type === "final"),
 });
 
-Deno.test("harness: a clean scripted run completes with verified writes", async () => {
+test("harness: a clean scripted run completes with verified writes", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions([
       { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
@@ -86,7 +87,7 @@ Deno.test("harness: a clean scripted run completes with verified writes", async 
   assert.equal(outcome.classification.failure_class, null);
 });
 
-Deno.test("harness: invalid calls are never executed and feedback is deterministic", async () => {
+test("harness: invalid calls are never executed and feedback is deterministic", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions([
       { toolCalls: [{ name: "filesystem.read", arguments: { path: 42 } }] },
@@ -106,7 +107,7 @@ Deno.test("harness: invalid calls are never executed and feedback is determinist
   assert.equal(outcome.state.invalidCalls, 1);
 });
 
-Deno.test("harness: exact duplicates after success are blocked, not re-executed", async () => {
+test("harness: exact duplicates after success are blocked, not re-executed", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions([
       { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
@@ -128,7 +129,7 @@ Deno.test("harness: exact duplicates after success are blocked, not re-executed"
   assert.equal(outcome.state.duplicateCalls, 1);
 });
 
-Deno.test("harness: repeated calls after deterministic failures are blocked as repeated_failure", async () => {
+test("harness: repeated calls after deterministic failures are blocked as repeated_failure", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions([
       { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
@@ -147,7 +148,7 @@ Deno.test("harness: repeated calls after deterministic failures are blocked as r
   assert.match(second.result.error ?? "", /change the arguments or approach/);
 });
 
-Deno.test("harness: a final without verification is rejected, then accepted after verification", async () => {
+test("harness: a final without verification is rejected, then accepted after verification", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions([
       { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
@@ -166,7 +167,7 @@ Deno.test("harness: a final without verification is rejected, then accepted afte
   assert.equal(outcome.state.writes[0].verified, true);
 });
 
-Deno.test("harness: two identical finals with no intervening action abort as false_completion", async () => {
+test("harness: two identical finals with no intervening action abort as false_completion", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions(
       [
@@ -184,7 +185,7 @@ Deno.test("harness: two identical finals with no intervening action abort as fal
   assert.ok(ev.guards.some((g) => g.kind === "false_completion"));
 });
 
-Deno.test("harness: transient timeouts are auto-retried once, then blocked", async () => {
+test("harness: transient timeouts are auto-retried once, then blocked", async () => {
   const shell = new FakeShell([
     { command: "slow-cmd", timed_out: true },
     { command: "true", exit_code: 0, stdout: "ok" },
@@ -220,7 +221,7 @@ Deno.test("harness: transient timeouts are auto-retried once, then blocked", asy
   );
 });
 
-Deno.test("harness: semantic loops are detected, guarded, and recoverable", async () => {
+test("harness: semantic loops are detected, guarded, and recoverable", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions(
       [
@@ -252,7 +253,7 @@ Deno.test("harness: semantic loops are detected, guarded, and recoverable", asyn
   assert.equal(outcome.phase, "completed");
 });
 
-Deno.test("harness: unknown experimental tools on the broad surface get deterministic feedback", async () => {
+test("harness: unknown experimental tools on the broad surface get deterministic feedback", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions(
       [
@@ -273,7 +274,7 @@ Deno.test("harness: unknown experimental tools on the broad surface get determin
   assert.match(result.result.error ?? "", /unknown_tool/);
 });
 
-Deno.test("harness: guard rejection budget exhausts deterministically", async () => {
+test("harness: guard rejection budget exhausts deterministically", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions(
       [
@@ -291,7 +292,7 @@ Deno.test("harness: guard rejection budget exhausts deterministically", async ()
   assert.ok(evidence(outcome).guards.length >= 2);
 });
 
-Deno.test("harness: configured final-attempt limit is enforced", async () => {
+test("harness: configured final-attempt limit is enforced", async () => {
   const outcome = await runReliabilityHarness(
     baseOptions(
       [
@@ -318,7 +319,7 @@ Deno.test("harness: configured final-attempt limit is enforced", async () => {
   assert.equal(evidence(outcome).finals.length, 1);
 });
 
-Deno.test("harness: deterministic HTTP failures are not retried", async () => {
+test("harness: deterministic HTTP failures are not retried", async () => {
   let calls = 0;
   const outcome = await runReliabilityHarness(
     baseOptions([], {
@@ -334,7 +335,7 @@ Deno.test("harness: deterministic HTTP failures are not retried", async () => {
   assert.equal(outcome.events.filter((event) => event.type === "model_request").length, 1);
 });
 
-Deno.test("harness: whole-run cancellation aborts a stalled injected transport", async () => {
+test("harness: whole-run cancellation aborts a stalled injected transport", async () => {
   const controller = new AbortController();
   let observedSignal: AbortSignal | undefined;
   const transport: HarmonyTransport = (_body, options) => {
@@ -380,7 +381,7 @@ Deno.test("harness: whole-run cancellation aborts a stalled injected transport",
   }
 });
 
-Deno.test("harness: a stalled transport that ignores cancellation stops at the run deadline", async () => {
+test("harness: a stalled transport that ignores cancellation stops at the run deadline", async () => {
   const controller = new AbortController();
   let observedSignal: AbortSignal | undefined;
   // A hung provider socket that never honours the run signal: the harness owns
@@ -414,7 +415,7 @@ Deno.test("harness: a stalled transport that ignores cancellation stops at the r
   }
 });
 
-Deno.test("harness: structured mode requests carry deterministically fewer tokens than full mode", async () => {
+test("harness: structured mode requests carry deterministically fewer tokens than full mode", async () => {
   const script: ScriptStep[] = [];
   const bigFiles: Record<string, string> = {};
   for (let i = 0; i < 12; i++) {
@@ -435,7 +436,7 @@ Deno.test("harness: structured mode requests carry deterministically fewer token
   assert.ok(lastStructured.estimatedTokens < lastFull.estimatedTokens, `structured ${lastStructured.estimatedTokens} < full ${lastFull.estimatedTokens}`);
 });
 
-Deno.test("harness: verificationCommand declared in the harness option satisfies writes", async () => {
+test("harness: verificationCommand declared in the harness option satisfies writes", async () => {
   const scriptedShell = new FakeShell([{ command: "sh tests/run.sh", exit_code: 0, stdout: "ok" }]);
   const outcome = await runReliabilityHarness(
     baseOptions(
@@ -452,14 +453,14 @@ Deno.test("harness: verificationCommand declared in the harness option satisfies
   assert.equal(outcome.state.writes[0].verifiedBy, "shell");
 });
 
-Deno.test("harness: maxTurns aborts as stalled turn_limit", async () => {
+test("harness: maxTurns aborts as stalled turn_limit", async () => {
   const outcome = await runReliabilityHarness(baseOptions([{ toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] }], { maxTurns: 2 }));
   assert.equal(outcome.phase, "failed");
   assert.equal(outcome.abortedReason, "turn_limit");
   assert.equal(outcome.classification.failure_class, "stalled");
 });
 
-Deno.test("harness: policy preambles are deterministic and reference the surface", () => {
+test("harness: policy preambles are deterministic and reference the surface", () => {
   const a = renderCanonicalPolicy({ tools: ["filesystem.read"], budget: "large" });
   const b = renderCanonicalPolicy({ tools: ["filesystem.read"], budget: "large" });
   assert.equal(a, b);

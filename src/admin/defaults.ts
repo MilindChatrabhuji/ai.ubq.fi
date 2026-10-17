@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 // Admin KV migration and defaults handlers, split out of src/admin.ts.
 
 import { loadCodexModelsSnapshot } from "../codex/index.ts";
@@ -128,7 +129,7 @@ const defaultsBody = (model: string, reasoningEffort: ReasoningEffort, kernelPol
 const defaultsJson = (model: string, reasoningEffort: ReasoningEffort, kernelPolicyLimit: number, kernelPolicyWindow: number): Response =>
   json(200, defaultsBody(model, reasoningEffort, kernelPolicyLimit, kernelPolicyWindow));
 
-const adminDefaultsGetResponse = async (kv: Deno.Kv, dependencies: AdminDefaultsDependencies): Promise<Response> => {
+const adminDefaultsGetResponse = async (kv: Kv, dependencies: AdminDefaultsDependencies): Promise<Response> => {
   const [runtime, kernelLimitEntry, kernelWindowEntry, meteredQuota] = await Promise.all([
     loadRuntimeConfig(kv),
     kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
@@ -186,9 +187,9 @@ type AdminDefaultsCutover =
 
 /** Acquires the default-window cutover guard when (and only when) it is required. */
 const resolveDefaultsCutover = async (
-  kv: Deno.Kv,
-  kernelLimitEntry: Deno.KvEntryMaybe<number>,
-  kernelWindowEntry: Deno.KvEntryMaybe<number>,
+  kv: Kv,
+  kernelLimitEntry: KvEntryMaybe<number>,
+  kernelWindowEntry: KvEntryMaybe<number>,
   intent: AdminDefaultsIntent,
   kernelPolicyWindow: number
 ): Promise<AdminDefaultsCutover> => {
@@ -207,11 +208,11 @@ const resolveDefaultsCutover = async (
 };
 
 const commitDefaultsUpdate = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{
-    runtimeEntry: Deno.KvEntryMaybe<unknown>;
-    kernelLimitEntry: Deno.KvEntryMaybe<number>;
-    kernelWindowEntry: Deno.KvEntryMaybe<number>;
+    runtimeEntry: KvEntryMaybe<unknown>;
+    kernelLimitEntry: KvEntryMaybe<number>;
+    kernelWindowEntry: KvEntryMaybe<number>;
     cutoverGuard: KernelDefaultWindowCutoverGuard | null;
     nextRuntime: ReturnType<typeof buildRuntimeConfig> | null;
     writesKernelLimit: boolean;
@@ -239,7 +240,7 @@ const commitDefaultsUpdate = async (
 
 /** One read-modify-write attempt; the caller owns the three-attempt retry bound. */
 const applyDefaultsUpdateAttempt = async (
-  kv: Deno.Kv,
+  kv: Kv,
   raw: Record<string, unknown>,
   intent: AdminDefaultsIntent
 ): Promise<{ kind: "retry" } | { kind: "response"; response: Response }> => {
@@ -293,7 +294,7 @@ const applyDefaultsUpdateAttempt = async (
  * cannot leave a model/defaults half-update behind, so a lost race simply
  * re-reads and rebuilds.
  */
-const applyDefaultsUpdate = async (kv: Deno.Kv, raw: Record<string, unknown>, intent: AdminDefaultsIntent): Promise<Response> => {
+const applyDefaultsUpdate = async (kv: Kv, raw: Record<string, unknown>, intent: AdminDefaultsIntent): Promise<Response> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const attemptResult = await applyDefaultsUpdateAttempt(kv, raw, intent);
     if (attemptResult.kind === "retry") continue;
@@ -302,7 +303,7 @@ const applyDefaultsUpdate = async (kv: Deno.Kv, raw: Record<string, unknown>, in
   return openaiError(409, "Defaults were modified concurrently; retry", "invalid_request_error");
 };
 
-const adminDefaultsPostResponse = async (kv: Deno.Kv, req: Request): Promise<Response> => {
+const adminDefaultsPostResponse = async (kv: Kv, req: Request): Promise<Response> => {
   const raw = await readJsonBody(req);
   if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
   const allowedFields = new Set(["model", "reasoning_effort", "kernel_policy_limit_requests", "kernel_policy_window_ms"]);

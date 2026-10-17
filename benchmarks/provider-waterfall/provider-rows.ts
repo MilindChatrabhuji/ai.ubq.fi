@@ -1,3 +1,4 @@
+import { readFile, writeFile } from "node:fs/promises";
 // Emits the objective's machine-readable per-provider rows from the measured
 // artifacts: metrics.json (full-corpus window), scores.json (normalized
 // scores), the concurrency probe rows and the OpenRouter reconciliation.
@@ -19,11 +20,11 @@ const OBSERVED_BILLING_SOURCE: Readonly<Record<string, string>> = {
 const observedBillingSource = (provider: string): string => OBSERVED_BILLING_SOURCE[provider] ?? "unknown";
 
 const dir = new URL("results/", import.meta.url).pathname;
-const readJson = async (name: string): Promise<Json> => JSON.parse(await Deno.readTextFile(`${dir}${name}`)) as Json;
+const readJson = async (name: string): Promise<Json> => JSON.parse(await readFile(`${dir}${name}`, "utf8")) as Json;
 const readRows = async (names: readonly string[]): Promise<AttemptRecord[]> => {
   const rows: AttemptRecord[] = [];
   for (const name of names) {
-    for (const line of (await Deno.readTextFile(`${dir}${name}`)).split("\n")) {
+    for (const line of (await readFile(`${dir}${name}`, "utf8")).split("\n")) {
       if (line.trim()) rows.push(JSON.parse(line) as AttemptRecord);
     }
   }
@@ -138,5 +139,5 @@ const out = {
   pre_funding_excluded_probes:
     "Surplus 402 insufficient_balance probes before the operator funded the account are retained as probe rows and excluded from scoring.",
 };
-await Deno.writeTextFile(`${dir}provider-rows.json`, JSON.stringify(out, null, 1));
+await writeFile(`${dir}provider-rows.json`, JSON.stringify(out, null, 1));
 console.log(`[provider-rows] wrote ${dir}provider-rows.json (${rows.length} providers)`);

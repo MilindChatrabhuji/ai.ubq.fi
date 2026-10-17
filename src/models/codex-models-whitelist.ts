@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { getString, isRecord } from "../utils.ts";
 
 // ── KV key ───────────────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ export const normalizeWhitelistModelIds = (rawIds: readonly unknown[]): string[]
  * Load the whitelist from KV. Returns `null` when KV is unavailable or the value
  * is absent/invalid.
  */
-export const loadCodexModelsWhitelist = async (kv: Deno.Kv | null): Promise<CodexModelsWhitelist | null> => {
+export const loadCodexModelsWhitelist = async (kv: Kv | null): Promise<CodexModelsWhitelist | null> => {
   if (!kv) return null;
   const entry = await kv.get(CODEX_MODELS_WHITELIST_KV_KEY, { consistency: "strong" });
   return normalizeCodexModelsWhitelist(entry.value);
@@ -69,7 +70,7 @@ export const loadCodexModelsWhitelist = async (kv: Deno.Kv | null): Promise<Code
  * `modelIds` is the list of model identifiers to allow. An empty list clears the filter.
  * Identifiers are trimmed and de-duplicated before they are persisted.
  */
-export const storeCodexModelsWhitelist = async (kv: Deno.Kv, modelIds: readonly string[]): Promise<boolean> => {
+export const storeCodexModelsWhitelist = async (kv: Kv, modelIds: readonly string[]): Promise<boolean> => {
   const whitelist: CodexModelsWhitelist = { model_ids: normalizeWhitelistModelIds(modelIds), updated_at_ms: Date.now() };
   const commit = await kv.set(CODEX_MODELS_WHITELIST_KV_KEY, whitelist);
   return commit.ok;

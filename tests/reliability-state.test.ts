@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -36,7 +37,7 @@ const exec = (seq: number, command: string, ok: boolean): ToolObservation => ({
 
 const policy = { ...DEFAULT_VERIFICATION_POLICY, verificationCommand: "sh tests/run.sh" };
 
-Deno.test("state: a verified edit run reaches phase done and a stable contract", () => {
+test("state: a verified edit run reaches phase done and a stable contract", () => {
   const run: ReliabilityRun = {
     observations: [
       read(1, "src/a.txt", "x=0"),
@@ -64,7 +65,7 @@ Deno.test("state: a verified edit run reaches phase done and a stable contract",
   assert.equal(stateContract(state), stateContract({ ...state }));
 });
 
-Deno.test("state: unverified writes and unresolved failures surface in the contract", () => {
+test("state: unverified writes and unresolved failures surface in the contract", () => {
   const run: ReliabilityRun = {
     observations: [patch(1, "answer.txt", "", "answer", true), exec(2, "curl https://example.invalid", false)],
     finals: [{ content: "done", accepted: false, seq: 3 }],
@@ -79,7 +80,7 @@ Deno.test("state: unverified writes and unresolved failures surface in the contr
   assert.match(contract, /"pendingVerification":\["answer\.txt"\]/);
 });
 
-Deno.test("state: the declared verification command satisfies pending writes in the replay", () => {
+test("state: the declared verification command satisfies pending writes in the replay", () => {
   const run: ReliabilityRun = {
     observations: [patch(1, "a.txt", "", "1", true), exec(2, "sh tests/run.sh", true)],
     finals: [],
@@ -92,7 +93,7 @@ Deno.test("state: the declared verification command satisfies pending writes in 
   assert.equal(state.pendingVerification.length, 0);
 });
 
-Deno.test("state: semantic loops stall the phase and count in the contract", () => {
+test("state: semantic loops stall the phase and count in the contract", () => {
   const observations: ToolObservation[] = [];
   let seq = 0;
   for (let i = 0; i < 8; i++) {
@@ -111,7 +112,7 @@ Deno.test("state: semantic loops stall the phase and count in the contract", () 
   assert.equal(contract.includes("semanticLoops"), false);
 });
 
-Deno.test("state: invalid calls never produce verification or write records", () => {
+test("state: invalid calls never produce verification or write records", () => {
   const run: ReliabilityRun = {
     observations: [
       {
@@ -132,7 +133,7 @@ Deno.test("state: invalid calls never produce verification or write records", ()
   assert.equal(state.reads.length, 1);
 });
 
-Deno.test("state: reduceFinalAttempt sorts finals and marks done", () => {
+test("state: reduceFinalAttempt sorts finals and marks done", () => {
   let state = emptyTaskState();
   state = reduceFinalAttempt(state, { content: "one", accepted: false, seq: 5 });
   state = reduceFinalAttempt(state, { content: "two", accepted: true, seq: 6 });
@@ -142,7 +143,7 @@ Deno.test("state: reduceFinalAttempt sorts finals and marks done", () => {
   assert.equal(state.finals[1].accepted, true);
 });
 
-Deno.test("state: replayed duplicates are counted from the observation stream", () => {
+test("state: replayed duplicates are counted from the observation stream", () => {
   const run: ReliabilityRun = {
     observations: [read(1, "x", "v"), read(2, "x", "v")],
     finals: [],
