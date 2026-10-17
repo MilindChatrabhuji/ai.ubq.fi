@@ -155,7 +155,10 @@ export const relayChatCompletionStream = (
     if (cancelledResponses.has(response)) return;
     cancelledResponses.add(response);
     const body = response.body;
-    if (body && !body.locked) void body.cancel(cancellationReason).catch(() => {});
+    if (body && !body.locked) {
+      const reason = cancellationReason === undefined ? downstreamSignal.reason : cancellationReason;
+      void body.cancel(reason).catch(() => {});
+    }
   };
 
   const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
@@ -216,8 +219,8 @@ export const relayChatCompletionStream = (
     closeController(controller);
   };
 
-  /** Whether the stream already closed; re-read after every await. */
-  const streamClosed = (): boolean => closed;
+  /** Whether the stream or its delivery already ended; re-read after every await. */
+  const streamClosed = (): boolean => closed || downstreamSignal.aborted;
 
   // Keep ownership of a deferred response even when the client cancels before
   // the first downstream pull starts waiting on it.
@@ -406,7 +409,10 @@ export const relayResponsesStream = (
     if (cancelledResponses.has(response)) return;
     cancelledResponses.add(response);
     const body = response.body;
-    if (body && !body.locked) void body.cancel(cancellationReason).catch(() => {});
+    if (body && !body.locked) {
+      const reason = cancellationReason === undefined ? downstreamSignal.reason : cancellationReason;
+      void body.cancel(reason).catch(() => {});
+    }
   };
   /** The next `sequence_number` this response's SSE stream will emit. */
   let sequenceNumber = 0;
@@ -530,8 +536,8 @@ export const relayResponsesStream = (
     closeController(controller);
   };
 
-  /** Whether the stream already settled or was cancelled; re-read after every await. */
-  const streamEnded = (): boolean => state.settled || state.cancelled;
+  /** Whether the stream or its delivery already ended; re-read after every await. */
+  const streamEnded = (): boolean => state.settled || state.cancelled || downstreamSignal.aborted;
 
   // Keep ownership of a deferred response even when the client cancels before
   // the first downstream pull starts waiting on it.
