@@ -608,7 +608,7 @@ export const handleAdminModelsRefresh = async (
   const [enrichment, openlux, surplus, claude] = await Promise.all([
     refreshEnrichment(),
     refreshOpenlux({ force: true }),
-    refreshSurplus({ force: true }),
+    refreshSurplus({ force: true, requireApiKey: false }),
     (dependencies.refreshClaude ?? fetchClaudeCodeModels)({ force: true }),
   ]);
   const enrichmentUpdatedAt = enrichment?.updated_at_ms ?? null;

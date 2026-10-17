@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "UbiquityOS AI Gateway API",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "The OpenAI-compatible inference API for AI.UBQ.FI. Authenticate with an approved UbiquityOS gateway token, query /v1/models before choosing a model, and use the published JSON error envelope and rate-limit fields for autonomous clients."
   },
   "servers": [
@@ -258,6 +258,258 @@
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
+    },
+    "/uos/models/catalog": {
+      "get": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "getPublicModelCatalog",
+        "summary": "Get the public model catalog",
+        "description": "Returns the public catalog the /models page renders: the operator's enabled models across the selected providers, with per-source status. It needs no bearer token and is not an OpenAI response shape; use GET /v1/models for the OpenAI-compatible list.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The public model catalog.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PublicModelCatalog" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/uos/auth": {
+      "get": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "getAuthIntrospection",
+        "summary": "Inspect the presented credential",
+        "description": "Reports which authentication path the presented credential resolved through (gateway token, KV API key, admin token, passkey session, or GitHub/kernel token), the auth mode, and a token fingerprint. It never returns the raw token. For a KV API key it adds key metadata and usage counters. Use it first when an integration fails.",
+        "responses": {
+          "200": {
+            "description": "The resolved authentication method.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthIntrospection" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/uos/embeddings": {
+      "post": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "createUosEmbeddings",
+        "summary": "Create text embeddings",
+        "description": "Creates Voyage voyage-4-large text embeddings, cached in durable KV, in the OpenAI-style list shape. It is not a fully OpenAI-compatible embeddings endpoint: it accepts text only, rejects token arrays, and does not accept or map OpenAI embedding model names. Send input as an array to batch. An Idempotency-Key header enables durable replay.",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EmbeddingsRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One embedding per input string, in input order.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmbeddingsResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/IdempotencyConflict" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "502": { "$ref": "#/components/responses/UpstreamFailure" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/uos/embedding-jobs": {
+      "post": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "createUosEmbeddingJob",
+        "summary": "Create an asynchronous embeddings job",
+        "description": "Creates an embeddings job. The gateway completes it immediately (200) or queues it (202, with Retry-After and retry_after_seconds) when Voyage is rate limited. Jobs require model voyage-4-large, an explicit input_type, and float encoding. Inputs are stored encrypted for up to 24 hours and deleted once the job completes.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EmbeddingJobRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The job finished: status is succeeded with a result, or failed with an error.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmbeddingJob" }
+              }
+            }
+          },
+          "202": {
+            "description": "The job is queued or running. Poll GET /uos/embedding-jobs/{id} after Retry-After seconds.",
+            "headers": {
+              "Retry-After": { "$ref": "#/components/headers/RetryAfter" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmbeddingJob" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "502": { "$ref": "#/components/responses/UpstreamFailure" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/uos/embedding-jobs/{id}": {
+      "get": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "getUosEmbeddingJob",
+        "summary": "Poll an embeddings job",
+        "description": "Returns an embeddings job until its status is succeeded or failed. Jobs are scoped to the authenticated client identity: poll with credentials that resolve to the identity that created the job (the same API key, or for GitHub/kernel auth the same owner and repository attestation context).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The id returned when the job was created.",
+            "schema": { "type": "string", "minLength": 1 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job finished: status is succeeded with a result, or failed with an error.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmbeddingJob" }
+              }
+            }
+          },
+          "202": {
+            "description": "The job is still queued or running. Poll again after Retry-After seconds.",
+            "headers": {
+              "Retry-After": { "$ref": "#/components/headers/RetryAfter" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmbeddingJob" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "502": { "$ref": "#/components/responses/UpstreamFailure" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/uos/agent-messages": {
+      "get": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "listAgentMessages",
+        "summary": "List agent messages",
+        "description": "Lists agent messages stored for the repository and state named by the kernel attestation, oldest first. It requires a GitHub token as the bearer credential with kernel attestation headers; any other credential receives 403. Page with cursor, or resume from next_since.",
+        "parameters": [
+          { "$ref": "#/components/parameters/GitHubOwner" },
+          { "$ref": "#/components/parameters/GitHubRepo" },
+          { "$ref": "#/components/parameters/KernelToken" },
+          { "$ref": "#/components/parameters/GitHubInstallationId" },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "Only messages created at or after this Unix time in milliseconds.",
+            "schema": { "type": "integer", "minimum": 1 }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The next_cursor from a previous page.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "maxLength": 120 }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "maxLength": 120 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of agent messages.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AgentMessageList" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      },
+      "post": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "createAgentMessage",
+        "summary": "Store an agent message",
+        "description": "Stores one agent message for the repository and state named by the kernel attestation. It requires a GitHub token as the bearer credential with kernel attestation headers; any other credential receives 403. The server assigns id, created_at_ms, owner, repo, and state_id.",
+        "parameters": [
+          { "$ref": "#/components/parameters/GitHubOwner" },
+          { "$ref": "#/components/parameters/GitHubRepo" },
+          { "$ref": "#/components/parameters/KernelToken" },
+          { "$ref": "#/components/parameters/GitHubInstallationId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AgentMessageCreateRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["message"],
+                  "properties": { "message": { "$ref": "#/components/schemas/AgentMessage" } },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
     }
   },
   "components": {
@@ -279,6 +531,41 @@
           "type": "string",
           "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
         }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Enables durable replay of the same embeddings request. Reusing a key with a different request returns 409.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "GitHubOwner": {
+        "name": "X-GitHub-Owner",
+        "in": "header",
+        "required": false,
+        "description": "Optional cross-check. The kernel attestation names the repository; when X-GitHub-Owner and X-GitHub-Repo are both sent, they must equal the owner and repository it names.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "GitHubRepo": {
+        "name": "X-GitHub-Repo",
+        "in": "header",
+        "required": false,
+        "description": "Optional cross-check. The kernel attestation names the repository; when X-GitHub-Owner and X-GitHub-Repo are both sent, they must equal the owner and repository it names.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "KernelToken": {
+        "name": "X-Ubiquity-Kernel-Token",
+        "in": "header",
+        "required": true,
+        "description": "The UbiquityOS kernel attestation JWT for the GitHub token sent as the bearer credential.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "GitHubInstallationId": {
+        "name": "X-GitHub-Installation-Id",
+        "in": "header",
+        "required": false,
+        "description": "Required when the kernel attestation includes installation_id.",
+        "schema": { "type": "string", "minLength": 1 }
       }
     },
     "headers": {
@@ -453,7 +740,8 @@
       },
       "ChatCompletionRequest": {
         "type": "object",
-        "description": "An OpenAI-compatible Chat Completions request. Additional documented OpenAI fields may be accepted by the gateway, but clients should start with this portable shape.",
+        "description": "An OpenAI-compatible Chat Completions request. The properties without x-uos-extension are exactly the request allowlist the gateway enforces, which matches the official CreateChatCompletionRequest schema at the pinned openai/openai-openapi revision checked by the spec:drift gate. Properties marked x-uos-extension are gateway compatibility extensions, not official OpenAI fields, and are accepted only on the routes they name. Any other property is rejected with 400 Unrecognized request argument supplied. An accepted field that the selected route does not apply is named in the x-uos-warning response header, for example temperature_ignored.",
+        "x-uos-official-schema": "CreateChatCompletionRequest",
         "required": ["messages"],
         "properties": {
           "model": {
@@ -472,9 +760,107 @@
           },
           "tools": { "type": "array", "items": { "$ref": "#/components/schemas/FunctionTool" } },
           "tool_choice": { "$ref": "#/components/schemas/ToolChoice" },
-          "parallel_tool_calls": { "type": "boolean" }
+          "parallel_tool_calls": { "type": "boolean" },
+          "audio": { "type": ["object", "null"] },
+          "frequency_penalty": { "type": ["number", "null"], "minimum": -2, "maximum": 2 },
+          "function_call": {
+            "deprecated": true,
+            "description": "Deprecated in favor of tool_choice.",
+            "oneOf": [
+              { "type": "string", "enum": ["none", "auto"] },
+              {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "type": "string" } }
+              }
+            ]
+          },
+          "functions": {
+            "deprecated": true,
+            "description": "Deprecated in favor of tools.",
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FunctionDefinition" }
+          },
+          "logit_bias": { "type": ["object", "null"], "additionalProperties": { "type": "integer" } },
+          "logprobs": { "type": ["boolean", "null"] },
+          "max_completion_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The OpenAI Chat Completions output-token cap. Its transport behavior depends on the selected route; see /llms-full.txt. Omit the field for no cap: null and values below 1 are rejected with 400."
+          },
+          "max_tokens": {
+            "deprecated": true,
+            "type": ["integer", "null"],
+            "description": "Deprecated in favor of max_completion_tokens."
+          },
+          "metadata": { "type": ["object", "null"], "additionalProperties": { "type": "string" } },
+          "modalities": { "type": ["array", "null"], "items": { "type": "string", "enum": ["text", "audio"] } },
+          "moderation": { "type": ["object", "null"] },
+          "n": { "type": ["integer", "null"], "minimum": 1, "maximum": 128 },
+          "prediction": { "type": ["object", "null"] },
+          "presence_penalty": { "type": ["number", "null"], "minimum": -2, "maximum": 2 },
+          "prompt_cache_key": {
+            "type": "string",
+            "description": "Forwarded as a prompt-cache routing hint. The gateway does not store or move an upstream prompt cache."
+          },
+          "prompt_cache_options": { "$ref": "#/components/schemas/PromptCacheOptions" },
+          "prompt_cache_retention": { "type": "string", "enum": ["in_memory", "24h"] },
+          "response_format": {
+            "type": "object",
+            "required": ["type"],
+            "properties": { "type": { "type": "string", "enum": ["text", "json_schema", "json_object"] } }
+          },
+          "safety_identifier": { "type": ["string", "null"] },
+          "seed": { "deprecated": true, "type": ["integer", "null"] },
+          "service_tier": { "type": ["string", "null"] },
+          "stop": { "type": ["string", "array", "null"], "items": { "type": "string" } },
+          "store": { "type": ["boolean", "null"] },
+          "stream_options": {
+            "type": "object",
+            "description": "Omit the field rather than sending null; null is outside this contract and most Chat routes reject it with 400.",
+            "properties": { "include_usage": { "type": "boolean" } }
+          },
+          "temperature": { "type": ["number", "null"], "minimum": 0, "maximum": 2 },
+          "top_logprobs": { "type": ["integer", "null"], "minimum": 0, "maximum": 20 },
+          "top_p": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "user": {
+            "deprecated": true,
+            "type": "string",
+            "description": "Deprecated in favor of safety_identifier and prompt_cache_key."
+          },
+          "verbosity": { "type": ["string", "null"], "enum": ["low", "medium", "high", null] },
+          "web_search_options": { "type": "object" },
+          "thinking": {
+            "type": "object",
+            "description": "DeepSeek thinking-mode switch: a DeepSeek compatibility extension, not an official OpenAI field. Accepted only when model selects the official DeepSeek route; every other model rejects it as an unrecognized argument.",
+            "x-uos-extension": "deepseek",
+            "properties": { "type": { "type": "string", "enum": ["enabled", "disabled"] } }
+          },
+          "cache_control": {
+            "$ref": "#/components/schemas/OpenRouterCacheControl",
+            "description": "OpenRouter Claude prompt-cache control: an OpenRouter compatibility extension, not an official OpenAI field. Accepted only for an anthropic/claude- model served by the enabled OpenRouter provider; otherwise rejected as an unrecognized argument.",
+            "x-uos-extension": "openrouter-claude"
+          }
         },
-        "additionalProperties": true
+        "additionalProperties": false
+      },
+      "PromptCacheOptions": {
+        "type": "object",
+        "description": "Prompt-cache options validated by the gateway.",
+        "properties": {
+          "mode": { "type": "string", "enum": ["implicit", "explicit"] },
+          "ttl": { "type": "string", "enum": ["30m"] }
+        },
+        "additionalProperties": false
+      },
+      "OpenRouterCacheControl": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "const": "ephemeral" },
+          "ttl": { "type": "string", "enum": ["5m", "1h"] }
+        },
+        "additionalProperties": false
       },
       "ResponseInput": {
         "description": "A Responses API input string or structured input-item array.",
@@ -485,7 +871,8 @@
       },
       "ResponseRequest": {
         "type": "object",
-        "description": "An OpenAI-compatible Responses API request. Input is optional so an approved continuation or instructions-only request can use the configured default behavior.",
+        "description": "An OpenAI-compatible Responses API request. Input is optional so an approved continuation or instructions-only request can use the configured default behavior. The properties without x-uos-extension are exactly the request allowlist the gateway enforces, which matches the official CreateResponse schema at the pinned openai/openai-openapi revision checked by the spec:drift gate. Properties marked x-uos-extension are gateway compatibility extensions, not official OpenAI fields: client_metadata is the Codex CLI extension accepted on every Responses request, and cache_control is accepted only on the route it names. Any other property is rejected with 400 Unrecognized request argument supplied. An accepted field that the selected route does not apply is named in the x-uos-warning response header, for example temperature_ignored.",
+        "x-uos-official-schema": "CreateResponse",
         "properties": {
           "model": { "type": "string", "description": "A model returned by GET /v1/models." },
           "instructions": { "type": "string" },
@@ -498,9 +885,54 @@
           },
           "tools": { "type": "array", "items": { "$ref": "#/components/schemas/ResponseFunctionTool" } },
           "tool_choice": { "$ref": "#/components/schemas/ResponseToolChoice" },
-          "parallel_tool_calls": { "type": "boolean" }
+          "parallel_tool_calls": { "type": "boolean" },
+          "background": { "type": ["boolean", "null"] },
+          "context_management": { "type": ["array", "null"], "items": { "type": "object" } },
+          "conversation": { "type": ["string", "object", "null"] },
+          "include": { "type": ["array", "null"], "items": { "type": "string" } },
+          "max_output_tokens": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "description": "The OpenAI Responses output-token cap. Its transport behavior depends on the selected route; see /llms-full.txt."
+          },
+          "max_tool_calls": { "type": ["integer", "null"], "minimum": 1 },
+          "metadata": { "type": ["object", "null"], "additionalProperties": { "type": "string" } },
+          "moderation": { "type": ["object", "null"] },
+          "previous_response_id": { "type": ["string", "null"] },
+          "prompt": { "type": ["object", "null"] },
+          "prompt_cache_key": {
+            "type": "string",
+            "description": "Forwarded as a prompt-cache routing hint. The gateway does not store or move an upstream prompt cache."
+          },
+          "prompt_cache_options": { "$ref": "#/components/schemas/PromptCacheOptions" },
+          "prompt_cache_retention": { "type": "string", "enum": ["in_memory", "24h"] },
+          "safety_identifier": { "type": ["string", "null"] },
+          "service_tier": { "type": ["string", "null"] },
+          "store": { "type": ["boolean", "null"] },
+          "stream_options": { "type": ["object", "null"] },
+          "temperature": { "type": ["number", "null"], "minimum": 0, "maximum": 2 },
+          "text": { "type": "object" },
+          "top_logprobs": { "type": ["integer", "null"], "minimum": 0, "maximum": 20 },
+          "top_p": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "truncation": { "type": ["string", "null"], "enum": ["auto", "disabled", null] },
+          "user": {
+            "deprecated": true,
+            "type": "string",
+            "description": "Deprecated in favor of safety_identifier and prompt_cache_key."
+          },
+          "client_metadata": {
+            "type": "object",
+            "description": "Codex CLI request metadata: a Codex CLI compatibility extension, not an official OpenAI field. Accepted on every /v1/responses request; every value must be a string.",
+            "x-uos-extension": "codex-cli",
+            "additionalProperties": { "type": "string" }
+          },
+          "cache_control": {
+            "$ref": "#/components/schemas/OpenRouterCacheControl",
+            "description": "OpenRouter Claude prompt-cache control: an OpenRouter compatibility extension, not an official OpenAI field. Accepted only for an anthropic/claude- model served by the enabled OpenRouter provider; otherwise rejected as an unrecognized argument.",
+            "x-uos-extension": "openrouter-claude"
+          }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "ChatCompletionResponse": {
         "type": "object",
@@ -750,6 +1182,203 @@
         "description": "Gateway-specific model capability metadata. This is not an official OpenAI response shape.",
         "additionalProperties": true
       },
+      "PublicModelCatalog": {
+        "type": "object",
+        "description": "The public model catalog. This is not an official OpenAI response shape.",
+        "required": ["object", "data", "sources"],
+        "properties": {
+          "object": { "const": "uos.model_catalog" },
+          "data": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "sources": {
+            "type": "object",
+            "description": "Per-source status, entry count, and last update time.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthIntrospection": {
+        "type": "object",
+        "required": ["ok", "service", "auth"],
+        "properties": {
+          "ok": { "const": true },
+          "service": { "type": "string" },
+          "auth": {
+            "type": "object",
+            "required": ["mode", "is_admin", "is_super_admin", "method", "token"],
+            "properties": {
+              "mode": { "type": "string", "enum": ["required", "disabled", "misconfigured"] },
+              "is_admin": { "type": "boolean" },
+              "is_super_admin": { "type": "boolean" },
+              "method": {
+                "type": "object",
+                "required": ["kind"],
+                "properties": { "kind": { "type": "string" } },
+                "additionalProperties": true
+              },
+              "token": {
+                "type": "object",
+                "description": "A fingerprint of the presented token. The raw token is never returned.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmbeddingsInput": {
+        "description": "One text string or an array of text strings. Token arrays are rejected.",
+        "oneOf": [{ "type": "string" }, { "type": "array", "minItems": 1, "items": { "type": "string" } }]
+      },
+      "EmbeddingsRequest": {
+        "type": "object",
+        "description": "A UOS text-embeddings request. These properties are exactly the runtime allowlist; any other property is rejected with 400.",
+        "required": ["model", "input"],
+        "properties": {
+          "model": { "const": "voyage-4-large" },
+          "input": { "$ref": "#/components/schemas/EmbeddingsInput" },
+          "input_type": {
+            "type": "string",
+            "enum": ["query", "document"],
+            "default": "document",
+            "description": "Send it explicitly for retrieval workloads."
+          },
+          "dimensions": { "type": "integer", "enum": [256, 512, 1024, 2048], "default": 1024 },
+          "encoding_format": { "type": "string", "enum": ["float", "base64"], "default": "float" },
+          "truncation": { "type": "boolean", "default": true },
+          "user": { "type": ["string", "null"], "description": "Accepted and ignored." }
+        },
+        "additionalProperties": false
+      },
+      "EmbeddingJobRequest": {
+        "type": "object",
+        "description": "An asynchronous UOS embeddings job request. These properties are exactly the runtime allowlist; any other property, user included, is rejected with 400.",
+        "required": ["model", "input", "input_type"],
+        "properties": {
+          "model": { "const": "voyage-4-large" },
+          "input": { "$ref": "#/components/schemas/EmbeddingsInput" },
+          "input_type": { "type": "string", "enum": ["query", "document"] },
+          "dimensions": { "type": "integer", "enum": [256, 512, 1024, 2048], "default": 1024 },
+          "encoding_format": { "type": "string", "enum": ["float"], "default": "float" },
+          "truncation": { "type": "boolean", "default": true }
+        },
+        "additionalProperties": false
+      },
+      "EmbeddingsResponse": {
+        "type": "object",
+        "description": "The OpenAI-style embeddings list. With encoding_format base64, each embedding is a base64 string of little-endian float32 values.",
+        "required": ["object", "data", "model", "usage"],
+        "properties": {
+          "object": { "const": "list" },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["object", "index", "embedding"],
+              "properties": {
+                "object": { "const": "embedding" },
+                "index": { "type": "integer", "minimum": 0 },
+                "embedding": {
+                  "oneOf": [{ "type": "array", "items": { "type": "number" } }, { "type": "string" }]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "model": { "type": "string" },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "prompt_tokens": { "type": "integer", "minimum": 0 },
+              "total_tokens": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "EmbeddingJob": {
+        "type": "object",
+        "required": ["id", "object", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "const": "embeddings.job" },
+          "status": { "type": "string", "enum": ["queued", "running", "succeeded", "failed"] },
+          "created_at_ms": { "type": "integer" },
+          "updated_at_ms": { "type": "integer" },
+          "model": { "type": "string" },
+          "input_type": { "type": "string" },
+          "dimensions": { "type": "integer" },
+          "encoding_format": { "type": "string" },
+          "truncation": { "type": "boolean" },
+          "input_count": { "type": "integer" },
+          "total_chars": { "type": "integer" },
+          "retry_after_seconds": { "type": ["integer", "null"] },
+          "error": {},
+          "result": {
+            "oneOf": [{ "$ref": "#/components/schemas/EmbeddingsResponse" }, { "type": "null" }]
+          }
+        },
+        "additionalProperties": true
+      },
+      "AgentMessageCreateRequest": {
+        "type": "object",
+        "required": ["agent_id", "body"],
+        "properties": {
+          "agent_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "body": { "type": "string", "minLength": 1, "maxLength": 8000 },
+          "channel": { "type": "string", "maxLength": 120 },
+          "kind": { "type": "string", "maxLength": 120 },
+          "metadata": {
+            "type": "object",
+            "description": "Any JSON object whose JSON encoding is at most 8000 characters.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "AgentMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "owner",
+          "repo",
+          "state_id",
+          "agent_id",
+          "channel",
+          "kind",
+          "body",
+          "metadata",
+          "created_at_ms"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "owner": { "type": "string" },
+          "repo": { "type": "string" },
+          "state_id": { "type": "string" },
+          "agent_id": { "type": "string" },
+          "channel": { "type": ["string", "null"] },
+          "kind": { "type": ["string", "null"] },
+          "body": { "type": "string" },
+          "metadata": { "type": ["object", "null"], "additionalProperties": true },
+          "created_at_ms": { "type": "integer" }
+        },
+        "additionalProperties": false
+      },
+      "AgentMessageList": {
+        "type": "object",
+        "required": ["messages", "next_since", "next_cursor", "has_more"],
+        "properties": {
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/AgentMessage" } },
+          "next_since": {
+            "type": ["integer", "null"],
+            "description": "created_at_ms of the last message on this page."
+          },
+          "next_cursor": { "type": ["string", "null"] },
+          "has_more": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
       "HealthResponse": {
         "type": "object",
         "required": ["status", "release"],
@@ -809,6 +1438,24 @@
           "RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
           "RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
         },
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+        }
+      },
+      "Forbidden": {
+        "description": "The credential is valid but cannot use this route, for example a non-GitHub credential on /uos/agent-messages.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+        }
+      },
+      "NotFound": {
+        "description": "The resource does not exist or belongs to another client identity.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+        }
+      },
+      "IdempotencyConflict": {
+        "description": "The Idempotency-Key was already used with a different request, or its first request is still in progress.",
         "content": {
           "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
         }

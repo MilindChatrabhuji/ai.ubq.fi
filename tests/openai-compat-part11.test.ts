@@ -7,6 +7,7 @@ afterEach(cleanupHarness);
 // openai-compat suite, part 11 of 12: tests moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
+import { resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } from "../src/models/openrouter-models.ts";
 import {
   DEEPSEEK_FLASH_MODEL,
   DEFAULT_TEST_MODEL,
@@ -1120,6 +1121,37 @@ test("openai: a switched-off DeepSeek provider is not dispatched on the Response
     else process.env.DEEPSEEK_API_KEY = originalApiKey;
     if (originalOpenRouterApiKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
     else process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+  }
+});
+
+test("openai: a switched-off OpenRouter provider does not refresh a cold catalogue", async () => {
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "openrouter-test-key";
+  resetOpenRouterModelsCacheForTest();
+  let catalogueFetches = 0;
+  setOpenRouterModelsFetchForTest(() => {
+    catalogueFetches += 1;
+    return Promise.reject(new Error("a switched-off OpenRouter provider must not refresh its catalogue"));
+  });
+  try {
+    await withDiscoveryKeys(null, async () => {
+      await withProviderSelection(["cerebras"], async () => {
+        const response = await withFetchMock(
+          () => {
+            throw new Error("the ordinary availability path must not dispatch an upstream request");
+          },
+          () => handleResponses(responsesRequest({ model: "vendor/alpha", input: "hi" }))
+        );
+        assert.equal(catalogueFetches, 0);
+        assert.equal(response.status, 404);
+        await response.text();
+      });
+    });
+  } finally {
+    setOpenRouterModelsFetchForTest(null);
+    resetOpenRouterModelsCacheForTest();
+    if (originalApiKey === undefined) Reflect.deleteProperty(process.env, "OPENROUTER_API_KEY");
+    else process.env.OPENROUTER_API_KEY = originalApiKey;
   }
 });
 

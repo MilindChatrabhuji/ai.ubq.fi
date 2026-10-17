@@ -46,8 +46,8 @@ import {
 import { SENTINEL_REPLAY_MAX_RECORDS, SENTINEL_REPLAY_MAX_STATUS_RECORDS, sentinelReplayReservationBytes } from "./replay-limits.ts";
 import { isSentinelReplayCaptureStatusRow } from "./replay-observation.ts";
 import { isSentinelReplayManifest } from "./replay-read.ts";
-import { bootstrapBeforeMutation, releaseLegacyReservation, runBootstrapBatch } from "./replay-retention-bootstrap.ts";
-import { metadataEntryMatches, reconcileSentinelReplayStatusMetadata } from "./replay-retention-metadata.ts";
+import { bootstrapBeforeMutation, forgetChunkOwnerIndex, releaseLegacyReservation, runBootstrapBatch } from "./replay-retention-bootstrap.ts";
+import { metadataEntryMatches, reconcileSentinelReplayStatusMetadata, reconcileSentinelReplayStatusMetadataIfDue } from "./replay-retention-metadata.ts";
 import {
   accountingKeyMatches,
   CAS_ATTEMPTS,
@@ -876,6 +876,8 @@ export const reserveSentinelReplayCapacity = async (
       }
       continue;
     }
+    // Admissions may create owners from here on, so no earlier chunk owner index can be trusted again.
+    forgetChunkOwnerIndex(kv);
     const overBudget = ledger.stored_bytes + ledger.reserved_bytes + charge > payloadBudget || ledger.records + 1 > SENTINEL_REPLAY_MAX_RECORDS;
     if (overBudget) {
       if (!(await reclaimAdmissionCapacity(kv, budgetBytes, payloadBudget, charge, input.now_ms))) {
@@ -919,7 +921,7 @@ export const reserveSentinelReplayCapacity = async (
   return { ok: false, reason: SENTINEL_REPLAY_STORAGE_FULL_REASON };
 };
 
-/** Bounded maintenance: reap, bootstrap, reclaim expired payloads and metadata charges, evict if needed. */
+/** Bounded maintenance: reap, bootstrap, reclaim expired payloads, evict if needed, and recount metadata when due. */
 export const runSentinelReplayRetentionMaintenance = async (
   kv: Kv,
   options: Readonly<{ now_ms: number; budget_bytes?: number }>
@@ -942,7 +944,8 @@ export const runSentinelReplayRetentionMaintenance = async (
       budget_bytes: budgetBytes,
     });
   }
-  await reconcileSentinelReplayStatusMetadata(kv, budgetBytes);
+  // Throttled: a healthy admin poll inside the interval neither rescans metadata nor writes the ledger.
+  await reconcileSentinelReplayStatusMetadataIfDue(kv, budgetBytes, options.now_ms);
   return await readSentinelReplayRetentionStatus(kv, budgetBytes);
 };
 
