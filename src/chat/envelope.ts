@@ -10,7 +10,7 @@ import { lithosUpstreamModelFor } from "../provider/lithos.ts";
 import { resolveOpenRouterUpstreamModel } from "../provider/openrouter.ts";
 import { handleOpenRouterChatCompletions } from "../provider/openrouter-handlers.ts";
 import { openRouterPromptCacheRequestExtensions, validateOpenRouterPromptCacheRequestControl } from "../provider/openrouter-request-controls.ts";
-import { isProviderEnabled, loadProviderSelectionCached } from "../provider/selection.ts";
+import { isProviderEnabled, loadProviderSelectionCached, type ProviderSelection } from "../provider/selection.ts";
 import { type ReasoningEffort } from "../defaults.ts";
 import { openaiError } from "../http.ts";
 import { createStreamFirstEventDeadline } from "../inference-deadline.ts";
@@ -99,6 +99,7 @@ const parseChatCompletionsEnvelope = async (
         rawRecord: Record<string, unknown>;
         warnings: string[];
         jsonObjectTextFormat: { type: "json_object" } | null;
+        selection: ProviderSelection | null;
       };
     }
   | { ok: false; response: Response }
@@ -148,7 +149,7 @@ const parseChatCompletionsEnvelope = async (
   ]);
   if (jsonObjectTextFormat) handledKeys.add("response_format");
   const warnings = buildIgnoredWarnings(rawRecord, handledKeys);
-  return { ok: true, value: { body, rawRecord, warnings, jsonObjectTextFormat } };
+  return { ok: true, value: { body, rawRecord, warnings, jsonObjectTextFormat, selection } };
 };
 
 const resolveChatCompletionsModel = async (
@@ -563,7 +564,7 @@ const dispatchAndPreflightChatCompletions = async (
 export const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const envelope = await parseChatCompletionsEnvelope(req);
   if (!envelope.ok) return envelope.response;
-  const { body, rawRecord, warnings, jsonObjectTextFormat } = envelope.value;
+  const { body, rawRecord, warnings, jsonObjectTextFormat, selection } = envelope.value;
 
   const modelChoice = await resolveChatCompletionsModel(rawRecord, usageContext);
   if (!modelChoice.ok) return modelChoice.response;
@@ -571,7 +572,6 @@ export const handleChatCompletionsInternal = async (req: Request, usageContext?:
 
   // A switched-off direct provider is not dispatched to; those ids then follow
   // the ordinary Codex/paid waterfall like any other catalog model.
-  const selection = await loadProviderSelectionCached();
   const cerebrasModel = cerebrasUpstreamModelFor(model);
   if (isProviderEnabled("cerebras", selection) && cerebrasModel) {
     return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext, cerebrasModel);
