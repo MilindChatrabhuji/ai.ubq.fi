@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { normalizeDeepSeekChatCompletion } from "../src/deepseek/index.ts";
@@ -203,7 +204,7 @@ const awaitAbort = (signal: AbortSignal): Promise<void> =>
 /** The kind a rejected DeepSeek transport error carries. */
 const kindOf = (error: unknown): unknown => (error as { kind?: unknown }).kind;
 
-Deno.test("m04 parity: answer text and fragmented tool calls agree between transports", () => {
+test("m04 parity: answer text and fragmented tool calls agree between transports", () => {
   const streamed = streamedTerminal([
     chatChunk({ role: "assistant", content: "Weather: " }),
     chatChunk({ content: "sunny." }),
@@ -235,7 +236,7 @@ Deno.test("m04 parity: answer text and fragmented tool calls agree between trans
   }
 });
 
-Deno.test("m04 parity: fragmented tool calls announced out of call order keep output_index positions", () => {
+test("m04 parity: fragmented tool calls announced out of call order keep output_index positions", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_order", echo, 1_780_000_000);
   const events: Record<string, unknown>[] = [];
   // Call 1 announces its name first while call 0 is still an anonymous
@@ -293,7 +294,7 @@ Deno.test("m04 parity: fragmented tool calls announced out of call order keep ou
   );
 });
 
-Deno.test("m04 parity: a reasoning item does not displace indexed items in the terminal output", () => {
+test("m04 parity: a reasoning item does not displace indexed items in the terminal output", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_reasoning_slot", echo, 1_780_000_000);
   const events: Record<string, unknown>[] = [];
   events.push(...translator.push(chatChunk({ role: "assistant", reasoning_content: "thinking" })));
@@ -311,7 +312,7 @@ Deno.test("m04 parity: a reasoning item does not displace indexed items in the t
   assert.equal(output[Number(added.output_index)].type, "message");
 });
 
-Deno.test("m04 parity: reasoning-first streams accumulate in the SDK's ordered output", () => {
+test("m04 parity: reasoning-first streams accumulate in the SDK's ordered output", () => {
   const events = streamedEvents([
     chatChunk({ role: "assistant", reasoning_content: "checking the weather " }),
     chatChunk({ reasoning_content: "for Oslo" }),
@@ -353,7 +354,7 @@ Deno.test("m04 parity: reasoning-first streams accumulate in the SDK's ordered o
   assert.deepEqual(outputTypes(terminal.response), outputTypes(buffered));
 });
 
-Deno.test("m04 parity: reasoning that arrives after text is announced at its own later index", () => {
+test("m04 parity: reasoning that arrives after text is announced at its own later index", () => {
   // The provider sends reasoning before content, but the lifecycle must stay
   // coherent whatever order the deltas arrive in: a late reasoning item is
   // announced at the index it actually owns instead of displacing the answer.
@@ -393,7 +394,7 @@ Deno.test("m04 parity: reasoning that arrives after text is announced at its own
   );
 });
 
-Deno.test("m04 parity: a refusal after reasoning keeps every SDK event on its own item", () => {
+test("m04 parity: a refusal after reasoning keeps every SDK event on its own item", () => {
   const refusal = "I cannot help with that.";
   const events = streamedEvents([
     chatChunk({ role: "assistant", reasoning_content: "checking the request" }),
@@ -415,7 +416,7 @@ Deno.test("m04 parity: a refusal after reasoning keeps every SDK event on its ow
   assert.deepEqual((buffered.output as Record<string, unknown>[])[1].content, [{ type: "refusal", refusal }]);
 });
 
-Deno.test("m04 parity: a reasoning-only stop accumulates its single indexed item on both transports", () => {
+test("m04 parity: a reasoning-only stop accumulates its single indexed item on both transports", () => {
   const events = streamedEvents([chatChunk({ role: "assistant", reasoning_content: "thinking only" }), chatChunk({}, { finish_reason: "stop" })]);
   const accumulated = sdkAccumulateOutput(events);
   const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
@@ -430,7 +431,7 @@ Deno.test("m04 parity: a reasoning-only stop accumulates its single indexed item
   assert.deepEqual(outputTypes(buffered), ["reasoning"]);
 });
 
-Deno.test("m04 Codex: reasoning then text completes reasoning before the message starts", () => {
+test("m04 Codex: reasoning then text completes reasoning before the message starts", () => {
   const events = streamedEvents([
     chatChunk({ role: "assistant", reasoning_content: "consider " }),
     chatChunk({ reasoning_content: "the answer" }),
@@ -455,7 +456,7 @@ Deno.test("m04 Codex: reasoning then text completes reasoning before the message
   assert.equal(((accumulated[1].content as Record<string, unknown>[])[0] as Record<string, unknown>).text, "pong");
 });
 
-Deno.test("m04 Codex: reasoning then a tool call completes reasoning before the call is announced", () => {
+test("m04 Codex: reasoning then a tool call completes reasoning before the call is announced", () => {
   const events = streamedEvents([
     chatChunk({ role: "assistant", reasoning_content: "the city needs a lookup" }),
     chatChunk(
@@ -476,7 +477,7 @@ Deno.test("m04 Codex: reasoning then a tool call completes reasoning before the 
   );
 });
 
-Deno.test("m04 Codex: late reasoning is delivered as one closed item after the answer", () => {
+test("m04 Codex: late reasoning is delivered as one closed item after the answer", () => {
   // The provider's normal order is reasoning first; this is the supported
   // robustness case where reasoning follows text. It cannot be announced while
   // the message is active, so it is delivered as one closed lifecycle after the
@@ -499,7 +500,7 @@ Deno.test("m04 Codex: late reasoning is delivered as one closed item after the a
   assert.equal(((accumulated[1].summary as Record<string, unknown>[])[0] as Record<string, unknown>).text, "reconsidered");
 });
 
-Deno.test("m04 Codex: deferred reasoning stays ahead of the tool call it belongs to for history replay", () => {
+test("m04 Codex: deferred reasoning stays ahead of the tool call it belongs to for history replay", () => {
   // content -> reasoning_content -> tool_calls. The deferred reasoning must be
   // flushed before the tool item, or the delivered output is
   // [message, function_call, reasoning] and replaying it with the tool result
@@ -554,7 +555,7 @@ Deno.test("m04 Codex: deferred reasoning stays ahead of the tool call it belongs
   ]);
 });
 
-Deno.test("m04 parity: a refusal is answer-bearing payload on both transports", () => {
+test("m04 parity: a refusal is answer-bearing payload on both transports", () => {
   const refusal = "I cannot help with that.";
   const buffered = bufferedPayload({ role: "assistant", content: null, refusal });
 
@@ -582,7 +583,7 @@ Deno.test("m04 parity: a refusal is answer-bearing payload on both transports", 
   assert.deepEqual(bufferedOutput[0].content, [{ type: "refusal", refusal }]);
 });
 
-Deno.test("m04 parity: a normalized refusal delta reaches the streamed translator", async () => {
+test("m04 parity: a normalized refusal delta reaches the streamed translator", async () => {
   const refusal = "I will not do that.";
   const chunks = await readChatStream(
     [sse(chatChunk({ role: "assistant", refusal })), sse({ ...chatChunk({}), choices: [{ index: 0, finish_reason: "stop" }] }), "data: [DONE]\n\n"].join("")
@@ -611,7 +612,7 @@ Deno.test("m04 parity: a normalized refusal delta reaches the streamed translato
   assert.deepEqual((terminal.response.output as Record<string, unknown>[])[0].content, [{ type: "refusal", refusal }]);
 });
 
-Deno.test("m04 parity: a normalized refusal-only completion is carried by the buffered adapter", () => {
+test("m04 parity: a normalized refusal-only completion is carried by the buffered adapter", () => {
   const refusal = "I will not do that.";
   const normalized = normalizeDeepSeekChatCompletion(chatCompletion({ role: "assistant", content: null, refusal }), "deepseek-flash");
   if (!normalized.ok) throw new Error(normalized.message);
@@ -623,14 +624,14 @@ Deno.test("m04 parity: a normalized refusal-only completion is carried by the bu
   assert.deepEqual((payload.output as Record<string, unknown>[])[0].content, [{ type: "refusal", refusal }]);
 });
 
-Deno.test("m04 parity: a non-string refusal is rejected by the transport, not dropped", async () => {
+test("m04 parity: a non-string refusal is rejected by the transport, not dropped", async () => {
   await assert.rejects(readChatStream(`${sse(chatChunk({ role: "assistant", refusal: 42 }))}data: [DONE]\n\n`), (error) => kindOf(error) === "invalid_chunk");
 
   const buffered = normalizeDeepSeekChatCompletion(chatCompletion({ role: "assistant", content: "hi", refusal: 42 }), "deepseek-flash");
   assert.equal(buffered.ok, false);
 });
 
-Deno.test("m04 parity: a null refusal is absence, not a malformed chunk", async () => {
+test("m04 parity: a null refusal is absence, not a malformed chunk", async () => {
   // The official Chat schema types `refusal` as an optional string or null, so
   // an ordinary null must stay a normal completion rather than becoming a new
   // 502 on either transport.
@@ -651,7 +652,7 @@ Deno.test("m04 parity: a null refusal is absence, not a malformed chunk", async 
   assert.equal(message.content, "hi");
 });
 
-Deno.test("m04 parity: a reasoning-only nominal stop is a completion nothing can act on", () => {
+test("m04 parity: a reasoning-only nominal stop is a completion nothing can act on", () => {
   const streamed = streamedTerminal([chatChunk({ role: "assistant", reasoning_content: "thinking only" }), chatChunk({}, { finish_reason: "stop" })]);
   assert.equal(streamed.type, "response.completed");
   assert.deepEqual(outputTypes(streamed.response), ["reasoning"]);
@@ -679,7 +680,7 @@ Deno.test("m04 parity: a reasoning-only nominal stop is a completion nothing can
   assert.deepEqual(outputTypes(bufferedPayload({ role: "assistant", content: null, reasoning_content: "thinking only" })), ["reasoning"]);
 });
 
-Deno.test("m04 parity: explicit length and content_filter stops are incompletions on both transports", () => {
+test("m04 parity: explicit length and content_filter stops are incompletions on both transports", () => {
   for (const [reason, expected] of [
     ["length", "max_output_tokens"],
     ["content_filter", "content_filter"],
@@ -697,7 +698,7 @@ Deno.test("m04 parity: explicit length and content_filter stops are incompletion
   }
 });
 
-Deno.test("m04 parity: malformed terminals and abrupt EOF cannot reach a completed terminal", async () => {
+test("m04 parity: malformed terminals and abrupt EOF cannot reach a completed terminal", async () => {
   const chunk = chatChunk({ role: "assistant", content: "partial" });
 
   // The provider's [DONE] sentinel is what ends a Chat stream; a body that stops
@@ -725,7 +726,7 @@ Deno.test("m04 parity: malformed terminals and abrupt EOF cannot reach a complet
   assert.deepEqual(unknown.response.incomplete_details, null);
 });
 
-Deno.test("m04 deadline: a queued wait spends the shared attempt budget instead of restarting it", async () => {
+test("m04 deadline: a queued wait spends the shared attempt budget instead of restarting it", async () => {
   const request = new AbortController();
   const shared = createStreamFirstEventDeadline(request.signal, 1_000);
   // Stand-in for queue waiting: the wait happens inside the caller's budget.
@@ -744,7 +745,7 @@ Deno.test("m04 deadline: a queued wait spends the shared attempt budget instead 
   shared.clear();
 });
 
-Deno.test("m04 deadline: a wait that outlives the budget leaves nothing to dispatch", async () => {
+test("m04 deadline: a wait that outlives the budget leaves nothing to dispatch", async () => {
   const shared = createStreamFirstEventDeadline(new AbortController().signal, 40);
   await new Promise((resolve) => setTimeout(resolve, 90));
   assert.equal(shared.signal.aborted, true);
@@ -760,7 +761,7 @@ Deno.test("m04 deadline: a wait that outlives the budget leaves nothing to dispa
   shared.clear();
 });
 
-Deno.test("m04 deadline: client cancellation composes through every attempt deadline", () => {
+test("m04 deadline: client cancellation composes through every attempt deadline", () => {
   const request = new AbortController();
   const shared = createStreamFirstEventDeadline(request.signal, 60_000);
   const attempt = createStreamSemanticDeadline(shared.signal, 60_000);
@@ -777,7 +778,7 @@ Deno.test("m04 deadline: client cancellation composes through every attempt dead
   shared.clear();
 });
 
-Deno.test("m04 deadline: an attempt-local abort does not cancel the shared budget", () => {
+test("m04 deadline: an attempt-local abort does not cancel the shared budget", () => {
   const request = new AbortController();
   const shared = createStreamFirstEventDeadline(request.signal, 60_000);
   const attempt = createStreamSemanticDeadline(shared.signal, 60_000);
@@ -795,7 +796,7 @@ Deno.test("m04 deadline: an attempt-local abort does not cancel the shared budge
   shared.clear();
 });
 
-Deno.test("m04 deadline: aborting a deadline releases its timer", () => {
+test("m04 deadline: aborting a deadline releases its timer", () => {
   const originalSetTimeout = globalThis.setTimeout;
   const originalClearTimeout = globalThis.clearTimeout;
   const armed = new Set<number>();
@@ -825,7 +826,7 @@ Deno.test("m04 deadline: aborting a deadline releases its timer", () => {
   }
 });
 
-Deno.test("m04 deadline: abort still aborts after clear", () => {
+test("m04 deadline: abort still aborts after clear", () => {
   const shared = createStreamFirstEventDeadline(new AbortController().signal, 60_000);
   const attempt = createStreamSemanticDeadline(shared.signal, 60_000);
   attempt.clear();

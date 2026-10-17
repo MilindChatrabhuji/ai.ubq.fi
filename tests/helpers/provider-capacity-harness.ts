@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 import { resetCodexAccountRoutingForTest } from "../../src/codex/account-routing.ts";
 import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../../src/codex/index.ts";
 import { setKvForTest } from "../../src/kv.ts";
@@ -8,7 +9,7 @@ type StoredValue = {
   versionstamp: string;
 };
 
-export const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+export const keyToString = (key: KvKey): string => JSON.stringify(key);
 
 // `String(input)` would render a `Request` as "[object Request]" instead of its URL.
 export const requestUrl = (input: RequestInfo | URL): string => {
@@ -27,58 +28,58 @@ class CapacityKvStore extends Map<string, StoredValue> {
     resetCodexAccountRoutingForTest();
   }
 
-  put(key: Deno.KvKey, value: unknown): void {
+  put(key: KvKey, value: unknown): void {
     this._nextVersion += 1;
     this.set(keyToString(key), { value, versionstamp: `v${this._nextVersion}` });
   }
 
-  remove(key: Deno.KvKey): void {
+  remove(key: KvKey): void {
     this.delete(keyToString(key));
   }
 
-  version(key: Deno.KvKey): string | null {
+  version(key: KvKey): string | null {
     return this.get(keyToString(key))?.versionstamp ?? null;
   }
 }
 
 export const kvStore = new CapacityKvStore();
 export const kvStub = {
-  get: (key: Deno.KvKey) => {
+  get: (key: KvKey) => {
     const stored = kvStore.get(keyToString(key));
     return Promise.resolve({
       key,
       value: stored?.value ?? null,
       versionstamp: stored?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<unknown>);
+    } as KvEntryMaybe<unknown>);
   },
-  set: (key: Deno.KvKey, value: unknown) => {
+  set: (key: KvKey, value: unknown) => {
     kvStore.put(key, value);
     return { ok: true } as const;
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.remove(key);
   },
-  list: function* (selector?: { prefix?: Deno.KvKey }) {
+  list: function* (selector?: { prefix?: KvKey }) {
     const prefix = selector?.prefix;
     for (const [encodedKey, stored] of kvStore.entries()) {
-      const key = JSON.parse(encodedKey) as Deno.KvKey;
+      const key = JSON.parse(encodedKey) as KvKey;
       if (prefix && !prefix.every((part, index) => key[index] === part)) continue;
-      yield { key, value: stored.value, versionstamp: stored.versionstamp } as Deno.KvEntry<unknown>;
+      yield { key, value: stored.value, versionstamp: stored.versionstamp } as KvEntry<unknown>;
     }
   },
   atomic: () => {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const operations: ({ type: "set"; key: Deno.KvKey; value: unknown } | { type: "delete"; key: Deno.KvKey })[] = [];
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
+    const operations: ({ type: "set"; key: KvKey; value: unknown } | { type: "delete"; key: KvKey })[] = [];
     const chain = {
-      check: (entry: Deno.KvEntryMaybe<unknown>) => {
+      check: (entry: KvEntryMaybe<unknown>) => {
         checks.push({ key: entry.key, versionstamp: entry.versionstamp });
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         operations.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         operations.push({ type: "delete", key });
         return chain;
       },
@@ -96,9 +97,7 @@ export const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
-
-setKvForTest(kvStub);
+} as unknown as Kv;
 
 export const nowMs = 1_800_000_000_000;
 
@@ -126,7 +125,7 @@ export const seed = (): void => {
     latest_refill_amount_credits: 10,
     latest_refill_completed_at_ms: nowMs - 5_000,
   });
-  Deno.env.set("METERED_API_KEY", "metered-api-key");
+  process.env.METERED_API_KEY = "metered-api-key";
 };
 
 const codexUsageBody = (primaryUsed: number, secondaryUsed: number, primaryResetAt = 1_800_010_000, secondaryResetAt = 1_800_020_000) => ({
@@ -227,3 +226,23 @@ export const createFetcher =
       )
     );
   };
+
+let harnessEnvironment: Map<string, string | undefined> | null = null;
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  harnessEnvironment ??= new Map(["METERED_API_KEY"].map((name) => [name, process.env[name]]));
+  setKvForTest(kvStub);
+};
+export const resetHarness = (): void => {
+  kvStore.clearStore();
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  for (const [name, value] of harnessEnvironment ?? []) {
+    if (value === undefined) Reflect.deleteProperty(process.env, name);
+    else process.env[name] = value;
+  }
+  harnessEnvironment = null;
+  setKvForTest(null);
+};

@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { createStreamFirstEventDeadline } from "../src/inference-deadline.ts";
@@ -41,7 +42,7 @@ const attemptError = async (response: Response, options: Parameters<typeof prepa
   return { trigger: result.attempt.trigger, status: result.attempt.response.status, error: body.error, terminal: result.attempt.terminal };
 };
 
-Deno.test("responses attempts: eligibility and trigger classification cover the documented vocabulary", () => {
+test("responses attempts: eligibility and trigger classification cover the documented vocabulary", () => {
   assert.equal(isEligibleResponsesAttemptStatus(new Response(null, { status: 500 })), true);
   assert.equal(isEligibleResponsesAttemptStatus(new Response(null, { status: 599 })), true);
   assert.equal(isEligibleResponsesAttemptStatus(new Response(null, { status: 404 })), false);
@@ -59,7 +60,7 @@ Deno.test("responses attempts: eligibility and trigger classification cover the 
   assert.equal(failureKindForResponsesAttemptTrigger("not_a_trigger" as never), null);
 });
 
-Deno.test("responses attempts: failure terminal types follow the trigger and both signals", () => {
+test("responses attempts: failure terminal types follow the trigger and both signals", () => {
   const open = new AbortController();
   assert.equal(responseFailureTerminalType("semantic_timeout", open.signal, open.signal), "deadline");
   assert.equal(responseFailureTerminalType("read_error", open.signal, open.signal), "error");
@@ -76,7 +77,7 @@ Deno.test("responses attempts: failure terminal types follow the trigger and bot
   assert.equal(responseFailureTerminalType("read_error", timedOut.signal, open.signal), "deadline");
 });
 
-Deno.test("responses attempts: a non-2xx upstream is classified by status and normalized for the client", async () => {
+test("responses attempts: a non-2xx upstream is classified by status and normalized for the client", async () => {
   const server = await attemptError(new Response(JSON.stringify({ error: { message: "upstream exploded", code: "boom" } }), { status: 503 }), {});
   assert.equal(server.trigger, "http_5xx");
   assert.equal(server.status, 503);
@@ -93,7 +94,7 @@ Deno.test("responses attempts: a non-2xx upstream is classified by status and no
   assert.equal(redirect.status, 302);
 });
 
-Deno.test("responses attempts: an upstream without a body fails closed as missing_body", async () => {
+test("responses attempts: an upstream without a body fails closed as missing_body", async () => {
   const failed = await attemptError(new Response(null, { status: 200 }), {});
 
   assert.equal(failed.trigger, "missing_body");
@@ -102,7 +103,7 @@ Deno.test("responses attempts: an upstream without a body fails closed as missin
   assert.equal(failed.error.code, "server_error");
 });
 
-Deno.test("responses attempts: a terminal completion without semantic output is an empty upstream completion", async () => {
+test("responses attempts: a terminal completion without semantic output is an empty upstream completion", async () => {
   const failed = await attemptError(sseResponse(sse([completedFrame("resp_empty")])), {});
 
   assert.equal(failed.trigger, "empty_upstream_completion");
@@ -112,7 +113,7 @@ Deno.test("responses attempts: a terminal completion without semantic output is 
   assert.equal(failed.terminal?.type, "response.completed");
 });
 
-Deno.test("responses attempts: a failed terminal is rejected when the route asks for it", async () => {
+test("responses attempts: a failed terminal is rejected when the route asks for it", async () => {
   const body = sse([JSON.stringify({ type: "response.failed", response: { id: "resp_failed" } })]);
   const rejected = await attemptError(sseResponse(body), { rejectFailedTerminal: true });
   assert.equal(rejected.trigger, "read_error");
@@ -130,7 +131,7 @@ Deno.test("responses attempts: a failed terminal is rejected when the route asks
   assert.equal(accepted.attempt.prepared.terminal?.type, "response.failed");
 });
 
-Deno.test("responses attempts: a semantic stream is prepared with its discovered identity", async () => {
+test("responses attempts: a semantic stream is prepared with its discovered identity", async () => {
   const controller = new AbortController();
   const deadline = createStreamFirstEventDeadline(controller.signal, 5_000);
   const body = sse([JSON.stringify({ type: "response.created", response: { id: "resp_ready" } }), deltaFrame(), completedFrame("resp_ready")]);
@@ -149,14 +150,14 @@ Deno.test("responses attempts: a semantic stream is prepared with its discovered
   assert.equal(typeof result.attempt.clearDeadline, "function");
 });
 
-Deno.test("responses attempts: malformed SSE JSON fails the attempt as a malformed event", async () => {
+test("responses attempts: malformed SSE JSON fails the attempt as a malformed event", async () => {
   const failed = await attemptError(sseResponse("data: {not json}\n\n"), {});
 
   assert.equal(failed.trigger, "malformed_event");
   assert.equal(failed.status, 502);
 });
 
-Deno.test("responses attempts: an eligible-model route rejects a stream without a created event or identity", async () => {
+test("responses attempts: an eligible-model route rejects a stream without a created event or identity", async () => {
   // The stream terminates without ever emitting response.created.
   const failedTerminal = JSON.stringify({ type: "response.failed", response: { id: "resp_1" } });
   const withoutCreated = await attemptError(sseResponse(sse([failedTerminal])), { requireEligibleModel: true });
@@ -178,7 +179,7 @@ Deno.test("responses attempts: an eligible-model route rejects a stream without 
   assert.equal(withoutModel.status, 502);
 });
 
-Deno.test("responses attempts: the deadline is cleared once an attempt settles", async () => {
+test("responses attempts: the deadline is cleared once an attempt settles", async () => {
   const controller = new AbortController();
   const deadline = createStreamFirstEventDeadline(controller.signal, 5_000);
   const body = sse([JSON.stringify({ type: "response.created", response: { id: "resp_clear" } }), completedFrame("resp_clear")]);
@@ -191,7 +192,7 @@ Deno.test("responses attempts: the deadline is cleared once an attempt settles",
   assert.equal(deadline.signal.aborted, false);
 });
 
-Deno.test("responses attempts: an aborted request signal rethrows the caller's reason", async () => {
+test("responses attempts: an aborted request signal rethrows the caller's reason", async () => {
   const controller = new AbortController();
   const deadline = createStreamFirstEventDeadline(controller.signal, 5_000);
   const reason = new Error("client went away");

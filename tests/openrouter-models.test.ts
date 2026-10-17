@@ -1,3 +1,5 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -22,16 +24,19 @@ const solEntry = {
 const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const withCleanCache = async (fn: () => Promise<void> | void) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = createFetchMock(() => Promise.reject(new Error("External network is not available in this catalog fixture")));
   resetOpenRouterModelsCacheForTest();
   try {
     await fn();
   } finally {
+    globalThis.fetch = originalFetch;
     setOpenRouterModelsFetchForTest(null);
     resetOpenRouterModelsCacheForTest();
   }
 };
 
-Deno.test("the upstream payload keeps context, provider context, and reasoning efforts", () => {
+test("the upstream payload keeps context, provider context, and reasoning efforts", () => {
   const models = openRouterModelsFromPayload(
     payload([
       solEntry,
@@ -59,12 +64,12 @@ Deno.test("the upstream payload keeps context, provider context, and reasoning e
   assert.deepEqual(models[2], { id: "no-metadata/model", context_window_tokens: null, max_context_window_tokens: null, reasoning: null });
 });
 
-Deno.test("a reasoning block without efforts or a default is not metadata", () => {
+test("a reasoning block without efforts or a default is not metadata", () => {
   const models = openRouterModelsFromPayload(payload([{ id: "a/b", reasoning: { mandatory: true } }]));
   assert.equal(models[0].reasoning, null);
 });
 
-Deno.test("ids join through ordered tiers, and an ambiguous key resolves to nothing", () => {
+test("ids join through ordered tiers, and an ambiguous key resolves to nothing", () => {
   const models = openRouterModelsFromPayload(
     payload([
       solEntry,
@@ -117,7 +122,7 @@ Deno.test("ids join through ordered tiers, and an ambiguous key resolves to noth
   assert.equal(matchOpenRouterModel(ambiguous, "alpha/shared-model")?.id, "alpha/shared-model");
 });
 
-Deno.test("a snapshot is cached, coalesced, and survives a failed refresh", async () => {
+test("a snapshot is cached, coalesced, and survives a failed refresh", async () => {
   await withCleanCache(async () => {
     let calls = 0;
     let mode: "ok" | "fail" | "empty" = "ok";
@@ -167,7 +172,7 @@ Deno.test("a snapshot is cached, coalesced, and survives a failed refresh", asyn
   });
 });
 
-Deno.test("no fetcher means no request and no metadata", async () => {
+test("no fetcher means no request and no metadata", async () => {
   await withCleanCache(async () => {
     const snapshot = await fetchOpenRouterModels();
     assert.equal(snapshot, null);

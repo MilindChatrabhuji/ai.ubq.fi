@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -84,7 +85,7 @@ const collectFrames = async (response: Response, signal?: AbortSignal): Promise<
   return frames;
 };
 
-Deno.test("lithos transport rejects an unknown model and an unserializable body before dispatch", async () => {
+test("lithos transport rejects an unknown model and an unserializable body before dispatch", async () => {
   let dispatched = false;
   const fetcher = () => {
     dispatched = true;
@@ -116,7 +117,7 @@ Deno.test("lithos transport rejects an unknown model and an unserializable body 
   assert.equal(dispatched, false);
 });
 
-Deno.test("lithos transport classifies a caller timeout and a blown header deadline as gateway timeouts", async () => {
+test("lithos transport classifies a caller timeout and a blown header deadline as gateway timeouts", async () => {
   const caller = new AbortController();
   caller.abort(new DOMException("caller deadline", "TimeoutError"));
   let dispatched = 0;
@@ -151,7 +152,7 @@ Deno.test("lithos transport classifies a caller timeout and a blown header deadl
   }
 });
 
-Deno.test("lithos buffered normalization accepts an absent model echo and rejects an unusable one", () => {
+test("lithos buffered normalization accepts an absent model echo and rejects an unusable one", () => {
   // A non-string echo carries no model claim, so it is not a mismatch.
   const scalarEcho = normalizedCompletion(completion({ role: "assistant", content: "hello" }, { model: 42 }));
   assert.equal(scalarEcho.model, MODEL);
@@ -177,7 +178,7 @@ Deno.test("lithos buffered normalization accepts an absent model echo and reject
   assert.match(rejectionMessage(mismatch), /different model than requested/);
 });
 
-Deno.test("lithos buffered normalization rejects every unusable message field", () => {
+test("lithos buffered normalization rejects every unusable message field", () => {
   assert.match(rejectionMessage(normalizeLithosChatCompletion(completion({ role: "user", content: "hello" }), MODEL)), /does not contain an assistant message/);
   assert.match(rejectionMessage(normalizeLithosChatCompletion(completion({ role: "assistant", content: 42 }), MODEL)), /unsupported message content/);
   assert.match(
@@ -224,7 +225,7 @@ Deno.test("lithos buffered normalization rejects every unusable message field", 
   assert.match(rejectionMessage(badIndex), /has an invalid index/);
 });
 
-Deno.test("lithos tool calls are validated field by field on the buffered path", () => {
+test("lithos tool calls are validated field by field on the buffered path", () => {
   const withToolCall = (toolCall: unknown): NormalizationOutcome =>
     normalizeLithosChatCompletion(completion({ role: "assistant", content: null, tool_calls: toolCall }), MODEL);
 
@@ -246,7 +247,7 @@ Deno.test("lithos tool calls are validated field by field on the buffered path",
   assert.equal(message.content, null);
 });
 
-Deno.test("lithos chunk normalization validates delta fields and the chunk envelope", () => {
+test("lithos chunk normalization validates delta fields and the chunk envelope", () => {
   const chunkOutcome = (frame: Record<string, unknown>): NormalizationOutcome => normalizeLithosChatCompletionChunk(frame, MODEL);
 
   assert.match(rejectionMessage(chunkOutcome(chunk([{ index: 0, delta: "nope" }]))), /invalid delta/);
@@ -285,7 +286,7 @@ Deno.test("lithos chunk normalization validates delta fields and the chunk envel
   assert.deepEqual(totals.usage, USAGE);
 });
 
-Deno.test("lithos SSE framing skips a data-free frame and rejects a bare data line", async () => {
+test("lithos SSE framing skips a data-free frame and rejects a bare data line", async () => {
   const payload = JSON.stringify(chunk([{ index: 0, delta: { content: "hi" } }]));
   // A leading blank frame carries no `data:` line and is skipped, not relayed.
   const frames = await collectFrames(sseResponse(`\r\rdata: ${payload}\r\rdata: [DONE]\r\r`));
@@ -320,7 +321,7 @@ Deno.test("lithos SSE framing skips a data-free frame and rejects a bare data li
   assert.match(truncated.message, /ended before \[DONE\]/);
 });
 
-Deno.test("lithos stream failures keep the caller's abort reason and fail closed on a broken reader", async () => {
+test("lithos stream failures keep the caller's abort reason and fail closed on a broken reader", async () => {
   // An already-aborted signal rejects the pending read with the caller's reason.
   const controller = new AbortController();
   const abortReason = new Error("caller left");
@@ -344,7 +345,7 @@ Deno.test("lithos stream failures keep the caller's abort reason and fail closed
   assert.match(failed.message, /stream failed/);
 });
 
-Deno.test("lithos stream sessions release their reader lock even when the upstream cancels badly", async () => {
+test("lithos stream sessions release their reader lock even when the upstream cancels badly", async () => {
   // The upstream `cancel` itself throws, and the release still happens.
   let cancelAttempted = false;
   const throwingCancel = new ReadableStream<Uint8Array>({

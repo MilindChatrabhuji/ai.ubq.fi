@@ -1,3 +1,4 @@
+import type { KvKey } from "#kv";
 // Sentinel replay envelope, key derivation and validation, split out of src/sentinel_replay_capture.ts.
 
 import { canonicalSentinelUpstreamJson, parseSentinelUpstreamTrace, type SentinelUpstreamTrace } from "./upstream-capture.ts";
@@ -386,13 +387,13 @@ const fingerprintParts = (
     : [...common, ...frame(input.body)];
 };
 
-const dedupeManifestKey = (value: unknown): Deno.KvKey | null => {
+const dedupeManifestKey = (value: unknown): KvKey | null => {
   if (!isRecord(value) || !Array.isArray(value.manifest_key) || value.manifest_key.length !== 7) return null;
-  return value.manifest_key as Deno.KvKey;
+  return value.manifest_key as KvKey;
 };
 
 /** The durable dedupe row now carries the winning manifest's real identity and expiry. */
-const dedupeRecordFor = (manifestKey: Deno.KvKey, manifest: SentinelReplayManifest): Readonly<Record<string, unknown>> => ({
+const dedupeRecordFor = (manifestKey: KvKey, manifest: SentinelReplayManifest): Readonly<Record<string, unknown>> => ({
   manifest_key: manifestKey,
   captured_at_ms: manifest.captured_at_ms,
   expires_at_ms: manifest.expires_at_ms,

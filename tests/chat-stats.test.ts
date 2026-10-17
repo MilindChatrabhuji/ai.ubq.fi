@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -59,7 +60,7 @@ class FakeDocument {
   }
 }
 
-Deno.test("chat stats aggregate completed responses with weighted averages", () => {
+test("chat stats aggregate completed responses with weighted averages", () => {
   const stats = createChatStatsAccumulator();
   assert.equal(
     recordCompletedChatResponse(stats, {
@@ -95,7 +96,7 @@ Deno.test("chat stats aggregate completed responses with weighted averages", () 
   assert.equal(formatChatStatsLine(stats), "2 turns · 2 steps | LLM avg 2s | TTFT avg 0.5s · 50 tok/s | " + "Cache hit 70% | Input 1K tok · Output 100 tok");
 });
 
-Deno.test("chat message text preserves non-streaming refusals", () => {
+test("chat message text preserves non-streaming refusals", () => {
   assert.equal(
     readChatCompletionMessageText({
       choices: [{ message: { role: "assistant", content: null, refusal: "I cannot help with that." } }],
@@ -112,7 +113,7 @@ Deno.test("chat message text preserves non-streaming refusals", () => {
   assert.equal(readChatCompletionMessageText({ choices: [{ message: { content: "  \n" } }] }), null);
 });
 
-Deno.test("chat stats align decode tokens with visible streamed output", () => {
+test("chat stats align decode tokens with visible streamed output", () => {
   const usage = {
     prompt_tokens: 100,
     completion_tokens: 90,
@@ -124,7 +125,7 @@ Deno.test("chat stats align decode tokens with visible streamed output", () => {
   assert.equal(readChatCompletionDecodeTokens({ ...usage, completion_tokens_details: { reasoning_tokens: 91 } }, "high"), null);
 });
 
-Deno.test("chat stats omit metrics that the browser cannot measure", () => {
+test("chat stats omit metrics that the browser cannot measure", () => {
   const stats = createChatStatsAccumulator();
   recordCompletedChatResponse(stats, { llmMs: 900 });
   const line = formatChatStatsLine(stats);
@@ -132,7 +133,7 @@ Deno.test("chat stats omit metrics that the browser cannot measure", () => {
   assert.doesNotMatch(line, /Tool call|TTFT|tok\/s|Cache hit|Input|Output|NaN|Infinity/);
 });
 
-Deno.test("chat stats keep cache-write details out of the OpenAI prompt total", () => {
+test("chat stats keep cache-write details out of the OpenAI prompt total", () => {
   assert.deepEqual(
     readChatCompletionUsage({
       prompt_tokens: 100,
@@ -160,7 +161,24 @@ Deno.test("chat stats keep cache-write details out of the OpenAI prompt total", 
   assert.match(formatChatStatsLine(stats), /Cache hit 40% \| Input 100 tok · Output 25 tok$/);
 });
 
-Deno.test("chat stats omit throughput without measured tokens or elapsed LLM time", () => {
+test("chat stats preserve unknown cache measurements instead of publishing a measured zero", () => {
+  for (const details of [undefined, { cached_tokens: -0.1, cache_write_tokens: 0.9 }]) {
+    assert.deepEqual(readChatCompletionUsage({ prompt_tokens: 100, completion_tokens: 10, ...(details ? { prompt_tokens_details: details } : {}) }), {
+      inputTokens: 100,
+      outputTokens: 10,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+    });
+  }
+  assert.deepEqual(readChatCompletionUsage({ prompt_tokens: 100, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } }), {
+    inputTokens: 100,
+    outputTokens: 10,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+  });
+});
+
+test("chat stats omit throughput without measured tokens or elapsed LLM time", () => {
   const withoutUsage = createChatStatsAccumulator();
   recordCompletedChatResponse(withoutUsage, { llmMs: 1_000, decodeMs: 500 });
   assert.doesNotMatch(formatChatStatsLine(withoutUsage), /tok\/s/);
@@ -182,7 +200,7 @@ Deno.test("chat stats omit throughput without measured tokens or elapsed LLM tim
   assert.doesNotMatch(formatChatStatsLine(withoutDecodeInterval), /tok\/s/);
 });
 
-Deno.test("chat stats omit token aggregates until every completed response reports usage", () => {
+test("chat stats omit token aggregates until every completed response reports usage", () => {
   const stats = createChatStatsAccumulator();
   recordCompletedChatResponse(stats, {
     llmMs: 1_000,
@@ -199,7 +217,7 @@ Deno.test("chat stats omit token aggregates until every completed response repor
   assert.doesNotMatch(line, /tok\/s|Cache hit|Input|Output/);
 });
 
-Deno.test("chat stats omit throughput unless every completed response has measurable timing", () => {
+test("chat stats omit throughput unless every completed response has measurable timing", () => {
   const stats = createChatStatsAccumulator();
   const usage = {
     prompt_tokens: 100,
@@ -214,13 +232,13 @@ Deno.test("chat stats omit throughput unless every completed response has measur
   assert.match(line, /Cache hit 50% \| Input 200 tok · Output 20 tok$/);
 });
 
-Deno.test("chat stats keep partial cache ratios below 100 percent", () => {
+test("chat stats keep partial cache ratios below 100 percent", () => {
   assert.equal(formatCacheHitPercent(1_000, 1_000), "100");
   assert.equal(formatCacheHitPercent(999, 1_000), "99.9");
   assert.equal(formatCacheHitPercent(null, 1_000), null);
 });
 
-Deno.test("chat stats use compact token and duration formatting", () => {
+test("chat stats use compact token and duration formatting", () => {
   assert.equal(formatChatTokens(517), "517");
   assert.equal(formatChatTokens(12_200), "12.2K");
   assert.equal(formatChatTokens(517_000), "517K");
@@ -229,7 +247,7 @@ Deno.test("chat stats use compact token and duration formatting", () => {
   assert.equal(formatChatDuration(162_000), "2m42s");
 });
 
-Deno.test("chat message content never contains a stats footer", () => {
+test("chat message content never contains a stats footer", () => {
   const documentRef = new FakeDocument();
   const message = createChatMessageElement(documentRef, "assistant", "First token");
 
@@ -240,7 +258,7 @@ Deno.test("chat message content never contains a stats footer", () => {
   assert.equal(message.children.length, 1);
 });
 
-Deno.test("chat stats reset clears and hides the single bar", () => {
+test("chat stats reset clears and hides the single bar", () => {
   const stats = createChatStatsAccumulator();
   recordCompletedChatResponse(stats, { llmMs: 1_200 });
   const bar = new FakeElement(new FakeDocument());
@@ -255,7 +273,7 @@ Deno.test("chat stats reset clears and hides the single bar", () => {
   assert.equal(bar.hidden, true);
 });
 
-Deno.test("chat stats reject incomplete response samples without changing averages", () => {
+test("chat stats reject incomplete response samples without changing averages", () => {
   const stats = createChatStatsAccumulator();
   recordCompletedChatResponse(stats, { llmMs: 1_000, ttftMs: 250 });
   const completedStats = structuredClone(stats);
@@ -264,7 +282,7 @@ Deno.test("chat stats reject incomplete response samples without changing averag
   assert.deepEqual(stats, completedStats);
 });
 
-Deno.test("chat stream events preserve refusals, usage, completion, and failures", () => {
+test("chat stream events preserve refusals, usage, completion, and failures", () => {
   assert.deepEqual(parseChatCompletionStreamEvent('{"choices":[{"delta":{"refusal":"I cannot help with that."}}]}'), {
     kind: "event",
     delta: "I cannot help with that.",
@@ -287,7 +305,7 @@ Deno.test("chat stream events preserve refusals, usage, completion, and failures
   assert.deepEqual(parseChatCompletionStreamEvent('{"choices":[],"usage":{}}'), { kind: "invalid" });
 });
 
-Deno.test("chat SSE framing accepts all line endings and a final unterminated event", () => {
+test("chat SSE framing accepts all line endings and a final unterminated event", () => {
   assert.deepEqual(splitChatSseEvents("data: first\r\n\r\ndata: second\n\ndata: final", true), {
     events: ["data: first", "data: second", "data: final"],
     remaining: "",
@@ -304,7 +322,7 @@ Deno.test("chat SSE framing accepts all line endings and a final unterminated ev
   });
 });
 
-Deno.test("chat SSE parsing accepts CR-only comments and multiline data", () => {
+test("chat SSE parsing accepts CR-only comments and multiline data", () => {
   assert.deepEqual(parseChatSseEvent(': keep-alive\rdata: {"choices":[\rdata: {"delta":{"content":"CR stream"}}\rdata: ]}'), {
     kind: "event",
     delta: "CR stream",

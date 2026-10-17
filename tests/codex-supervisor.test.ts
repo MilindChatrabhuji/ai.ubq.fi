@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import handler from "../src/handler/index.ts";
@@ -5,7 +6,7 @@ import { defaultSupervisorSource, normalizeEpochMs, parseSupervisorConfig } from
 import { extractFollowEntries, parseFollowCursor } from "../src/codex/supervisor-follow.ts";
 import { classifySupervisorState, quotaFromRateLimits, sessionFromParts } from "../src/codex/supervisor-inventory.ts";
 
-Deno.test("parseSupervisorConfig accepts a valid source list", () => {
+test("parseSupervisorConfig accepts a valid source list", () => {
   const parsed = parseSupervisorConfig({
     sources: [
       { id: "local", name: "This Mac", socketPath: "/var/lib/uos-supervisor/a.sock", codexHome: "/var/lib/uos-supervisor/.codex" },
@@ -19,7 +20,7 @@ Deno.test("parseSupervisorConfig accepts a valid source list", () => {
   ]);
 });
 
-Deno.test("parseSupervisorConfig ignores unsafe or malformed sources", () => {
+test("parseSupervisorConfig ignores unsafe or malformed sources", () => {
   const parsed = parseSupervisorConfig({
     sources: [
       { id: "Local", name: "Uppercase id", socketPath: "/var/lib/uos-supervisor/a.sock" },
@@ -37,13 +38,13 @@ Deno.test("parseSupervisorConfig ignores unsafe or malformed sources", () => {
   assert.equal(parsed.notes.length, 4);
 });
 
-Deno.test("parseSupervisorConfig requires a sources array", () => {
+test("parseSupervisorConfig requires a sources array", () => {
   assert.deepEqual(parseSupervisorConfig(null).sources, []);
   assert.deepEqual(parseSupervisorConfig({}).sources, []);
   assert.equal(parseSupervisorConfig({ sources: [] }).notes.length, 1);
 });
 
-Deno.test("defaultSupervisorSource prefers CODEX_HOME and falls back to HOME", () => {
+test("defaultSupervisorSource prefers CODEX_HOME and falls back to HOME", () => {
   const notes: string[] = [];
   const fromCodexHome = defaultSupervisorSource((name) => (name === "CODEX_HOME" ? "/custom/codex" : "/home/tester"), notes);
   assert.deepEqual(fromCodexHome, {
@@ -63,7 +64,7 @@ Deno.test("defaultSupervisorSource prefers CODEX_HOME and falls back to HOME", (
   assert.ok(notes.length >= 1);
 });
 
-Deno.test("normalizeEpochMs accepts seconds and milliseconds", () => {
+test("normalizeEpochMs accepts seconds and milliseconds", () => {
   assert.equal(normalizeEpochMs(1_730_831_111), 1_730_831_111_000);
   assert.equal(normalizeEpochMs(1_730_831_111_000), 1_730_831_111_000);
   assert.equal(normalizeEpochMs(0), null);
@@ -72,14 +73,14 @@ Deno.test("normalizeEpochMs accepts seconds and milliseconds", () => {
   assert.equal(normalizeEpochMs(null), null);
 });
 
-Deno.test("classifySupervisorState treats runtime status as authoritative", () => {
+test("classifySupervisorState treats runtime status as authoritative", () => {
   assert.equal(classifySupervisorState({ runtimeStatus: "active", turnStatus: "inProgress", loaded: true }), "active");
   assert.equal(classifySupervisorState({ runtimeStatus: "systemError", turnStatus: null, loaded: true }), "system_error");
   assert.equal(classifySupervisorState({ runtimeStatus: "idle", turnStatus: null, loaded: false }), "idle");
   assert.equal(classifySupervisorState({ runtimeStatus: "notLoaded", turnStatus: "completed", loaded: false }), "idle");
 });
 
-Deno.test("classifySupervisorState never fabricates idle", () => {
+test("classifySupervisorState never fabricates idle", () => {
   assert.equal(classifySupervisorState({ runtimeStatus: "notLoaded", turnStatus: "inProgress", loaded: false }), "stale");
   assert.equal(classifySupervisorState({ runtimeStatus: "notLoaded", turnStatus: null, loaded: false }), "unknown");
   assert.equal(classifySupervisorState({ runtimeStatus: null, turnStatus: "completed", loaded: false }), "unknown");
@@ -88,7 +89,7 @@ Deno.test("classifySupervisorState never fabricates idle", () => {
   assert.equal(classifySupervisorState({ runtimeStatus: null, turnStatus: null, loaded: true }), "unknown");
 });
 
-Deno.test("extractFollowEntries keeps only assistant messages and command output", () => {
+test("extractFollowEntries keeps only assistant messages and command output", () => {
   const entries = extractFollowEntries("turn_1", [
     { type: "reasoning", id: "r1", summary: ["private reasoning"], content: ["private reasoning"] },
     { type: "userMessage", id: "u1", content: [{ type: "text", text: "hello" }] },
@@ -111,7 +112,7 @@ Deno.test("extractFollowEntries keeps only assistant messages and command output
   assert.equal(entries[1].index, 3);
 });
 
-Deno.test("extractFollowEntries tolerates unknown payloads", () => {
+test("extractFollowEntries tolerates unknown payloads", () => {
   assert.deepEqual(extractFollowEntries("turn_1", null), []);
   assert.deepEqual(extractFollowEntries("turn_1", "not-an-array"), []);
   assert.deepEqual(
@@ -120,7 +121,7 @@ Deno.test("extractFollowEntries tolerates unknown payloads", () => {
   );
 });
 
-Deno.test("parseFollowCursor round-trips turn ids that contain separators", () => {
+test("parseFollowCursor round-trips turn ids that contain separators", () => {
   assert.deepEqual(parseFollowCursor("turn_1:4"), { turnId: "turn_1", index: 4 });
   assert.deepEqual(parseFollowCursor("thr:a:b:0"), { turnId: "thr:a:b", index: 0 });
   assert.deepEqual(parseFollowCursor("turn_1:-1"), { turnId: "turn_1", index: -1 });
@@ -129,14 +130,14 @@ Deno.test("parseFollowCursor round-trips turn ids that contain separators", () =
   assert.equal(parseFollowCursor("turn_1:x"), null);
 });
 
-Deno.test("the supervisor routes require admin auth in the real router", async () => {
+test("the supervisor routes require admin auth in the real router", async () => {
   const sessions = await handler(new Request("https://ai.ubq.fi/admin/codex/supervisor/sessions"));
   assert.equal(sessions.status, 401, "an unauthenticated session read reaches the admin gate instead of sampling sources");
   const output = await handler(new Request("https://ai.ubq.fi/admin/codex/supervisor/output?source=local&id=thread-1"));
   assert.equal(output.status, 401, "an unauthenticated follow read reaches the admin gate");
 });
 
-Deno.test("remote rows use verified live thread fields and keep token usage unavailable", () => {
+test("remote rows use verified live thread fields and keep token usage unavailable", () => {
   const session = sessionFromParts({
     id: "01a0c7ae-5be8-7712-aaee-26638cf84a32",
     source: { id: "vps", name: "vps.pavlovcik.com", socketPath: "/var/lib/uos-supervisor/vps.sock", codexHome: null },
@@ -173,7 +174,7 @@ Deno.test("remote rows use verified live thread fields and keep token usage unav
   assert.deepEqual(session.unavailable, ["token usage is not reported by the source"]);
 });
 
-Deno.test("thread/read fields serve loaded threads and local metadata only enriches gaps", () => {
+test("thread/read fields serve loaded threads and local metadata only enriches gaps", () => {
   const session = sessionFromParts({
     id: "01a0bd67-loaded-only",
     source: { id: "local", name: "m1.local", socketPath: "/var/lib/uos-supervisor/local.sock", codexHome: "/Users/example/.codex" },
@@ -226,7 +227,7 @@ Deno.test("thread/read fields serve loaded threads and local metadata only enric
   assert.equal(session.usageSource, "state_db");
 });
 
-Deno.test("listed session gaps use probed fields before metadata and preserve nonnull listed values", () => {
+test("listed session gaps use probed fields before metadata and preserve nonnull listed values", () => {
   const thread = {
     id: "01a0bd67-listed-and-probed",
     name: "Probed title",
@@ -313,7 +314,7 @@ Deno.test("listed session gaps use probed fields before metadata and preserve no
   assert.equal(preview.title, thread.preview);
 });
 
-Deno.test("shared quota projection keeps one account-wide bucket per limit", () => {
+test("shared quota projection keeps one account-wide bucket per limit", () => {
   const quota = quotaFromRateLimits({
     rateLimits: { limitId: "codex", primary: { usedPercent: 29, windowDurationMins: 10080, resetsAt: 1_790_478_535 } },
     rateLimitsByLimitId: {

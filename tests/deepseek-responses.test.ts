@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload, toResponsesUsage } from "../src/deepseek/responses-payload.ts";
@@ -27,7 +28,7 @@ const chatChunk = (delta: Record<string, unknown>, extra: Record<string, unknown
 
 const eventTypes = (events: readonly Record<string, unknown>[]): string[] => events.map((event) => String(event.type));
 
-Deno.test("deepseek responses: maps Responses input onto Chat messages", () => {
+test("deepseek responses: maps Responses input onto Chat messages", () => {
   const result = toDeepSeekChatMessages(
     [
       { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
@@ -62,7 +63,7 @@ Deno.test("deepseek responses: maps Responses input onto Chat messages", () => {
   ]);
 });
 
-Deno.test("deepseek responses: rejects input shapes it cannot translate", () => {
+test("deepseek responses: rejects input shapes it cannot translate", () => {
   const badRole = toDeepSeekChatMessages([{ type: "message", role: "system", content: "x" }], null);
   assert.equal(badRole.ok, false);
   const badType = toDeepSeekChatMessages([{ type: "computer_call", call_id: "c" }], null);
@@ -71,7 +72,7 @@ Deno.test("deepseek responses: rejects input shapes it cannot translate", () => 
   assert.equal(badContent.ok, false);
 });
 
-Deno.test("deepseek responses: emitted refusal output replays as assistant history", () => {
+test("deepseek responses: emitted refusal output replays as assistant history", () => {
   // Both transports emit an assistant message whose content carries
   // `{ type: "refusal", refusal }`. A client that sends that output back as the
   // next request's `input` must be able to continue the conversation: before
@@ -118,7 +119,7 @@ Deno.test("deepseek responses: emitted refusal output replays as assistant histo
   assert.equal("refusal" in (mixed.value.body.messages as Record<string, unknown>[])[0], false);
 });
 
-Deno.test("deepseek responses: a malformed refusal part is rejected instead of translated", () => {
+test("deepseek responses: a malformed refusal part is rejected instead of translated", () => {
   const missing = toDeepSeekResponsesChatBody({ input: [{ type: "message", role: "assistant", content: [{ type: "refusal" }] }] }, "deepseek-flash", false);
   assert.equal(missing.ok, false);
   assert.equal(missing.param, "input.content.refusal");
@@ -155,7 +156,7 @@ Deno.test("deepseek responses: a malformed refusal part is rejected instead of t
   assert.match(wrongRole.message, /type 'refusal' is not supported/);
 });
 
-Deno.test("deepseek responses: flattens namespaced tools and drops what the API cannot serve", () => {
+test("deepseek responses: flattens namespaced tools and drops what the API cannot serve", () => {
   // `reasoning.effort: "none"` disables thinking mode. A named tool_choice is
   // rejected while thinking mode is active (see the thinking-mode test below),
   // so this capability check disables thinking first.
@@ -208,7 +209,7 @@ Deno.test("deepseek responses: flattens namespaced tools and drops what the API 
   assert.deepEqual(body.tool_choice, { type: "function", function: { name: "now" } });
 });
 
-Deno.test("deepseek responses: a namespaced tool call returns its namespace to the client", () => {
+test("deepseek responses: a namespaced tool call returns its namespace to the client", () => {
   const body = toDeepSeekResponsesChatBody(
     {
       input: "hi",
@@ -268,7 +269,7 @@ Deno.test("deepseek responses: a namespaced tool call returns its namespace to t
   ]);
 });
 
-Deno.test("deepseek responses: replays reasoning on tool turns because the provider requires it", () => {
+test("deepseek responses: replays reasoning on tool turns because the provider requires it", () => {
   // A tool-bearing request whose historical assistant turn omits
   // `reasoning_content` is rejected by the provider with HTTP 400:
   // "The `reasoning_content` in the thinking mode must be passed back to the API."
@@ -299,7 +300,7 @@ Deno.test("deepseek responses: replays reasoning on tool turns because the provi
   ]);
 });
 
-Deno.test("deepseek responses: fills reasoning on every assistant turn after the last user message", () => {
+test("deepseek responses: fills reasoning on every assistant turn after the last user message", () => {
   // Reproduces the production failure: Codex echoes the assistant's text
   // message ahead of its `function_call`, so continuing a tool call sends a
   // plain assistant message in the tail. The provider rejected that request
@@ -333,7 +334,7 @@ Deno.test("deepseek responses: fills reasoning on every assistant turn after the
   ]);
 });
 
-Deno.test("deepseek responses: an assistant turn before the last user message keeps its reasoning absent", () => {
+test("deepseek responses: an assistant turn before the last user message keeps its reasoning absent", () => {
   // The measured provider rule exempts history before the last user message, so
   // the fill must not rewrite replayed turns the provider never validated.
   const body = toDeepSeekResponsesChatBody(
@@ -359,7 +360,7 @@ Deno.test("deepseek responses: an assistant turn before the last user message ke
   assert.equal("reasoning_content" in assistant, false);
 });
 
-Deno.test("deepseek responses: carries the client's echoed reasoning onto its assistant turn", () => {
+test("deepseek responses: carries the client's echoed reasoning onto its assistant turn", () => {
   const withReasoning = toDeepSeekResponsesChatBody(
     {
       input: [
@@ -392,7 +393,7 @@ Deno.test("deepseek responses: carries the client's echoed reasoning onto its as
   assert.deepEqual(assistant.tool_calls, [{ id: "call_1", type: "function", function: { name: "shell", arguments: '{"cmd":"echo hi"}' } }]);
 });
 
-Deno.test("deepseek responses: continuation guidance never rewrites caller instructions or history", () => {
+test("deepseek responses: continuation guidance never rewrites caller instructions or history", () => {
   const instructions = "Caller rules.";
   const guided = toDeepSeekResponsesChatBody(
     {
@@ -435,7 +436,7 @@ Deno.test("deepseek responses: continuation guidance never rewrites caller instr
   }
 });
 
-Deno.test("deepseek responses: a reasoning item also rides a plain assistant message", () => {
+test("deepseek responses: a reasoning item also rides a plain assistant message", () => {
   const withMessage = toDeepSeekResponsesChatBody(
     {
       input: [
@@ -453,7 +454,7 @@ Deno.test("deepseek responses: a reasoning item also rides a plain assistant mes
   assert.equal(messages[1].reasoning_content, "Because.");
 });
 
-Deno.test("deepseek responses: reasoning is never invented without tools", () => {
+test("deepseek responses: reasoning is never invented without tools", () => {
   const withoutTools = toDeepSeekResponsesChatBody(
     {
       input: [
@@ -470,7 +471,7 @@ Deno.test("deepseek responses: reasoning is never invented without tools", () =>
   assert.equal("reasoning_content" in messages[1], false);
 });
 
-Deno.test("deepseek responses: freeform tools round-trip through the function-only provider contract", () => {
+test("deepseek responses: freeform tools round-trip through the function-only provider contract", () => {
   // Codex's freeform tools (`apply_patch`, code-mode `exec`) have no Chat
   // Completions shape, so they are advertised as one freeform string parameter
   // and their calls come back as `custom_tool_call` items.
@@ -539,7 +540,7 @@ Deno.test("deepseek responses: freeform tools round-trip through the function-on
   });
 });
 
-Deno.test("deepseek responses: a streamed freeform call emits custom tool events", () => {
+test("deepseek responses: a streamed freeform call emits custom tool events", () => {
   const body = toDeepSeekResponsesChatBody(
     {
       input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "run code" }] }],
@@ -583,7 +584,7 @@ Deno.test("deepseek responses: a streamed freeform call emits custom tool events
   ]);
 });
 
-Deno.test("deepseek responses: projects a sub-agent message envelope onto a user turn", () => {
+test("deepseek responses: projects a sub-agent message envelope onto a user turn", () => {
   const plaintextPayload = toDeepSeekChatMessages(
     [
       { type: "message", role: "user", content: [{ type: "input_text", text: "delegate this" }] },
@@ -634,7 +635,7 @@ Deno.test("deepseek responses: projects a sub-agent message envelope onto a user
   ]);
 });
 
-Deno.test("deepseek responses: bounds oversized sub-agent payloads under the declared policy", () => {
+test("deepseek responses: bounds oversized sub-agent payloads under the declared policy", () => {
   const oversized = "x".repeat(FORWARDED_PAYLOAD_POLICY.perMessageLimit + 1_000);
   const message = {
     type: "agent_message",
@@ -659,7 +660,7 @@ Deno.test("deepseek responses: bounds oversized sub-agent payloads under the dec
   assert.equal(rejected.code, "context_length_exceeded");
 });
 
-Deno.test("deepseek responses: rejects unsupported wire requests instead of approximating them", () => {
+test("deepseek responses: rejects unsupported wire requests instead of approximating them", () => {
   const schema = toDeepSeekResponsesChatBody({ input: "hi", text: { format: { type: "json_schema", name: "x" } } }, "deepseek-flash", false);
   assert.equal(schema.ok, false);
   assert.equal(schema.param, "text.format.type");
@@ -673,14 +674,14 @@ Deno.test("deepseek responses: rejects unsupported wire requests instead of appr
   assert.equal(empty.ok, false);
 });
 
-Deno.test("deepseek responses: streaming requests ask the provider for usage", () => {
+test("deepseek responses: streaming requests ask the provider for usage", () => {
   const result = toDeepSeekResponsesChatBody({ input: "hi" }, "deepseek-flash", true);
   assert.equal(result.ok, true);
   assert.equal(result.value.body.stream, true);
   assert.deepEqual(result.value.body.stream_options, { include_usage: true });
 });
 
-Deno.test("deepseek responses: builds a completed Responses object from a Chat completion", () => {
+test("deepseek responses: builds a completed Responses object from a Chat completion", () => {
   const payload = toDeepSeekResponsesPayload(
     chatCompletion({
       role: "assistant",
@@ -711,7 +712,7 @@ Deno.test("deepseek responses: builds a completed Responses object from a Chat c
   });
 });
 
-Deno.test("deepseek responses: usage translation reports measured counters and never invents an unmeasured one", () => {
+test("deepseek responses: usage translation reports measured counters and never invents an unmeasured one", () => {
   assert.equal(toResponsesUsage({ prompt_tokens: 1 }), null);
   assert.equal(toResponsesUsage(null), null);
   // An upstream that reports no counter leaves the detail object absent: a
@@ -767,7 +768,7 @@ Deno.test("deepseek responses: usage translation reports measured counters and n
   });
 });
 
-Deno.test("deepseek responses: stream translator emits the Responses event sequence", () => {
+test("deepseek responses: stream translator emits the Responses event sequence", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_stream", echo, 1_780_000_000);
   const events: Record<string, unknown>[] = [];
   events.push(...translator.push(chatChunk({ role: "assistant", reasoning_content: "think " })));
@@ -821,7 +822,7 @@ Deno.test("deepseek responses: stream translator emits the Responses event seque
   );
 });
 
-Deno.test("deepseek responses: the reasoning item announces the index it answers for", () => {
+test("deepseek responses: the reasoning item announces the index it answers for", () => {
   // The official client accumulates `response.output_item.added` in arrival
   // order and reads every later event's `output_index` out of that accumulated
   // output. Reserving a reasoning slot without announcing it made the following
@@ -890,7 +891,7 @@ Deno.test("deepseek responses: the reasoning item announces the index it answers
   assert.equal(output[1].type, "message");
 });
 
-Deno.test("deepseek responses: stream translator accumulates fragmented tool calls", () => {
+test("deepseek responses: stream translator accumulates fragmented tool calls", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_tools", echo, 1_780_000_000);
   const events: Record<string, unknown>[] = [];
   events.push(
@@ -921,7 +922,7 @@ Deno.test("deepseek responses: stream translator accumulates fragmented tool cal
   });
 });
 
-Deno.test("deepseek responses: an argument-only tool-call delta is not answer-bearing", () => {
+test("deepseek responses: an argument-only tool-call delta is not answer-bearing", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_partial_call", echo, 1_780_000_000);
   translator.push(chatChunk({ content: "Step 11 of 16 complete." }));
   translator.push(chatChunk({ tool_calls: [{ index: 0, function: { arguments: '{"path":' } }] }, { finish_reason: "stop" }));
@@ -932,13 +933,13 @@ Deno.test("deepseek responses: an argument-only tool-call delta is not answer-be
   assert.deepEqual(translator.answerBearingOutput(), { text: "Step 11 of 16 complete.", refusal: "", toolCallCount: 0 });
 });
 
-Deno.test("deepseek responses: stream translator is idempotent at the terminal", () => {
+test("deepseek responses: stream translator is idempotent at the terminal", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_once", echo, 1_780_000_000);
   assert.deepEqual(eventTypes(translator.finish()), ["response.created", "response.in_progress", "response.completed"]);
   assert.deepEqual(translator.finish(), []);
 });
 
-Deno.test("deepseek responses: maps the upstream stop reason onto the terminal vocabulary", () => {
+test("deepseek responses: maps the upstream stop reason onto the terminal vocabulary", () => {
   // The provider's documented set is [stop, length, content_filter, tool_calls,
   // insufficient_system_resource, aborted]; `content_filter` is an incomplete
   // with the official reason, and the two interruption reasons fail visibly
@@ -953,7 +954,7 @@ Deno.test("deepseek responses: maps the upstream stop reason onto the terminal v
   assert.equal(deepSeekResponsesTerminalKind("something_new"), "failed");
 });
 
-Deno.test("deepseek responses: a length stop becomes response.incomplete with max_output_tokens", () => {
+test("deepseek responses: a length stop becomes response.incomplete with max_output_tokens", () => {
   // The real terminal chunk carries the reason on a choice with no delta, so
   // the reason must survive independently of `choice.delta`.
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_length", echo, 1_780_000_000);
@@ -974,7 +975,7 @@ Deno.test("deepseek responses: a length stop becomes response.incomplete with ma
   assert.equal(done.item.status, "completed");
 });
 
-Deno.test("deepseek responses: stop, tool_calls and an absent reason keep response.completed", () => {
+test("deepseek responses: stop, tool_calls and an absent reason keep response.completed", () => {
   const terminalFor = (chunks: readonly Record<string, unknown>[]): Record<string, unknown> => {
     const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_completed", echo, 1_780_000_000);
     for (const chunk of chunks) translator.push(chunk);
@@ -1003,7 +1004,7 @@ Deno.test("deepseek responses: stop, tool_calls and an absent reason keep respon
   assert.equal((absent.response as Record<string, unknown>).incomplete_details, null);
 });
 
-Deno.test("deepseek responses: a provider interruption names its own cause instead of succeeding", () => {
+test("deepseek responses: a provider interruption names its own cause instead of succeeding", () => {
   // Each documented interruption keeps its own error code, so an operator can
   // tell a resource interruption from an unspecified abort.
   for (const [reason, code] of [
@@ -1020,7 +1021,7 @@ Deno.test("deepseek responses: a provider interruption names its own cause inste
   }
 });
 
-Deno.test("deepseek responses: encodes named SSE frames", () => {
+test("deepseek responses: encodes named SSE frames", () => {
   assert.equal(
     encodeResponsesEvent({ type: "response.completed", response: { id: "resp_1" } }),
     'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
@@ -1029,7 +1030,7 @@ Deno.test("deepseek responses: encodes named SSE frames", () => {
 
 const toolsForChoice = [{ type: "function", name: "exec", description: "Run.", parameters: { type: "object" } }];
 
-Deno.test("deepseek responses: rejects tool_choice 'required' while thinking mode is active", () => {
+test("deepseek responses: rejects tool_choice 'required' while thinking mode is active", () => {
   // The provider answers HTTP 400 "Thinking mode does not support this
   // tool_choice" for both of these (probed 2026-09-21 on the Chat endpoint and
   // on the provider's native Responses endpoint). Rejecting the combination
@@ -1058,7 +1059,7 @@ Deno.test("deepseek responses: rejects tool_choice 'required' while thinking mod
   }
 });
 
-Deno.test("deepseek responses: accepts required tool_choice once thinking mode is disabled", () => {
+test("deepseek responses: accepts required tool_choice once thinking mode is disabled", () => {
   const disabledByEffort = toDeepSeekResponsesChatBody(
     { input: "hi", tools: toolsForChoice, tool_choice: "required", reasoning: { effort: "none" } },
     "deepseek-flash",
@@ -1088,18 +1089,18 @@ Deno.test("deepseek responses: accepts required tool_choice once thinking mode i
   }
 });
 
-Deno.test("deepseek responses: the thinking-mode tool_choice rule has one shared expression", () => {
+test("deepseek responses: the thinking-mode tool_choice rule has one shared expression", () => {
   // The rule is consumed by both DeepSeek request seams, so it is asserted at
   // its own seam as well as through the Responses translation.
   assert.equal(deepSeekThinkingToolChoiceConflict("high", undefined, "required"), "required");
   assert.equal(deepSeekThinkingToolChoiceConflict(undefined, undefined, { type: "function", name: "exec" }), "function:exec");
-  assert.equal(deepSeekThinkingToolChoiceConflict("none", undefined, "required"), null);
-  assert.equal(deepSeekThinkingToolChoiceConflict("max", { type: "disabled" }, "required"), null);
+  assert.equal(deepSeekThinkingToolChoiceConflict("none", { type: "enabled" }, "required"), null);
+  assert.equal(deepSeekThinkingToolChoiceConflict("max", { type: "disabled" }, "required"), "required");
   assert.equal(deepSeekThinkingToolChoiceConflict("max", undefined, "auto"), null);
   assert.equal(deepSeekThinkingToolChoiceConflict("max", undefined, undefined), null);
 });
 
-Deno.test("deepseek responses: maps every documented finish_reason to a truthful terminal", () => {
+test("deepseek responses: maps every documented finish_reason to a truthful terminal", () => {
   // The vocabulary is the provider's own: the Chat Completions reference lists
   // "stop, length, content_filter, tool_calls, insufficient_system_resource,
   // aborted" (read 2026-09-21).
@@ -1116,7 +1117,7 @@ Deno.test("deepseek responses: maps every documented finish_reason to a truthful
   assert.deepEqual(deepSeekFinishDisposition("something_new"), { kind: "unknown", value: "something_new" });
 });
 
-Deno.test("deepseek responses: a truncated stream reports response.incomplete instead of completed", () => {
+test("deepseek responses: a truncated stream reports response.incomplete instead of completed", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_len", echo, 1_780_000_000);
   const events: Record<string, unknown>[] = [];
   events.push(...translator.push(chatChunk({ role: "assistant", reasoning_content: "thinking about it" })));
@@ -1134,7 +1135,7 @@ Deno.test("deepseek responses: a truncated stream reports response.incomplete in
   );
 });
 
-Deno.test("deepseek responses: a length-truncated tool call closes incomplete before the terminal", () => {
+test("deepseek responses: a length-truncated tool call closes incomplete before the terminal", () => {
   // A `length` stop can land mid-arguments. Closing the item as `completed`
   // before the `response.incomplete` terminal hands a status-aware consumer a
   // partial call it may execute, so the terminal disposition is decided first
@@ -1183,7 +1184,7 @@ Deno.test("deepseek responses: a length-truncated tool call closes incomplete be
   );
 });
 
-Deno.test("deepseek responses: a provider interruption is a failed terminal, not a completion", () => {
+test("deepseek responses: a provider interruption is a failed terminal, not a completion", () => {
   for (const [reason, code] of [
     ["insufficient_system_resource", "insufficient_system_resource"],
     ["aborted", "aborted"],
@@ -1207,7 +1208,7 @@ Deno.test("deepseek responses: a provider interruption is a failed terminal, not
   }
 });
 
-Deno.test("deepseek responses: a truncated buffered completion is not reported as completed", () => {
+test("deepseek responses: a truncated buffered completion is not reported as completed", () => {
   const payload = toDeepSeekResponsesPayload(
     {
       id: "chatcmpl-len",
@@ -1225,7 +1226,7 @@ Deno.test("deepseek responses: a truncated buffered completion is not reported a
   assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
 });
 
-Deno.test("deepseek responses: a normal stream is still reported as completed", () => {
+test("deepseek responses: a normal stream is still reported as completed", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_ok", echo, 1_780_000_000);
   const events: Record<string, unknown>[] = [];
   events.push(...translator.push(chatChunk({ content: "hi" }, { finish_reason: "stop" })));
@@ -1238,7 +1239,7 @@ Deno.test("deepseek responses: a normal stream is still reported as completed", 
   assert.equal(terminal.response.error, null);
 });
 
-Deno.test("deepseek responses: bounds oversized forwarded payloads under the declared policy", () => {
+test("deepseek responses: bounds oversized forwarded payloads under the declared policy", () => {
   const limit = FORWARDED_PAYLOAD_POLICY.perMessageLimit;
   const messages = (result: ReturnType<typeof toDeepSeekChatMessages>): Record<string, unknown>[] => {
     if (!result.ok) throw new Error(`unexpected projection failure: ${result.message}`);
@@ -1395,7 +1396,7 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
 // the adapter refuses cannot be cleared by repairing one thread.
 // ---------------------------------------------------------------------------
 
-Deno.test("deepseek responses: a call_id-less function_call_output is skipped, not fatal", () => {
+test("deepseek responses: a call_id-less function_call_output is skipped, not fatal", () => {
   // Codex's app-server replays a named unpaired output (`name`/`namespace`, no
   // `call_id`) for a tool its own client ran. Chat can only answer a preceding
   // `tool_calls` entry, so the output is dropped rather than re-paired by name;
@@ -1439,7 +1440,7 @@ Deno.test("deepseek responses: a call_id-less function_call_output is skipped, n
   assert.equal(toolOutputOnly.message, "input must contain at least one message");
 });
 
-Deno.test("deepseek responses: malformed function_call and unknown item types still fail", () => {
+test("deepseek responses: malformed function_call and unknown item types still fail", () => {
   // A function_call without its call_id/name pair remains a protocol violation.
   const callWithoutId = toDeepSeekChatMessages([{ type: "function_call", name: "lookup" }], null);
   assert.equal(callWithoutId.ok, false);

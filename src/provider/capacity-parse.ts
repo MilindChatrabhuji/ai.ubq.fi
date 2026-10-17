@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 // Provider capacity parsing and stored-snapshot decoding, split out of src/provider_capacity.ts.
 
 import { config } from "../config.ts";
@@ -28,7 +29,7 @@ export const codexAccountLabel = (slot: number, email: string | null = null): st
   return `Codex account ${slot}`;
 };
 
-const providerCapacityLastAvailableKey = (slot: 1 | 2): Deno.KvKey => [...PROVIDER_CAPACITY_LAST_AVAILABLE_KEY_PREFIX, slot];
+const providerCapacityLastAvailableKey = (slot: 1 | 2): KvKey => [...PROVIDER_CAPACITY_LAST_AVAILABLE_KEY_PREFIX, slot];
 
 const capacityState = (value: unknown): CapacityState | null => (value === "available" || value === "stale" || value === "unavailable" ? value : null);
 
@@ -360,7 +361,7 @@ const readStoredSnapshot = (value: unknown): ProviderCapacitySnapshot | null => 
   };
 };
 
-const readCapacitySnapshot = async (kv: Deno.Kv): Promise<ProviderCapacitySnapshot | null> => {
+const readCapacitySnapshot = async (kv: Kv): Promise<ProviderCapacitySnapshot | null> => {
   try {
     return readStoredSnapshot((await kv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY)).value);
   } catch {

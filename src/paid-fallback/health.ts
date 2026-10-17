@@ -11,19 +11,19 @@ import { getString, isRecord } from "../utils.ts";
 import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, MeteredError, readMeteredApiKey } from "../provider/metered.ts";
 import { fetchSurplusModels, fetchSurplusResponses, readSurplusApiKey, SURPLUS_MODELS_CACHE_TTL_MS, SurplusError } from "../provider/surplus.ts";
 import {
-  InferenceFallbackReason,
-  PaidProviderHealthClassification,
-  PaidProviderHealthEvent,
-  ResponseTelemetryState,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
-  UsageTokens,
+  type InferenceFallbackReason,
+  type PaidProviderHealthClassification,
+  type PaidProviderHealthEvent,
+  type ResponseTelemetryState,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
+  type UsageTokens,
   isTimeoutFailure,
   recordAttemptedProvider,
   recordFirstProviderDispatch,
   recordFirstProviderHeaders,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "../openai-telemetry.ts";
 import { normalizeProviderRequestId } from "../upstream-wire.ts";
 import { isAdditionalTrustedCodexModel } from "../request-policy.ts";
@@ -196,6 +196,7 @@ const reconcileMeteredTransportTerminal = async (
               cached_input_tokens: usage.cachedInputTokens,
               cache_write_input_tokens: usage.cacheWriteInputTokens,
               output_tokens: usage.outputTokens,
+              ...(Object.prototype.hasOwnProperty.call(usage, "buyerCostMicro") ? { buyer_cost_micro: usage.buyerCostMicro } : {}),
             },
             surplusBilling
           );
@@ -441,6 +442,17 @@ const surplusPreHeaderFailureResponse = (error: unknown, timedOut: boolean): Res
   });
 };
 
+const recordTemporarySurplusMetadata = (
+  telemetry: ResponseTelemetryState | undefined,
+  result: Awaited<ReturnType<typeof fetchSurplusResponses>>,
+  providerRequestId: string | null
+): void => {
+  if (!telemetry) return;
+  telemetry.providerRequestId = providerRequestId;
+  if (result.prompt_cache_mode !== undefined) telemetry.promptCacheMode = result.prompt_cache_mode;
+  if (result.explicit_breakpoint_count !== undefined) telemetry.explicitBreakpointCount = result.explicit_breakpoint_count;
+};
+
 export const fetchTemporaryFreeSurplusRoutedResponses = async (
   body: Record<string, unknown>,
   options: Readonly<{ model: string; usageContext?: UsageContext; signal?: AbortSignal }>
@@ -461,6 +473,7 @@ export const fetchTemporaryFreeSurplusRoutedResponses = async (
   try {
     const result = await fetchSurplusResponses(body, {
       signal: options.signal,
+      reasoningReplayScope: codexCacheScopeForUsageContext(options.usageContext),
       beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("surplus") ?? Promise.resolve(undefined),
       onDispatch: () => {
         dispatchState.transportStarted = true;
@@ -470,7 +483,7 @@ export const fetchTemporaryFreeSurplusRoutedResponses = async (
     });
     recordFirstProviderHeaders(options.usageContext);
     const providerRequestId = normalizeProviderRequestId(result.request_id);
-    if (telemetry) telemetry.providerRequestId = providerRequestId;
+    recordTemporarySurplusMetadata(telemetry, result, providerRequestId);
     await recordPaidProviderResponseHealth("surplus", result.response.status, providerRequestId);
     return {
       response: result.response,

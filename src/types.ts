@@ -4,7 +4,14 @@ export type CodexAuthState = Readonly<{
   account_id: string;
   updated_at_ms: number;
   /** Local native Codex owns this account's rotating credential lineage. */
-  native_owner?: Readonly<{ codex_home: string; generation_hash: string; native_refreshed_at?: string }>;
+  native_owner?: Readonly<{
+    codex_home: string;
+    generation_hash: string;
+    native_refreshed_at?: string;
+    /** A native external consumer receives access authorization, never rotating credentials. */
+    auth_mode?: "chatgptAuthTokens";
+    chatgpt_user_id?: string;
+  }>;
 }>;
 
 export type CodexAuthPoolState = Readonly<{
@@ -142,7 +149,7 @@ export type ApiKeyUsageRequestV3 = Readonly<{
   state: "reserved" | "dispatched" | "released";
   reserved_at_ms: number;
   lease_expires_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus" | "voyage" | null;
+  provider: "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus" | "voyage" | null;
   dispatched_at_ms: number | null;
   released_at_ms: number | null;
   release_reason: string | null;

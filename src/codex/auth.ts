@@ -1,22 +1,26 @@
+import type { Kv, KvEntryMaybe } from "#kv";
+import { readFileSync } from "node:fs";
 // Codex auth pool parsing, caching and loading, split out of src/codex.ts.
 
 import { config } from "../config.ts";
 import { markCodexSuccess, releaseCodexRoutingProbe } from "./account-routing.ts";
-import { RoutingAccount } from "./routing-state.ts";
+import { type RoutingAccount } from "./routing-state.ts";
 import { resetCodexAccountRoutingForTest } from "./capacity-routing.ts";
-import { CodexActiveAccountTransitionReason } from "./routing-state.ts";
+import { type CodexActiveAccountTransitionReason } from "./routing-state.ts";
 
 import { getKv } from "../kv.ts";
 import { recordCodexProviderHealth } from "../provider/health.ts";
 import { base64UrlDecode, decodeBase64ToString, getString, isRecord, sha256Hex } from "../utils.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../types.ts";
 import { bindNativeCodexAuthPool } from "./native-auth.ts";
+import { externalCodexIdentity } from "./external-auth.ts";
 
 const CODEX_REFRESH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
+export const CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE = "codex_subscriptions_unavailable";
 export const CODEX_UPSTREAM_DEGRADED_ERROR_CODE = "codex_upstream_degraded";
 export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
 export const CODEX_AUTH_REAUTH_MESSAGE = "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";
@@ -97,7 +101,7 @@ const CODEX_AUTH_REFRESH_WAIT_MS = 10_000;
 export const CODEX_ADDITIONAL_429_RETRY_MAX_DELAY_MS = 2_000;
 
 export const parseCodexAuthFromAuthJson = (value: unknown): Omit<CodexAuthState, "updated_at_ms"> | null => {
-  if (!isRecord(value)) return null;
+  if (!isRecord(value) || value.auth_mode === "chatgptAuthTokens") return null;
   const tokens = isRecord(value.tokens) ? value.tokens : null;
   if (!tokens) return null;
   const accessToken = getString(tokens.access_token);
@@ -113,7 +117,42 @@ const parseNativeAuthOwner = (value: unknown): CodexAuthState["native_owner"] =>
     throw new CodexError("Codex native credential ownership is malformed; nothing was replaced.", "codex_auth_owner_unavailable", 503);
   }
   const refreshedAt = getString(value.native_refreshed_at);
-  return { codex_home: String(value.codex_home), generation_hash: String(value.generation_hash), ...(refreshedAt ? { native_refreshed_at: refreshedAt } : {}) };
+  const userId = getString(value.chatgpt_user_id);
+  if (value.auth_mode !== undefined && (value.auth_mode !== "chatgptAuthTokens" || !userId)) {
+    throw new CodexError("Codex external native ownership is malformed; nothing was replaced.", "codex_auth_owner_unavailable", 503);
+  }
+  return {
+    codex_home: String(value.codex_home),
+    generation_hash: String(value.generation_hash),
+    ...(refreshedAt ? { native_refreshed_at: refreshedAt } : {}),
+    ...(value.auth_mode === "chatgptAuthTokens" ? { auth_mode: "chatgptAuthTokens" as const, chatgpt_user_id: userId ?? undefined } : {}),
+  };
+};
+
+const parsePoolRefreshToken = (candidate: Record<string, unknown>, owner: CodexAuthState["native_owner"]): string | null => {
+  const refreshToken = getString(candidate.refresh_token);
+  if (owner?.auth_mode !== "chatgptAuthTokens") return refreshToken === "" ? null : refreshToken;
+  const accessToken = getString(candidate.access_token);
+  const identity = accessToken ? externalCodexIdentity(accessToken) : null;
+  if (candidate.refresh_token !== "" || identity?.userId !== owner.chatgpt_user_id || identity?.accountId !== candidate.account_id) return null;
+  return "";
+};
+
+const parsePoolAccount = (candidate: unknown): CodexAuthState | null => {
+  if (!isRecord(candidate)) return null;
+  const accessToken = getString(candidate.access_token);
+  const owner = parseNativeAuthOwner(candidate.native_owner);
+  const refreshToken = parsePoolRefreshToken(candidate, owner);
+  const accountId = getString(candidate.account_id);
+  const updatedAtMs = typeof candidate.updated_at_ms === "number" && Number.isFinite(candidate.updated_at_ms) ? candidate.updated_at_ms : null;
+  if (!accessToken || refreshToken === null || !accountId || updatedAtMs === null) return null;
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    account_id: accountId,
+    updated_at_ms: updatedAtMs,
+    ...(owner ? { native_owner: owner } : {}),
+  };
 };
 
 export const parseCodexAuthPool = (value: unknown): CodexAuthPoolState | null => {
@@ -125,29 +164,19 @@ export const parseCodexAuthPool = (value: unknown): CodexAuthPoolState | null =>
   const accountIds = new Set<string>();
   const accounts: CodexAuthState[] = [];
   for (const candidate of value.accounts) {
-    if (!isRecord(candidate)) return null;
-    const accessToken = getString(candidate.access_token);
-    const refreshToken = getString(candidate.refresh_token);
-    const accountId = getString(candidate.account_id);
-    const accountUpdatedAtMs = typeof candidate.updated_at_ms === "number" && Number.isFinite(candidate.updated_at_ms) ? candidate.updated_at_ms : null;
-    if (!accessToken || !refreshToken || !accountId || accountUpdatedAtMs === null || accountIds.has(accountId)) {
-      return null;
-    }
-    accountIds.add(accountId);
-    const owner = parseNativeAuthOwner(candidate.native_owner);
-    accounts.push({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      account_id: accountId,
-      updated_at_ms: accountUpdatedAtMs,
-      ...(owner ? { native_owner: owner } : {}),
-    });
+    const account = parsePoolAccount(candidate);
+    if (!account || accountIds.has(account.account_id)) return null;
+    accountIds.add(account.account_id);
+    accounts.push(account);
   }
 
   return { accounts, updated_at_ms: updatedAtMs };
 };
 
 export const upsertCodexAuthAccount = (pool: CodexAuthPoolState | null, auth: CodexAuthState): CodexAuthPoolState | null => {
+  if (!auth.refresh_token && auth.native_owner?.auth_mode !== "chatgptAuthTokens") {
+    throw new CodexError("Access-only Codex auth requires proven external native ownership.", "codex_auth_owner_unavailable", 503);
+  }
   const accounts = pool ? [...pool.accounts] : [];
   const matchingIndex = accounts.findIndex((candidate) => candidate.account_id === auth.account_id);
   if (matchingIndex >= 0) {
@@ -238,8 +267,8 @@ const codexAuthWarningForError = (error: unknown): string | null =>
     : null;
 
 type CodexAuthPoolEntry = {
-  kv: Deno.Kv | null;
-  entry: Deno.KvEntryMaybe<CodexAuthPoolState> | null;
+  kv: Kv | null;
+  entry: KvEntryMaybe<CodexAuthPoolState> | null;
   pool: CodexAuthPoolState;
 };
 
@@ -468,12 +497,12 @@ const loadAuthSeedFromEnv = (): CodexAuthState => {
 
 const loadAuthSeedFromDisk = (): CodexAuthState => {
   if (!config.isDeploy) {
-    const home = (Deno as unknown as { homeDir?: () => string | null }).homeDir?.() ?? Deno.env.get("HOME");
+    const home = process.env.HOME;
     if (!home) {
       throw new CodexError("Could not resolve home directory for ~/.codex/auth.json.", "codex_auth_invalid", 503);
     }
     try {
-      const raw = Deno.readTextFileSync(`${home}/.codex/auth.json`);
+      const raw = readFileSync(`${home}/.codex/auth.json`, "utf8");
       const parsed = JSON.parse(raw) as unknown;
       const tokenData = parseCodexAuthFromAuthJson(parsed);
       if (!tokenData) {
@@ -512,8 +541,8 @@ const poolFromSeed = (auth: CodexAuthState): CodexAuthPoolState => ({
 const loadedAuthPoolEntry = (
   pool: CodexAuthPoolState,
   generationAtStart: number,
-  kv: Deno.Kv | null,
-  entry: Deno.KvEntryMaybe<CodexAuthPoolState> | null
+  kv: Kv | null,
+  entry: KvEntryMaybe<CodexAuthPoolState> | null
 ): CodexAuthPoolEntry => {
   if (authCacheGeneration !== generationAtStart && cachedAuthPool) {
     return { kv: null, entry: null, pool: cachedAuthPool };

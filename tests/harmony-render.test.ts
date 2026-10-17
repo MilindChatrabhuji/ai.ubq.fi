@@ -1,10 +1,11 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { normalizeToolStrictness } from "../src/harmony/adapter.ts";
 import { harmonyTypeFromJsonSchema, quoteString, renderDeveloperMessage, renderSystemMessage } from "../src/harmony/render.ts";
 import { ANSWER_SCHEMA, NOTE_TOOL, WEATHER_TOOL } from "../src/harmony/probes.ts";
 
-Deno.test("system message renders identity, dates, reasoning effort, channels and the tool note", () => {
+test("system message renders identity, dates, reasoning effort, channels and the tool note", () => {
   const rendered = renderSystemMessage({
     currentDate: "2025-06-28",
     reasoningEffort: "high",
@@ -17,7 +18,7 @@ Deno.test("system message renders identity, dates, reasoning effort, channels an
   assert.match(rendered, /Calls to these tools must go to the commentary channel: 'functions'\./);
 });
 
-Deno.test("system message omits the function-call note when no tools are exposed", () => {
+test("system message omits the function-call note when no tools are exposed", () => {
   const rendered = renderSystemMessage({
     currentDate: "2025-06-28",
     reasoningEffort: "low",
@@ -27,7 +28,7 @@ Deno.test("system message omits the function-call note when no tools are exposed
   assert.doesNotMatch(rendered, /must go to the commentary channel/);
 });
 
-Deno.test("developer message renders Harmony TypeScript tool definitions", () => {
+test("developer message renders Harmony TypeScript tool definitions", () => {
   const rendered = renderDeveloperMessage({
     instructions: "You are a weather assistant.",
     tools: [WEATHER_TOOL],
@@ -41,7 +42,7 @@ Deno.test("developer message renders Harmony TypeScript tool definitions", () =>
   assert.match(rendered, /\} \/\/ namespace functions/);
 });
 
-Deno.test("developer message renders optional fields, enums and defaults", () => {
+test("developer message renders optional fields, enums and defaults", () => {
   const rendered = renderDeveloperMessage({
     instructions: "Use tools.",
     tools: [
@@ -63,7 +64,7 @@ Deno.test("developer message renders optional fields, enums and defaults", () =>
   assert.match(rendered, /format\?: "celsius" \| "fahrenheit", \/\/ default: "celsius"/);
 });
 
-Deno.test("developer message renders a response format schema section", () => {
+test("developer message renders a response format schema section", () => {
   const rendered = renderDeveloperMessage({
     instructions: "Return JSON.",
     responseFormat: { formatName: "answer_response", description: "The computed answer", schema: ANSWER_SCHEMA },
@@ -74,7 +75,7 @@ Deno.test("developer message renders a response format schema section", () => {
   assert.match(rendered, new RegExp(JSON.stringify(ANSWER_SCHEMA).slice(0, 24)));
 });
 
-Deno.test("harmonyTypeFromJsonSchema covers enums, arrays, anyOf and nested objects", () => {
+test("harmonyTypeFromJsonSchema covers enums, arrays, anyOf and nested objects", () => {
   assert.equal(harmonyTypeFromJsonSchema({ type: "integer" }), "integer");
   assert.equal(harmonyTypeFromJsonSchema({ type: "string", enum: ["a", "b"] }), '"a" | "b"');
   assert.equal(harmonyTypeFromJsonSchema({ type: "array", items: { type: "string" } }), "string[]");
@@ -87,19 +88,19 @@ Deno.test("harmonyTypeFromJsonSchema covers enums, arrays, anyOf and nested obje
   assert.equal(nested, "{\n  inner: {\n    value: boolean,\n  },\n}");
 });
 
-Deno.test("unknown schema constructs degrade to any, never crash", () => {
+test("unknown schema constructs degrade to any, never crash", () => {
   assert.equal(harmonyTypeFromJsonSchema("not a schema"), "any");
   assert.equal(harmonyTypeFromJsonSchema({ type: "object" }), "any");
   assert.equal(harmonyTypeFromJsonSchema({ type: "object", properties: {} }), "{}");
   assert.equal(harmonyTypeFromJsonSchema(null), "any");
 });
 
-Deno.test("quoteString escapes Harmony TS string literals", () => {
+test("quoteString escapes Harmony TS string literals", () => {
   assert.equal(quoteString('say "hi"'), '"say \\"hi\\""');
   assert.equal(quoteString("a\\b"), '"a\\\\b"');
 });
 
-Deno.test("normalizeToolStrictness forces one strictness value on every tool", () => {
+test("normalizeToolStrictness forces one strictness value on every tool", () => {
   const mixed = [{ ...WEATHER_TOOL, strict: true } as const, NOTE_TOOL];
   const allFalse = normalizeToolStrictness(mixed, false);
   assert.equal(allFalse.length, 2);
