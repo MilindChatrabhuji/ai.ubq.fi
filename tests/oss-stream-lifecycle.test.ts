@@ -86,7 +86,7 @@ type UpstreamProbe = Readonly<{
  * `null` to hold that read open until the source is cancelled. Entering a pull
  * is the handshake these fixtures wait on instead of assuming microtask turns.
  */
-const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null): UpstreamProbe => {
+const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null, highWaterMark = 1): UpstreamProbe => {
   let started = 0;
   let pending = 0;
   let cancelCount = 0;
@@ -110,32 +110,35 @@ const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null): Upst
       waiters.add(waiter);
     });
   };
-  const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      started += 1;
-      pending += 1;
-      notify();
-      try {
-        const chunk = produce?.(started) ?? null;
-        if (chunk === null) {
-          await new Promise<void>((resolve) => {
-            releaseQuiet = resolve;
-          });
-          return;
-        }
-        controller.enqueue(chunk);
-      } finally {
-        pending -= 1;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        started += 1;
+        pending += 1;
         notify();
-      }
+        try {
+          const chunk = produce?.(started) ?? null;
+          if (chunk === null) {
+            await new Promise<void>((resolve) => {
+              releaseQuiet = resolve;
+            });
+            return;
+          }
+          controller.enqueue(chunk);
+        } finally {
+          pending -= 1;
+          notify();
+        }
+      },
+      cancel() {
+        cancelCount += 1;
+        releaseQuiet?.();
+        releaseQuiet = null;
+        resolveCancelled();
+      },
     },
-    cancel() {
-      cancelCount += 1;
-      releaseQuiet?.();
-      releaseQuiet = null;
-      resolveCancelled();
-    },
-  });
+    { highWaterMark }
+  );
   return { stream, started: () => started, pending: () => pending, startedAtLeast, cancelled, cancelCount: () => cancelCount };
 };
 
@@ -336,7 +339,9 @@ test("Provider relays cancel a late deferred response without reading it", async
     responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
   };
   for (const wire of ["chat", "responses"] as const) {
-    const lateUpstream = probeUpstream();
+    // Bun eagerly pulls a normal stream once it enters the microtask queue;
+    // keep this late body genuinely unread until the relay owns it.
+    const lateUpstream = probeUpstream(undefined, 0);
     let resolvePending: (response: Response) => void = () => {};
     const pending = new Promise<Response>((resolve) => {
       resolvePending = resolve;
@@ -367,8 +372,9 @@ test("Provider relays cancel a late deferred response without reading it", async
             upstreamModel: "deepseek-flash",
             cancelPending,
           });
-    const reader = response.body?.getReader();
-    assert.ok(reader);
+    const body = response.body;
+    assert.ok(body);
+    const reader = body.getReader();
     const pendingRead = reader.read();
     try {
       await reader.cancel("client disconnected");
