@@ -1701,9 +1701,18 @@ restores the supported previous selector and actual listener/public identity; da
 selector and issues no gateway restart. After successful ingress reload, a public verification failure retains the ready
 candidate and ingress-applied intent for nondestructive same-SHA verification retry. Candidate bytes remain immutable,
 and pruning occurs only after exact loopback and public identity acceptance. Unsupported or historical root-relative
-launchers are refused before destructive activation; successful historical restoration and first-deployment rollback
-remain separate unresolved scopes. The normal deployment command must permit the verified prior loopback port, and
-verify/CI must provide the scoped shell and loopback capabilities required by every actual launcher fixture.
+launchers are refused before destructive activation. The normal deployment command must permit the verified prior
+loopback port, and verify/CI must provide the scoped shell and loopback capabilities required by every actual launcher
+fixture.
+
+2026-10-16: A first deployment has no previous release, selector or listener to restore. If it fails before the gateway
+restart, recovery removes the selector it created and records `rolled_back`, and the same SHA starts again. After a
+restart attempt the unit can run only the candidate, so recovery leaves that candidate selected and unaccepted rather than
+removing a selector that cannot stop it. The next same-SHA run resumes at ingress when the candidate serves its exact
+loopback identity, and otherwise restarts only that verified selected candidate. Any other selector or phase state stays
+refused. Historical restoration is no longer an open scope: historical root-relative launchers stay refused before
+activation, and a Bun startup still refuses automatic rollback to a Deno release under the Bun runtime rules in
+`AGENTS.md`.
 
 ## Jev compaction upstream - 2026-10-05
 
