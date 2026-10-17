@@ -9758,17 +9758,27 @@ const providersHasUnsavedChanges = () =>
 const providersSelectionIsEmpty = () => providerSelection.size === 0;
 
 /**
- * Selected ids in roster order, then the narrowed subscriptions, or an empty
- * list when every active provider is checked (which is the no-filter state).
+ * Selected ids in roster order, then the narrowed subscriptions, then staged
+ * ids the roster no longer describes, or an empty list when every active
+ * provider is checked (which is the no-filter state). A missing id is part of
+ * the operator's restriction until "Remove missing" drops it, so it is never
+ * silently left out: a selection of only missing ids would otherwise serialize
+ * to the empty list and re-enable every provider. The `codex` umbrella already
+ * covers every configured subscription, so a missing subscription beside it is
+ * not sent, exactly as the API would absorb it.
  */
 const providersSelectedIds = () => {
   const rosterIds = providersRosterIds();
   if (providersSelectionIsEmpty() || rosterIds.every((id) => providerSelection.has(id))) return [];
   const selected = rosterIds.filter((id) => providerSelection.has(id));
+  const umbrella = providerSelection.has("codex");
   for (const subscription of providerSubscriptions()) {
-    if (providerSubscriptionSelected(subscription.id) && !providerSelection.has("codex")) {
+    if (providerSubscriptionSelected(subscription.id) && !umbrella) {
       selected.push(subscription.id);
     }
+  }
+  for (const id of providersMissingSelectionIds()) {
+    if (!(umbrella && id.startsWith("codex:"))) selected.push(id);
   }
   return selected;
 };
@@ -10081,8 +10091,11 @@ const updateProvidersStatus = () => {
       total
     )} providers checked: no filter is saved, so every provider is active.`;
   } else {
+    // A restriction naming only missing subscriptions leaves no tier active;
+    // the routing warnings below say why.
+    const activeList = activeLabels.length ? `: ${activeLabels.join(", ")}` : "";
     providersSummary.textContent =
-      `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active: ${activeLabels.join(", ")}.` +
+      `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active${activeList}.` +
       (visibleCount < total ? ` Showing ${formatNumber(visibleCount)}.` : "");
   }
 
