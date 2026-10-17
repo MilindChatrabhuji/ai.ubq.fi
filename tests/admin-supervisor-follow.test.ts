@@ -296,6 +296,10 @@ type PendingProvider = {
   reject: (error: unknown) => void;
 };
 
+type ProviderFailure =
+  | { name: string; rejected: true }
+  | { name: string; rejected: false; selection: Response; health: Response };
+
 const createProviderQueue = () => {
   const pending: PendingProvider[] = [];
   const fetch: ProviderFetch = (path) =>
@@ -327,7 +331,7 @@ const startProviderRefresh = async (harness: ReturnType<typeof createHarness>): 
 };
 
 test("a provider failure clears a previously healthy strip", async () => {
-  const failures = [
+  const failures: ProviderFailure[] = [
     { name: "selection 502", rejected: false, selection: providerResponse({}, 502), health: providerResponse(PROVIDER_HEALTH) },
     { name: "health 500", rejected: false, selection: providerResponse(PROVIDER_SELECTION), health: providerResponse({}, 500) },
     { name: "malformed body", rejected: false, selection: providerResponse("not json"), health: providerResponse(PROVIDER_HEALTH) },
