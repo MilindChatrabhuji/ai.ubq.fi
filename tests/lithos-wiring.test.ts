@@ -976,7 +976,6 @@ test("lithos wiring: a refusal on both tiers is relayed without waiting", async 
     assert.equal(telemetry.streamTerminalType, "response.failed");
   });
 });
-
 test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own window, then the requested tier answers", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
@@ -1006,7 +1005,6 @@ test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own win
     }
   });
 });
-
 test("lithos wiring: retry waits preserve deadline and caller cancellation without dispatching again", async () =>
   runSequence(async (step) => {
     await withLithosKey(async () => {
@@ -1065,7 +1063,6 @@ test("lithos wiring: retry waits preserve deadline and caller cancellation witho
       }
     });
   }));
-
 test("lithos wiring: a window beyond the wait cap is relayed instead of absorbed", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
