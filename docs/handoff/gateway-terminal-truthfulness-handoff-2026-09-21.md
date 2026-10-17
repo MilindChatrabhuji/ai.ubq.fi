@@ -318,7 +318,8 @@ terminal event.
 Apply G1's stop-reason mapping before this validity check. A mapped stop reason takes precedence over output shape: in
 particular, `length` remains `response.incomplete` even when the stream already contains a message or tool call, and an
 absent or unrecognized reason remains fail-closed. Only a reason whose G1 mapping permits a completed terminal reaches
-the output-validity rules below.
+the output-validity rules below; G2 and G3 must not relabel a mapped incomplete or fail-closed terminal based on its
+output items.
 
 Decision rule for the terminal event, evaluated in order:
 
