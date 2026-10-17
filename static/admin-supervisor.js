@@ -148,10 +148,12 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     const entries = Array.isArray(selection?.data?.providers) ? selection.data.providers : [];
     if (entries.length === 0) return;
     const selectedProviderIds = Array.isArray(selection?.data?.selection?.provider_ids)
-      ? selection.data.selection.provider_ids.filter((id) => typeof id === "string")
+      ? selection.data.selection.provider_ids
+          .filter((id) => typeof id === "string" && id.trim().length > 0)
+          .map((id) => id.trim())
       : [];
-    // An empty selection is deliberately no filter: every provider remains
-    // routable, just as it does on the inference path.
+    // An empty (including blank-only) selection is deliberately no filter:
+    // every provider remains routable, just as it does on the inference path.
     const filterActive = selection?.data?.filter_active === true && selectedProviderIds.length > 0;
     const rows = entries.map((entry) => {
       const health =
