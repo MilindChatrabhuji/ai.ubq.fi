@@ -6829,9 +6829,10 @@ const renderKeys = (keys, view = "all") => {
     applyIconButton(editBtn, "edit", "Edit API key");
     actionRow.appendChild(editBtn);
 
-    const renderKeyActions = (nextStatusKind) => {
+    const renderKeyActions = (statusKind) => {
       actionRow.textContent = "";
-      if (nextStatusKind !== "revoked") {
+      actionRow.appendChild(editBtn);
+      if (statusKind !== "revoked") {
         const revokeBtn = document.createElement("button");
         revokeBtn.type = "button";
         revokeBtn.dataset.variant = "danger";
@@ -7166,10 +7167,18 @@ const renderKeys = (keys, view = "all") => {
       else delete expiresInfo.item.dataset.state;
       row.hidden = currentKeyView !== "all" && currentKeyView !== nextStatusKind;
       scheduleKeyExpiryRefresh();
-      if (row.hidden) {
-        const visibleCount = allKeys.filter((candidate) => getApiKeyStatus(candidate) === currentKeyView).length;
-        setKeysBadge("ok", visibleCount ? `${formatPlural(visibleCount, "API key")}` : `No ${currentKeyView} API keys`);
-      }
+      const visibleCount =
+        currentKeyView === "all"
+          ? allKeys.length
+          : allKeys.filter((candidate) => getApiKeyStatus(candidate) === currentKeyView).length;
+      setKeysBadge(
+        "ok",
+        visibleCount
+          ? `${formatPlural(visibleCount, "API key")}`
+          : currentKeyView === "all"
+            ? "No API keys"
+            : `No ${currentKeyView} API keys`
+      );
     };
 
     const buildEditPayload = () => {

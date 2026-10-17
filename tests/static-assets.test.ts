@@ -770,6 +770,8 @@ test("admin routes and page aliases are never cacheable before authentication", 
     ["PATCH", "/admin/api-keys"],
     ["DELETE", "/admin/api-keys"],
     ["GET", "/admin/api-keys/changes"],
+    ["POST", "/admin/api-keys/revoke"],
+    ["POST", "/admin/api-keys/unrevoke"],
     ["GET", "/admin/kernel-usage"],
     ["POST", "/admin/kernel-usage"],
     ["DELETE", "/admin/kernel-usage"],
@@ -810,9 +812,13 @@ test("admin API-key actions preserve expired and unrevoke states", () => {
   );
   assert.match(keyRenderer, /if \(statusKind !== "revoked"\)/);
   assert.match(keyRenderer, /const keyLabel = key\.name \|\| key\.id \|\| "unnamed API key"/);
+  assert.match(keyRenderer, /actionRow\.textContent = "";\s+actionRow\.appendChild\(editBtn\);/);
   assert.match(adminScript, /if \(inputsUnchanged && !expiresMismatch\) renderKeys\(allKeys, currentKeyView\);/);
   assert.match(adminScript, /const updateKeyStatus = \(\) =>/);
+  assert.match(adminScript, /row\.hidden = currentKeyView !== "all" && currentKeyView !== nextStatusKind;/);
+  assert.match(adminScript, /scheduleKeyExpiryRefresh\(\);/);
   assert.match(adminScript, /updateAccessApiKeysSummary\(\);/);
+  assert.match(styleCss, /\[data-key\]\[data-state="expired"\][\s\S]*?--key-accent:\s*var\(--warning\)/);
   assert.match(adminScript, /toast\.info\(`Unrevoked \$\{name\}`,[\s\S]*?remains expired/);
   assert.match(adminScript, /if \(!confirm\(`Revoke API key "\$\{name\}"\?`\)\) return;/);
 });
@@ -820,6 +826,7 @@ test("admin API-key actions preserve expired and unrevoke states", () => {
 test("admin defaults keep queued edits through reloads and debounce the follow-up", () => {
   assert.match(adminScript, /if \(!defaultsLoaded\) \{\s+queueDefaultsSave\(\);\s+return;/);
   assert.match(adminScript, /const scheduleQueuedDefaultsSave = \(loadTarget\) =>/);
+  assert.match(adminScript, /const clearDefaultsSaveQueue = \(\) => \{\s+cancelDefaultsSaveSchedule\(\);/);
   assert.match(adminScript, /defaultsEditRevision \+= 1;\s+clearDefaultsSaveQueue\(\);/);
   assert.match(adminScript, /else scheduleDefaultsSave\(\);/);
 });
