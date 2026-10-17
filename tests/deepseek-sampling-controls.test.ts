@@ -10,7 +10,9 @@ test("deepseek responses: forwards sampling controls when thinking is disabled",
     false
   );
   assert.equal(disabled.ok, true);
+  assert.equal(Object.hasOwn(disabled.value.body, "temperature"), true);
   assert.equal(disabled.value.body.temperature, 0);
+  assert.equal(Object.hasOwn(disabled.value.body, "top_p"), true);
   assert.equal(disabled.value.body.top_p, 0.4);
   assert.deepEqual(disabled.value.warnings, []);
 

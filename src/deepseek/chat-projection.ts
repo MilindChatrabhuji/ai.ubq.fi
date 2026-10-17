@@ -702,15 +702,18 @@ const applyReasoning = (
   return { ok: true, value: undefined };
 };
 
+const SAMPLING_CONTROL_KEYS = ["temperature", "top_p"] as const;
+
 const applySamplingControls = (body: Record<string, unknown>, rawRecord: Record<string, unknown>, profile: ChatOnlyResponsesProfile): string[] => {
   const thinkingActive = profile.id === "deepseek" && deepSeekThinkingModeActive(body.reasoning_effort, rawRecord.thinking);
   const warnings: string[] = [];
-  for (const key of ["temperature", "top_p"] as const) {
+  for (const key of SAMPLING_CONTROL_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(rawRecord, key)) continue;
     if (thinkingActive) {
       warnings.push(`${key}_ignored`);
       continue;
     }
+    // Check presence rather than truthiness so valid values such as temperature 0 survive.
     body[key] = rawRecord[key];
   }
   return warnings;
