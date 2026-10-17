@@ -730,3 +730,102 @@ test("shipped shared account controls preserve scoped drafts and send only expli
     "account viewing/import never silently changes active selection"
   );
 });
+
+const PROVIDER_ROSTER = [
+  { id: "codex", tier: "subscription", label: "Codex", subscriptions: [{ id: "sub-a" }, { id: "sub-b" }] },
+  { id: "surplus", tier: "paid", label: "Surplus" },
+  { id: "openlux", tier: "paid", label: "OpenLux" },
+];
+
+/**
+ * The shipped picker state helpers, status writer, and bulk click handlers,
+ * with only the DOM, warnings, and badge stubbed.
+ */
+const providerPicker = (selection: string[], visibleIds: string[]) => {
+  const between = (start: string, end: string) => {
+    const from = sourceText.indexOf(start);
+    const to = sourceText.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `admin.js must contain ${start} before ${end}`);
+    return sourceText.slice(from, to);
+  };
+  const buttons = {
+    providersCheckAllBtn: new TestElement(),
+    providersUncheckAllBtn: new TestElement(),
+    providersInvertBtn: new TestElement(),
+    providersDropMissingBtn: new TestElement(),
+    providersDiscardBtn: new TestElement(),
+    providersSelectionSave: new TestElement(),
+  };
+  const fixture = {
+    ...buttons,
+    providerRoster: PROVIDER_ROSTER,
+    providerSelection: new Set(selection),
+    providersSavedSelection: new Set(selection),
+    providersVisibleIds: new Set(visibleIds),
+    providerSelectionSaving: false,
+    providerSelectionLoadedAt: 1,
+    providerSelectionSaveError: "",
+    providersSummary: new TestElement(),
+    providersWarning: new TestElement(),
+    providersOnlyActiveInput: { checked: false },
+    providersList: { querySelectorAll: () => [] },
+    providersVisibleEntries: () => PROVIDER_ROSTER.filter((entry) => visibleIds.includes(entry.id)),
+    providersFilterIsActive: () => visibleIds.length < PROVIDER_ROSTER.length,
+    providersEmptyWarning: () => "",
+    providersRoutingWarnings: () => [],
+    providersHealthWarning: () => "",
+    setProvidersSelectionBadge: () => {},
+    updateProviderTierFilterChips: () => {},
+    formatNumber: (value: number) => String(value),
+  };
+  runInNewContext(
+    [
+      between("const providerRosterEntry =", "/** One tier chip per tier"),
+      between("const providersSubscriptionsFor =", "const providersTierCounts ="),
+      between("const updateProvidersStatus = () =>", "const renderProvidersPicker ="),
+      between("const applyProvidersSelection =", "const loadProviderSelection ="),
+      between("const setProviderChecked =", 'providersList.addEventListener("change"'),
+      between('providersCheckAllBtn.addEventListener("click"', 'providersInvertBtn.addEventListener("click"'),
+      "updateProvidersStatus();",
+    ].join("\n"),
+    fixture
+  );
+  return { ...buttons, selection: fixture.providerSelection };
+};
+
+test("a narrowed Codex tier filtered alone keeps Uncheck shown enabled, and unchecking clears its subscription", () => {
+  const picker = providerPicker(["sub-a"], ["codex"]);
+  assert.equal(picker.providersUncheckAllBtn.disabled, false, "the narrowed Codex row is checked, so Uncheck shown has work to do");
+  assert.equal(picker.providersUncheckAllBtn.textContent, "Uncheck 1 shown");
+
+  picker.providersUncheckAllBtn.click();
+  assert.deepEqual([...picker.selection], [], "Uncheck shown drops the narrowed subscription, not just the umbrella id");
+  assert.equal(picker.providersUncheckAllBtn.disabled, true);
+  assert.equal(picker.providersCheckAllBtn.disabled, false);
+});
+
+test("a narrowed Codex tier filtered alone keeps Check shown enabled, and checking expands it to every subscription", () => {
+  const picker = providerPicker(["sub-a"], ["codex"]);
+  assert.equal(picker.providersCheckAllBtn.disabled, false, "a partial Codex row is not fully checked, so Check shown still applies");
+
+  picker.providersCheckAllBtn.click();
+  assert.deepEqual([...picker.selection], ["codex"], "Check shown widens the narrowed tier to the umbrella id");
+  assert.equal(picker.providersCheckAllBtn.disabled, true);
+  assert.equal(picker.providersUncheckAllBtn.disabled, false);
+});
+
+test("provider bulk buttons keep their umbrella and unchecked-row states", () => {
+  const all = providerPicker(["codex"], ["codex"]);
+  assert.equal(all.providersCheckAllBtn.disabled, true, "the whole Codex tier is already checked");
+  assert.equal(all.providersUncheckAllBtn.disabled, false);
+
+  const none = providerPicker(["surplus"], ["codex"]);
+  assert.equal(none.providersCheckAllBtn.disabled, false);
+  assert.equal(none.providersUncheckAllBtn.disabled, true, "no shown row is checked");
+
+  const mixed = providerPicker(["sub-b", "surplus"], ["codex", "surplus", "openlux"]);
+  assert.equal(mixed.providersCheckAllBtn.disabled, false);
+  assert.equal(mixed.providersUncheckAllBtn.disabled, false);
+  mixed.providersUncheckAllBtn.click();
+  assert.deepEqual([...mixed.selection], [], "Uncheck all clears the narrowed subscription with the other shown rows");
+});
