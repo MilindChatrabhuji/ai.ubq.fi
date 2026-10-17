@@ -6,11 +6,11 @@ injected transport, so focused tests stay hermetic and offline.
 
 ## Adapters
 
-| id | adapter                 | behavior                                                               | default instance                                  |
-| -- | ----------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
-| A  | `gateway-gpt-oss-chat`  | current gateway GPT-OSS Chat Completions behavior (m01 generic style)  | live gateway transport (`gpt-oss-120b`), refused  |
-| B  | `codex-infinity-bridge` | codex-infinity-compatible process/trajectory bridge, pinned provenance | inert: never clones, never spawns                 |
-| D  | `strong-control`        | generic strong control over an owner-approved OpenAI-compatible model  | placeholder model, null transport, always refused |
+| id  | adapter                 | behavior                                                               | default instance                                  |
+| --- | ----------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
+| A   | `gateway-gpt-oss-chat`  | current gateway GPT-OSS Chat Completions behavior (m01 generic style)  | live gateway transport (`gpt-oss-120b`), refused  |
+| B   | `codex-infinity-bridge` | codex-infinity-compatible process/trajectory bridge, pinned provenance | inert: never clones, never spawns                 |
+| D   | `strong-control`        | generic strong control over an owner-approved OpenAI-compatible model  | placeholder model, null transport, always refused |
 
 All implement `BenchmarkAdapter` from `benchmarks/adapter.ts` (schema 1.0) and write schema-valid events through
 `AdapterRunContext.record`. The runner derives metrics, runs verification and evaluates oracles exactly as for the

@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Codex banked reset submission, redemption and reconciliation, split out of src/codex_banked_reset.ts.
 
 import { getKv } from "../kv.ts";
@@ -62,7 +63,7 @@ import {
 } from "./banked-reset-claim.ts";
 
 const verifyOwned = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -105,7 +106,7 @@ const verifyOwned = async (
  * responses never reach this path and remain durable `unknown`.
  */
 const finalizeDocumentedRedeemOutcome = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -155,7 +156,7 @@ const terminalOutcomeCannotReconcile = (provider: CodexUsageResetProvider): bool
 };
 
 const reconcileOwned = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -212,7 +213,7 @@ const reconcileOwned = async (
  * still open. A violation is durably rejected, exactly as before.
  */
 const rejectIfClaimWindowClosed = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -231,7 +232,7 @@ const rejectIfClaimWindowClosed = async (
 
 /** Pre-inventory policy and clock checks; `ready` carries the observed time. */
 const submissionPreflight = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -253,7 +254,7 @@ const submissionPreflight = async (
 
 /** Inventory fallback: read once, re-check the claim, and select one credit. */
 const resolveInventoryCredit = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -304,7 +305,7 @@ const isUsableSelectedCredit = (credit: ResetInventoryCredit | undefined, provid
  * present, otherwise one read of the provider inventory.
  */
 const resolveSelectedCredit = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -336,7 +337,7 @@ const resolveSelectedCredit = async (
  * policy re-read, keeping the observed inventory time as the commit time.
  */
 const prepareLiveSubmission = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -367,7 +368,7 @@ const prepareLiveSubmission = async (
 };
 
 const submitClaimed = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -407,7 +408,7 @@ const redeemGate = (
  * that outcome is authoritative; `null` leaves the result to the ordinary path.
  */
 const finalizeTerminalRedeemResult = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -432,7 +433,7 @@ const finalizeTerminalRedeemResult = async (
 
 /** Record the receipt durably and verify the reset it belongs to. */
 const persistReceiptAndVerify = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -457,7 +458,7 @@ const persistReceiptAndVerify = async (
 
 /** Invoke `redeem` once and finalize the durable record for its outcome. */
 const redeemSubmittedOwned = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   candidate: CodexBankedResetCandidate,
@@ -530,7 +531,7 @@ const redeemSubmittedOwned = async (
  * renewal still prevents the redemption.
  */
 const renewAndRedeem = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   dependencies: CodexBankedResetDependencies,
@@ -576,7 +577,7 @@ const renewAndRedeem = async (
  * The production KV accessor. An unavailable accessor and an explicit null
  * override both fail closed, exactly as before.
  */
-const openResetKv = async (dependencies: CodexBankedResetDependencies): Promise<Deno.Kv | null> => {
+const openResetKv = async (dependencies: CodexBankedResetDependencies): Promise<Kv | null> => {
   try {
     return dependencies.kv === undefined ? await getKv() : dependencies.kv;
   } catch {
@@ -624,7 +625,7 @@ const settledRecordDisposition = (
 
 /** Policy gate for the very first claim of an observed quota window. */
 const resolveNewSubmissionAllowance = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   dependencies: CodexBankedResetDependencies,
   reconcileOnly: boolean,
@@ -661,7 +662,7 @@ const resolveNewSubmissionAllowance = async (
  * `unknown` record is only ever reconciled, never re-submitted.
  */
 const resolveSubmissionAllowance = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   existing: CodexResetRedemptionRecord | null,
   dependencies: CodexBankedResetDependencies,
@@ -679,7 +680,7 @@ const resolveSubmissionAllowance = async (
 
 /** Translate one claim result into the caller-visible outcome. */
 const handleClaimResult = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   dependencies: CodexBankedResetDependencies,
