@@ -379,10 +379,15 @@ test("codex catalog: revalidation reapplies narrower OpenRouter windows to the s
         }),
         true
       );
-      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 304, headers: { ETag: '"catalog-etag"' } }));
+      let upstreamIfNoneMatch: string | null = null;
+      globalThis.fetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamIfNoneMatch = new Request(input, init).headers.get("If-None-Match");
+        return Promise.resolve(new Response(null, { status: 304, headers: { ETag: '"catalog-etag"' } }));
+      };
       const first = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
       const firstModel = ((await first.json()) as { models: { context_window: number; max_context_window: number }[] }).models[0];
       assert.deepEqual([firstModel.context_window, firstModel.max_context_window], [1_050_000, 1_050_000]);
+      assert.equal(upstreamIfNoneMatch, '"catalog-etag"');
 
       await fetchOpenRouterModels({
         force: true,
