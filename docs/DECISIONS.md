@@ -855,7 +855,7 @@ this is deployed.
 ## Codex premature turn endings: real reproduction, and the continuation-guidance contract - 2026-09-22
 
 The case that Codex can end a turn with an outstanding requested action is recorded here as reproduced, not inferred
-from the invalid frequencies corrected below. The contract this repository now carries is: on the DeepSeek Responses
+from the unverified frequencies corrected below. The contract this repository now carries is: on the DeepSeek Responses
 translation seam, a tool-bearing request whose mapped executable tools exist and whose `tool_choice` is not `none` gets
 one short neutral continuation instruction appended to the caller's own instructions, or carried as the system message
 when the caller sent none. It never forces a tool call, forbids a legitimate final answer, or claims a tool action
@@ -1046,8 +1046,10 @@ handling of the terminal is proven; which upstreams ever emit it is not.
 
 ## Deployment status of the terminal-truthfulness work - 2026-09-21
 
-The measurement-artifact correction above retracts the premise that motivated this work. It therefore matters which
-parts are actually running, and whether any deployed behaviour change was justified by the retracted claim.
+The correction "CORRECTION: the narration symptom counts are unverified" below withdraws the premise that motivated this
+work: the narration counts behind it were not reproduced and are unverified, so they cannot justify a change. In this
+entry, "retracted" means withdrawn as unverified, not shown to be false. It therefore matters which parts are actually
+running, and whether any deployed behaviour change was justified by the retracted claim.
 
 **Status update, same day: both deployments now run the program.** At the time this entry was first written none of it
 was deployed, and the two running releases predated every commit in it. The program was then deployed to both surfaces
@@ -1089,26 +1091,33 @@ call" guard, which reads as narration-targeted although the code does not test f
 Prior state, retained: the two then-running releases (`922c33392d` on the VPS, `4176e992f5` on the Mac) preceded every
 commit in the program, so at that time no production inference behaviour had changed.
 
-**Only one of the three changes depends on the retracted premise, and partially.**
+**No change depends on the retracted premise; only part of G3's original motivation did.**
 
 - **G5 (report the effective output allowance)** - independent. It is telemetry only, changes no generation behaviour,
   and was justified by the provider's tier-dependent default (8,192 at `none`), measured directly.
 - **G1 (`length` to `response.incomplete`)** - independent. It was reproduced end to end: an upstream
   `finish_reason: "length"` reached the client as a clean `response.completed` with `incomplete_details: null` while the
   gateway's own telemetry recorded `output_tokens: 8192`. That demonstration does not involve narration at all.
-- **G3 (fail closed on a degenerate completion)** - **partially dependent.** Its stated trigger is a stream about to
-  complete "with no tool call, no non-empty assistant text and no refusal". The no-tool-call clause was written for the
-  narration symptom that has now been retracted. The reasoning-only clause stands on its own: a completion whose only
-  output is reasoning hands the client nothing, which the Cerebras route already failed closed for independently of any
-  narration claim. The no-tool-call clause is nonetheless required on its own merits, whatever motivated it:
-  `isAnswerBearingCompletion` in `src/upstream-wire.ts` counts a tool call as answer-bearing, and the stream relay fails
-  a completed terminal closed only when that predicate is false, so dropping the clause would fail every tool-call-only
-  turn - an ordinary agent step - closed as `empty_upstream_completion`. The retracted narration cases carried non-empty
-  assistant text, so they never depended on this clause.
+- **G3 (fail closed on a degenerate completion)** - **partially dependent in motivation only; every clause now stands
+  independently.** Its stated trigger is a stream about to complete "with no tool call, no non-empty assistant text and
+  no refusal". The no-tool-call clause was written for the narration symptom that has now been retracted. The
+  reasoning-only clause stands on its own: a completion whose only output is reasoning hands the client nothing, which
+  the Cerebras route already failed closed for independently of any narration claim. The no-tool-call clause is
+  nonetheless required on its own merits, whatever motivated it. G3's trigger is the negation of the shared
+  completion-validity predicate, `isAnswerBearingCompletion` in `src/upstream-wire.ts`, and the no-tool-call clause is
+  that predicate's `toolCallCount > 0` term: a tool call counts as answer-bearing output. Today the stream relay
+  (`src/provider/stream-relay.ts`) fails a completed terminal closed only when the predicate is false, so it accepts a
+  turn that only calls tools. Removing the `toolCallCount > 0` term would fail every tool-call-only turn - an ordinary
+  agent step - closed on every route that uses this predicate to fail closed: the stream relay (as
+  `empty_upstream_completion`), the buffered DeepSeek and LithosAI Responses paths (`src/deepseek/handlers.ts`,
+  `src/provider/lithos-handlers.ts`) and the Cerebras Responses check (`src/provider/cerebras-responses.ts`), the last
+  three through `chatCompletionHasAnswerBearingOutput`. The retracted narration cases carried non-empty assistant text,
+  so they never depended on this clause.
 
-Reason for recording this: the correction above removes the motivation for one clause of one change, and a future reader
-deciding whether to deploy needs to know that the other two changes and most of the third rest on reproductions that
-survived the retraction.
+Reason for recording this: the correction below removes the motivation for one clause of one change, and a future reader
+deciding whether to deploy needs to know that the other two changes and every clause of the third stand without it: G1,
+G5 and G3's reasoning-only clause on evidence that survived the retraction, and G3's no-tool-call clause on the
+completion-validity predicate.
 
 Reversal risk: deploying on the belief that the narration symptom is real, or reverting the whole program because its
 original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
@@ -1117,25 +1126,33 @@ original motivation was retracted. The first is unfounded; the second discards t
 the program is to be deployed", re-derive G3's trigger from the surviving evidence alone. The program was deployed on
 2026-09-21, so that next action is historical. The G3 bullet above now carries the re-derivation, and it keeps every
 clause of the deployed trigger: the reasoning-only and empty-output clauses stand on the surviving evidence, and the
-no-tool-call clause rests on the completion-validity predicate, not on the invalidated frequency claim. What remains
+no-tool-call clause rests on the completion-validity predicate, not on the unverified frequency claim. What remains
 after deployment:
 
 - Before any future change to G3, revise the changelog wording that calls it a "no tool call" guard (see above). Keep the
-  no-tool-call clause for as long as `isAnswerBearingCompletion` counts a tool call as answer-bearing output; re-derive
-  the trigger if that predicate changes.
+  no-tool-call clause: G3 is the negation of the shared completion-validity predicate (`isAnswerBearingCompletion`), and
+  a tool call is valid output.
 - Do not cite this entry as an accepted deployment under `AGENTS.md`. The missing acceptance observations were not
   recorded while `2207a757fb` ran, and both surfaces moved to `3661bcfd13` on 2026-09-22 (see "Buffered-terminal fix
   deployed to both surfaces" below).
 
-## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
+## CORRECTION: the narration symptom counts are unverified - 2026-09-21
 
-> **Superseded in part on 2026-09-22.** The reported counts remain unreproducible and cannot be quoted as a rate. A
-> paired real-client reproduction did observe one premature stop with outstanding work, so these invalid counts are not
-> evidence that the behaviour is absent either. See the entry at the top of this file.
+> **Superseded in part on 2026-09-22.** The reported counts were not reproduced and cannot be quoted as a rate. A paired
+> real-client reproduction did observe one premature stop with outstanding work, so these unverified counts are not
+> evidence that the behaviour is absent either. See "Codex premature turn endings: real reproduction, and the
+> continuation-guidance contract - 2026-09-22" above. (Reworded on 2026-10-17, #1132: this note first said the counts
+> "remain unreproducible", called them "invalid counts", and pointed to "the entry at the top of this file", which was
+> that entry when the note was written.)
 
 > **Qualified on 2026-10-16 (#603): the artifact conclusion is unverified, not established.** Two comparisons below do
-> not test the handoff's measurement as it was recorded, so they cannot show that it was an artifact. The text below is
-> kept as first written; read its "not reproducible" as "not reproduced".
+> not test the handoff's measurement as it was recorded, so they cannot show that it was an artifact. As first written,
+> this entry was headed "CORRECTION: the narration symptom was itself a measurement artifact", and its body said the
+> counts "are not reproducible from the recorded sessions", that "It appears to be an artifact of how the original count
+> was taken", that "the original measurement cannot be reconstructed from the sessions it cites", that the chain of
+> reasoning "inherits an artifact", that each reversal "propagates the artifact", and that "the defect is most likely in
+> the counting procedure". On 2026-10-17 (#1132) the heading and those sentences were reworded to "not reproduced" and
+> "unverified" below; the counts, tables and examples are unchanged.
 >
 > - **Window.** The handoff scopes its counts to the 2026-09-21 13:26–13:56 UTC window. The reconciliation table below
 >   counts "the two sessions" and never states that window, so it is not a like-for-like comparison: counts over a
@@ -1152,9 +1169,9 @@ after deployment:
 
 The entry below and the terminal-truthfulness handoff both rest on an observed condition: a long-running agent
 "frequently believes its turn completed mid-task", quantified as 154 of 292 turns in one session and 24 of 67 in
-another. **Those reported counts are not reproducible from the recorded sessions.** It appears to be an artifact of how
-the original count was taken, and the entries that depend on it should not be cited as evidence that the behaviour is
-common.
+another. **Those reported counts were not reproduced from the recorded sessions, and are unverified.** How the original
+count was taken may explain them, but that is not shown, and the entries that depend on them should not be cited as
+evidence that the behaviour is common.
 
 **The numbers do not reconcile.** For the two sessions the handoff names, counting every plausible unit:
 
@@ -1164,7 +1181,8 @@ common.
 | `oracle-free-arch-vps` |            145 |             143 |                     497 |                               269 |
 
 The handoff reports 292 turns / 154 narrated for `sentinel` and 67 / 24 for `oracle`. **No column matches either
-figure**, so the original measurement cannot be reconstructed from the sessions it cites.
+figure**, so these whole-session counts do not reconstruct the original measurement; they apply neither its window nor
+its classifier (see the qualification above), so they do not show that it cannot be reconstructed either.
 
 **The forward-looking-phrase test does not identify premature endings.** Inspecting the messages it matches shows they
 are ordinary mid-task narration that is _followed by a tool call_ — "Let me load the required harness policy and verify
@@ -1179,15 +1197,16 @@ only 3 of 13 in one sampled window exceeding 10 items.
 
 Reason for recording this: two merged documents and six merged corrections treat this symptom as established and build
 on it. A future reader must know that the premise is unsupported, or the chain of reasoning above this entry inherits an
-artifact. The gateway trustworthiness findings in the handoff stand on their own evidence and are unaffected; only the
-claim that the symptom is frequent, and the model-versus-gateway contrast drawn from it, depend on this.
+unverified premise. The gateway trustworthiness findings in the handoff stand on their own evidence and are unaffected;
+only the claim that the symptom is frequent, and the model-versus-gateway contrast drawn from it, depend on this.
 
 Reversal risk: quoting 154-of-292, treating forward-looking phrasing as a malfunction signal, or building any detector
-on that regex. Each propagates the artifact.
+on that regex. Each propagates an unverified count or a phrase test that does not discriminate.
 
-Method note: the original count was never reproduced, so the defect is most likely in the counting procedure rather than
-in the sessions. Any replacement measurement must state its unit (turn, message, or item), its window, and how it
-decides a turn was premature, and must show that the classifier does not fire on ordinary mid-task narration.
+Method note: the original count was never reproduced, and whether the counting procedure or this reconciliation's
+choice of unit, window and classifier explains the gap is not established. Any replacement measurement must state its
+unit (turn, message, or item), its window, and how it decides a turn was premature, and must show that the classifier
+does not fire on ordinary mid-task narration.
 
 ## CORRECTION: context size is unconfirmed as the narration trigger - 2026-09-21
 
@@ -1215,9 +1234,9 @@ were run against `deepseek-flash` at matched effort:
 | repetitive (original) |              66,533 |     28 |        8 |    29% |
 | **varied (matched)**  |          **71,295** | **18** |    **0** | **0%** |
 
-The varied payload is _larger_ than the repetitive one and narrates _never_. If that contrast holds, length alone is not
-the trigger, which leaves both "context size is the trigger" and the recorded onset of "between roughly 1k and 4k"
-unconfirmed.
+The varied payload is _larger_ than the repetitive one and narrates _never_. This contrast pools runs from different
+time windows and does not survive the interleaved control below, so it shows neither that length is the trigger nor
+that it is not; "context size is the trigger" and the recorded onset of "between roughly 1k and 4k" remain unconfirmed.
 
 **A controlled interleaved run, and its non-result.** To separate condition from time drift, the three conditions
 (repetitive ~66k, varied ~71k, small ~1k) were cycled round-robin inside a single time window, eight rounds:
@@ -1241,7 +1260,8 @@ across batches on its own payload (5/10, then 1/10, `p = 0.14`).
   which is not zero. Its true trigger is unidentified; repetitive content is a candidate, not an established cause.
 - **Survives:** that `gpt-reserve` never narrated on any payload at any size tested - 0 of 30 pooled across every cell
   run in this investigation, spanning 61k to 176k input tokens and both payload families. The model contrast is weaker
-  than first reported, because the DeepSeek rate it is measured against fell, but it has not been contradicted.
+  than first reported, because the DeepSeek rate it is measured against fell, but it has not been contradicted (a
+  model-and-route contrast; see the route caveat in the narration entry below).
 
 Reason for recording at this length: the previous entry states a specific causal trigger with statistics behind it, and
 this repository treats that as load-bearing. Leaving an unconfirmed trigger recorded as established would be worse than
@@ -1255,10 +1275,13 @@ time window. Both were missing here, and both are what caught it.
 
 ## Narration-without-action is model-specific and context-gated - 2026-09-21
 
-> **Superseded.** The condition this entry measures - a model frequently believing its turn completed mid-task - is not
-> reproducible from the sessions it cites; see the measurement-artifact correction above. The context-size trigger and
-> onset threshold are separately unconfirmed. Treat every rate here as an artifact. The gateway trustworthiness findings
-> in the handoff are unaffected, since they rest on their own evidence.
+> **Superseded.** The condition this entry measures - a model frequently believing its turn completed mid-task - was not
+> reproduced from the sessions it cites, and its reported counts are unverified; see "CORRECTION: the narration symptom
+> counts are unverified" above. The context-size trigger and onset threshold are separately unconfirmed. The rates here
+> were measured on a repetitive-filler payload and must not be generalised to real sessions. The gateway trustworthiness
+> findings in the handoff are unaffected, since they rest on their own evidence. (Reworded on 2026-10-17, #1132: this
+> note first said the condition "is not reproducible from the sessions it cites" and "Treat every rate here as an
+> artifact".)
 
 > **Qualified on 2026-10-16 (#603).** The note above first said the trigger and onset were "separately falsified"; the
 > correction above supports only "unconfirmed". Three conclusions below are also narrowed to what this entry's data
@@ -1391,9 +1414,9 @@ buffered DeepSeek, LithosAI and Cerebras Responses paths map the payload status 
 `deepSeekTerminalTypeForPayload`. The native Responses paths - Surplus, OpenLux and OpenRouter `/v1/responses` and the
 Codex subscription - pass an upstream-authored `response.incomplete` through as the terminal. OpenRouter's route,
 `handleOpenRouterResponses` in `src/provider/openrouter-handlers.ts`, is reached directly and as the third hop of the
-DeepSeek waterfall. It streams through `proxyResponsesStream` (`src/provider/openrouter-streams.ts`), which forwards
-every upstream event, the terminal included, and its buffered path returns the upstream payload unchanged, including a
-`status: "incomplete"`.
+DeepSeek waterfall. It streams through `streamOpenRouterResponses` (`src/provider/openrouter-streams.ts`), which wraps
+`proxyResponsesStream` (`src/responses-stream.ts`) and forwards every upstream event, the terminal included, and its
+buffered path returns the upstream payload unchanged, including a `status: "incomplete"`.
 
 A per-provider allow/deny filter would still be solving a leak that does not exist: every construction is a deliberate
 per-route mapping, and every relay forwards a terminal that a translator or the upstream already chose. A provider that
@@ -1408,8 +1431,8 @@ should use the mapping still needs its own deliberate wiring.
 
 **The Cerebras path was reproduced, not inferred.** A direct probe with `max_completion_tokens: 16` returned
 `finish_reason: "length"` with the `content` key absent entirely and only `reasoning` populated (53 characters), on two
-consecutive runs. That trips `choiceHasNoPayload` (`src/provider/cerebras.ts:376`, applied at `:403`), which rejects a
-choice carrying neither content, nor a tool call, nor a refusal. Through the gateway the same request returns HTTP 502
+consecutive runs. That trips `choiceHasNoPayload` in `src/provider/cerebras.ts`, which rejects a choice carrying neither
+content, nor a tool call, nor a refusal. Through the gateway the same request returns HTTP 502
 `cerebras_upstream_invalid_response`, recorded in the error ledger as
 `chat.completions 502 cerebras_upstream_invalid_response model=gpt-oss-120b`. Note that reasoning alone is deliberately
 not sufficient payload: it is preserved for clients as `message.reasoning`, but it is not content.
@@ -1435,8 +1458,15 @@ deliver the incompletion:
 OpenRouter is reachable, but its truncation behaviour is unmeasured too: its `/v1/responses` route relays the upstream's
 own terminal, and no probe has recorded what OpenRouter sends when a generation is cut off.
 
-Probe both paths on both blocked providers, and OpenRouter's `/v1/responses`, before trusting any of them, and recheck
-the blockers before treating them as permanent.
+LithosAI and the Claude Code route are not in the provider table either, and no truncation probe is recorded for them;
+only the routes in that table were measured. LithosAI uses the shared Chat-only construction and relays its stream
+through `relayResponsesStream`, so whether a truncated LithosAI generation reaches the client as `response.incomplete`
+depends on its upstream reporting `length`, which is unmeasured. The Claude Code route builds the terminal through the
+Anthropic Messages translation in `src/provider/anthropic-responses.ts`, so it depends on its upstream reporting
+`max_tokens` when it truncates, which is also unmeasured.
+
+Probe both paths on both blocked providers, OpenRouter's `/v1/responses`, LithosAI and the Claude Code route before
+trusting any of them, and recheck the blockers before treating them as permanent.
 
 **Recheck 2026-09-22, both blockers still hold.** Surplus answers a probe on a Surplus-routed id with HTTP 402
 `Insufficient USDC balance: need ~$1.0000, have $0.9895` (request id `01M33CFBC7AHTBXM365KNCM28D`), and the terminal
@@ -1520,7 +1550,8 @@ for any non-`off` effort. **Correction 2026-09-22: that field is no longer rejec
 `a4d0b470`) accepts the vendor's own `thinking` field on the DeepSeek route and projects it to `reasoning_effort`; it
 remains outside the official OpenAI schema everywhere else, so the earlier HTTP 400
 `Unrecognized request argument supplied: thinking` no longer describes this route's behaviour. That compatibility change
-did not fix the Codex premature turn endings recorded at the top of this file, which remain a separate mechanism.
+did not fix the Codex premature turn endings recorded in "Codex premature turn endings: real reproduction, and the
+continuation-guidance contract - 2026-09-22", which remain a separate mechanism.
 
 **The program added no new 5xx responses.** Counting every `openaiError(<n>, ...)` and `streamErrorResponse(<n>, ...)`
 call in `src/openai.ts` between the pre-program revision `922c33392d` and the merged terminal-truthfulness revision: 31

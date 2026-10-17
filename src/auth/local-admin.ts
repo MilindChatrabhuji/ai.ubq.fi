@@ -1,4 +1,5 @@
 import type { Addr } from "#http";
+import { config } from "../config.ts";
 export type ServeRuntimeOptions = Readonly<{
   disableAdminAuth: boolean;
 }>;
@@ -8,7 +9,10 @@ const DISABLE_ADMIN_AUTH_FLAG = "--disable-admin-auth";
 const formatArgumentError = (argument: string): Error =>
   new Error(`[ai.ubq.fi] Unknown server argument '${argument}'. Supported arguments: ${DISABLE_ADMIN_AUTH_FLAG}`);
 
-export const parseServeRuntimeOptions = (args: readonly string[], options: Readonly<{ isDeploy: boolean }>): ServeRuntimeOptions => {
+export const parseServeRuntimeOptions = (
+  args: readonly string[],
+  options: Readonly<{ isDeploy: boolean; isProductionTimeline: boolean }>
+): ServeRuntimeOptions => {
   let disableAdminAuth = false;
 
   for (const argument of args) {
@@ -21,6 +25,10 @@ export const parseServeRuntimeOptions = (args: readonly string[], options: Reado
 
   if (disableAdminAuth && options.isDeploy) {
     throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} is unavailable in Deno Deploy.`);
+  }
+  // The production VPS serves Caddy-proxied public traffic on its loopback listener (#262).
+  if (disableAdminAuth && options.isProductionTimeline) {
+    throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} is unavailable on the production timeline (DENO_TIMELINE=production).`);
   }
 
   return Object.freeze({ disableAdminAuth });
@@ -119,7 +127,9 @@ export const configureMacLocalAdminAuthBypassForListener = (address: Addr): bool
 const isLoopbackPeer = (peer: Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
 
 export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
-  if (!adminAuthDisabled) return false;
+  // The production timeline never grants a development bypass, however a
+  // launcher enabled one: its loopback peers are the public proxy (#262).
+  if (!adminAuthDisabled || config.isProductionTimeline) return false;
   // The bypass must be granted only to an actual loopback peer, never to a
   // forwarded, tunneled, or port-forwarded request whose URL hostname is
   // client-controlled. Fail closed when the peer is unknown (for example a
