@@ -1,15 +1,16 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { invalidCallLabel, renderValidationFeedback, validateToolArgumentsDetailed } from "../src/harmony/reliability/feedback.ts";
 
-Deno.test("feedback: a fully valid call has no issues", () => {
+test("feedback: a fully valid call has no issues", () => {
   const result = validateToolArgumentsDetailed("filesystem.read", { path: "docs/spec.txt" });
   assert.equal(result.valid, true);
   assert.deepEqual(result.issues, []);
   assert.deepEqual(result.arguments, { path: "docs/spec.txt" });
 });
 
-Deno.test("feedback: reports every issue at once with stable codes and hints", () => {
+test("feedback: reports every issue at once with stable codes and hints", () => {
   const result = validateToolArgumentsDetailed("filesystem.read", { path: 42, file: "x" });
   assert.equal(result.valid, false);
   const codes = result.issues.map((i) => i.code);
@@ -23,7 +24,7 @@ Deno.test("feedback: reports every issue at once with stable codes and hints", (
   assert.match(wrongType.message, /must be a string/);
 });
 
-Deno.test("feedback: required, non-empty and undefined rules are enforced", () => {
+test("feedback: required, non-empty and undefined rules are enforced", () => {
   const missing = validateToolArgumentsDetailed("shell.exec", {});
   assert.equal(missing.valid, false);
   assert.equal(missing.issues[0].code, "missing_required");
@@ -38,7 +39,7 @@ Deno.test("feedback: required, non-empty and undefined rules are enforced", () =
   assert.ok(undefinedArg.issues.some((i) => i.code === "unexpected_argument"));
 });
 
-Deno.test("feedback: plan arrays validate item by item", () => {
+test("feedback: plan arrays validate item by item", () => {
   const bad = validateToolArgumentsDetailed("task.update_plan", { plan: ["ok", ""] });
   assert.equal(bad.valid, false);
   assert.equal(bad.issues[0].code, "bad_array_item");
@@ -47,7 +48,7 @@ Deno.test("feedback: plan arrays validate item by item", () => {
   assert.equal(good.valid, true);
 });
 
-Deno.test("feedback: unknown tools produce one deterministic issue", () => {
+test("feedback: unknown tools produce one deterministic issue", () => {
   const result = validateToolArgumentsDetailed("filesystem.write", { path: "x" });
   assert.equal(result.valid, false);
   assert.equal(result.issues.length, 1);
@@ -55,13 +56,13 @@ Deno.test("feedback: unknown tools produce one deterministic issue", () => {
   assert.match(result.issues[0].hint, /filesystem\.read/);
 });
 
-Deno.test("feedback: non-object arguments are rejected deterministically", () => {
+test("feedback: non-object arguments are rejected deterministically", () => {
   const result = validateToolArgumentsDetailed("filesystem.read", "not-an-object");
   assert.equal(result.valid, false);
   assert.equal(result.issues[0].code, "not_an_object");
 });
 
-Deno.test("feedback: rendered feedback is one deterministic line with every issue", () => {
+test("feedback: rendered feedback is one deterministic line with every issue", () => {
   const result = validateToolArgumentsDetailed("filesystem.read", { path: 42, file: "x" });
   const rendered = renderValidationFeedback("filesystem.read", result);
   assert.match(rendered, /^invalid arguments \(2 issue\(s\)\)/);
@@ -71,7 +72,7 @@ Deno.test("feedback: rendered feedback is one deterministic line with every issu
   assert.equal(rendered, again);
 });
 
-Deno.test("feedback: invalidCallLabel is a stable short code", () => {
+test("feedback: invalidCallLabel is a stable short code", () => {
   const result = validateToolArgumentsDetailed("shell.exec", { command: "" });
   const label = invalidCallLabel(result);
   assert.match(label, /^non_empty:/);

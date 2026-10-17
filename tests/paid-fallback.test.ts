@@ -1,24 +1,24 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type * as KvTypes from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { setKvForTest } from "../src/kv.ts";
 import assert from "node:assert/strict";
-
 type StoredEntry = {
-  key: Deno.KvKey;
+  key: KvTypes.KvKey;
   value: unknown;
   versionstamp: string;
   expiresAtMs: number | null;
 };
-
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvTypes.KvKey): string => JSON.stringify(key);
 const clone = <T>(value: T): T => structuredClone(value);
-
-const compareKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
+const compareKeyPart = (left: KvTypes.KvKeyPart, right: KvTypes.KvKeyPart): number => {
   if (left === right) return 0;
   if (typeof left === "number" && typeof right === "number") return left - right;
   const leftText = String(left);
   const rightText = String(right);
   return leftText < rightText ? -1 : 1;
 };
-
-const compareKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
+const compareKeys = (left: KvTypes.KvKey, right: KvTypes.KvKey): number => {
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
     if (index >= left.length) return -1;
@@ -28,9 +28,7 @@ const compareKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
   }
   return 0;
 };
-
-const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
-
+const startsWithKey = (key: KvTypes.KvKey, prefix: KvTypes.KvKey): boolean => prefix.every((part, index) => key[index] === part);
 class MemoryKv {
   readonly entries = new Map<string, StoredEntry>();
   readonly queueMessages: { message: unknown; options: unknown }[] = [];
@@ -40,7 +38,6 @@ class MemoryKv {
   getCalls = 0;
   listCalls = 0;
   #version = 0;
-
   clear(): void {
     this.entries.clear();
     this.queueMessages.length = 0;
@@ -51,12 +48,10 @@ class MemoryKv {
     this.listCalls = 0;
     this.#version = 0;
   }
-
   #nextVersionstamp(): string {
     this.#version += 1;
     return String(this.#version).padStart(20, "0");
   }
-
   #purgeExpired(): void {
     const now = Date.now();
     for (const [encodedKey, entry] of this.entries) {
@@ -65,8 +60,7 @@ class MemoryKv {
       }
     }
   }
-
-  #write(key: Deno.KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
+  #write(key: KvTypes.KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
     const expireIn = options?.expireIn;
     const expiresAtMs = typeof expireIn === "number" ? Date.now() + Math.max(0, expireIn) : null;
     this.entries.set(encodeKey(key), {
@@ -76,18 +70,16 @@ class MemoryKv {
       expiresAtMs,
     });
   }
-
-  versionstamp(key: Deno.KvKey): string | null {
+  versionstamp(key: KvTypes.KvKey): string | null {
     this.#purgeExpired();
     return this.entries.get(encodeKey(key))?.versionstamp ?? null;
   }
-
-  expiration(key: Deno.KvKey): number | null {
+  expiration(key: KvTypes.KvKey): number | null {
     this.#purgeExpired();
     return this.entries.get(encodeKey(key))?.expiresAtMs ?? null;
   }
 
-  get<T = unknown>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvTypes.KvKey): Promise<KvTypes.KvEntryMaybe<T>> {
     this.getCalls += 1;
     this.#purgeExpired();
     const entry = this.entries.get(encodeKey(key));
@@ -95,16 +87,16 @@ class MemoryKv {
       key: clone(key),
       value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvTypes.KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  set(key: KvTypes.KvKey, value: unknown, options?: { expireIn?: number }): Promise<KvTypes.KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.#write(key, value, options, versionstamp);
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvTypes.KvKey): Promise<void> {
     this.#purgeExpired();
     this.entries.delete(encodeKey(key));
     this.#nextVersionstamp();
@@ -117,7 +109,7 @@ class MemoryKv {
     return Promise.resolve();
   }
 
-  list<T = unknown>(selector: Deno.KvListSelector, options: Deno.KvListOptions = {}): Deno.KvListIterator<T> {
+  list<T = unknown>(selector: KvTypes.KvListSelector, options: KvTypes.KvListOptions = {}): KvTypes.KvListIterator<T> {
     this.listCalls += 1;
     this.#purgeExpired();
     let entries = [...this.entries.values()]
@@ -132,7 +124,7 @@ class MemoryKv {
     if (options.reverse) entries = entries.reverse();
     if (typeof options.limit === "number") entries = entries.slice(0, options.limit);
 
-    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<KvTypes.KvEntry<T>> {
       for (const entry of entries) {
         yield {
           key: clone(entry.key),
@@ -140,28 +132,28 @@ class MemoryKv {
           versionstamp: entry.versionstamp,
         };
       }
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvTypes.KvListIterator<T>;
     Object.defineProperty(iterator, "cursor", { get: () => "" });
     return iterator;
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const mutations: ({ type: "set"; key: Deno.KvKey; value: unknown; options?: { expireIn?: number } } | { type: "delete"; key: Deno.KvKey })[] = [];
+  atomic(): KvTypes.AtomicOperation {
+    const checks: { key: KvTypes.KvKey; versionstamp: string | null }[] = [];
+    const mutations: ({ type: "set"; key: KvTypes.KvKey; value: unknown; options?: { expireIn?: number } } | { type: "delete"; key: KvTypes.KvKey })[] = [];
     const operation = {
-      check: (entry: { key: Deno.KvKey; versionstamp: string | null }) => {
+      check: (entry: { key: KvTypes.KvKey; versionstamp: string | null }) => {
         checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+      set: (key: KvTypes.KvKey, value: unknown, options?: { expireIn?: number }) => {
         mutations.push({ type: "set", key: clone(key), value: clone(value), options });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvTypes.KvKey) => {
         mutations.push({ type: "delete", key: clone(key) });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvTypes.KvCommitResult | KvTypes.KvCommitError> => {
         this.beforeAtomicCommit?.();
         this.beforeAtomicCommit = null;
         this.#purgeExpired();
@@ -183,20 +175,24 @@ class MemoryKv {
     };
     Object.defineProperty(operation, "then", {
       get() {
-        throw new TypeError("'Deno.AtomicOperation' is not a promise: did you forget to call 'commit()'");
+        throw new TypeError("'KvTypes.AtomicOperation' is not a promise: did you forget to call 'commit()'");
       },
     });
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as KvTypes.AtomicOperation;
   }
 
   close(): void {}
 }
 
 const memoryKv = new MemoryKv();
-const kv = memoryKv as unknown as Deno.Kv;
-const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv);
-
+const kv = memoryKv as unknown as KvTypes.Kv;
+setKvForTest(kv);
+beforeEach(() => {
+  setKvForTest(kv);
+});
+afterEach(() => {
+  setKvForTest(null);
+});
 const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api-keys.ts");
 const { apiKeyRequestLogKey, recordApiKeyRequestLog, updateApiKeyRequestLog } = await import("../src/analytics.ts");
 const { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy, reservePaidFallback } = await import("../src/paid-fallback/index.ts");
@@ -228,7 +224,6 @@ const {
 } = await import("../src/paid-fallback/ledger-state.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
-
 const strictKeyRecord = (overrides: Record<string, unknown> = {}): Record<string, unknown> => {
   const now = Date.now();
   return {
@@ -279,12 +274,13 @@ const seedStrictKey = async (overrides: Record<string, unknown> = {}): Promise<R
 };
 
 const withMeteredApiKey = async (fn: () => Promise<void>): Promise<void> => {
-  const originalGet = Deno.env.get.bind(Deno.env);
-  Deno.env.get = (key: string): string | undefined => (key === "METERED_API_KEY" ? "metered-test-key" : originalGet(key));
+  const originalGet = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-test-key";
   try {
     await fn();
   } finally {
-    Deno.env.get = originalGet;
+    if (originalGet === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalGet;
   }
 };
 
@@ -322,7 +318,7 @@ const v3AdmissionInput = (
   ...overrides,
 });
 
-Deno.test("strict paid fallback policy accepts valid disabled history and unlimited reservation state", () => {
+test("strict paid fallback policy accepts valid disabled history and unlimited reservation state", () => {
   const disabledHistory = strictKeyRecord({
     paid_fallback_enabled: false,
     paid_fallback_limit_microcredits: 5_000_000,
@@ -355,7 +351,7 @@ Deno.test("strict paid fallback policy accepts valid disabled history and unlimi
   assert.equal(hasStrictPaidFallbackKeyPolicy(unlimitedReservation), true);
 });
 
-Deno.test("strict paid fallback policy rejects invalid values but ignores legacy counter relationships", () => {
+test("strict paid fallback policy rejects invalid values but ignores legacy counter relationships", () => {
   const invalidCommonPolicies = [
     { paid_fallback_spent_microcredits: -1 },
     { paid_fallback_spent_microcredits: Number.MAX_SAFE_INTEGER + 1 },
@@ -411,7 +407,7 @@ Deno.test("strict paid fallback policy rejects invalid values but ignores legacy
   }
 });
 
-Deno.test("concurrent paid fallback ledger patches retry without losing either update", async () => {
+test("concurrent paid fallback ledger patches retry without losing either update", async () => {
   memoryKv.clear();
   const keyId = "key-concurrent-ledger";
   const requestId = "request-concurrent-ledger";
@@ -445,7 +441,7 @@ Deno.test("concurrent paid fallback ledger patches retry without losing either u
   assert.equal(stored.value.completed_at_ms, createdAtMs + 50);
 });
 
-Deno.test("V3 admits concurrent bounded requests without a single reservation slot", async () => {
+test("V3 admits concurrent bounded requests without a single reservation slot", async () => {
   memoryKv.clear();
   const keyId = "v3-concurrent";
   const resetAtMs = Date.now() + 60_000;
@@ -482,15 +478,15 @@ Deno.test("V3 admits concurrent bounded requests without a single reservation sl
   assert.equal(typeof pending.value?.next_reconciliation_at_ms, "number");
 });
 
-Deno.test("V3 idle reconciliation gate avoids pending scans and Metered billing reads", async () => {
+test("V3 idle reconciliation gate avoids pending scans and Metered billing reads", async () => {
   memoryKv.clear();
   await memoryKv.set(paidFallbackReconciliationGateV3Key(), { next_due_at_ms: null });
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     return Promise.reject(new Error("idle reconciliation must not contact Metered"));
-  };
+  });
   try {
     assert.equal(await reconcileDuePaidFallbacksV3(Date.now(), kv), 0);
     assert.equal(memoryKv.getCalls, 1);
@@ -502,12 +498,12 @@ Deno.test("V3 idle reconciliation gate avoids pending scans and Metered billing 
   }
 });
 
-Deno.test("V3 reconciliation gate arms at dispatch boundaries and clears after settlement", async () => {
+test("V3 reconciliation gate arms at dispatch boundaries and clears after settlement", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const providerRequestId = "provider-gate-dispatch";
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     return Promise.resolve(
       Response.json({
@@ -524,7 +520,7 @@ Deno.test("V3 reconciliation gate arms at dispatch boundaries and clears after s
         ],
       })
     );
-  };
+  });
   try {
     await withMeteredApiKey(async () => {
       const admission = await admitPaidFallbackV3(
@@ -567,7 +563,7 @@ Deno.test("V3 reconciliation gate arms at dispatch boundaries and clears after s
   }
 });
 
-Deno.test("V3 missing reconciliation gate bootstraps the earliest legacy marker", async () => {
+test("V3 missing reconciliation gate bootstraps the earliest legacy marker", async () => {
   memoryKv.clear();
   const keyId = "gate-legacy";
   const requestId = "gate-legacy-request";
@@ -580,10 +576,10 @@ Deno.test("V3 missing reconciliation gate bootstraps the earliest legacy marker"
   });
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     return Promise.reject(new Error("future legacy work must not contact Metered"));
-  };
+  });
   try {
     assert.equal(await reconcileDuePaidFallbacksV3(Date.now(), kv), 0);
     assert.equal(memoryKv.listCalls, 1);
@@ -594,7 +590,7 @@ Deno.test("V3 missing reconciliation gate bootstraps the earliest legacy marker"
   }
 });
 
-Deno.test("V3 concurrent dispatch-intent admissions retain every reservation and gate arm", async () => {
+test("V3 concurrent dispatch-intent admissions retain every reservation and gate arm", async () => {
   memoryKv.clear();
   const decisions = await Promise.all(
     Array.from({ length: 32 }, (_, index) =>
@@ -618,7 +614,7 @@ Deno.test("V3 concurrent dispatch-intent admissions retain every reservation and
   assert.equal(typeof (await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value?.next_due_at_ms, "number");
 });
 
-Deno.test("paid fallback admission re-reads policy when a committed disable races its CAS", async () => {
+test("paid fallback admission re-reads policy when a committed disable races its CAS", async () => {
   memoryKv.clear();
   const record = await seedStrictKey({ id: "key-policy-cas-barrier", hash: "hash-policy-cas-barrier" });
   const keyId = String(record.id);
@@ -648,17 +644,17 @@ Deno.test("paid fallback admission re-reads policy when a committed disable race
   assert.equal(policy.value?.paid_fallback_enabled, false);
 });
 
-Deno.test("paid fallback admission reconciles a due reservation and fails closed while exposure is unresolved", async () => {
+test("paid fallback admission reconciles a due reservation and fails closed while exposure is unresolved", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "admission-due-reconcile";
   const providerRequestId = "provider-admission-due";
   const providerLogs: Record<string, unknown>[] = [];
   let fetchCalls = 0;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     fetchCalls += 1;
     return Promise.resolve(Response.json({ success: true, data: providerLogs }));
-  };
+  });
   try {
     await withMeteredApiKey(async () => {
       await seedStrictKey({ id: keyId, paid_fallback_limit_microcredits: 500_000 });
@@ -694,7 +690,7 @@ Deno.test("paid fallback admission reconciles a due reservation and fails closed
   }
 });
 
-Deno.test("V3 unlimited admission writes independent rows without a shared window", async () => {
+test("V3 unlimited admission writes independent rows without a shared window", async () => {
   memoryKv.clear();
   const keyId = "v3-unlimited";
   const resetAtMs = Date.now() + 60_000;
@@ -725,7 +721,7 @@ Deno.test("V3 unlimited admission writes independent rows without a shared windo
   assert.equal((await memoryKv.get(paidFallbackWindowV3Key(keyId, resetAtMs))).value, null);
 });
 
-Deno.test("V3 terminal reconciliation settles a pending request exactly once without KV queues", async () => {
+test("V3 terminal reconciliation settles a pending request exactly once without KV queues", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-terminal";
@@ -733,7 +729,7 @@ Deno.test("V3 terminal reconciliation settles a pending request exactly once wit
   const providerRequestId = "provider-terminal";
   const resetAtMs = Date.now() + 60_000;
   const createdAtMs = Date.now();
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       Response.json({
         success: true,
@@ -748,7 +744,8 @@ Deno.test("V3 terminal reconciliation settles a pending request exactly once wit
           },
         ],
       })
-    );
+    )
+  );
   try {
     await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3({
@@ -798,7 +795,7 @@ Deno.test("V3 terminal reconciliation settles a pending request exactly once wit
   }
 });
 
-Deno.test("V3 reconciliation records billing facts without manufacturing a terminal event", async () => {
+test("V3 reconciliation records billing facts without manufacturing a terminal event", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-out-of-order";
@@ -806,7 +803,7 @@ Deno.test("V3 reconciliation records billing facts without manufacturing a termi
   const providerRequestId = "provider-out-of-order";
   const requestKey = paidFallbackRequestV3Key(keyId, requestId);
   let injectedContention = false;
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     if (!injectedContention) {
       injectedContention = true;
       memoryKv.beforeAtomicCommit = () => {
@@ -833,7 +830,7 @@ Deno.test("V3 reconciliation records billing facts without manufacturing a termi
         ],
       })
     );
-  };
+  });
   try {
     await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
@@ -866,14 +863,14 @@ Deno.test("V3 reconciliation records billing facts without manufacturing a termi
   }
 });
 
-Deno.test("V3 terminal delivery expedites a request deferred before provider billing appeared", async () => {
+test("V3 terminal delivery expedites a request deferred before provider billing appeared", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-terminal-expedite";
   const requestId = "gateway-terminal-expedite";
   const providerRequestId = "provider-terminal-expedite";
   let billingVisible = false;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       Response.json({
         success: true,
@@ -890,7 +887,8 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
             ]
           : [],
       })
-    );
+    )
+  );
   try {
     await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
@@ -921,7 +919,7 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
   }
 });
 
-Deno.test("V3 expedite versions an already-due gate against stale recomputation", async () => {
+test("V3 expedite versions an already-due gate against stale recomputation", async () => {
   memoryKv.clear();
   const keyId = "v3-expedite-gate-version";
   const requestId = "expedite-gate-version";
@@ -945,7 +943,7 @@ Deno.test("V3 expedite versions an already-due gate against stale recomputation"
   assert.equal(Number((await memoryKv.get<Record<string, unknown>>(pendingKey)).value?.next_reconciliation_at_ms) <= Date.now(), true);
 });
 
-Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and retain final-call overshoot", async () => {
+test("V3 bounded policy edits preserve exposure, admit concurrently, and retain final-call overshoot", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-policy-edit";
@@ -1009,7 +1007,7 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
       });
     })
   );
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       Response.json({
         success: true,
@@ -1032,7 +1030,8 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
           },
         ],
       })
-    );
+    )
+  );
   try {
     await withMeteredApiKey(async () => {
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 2);
@@ -1067,7 +1066,7 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
   });
 });
 
-Deno.test("V3 due scanning honors leases and backoff while retaining unresolved exposure after 24 hours", async () => {
+test("V3 due scanning honors leases and backoff while retaining unresolved exposure after 24 hours", async () => {
   memoryKv.clear();
   const keyId = "v3-unresolved";
   const requestId = "missing-provider-id";
@@ -1121,7 +1120,7 @@ Deno.test("V3 due scanning honors leases and backoff while retaining unresolved 
   assert.equal(deletion.kind, "blocked");
 });
 
-Deno.test("V3 unlimited projection and newest-first history support safe settled-state deletion", async () => {
+test("V3 unlimited projection and newest-first history support safe settled-state deletion", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-unlimited-projection";
@@ -1158,7 +1157,7 @@ Deno.test("V3 unlimited projection and newest-first history support safe settled
       terminal_state: "completed",
     }),
   ]);
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       Response.json({
         success: true,
@@ -1181,7 +1180,8 @@ Deno.test("V3 unlimited projection and newest-first history support safe settled
           },
         ],
       })
-    );
+    )
+  );
   try {
     await withMeteredApiKey(async () => {
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 2);
@@ -1243,7 +1243,7 @@ Deno.test("V3 unlimited projection and newest-first history support safe settled
   );
 });
 
-Deno.test("V3 window rollover isolates prior exposure from new admissions", async () => {
+test("V3 window rollover isolates prior exposure from new admissions", async () => {
   memoryKv.clear();
   const keyId = "v3-window-rollover";
   const firstResetAtMs = Date.now() + 60_000;
@@ -1277,7 +1277,7 @@ Deno.test("V3 window rollover isolates prior exposure from new admissions", asyn
   assert.equal(secondWindow.value.reserved_microcredits, 250_000);
 });
 
-Deno.test("V3 deletion guard linearizes against an in-flight admission", async () => {
+test("V3 deletion guard linearizes against an in-flight admission", async () => {
   memoryKv.clear();
   const keyId = "v3-deletion-race";
   memoryKv.beforeAtomicCommit = () => {
@@ -1294,7 +1294,7 @@ Deno.test("V3 deletion guard linearizes against an in-flight admission", async (
   });
 });
 
-Deno.test("V3 undispatched release is idempotent and cannot erase dispatched exposure", async () => {
+test("V3 undispatched release is idempotent and cannot erase dispatched exposure", async () => {
   memoryKv.clear();
   const keyId = "v3-release";
   const resetAtMs = Date.now() + 60_000;
@@ -1339,7 +1339,7 @@ Deno.test("V3 undispatched release is idempotent and cannot erase dispatched exp
   assert.equal(prefetchRequest.value.terminal_state, "cancelled");
 });
 
-Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is idempotent", async () => {
+test("V3 queue delivery coalesces due rows by key and duplicate delivery is idempotent", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-queue-coalesced";
@@ -1364,7 +1364,7 @@ Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is
     [{ key_id: keyId }]
   );
 
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       Response.json({
         success: true,
@@ -1379,7 +1379,8 @@ Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is
           },
         ],
       })
-    );
+    )
+  );
   try {
     await withMeteredApiKey(async () => {
       assert.equal(await handlePaidFallbackReconciliationJobV3({ key_id: keyId }, kv), 1);
@@ -1395,7 +1396,7 @@ Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is
   assert.equal(secondRequest.value.reconciliation_attempts, 1);
 });
 
-Deno.test("V3 queue enqueue failure does not roll back durable reconciliation backoff", async () => {
+test("V3 queue enqueue failure does not roll back durable reconciliation backoff", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-queue-failure";
@@ -1407,7 +1408,7 @@ Deno.test("V3 queue enqueue failure does not roll back durable reconciliation ba
     provider_request_id: "provider-queue-failure",
     dispatch_state: "dispatched",
   });
-  globalThis.fetch = () => Promise.resolve(Response.json({ success: true, data: [] }));
+  globalThis.fetch = createFetchMock(() => Promise.resolve(Response.json({ success: true, data: [] })));
   memoryKv.enqueueFailure = new Error("queue unavailable");
   try {
     await withMeteredApiKey(async () => {
@@ -1422,7 +1423,7 @@ Deno.test("V3 queue enqueue failure does not roll back durable reconciliation ba
   assert.equal(pending.value?.next_reconciliation_at_ms, Number(request.value.last_reconciliation_at_ms) + 5_000);
 });
 
-Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billing appears", async () => {
+test("V3 unresolved rows remain queue-reconcilable when late provider billing appears", async () => {
   memoryKv.clear();
   const originalFetch = globalThis.fetch;
   const keyId = "v3-unresolved-late";
@@ -1435,7 +1436,7 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
     provider_request_id: providerRequestId,
     dispatch_state: "dispatched",
   });
-  globalThis.fetch = () => Promise.resolve(Response.json({ success: true, data: [] }));
+  globalThis.fetch = createFetchMock(() => Promise.resolve(Response.json({ success: true, data: [] })));
   try {
     await withMeteredApiKey(async () => {
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 0);
@@ -1451,7 +1452,7 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
     ...pending.value,
     next_reconciliation_at_ms: Date.now() - 1,
   });
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       Response.json({
         success: true,
@@ -1466,7 +1467,8 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
           },
         ],
       })
-    );
+    )
+  );
   try {
     await withMeteredApiKey(async () => {
       assert.equal(await handlePaidFallbackReconciliationJobV3({ key_id: keyId }, kv), 1);
@@ -1479,7 +1481,7 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
   assert.equal((await memoryKv.get(paidFallbackPendingV3Key(keyId, requestId))).value, null);
 });
 
-Deno.test("disabled paid fallback does not rewrite an expired usage window", async () => {
+test("disabled paid fallback does not rewrite an expired usage window", async () => {
   memoryKv.clear();
   const expiredResetAtMs = Date.now() - 1;
   const record = await seedStrictKey({
@@ -1494,5 +1496,3 @@ Deno.test("disabled paid fallback does not rewrite an expired usage window", asy
   assert.equal(stored.value?.usage_reset_at_ms, expiredResetAtMs);
   assert.equal(stored.value.paid_fallback_reservation_request_id, null);
 });
-
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;

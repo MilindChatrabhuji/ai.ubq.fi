@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Prompt cache scope promotion, split out of src/codex_catalog.ts.
 
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, preserveCodexDefaultModel } from "../codex/index.ts";
@@ -15,7 +16,7 @@ import { PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS } from "./types.ts";
 import type { RefreshLease } from "./types.ts";
 
 export type PromptCacheScopePromotionLease = Readonly<{
-  key: Deno.KvKey;
+  key: KvKey;
   owner: string;
 }>;
 
@@ -64,10 +65,10 @@ type PromptCacheScopePromotionInput = Readonly<{
 
 /** The strong reads one promotion attempt validates against each other. */
 type PromptCacheScopePromotionEntries = Readonly<{
-  snapshot: Deno.KvEntryMaybe<CodexModelsSnapshot>;
-  runtime: Deno.KvEntryMaybe<RuntimeConfigV2>;
-  lease: Deno.KvEntryMaybe<unknown>;
-  authPool: Deno.KvEntryMaybe<unknown>;
+  snapshot: KvEntryMaybe<CodexModelsSnapshot>;
+  runtime: KvEntryMaybe<RuntimeConfigV2>;
+  lease: KvEntryMaybe<unknown>;
+  authPool: KvEntryMaybe<unknown>;
 }>;
 
 const ownsPromptCacheScopePromotionLease = (value: unknown, owner: string): boolean =>
@@ -147,7 +148,7 @@ const planPromptCacheScopePromotion = (
  * are committed together, and the warm runtime cache changes only after that
  * compare-and-swap succeeds.
  */
-export const promoteCodexPromptCacheScope = async (kv: Deno.Kv, input: PromptCacheScopePromotionInput): Promise<PromptCacheScopePromotionResult> => {
+export const promoteCodexPromptCacheScope = async (kv: Kv, input: PromptCacheScopePromotionInput): Promise<PromptCacheScopePromotionResult> => {
   const model = input.model.trim();
   if (
     !model ||

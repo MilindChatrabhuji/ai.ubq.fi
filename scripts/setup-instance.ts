@@ -9,7 +9,7 @@ type SetupLogger = Readonly<{
 
 export type SetupInstanceDependencies = Readonly<{
   env?: SetupEnvironment;
-  fetch?: typeof globalThis.fetch;
+  fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   log?: SetupLogger;
 }>;
 
@@ -155,10 +155,10 @@ const parseAppId = (value: string | undefined): number | null => {
 
 /**
  * Derive and register a GitHub App public key. Returning a process-style exit
- * code keeps the operational entrypoint testable without stubbing Deno.exit.
+ * code keeps the operational entrypoint testable without stubbing process.exit.
  */
 export const runSetupInstance = async (dependencies: SetupInstanceDependencies = {}): Promise<number> => {
-  const env = dependencies.env ?? Deno.env;
+  const env = dependencies.env ?? { get: (key: string) => process.env[key] };
   const fetchFn = dependencies.fetch ?? globalThis.fetch;
   const log = dependencies.log ?? console;
   const appId = parseAppId(env.get("APP_ID"));
@@ -220,5 +220,5 @@ export const runSetupInstance = async (dependencies: SetupInstanceDependencies =
 
 if (import.meta.main) {
   const exitCode = await runSetupInstance();
-  if (exitCode !== 0) Deno.exit(exitCode);
+  process.exitCode = exitCode;
 }

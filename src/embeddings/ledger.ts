@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Embeddings KV ledger, idempotency records and job/cache keys, extracted from src/openai.ts.
 
 import { openaiError } from "../http.ts";
@@ -70,8 +71,8 @@ export const UOS_EMBEDDINGS_JOB_ALLOWED_KEYS = new Set(["dimensions", "encoding_
 // Voyage free-tier throttles are tiny; we enforce conservative defaults to avoid 429s.
 export const VOYAGE_RATE_LIMIT_RPM = 3;
 export const VOYAGE_RATE_LIMIT_TPM = 10_000;
-export const VOYAGE_RATE_LIMIT_KEY: Deno.KvKey = ["embeddings", "v1", "rate", "voyage"];
-export const VOYAGE_API_KEY_KV_KEY: Deno.KvKey = ["uos_ai", "voyage_api_key"];
+export const VOYAGE_RATE_LIMIT_KEY: KvKey = ["embeddings", "v1", "rate", "voyage"];
+export const VOYAGE_API_KEY_KV_KEY: KvKey = ["uos_ai", "voyage_api_key"];
 
 type EmbeddingsIdempotencyState = "reserved" | "dispatched" | "succeeded" | "indeterminate";
 
@@ -91,9 +92,9 @@ type EmbeddingsIdempotencyRecord = Readonly<{
 }>;
 
 export type EmbeddingsIdempotencyLease = Readonly<{
-  kv: Deno.Kv;
-  key: Deno.KvKey;
-  responseKeyPrefix: Deno.KvKey;
+  kv: Kv;
+  key: KvKey;
+  responseKeyPrefix: KvKey;
   fingerprint: string;
   ownerRequestId: string;
 }>;
@@ -139,16 +140,9 @@ export type EmbeddingsJobLookupRecord = Readonly<{
   cache_profile_key: string;
 }>;
 
-export const embeddingsJobKey = (tokenHash: string, cacheProfileKey: string, id: string): Deno.KvKey => [
-  "embeddings",
-  "jobs",
-  "v2",
-  tokenHash,
-  cacheProfileKey,
-  id,
-];
-export const embeddingsJobLookupKey = (tokenHash: string, id: string): Deno.KvKey => ["embeddings", "jobs", "v2", "lookup", tokenHash, id];
-export const embeddingsJobInputKey = (tokenHash: string, cacheProfileKey: string, jobId: string, hash: string): Deno.KvKey => [
+export const embeddingsJobKey = (tokenHash: string, cacheProfileKey: string, id: string): KvKey => ["embeddings", "jobs", "v2", tokenHash, cacheProfileKey, id];
+export const embeddingsJobLookupKey = (tokenHash: string, id: string): KvKey => ["embeddings", "jobs", "v2", "lookup", tokenHash, id];
+export const embeddingsJobInputKey = (tokenHash: string, cacheProfileKey: string, jobId: string, hash: string): KvKey => [
   "embeddings",
   "jobs",
   "v2",
@@ -159,7 +153,7 @@ export const embeddingsJobInputKey = (tokenHash: string, cacheProfileKey: string
   hash,
 ];
 
-export const embeddingsCacheIndexKey = (cacheProfileKey: string, createdAtMs: number, hash: string): Deno.KvKey => [
+export const embeddingsCacheIndexKey = (cacheProfileKey: string, createdAtMs: number, hash: string): KvKey => [
   "embeddings",
   "v2",
   "cache_index",
@@ -167,23 +161,23 @@ export const embeddingsCacheIndexKey = (cacheProfileKey: string, createdAtMs: nu
   createdAtMs,
   hash,
 ];
-export const embeddingsCacheGlobalIndexPrefix: Deno.KvKey = ["embeddings", "v2", "cache_index_global"];
-export const embeddingsCacheGlobalIndexKey = (createdAtMs: number, cacheProfileKey: string, hash: string): Deno.KvKey => [
+export const embeddingsCacheGlobalIndexPrefix: KvKey = ["embeddings", "v2", "cache_index_global"];
+export const embeddingsCacheGlobalIndexKey = (createdAtMs: number, cacheProfileKey: string, hash: string): KvKey => [
   ...embeddingsCacheGlobalIndexPrefix,
   createdAtMs,
   cacheProfileKey,
   hash,
 ];
-export const embeddingsCacheIndexByHashKey = (cacheProfileKey: string, hash: string): Deno.KvKey => [
+export const embeddingsCacheIndexByHashKey = (cacheProfileKey: string, hash: string): KvKey => [
   "embeddings",
   "v2",
   "cache_index_by_hash",
   cacheProfileKey,
   hash,
 ];
-export const embeddingsCacheKey = (cacheProfileKey: string, hash: string): Deno.KvKey => ["embeddings", "v2", "cache", cacheProfileKey, hash];
+export const embeddingsCacheKey = (cacheProfileKey: string, hash: string): KvKey => ["embeddings", "v2", "cache", cacheProfileKey, hash];
 
-const embeddingsIdempotencyKey = (principalHash: string, idempotencyKeyHash: string): Deno.KvKey => [
+const embeddingsIdempotencyKey = (principalHash: string, idempotencyKeyHash: string): KvKey => [
   "embeddings",
   "idempotency",
   "v1",
@@ -191,7 +185,7 @@ const embeddingsIdempotencyKey = (principalHash: string, idempotencyKeyHash: str
   idempotencyKeyHash,
 ];
 
-const embeddingsIdempotencyResponseKeyPrefix = (principalHash: string, idempotencyKeyHash: string): Deno.KvKey => [
+const embeddingsIdempotencyResponseKeyPrefix = (principalHash: string, idempotencyKeyHash: string): KvKey => [
   "embeddings",
   "idempotency",
   "v1",
@@ -370,9 +364,9 @@ const buildEmbeddingsIdempotencyIndeterminateRecord = (record: EmbeddingsIdempot
 });
 
 const commitEmbeddingsIdempotencyRecordReplacement = async (
-  kv: Deno.Kv,
-  entry: Deno.KvEntryMaybe<EmbeddingsIdempotencyRecord>,
-  key: Deno.KvKey,
+  kv: Kv,
+  entry: KvEntryMaybe<EmbeddingsIdempotencyRecord>,
+  key: KvKey,
   record: EmbeddingsIdempotencyRecord
 ): Promise<boolean> => {
   const commit = await kv.atomic().check(entry).set(key, record, { expireIn: EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS }).commit();
@@ -380,9 +374,9 @@ const commitEmbeddingsIdempotencyRecordReplacement = async (
 };
 
 const resolveSucceededEmbeddingsIdempotencyLease = async (params: {
-  kv: Deno.Kv;
-  key: Deno.KvKey;
-  entry: Deno.KvEntryMaybe<EmbeddingsIdempotencyRecord>;
+  kv: Kv;
+  key: KvKey;
+  entry: KvEntryMaybe<EmbeddingsIdempotencyRecord>;
   record: EmbeddingsIdempotencyRecord;
   lease: EmbeddingsIdempotencyLease;
   now: number;
@@ -400,9 +394,9 @@ const resolveSucceededEmbeddingsIdempotencyLease = async (params: {
 };
 
 const retireDispatchedEmbeddingsIdempotencyLease = async (params: {
-  kv: Deno.Kv;
-  key: Deno.KvKey;
-  entry: Deno.KvEntryMaybe<EmbeddingsIdempotencyRecord>;
+  kv: Kv;
+  key: KvKey;
+  entry: KvEntryMaybe<EmbeddingsIdempotencyRecord>;
   record: EmbeddingsIdempotencyRecord;
   now: number;
 }): Promise<EmbeddingsIdempotencyAcquireResult | null> => {
@@ -417,8 +411,8 @@ const retireDispatchedEmbeddingsIdempotencyLease = async (params: {
 };
 
 const attemptEmbeddingsIdempotencyLeaseAcquire = async (params: {
-  kv: Deno.Kv;
-  key: Deno.KvKey;
+  kv: Kv;
+  key: KvKey;
   fingerprint: string;
   requestId: string;
   lease: EmbeddingsIdempotencyLease;
@@ -499,7 +493,7 @@ const attemptEmbeddingsIdempotencyLeaseAcquire = async (params: {
 };
 
 export const acquireEmbeddingsIdempotencyLease = async (params: {
-  kv: Deno.Kv;
+  kv: Kv;
   principal: string;
   idempotencyKey: string;
   fingerprint: string;

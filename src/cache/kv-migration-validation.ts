@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 // KV migration target validation, split out of src/kv_migration.ts.
 
 import {
@@ -58,7 +59,7 @@ type KvMigrationTargetCounts = Readonly<{
 }>;
 
 /** Counts every durable row group the migration validation reports on. */
-const countKvMigrationTargetRows = async (kv: Deno.Kv): Promise<KvMigrationTargetCounts> => {
+const countKvMigrationTargetRows = async (kv: Kv): Promise<KvMigrationTargetCounts> => {
   const [
     apiIds,
     apiHashes,
@@ -130,7 +131,7 @@ const countKvMigrationTargetRows = async (kv: Deno.Kv): Promise<KvMigrationTarge
 };
 
 /** True when the reservation has a matching row in the dedicated ledger. */
-const hasPendingPaidFallbackLedger = async (kv: Deno.Kv, keyId: string, requestId: string): Promise<boolean> => {
+const hasPendingPaidFallbackLedger = async (kv: Kv, keyId: string, requestId: string): Promise<boolean> => {
   const expected = paidFallbackLedgerReference(keyId, requestId);
   for await (const ledger of kv.list({ prefix: [...PAID_FALLBACK_LEDGER_PREFIX, keyId] })) {
     const reference = pendingPaidFallbackLedgerReferenceFromEntry(ledger, PAID_FALLBACK_LEDGER_PREFIX);
@@ -140,7 +141,7 @@ const hasPendingPaidFallbackLedger = async (kv: Deno.Kv, keyId: string, requestI
 };
 
 /** Reports a bounded key whose V3 aggregate or migration baseline is invalid. */
-const auditApiKeyBoundedAggregates = async (kv: Deno.Kv, policy: ApiKeyPolicy, record: ApiKeyRecord, errors: string[]): Promise<void> => {
+const auditApiKeyBoundedAggregates = async (kv: Kv, policy: ApiKeyPolicy, record: ApiKeyRecord, errors: string[]): Promise<void> => {
   const v3Window = normalizeApiKeyUsageWindowV3((await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy))).value);
   if (
     v3Window?.key_id !== policy.key_id ||
@@ -157,7 +158,7 @@ const auditApiKeyBoundedAggregates = async (kv: Deno.Kv, policy: ApiKeyPolicy, r
 };
 
 /** Reports why one api-key pair is not fully migrated. */
-const auditApiKeyPolicy = async (kv: Deno.Kv, pair: StrictApiKeyPair, validationNowMs: number, errors: string[]): Promise<void> => {
+const auditApiKeyPolicy = async (kv: Kv, pair: StrictApiKeyPair, validationNowMs: number, errors: string[]): Promise<void> => {
   const { record, hashRecord } = pair;
   const reservedRequestId = record.paid_fallback_reservation_request_id;
   if (reservedRequestId !== null) {
@@ -178,7 +179,7 @@ const auditApiKeyPolicy = async (kv: Deno.Kv, pair: StrictApiKeyPair, validation
 };
 
 /** Reports a default model that the uploaded Codex snapshot cannot serve. */
-const auditCodexModelSnapshot = async (kv: Deno.Kv, errors: string[]): Promise<void> => {
+const auditCodexModelSnapshot = async (kv: Kv, errors: string[]): Promise<void> => {
   const codexModels = await kv.get<Record<string, unknown>>(["ubq_ai", "codex_models"]);
   const defaultModel = await kv.get<string>(["default", "model"]);
   const modelList = Array.isArray(codexModels.value?.models) ? codexModels.value.models : [];
@@ -196,7 +197,7 @@ const auditCodexModelSnapshot = async (kv: Deno.Kv, errors: string[]): Promise<v
 };
 
 /** Reports reset usage rows whose key or explicit boolean setting is malformed. */
-const auditCodexResetUsage = async (kv: Deno.Kv, errors: string[]): Promise<void> => {
+const auditCodexResetUsage = async (kv: Kv, errors: string[]): Promise<void> => {
   for await (const entry of kv.list({ prefix: CODEX_RESET_USAGE_PREFIX })) {
     const key = entry.key;
     const accountHash = key[4];
@@ -219,7 +220,7 @@ const auditCodexResetUsage = async (kv: Deno.Kv, errors: string[]): Promise<void
 };
 
 /** Reads every settings key the validation reports presence for. */
-const readKvMigrationSettings = async (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<unknown>[]> => {
+const readKvMigrationSettings = async (kv: Kv): Promise<KvEntryMaybe<unknown>[]> => {
   return await Promise.all([
     kv.get(["ubq_ai", "codex_auth"]),
     kv.get(["ubq_ai", "codex_models"]),
@@ -233,7 +234,7 @@ const readKvMigrationSettings = async (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<u
   ]);
 };
 
-export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigrationValidationResult> => {
+export const validateKvMigrationTarget = async (kv: Kv): Promise<KvMigrationValidationResult> => {
   const errors: string[] = [];
   const counts = await countKvMigrationTargetRows(kv);
 

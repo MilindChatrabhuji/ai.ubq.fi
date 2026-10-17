@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { normalizeAnthropicChatResponsesResponse, toAnthropicChatResponsesUsage } from "../src/provider/anthropic-chat-responses.ts";
 import { restoreAnthropicChatReplay, restoreAnthropicReplay } from "../src/provider/anthropic-replay.ts";
@@ -44,7 +45,7 @@ const collect = async (response: Response): Promise<JsonRecord[]> => {
 };
 const terminal = (events: JsonRecord[]): JsonRecord => events.at(-1)?.response as JsonRecord;
 
-Deno.test("Claude Chat Responses usage stays gross and retains exact cache and buyer cost provenance", () => {
+test("Claude Chat Responses usage stays gross and retains exact cache and buyer cost provenance", () => {
   const projected = toAnthropicChatResponsesUsage(usage);
   assert.deepEqual(projected, {
     input_tokens: 1043,
@@ -63,7 +64,7 @@ Deno.test("Claude Chat Responses usage stays gross and retains exact cache and b
   assert.equal(measured.cacheWriteInputTokens, 0);
 });
 
-Deno.test("Claude Chat Responses usage does not create zero counters or launder invalid measurements", () => {
+test("Claude Chat Responses usage does not create zero counters or launder invalid measurements", () => {
   assert.deepEqual(toAnthropicChatResponsesUsage({ prompt_tokens: 15, completion_tokens: 4, total_tokens: 19 }), {
     input_tokens: 15,
     output_tokens: 4,
@@ -80,7 +81,7 @@ Deno.test("Claude Chat Responses usage does not create zero counters or launder 
   assert.equal(projected?.buyer_cost_micro, "69");
 });
 
-Deno.test("Claude Chat Responses JSON emits reasoning and text without duplicating signed detail text", async () => {
+test("Claude Chat Responses JSON emits reasoning and text without duplicating signed detail text", async () => {
   const assistant = { role: "assistant", content: "OK", reasoning_content: signedReasoning.text, reasoning_details: [signedReasoning] };
   const upstream = new Response(JSON.stringify(completion(assistant)), {
     headers: { "content-type": "application/json", "content-length": "999", "x-cost-micro": "285" },
@@ -102,7 +103,7 @@ Deno.test("Claude Chat Responses JSON emits reasoning and text without duplicati
   assert.equal(JSON.stringify(payload).includes("encrypted_content"), false);
 });
 
-Deno.test("Claude Chat Responses JSON privately restores the original signed Chat message", async () => {
+test("Claude Chat Responses JSON privately restores the original signed Chat message", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const assistant = {
     role: "assistant",
@@ -122,7 +123,7 @@ Deno.test("Claude Chat Responses JSON privately restores the original signed Cha
   assert.equal(restoreAnthropicChatReplay(payload.output, { scope: "another-principal", provider: "surplus", model }), null);
 });
 
-Deno.test("Claude Chat Responses respects summary none without losing private signed tool continuation", async () => {
+test("Claude Chat Responses respects summary none without losing private signed tool continuation", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const assistant = {
     role: "assistant",
@@ -145,7 +146,7 @@ Deno.test("Claude Chat Responses respects summary none without losing private si
   assert.equal(JSON.stringify(payload).includes(signedReasoning.text), false);
 });
 
-Deno.test("Claude Chat Responses JSON supports namespaced and freeform tools with exact private provenance", async () => {
+test("Claude Chat Responses JSON supports namespaced and freeform tools with exact private provenance", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const assistant = {
     role: "assistant",
@@ -175,7 +176,7 @@ Deno.test("Claude Chat Responses JSON supports namespaced and freeform tools wit
   assert.deepEqual(restoreAnthropicChatReplay(payload.output, { scope, provider: "surplus", model }), [{ type: "native_chat_assistant", message: assistant }]);
 });
 
-Deno.test("Claude Chat Max reasoning-only length completion is incomplete and retains cache/cost usage", async () => {
+test("Claude Chat Max reasoning-only length completion is incomplete and retains cache/cost usage", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const capped = { ...usage, completion_tokens: 128, completion_tokens_details: { reasoning_tokens: 128 }, total_tokens: 1171, buyer_cost_micro: 565 };
   const assistant = { role: "assistant", content: null, reasoning_content: signedReasoning.text, reasoning_details: [signedReasoning] };
@@ -197,7 +198,7 @@ Deno.test("Claude Chat Max reasoning-only length completion is incomplete and re
   assert.equal(restoreAnthropicChatReplay(payload.output, { scope, provider: "surplus", model }), null);
 });
 
-Deno.test("Claude Chat SSE streams reasoning and text, then includes trailing cache and authoritative cost", async () => {
+test("Claude Chat SSE streams reasoning and text, then includes trailing cache and authoritative cost", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const chunks = [
     chunk({
@@ -229,7 +230,7 @@ Deno.test("Claude Chat SSE streams reasoning and text, then includes trailing ca
   assert.equal(JSON.stringify(events).includes("opaque-chat-signature"), false);
 });
 
-Deno.test("Claude Chat SSE closes text before announcing complete fragmented tool calls", async () => {
+test("Claude Chat SSE closes text before announcing complete fragmented tool calls", async () => {
   const chunks = [
     chunk({ content: "Checking." }),
     chunk({ tool_calls: [{ index: 0, id: "call_weather", type: "function", function: { name: "wea", arguments: "" } }] }),
@@ -247,7 +248,7 @@ Deno.test("Claude Chat SSE closes text before announcing complete fragmented too
   assert.equal(output[1].call_id, "call_weather");
 });
 
-Deno.test("Claude Chat proven Max SSE reasoning alias renders once with actual cache-write and buyer cost", async () => {
+test("Claude Chat proven Max SSE reasoning alias renders once with actual cache-write and buyer cost", async () => {
   const nativeUsage = {
     prompt_tokens: 1043,
     prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 1028 },
@@ -278,7 +279,7 @@ Deno.test("Claude Chat proven Max SSE reasoning alias renders once with actual c
   assert.equal(JSON.stringify(events).includes("late-original-signature"), false);
 });
 
-Deno.test("Claude Chat SSE privately retains original reasoning spelling and a late replacement for an empty signature", async () => {
+test("Claude Chat SSE privately retains original reasoning spelling and a late replacement for an empty signature", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const chunks = [
     chunk({
@@ -305,7 +306,7 @@ Deno.test("Claude Chat SSE privately retains original reasoning spelling and a l
   ]);
 });
 
-Deno.test("Claude Chat SSE length and malformed or missing terminals are not completed", async () => {
+test("Claude Chat SSE length and malformed or missing terminals are not completed", async () => {
   const events = await collect(
     await normalizeAnthropicChatResponsesResponse(sse([chunk({ reasoning_content: "Partial." }, "length"), { choices: [], usage }]), { model })
   );
@@ -323,7 +324,7 @@ Deno.test("Claude Chat SSE length and malformed or missing terminals are not com
   );
 });
 
-Deno.test("Claude Chat SSE ambiguous repeated signatures do not create a signed replay receipt", async () => {
+test("Claude Chat SSE ambiguous repeated signatures do not create a signed replay receipt", async () => {
   const scope = `principal_${crypto.randomUUID()}`;
   const chunks = [
     chunk({ reasoning_details: [{ ...signedReasoning, signature: "first" }] }),
@@ -335,7 +336,7 @@ Deno.test("Claude Chat SSE ambiguous repeated signatures do not create a signed 
   assert.equal(restoreAnthropicChatReplay(terminal(events).output as JsonRecord[], { scope, provider: "surplus", model }), null);
 });
 
-Deno.test("Claude Chat preserves HTTP errors and propagates downstream cancellation", async () => {
+test("Claude Chat preserves HTTP errors and propagates downstream cancellation", async () => {
   const errorResponse = new Response('{"error":{"code":"insufficient_funds","message":"capacity"}}', { status: 429 });
   assert.equal(await normalizeAnthropicChatResponsesResponse(errorResponse, { model }), errorResponse);
   let cancelled = false;
@@ -356,7 +357,7 @@ Deno.test("Claude Chat preserves HTTP errors and propagates downstream cancellat
   assert.equal(cancelled, true);
 });
 
-Deno.test("Claude Chat observed usage survives a subsequent premature stream EOF", async () => {
+test("Claude Chat observed usage survives a subsequent premature stream EOF", async () => {
   const upstream = sse([chunk({ content: "Partial." }), { choices: [], usage }], false);
   const response = await normalizeAnthropicChatResponsesResponse(upstream, { model });
   const body = response.body;

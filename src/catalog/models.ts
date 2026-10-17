@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Codex catalog model list assembly, split out of src/codex_catalog.ts.
 
 import { CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, preserveCodexDefaultModel } from "../codex/index.ts";
@@ -32,9 +33,42 @@ import { codexSnapshotMetadataHint, codexSubscriptionMetadataHint, resolveModelM
 import { openRouterModelsSnapshot } from "../models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "./types.ts";
+import { claudeCodeReasoningLevels, type ClaudeCodeModel } from "../provider/claude-code-models.ts";
+
+/** Codex shell defaults are generic; reasoning and windows require observed Claude capabilities. */
+export const claudeCodeCodexModels = (models: readonly ClaudeCodeModel[]): Record<string, unknown>[] =>
+  models.map((model) => ({
+    slug: model.id,
+    display_name: model.display_name ?? model.id,
+    owned_by: "anthropic",
+    supported_endpoint_types: ["openai-response", "openai"],
+    supported_reasoning_levels: claudeCodeReasoningLevels(model).map((effort) => ({ effort, description: effort === "none" ? "No reasoning" : effort })),
+    ...(model.supports_disabled_thinking === true ? { default_reasoning_level: "none" } : {}),
+    ...(model.context_window_tokens ? { context_window: model.context_window_tokens, max_context_window: model.context_window_tokens } : {}),
+    ...(model.max_output_tokens ? { max_output_tokens: model.max_output_tokens } : {}),
+    shell_type: "shell_command",
+    visibility: "list",
+    supported_in_api: true,
+    priority: 1000,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: "",
+    support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: null,
+    web_search_tool_type: "text",
+    truncation_policy: { mode: "tokens", limit: 10000 },
+    supports_parallel_tool_calls: false,
+    experimental_supported_tools: [],
+  }));
+
+export const withClaudeCodeModels = (models: readonly Record<string, unknown>[], claude: readonly ClaudeCodeModel[]): Record<string, unknown>[] => {
+  const seen = catalogModelIds(models);
+  return [...models, ...claudeCodeCodexModels(claude).filter((model) => !seen.has(String(model.slug)))];
+};
 
 const maybeUpdateNormalizedSnapshot = async (
-  kv: Deno.Kv,
+  kv: Kv,
   version: string,
   authGeneration: string,
   parsed: Record<string, unknown>,
@@ -145,7 +179,9 @@ const meteredCodexModelRecord = (
     supported_reasoning_levels: levels?.length
       ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
       : [{ effort: "none", description: "No reasoning" }],
-    default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+    ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+      ? {}
+      : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
     ...(resolved.context_window_tokens === null
       ? {}
       : {
@@ -414,7 +450,9 @@ const cerebrasCodexModels = (): Record<string, unknown>[] => {
         effort: String(effort),
         description: codexReasoningEffortDescription(String(effort)),
       })),
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {
@@ -484,7 +522,9 @@ const openRouterCodexModels = (): Record<string, unknown>[] => {
       supported_reasoning_levels: levels?.length
         ? levels.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) }))
         : [{ effort: "none", description: "No reasoning" }],
-      default_reasoning_level: resolved.default_reasoning_effort ?? "none",
+      ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_level: resolved.default_reasoning_effort ?? "none" }),
       ...(resolved.context_window_tokens === null
         ? {}
         : {

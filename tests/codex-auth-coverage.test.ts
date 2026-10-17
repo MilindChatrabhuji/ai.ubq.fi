@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type AtomicOperation, type Kv, type KvCommitResult, type KvEntryMaybe, type KvKey } from "#kv";
 import assert from "node:assert/strict";
 
 import {
@@ -88,13 +91,13 @@ const routingAccount = (auth: CodexAuthState, extra: Partial<RoutingAccount> = {
 
 /* ------------------------------------------------------------------ fake KV */
 
-type KvWrite = { type: "set" | "delete"; key: Deno.KvKey };
+type KvWrite = { type: "set" | "delete"; key: KvKey };
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
 /**
- * In-memory KV with observable reads and failure injection. `Deno.openKv` is
- * undefined in this test configuration, so every KV-dependent path receives
+ * In-memory KV with observable reads and failure injection. `openKv` is
+ * not used by this fixture, so every KV-dependent path receives
  * this stub through `setKvForTest`.
  */
 class ScriptedKv {
@@ -107,14 +110,14 @@ class ScriptedKv {
   commitThrows = 0;
   failLeaseDeleteCommit = false;
   rejectNextAuthGet = false;
-  onGet: ((key: Deno.KvKey) => void) | null = null;
+  onGet: ((key: KvKey) => void) | null = null;
 
   /** The same stub viewed as the KV binding production code receives. */
-  get binding(): Deno.Kv {
-    return this as unknown as Deno.Kv;
+  get binding(): Kv {
+    return this as unknown as Kv;
   }
 
-  get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     assert.equal(options?.consistency, "strong", "credential reads must be strong");
     const encoded = keyOf(key);
     this.gets.push(encoded);
@@ -129,28 +132,28 @@ class ScriptedKv {
       key,
       value: value ?? null,
       versionstamp: version === undefined ? null : String(version).padStart(20, "0"),
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.writes.push({ type: "set", key });
     this.#apply({ type: "set", key, value });
     return Promise.resolve({ ok: true, versionstamp: String(this.versions.get(keyOf(key)) ?? 0).padStart(20, "0") });
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const writes: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
+    const writes: { type: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
     const chain = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         writes.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         writes.push({ type: "delete", key });
         return chain;
       },
@@ -177,13 +180,13 @@ class ScriptedKv {
         return Promise.resolve({ ok: true, versionstamp: "00000000000000000009" } as const);
       },
     };
-    return chain as unknown as Deno.AtomicOperation;
+    return chain as unknown as AtomicOperation;
   }
 
   /** Runs one isolated test with this stub installed and every codex singleton reset. */
   static async run(run: (kv: ScriptedKv) => Promise<void>): Promise<void> {
     const kv = new ScriptedKv();
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     resetCodexAuthCacheForTest();
     resetProviderHealthThrottleForTest();
     try {
@@ -195,7 +198,7 @@ class ScriptedKv {
     }
   }
 
-  #apply(write: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }): void {
+  #apply(write: { type: "set" | "delete"; key: KvKey; value?: unknown }): void {
     const encoded = keyOf(write.key);
     if (write.type === "delete") {
       this.values.delete(encoded);
@@ -222,7 +225,7 @@ const settleAsyncWork = async (predicate: () => boolean, attempts = 50): Promise
 
 /* --------------------------------------------------------------------- tests */
 
-Deno.test("codexUserAgent keeps the higher of the requested and pinned client versions", () => {
+test("codexUserAgent keeps the higher of the requested and pinned client versions", () => {
   assert.equal(codexUserAgent("0.99.0"), `codex_cli_rs/${CODEX_CLIENT_VERSION} (ai.ubq.fi)`, "an older patch line keeps the pinned version");
   assert.equal(codexUserAgent("0.100.1"), "codex_cli_rs/0.100.1 (ai.ubq.fi)");
   assert.equal(codexUserAgent("2.0"), "codex_cli_rs/2.0 (ai.ubq.fi)", "a two-part version is accepted verbatim");
@@ -233,7 +236,7 @@ Deno.test("codexUserAgent keeps the higher of the requested and pinned client ve
   assert.equal(codexUserAgent("1.-2.3"), "codex_cli_rs/1.-2.3 (ai.ubq.fi)", "a negative component is unparsable and kept verbatim");
 });
 
-Deno.test("parseCodexAuthFromAuthJson accepts only a complete token triple", () => {
+test("parseCodexAuthFromAuthJson accepts only a complete token triple", () => {
   assert.deepEqual(parseCodexAuthFromAuthJson({ tokens: { access_token: "a", refresh_token: "r", account_id: "id" } }), {
     access_token: "a",
     refresh_token: "r",
@@ -245,7 +248,7 @@ Deno.test("parseCodexAuthFromAuthJson accepts only a complete token triple", () 
   assert.equal(parseCodexAuthFromAuthJson(null), null);
 });
 
-Deno.test("parseCodexAuthPool rejects a pool that is not a bounded, unique, complete account list", () => {
+test("parseCodexAuthPool rejects a pool that is not a bounded, unique, complete account list", () => {
   const valid = poolOf(accountAuth("one", "access-one"));
   assert.deepEqual(parseCodexAuthPool(valid), valid);
   assert.equal(parseCodexAuthPool({ accounts: [accountAuth("one", "a")] }), null, "a missing pool timestamp is rejected");
@@ -260,7 +263,7 @@ Deno.test("parseCodexAuthPool rejects a pool that is not a bounded, unique, comp
   assert.equal(parseCodexAuthPool({ accounts: [{ access_token: "a", refresh_token: "r", account_id: "one" }], updated_at_ms: 1 }), null);
 });
 
-Deno.test("upsertCodexAuthAccount replaces, appends and refuses to grow the pool", () => {
+test("upsertCodexAuthAccount replaces, appends and refuses to grow the pool", () => {
   const first = accountAuth("one", "access-one");
   const second = accountAuth("two", "access-two");
   const replaced = upsertCodexAuthAccount(poolOf(first, second), accountAuth("one", "access-one-new"));
@@ -285,7 +288,7 @@ Deno.test("upsertCodexAuthAccount replaces, appends and refuses to grow the pool
   );
 });
 
-Deno.test("JWT expiry parsing, refresh need and expiry checks agree on the same token", () => {
+test("JWT expiry parsing, refresh need and expiry checks agree on the same token", () => {
   const expiring = accessTokenExpiringIn(60_000);
   const healthy = accessTokenExpiringIn(10 * 60_000);
   assert.equal(getJwtExpMs(expiring), Math.floor((Date.now() + 60_000) / 1_000) * 1_000);
@@ -307,7 +310,7 @@ Deno.test("JWT expiry parsing, refresh need and expiry checks agree on the same 
   assert.equal(accessTokenExpired(opaque), false, "an opaque token has no provable expiry");
 });
 
-Deno.test("getCodexAccountEmail reads only a usable provider email claim", () => {
+test("getCodexAccountEmail reads only a usable provider email claim", () => {
   assert.equal(getCodexAccountEmail(jwtLike({ "https://api.openai.com/profile": { email: "dev@example.com" } })), "dev@example.com");
   assert.equal(getCodexAccountEmail(jwtLike({ email: "  fallback@example.com  " })), "fallback@example.com");
   assert.equal(getCodexAccountEmail(jwtLike({ email: "no-at-sign" })), null);
@@ -318,7 +321,7 @@ Deno.test("getCodexAccountEmail reads only a usable provider email claim", () =>
   assert.equal(getCodexAccountEmail("a"), null, "a token without a payload segment has no claims");
 });
 
-Deno.test("codexAuthWarningForError maps only re-authentication failures to the dashboard warning", () => {
+test("codexAuthWarningForError maps only re-authentication failures to the dashboard warning", () => {
   assert.equal(codexAuthWarningForError(new CodexError("invalid", "codex_auth_invalid", 503)), CODEX_AUTH_REAUTH_WARNING);
   assert.equal(codexAuthWarningForError(new CodexError("refresh failed", "codex_auth_refresh_failed", 503)), CODEX_AUTH_REAUTH_WARNING);
   assert.equal(codexAuthWarningForError(new CodexError("reused", "refresh_token_reused", 401)), CODEX_AUTH_REAUTH_WARNING);
@@ -327,19 +330,20 @@ Deno.test("codexAuthWarningForError maps only re-authentication failures to the 
   assert.equal(codexAuthWarningForError("not an error"), null);
 });
 
-Deno.test("withCodexWarnings merges, dedupes and only decorates a response that needs it", async () => {
+test("withCodexWarnings merges, dedupes and only decorates a response that needs it", async () => {
   const plain = new Response("body", { status: 200 });
   assert.equal(withCodexWarnings(plain, []), plain, "a warning-free response is returned untouched");
   assert.equal(plain.headers.get("x-uos-warning"), null);
 
   const alreadyWarned = new Response("body", { status: 200, headers: { "x-uos-warning": "first" } });
+  const mergeInput = alreadyWarned.clone();
   const undecorated = withCodexWarnings(alreadyWarned, []);
   assert.notEqual(undecorated, alreadyWarned);
   assert.equal(undecorated.headers.get("x-uos-warning"), "first");
   assert.equal(undecorated.status, 200);
   assert.equal(await undecorated.text(), "body");
 
-  const merged = withCodexWarnings(alreadyWarned, ["second", "first"]);
+  const merged = withCodexWarnings(mergeInput, ["second", "first"]);
   assert.equal(merged.headers.get("x-uos-warning"), "first, second", "an existing warning is never duplicated");
   assert.equal(alreadyWarned.headers.get("x-uos-warning"), "first", "the original response keeps its own headers");
 
@@ -348,7 +352,7 @@ Deno.test("withCodexWarnings merges, dedupes and only decorates a response that 
   assert.equal(authWarned.status, 502);
 });
 
-Deno.test("response-local routing telemetry follows a decorated response and never explains a response that was not admitted", async () => {
+test("response-local routing telemetry follows a decorated response and never explains a response that was not admitted", async () => {
   const auth = accountAuth("account-one", "access-one");
   const probe = routingAccount(auth);
   const response = new Response("body", { status: 200 });
@@ -397,7 +401,7 @@ Deno.test("response-local routing telemetry follows a decorated response and nev
   assert.deepEqual(getCodexResponseActiveTelemetry(probeDecorated), { activeGeneration: null, activeTransitionReason: null });
 });
 
-Deno.test("a terminal response records its outcome exactly once, even after decoration", async () => {
+test("a terminal response records its outcome exactly once, even after decoration", async () => {
   await ScriptedKv.run(async (kv) => {
     const healthWrites = (): number => kv.writes.filter((write) => write.key[1] === "provider_health").length;
 
@@ -432,7 +436,7 @@ Deno.test("a terminal response records its outcome exactly once, even after deco
   });
 });
 
-Deno.test("getAuthPoolEntry serves the warm cache, coalesces concurrent reads and works without any KV binding", async () => {
+test("getAuthPoolEntry serves the warm cache, coalesces concurrent reads and works without any KV binding", async () => {
   const pool = poolOf(accountAuth("one", accessTokenExpiringIn(10 * 60_000)));
   await ScriptedKv.run(async (kv) => {
     await kv.set(CODEX_AUTH_POOL_KV_KEY, pool);
@@ -446,7 +450,7 @@ Deno.test("getAuthPoolEntry serves the warm cache, coalesces concurrent reads an
     assert.equal(kv.gets.filter((key) => key === keyOf(CODEX_AUTH_POOL_KV_KEY)).length, readsAfterFirst, "a warm read never touches KV");
 
     resetCodexAuthCacheForTest();
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     const [concurrentA, concurrentB] = await Promise.all([getAuthPoolEntry(true), getAuthPoolEntry(true)]);
     assert.deepEqual(concurrentA.pool, pool);
     assert.equal(concurrentB.pool, concurrentA.pool, "overlapping strong reads share one in-flight pool read");
@@ -458,7 +462,7 @@ Deno.test("getAuthPoolEntry serves the warm cache, coalesces concurrent reads an
   });
 });
 
-Deno.test("getAuthPoolEntry fails closed without a KV binding and still serves a cached pool", async () => {
+test("getAuthPoolEntry fails closed without a KV binding and still serves a cached pool", async () => {
   const isolated = async (run: () => Promise<void>): Promise<void> => {
     setKvForTest(null);
     resetCodexAuthCacheForTest();
@@ -480,13 +484,18 @@ Deno.test("getAuthPoolEntry fails closed without a KV binding and still serves a
   });
 
   await isolated(async () => {
-    // Without KV and without env access there is no auth seed to fall back to:
+    // Without KV or a credential/home input there is no auth seed to fall back to:
     // the read fails closed instead of inventing credentials.
-    await assert.rejects(getAuthPoolEntry(true), Deno.errors.NotCapable);
+    assert.equal(process.env.CODEX_AUTH_JSON_B64, undefined);
+    assert.equal(process.env.HOME, undefined);
+    await assert.rejects(
+      getAuthPoolEntry(true),
+      (error: unknown) => error instanceof CodexError && error.code === "codex_auth_invalid" && error.status === 503
+    );
   });
 });
 
-Deno.test("releaseCodexResponseProbe detaches a probe once and leaves the transition set empty", async () => {
+test("releaseCodexResponseProbe detaches a probe once and leaves the transition set empty", async () => {
   await ScriptedKv.run(async () => {
     const response = new Response("body", { status: 200 });
     setCodexResponseAccountTelemetry(response, 0, "account-one");
@@ -499,7 +508,7 @@ Deno.test("releaseCodexResponseProbe detaches a probe once and leaves the transi
   });
 });
 
-Deno.test("a codex error carries its code, status and cause for the fallback adapter", () => {
+test("a codex error carries its code, status and cause for the fallback adapter", () => {
   const cause = new Error("socket closed");
   const error = new CodexError("refresh unreachable", "codex_auth_refresh_unreachable", 502, cause);
   assert.equal(error.name, "CodexError");
@@ -516,7 +525,7 @@ type FetchCall = { url: string; method: string | undefined; body: Record<string,
 const withStubbedFetch = async <TResult>(handler: (call: FetchCall) => Response | Error, run: (calls: FetchCall[]) => Promise<TResult>): Promise<TResult> => {
   const originalFetch = globalThis.fetch;
   const calls: FetchCall[] = [];
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     let url: string;
     if (typeof input === "string") url = input;
     else if (input instanceof URL) url = input.toString();
@@ -526,7 +535,7 @@ const withStubbedFetch = async <TResult>(handler: (call: FetchCall) => Response 
     calls.push(call);
     const result = handler(call);
     return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
-  };
+  });
   try {
     return await run(calls);
   } finally {
@@ -547,7 +556,7 @@ const failureOf = async (run: () => Promise<unknown>): Promise<CodexError> => {
   throw new Error("expected the call to fail");
 };
 
-Deno.test("getCurrentAccountEntry reports an account that is no longer configured", async () => {
+test("getCurrentAccountEntry reports an account that is no longer configured", async () => {
   await ScriptedKv.run(async (kv) => {
     const pool = poolOf(accountAuth("one", accessTokenExpiringIn(10 * 60_000)));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, pool);
@@ -562,7 +571,7 @@ Deno.test("getCurrentAccountEntry reports an account that is no longer configure
   });
 });
 
-Deno.test("refreshAuthStateless sends one official refresh request and reports each provider rejection with its own code", async () => {
+test("refreshAuthStateless sends one official refresh request and reports each provider rejection with its own code", async () => {
   const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
   const cases: { name: string; status: number; payload: unknown; code: string; expectedStatus: number }[] = [
     { name: "a reused refresh token", status: 429, payload: { error: { code: "refresh_token_reused" } }, code: "refresh_token_reused", expectedStatus: 503 },
@@ -646,7 +655,7 @@ Deno.test("refreshAuthStateless sends one official refresh request and reports e
   );
 });
 
-Deno.test("refreshAuthCoordinated adopts credentials another writer rotated during the refresh", async () => {
+test("refreshAuthCoordinated adopts credentials another writer rotated during the refresh", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     const pool = poolOf(stale);
@@ -673,7 +682,7 @@ Deno.test("refreshAuthCoordinated adopts credentials another writer rotated duri
   });
 });
 
-Deno.test("refreshAuthCoordinated claims the cross-isolate lease, persists the rotated token and releases the lease", async () => {
+test("refreshAuthCoordinated claims the cross-isolate lease, persists the rotated token and releases the lease", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -705,7 +714,7 @@ Deno.test("refreshAuthCoordinated claims the cross-isolate lease, persists the r
   });
 });
 
-Deno.test("a waiter adopts the lease owner's rotated credentials instead of refreshing again", async () => {
+test("a waiter adopts the lease owner's rotated credentials instead of refreshing again", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     const rotated = accountAuth("one", "owner-rotated-access");
@@ -732,7 +741,7 @@ Deno.test("a waiter adopts the lease owner's rotated credentials instead of refr
   });
 });
 
-Deno.test("a lease that cannot be claimed falls open to a bounded direct refresh and a failed release stays harmless", async () => {
+test("a lease that cannot be claimed falls open to a bounded direct refresh and a failed release stays harmless", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -766,7 +775,7 @@ Deno.test("a lease that cannot be claimed falls open to a bounded direct refresh
   });
 });
 
-Deno.test("the coordinated refresh fails open when its own strong pool re-read is unavailable", async () => {
+test("the coordinated refresh fails open when its own strong pool re-read is unavailable", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -781,7 +790,7 @@ Deno.test("the coordinated refresh fails open when its own strong pool re-read i
   });
 });
 
-Deno.test("the coordinated refresh skips coordination entirely without a KV binding", async () => {
+test("the coordinated refresh skips coordination entirely without a KV binding", async () => {
   setKvForTest(null);
   resetCodexAuthCacheForTest();
   try {
@@ -797,7 +806,7 @@ Deno.test("the coordinated refresh skips coordination entirely without a KV bind
   }
 });
 
-Deno.test("a refresh that loses every compare-and-set reports the conflict instead of claiming success", async () => {
+test("a refresh that loses every compare-and-set reports the conflict instead of claiming success", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -814,7 +823,7 @@ Deno.test("a refresh that loses every compare-and-set reports the conflict inste
   });
 });
 
-Deno.test("a pool that disappears during a refresh is reported instead of silently replaced", async () => {
+test("a pool that disappears during a refresh is reported instead of silently replaced", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -832,7 +841,7 @@ Deno.test("a pool that disappears during a refresh is reported instead of silent
   });
 });
 
-Deno.test("a pool rotated in KV during the refresh is adopted instead of the response's own token", async () => {
+test("a pool rotated in KV during the refresh is adopted instead of the response's own token", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -851,7 +860,7 @@ Deno.test("a pool rotated in KV during the refresh is adopted instead of the res
   });
 });
 
-Deno.test("getValidAuth reuses a healthy token without touching the auth server", async () => {
+test("getValidAuth reuses a healthy token without touching the auth server", async () => {
   await ScriptedKv.run(async (kv) => {
     const healthy = accountAuth("one", accessTokenExpiringIn(10 * 60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(healthy));
@@ -869,7 +878,7 @@ Deno.test("getValidAuth reuses a healthy token without touching the auth server"
   });
 });
 
-Deno.test("getValidAuth coalesces concurrent refreshes of one stale account into a single request", async () => {
+test("getValidAuth coalesces concurrent refreshes of one stale account into a single request", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -889,7 +898,7 @@ Deno.test("getValidAuth coalesces concurrent refreshes of one stale account into
   });
 });
 
-Deno.test("version, telemetry and warning decoration keep the exact edge values", async () => {
+test("version, telemetry and warning decoration keep the exact edge values", async () => {
   assert.equal(codexUserAgent(CODEX_CLIENT_VERSION), `codex_cli_rs/${CODEX_CLIENT_VERSION} (ai.ubq.fi)`, "an equal version keeps the requested spelling");
 
   const invalidPayload = `${encodeBase64Url({ alg: "none" })}.${btoa("not json")}.signature`;
@@ -913,7 +922,7 @@ Deno.test("version, telemetry and warning decoration keep the exact edge values"
   assert.equal(await getCodexResponseAccountCohortId(cohortless), null);
 });
 
-Deno.test("a registered recovery probe is transitioned on both a completed and a degraded response", async () => {
+test("a registered recovery probe is transitioned on both a completed and a degraded response", async () => {
   await ScriptedKv.run(async () => {
     const completed = new Response("body", { status: 200 });
     setCodexResponseAccountTelemetry(completed, 0, "account-one");
@@ -931,7 +940,7 @@ Deno.test("a registered recovery probe is transitioned on both a completed and a
   });
 });
 
-Deno.test("an auth-pool read that loses its generation race serves the concurrent cache instead of the stale row", async () => {
+test("an auth-pool read that loses its generation race serves the concurrent cache instead of the stale row", async () => {
   await ScriptedKv.run(async (kv) => {
     const stored = poolOf(accountAuth("one", accessTokenExpiringIn(10 * 60_000)));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, stored);
@@ -958,7 +967,7 @@ Deno.test("an auth-pool read that loses its generation race serves the concurren
   });
 });
 
-Deno.test("a coordinated refresh reports an unreachable auth server and a rejected refresh token", async () => {
+test("a coordinated refresh reports an unreachable auth server and a rejected refresh token", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -999,7 +1008,7 @@ Deno.test("a coordinated refresh reports an unreachable auth server and a reject
   });
 });
 
-Deno.test("a lease stolen while the refresh ran keeps its new owner and the local release stays silent", async () => {
+test("a lease stolen while the refresh ran keeps its new owner and the local release stays silent", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     await kv.set(CODEX_AUTH_POOL_KV_KEY, poolOf(stale));
@@ -1024,7 +1033,7 @@ Deno.test("a lease stolen while the refresh ran keeps its new owner and the loca
   });
 });
 
-Deno.test("a waiter survives an unavailable coordination read and adopts the credentials published at the handoff", async () => {
+test("a waiter survives an unavailable coordination read and adopts the credentials published at the handoff", async () => {
   await ScriptedKv.run(async (kv) => {
     const stale = accountAuth("one", accessTokenExpiringIn(-60_000));
     const rotated = accountAuth("one", "handoff-access", "handoff-refresh");
@@ -1062,7 +1071,7 @@ Deno.test("a waiter survives an unavailable coordination read and adopts the cre
   });
 });
 
-Deno.test("abort reasons are preserved as Errors for both promise rejections and thrown values", async () => {
+test("abort reasons are preserved as Errors for both promise rejections and thrown values", async () => {
   const original = new Error("client went away");
   assert.equal(abortReasonAsError(original), original);
   const undefinedReason = abortReasonAsError(undefined);
