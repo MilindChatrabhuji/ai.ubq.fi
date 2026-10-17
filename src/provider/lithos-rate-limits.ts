@@ -173,18 +173,18 @@ export const waitForLithosRetry = (
   signal: AbortSignal,
   onElapsed?: (elapsedMs: number) => void
 ): Promise<void> => {
+  if (milliseconds <= 0) {
+    onElapsed?.(0);
+    return Promise.resolve();
+  }
+  if (signal.aborted) {
+    onElapsed?.(0);
+    return Promise.reject(lithosRetryAbortError(signal));
+  }
   const startedAt = performance.now();
   const reportElapsed = (): void => {
     onElapsed?.(Math.max(0, Math.round(performance.now() - startedAt)));
   };
-  if (milliseconds <= 0) {
-    reportElapsed();
-    return Promise.resolve();
-  }
-  if (signal.aborted) {
-    reportElapsed();
-    return Promise.reject(lithosRetryAbortError(signal));
-  }
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
