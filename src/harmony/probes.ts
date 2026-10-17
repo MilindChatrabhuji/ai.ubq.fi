@@ -311,7 +311,7 @@ export const createProbeContext = (transport: HarmonyTransport, now: () => Date 
         const request: ProbeRequestSummary = {
           style: built.style,
           model: built.metadata.model,
-          roles: projectedMessageRoles(built.body),
+          roles: built.metadata.messageRoles,
           tools: built.metadata.toolEntries.length > 0 ? built.metadata.toolEntries : null,
           toolStrictnessValues: built.metadata.toolStrictnessValues,
           reasoningEffortTopLevel: built.metadata.reasoningEffortTopLevel,

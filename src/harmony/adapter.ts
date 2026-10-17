@@ -17,7 +17,7 @@
  * deterministic and offline.
  */
 
-import { CEREBRAS_GPT_OSS_120B_MODEL, type CerebrasFetch, fetchCerebrasChatCompletions } from "../provider/cerebras.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL, fetchCerebrasChatCompletions, projectCerebrasRequest, type CerebrasFetch } from "../provider/cerebras.ts";
 import { isRecord } from "../utils.ts";
 import { wireMessagesFromConversation } from "./conversation.ts";
 import { normalizeToolArguments, parseHarmonyOutput } from "./parse.ts";
@@ -67,6 +67,7 @@ export type BuiltHarmonyRequest = Readonly<{
   body: Record<string, unknown>;
   metadata: Readonly<{
     model: string;
+    /** Roles after the provider projection, matching the dispatched body. */
     messageRoles: readonly string[];
     toolsRendered: "parameter" | "developer" | "none";
     toolEntries: readonly { name: string; strict: boolean }[];
@@ -110,6 +111,18 @@ const jsonSchemaTool = (tool: ToolDefinition): Record<string, unknown> => ({
   },
 });
 
+/** Reads roles from the same projected body that the Cerebras transport sends. */
+const wireMessageRoles = (body: Record<string, unknown>): readonly string[] => {
+  const projected = projectCerebrasRequest(body);
+  if (!Array.isArray(projected.messages)) return [];
+  return projected.messages.map((message) => {
+    if (!isRecord(message) || Array.isArray(message)) return "?";
+    const role = message.role;
+    if (role === null || role === undefined) return "?";
+    return String(role);
+  });
+};
+
 /** Generic style: the gateway's existing Chat Completions shape. */
 const buildGenericHarmonyRequest = (options: HarmonyRequestOptions, strictTools: readonly ToolDefinition[]): BuiltHarmonyRequest => {
   const messages = wireMessagesFromConversation({ turns: options.turns });
@@ -129,7 +142,7 @@ const buildGenericHarmonyRequest = (options: HarmonyRequestOptions, strictTools:
     body,
     metadata: {
       model: CEREBRAS_GPT_OSS_120B_MODEL,
-      messageRoles: messages.map((message) => String(message.role)),
+      messageRoles: wireMessageRoles(body),
       toolsRendered: strictTools.length > 0 ? "parameter" : "none",
       toolEntries: strictTools.map((tool) => ({ name: tool.name, strict: toolStrictnessFor(tool) })),
       toolStrictnessValues: strictTools.map(toolStrictnessFor),
@@ -204,7 +217,7 @@ const buildNativeHarmonyRequest = (options: HarmonyRequestOptions, strictTools: 
     body: result,
     metadata: {
       model: CEREBRAS_GPT_OSS_120B_MODEL,
-      messageRoles: messages.map((message) => String(message.role)),
+      messageRoles: wireMessageRoles(result),
       toolsRendered: strictTools.length > 0 ? "developer" : "none",
       toolEntries: strictTools.map((tool) => ({ name: tool.name, strict: toolStrictnessFor(tool) })),
       toolStrictnessValues: strictTools.map(toolStrictnessFor),
