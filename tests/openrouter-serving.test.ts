@@ -470,6 +470,46 @@ const streamUsageContext = (responseTelemetry: ResponseTelemetryState) => ({
   responseTelemetry,
 });
 
+test("openrouter buffered responses derives terminal telemetry from payload status", async () => {
+  await withServedCatalogue(async () => {
+    for (const [status, terminalType, completed] of [
+      ["completed", "response.completed", true],
+      ["incomplete", "response.incomplete", false],
+      ["failed", "response.failed", false],
+    ] as const) {
+      const telemetry = createResponseTelemetryState();
+      let callbackCompleted: boolean | null = null;
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi" },
+        "vendor/beta",
+        {
+          ...streamUsageContext(telemetry),
+          onTerminalUsage: (_usage, value) => {
+            callbackCompleted = value;
+          },
+        },
+        {
+          fetchResponses: () =>
+            Promise.resolve(
+              jsonResponse({
+                id: "resp_status",
+                object: "response",
+                status,
+                output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "partial" }] }],
+                usage: { input_tokens: 4, output_tokens: 1, total_tokens: 5 },
+              })
+            ),
+        }
+      );
+      assert.equal(response.status, 200);
+      assert.equal(telemetry.streamTerminalType, terminalType);
+      assert.equal(telemetry.completed, completed);
+      assert.equal(callbackCompleted, completed);
+    }
+  });
+});
+
 test("openrouter chat relays validated stream frames and records usage", async () => {
   await withServedCatalogue(async () => {
     const telemetry = createResponseTelemetryState();
