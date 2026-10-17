@@ -292,7 +292,7 @@ type CodexSerialAdmissionRows = Readonly<{
  * the cohort: "every account is exhausted" and the banked-reset cohort both
  * describe the subscriptions that are still switched on.
  */
-const selectedCodexSubscriptionPool = async (pool: CodexAuthPoolState): Promise<CodexAuthPoolState> => {
+export const selectedCodexSubscriptionPool = async (pool: CodexAuthPoolState): Promise<CodexAuthPoolState> => {
   const eligibility = codexAccountEligibility(await loadProviderSelectionCached());
   if (eligibility.kind === "all") return pool;
   if (eligibility.kind === "none") return pool.accounts.length ? { ...pool, accounts: [] } : pool;

@@ -8,6 +8,13 @@ import type { Kv } from "#kv";
  * request-local cooldown so a transient 429 cannot invent a weekly block.
  */
 import { isRecord } from "../utils.ts";
+import {
+  CLAUDE_CODE_ACCOUNTS_KEY,
+  claudeCodeAccountIdentity,
+  currentClaudeCodeAccountEntry,
+  type ClaudeCodeAccountBinding,
+  type ClaudeCodeAccountIdentity,
+} from "./claude-code-accounts.ts";
 
 export const CLAUDE_CODE_QUOTA_KV_KEY = ["ubq_ai", "claude_code_quota"] as const;
 /** Margin after an upstream reset before the tier is retried. */
@@ -62,7 +69,31 @@ export type ClaudeCodeQuotaObservation = Readonly<{
   observed_at_ms: number;
 }>;
 
+export type ClaudeCodeAcceptedObservation = ClaudeCodeAccountIdentity &
+  Readonly<{
+    v: 1;
+    observation_id: string;
+    source_observed_at_ms: number | null;
+    sampled_at_ms: number;
+    response_status: number | null;
+    state: "available" | "unavailable";
+    observation: ClaudeCodeQuotaObservation;
+  }>;
+type ObservationRecorder = (kv: Kv, event: ClaudeCodeAcceptedObservation) => Promise<void>;
+let observationRecorder: ObservationRecorder | null = null;
+/** Install at application module initialization, before its first inference, never on an admin read. */
+export const registerClaudeCodeObservationRecorder = (recorder: ObservationRecorder): (() => void) => {
+  if (observationRecorder && observationRecorder !== recorder) throw new Error("Claude observation recorder is already installed");
+  observationRecorder = recorder;
+  return () => {
+    if (observationRecorder === recorder) observationRecorder = null;
+  };
+};
+export const claudeCodeQuotaKey = (binding?: ClaudeCodeAccountBinding) =>
+  binding ? (["uos_ai", "claude_code_quota", "v1", binding.account_id, binding.account_cohort_id] as const) : CLAUDE_CODE_QUOTA_KV_KEY;
+
 export type ClaudeCodeQuotaState = Readonly<{
+  pool_proofs?: Readonly<Record<string, ClaudeCodePoolProof>>;
   windows: Readonly<Partial<Record<ClaudeCodeWindowId, ClaudeCodeQuotaWindow>>>;
   standard: Readonly<Partial<Record<ClaudeCodeStandardFamily, ClaudeCodeStandardWindow>>>;
   representative_claim: string | null;
@@ -72,6 +103,54 @@ export type ClaudeCodeQuotaState = Readonly<{
   last_error: ClaudeCodeQuotaError | null;
   updated_at_ms: number;
 }>;
+export type ClaudeCodePoolProof = Readonly<{
+  kind: "auth_invalid" | "quota_exhausted";
+  model_id: string | null;
+  observed_at_ms: number;
+  expires_at_ms: number;
+  evidence_generation: string;
+}>;
+export const CLAUDE_CODE_AUTH_INVALID_PROOF_TTL_MS = 5 * 60_000;
+const parsePoolProofs = (value: unknown): Record<string, ClaudeCodePoolProof> => {
+  if (!isRecord(value)) return {};
+  const proofs: Record<string, ClaudeCodePoolProof> = {};
+  for (const [key, proof] of Object.entries(value)) {
+    if (!isRecord(proof) || (proof.kind !== "auth_invalid" && proof.kind !== "quota_exhausted")) continue;
+    if (
+      typeof proof.observed_at_ms !== "number" ||
+      !Number.isSafeInteger(proof.observed_at_ms) ||
+      proof.observed_at_ms <= 0 ||
+      typeof proof.expires_at_ms !== "number" ||
+      !Number.isSafeInteger(proof.expires_at_ms) ||
+      proof.expires_at_ms <= proof.observed_at_ms ||
+      typeof proof.evidence_generation !== "string"
+    )
+      continue;
+    if (!(proof.model_id === null || typeof proof.model_id === "string")) continue;
+    if (proof.kind === "auth_invalid" ? proof.model_id !== null : !proof.model_id) continue;
+    proofs[key] = {
+      kind: proof.kind,
+      model_id: proof.model_id,
+      observed_at_ms: proof.observed_at_ms,
+      expires_at_ms: proof.expires_at_ms,
+      evidence_generation: proof.evidence_generation,
+    };
+  }
+  return proofs;
+};
+export const claudeCodePoolProofForModel = (
+  state: ClaudeCodeQuotaState | null,
+  binding: ClaudeCodeAccountBinding,
+  model: string,
+  nowMs = Date.now()
+): ClaudeCodePoolProof | null =>
+  Object.values(state?.pool_proofs ?? {}).find(
+    (proof) =>
+      proof.evidence_generation === binding.evidence_generation &&
+      proof.observed_at_ms <= nowMs &&
+      proof.expires_at_ms > nowMs &&
+      (proof.kind === "auth_invalid" || proof.model_id === model)
+  ) ?? null;
 
 const finiteNonNegative = (value: number): number | null => (Number.isFinite(value) && value >= 0 ? value : null);
 
@@ -249,6 +328,7 @@ export const parseClaudeCodeQuotaState = (value: unknown): ClaudeCodeQuotaState 
   const updatedAtMs = finiteNumber(value.updated_at_ms);
   if (updatedAtMs === null || updatedAtMs <= 0) return null;
   return {
+    ...(value.pool_proofs === undefined ? {} : { pool_proofs: parsePoolProofs(value.pool_proofs) }),
     windows: parseStoredWindows(value.windows),
     standard: parseStoredStandardWindows(value.standard),
     representative_claim: typeof value.representative_claim === "string" ? value.representative_claim : null,
@@ -260,9 +340,10 @@ export const parseClaudeCodeQuotaState = (value: unknown): ClaudeCodeQuotaState 
   };
 };
 
-export const loadClaudeCodeQuotaState = async (kv: Kv | null): Promise<ClaudeCodeQuotaState | null> => {
+export const loadClaudeCodeQuotaState = async (kv: Kv | null, binding?: ClaudeCodeAccountBinding): Promise<ClaudeCodeQuotaState | null> => {
   if (!kv) return null;
-  const entry = await kv.get(CLAUDE_CODE_QUOTA_KV_KEY, { consistency: "strong" });
+  if (binding && !(await currentClaudeCodeAccountEntry(kv, binding))) return null;
+  const entry = await kv.get(claudeCodeQuotaKey(binding), { consistency: "strong" });
   return parseClaudeCodeQuotaState(entry.value);
 };
 
@@ -317,16 +398,6 @@ export const mergeClaudeCodeQuotaState = (
   };
 };
 
-export const storeClaudeCodeQuotaState = async (kv: Kv | null, state: ClaudeCodeQuotaState): Promise<boolean> => {
-  if (!kv) return false;
-  try {
-    await kv.set(CLAUDE_CODE_QUOTA_KV_KEY, state);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 /** True while the stored durable block still covers the present instant. */
 export const claudeCodeQuotaBlocked = (state: ClaudeCodeQuotaState | null, nowMs: number = Date.now()): boolean =>
   state !== null && state.blocked_until_ms !== null && state.blocked_until_ms > nowMs;
@@ -343,25 +414,28 @@ export const claudeCodeQuotaCoolingDown = (state: ClaudeCodeQuotaState | null, n
  * longer bounded config cooldown plus its displayable detail, so a transient
  * failure can never be persisted as durable exhaustion.
  */
-export const recordClaudeCodeQuotaOutcome = async (
-  kv: Kv | null,
-  input: Readonly<{
-    observation: ClaudeCodeQuotaObservation | null;
-    /** Durable exhaustion claimed by the caller's classification. */
-    exhaustion?: Readonly<{ window: ClaudeCodeWindowId; reset_at_ms: number | null }> | null;
-    /** Generic rate limit with no durable window evidence. */
-    transient?: Readonly<{ retry_after_ms: number | null }> | null;
-    /** Configuration rejection: billing, workspace, or credential scoping. */
-    config_error?: Readonly<{ kind: string; status: number | null; message: string | null; retry_after_ms?: number | null }> | null;
-    /** The tier served this request; clears any recorded configuration error. */
-    served?: boolean;
-    nowMs?: number;
-  }>
-): Promise<ClaudeCodeQuotaState | null> => {
-  const nowMs = input.nowMs ?? Date.now();
-  const previous = await loadClaudeCodeQuotaState(kv);
+type QuotaOutcome = Readonly<{
+  model_id?: string;
+  auth_invalid?: boolean;
+  response_observed_at_ms?: number;
+  observation: ClaudeCodeQuotaObservation | null;
+  binding?: ClaudeCodeAccountBinding;
+  response_status?: number | null;
+  /** Durable exhaustion claimed by the caller's classification. */
+  exhaustion?: Readonly<{ window: ClaudeCodeWindowId; reset_at_ms: number | null }> | null;
+  /** Generic rate limit with no durable window evidence. */
+  transient?: Readonly<{ retry_after_ms: number | null }> | null;
+  /** Configuration rejection: billing, workspace, or credential scoping. */
+  config_error?: Readonly<{ kind: string; status: number | null; message: string | null; retry_after_ms?: number | null }> | null;
+  /** The tier served this request; clears any recorded configuration error. */
+  served?: boolean;
+  nowMs?: number;
+  /** Internal CAS retry budget, never an upstream retry. */
+  attempts?: number;
+}>;
+
+const quotaStateForOutcome = (previous: ClaudeCodeQuotaState | null, input: QuotaOutcome, nowMs: number): ClaudeCodeQuotaState => {
   const observation = input.observation ?? { windows: {}, standard: {}, representative_claim: null, observed_at_ms: nowMs };
-  if (input.observation === null && !input.exhaustion && !input.transient && !input.config_error && !input.served) return previous;
   const base = mergeClaudeCodeQuotaState(previous, observation, input.exhaustion ?? null, nowMs);
   let withCooldown: ClaudeCodeQuotaState = base;
   if (input.transient) {
@@ -387,8 +461,79 @@ export const recordClaudeCodeQuotaOutcome = async (
   } else if (input.served) {
     withCooldown = { ...withCooldown, last_error: null };
   }
-  const stored = await storeClaudeCodeQuotaState(kv, withCooldown);
-  return stored ? withCooldown : base;
+  return input.binding ? { ...withCooldown, pool_proofs: poolProofsForOutcome(previous, input, nowMs) } : withCooldown;
+};
+
+const newPoolProof = (input: QuotaOutcome, observedAt: number): readonly [string, ClaudeCodePoolProof] | null => {
+  if (!input.binding || !input.model_id) return null;
+  const reset = input.exhaustion?.reset_at_ms;
+  let expiry: number | null = null;
+  if (input.auth_invalid) expiry = observedAt + CLAUDE_CODE_AUTH_INVALID_PROOF_TTL_MS;
+  else if (reset && reset > observedAt) expiry = reset + CLAUDE_CODE_RESET_MARGIN_MS;
+  if (expiry === null) return null;
+  return [
+    input.auth_invalid ? "credential" : `model:${input.model_id}`,
+    {
+      kind: input.auth_invalid ? "auth_invalid" : "quota_exhausted",
+      model_id: input.auth_invalid ? null : input.model_id,
+      observed_at_ms: observedAt,
+      expires_at_ms: expiry,
+      evidence_generation: input.binding.evidence_generation,
+    },
+  ];
+};
+const poolProofsForOutcome = (previous: ClaudeCodeQuotaState | null, input: QuotaOutcome, nowMs: number): Record<string, ClaudeCodePoolProof> => {
+  const observedAt = input.response_observed_at_ms ?? nowMs;
+  const modelId = input.model_id ?? null;
+  const proofs = new Map<string, ClaudeCodePoolProof>(Object.entries(previous?.pool_proofs ?? {}).filter(([, proof]) => proof.expires_at_ms > nowMs));
+  if (input.served) {
+    for (const [key, proof] of proofs) {
+      if (proof.observed_at_ms <= observedAt && (proof.kind === "auth_invalid" || proof.model_id === modelId)) proofs.delete(key);
+    }
+  }
+  const next = newPoolProof(input, observedAt);
+  if (next && next[1].expires_at_ms > nowMs) {
+    const previousProof = proofs.get(next[0]);
+    if (!previousProof || previousProof.observed_at_ms <= observedAt) proofs.set(...next);
+  }
+  return Object.fromEntries(proofs);
+};
+
+const publishAcceptedObservation = async (kv: Kv, input: QuotaOutcome, withCooldown: ClaudeCodeQuotaState, nowMs: number): Promise<void> => {
+  if (input.binding && input.observation && !observationIsEmpty(input.observation) && observationRecorder) {
+    const event: ClaudeCodeAcceptedObservation = {
+      ...claudeCodeAccountIdentity(input.binding),
+      v: 1,
+      observation_id: crypto.randomUUID(),
+      source_observed_at_ms:
+        Number.isFinite(input.observation.observed_at_ms) && input.observation.observed_at_ms > 0 ? input.observation.observed_at_ms : null,
+      sampled_at_ms: nowMs,
+      response_status: input.response_status ?? null,
+      state: input.auth_invalid || claudeCodeQuotaBlocked(withCooldown, nowMs) || claudeCodeQuotaCoolingDown(withCooldown, nowMs) ? "unavailable" : "available",
+      observation: input.observation,
+    };
+    try {
+      await observationRecorder(kv, event);
+    } catch {
+      console.warn("[ai.ubq.fi] Claude observation history write failed after accepted quota persistence.");
+    }
+  }
+};
+
+export const recordClaudeCodeQuotaOutcome = async (kv: Kv | null, input: QuotaOutcome): Promise<ClaudeCodeQuotaState | null> => {
+  const nowMs = input.nowMs ?? Date.now();
+  const accountEntry = kv && input.binding ? await currentClaudeCodeAccountEntry(kv, input.binding) : null;
+  if (input.binding && !accountEntry) return null;
+  const quotaEntry = kv ? await kv.get(claudeCodeQuotaKey(input.binding), { consistency: "strong" }) : null;
+  const previous = parseClaudeCodeQuotaState(quotaEntry?.value);
+  if (input.observation === null && !input.exhaustion && !input.transient && !input.config_error && !input.served && !input.auth_invalid) return previous;
+  const withCooldown = quotaStateForOutcome(previous, input, nowMs);
+  if (!kv) return null;
+  const atomic = kv.atomic().check(...(accountEntry ? [accountEntry] : []), ...(quotaEntry ? [quotaEntry] : []));
+  const stored = await atomic.set(claudeCodeQuotaKey(input.binding), withCooldown).commit();
+  if (!stored.ok) return (input.attempts ?? 0) < 8 ? await recordClaudeCodeQuotaOutcome(kv, { ...input, nowMs, attempts: (input.attempts ?? 0) + 1 }) : null;
+  await publishAcceptedObservation(kv, input, withCooldown, nowMs);
+  return withCooldown;
 };
 
 /**
@@ -397,18 +542,32 @@ export const recordClaudeCodeQuotaOutcome = async (
  * observed window utilization is preserved because it is upstream truth, not a
  * gateway guard.
  */
-export const clearClaudeCodeQuotaGuards = async (kv: Kv | null): Promise<ClaudeCodeQuotaState | null> => {
+export const clearClaudeCodeQuotaGuards = async (kv: Kv | null, binding?: ClaudeCodeAccountBinding): Promise<ClaudeCodeQuotaState | null> => {
   if (!kv) return null;
-  const previous = await loadClaudeCodeQuotaState(kv);
-  if (!previous) return null;
+  const accountEntry = binding ? await currentClaudeCodeAccountEntry(kv, binding) : null;
+  if (binding && !accountEntry) return null;
+  const quotaEntry = await kv.get(claudeCodeQuotaKey(binding), { consistency: "strong" });
+  const previous = parseClaudeCodeQuotaState(quotaEntry.value);
+  // Even an empty guard record invalidates older in-flight evidence.
+  if (!previous && !accountEntry) return null;
+  const base = previous ?? mergeClaudeCodeQuotaState(null, { windows: {}, standard: {}, representative_claim: null, observed_at_ms: Date.now() }, null);
   const cleared: ClaudeCodeQuotaState = {
-    ...previous,
+    ...base,
     blocked_until_ms: null,
     block_window: null,
     cooldown_until_ms: null,
     last_error: null,
+    pool_proofs: {},
     updated_at_ms: Date.now(),
   };
-  const stored = await storeClaudeCodeQuotaState(kv, cleared);
-  return stored ? cleared : previous;
+  const operation = kv.atomic().check(quotaEntry);
+  if (accountEntry?.value && binding) {
+    operation.check(accountEntry).set(CLAUDE_CODE_ACCOUNTS_KEY, {
+      ...accountEntry.value,
+      accounts: accountEntry.value.accounts.map((account) =>
+        account.account_id === binding.account_id ? { ...account, evidence_generation: crypto.randomUUID() } : account
+      ),
+    });
+  }
+  return (await operation.set(claudeCodeQuotaKey(binding), cleared).commit()).ok ? cleared : null;
 };
