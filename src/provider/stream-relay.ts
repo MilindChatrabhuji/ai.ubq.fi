@@ -141,6 +141,15 @@ export const relayChatCompletionStream = (
   let semantic = false;
   let usage: UsageTokens | null = null;
   let cancellationReason: unknown;
+  let pendingCancelled = false;
+  const cancelPendingOnce = (reason?: unknown): void => {
+    if (pendingCancelled) return;
+    pendingCancelled = true;
+    cancelPending?.(reason);
+  };
+  const cancelPendingOnDownstreamAbort = (): void => cancelPendingOnce(downstreamSignal.reason);
+  if (downstreamSignal.aborted) cancelPendingOnDownstreamAbort();
+  else downstreamSignal.addEventListener("abort", cancelPendingOnDownstreamAbort, { once: true });
   const cancelledResponses = new WeakSet<Response>();
   const cancelResponse = (response: Response): void => {
     if (cancelledResponses.has(response)) return;
@@ -299,7 +308,7 @@ export const relayChatCompletionStream = (
       // uninterruptible `return()` can block teardown. A consumer can cancel
       // before the first read, so an untouched source is cancelled directly.
       if (!cancellation.signal.aborted) cancellation.abort(reason);
-      cancelPending?.(reason);
+      cancelPendingOnce(reason);
       if (upstream !== null) cancelResponse(upstream);
       // Cleanup is best effort and never surfaces as a provider error.
       if (iterator !== null) void iterator.return().catch(() => {});
@@ -383,6 +392,15 @@ export const relayResponsesStream = (
     usage: null as UsageTokens | null,
   };
   let cancellationReason: unknown;
+  let pendingCancelled = false;
+  const cancelPendingOnce = (reason?: unknown): void => {
+    if (pendingCancelled) return;
+    pendingCancelled = true;
+    cancelPending?.(reason);
+  };
+  const cancelPendingOnDownstreamAbort = (): void => cancelPendingOnce(downstreamSignal.reason);
+  if (downstreamSignal.aborted) cancelPendingOnDownstreamAbort();
+  else downstreamSignal.addEventListener("abort", cancelPendingOnDownstreamAbort, { once: true });
   const cancelledResponses = new WeakSet<Response>();
   const cancelResponse = (response: Response): void => {
     if (cancelledResponses.has(response)) return;
@@ -641,7 +659,7 @@ export const relayResponsesStream = (
       // uninterruptible `return()` can block teardown. A consumer can cancel
       // before the first read, so an untouched source is cancelled directly.
       if (!cancellation.signal.aborted) cancellation.abort(reason);
-      cancelPending?.(reason);
+      cancelPendingOnce(reason);
       if (upstream !== null) cancelResponse(upstream);
       // Cleanup is best effort and never surfaces as a provider error.
       if (iterator !== null) void iterator.return().catch(() => {});

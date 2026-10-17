@@ -383,6 +383,7 @@ test("Provider relays cancel a late deferred response without reading it", async
       pendingResolved = true;
       resolvePending(new Response(lateUpstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
       assert.equal(await settlesWithin(pendingRead, 500), true, "the abandoned downstream read must settle");
+      assert.equal((await pendingRead).done, true, "client cancellation must not emit an error frame");
       assert.equal(await settlesWithin(lateUpstream.cancelled, 500), true, "the late upstream body must be cancelled");
       assert.equal(lateUpstream.cancelCount(), 1, "the late upstream body must be cancelled exactly once");
       assert.equal(lateUpstream.started(), 0, "cancellation must not start an upstream read");
