@@ -106,6 +106,22 @@ no credential, and an existing `UOS_AI_TOKEN` in that profile keeps working unch
 available for an explicit remote profile. Local inference avoids the VPS round trip; traffic between the Mac and
 upstream model providers still uses the internet. The two gateways have independent usage and routing state.
 
+## Provider analytics chart
+
+The loopback admin's Provider analytics chart shows the VPS chart: `src/admin/chart-source-proxy.ts` reads
+`/admin/providers/capacity` and `/admin/errors?limit=1` from `https://ai.ubq.fi` with the first `DENO_DEPLOY_TOKEN`
+entry and replaces only the chart fields and the five-xx buckets. It never forwards the loopback query string.
+
+Only this service pushes its own capacity samples to the VPS. The signal is the LAN listener that `scripts/serve-mac.ts`
+configures; a `bun run dev` or `dev:local` server holding the same token reads the VPS chart but never pushes. Each
+Analytics poll starts at most one background push, which sends only samples newer than the last one the VPS
+acknowledged, oldest first and at most 512 per request. The chart read never waits for it. The rows are stored under host
+`UOS_CAPACITY_OBSERVATION_HOST_ID` from `.env`, or `mac` when it is unset. An invalid id disables the push.
+
+The VPS history stays canonical. A pushed sample is drawn only in a 15-minute bucket the VPS did not observe, and only
+when every configured Codex slot in it is available and reports the same account cohorts as the nearest VPS sample
+before or after it. The Mac's own 401 or unreachable samples therefore never draw an outage on the VPS chart.
+
 ## Bun runtime and offline cutover
 
 Application TypeScript executes directly in checksum-pinned Bun 1.4.0. Runtime archives, extracted binaries, frozen dependency trees and the Linux native containment payload are verified before immutable publication and service interruption. Launchers use `--no-env-file --no-install`; they load only the selected repository-root dotenv file. Missing or corrupt runtime, dependency or native payloads fail closed without downloading, installing or compiling at startup. The previous Deno runtime store and immutable releases remain untouched.
