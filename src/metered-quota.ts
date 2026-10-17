@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 import { getKv } from "./kv.ts";
 import { isRecord, sha256Hex } from "./utils.ts";
 import { METERED_BASE_URL, type MeteredFetch } from "./provider/metered.ts";
@@ -129,7 +130,7 @@ export type MeteredQuotaDiagnostics = Readonly<{
 }>;
 
 export type GetMeteredQuotaSnapshotOptions = Readonly<{
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   fetcher?: MeteredFetch;
   now?: () => number;
   signal?: AbortSignal;
@@ -169,7 +170,7 @@ const parseCredentials = (credentials: MeteredAccountCredentials): MeteredAccoun
 
 const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }
@@ -436,21 +437,21 @@ const toSnapshot = (state: MeteredQuotaState, cacheState: MeteredQuotaCacheState
   };
 };
 
-const loadRetainedState = async (kv: Deno.Kv, nowMs: number): Promise<Deno.KvEntryMaybe<MeteredQuotaState> | null> => {
+const loadRetainedState = async (kv: Kv, nowMs: number): Promise<KvEntryMaybe<MeteredQuotaState> | null> => {
   const entry = await kv.get<MeteredQuotaState>(METERED_QUOTA_STATE_KEY);
   if (!isMeteredQuotaState(entry.value)) return null;
   if (nowMs - entry.value.observed_at_ms >= METERED_QUOTA_RETENTION_MS) return null;
   return entry;
 };
 
-const loadInvalidation = (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<unknown>> => Promise.resolve(kv.get(METERED_QUOTA_INVALIDATION_KEY));
+const loadInvalidation = (kv: Kv): Promise<KvEntryMaybe<unknown>> => Promise.resolve(kv.get(METERED_QUOTA_INVALIDATION_KEY));
 
 const quotaInvalidationValue = (value: unknown): QuotaInvalidation | null => (isQuotaInvalidation(value) ? value : null);
 
 const isInvalidated = (state: MeteredQuotaState, invalidation: QuotaInvalidation | null): boolean =>
   Boolean(invalidation && invalidation.invalidated_at_ms >= state.observed_at_ms);
 
-const acquireRefreshLease = async (kv: Deno.Kv, owner: string, nowMs: number): Promise<boolean> => {
+const acquireRefreshLease = async (kv: Kv, owner: string, nowMs: number): Promise<boolean> => {
   const entry = await kv.get<RefreshLease>(METERED_QUOTA_REFRESH_LEASE_KEY);
   if (entry.value && entry.value.lease_until_ms > nowMs) return false;
   const lease: RefreshLease = { owner, lease_until_ms: nowMs + METERED_QUOTA_REFRESH_LEASE_MS };
@@ -463,7 +464,7 @@ const acquireRefreshLease = async (kv: Deno.Kv, owner: string, nowMs: number): P
   ).ok;
 };
 
-const releaseRefreshLease = async (kv: Deno.Kv, owner: string): Promise<void> => {
+const releaseRefreshLease = async (kv: Kv, owner: string): Promise<void> => {
   try {
     const entry = await kv.get<RefreshLease>(METERED_QUOTA_REFRESH_LEASE_KEY);
     if (entry.value?.owner === owner) {
@@ -474,7 +475,7 @@ const releaseRefreshLease = async (kv: Deno.Kv, owner: string): Promise<void> =>
   }
 };
 
-const waitForColdState = async (kv: Deno.Kv): Promise<MeteredQuotaState | null> => {
+const waitForColdState = async (kv: Kv): Promise<MeteredQuotaState | null> => {
   const deadline = Date.now() + METERED_QUOTA_COLD_WAIT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -491,12 +492,12 @@ const staleSnapshotOrNull = (replacement: MeteredQuotaState | null, cached: Mete
   return null;
 };
 
-const replacementStaleSnapshot = async (kv: Deno.Kv, cached: MeteredQuotaState | null): Promise<MeteredQuotaSnapshot | null> => {
+const replacementStaleSnapshot = async (kv: Kv, cached: MeteredQuotaState | null): Promise<MeteredQuotaSnapshot | null> => {
   const replacement = await loadRetainedState(kv, Date.now()).catch(() => null);
   return staleSnapshotOrNull(replacement?.value ?? null, cached);
 };
 
-const readCachedQuotaState = async (kv: Deno.Kv, nowMs: number): Promise<Readonly<{ cached: MeteredQuotaState | null; cachedInvalidated: boolean }>> => {
+const readCachedQuotaState = async (kv: Kv, nowMs: number): Promise<Readonly<{ cached: MeteredQuotaState | null; cachedInvalidated: boolean }>> => {
   const [cachedEntry, cachedInvalidationEntry] = await Promise.all([
     loadRetainedState(kv, nowMs).catch((error: unknown) => {
       console.warn("[ai.ubq.fi] Metered quota cache read failed:", error);
@@ -516,7 +517,7 @@ const readCachedQuotaState = async (kv: Deno.Kv, nowMs: number): Promise<Readonl
  * caller reports through the same stale snapshot used for a failed commit.
  */
 const refreshMeteredQuotaSnapshot = async (
-  kv: Deno.Kv,
+  kv: Kv,
   credentials: MeteredAccountCredentials,
   options: GetMeteredQuotaSnapshotOptions,
   cached: MeteredQuotaState | null,
@@ -555,7 +556,7 @@ const refreshMeteredQuotaSnapshot = async (
 };
 
 /** Without the lease we serve whatever retained state appears, or nothing. */
-const coldWaitSnapshot = async (kv: Deno.Kv, cached: MeteredQuotaState | null): Promise<MeteredQuotaSnapshot | null> => {
+const coldWaitSnapshot = async (kv: Kv, cached: MeteredQuotaState | null): Promise<MeteredQuotaSnapshot | null> => {
   if (cached) return toSnapshot(cached, "stale");
   const waited = await waitForColdState(kv).catch(() => null);
   return waited ? toSnapshot(waited, "wait") : null;
@@ -668,7 +669,7 @@ const balanceSampleFromState = (state: MeteredQuotaState, observedAtMs: number):
  * Reader is readMeteredQuotaBalanceHistory.
  */
 export const writeMeteredQuotaBalanceSample = async (
-  kv: Deno.Kv,
+  kv: Kv,
   state: MeteredQuotaState,
   observedAtMs: number,
   accountFingerprint: string | null
@@ -687,7 +688,7 @@ export const writeMeteredQuotaBalanceSample = async (
 };
 
 export const readMeteredQuotaBalanceHistory = async (
-  kv: Deno.Kv | null,
+  kv: Kv | null,
   options: Readonly<{ sinceMs: number; nowMs: number; accountFingerprint: string | null; limit?: number }>
 ): Promise<MeteredQuotaBalanceSample[]> => {
   if (!kv || !options.accountFingerprint) return [];
@@ -695,9 +696,9 @@ export const readMeteredQuotaBalanceHistory = async (
   const samples: MeteredQuotaBalanceSample[] = [];
   const sinceMs = Math.max(0, Math.trunc(options.sinceMs));
   const nowMs = Math.max(sinceMs, Math.trunc(options.nowMs));
-  const prefix: Deno.KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, options.accountFingerprint];
-  const start: Deno.KvKey = [...prefix, Math.floor(sinceMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS];
-  const end: Deno.KvKey = [
+  const prefix: KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, options.accountFingerprint];
+  const start: KvKey = [...prefix, Math.floor(sinceMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS];
+  const end: KvKey = [
     ...prefix,
     Math.floor(nowMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS + METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
   ];

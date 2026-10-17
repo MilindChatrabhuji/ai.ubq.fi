@@ -1,3 +1,6 @@
+import { KvU64 } from "#kv";
+import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { warnQuotaAccountingFailure, withTerminalRequestLog } from "../src/handler/terminal-log.ts";
 import { recordPromptCacheAnalytics } from "../src/cache/prompt-analytics.ts";
@@ -8,31 +11,25 @@ import {
   resolvePromptCacheTelemetryCounterKeys,
 } from "../src/cache/telemetry-gate.ts";
 
-if (typeof Deno.KvU64 !== "function") {
-  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
-    constructor(readonly value: bigint) {}
-  } as typeof Deno.KvU64;
-}
-
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 
 class MemoryKv {
   readonly values = new Map<string, unknown>();
   atomicCommits = 0;
   failNextCommit = false;
 
-  get<T>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey): Promise<KvEntryMaybe<T>> {
     return Promise.resolve({
       key,
       value: (this.values.get(encodeKey(key)) as T | undefined) ?? null,
       versionstamp: this.values.has(encodeKey(key)) ? "00000000000000000001" : null,
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  atomic(): Deno.AtomicOperation {
-    const sums: Readonly<{ key: Deno.KvKey; amount: bigint }>[] = [];
+  atomic(): AtomicOperation {
+    const sums: Readonly<{ key: KvKey; amount: bigint }>[] = [];
     const operation = {
-      sum: (key: Deno.KvKey, amount: bigint) => {
+      sum: (key: KvKey, amount: bigint) => {
         sums.push({ key, amount });
         return operation;
       },
@@ -45,20 +42,20 @@ class MemoryKv {
         for (const { key, amount } of sums) {
           const encoded = encodeKey(key);
           const existing = this.values.get(encoded);
-          const current = existing instanceof Deno.KvU64 ? existing.value : 0n;
-          this.values.set(encoded, new Deno.KvU64(current + amount));
+          const current = existing instanceof KvU64 ? existing.value : 0n;
+          this.values.set(encoded, new KvU64(current + amount));
         }
         return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
-  setCounter(key: Deno.KvKey, value: bigint): void {
-    this.values.set(encodeKey(key), new Deno.KvU64(value));
+  setCounter(key: KvKey, value: bigint): void {
+    this.values.set(encodeKey(key), new KvU64(value));
   }
 
-  setRawCounter(key: Deno.KvKey, value: unknown): void {
+  setRawCounter(key: KvKey, value: unknown): void {
     this.values.set(encodeKey(key), value);
   }
 }
@@ -75,11 +72,11 @@ const event = (overrides: Partial<Parameters<typeof recordPromptCacheTelemetry>[
   ...overrides,
 });
 
-Deno.test("prompt-cache telemetry gate atomically stores only redacted completed 2xx inference counters", async () => {
+test("prompt-cache telemetry gate atomically stores only redacted completed 2xx inference counters", async () => {
   const kv = new MemoryKv();
   const rawModel = "gpt-secret-model-name-must-not-persist";
   const recorded = await recordPromptCacheTelemetry(event({ model: rawModel }), {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     release: RELEASE,
   });
 
@@ -91,28 +88,28 @@ Deno.test("prompt-cache telemetry gate atomically stores only redacted completed
   assert.equal(kv.values.size, 3);
   for (const [key, value] of kv.values) {
     assert.doesNotMatch(key, new RegExp(rawModel));
-    assert.ok(value instanceof Deno.KvU64);
+    assert.ok(value instanceof KvU64);
     assert.equal(value.value, 1n);
   }
 
   const incomplete = await recordPromptCacheTelemetry(event({ completed: false, usageTelemetryStatus: "reported" }), {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     release: RELEASE,
   });
-  const failed = await recordPromptCacheTelemetry(event({ status: 503, usageTelemetryStatus: "reported" }), { kv: kv as unknown as Deno.Kv, release: RELEASE });
+  const failed = await recordPromptCacheTelemetry(event({ status: 503, usageTelemetryStatus: "reported" }), { kv: kv as unknown as Kv, release: RELEASE });
   assert.deepEqual([incomplete.reason, failed.reason], ["not_completed_2xx", "not_completed_2xx"]);
   assert.equal(kv.atomicCommits, 1);
 
   kv.failNextCommit = true;
-  const unavailable = await recordPromptCacheTelemetry(event({ model: rawModel }), { kv: kv as unknown as Deno.Kv, release: RELEASE });
+  const unavailable = await recordPromptCacheTelemetry(event({ model: rawModel }), { kv: kv as unknown as Kv, release: RELEASE });
   assert.equal(unavailable.status, "unavailable");
   assert.equal(unavailable.reason, "kv_unavailable");
   assert.doesNotMatch(JSON.stringify(unavailable), new RegExp(rawModel));
 });
 
-Deno.test("prompt-cache telemetry gate records invalid usage separately from reported coverage", async () => {
+test("prompt-cache telemetry gate records invalid usage separately from reported coverage", async () => {
   const kv = new MemoryKv();
-  const options = { kv: kv as unknown as Deno.Kv, release: RELEASE };
+  const options = { kv: kv as unknown as Kv, release: RELEASE };
   const target = { provider: "chatgpt_codex", model: "gpt-cache-target" };
 
   const recorded = await recordPromptCacheTelemetry(event({ usageTelemetryStatus: "invalid" }), options);
@@ -123,8 +120,8 @@ Deno.test("prompt-cache telemetry gate records invalid usage separately from rep
   assert.ok(keys);
   const responseKeys = keys.routes.find((route) => route.route === "responses");
   assert.ok(responseKeys);
-  assert.equal((kv.values.get(encodeKey(responseKeys.completed)) as Deno.KvU64).value, 1n);
-  assert.equal((kv.values.get(encodeKey(responseKeys.invalid)) as Deno.KvU64).value, 1n);
+  assert.equal((kv.values.get(encodeKey(responseKeys.completed)) as KvU64).value, 1n);
+  assert.equal((kv.values.get(encodeKey(responseKeys.invalid)) as KvU64).value, 1n);
   assert.equal(kv.values.has(encodeKey(responseKeys.reported)), false);
   assert.equal(kv.values.has(encodeKey(responseKeys.cache_write_reported)), false);
 
@@ -135,9 +132,9 @@ Deno.test("prompt-cache telemetry gate records invalid usage separately from rep
   assert.equal(baseline.aggregate.cache_write_reported, "0");
 });
 
-Deno.test("prompt-cache telemetry gate fails closed for an unknown release and malformed durable counters", async () => {
+test("prompt-cache telemetry gate fails closed for an unknown release and malformed durable counters", async () => {
   const kv = new MemoryKv();
-  const unknown = await recordPromptCacheTelemetry(event(), { kv: kv as unknown as Deno.Kv, release: "unknown" });
+  const unknown = await recordPromptCacheTelemetry(event(), { kv: kv as unknown as Kv, release: "unknown" });
   assert.deepEqual(unknown, {
     status: "ignored",
     reason: "unknown_release",
@@ -150,7 +147,7 @@ Deno.test("prompt-cache telemetry gate fails closed for an unknown release and m
 
   const target = { provider: "chatgpt_codex", model: "gpt-cache-target" };
   const unknownBaseline = await readPromptCacheTelemetryBaseline(target, {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     release: "unknown",
   });
   assert.equal(unknownBaseline.status, "not_ready");
@@ -161,14 +158,14 @@ Deno.test("prompt-cache telemetry gate fails closed for an unknown release and m
   const responseKeys = keys.routes.find((route) => route.route === "responses");
   assert.ok(responseKeys);
   kv.setRawCounter(responseKeys.completed, { value: 1n });
-  const malformed = await readPromptCacheTelemetryBaseline(target, { kv: kv as unknown as Deno.Kv, release: RELEASE });
+  const malformed = await readPromptCacheTelemetryBaseline(target, { kv: kv as unknown as Kv, release: RELEASE });
   assert.equal(malformed.status, "not_ready");
   assert.equal(malformed.reason, "invalid_counter");
 });
 
-Deno.test("prompt-cache telemetry gate requires aggregate volume, every observed route, and reported coverage", async () => {
+test("prompt-cache telemetry gate requires aggregate volume, every observed route, and reported coverage", async () => {
   const kv = new MemoryKv();
-  const options = { kv: kv as unknown as Deno.Kv, release: RELEASE };
+  const options = { kv: kv as unknown as Kv, release: RELEASE };
   const target = { provider: "chatgpt_codex", model: "gpt-cache-target" };
 
   const keys = await resolvePromptCacheTelemetryCounterKeys(target, options);
@@ -215,9 +212,9 @@ Deno.test("prompt-cache telemetry gate requires aggregate volume, every observed
   assert.equal(chatRoute.reported_coverage_passed, false);
 });
 
-Deno.test("prompt-cache telemetry gate requires complete cache-write coverage and counts a valid zero as present", async () => {
+test("prompt-cache telemetry gate requires complete cache-write coverage and counts a valid zero as present", async () => {
   const kv = new MemoryKv();
-  const options = { kv: kv as unknown as Deno.Kv, release: RELEASE };
+  const options = { kv: kv as unknown as Kv, release: RELEASE };
   const target = { provider: "chatgpt_codex", model: "gpt-cache-target" };
   const keys = await resolvePromptCacheTelemetryCounterKeys(target, options);
   assert.ok(keys);
@@ -228,7 +225,7 @@ Deno.test("prompt-cache telemetry gate requires complete cache-write coverage an
   const zero = await recordPromptCacheTelemetry(event({ cacheWriteTokensPresent: true }), options);
   assert.equal(absent.status, "recorded");
   assert.equal(zero.status, "recorded");
-  assert.equal((kv.values.get(encodeKey(responseKeys.cache_write_reported)) as Deno.KvU64).value, 1n);
+  assert.equal((kv.values.get(encodeKey(responseKeys.cache_write_reported)) as KvU64).value, 1n);
 
   kv.setCounter(responseKeys.completed, 10_000n);
   kv.setCounter(responseKeys.reported, 10_000n);
@@ -249,7 +246,7 @@ Deno.test("prompt-cache telemetry gate requires complete cache-write coverage an
   assert.equal(malformed.reason, "invalid_counter");
 });
 
-Deno.test("terminal telemetry failures do not change non-stream or SSE responses", async () => {
+test("terminal telemetry failures do not change non-stream or SSE responses", async () => {
   const originalInfo = console.info;
   const terminalLogs: unknown[][] = [];
   let telemetryAttempts = 0;
@@ -294,7 +291,7 @@ Deno.test("terminal telemetry failures do not change non-stream or SSE responses
   }
 });
 
-Deno.test("quota accounting warnings expose only error classes", () => {
+test("quota accounting warnings expose only error classes", () => {
   const originalWarn = console.warn;
   const warnings: unknown[][] = [];
   const secret = "quota-secret-must-not-reach-logs";

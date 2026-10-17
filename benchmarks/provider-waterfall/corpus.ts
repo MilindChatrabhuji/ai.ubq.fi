@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 // Frozen corpus loading and integrity verification.
 
 import type { CorpusClass, CorpusEntry } from "./types.ts";
@@ -44,9 +45,9 @@ const manifestSha256 = (manifestRaw: Record<string, unknown>): string | null => 
 export const loadCorpus = async (root: string): Promise<Readonly<{ entries: readonly CorpusEntry[]; manifest: CorpusManifest; sha256: string }>> => {
   const corpusPath = `${root}/corpus/corpus-v1.jsonl`;
   const manifestPath = `${root}/corpus/corpus-v1.manifest.json`;
-  const bytes = await Deno.readFile(corpusPath);
+  const bytes = await readFile(corpusPath);
   const sha256 = await sha256Hex(bytes);
-  const manifestRaw = JSON.parse(await Deno.readTextFile(manifestPath)) as unknown;
+  const manifestRaw = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
   if (!isRecord(manifestRaw)) throw new Error("corpus manifest is not an object");
   const manifestSha = manifestSha256(manifestRaw);
   if (manifestSha === null) throw new Error("corpus manifest carries no content sha256");

@@ -1,9 +1,23 @@
+import { openKv } from "#kv";
+import type {
+  AtomicCheck,
+  AtomicOperation,
+  Kv,
+  KvCommitError,
+  KvCommitResult,
+  KvEntry,
+  KvEntryMaybe,
+  KvKey,
+  KvKeyPart,
+  KvListIterator,
+  KvListOptions,
+  KvListSelector,
+  KvMutation,
+} from "#kv";
 /**
- * In-memory `Deno.Kv` substitute for the sentinel replay coverage tests.
+ * In-memory `Kv` substitute for the sentinel replay coverage tests.
  *
- * The default test task runs without `--unstable-kv`, so `Deno.openKv` is
- * `undefined` and every sentinel path that takes a `kv` argument has to be
- * given an in-memory store instead. This is not a recording stub: it keeps the
+ * This specialized fake keeps the
  * versionstamp/CAS boundary the production code depends on, hands out
  * versionstamps in strictly increasing order, returns the same
  * `{ key, value: null, versionstamp: null }` shape for absent keys, and orders
@@ -17,7 +31,7 @@
  * cannot mistake silence for support.
  */
 
-type StoredEntry = Readonly<{ key: Deno.KvKey; value: unknown; versionstamp: string }>;
+type StoredEntry = Readonly<{ key: KvKey; value: unknown; versionstamp: string }>;
 
 /** Internal storage shared with the atomic-operation implementation. */
 export type SentinelKvStorage = {
@@ -29,16 +43,16 @@ const UNSUPPORTED = "Sentinel in-memory KV does not support this operation";
 
 const clone = <T>(value: T): T => structuredClone(value);
 
-const keyPartValue = (part: Deno.KvKeyPart): unknown => {
+const keyPartValue = (part: KvKeyPart): unknown => {
   if (part instanceof Uint8Array) return ["bytes", [...part]];
   if (typeof part === "bigint") return ["bigint", part.toString()];
   return part;
 };
 
-const keyText = (key: Deno.KvKey): string => JSON.stringify(key.map(keyPartValue));
+const keyText = (key: KvKey): string => JSON.stringify(key.map(keyPartValue));
 
 /** Deno KV orders key parts by type first: bytes, string, number, bigint, boolean. */
-const partRank = (part: Deno.KvKeyPart): number => {
+const partRank = (part: KvKeyPart): number => {
   if (part instanceof Uint8Array) return 0;
   if (typeof part === "string") return 1;
   if (typeof part === "number") return 2;
@@ -52,9 +66,9 @@ const compareOrdered = (left: string | bigint, right: string | bigint): number =
 };
 
 /** Byte-array parts compare on their comma-joined text, which is monotonic for whole bytes. */
-const keyPartText = (part: Deno.KvKeyPart): string => (part instanceof Uint8Array ? [...part].join(",") : String(part));
+const keyPartText = (part: KvKeyPart): string => (part instanceof Uint8Array ? [...part].join(",") : String(part));
 
-const compareParts = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
+const compareParts = (left: KvKeyPart, right: KvKeyPart): number => {
   const rank = partRank(left) - partRank(right);
   if (rank !== 0) return rank;
   if (typeof left === "number" && typeof right === "number") return left - right;
@@ -62,7 +76,7 @@ const compareParts = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   return compareOrdered(keyPartText(left), keyPartText(right));
 };
 
-const compareKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
+const compareKeys = (left: KvKey, right: KvKey): number => {
   const shared = Math.min(left.length, right.length);
   for (let index = 0; index < shared; index += 1) {
     const comparison = compareParts(left[index], right[index]);
@@ -71,7 +85,7 @@ const compareKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
   return left.length - right.length;
 };
 
-const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => {
+const matchesPrefix = (key: KvKey, prefix: KvKey): boolean => {
   if (prefix.length > key.length) return false;
   for (let index = 0; index < prefix.length; index += 1) {
     if (compareParts(prefix[index], key[index]) !== 0) return false;
@@ -80,7 +94,7 @@ const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => {
 };
 
 /** One iteration over a frozen snapshot of the matching keys, with a resumable cursor. */
-class SentinelKvListIterator<T> implements Deno.KvListIterator<T> {
+class SentinelKvListIterator<T> implements KvListIterator<T> {
   #entries: StoredEntry[];
   #index = 0;
   #cursor = "";
@@ -94,7 +108,7 @@ class SentinelKvListIterator<T> implements Deno.KvListIterator<T> {
     return this.#cursor;
   }
 
-  next(): Promise<IteratorResult<Deno.KvEntry<T>, undefined>> {
+  next(): Promise<IteratorResult<KvEntry<T>, undefined>> {
     const entry: StoredEntry | undefined = this.#entries.at(this.#index);
     this.#index += 1;
     if (entry === undefined) {
@@ -105,60 +119,60 @@ class SentinelKvListIterator<T> implements Deno.KvListIterator<T> {
     return Promise.resolve({ done: false, value: { ...entry, value: entry.value as T } });
   }
 
-  [Symbol.asyncIterator](): AsyncIterableIterator<Deno.KvEntry<T>> {
+  [Symbol.asyncIterator](): AsyncIterableIterator<KvEntry<T>> {
     return this;
   }
 }
 
 // Base64 padding only ever trails, so removing every "=" is the same operation
 // as stripping the 1-2 character pad, without a backtracking pattern.
-const encodeCursor = (after: Deno.KvKey): string => btoa(keyText(after)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-const decodeCursor = (cursor: string): Deno.KvKey => JSON.parse(atob(cursor.replaceAll("-", "+").replaceAll("_", "/"))) as Deno.KvKey;
+const encodeCursor = (after: KvKey): string => btoa(keyText(after)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+const decodeCursor = (cursor: string): KvKey => JSON.parse(atob(cursor.replaceAll("-", "+").replaceAll("_", "/"))) as KvKey;
 
-class SentinelAtomicOperation implements Deno.AtomicOperation {
+class SentinelAtomicOperation implements AtomicOperation {
   #storage: SentinelKvStorage;
-  #checks: Deno.AtomicCheck[] = [];
-  #mutations: Deno.KvMutation[] = [];
+  #checks: AtomicCheck[] = [];
+  #mutations: KvMutation[] = [];
 
   constructor(storage: SentinelKvStorage) {
     this.#storage = storage;
   }
 
-  check(...checks: Deno.AtomicCheck[]): this {
+  check(...checks: AtomicCheck[]): this {
     this.#checks.push(...checks);
     return this;
   }
 
-  mutate(...mutations: Deno.KvMutation[]): this {
+  mutate(...mutations: KvMutation[]): this {
     this.#mutations.push(...mutations);
     return this;
   }
 
-  sum(_key: Deno.KvKey, _n: bigint): this {
+  sum(_key: KvKey, _n: bigint): this {
     throw new Error(UNSUPPORTED);
   }
 
-  min(_key: Deno.KvKey, _n: bigint): this {
+  min(_key: KvKey, _n: bigint): this {
     throw new Error(UNSUPPORTED);
   }
 
-  max(_key: Deno.KvKey, _n: bigint): this {
+  max(_key: KvKey, _n: bigint): this {
     throw new Error(UNSUPPORTED);
   }
 
-  set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): this {
+  set(key: KvKey, value: unknown, _options?: { expireIn?: number }): this {
     return this.mutate({ type: "set", key, value });
   }
 
-  delete(key: Deno.KvKey): this {
+  delete(key: KvKey): this {
     return this.mutate({ type: "delete", key });
   }
 
-  enqueue(_value: unknown, _options?: { delay?: number; keysIfUndelivered?: Deno.KvKey[] }): this {
+  enqueue(_value: unknown, _options?: { delay?: number; keysIfUndelivered?: KvKey[] }): this {
     throw new Error(UNSUPPORTED);
   }
 
-  commit(): Promise<Deno.KvCommitResult | Deno.KvCommitError> {
+  commit(): Promise<KvCommitResult | KvCommitError> {
     const conflicted = this.#checks.some((check) => (this.#storage.entries.get(keyText(check.key))?.versionstamp ?? null) !== check.versionstamp);
     if (conflicted) return Promise.resolve({ ok: false });
     const versionstamp = this.#storage.nextVersionstamp();
@@ -172,7 +186,7 @@ class SentinelAtomicOperation implements Deno.AtomicOperation {
   }
 }
 
-export class SentinelKvStub implements Deno.Kv {
+export class SentinelKvStub implements Kv {
   readonly storage: SentinelKvStorage = { entries: new Map<string, StoredEntry>(), nextVersionstamp: () => this.#nextVersionstamp() };
   #sequence = 0;
 
@@ -181,34 +195,34 @@ export class SentinelKvStub implements Deno.Kv {
     return String(this.#sequence).padStart(20, "0");
   }
 
-  get<T = unknown>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: KvKey): Promise<KvEntryMaybe<T>> {
     const entry = this.storage.entries.get(keyText(key));
-    if (entry === undefined) return Promise.resolve({ key: [...key], value: null, versionstamp: null } as Deno.KvEntryMaybe<T>);
+    if (entry === undefined) return Promise.resolve({ key: [...key], value: null, versionstamp: null } as KvEntryMaybe<T>);
     return Promise.resolve({ key: [...key], value: clone(entry.value) as T, versionstamp: entry.versionstamp });
   }
 
-  getMany<T extends readonly unknown[]>(keys: readonly [...{ [K in keyof T]: Deno.KvKey }]): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+  getMany<T extends readonly unknown[]>(keys: readonly [...{ [K in keyof T]: KvKey }]): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     const entries = keys.map((key) => {
       const entry = this.storage.entries.get(keyText(key));
       return entry === undefined
-        ? ({ key: [...key], value: null, versionstamp: null } as Deno.KvEntryMaybe<unknown>)
-        : ({ key: [...key], value: clone(entry.value), versionstamp: entry.versionstamp } as Deno.KvEntryMaybe<unknown>);
+        ? ({ key: [...key], value: null, versionstamp: null } as KvEntryMaybe<unknown>)
+        : ({ key: [...key], value: clone(entry.value), versionstamp: entry.versionstamp } as KvEntryMaybe<unknown>);
     });
-    return Promise.resolve(entries as unknown as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
+    return Promise.resolve(entries as unknown as { [K in keyof T]: KvEntryMaybe<T[K]> });
   }
 
-  set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown, _options?: { expireIn?: number }): Promise<KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.storage.entries.set(keyText(key), { key: [...key], value: clone(value), versionstamp });
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this.storage.entries.delete(keyText(key));
     return Promise.resolve();
   }
 
-  list<T = unknown>(selector: Deno.KvListSelector, options?: Deno.KvListOptions): Deno.KvListIterator<T> {
+  list<T = unknown>(selector: KvListSelector, options?: KvListOptions): KvListIterator<T> {
     const prefix = "prefix" in selector ? selector.prefix : [];
     const start = "start" in selector ? selector.start : undefined;
     const end = "end" in selector ? selector.end : undefined;
@@ -225,14 +239,14 @@ export class SentinelKvStub implements Deno.Kv {
     return new SentinelKvListIterator<T>(page);
   }
 
-  atomic(): Deno.AtomicOperation {
+  atomic(): AtomicOperation {
     return new SentinelAtomicOperation(this.storage);
   }
 
   watch<T extends readonly unknown[]>(
-    _keys: readonly [...{ [K in keyof T]: Deno.KvKey }],
+    _keys: readonly [...{ [K in keyof T]: KvKey }],
     _options?: { raw?: boolean }
-  ): ReadableStream<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+  ): ReadableStream<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     throw new Error(UNSUPPORTED);
   }
 
@@ -240,7 +254,7 @@ export class SentinelKvStub implements Deno.Kv {
     throw new Error(UNSUPPORTED);
   }
 
-  enqueue(_value: unknown, _options?: { delay?: number; keysIfUndelivered?: Deno.KvKey[] }): Promise<Deno.KvCommitResult> {
+  enqueue(_value: unknown, _options?: { delay?: number; keysIfUndelivered?: KvKey[] }): Promise<KvCommitResult> {
     return Promise.reject(new Error(UNSUPPORTED));
   }
 
@@ -257,12 +271,8 @@ export class SentinelKvStub implements Deno.Kv {
   }
 }
 
-/** Whether this runtime can open a real in-memory Deno KV (`--unstable-kv`). */
-export const hasRuntimeKv = (): boolean => typeof Deno.openKv === "function";
+/** Native Bun storage is required by the migrated acceptance suite. */
+export const hasRuntimeKv = (): boolean => true;
 
-/**
- * Open a disposable store for one test: the runtime's own in-memory Deno KV
- * when it is available, otherwise {@link SentinelKvStub}. Both satisfy the same
- * CAS/versionstamp contract, so the same test body runs under either runtime.
- */
-export const openSentinelTestKv = async (): Promise<Deno.Kv> => (hasRuntimeKv() ? await Deno.openKv(":memory:") : new SentinelKvStub());
+/** Open real disposable storage; tests needing injected faults construct SentinelKvStub directly. */
+export const openSentinelTestKv = async (): Promise<Kv> => await openKv(":memory:");

@@ -80,9 +80,11 @@ three sentences to `docs/DECISIONS.md` recording why this route deviates from th
 
 ## Validation
 
-- Focused: `deno test --frozen tests/provider-selection.test.ts`, `tests/admin-models-catalog.test.ts`,
-  `tests/static-assets.test.ts`, `tests/lithos-wiring.test.ts`, plus `deno task build` (deno check) and the formatter
-  for every edited file (Prettier for `*.ts`, `deno fmt` for JSON/Markdown/HTML/`static/*.js`).
+- Focused:
+  `deno test --frozen --allow-env=CEREBRAS_API_KEY,DEEPSEEK_API_KEY,LITHOSAI_API_KEY,VOYAGEAI_API_KEY,METERED_API_KEY,SURPLUS_API_KEY,OPENROUTER_API_KEY,IMAGE_BASE_MODEL,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID tests/provider-selection.test.ts`,
+  `tests/admin-models-catalog.test.ts`, `tests/static-assets.test.ts`, `tests/lithos-wiring.test.ts`, plus
+  `deno task build` (deno check) and the formatter for every edited file (Prettier for `*.ts`, `deno fmt` for
+  JSON/Markdown/HTML/`static/*.js`).
 - New server assertions: every selectable provider row carries a complete presentation; `lithos` reports label
   "LithosAI" and health key `lithos`; `tiers` is ordered; every `health_key` is a key the provider-health view
   publishes; the derived fallback presentation is complete for an unlisted id.

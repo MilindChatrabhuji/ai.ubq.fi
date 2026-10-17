@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { type AtomicOperation, type Kv, type KvCommitResult, type KvEntryMaybe, type KvKey } from "#kv";
 import assert from "node:assert/strict";
 
 import {
@@ -112,11 +114,11 @@ const observationOf = (input: Partial<CodexCapacityRoutingObservation> & { slot:
 
 /* ------------------------------------------------------------------ fake KV */
 
-type KvWrite = { type: "set" | "delete"; key: Deno.KvKey };
+type KvWrite = { type: "set" | "delete"; key: KvKey };
 
-const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyOf = (key: KvKey): string => JSON.stringify(key);
 
-/** In-memory KV with observable reads and injectable failures; `Deno.openKv` is undefined here. */
+/** In-memory KV with observable reads and injectable failures; `openKv` is undefined here. */
 class ScriptedKv {
   readonly values = new Map<string, unknown>();
   readonly versions = new Map<string, number>();
@@ -126,11 +128,11 @@ class ScriptedKv {
   commitFailures = 0;
   rejectGets = false;
 
-  get binding(): Deno.Kv {
-    return this as unknown as Deno.Kv;
+  get binding(): Kv {
+    return this as unknown as Kv;
   }
 
-  get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     assert.equal(options?.consistency, "strong", "routing reads must be strong");
     const encoded = keyOf(key);
     this.gets.push(encoded);
@@ -141,28 +143,28 @@ class ScriptedKv {
       key,
       value: value ?? null,
       versionstamp: version === undefined ? null : String(version).padStart(20, "0"),
-    } as Deno.KvEntryMaybe<T>);
+    } as KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this.writes.push({ type: "set", key });
     this.#apply({ type: "set", key, value });
     return Promise.resolve({ ok: true, versionstamp: String(this.versions.get(keyOf(key)) ?? 0).padStart(20, "0") });
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const writes: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+  atomic(): AtomicOperation {
+    const checks: { key: KvKey; versionstamp: string | null }[] = [];
+    const writes: { type: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
     const chain = {
-      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
+      check: (...entries: { key: KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         writes.push({ type: "set", key, value });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         writes.push({ type: "delete", key });
         return chain;
       },
@@ -181,7 +183,7 @@ class ScriptedKv {
         return Promise.resolve({ ok: true, versionstamp: "00000000000000000007" } as const);
       },
     };
-    return chain as unknown as Deno.AtomicOperation;
+    return chain as unknown as AtomicOperation;
   }
 
   /** Runs one test with this stub installed and the routing singletons reset. */
@@ -197,7 +199,7 @@ class ScriptedKv {
     }
   }
 
-  #apply(write: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }): void {
+  #apply(write: { type: "set" | "delete"; key: KvKey; value?: unknown }): void {
     const encoded = keyOf(write.key);
     if (write.type === "delete") this.values.delete(encoded);
     else this.values.set(encoded, write.value);
@@ -207,7 +209,7 @@ class ScriptedKv {
 
 /* ------------------------------------------------------------- pure helpers */
 
-Deno.test("slotFor falls back to a neutral slot for an account the state does not describe", async () => {
+test("slotFor falls back to a neutral slot for an account the state does not describe", async () => {
   const auth = account("one");
   const routingAccount = await routingAccountOf(auth, 0);
   const described = stateWith({ ...neutralSlot(routingAccount.credentialVersion, routingAccount.accountIdHash), generation: 4 });
@@ -221,7 +223,7 @@ Deno.test("slotFor falls back to a neutral slot for an account the state does no
   assert.deepEqual(neutral.quota_blocks_by_class, {});
 });
 
-Deno.test("slotMatchesRoutingAccount accepts an exact identity and the legacy null-hash record only", async () => {
+test("slotMatchesRoutingAccount accepts an exact identity and the legacy null-hash record only", async () => {
   const routingAccount = await routingAccountOf(account("one"), 0);
   const exact = neutralSlot(routingAccount.credentialVersion, routingAccount.accountIdHash);
   assert.equal(slotMatchesRoutingAccount(exact, routingAccount), true);
@@ -233,7 +235,7 @@ Deno.test("slotMatchesRoutingAccount accepts an exact identity and the legacy nu
   assert.equal(slotMatchesRoutingAccount(foreign, routingAccount), false);
 });
 
-Deno.test("probeLeaseMatchesRoutingAccount requires a complete claim on the exact account", async () => {
+test("probeLeaseMatchesRoutingAccount requires a complete claim on the exact account", async () => {
   const routingAccount = await routingAccountOf(account("one"), 0, {
     probeGeneration: 3,
     probeToken: "token-3",
@@ -284,7 +286,7 @@ Deno.test("probeLeaseMatchesRoutingAccount requires a complete claim on the exac
   );
 });
 
-Deno.test("withSlot grows the slot list to the requested index and stamps the update", () => {
+test("withSlot grows the slot list to the requested index and stamps the update", () => {
   const state = stateWith(neutralSlot("credential-one", "account-one-hash"));
   const grown = withSlot(state, 2, neutralSlot("credential-three", "account-three-hash"));
   assert.equal(grown.slots.length, 3);
@@ -297,7 +299,7 @@ Deno.test("withSlot grows the slot list to the requested index and stamps the up
   assert.equal(replaced.slots.length, 1);
 });
 
-Deno.test("percent parsing and headroom projection ignore unusable values", () => {
+test("percent parsing and headroom projection ignore unusable values", () => {
   assert.equal(parseFinitePercent(null), null);
   assert.equal(parseFinitePercent("42"), 42);
   assert.equal(parseFinitePercent("abc"), null);
@@ -317,7 +319,7 @@ Deno.test("percent parsing and headroom projection ignore unusable values", () =
   assert.equal(quotaHeadroomFor(negative), 0, "an over-quota window reports no negative headroom");
 });
 
-Deno.test("class-scoped quota blocks keep the legacy class list and its synthetic unknown fence", () => {
+test("class-scoped quota blocks keep the legacy class list and its synthetic unknown fence", () => {
   const astra = quotaClass("gpt-6-astra");
   const known = slotWithClassBlock(astra, quotaBlock(1_790_000_000));
   assert.equal(quotaBlockForClass(known, astra)?.blocked_until_ms, 1_790_000_000);
@@ -344,7 +346,7 @@ Deno.test("class-scoped quota blocks keep the legacy class list and its syntheti
   assert.equal(quotaSignalObservedAtForClass(neutralSlot("credential-one", "account-one-hash"), astra), null);
 });
 
-Deno.test("recheckQuotaClasses preserves legacy evidence and re-fences every class block", () => {
+test("recheckQuotaClasses preserves legacy evidence and re-fences every class block", () => {
   const recheckAtMs = 1_790_000_500;
   const legacyOnly = { ...neutralSlot("credential-one", "account-one-hash"), quota_blocked_until_ms: 1_790_000_100, quota_blocked_classes: ["codex"] };
   const recheckedLegacy = recheckQuotaClasses(legacyOnly, recheckAtMs);
@@ -366,7 +368,7 @@ Deno.test("recheckQuotaClasses preserves legacy evidence and re-fences every cla
   assert.equal(rechecked.observed_reset_at_is_stable, true);
 });
 
-Deno.test("releaseQuotaClassProbe clears the class fence and keeps pending recovery evidence", () => {
+test("releaseQuotaClassProbe clears the class fence and keeps pending recovery evidence", () => {
   const astra = quotaClass("gpt-6-astra");
   const released = releaseQuotaClassProbe(slotWithClassBlock(astra, quotaBlock(1_790_000_100)), astra);
   assert.deepEqual(released.quota_blocks_by_class, {});
@@ -381,7 +383,7 @@ Deno.test("releaseQuotaClassProbe clears the class fence and keeps pending recov
   assert.equal(releasedPending.banked_reset_generation_ambiguous, true);
 });
 
-Deno.test("legacy timeout fences are discarded before any routing decision", async () => {
+test("legacy timeout fences are discarded before any routing decision", async () => {
   await ScriptedKv.run(async (kv) => {
     const auth = account("one");
     const identity = await routingAccountIdentity(auth);
@@ -403,7 +405,7 @@ Deno.test("legacy timeout fences are discarded before any routing decision", asy
 
 /* --------------------------------------------------- loading and transitions */
 
-Deno.test("loadCodexAccountRouting normalizes from the auth pool without a KV binding and caches the result", async () => {
+test("loadCodexAccountRouting normalizes from the auth pool without a KV binding and caches the result", async () => {
   setKvForTest(null);
   resetCodexAccountRoutingForTest();
   try {
@@ -422,7 +424,7 @@ Deno.test("loadCodexAccountRouting normalizes from the auth pool without a KV bi
   }
 });
 
-Deno.test("loadCodexAccountRouting reads the durable row and falls open when the binding fails", async () => {
+test("loadCodexAccountRouting reads the durable row and falls open when the binding fails", async () => {
   await ScriptedKv.run(async (kv) => {
     const auth = account("one");
     const identity = await routingAccountIdentity(auth);
@@ -442,7 +444,7 @@ Deno.test("loadCodexAccountRouting reads the durable row and falls open when the
   });
 });
 
-Deno.test("updateRoutingState applies a local transition when there is no KV binding", async () => {
+test("updateRoutingState applies a local transition when there is no KV binding", async () => {
   setKvForTest(null);
   resetCodexAccountRoutingForTest();
   try {
@@ -469,7 +471,7 @@ Deno.test("updateRoutingState applies a local transition when there is no KV bin
   }
 });
 
-Deno.test("updateRoutingState commits with the cached versionstamp, survives a lost race and reports exhaustion", async () => {
+test("updateRoutingState commits with the cached versionstamp, survives a lost race and reports exhaustion", async () => {
   await ScriptedKv.run(async (kv) => {
     const pool = poolOf(account("one"));
     await loadCodexAccountRouting(pool);
@@ -496,7 +498,7 @@ Deno.test("updateRoutingState commits with the cached versionstamp, survives a l
   });
 });
 
-Deno.test("capacity observations are parsed defensively from the durable store", () => {
+test("capacity observations are parsed defensively from the durable store", () => {
   const valid = observationOf({ slot: 0, account_id_hash: "account-one-hash" });
   assert.deepEqual(parseStoredCapacityObservationStore({ v: 1, observations: [valid] }), [valid]);
   assert.deepEqual(parseStoredCapacityObservationStore({ v: 2, observations: [valid] }), [], "an unknown store version is ignored");
@@ -547,7 +549,7 @@ Deno.test("capacity observations are parsed defensively from the durable store",
   );
 });
 
-Deno.test("capacity headroom follows the requested model's own rate-limit windows", () => {
+test("capacity headroom follows the requested model's own rate-limit windows", () => {
   const observation = observationOf({
     slot: 0,
     account_id_hash: "account-one-hash",
@@ -593,7 +595,7 @@ const storedObservationsOf = (kv: ScriptedKv): readonly CodexCapacityRoutingObse
 
 const NOW_MS = 1_790_000_000_000;
 
-Deno.test("recordCodexCapacityRoutingObservations stores only account-hash-bound rows and refuses unusable input", async () => {
+test("recordCodexCapacityRoutingObservations stores only account-hash-bound rows and refuses unusable input", async () => {
   await ScriptedKv.run(async (kv) => {
     const one = account("one");
     const pool = poolOf(one, account("two"));
@@ -628,7 +630,7 @@ Deno.test("recordCodexCapacityRoutingObservations stores only account-hash-bound
   });
 });
 
-Deno.test("capacity observations are kept in memory without KV and are never adopted after a lost compare-and-set", async () => {
+test("capacity observations are kept in memory without KV and are never adopted after a lost compare-and-set", async () => {
   await ScriptedKv.run(async (kv) => {
     const one = account("one");
     const pool = poolOf(one);
@@ -654,7 +656,7 @@ Deno.test("capacity observations are kept in memory without KV and are never ado
   }
 });
 
-Deno.test("the durable observation store merges with the legacy provider snapshot by newest sample", async () => {
+test("the durable observation store merges with the legacy provider snapshot by newest sample", async () => {
   await ScriptedKv.run(async (kv) => {
     const one = account("one");
     const pool = poolOf(one);
@@ -713,7 +715,7 @@ Deno.test("the durable observation store merges with the legacy provider snapsho
   });
 });
 
-Deno.test("reconcileCapacityRoutingState applies only observations that still describe the durable slot", async () => {
+test("reconcileCapacityRoutingState applies only observations that still describe the durable slot", async () => {
   await ScriptedKv.run(async () => {
     const one = account("one");
     const two = account("two");
@@ -758,7 +760,7 @@ Deno.test("reconcileCapacityRoutingState applies only observations that still de
   });
 });
 
-Deno.test("a recorded observation reconciles the cached routing slot before the next inference", async () => {
+test("a recorded observation reconciles the cached routing slot before the next inference", async () => {
   await ScriptedKv.run(async (kv) => {
     const one = account("one");
     const pool = poolOf(one);
