@@ -43,9 +43,13 @@ export const EVICTION_MAX_CHUNK_DELETES = 512;
 // native atomic backend accepts at most ten checks, so four rows (nine checks)
 // is the largest portable batch.
 export const BOOTSTRAP_BATCH_ENTRIES = 4;
-// Owner rows (accounting + manifest) one bootstrap batch may read while indexing
-// chunk owners. Fixed, so a batch's owner reads never grow with retained captures.
+// Owner rows (accounting + manifest) one slice of the chunk owner index reads.
+// Fixed, so no single owner read grows with retained captures.
 export const BOOTSTRAP_OWNER_SCAN_ENTRIES = 64;
+// Longest a bootstrap batch waits for its sweep's owner index fill, which runs
+// in the background, before it leaves the sweep in place for a later batch. A
+// small store's index fills well inside it; a large one keeps filling after.
+export const BOOTSTRAP_OWNER_INDEX_WAIT_MS = 500;
 export const RESERVATION_REAP_LIMIT = 8;
 export const STATUS_PRUNE_BATCH = 16;
 export const CAS_ATTEMPTS = 5;
@@ -110,6 +114,12 @@ export type SentinelReplayBudgetLedger = Readonly<{
   bootstrap_complete: boolean;
   /** "<prefix index>|<kv cursor>" while a resumable bootstrap sweep is in flight. */
   bootstrap_cursor: string | null;
+  /**
+   * Random id the batch that starts a sweep stamps, so in-memory state built for
+   * one sweep never serves another, even after the ledger is deleted. Absent on
+   * ledgers written before it existed.
+   */
+  bootstrap_sweep?: string | null;
   /** Sticky fail-closed marker set when an in-scope row could not be accounted. */
   accounting_error: string | null;
   over_budget: boolean;
@@ -232,6 +242,7 @@ const emptyLedger = (budgetBytes: number): SentinelReplayBudgetLedger => ({
 });
 
 export const counter = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isAbsentOrString = (value: unknown): boolean => value === undefined || value === null || typeof value === "string";
 
 /**
  * A present ledger is only accepted when every counter is a non-negative safe
@@ -264,7 +275,8 @@ const isLedger = (value: unknown): value is SentinelReplayBudgetLedger => {
   for (const field of ["last_skip_reason", "bootstrap_cursor", "accounting_error"]) {
     if (row[field] !== null && typeof row[field] !== "string") return false;
   }
-  return true;
+  // Optional: ledgers written before sweeps had ids omit it.
+  return isAbsentOrString(row.bootstrap_sweep);
 };
 
 export const isAccountingRow = (value: unknown): value is SentinelReplayAccountingRow => {

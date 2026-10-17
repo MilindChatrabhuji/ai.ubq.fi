@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
+import { isProviderSelectionId, normalizeSelectedProviderIds } from "../src/provider/selection.ts";
 const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
 
 class TestElement {
@@ -292,6 +293,100 @@ test("shipped routing warnings describe only disabled capacity and paid fallback
   assert.deepEqual(Array.from(warnings()), []);
   selection.clear();
   assert.deepEqual(Array.from(warnings()), [], "an empty selection keeps its existing unfiltered semantics");
+});
+
+test("a saved selection naming a removed Codex subscription keeps its restriction when Surplus is unchecked", () => {
+  const removed = `codex:${"a".repeat(64)}`;
+  const configuredA = `codex:${"b".repeat(64)}`;
+  const configuredB = `codex:${"c".repeat(64)}`;
+  const badges: string[] = [];
+  // The API roster: the removed subscription is no longer configured, so only
+  // the two remaining accounts are listed under the Codex tier.
+  const fixture = {
+    providerRoster: [
+      { id: "codex", label: "Codex", subscriptions: [{ id: configuredA }, { id: configuredB }] },
+      { id: "surplus", label: "Surplus" },
+      { id: "openlux", label: "OpenLux" },
+    ],
+    providerSelection: new Set<string>(),
+    providersSavedSelection: new Set<string>(),
+    providersVisibleIds: new Set(["codex", "surplus", "openlux"]),
+    providerSelectionLoadedAt: 1,
+    providerSelectionSaving: false,
+    providerSelectionSaveError: "",
+    providersSummary: new TestElement(),
+    providersWarning: new TestElement(),
+    providersCheckAllBtn: new TestElement(),
+    providersUncheckAllBtn: new TestElement(),
+    providersInvertBtn: new TestElement(),
+    providersDropMissingBtn: new TestElement(),
+    providersDiscardBtn: new TestElement(),
+    providersSelectionSave: new TestElement(),
+    formatNumber: (value: number) => String(value),
+    providerHealthFor: () => null,
+    providersFilterIsActive: () => false,
+    updateProviderTierFilterChips: () => {},
+    setProvidersSelectionBadge: (_state: string, text: string) => badges.push(text),
+  };
+  // Execute the shipped roster helpers, staged-selection edits, serializer and
+  // panel status; nothing else from the console runs here.
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const providerRosterEntry ="), sourceText.indexOf("/** Roster order for rendering")) +
+      sourceText.slice(sourceText.indexOf("const providersSubscriptionsFor ="), sourceText.indexOf("const providersTierCounts =")) +
+      sourceText.slice(sourceText.indexOf("const providersEmptyWarning ="), sourceText.indexOf("const renderProvidersPicker =")) +
+      sourceText.slice(sourceText.indexOf("const setProviderChecked ="), sourceText.indexOf('providersList.addEventListener("change"')) +
+      "\nglobalThis.picker = { fromIds: providersSelectionFromIds, setProviderChecked, setSubscriptionChecked, serialize: providersSelectedIds, status: updateProvidersStatus };",
+    fixture
+  );
+  const picker = (
+    fixture as typeof fixture & {
+      picker: {
+        fromIds: (ids: string[]) => Set<string>;
+        setProviderChecked: (id: string, checked: boolean) => void;
+        setSubscriptionChecked: (id: string, checked: boolean) => void;
+        serialize: () => string[];
+        status: () => void;
+      };
+    }
+  ).picker;
+  const load = (ids: string[]) => {
+    fixture.providersSavedSelection = picker.fromIds(ids);
+    fixture.providerSelection = picker.fromIds(ids);
+  };
+  const serialize = () => {
+    const ids = Array.from(picker.serialize());
+    // Every serialized id passes the POST validation and survives storage
+    // normalization, so the console saves exactly what it shows as staged.
+    assert.ok(ids.every((id) => isProviderSelectionId(id)));
+    const sorted = (values: readonly string[]) => [...values].sort((left, right) => left.localeCompare(right));
+    assert.deepEqual(sorted(normalizeSelectedProviderIds(ids)), sorted(ids));
+    return ids;
+  };
+
+  load([removed, "surplus"]);
+  assert.deepEqual(serialize(), ["surplus", removed], "saving an untouched restriction keeps the removed subscription");
+  picker.setProviderChecked("surplus", false);
+  assert.deepEqual(serialize(), [removed], "a nonempty staged restriction never serializes to the empty no-filter list");
+  picker.status();
+  assert.equal(fixture.providersSummary.textContent, "0 of 3 providers active.", "the panel never reports this restriction as no filter");
+  assert.match(fixture.providersWarning.textContent, /1 saved subscription is no longer configured/);
+  assert.equal(badges.at(-1), "Unsaved changes");
+  assert.equal(fixture.providersSelectionSave.disabled, false);
+  assert.equal(fixture.providersDropMissingBtn.disabled, false);
+
+  load([removed, "surplus"]);
+  picker.setSubscriptionChecked(configuredA, true);
+  assert.deepEqual(serialize(), ["surplus", configuredA, removed], "narrowing to a configured account keeps the removed one");
+  picker.status();
+  assert.equal(fixture.providersSummary.textContent, "2 of 3 providers active: Codex (1 of 2 subscriptions), Surplus.");
+
+  load([removed, "surplus"]);
+  picker.setProviderChecked("codex", true);
+  assert.deepEqual(serialize(), ["codex", "surplus"], "the Codex umbrella already covers every configured account");
+  picker.setProviderChecked("openlux", true);
+  assert.deepEqual(serialize(), [], "checking every provider is still the no-filter state");
+  picker.status();
+  assert.equal(fixture.providersSummary.textContent, "All 3 providers checked: no filter is saved, so every provider is active.");
 });
 
 test("shipped capacity summary counts exactly displayed Claude roster or legacy rows without changing Codex chart inputs", () => {
