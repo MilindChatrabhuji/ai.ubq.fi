@@ -6,7 +6,7 @@ import { handleTerminalRoute } from "../src/handler/terminal-route.ts";
 import { setInferenceAdmissionControllerForTest } from "../src/handler/admission.ts";
 import { createInferenceAdmissionController } from "../src/inference-admission.ts";
 import { config } from "../src/config.ts";
-import { VpsJournalMetrics } from "../ops/vps-release-metrics.ts";
+import { boundedRows, metricsFixture } from "../ops/tests/vps-metrics-fixture.ts";
 import type { VpsIdentity } from "../ops/vps-release-contract.ts";
 
 type RequestEvent = { kind: "accepted" | "terminal"; payload: Record<string, unknown> };
@@ -40,27 +40,23 @@ const captureEvents = async (run: () => Promise<Response>, afterAccepted?: () =>
 };
 
 /** Model the baked release identity in the fake journal; preserve every actual producer field and event. */
-const sampleEvents = (events: readonly RequestEvent[]) =>
-  new VpsJournalMetrics(
+const sampleEvents = async (events: readonly RequestEvent[]) => {
+  const raw = events
+    .map((event, index) =>
+      JSON.stringify({
+        _SYSTEMD_UNIT: "ai-ubq-fi.service",
+        _BOOT_ID: "fixture-boot",
+        __CURSOR: "cursor-" + String(index),
+        __REALTIME_TIMESTAMP: String((start + index + 1) * 1000),
+        MESSAGE:
+          "[ai.ubq.fi] request_" + event.kind + " " + JSON.stringify({ ...event.payload, git_sha: identity.gitSha, deno_revision: identity.deploymentId }),
+      })
+    )
+    .join("\n");
+  const { metrics } = await metricsFixture(
+    identity,
     {
-      read: () =>
-        Promise.resolve(
-          events
-            .map((event, index) =>
-              JSON.stringify({
-                _SYSTEMD_UNIT: "ai-ubq-fi.service",
-                _BOOT_ID: "fixture-boot",
-                __CURSOR: `cursor-${index}`,
-                __REALTIME_TIMESTAMP: String((start + index + 1) * 1000),
-                MESSAGE: `[ai.ubq.fi] request_${event.kind} ${JSON.stringify({
-                  ...event.payload,
-                  git_sha: identity.gitSha,
-                  deno_revision: identity.deploymentId,
-                })}`,
-              })
-            )
-            .join("\n")
-        ),
+      read: (from, to) => Promise.resolve(boundedRows(raw, from, to)),
       coverage: (windowStart, windowEnd) =>
         Promise.resolve({
           complete: true,
@@ -73,11 +69,10 @@ const sampleEvents = (events: readonly RequestEvent[]) =>
           digest: "d".repeat(64),
         }),
     },
-    () => start + 65_000,
-    5000,
-    [],
-    []
-  ).sample({ identity, windowStart: start, windowEnd: start + 30_000 });
+    () => start + 65_000
+  );
+  return metrics.sample({ identity, windowStart: start, windowEnd: start + 30_000 });
+};
 
 test("terminal admission: actual authentication refusal is excluded with complete journal coverage", async () => {
   const { response, events } = await captureEvents(() =>

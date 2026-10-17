@@ -14,6 +14,19 @@ import {
   withBudget,
 } from "./replay-retention-schema.ts";
 
+/** Durable marker of the last committed maintenance recount; it sits outside every counted prefix. */
+export const SENTINEL_REPLAY_METADATA_RECONCILED_KEY = ["uos_ai", "sentinel_replay", "v1", "metadata_reconciled"] as const;
+/**
+ * Admin-poll maintenance recounts status/tombstone metadata at most once per
+ * interval. Native TTL deletion only leaves the counters conservatively high, so
+ * between recounts the admin status may overstate them by rows that already
+ * expired; the first maintenance pass at least this long after the last
+ * committed recount removes that residual charge. Admission and publish under
+ * metadata pressure never wait for it: their pruning path recounts at once.
+ */
+export const SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS = 15 * 60 * 1_000;
+
+type ReconcileMarker = Readonly<{ version: 1; reconciled_at_ms: number }>;
 type MetadataTotals = Readonly<{ records: number; bytes: number }>;
 type MetadataScan = Readonly<{ kind: "complete"; totals: MetadataTotals }> | Readonly<{ kind: "over_limit" | "failed" }>;
 
@@ -62,8 +75,17 @@ const scanMetadata = async (kv: Kv): Promise<MetadataScan> => {
  * removes that residual charge. Valid over-cap data permits bounded pruning only
  * after the same ledger CAS; its partial totals are never committed.
  * A partial/corrupt scan or CAS loss changes nothing.
+ *
+ * A recount that matches the ledger leaves the ledger unwritten, so an unchanged
+ * pass never moves its version under concurrent CAS writers. When
+ * `reconciledAtMs` is given, the same commit records the maintenance marker; a
+ * lost CAS therefore never records a recount that did not land.
  */
-export const reconcileSentinelReplayStatusMetadata = async (kv: Kv, budgetBytes: number): Promise<"reconciled" | "over_limit" | "failed"> => {
+export const reconcileSentinelReplayStatusMetadata = async (
+  kv: Kv,
+  budgetBytes: number,
+  reconciledAtMs?: number
+): Promise<"reconciled" | "over_limit" | "failed"> => {
   try {
     const state = await readLedger(kv, budgetBytes);
     if (state.kind !== "ok" || !state.ledger.bootstrap_complete || state.ledger.accounting_error !== null) return "failed";
@@ -72,7 +94,12 @@ export const reconcileSentinelReplayStatusMetadata = async (kv: Kv, budgetBytes:
     const operation = kv.atomic().check({ key: SENTINEL_REPLAY_BUDGET_LEDGER_KEY, versionstamp: state.versionstamp });
     if (scan.kind === "complete") {
       const ledger = withBudget(state.ledger, budgetBytes);
-      operation.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, { ...ledger, status_records: scan.totals.records, metadata_bytes: scan.totals.bytes });
+      const changed = ledger !== state.ledger || ledger.status_records !== scan.totals.records || ledger.metadata_bytes !== scan.totals.bytes;
+      if (changed) operation.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, { ...ledger, status_records: scan.totals.records, metadata_bytes: scan.totals.bytes });
+    }
+    if (reconciledAtMs !== undefined) {
+      const marker: ReconcileMarker = { version: 1, reconciled_at_ms: reconciledAtMs };
+      operation.set(SENTINEL_REPLAY_METADATA_RECONCILED_KEY, marker);
     }
     const committed = await operation.commit();
     if (!committed.ok) return "failed";
@@ -80,4 +107,35 @@ export const reconcileSentinelReplayStatusMetadata = async (kv: Kv, budgetBytes:
   } catch {
     return "failed";
   }
+};
+
+/**
+ * A missing or malformed marker, one at least the interval old, one from a clock
+ * that ran ahead of `nowMs`, or an invalid `nowMs` makes the recount due; only a
+ * valid marker inside the interval defers it.
+ */
+const recountDue = (value: unknown, nowMs: number): boolean => {
+  if (!counter(nowMs) || typeof value !== "object" || value === null) return true;
+  const marker = value as Record<string, unknown>;
+  if (marker.version !== 1 || !counter(marker.reconciled_at_ms)) return true;
+  return marker.reconciled_at_ms > nowMs || nowMs - marker.reconciled_at_ms >= SENTINEL_REPLAY_METADATA_RECONCILE_INTERVAL_MS;
+};
+
+/**
+ * The throttled recount for admin-poll maintenance. Inside the interval it reads
+ * one marker row instead of every status/tombstone row and writes nothing. A due
+ * recount that commits (including a valid over-cap witness) records the marker;
+ * a failed scan or lost CAS does not, so the next poll retries it.
+ */
+export const reconcileSentinelReplayStatusMetadataIfDue = async (
+  kv: Kv,
+  budgetBytes: number,
+  nowMs: number
+): Promise<"reconciled" | "over_limit" | "failed" | "not_due"> => {
+  try {
+    if (!recountDue((await kv.get(SENTINEL_REPLAY_METADATA_RECONCILED_KEY)).value, nowMs)) return "not_due";
+  } catch {
+    return "failed";
+  }
+  return await reconcileSentinelReplayStatusMetadata(kv, budgetBytes, counter(nowMs) ? nowMs : undefined);
 };

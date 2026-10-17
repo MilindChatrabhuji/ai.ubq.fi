@@ -36,6 +36,7 @@ import {
 import { resetDebugRoutingCacheForTest } from "../src/debug-routing.ts";
 import { setKvForTest } from "../src/kv.ts";
 import type { PromptCacheAnalyticsView } from "../src/cache/prompt-analytics.ts";
+import { fetchSurplusModels, resetSurplusModelsCacheForTest } from "../src/provider/surplus.ts";
 
 type ErrorFields = Readonly<{ message?: string; code?: string; type?: string; param?: string | null }>;
 type Json = Record<string, unknown>;
@@ -601,6 +602,36 @@ test("admin models refresh reports every upstream refresh result", async () => {
   const refreshedPayload = (await bodyOf(refreshed)).data as Json;
   assert.deepEqual(refreshedPayload.openrouter, { upstream_models: 1, updated_at_ms: 11, refreshed: true });
   assert.deepEqual(refreshedPayload.surplus, { models: 1, updated_at_ms: 12 });
+});
+
+test("admin models refresh performs keyless Surplus discovery", async () => {
+  const originalSurplusApiKey = process.env.SURPLUS_API_KEY;
+  Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+  resetSurplusModelsCacheForTest();
+  let fetchCalls = 0;
+  try {
+    const response = await handleAdminModelsRefresh({
+      refreshEnrichment: () => Promise.resolve(null),
+      refreshOpenlux: () => Promise.resolve(null),
+      refreshSurplus: (options) =>
+        fetchSurplusModels({
+          ...options,
+          fetcher: () => {
+            fetchCalls += 1;
+            return Promise.resolve(Response.json({ data: [{ id: "surplus-test-model" }] }));
+          },
+        }),
+      refreshClaude: () => Promise.resolve(null),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(fetchCalls, 1);
+    const data = (await bodyOf(response)).data as Json;
+    assert.equal((data.surplus as Json).models, 1);
+  } finally {
+    resetSurplusModelsCacheForTest();
+    if (originalSurplusApiKey === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = originalSurplusApiKey;
+  }
 });
 
 test("admin provider selection get serves the roster and reports an unavailable KV", async () => {

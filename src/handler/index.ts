@@ -45,6 +45,8 @@ import {
   handleAdminProvidersQuotaProjectionBackfill,
 } from "../admin/index.ts";
 import { handleAdminErrors } from "../admin/error-log.ts";
+import { proxyAdminChartSource } from "../admin/chart-source-proxy.ts";
+import { handleCapacityObservationIngest } from "../admin/capacity-observation-sync.ts";
 import type { ApiKeyAuditContext } from "../admin/api-key-audit.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "../agent-messages.ts";
 import { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth, type AdminAuthResult } from "../auth/index.ts";
@@ -152,13 +154,14 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET"], path: "/admin/codex/supervisor/sessions", run: () => handleAdminCodexSupervisorSessions() },
   { methods: ["GET"], path: "/admin/codex/supervisor/output", run: (req) => handleAdminCodexSupervisorOutput(req) },
   { methods: ["POST"], path: "/admin/codex/supervisor/brief", run: (req) => handleAdminCodexSupervisorBrief(req) },
-  { methods: ["GET"], path: "/admin/errors", run: (req) => handleAdminErrors(req) },
+  { methods: ["GET"], path: "/admin/errors", run: (req) => proxyAdminChartSource(req, handleAdminErrors(req)) },
   { methods: ["GET", "POST"], path: "/admin/defaults", run: (req) => handleAdminDefaults(req) },
   { methods: ["GET", "POST", "DELETE"], path: "/admin/debug/routing", run: (req) => handleAdminDebugRouting(req) },
   { methods: ["GET"], path: "/admin/providers", run: () => handleHealthProviders({ includeQuota: true }) },
   { methods: ["GET"], path: "/admin/providers/selection", run: () => handleAdminProviderSelectionGet() },
   { methods: ["POST"], path: "/admin/providers/selection", run: (req) => handleAdminProviderSelectionSet(req) },
-  { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => handleProviderCapacity(req) },
+  { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => proxyAdminChartSource(req, handleProviderCapacity(req)) },
+  { methods: ["POST"], path: "/admin/providers/capacity/observations", run: (req) => handleCapacityObservationIngest(req) },
   { methods: ["GET"], path: "/admin/providers/capacity/rollups", run: (req) => handleProviderCapacityRollups(req) },
   { methods: ["GET", "POST"], path: "/admin/providers/claude-code/access", run: (req) => handleAdminClaudeCodeAccess(req) },
   { methods: ["POST"], path: "/admin/providers/claude-code/accounts/active", run: (req) => handleAdminClaudeCodeAccountActive(req) },

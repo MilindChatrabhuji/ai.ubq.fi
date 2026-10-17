@@ -187,6 +187,10 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     providersList.replaceChildren(...rows);
   };
 
+  const markProvidersUnavailable = () => {
+    providersList.textContent = "Provider health unavailable; previous observations cleared.";
+  };
+
   const loadProviders = async () => {
     if (!active) return;
     if (providerController) providerController.abort();
@@ -226,9 +230,22 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       ) {
         return;
       }
-      if (selection) renderProviders(selection, healthSnapshot);
+      if (selection && healthSnapshot) renderProviders(selection, healthSnapshot);
+      else markProvidersUnavailable();
     } catch {
-      // Best effort: the sessions panel already reports its own load state.
+      const currentToken = typeof getToken === "function" ? getToken() : "";
+      if (
+        loadId !== providerLoadId ||
+        providerController !== request ||
+        request.signal.aborted ||
+        !active ||
+        selectionTarget !== apiUrl("/admin/providers/selection") ||
+        healthTarget !== apiUrl("/admin/providers") ||
+        token !== currentToken
+      ) {
+        return;
+      }
+      markProvidersUnavailable();
     } finally {
       if (providerController === request) providerController = null;
     }

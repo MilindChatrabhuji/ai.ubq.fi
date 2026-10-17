@@ -324,6 +324,11 @@ const appendToolCall = (messages: Record<string, unknown>[], call: Record<string
   const previous = messages.at(-1);
   if (previous?.role === "assistant" && Array.isArray(previous.tool_calls) && previous.content === null) {
     previous.tool_calls.push(call);
+    if (pending.reasoning) {
+      const previousReasoning = typeof previous.reasoning_content === "string" ? previous.reasoning_content : "";
+      previous.reasoning_content = previousReasoning + pending.reasoning;
+      pending.reasoning = "";
+    }
     return;
   }
   const turn: Record<string, unknown> = { role: "assistant", content: null, tool_calls: [call] };
@@ -343,7 +348,9 @@ const appendMessageItem = (
   elisions: ForwardedPayloadElision[]
 ): DeepSeekResponsesResult<void> => {
   const role = getString(item.role) ?? "user";
-  if (role !== "user" && role !== "assistant" && role !== "developer") return failure("input.role", `input role '${role}' is not supported`);
+  if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
+    return failure("input.role", `input role '${role}' is not supported`);
+  }
   const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
@@ -549,11 +556,15 @@ const chatFunctionRecord = (fn: Record<string, unknown>, chatName: string): Reco
   },
 });
 
-/** Names must stay distinct and rule-compliant, so collisions suffix deterministically. */
+const CHAT_FUNCTION_NAME_LIMIT = 128;
+
+/** Names must stay distinct and rule-compliant within the provider limit, so collisions suffix deterministically. */
 const uniqueChatName = (used: ReadonlySet<string>, name: string): string => {
-  if (!used.has(name)) return name;
+  const boundedName = name.slice(0, CHAT_FUNCTION_NAME_LIMIT);
+  if (!used.has(boundedName)) return boundedName;
   for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${name}_${suffix}`;
+    const suffixText = `_${suffix}`;
+    const candidate = `${name.slice(0, CHAT_FUNCTION_NAME_LIMIT - suffixText.length)}${suffixText}`;
     if (!used.has(candidate)) return candidate;
   }
 };
