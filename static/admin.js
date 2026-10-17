@@ -293,6 +293,7 @@ let adminPrefetchSignature = "";
 let adminPrefetchPromise = null;
 let authWidgetAutoOpened = false;
 let allKeys = [];
+let keyExpiryTimer = 0;
 let keysLoading = false;
 let keysLoadedAt = 0;
 let providersLoading = false;
@@ -368,6 +369,7 @@ const meteredQuotaCycleStarted = mustGet("metered-quota-cycle-started");
 let defaultsLoaded = false;
 let defaultsSaving = false;
 let defaultsSaveQueued = false;
+let defaultsSaveQueuedTarget = "";
 let defaultsModelMap = new Map();
 let defaultsTouched = false;
 let defaultsEditRevision = 0;
@@ -920,6 +922,23 @@ const isExpiredAt = (ms) => typeof ms === "number" && Number.isFinite(ms) && ms 
 const getApiKeyStatus = (key) => {
   if (key?.revoked_at_ms) return "revoked";
   return isExpiredAt(key?.expires_at_ms) ? "expired" : "active";
+};
+
+const scheduleKeyExpiryRefresh = () => {
+  if (keyExpiryTimer) globalThis.clearTimeout(keyExpiryTimer);
+  keyExpiryTimer = 0;
+  const now = Date.now();
+  const nextExpiry = allKeys.reduce((next, key) => {
+    const expiresAtMs = key?.expires_at_ms;
+    return typeof expiresAtMs === "number" && Number.isFinite(expiresAtMs) && expiresAtMs > now
+      ? Math.min(next, expiresAtMs)
+      : next;
+  }, Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(nextExpiry)) return;
+  keyExpiryTimer = globalThis.setTimeout(() => {
+    keyExpiryTimer = 0;
+    renderKeys(allKeys, currentKeyView);
+  }, Math.min(2_147_483_647, Math.max(0, nextExpiry - now + 1)));
 };
 
 const numberFormatter = new Intl.NumberFormat();
@@ -6629,11 +6648,13 @@ const renderKeys = (keys, view = "all") => {
     setKeyListMessage(view === "all" ? "No API keys yet." : `No ${view} API keys.`);
     setKeysBadge("ok", view === "all" ? "No API keys" : `No ${view} API keys`);
     updateAccessApiKeysSummary();
+    scheduleKeyExpiryRefresh();
     return;
   }
 
   filteredKeys.forEach((key, index) => {
     const statusKind = getApiKeyStatus(key);
+    const keyLabel = key.name || key.id || "unnamed API key";
     const row = document.createElement("div");
     row.dataset.key = "row";
     row.dataset.state = statusKind;
@@ -6801,13 +6822,13 @@ const renderKeys = (keys, view = "all") => {
     applyIconButton(editBtn, "edit", "Edit API key");
     actionRow.appendChild(editBtn);
 
-    if (statusKind === "active") {
+    if (statusKind !== "revoked") {
       const revokeBtn = document.createElement("button");
       revokeBtn.type = "button";
       revokeBtn.dataset.variant = "danger";
       applyIconButton(revokeBtn, "revoke", "Revoke API key");
       revokeBtn.addEventListener("click", () => {
-        void revokeKey(key.id, key.name || "this API key", revokeBtn);
+        void revokeKey(key.id, keyLabel, revokeBtn);
       });
       actionRow.appendChild(revokeBtn);
     } else if (statusKind === "revoked") {
@@ -6815,7 +6836,7 @@ const renderKeys = (keys, view = "all") => {
       restoreBtn.type = "button";
       applyIconButton(restoreBtn, "restore", "Unrevoke API key");
       restoreBtn.addEventListener("click", () => {
-        void unrevokeKey(key.id, key.name || "this API key", restoreBtn);
+        void unrevokeKey(key.id, keyLabel, restoreBtn);
       });
       actionRow.appendChild(restoreBtn);
 
@@ -6824,7 +6845,7 @@ const renderKeys = (keys, view = "all") => {
       deleteBtn.dataset.variant = "danger";
       applyIconButton(deleteBtn, "trash", "Delete API key");
       deleteBtn.addEventListener("click", () => {
-        void deleteKey(key.id, key.name || "this API key", deleteBtn);
+        void deleteKey(key.id, keyLabel, deleteBtn);
       });
       actionRow.appendChild(deleteBtn);
     }
@@ -7121,6 +7142,17 @@ const renderKeys = (keys, view = "all") => {
       updatePaidFallbackInfo();
     };
 
+    const updateKeyStatus = () => {
+      const nextStatusKind = getApiKeyStatus(key);
+      row.dataset.state = nextStatusKind;
+      status.dataset.state = nextStatusKind === "active" ? "ok" : nextStatusKind === "expired" ? "warning" : "bad";
+      status.textContent =
+        nextStatusKind === "revoked" ? "Revoked" : nextStatusKind === "expired" ? "Expired" : "Active";
+      expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
+      if (nextStatusKind === "expired") expiresInfo.item.dataset.state = "bad";
+      else delete expiresInfo.item.dataset.state;
+    };
+
     const buildEditPayload = () => {
       const payload = { id: key.id };
       let changed = false;
@@ -7303,7 +7335,7 @@ const renderKeys = (keys, view = "all") => {
         }
 
         title.textContent = key.name || "Untitled";
-        expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
+        updateKeyStatus();
         observedAtMs = Date.now();
         updateUsageInfo();
 
@@ -7328,6 +7360,8 @@ const renderKeys = (keys, view = "all") => {
         } else {
           setEditBadge("ok", "Saved");
         }
+        if (inputsUnchanged && !expiresMismatch) renderKeys(allKeys, currentKeyView);
+        updateAccessApiKeysSummary();
       } catch {
         setEditBadge("bad", "Offline");
       } finally {
@@ -7460,6 +7494,7 @@ const renderKeys = (keys, view = "all") => {
   });
   setKeysBadge("ok", `${formatPlural(filteredKeys.length, "API key")}`);
   updateAccessApiKeysSummary();
+  scheduleKeyExpiryRefresh();
 };
 
 const renderPasskeyUsers = (users) => {
@@ -8712,11 +8747,16 @@ const unrevokeKey = async (id, name, button) => {
     }
     updateKeyRevocationState(id, null);
     const remainsExpired = isExpiredAt(allKeys.find((key) => key?.id === id)?.expires_at_ms);
+    if (remainsExpired) {
+      toast.info(`Unrevoked ${name}`, {
+        description: "The key remains expired and cannot be used until its expiry is extended.",
+      });
+    }
+    await refreshKeys();
     setKeysBadge(
       remainsExpired ? "warning" : "ok",
       remainsExpired ? `Unrevoked ${name} · remains expired` : `Unrevoked ${name}`
     );
-    void refreshKeys();
   } catch {
     setKeysBadge("bad", "Offline");
   } finally {
@@ -8913,6 +8953,24 @@ const updateReasoningOptions = (modelSlug, preferred) => {
   return updateReasoningSelectForModel(defaultsReasoningSelect, model, preferred);
 };
 
+const defaultsTarget = () => apiUrl("/admin/defaults");
+const clearDefaultsSaveQueue = () => {
+  defaultsSaveQueued = false;
+  defaultsSaveQueuedTarget = "";
+};
+const queueDefaultsSave = () => {
+  defaultsSaveQueued = true;
+  defaultsSaveQueuedTarget = defaultsTarget();
+};
+const scheduleQueuedDefaultsSave = (loadTarget) => {
+  if (!defaultsSaveQueued) return;
+  if (defaultsSaveQueuedTarget !== loadTarget || defaultsTarget() !== loadTarget) {
+    clearDefaultsSaveQueue();
+    return;
+  }
+  scheduleDefaultsSave();
+};
+
 const loadDefaults = async (options = {}) => {
   const token = getAdminToken();
   if (!token && !hasAdminCredential()) {
@@ -8924,7 +8982,12 @@ const loadDefaults = async (options = {}) => {
 
   const loadId = ++defaultsLoadId;
   const preserveInputs = options.preserveInputs === true;
-  if (!preserveInputs) defaultsTouched = false;
+  const loadTarget = defaultsTarget();
+  if (!preserveInputs) {
+    defaultsTouched = false;
+    defaultsEditRevision += 1;
+    clearDefaultsSaveQueue();
+  }
   defaultsLoaded = false;
   setDefaultsBadge("unknown", defaultsLoadedAt ? "Cached · refreshing" : "Loading...");
   setMeteredQuotaBadge("unknown", defaultsLoadedAt ? "Cached · refreshing" : "Loading...");
@@ -8946,6 +9009,7 @@ const loadDefaults = async (options = {}) => {
         defaultsLoaded = true;
         setDefaultsBadge("unknown", "Cached · refresh unavailable");
         setMeteredQuotaBadge("unknown", "Cached · refresh unavailable");
+        scheduleQueuedDefaultsSave(loadTarget);
         return;
       }
       setDefaultsBadge("bad", modelsPayload?.error?.message ?? "Error");
@@ -8964,6 +9028,7 @@ const loadDefaults = async (options = {}) => {
         defaultsLoaded = true;
         setDefaultsBadge("unknown", "Cached · refresh unavailable");
         setMeteredQuotaBadge("unknown", "Cached · refresh unavailable");
+        scheduleQueuedDefaultsSave(loadTarget);
         return;
       }
       setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
@@ -8999,6 +9064,7 @@ const loadDefaults = async (options = {}) => {
     });
     defaultsLoaded = true;
     defaultsLoadedAt = Date.now();
+    scheduleQueuedDefaultsSave(loadTarget);
     if (!defaultsTouched && result) {
       setDefaultsBadge("ok", `${result.selectedModel} · ${result.selectedReasoning}`);
     }
@@ -9007,6 +9073,7 @@ const loadDefaults = async (options = {}) => {
       defaultsLoaded = true;
       setDefaultsBadge("unknown", "Cached · offline");
       setMeteredQuotaBadge("unknown", "Cached · offline");
+      scheduleQueuedDefaultsSave(loadTarget);
       return;
     }
     setDefaultsBadge("bad", "Offline");
@@ -10411,7 +10478,10 @@ providersSelectionSave.addEventListener("click", () => {
 });
 
 const saveDefaults = async () => {
-  if (!defaultsLoaded) return;
+  if (!defaultsLoaded) {
+    queueDefaultsSave();
+    return;
+  }
   const token = getAdminToken();
   if (!token && !hasAdminCredential()) {
     setDefaultsBadge("bad", "Missing token");
@@ -10419,10 +10489,19 @@ const saveDefaults = async () => {
   }
 
   if (defaultsSaving) {
-    defaultsSaveQueued = true;
+    queueDefaultsSave();
     return;
   }
+  const saveTarget = defaultsTarget();
+  if (defaultsSaveQueued) {
+    if (defaultsSaveQueuedTarget !== saveTarget) {
+      clearDefaultsSaveQueue();
+      return;
+    }
+    clearDefaultsSaveQueue();
+  }
   defaultsSaving = true;
+  const saveLoadId = defaultsLoadId;
   const saveRevision = defaultsEditRevision;
   const model = defaultsModelSelect.value;
   const reasoning = defaultsReasoningSelect.value;
@@ -10440,7 +10519,7 @@ const saveDefaults = async () => {
   setDefaultsBadge("unknown", "Saving...");
 
   try {
-    const res = await fetch(apiUrl("/admin/defaults"), {
+    const res = await fetch(saveTarget, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -10454,6 +10533,11 @@ const saveDefaults = async () => {
       }),
     });
     const data = await res.json().catch(() => null);
+    if (saveTarget !== defaultsTarget()) {
+      if (defaultsSaveQueuedTarget === saveTarget) clearDefaultsSaveQueue();
+      return;
+    }
+    if (saveLoadId !== defaultsLoadId && !defaultsSaveQueued) return;
     if (!res.ok) {
       setDefaultsBadge("bad", data?.error?.message ?? "Error");
       return;
@@ -10470,7 +10554,7 @@ const saveDefaults = async () => {
       defaultsTouched = false;
       setDefaultsBadge("ok", summary);
     } else {
-      defaultsSaveQueued = true;
+      queueDefaultsSave();
       setDefaultsBadge("unknown", "Saving latest changes...");
     }
   } catch {
@@ -10478,8 +10562,8 @@ const saveDefaults = async () => {
   } finally {
     defaultsSaving = false;
     if (defaultsSaveQueued) {
-      defaultsSaveQueued = false;
-      void saveDefaults();
+      if (defaultsSaveQueuedTarget !== defaultsTarget()) clearDefaultsSaveQueue();
+      else scheduleDefaultsSave();
     }
   }
 };
@@ -10803,6 +10887,7 @@ tokenInput.addEventListener("input", () => {
     setKernelPubKeysBadge("unknown", "Not loaded");
     setKernelPubKeysMessage("Paste an admin token to load kernel attestation keys.");
     allKeys = [];
+    scheduleKeyExpiryRefresh();
     passkeyUsers = [];
     kernelQueueItems = [];
     kernelPubKeys = [];
@@ -10969,12 +11054,15 @@ baseSelect.addEventListener("change", () => {
   setKernelNewPanelOpen(false);
   resetKernelPubKeyForm();
   allKeys = [];
+  scheduleKeyExpiryRefresh();
   keysLoadedAt = 0;
   passkeyUsers = [];
   passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
   defaultsLoadedAt = 0;
   defaultsLoadId += 1;
+  defaultsEditRevision += 1;
+  clearDefaultsSaveQueue();
   kernelListLoadedAt = 0;
   kernelListLoadId += 1;
   kernelQueueItems = [];
@@ -11182,7 +11270,7 @@ const markDefaultsEditing = () => {
   defaultsEditRevision += 1;
   setDefaultsBadge("unknown", "Editing...");
   if (defaultsSaving) {
-    defaultsSaveQueued = true;
+    queueDefaultsSave();
     return;
   }
   scheduleDefaultsSave();

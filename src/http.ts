@@ -53,7 +53,7 @@ const isAdminPath = (req?: Request): boolean => {
   if (!req) return false;
   try {
     const path = new URL(req.url).pathname;
-    return path === "/admin" || path.startsWith("/admin/");
+    return path === "/admin" || path === "/admin.html" || path.startsWith("/admin/");
   } catch {
     return false;
   }

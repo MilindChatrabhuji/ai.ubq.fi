@@ -717,6 +717,113 @@ test("public HEAD routes preserve GET metadata without a response body", async (
   }
 });
 
+test("admin routes and page aliases are never cacheable before authentication", async () => {
+  const adminRoutes = [
+    ["GET", "/admin/passkey-users"],
+    ["PATCH", "/admin/passkey-users"],
+    ["POST", "/admin/codex/auth"],
+    ["GET", "/admin/providers/codex/banked-resets"],
+    ["PATCH", "/admin/providers/codex/banked-resets"],
+    ["GET", "/admin/providers/codex/overage-usage"],
+    ["PATCH", "/admin/providers/codex/overage-usage"],
+    ["GET", "/admin/providers/codex/banked-resets/shadow-decisions"],
+    ["GET", "/admin/providers/codex/cache-scope-experiment"],
+    ["POST", "/admin/providers/codex/cache-scope-experiment"],
+    ["GET", "/admin/codex/models"],
+    ["POST", "/admin/codex/models"],
+    ["GET", "/admin/models/whitelist"],
+    ["POST", "/admin/models/whitelist"],
+    ["GET", "/admin/models/catalog"],
+    ["POST", "/admin/models/refresh"],
+    ["POST", "/admin/codex/prompts/purge"],
+    ["POST", "/admin/kv-migration/import"],
+    ["GET", "/admin/kv-migration/validate"],
+    ["GET", "/admin/sentinel/replay-captures"],
+    ["GET", "/admin/sentinel/incidents"],
+    ["GET", "/admin/codex/supervisor/sessions"],
+    ["GET", "/admin/codex/supervisor/output"],
+    ["POST", "/admin/codex/supervisor/brief"],
+    ["GET", "/admin/errors"],
+    ["GET", "/admin/defaults"],
+    ["POST", "/admin/defaults"],
+    ["GET", "/admin/debug/routing"],
+    ["POST", "/admin/debug/routing"],
+    ["DELETE", "/admin/debug/routing"],
+    ["GET", "/admin/providers"],
+    ["GET", "/admin/providers/selection"],
+    ["POST", "/admin/providers/selection"],
+    ["GET", "/admin/providers/capacity"],
+    ["POST", "/admin/providers/capacity/observations"],
+    ["GET", "/admin/providers/capacity/rollups"],
+    ["GET", "/admin/providers/claude-code/access"],
+    ["POST", "/admin/providers/claude-code/access"],
+    ["POST", "/admin/providers/claude-code/accounts/active"],
+    ["GET", "/admin/providers/claude-code/auth"],
+    ["POST", "/admin/providers/claude-code/auth"],
+    ["DELETE", "/admin/providers/claude-code/auth"],
+    ["POST", "/admin/providers/claude-code/quota/clear"],
+    ["GET", "/admin/providers/quota-projection"],
+    ["POST", "/admin/providers/quota-projection/backfill"],
+    ["GET", "/admin/prompt-cache-analytics"],
+    ["GET", "/admin/api-keys"],
+    ["POST", "/admin/api-keys"],
+    ["PATCH", "/admin/api-keys"],
+    ["DELETE", "/admin/api-keys"],
+    ["GET", "/admin/api-keys/changes"],
+    ["GET", "/admin/kernel-usage"],
+    ["POST", "/admin/kernel-usage"],
+    ["DELETE", "/admin/kernel-usage"],
+    ["GET", "/admin/kernel-policy-queue"],
+    ["GET", "/admin/kernel-pubkeys"],
+    ["POST", "/admin/kernel-pubkeys"],
+    ["DELETE", "/admin/kernel-pubkeys"],
+    ["POST", "/admin/providers/codex/1/recheck"],
+    ["GET", "/admin/api-keys/example/paid-fallbacks"],
+  ] as const;
+  const requests = [
+    ["GET", "/admin"],
+    ["HEAD", "/admin"],
+    ["GET", "/admin.html"],
+    ["HEAD", "/admin.html"],
+    ["OPTIONS", "/admin/defaults"],
+    ["GET", "/admin/not-a-real-route"],
+    ...adminRoutes,
+  ] as const;
+  for (const authorization of [undefined, "Bearer definitely-wrong"] as const) {
+    for (const [method, path] of requests) {
+      const headers = authorization ? { Authorization: authorization } : undefined;
+      const response = await handler(new Request(`https://ai.ubq.fi${path}`, { method, headers }));
+      assert.equal(
+        response.headers.get("cache-control"),
+        "no-store",
+        `${method} ${path} ${authorization ?? "anonymous"}`
+      );
+      await response.body?.cancel();
+    }
+  }
+});
+
+test("admin API-key actions preserve expired and unrevoke states", () => {
+  const keyRenderer = adminScript.slice(
+    adminScript.indexOf("const renderKeys"),
+    adminScript.indexOf("const renderPasskeyUsers")
+  );
+  assert.match(keyRenderer, /if \(statusKind !== "revoked"\)/);
+  assert.match(keyRenderer, /const keyLabel = key\.name \|\| key\.id \|\| "unnamed API key"/);
+  assert.match(adminScript, /if \(inputsUnchanged && !expiresMismatch\) renderKeys\(allKeys, currentKeyView\);/);
+  assert.match(adminScript, /const updateKeyStatus = \(\) =>/);
+  assert.match(adminScript, /updateAccessApiKeysSummary\(\);/);
+  assert.match(adminScript, /toast\.info\(`Unrevoked \$\{name\}`,[\s\S]*?remains expired/);
+  assert.match(adminScript, /if \(!confirm\(`Revoke API key "\$\{name\}"\?`\)\) return;/);
+});
+
+test("admin defaults keep queued edits through reloads and debounce the follow-up", () => {
+  assert.match(adminScript, /if \(!defaultsLoaded\) \{\s+queueDefaultsSave\(\);\s+return;/);
+  assert.match(adminScript, /const scheduleQueuedDefaultsSave = \(loadTarget\) =>/);
+  assert.match(adminScript, /defaultsEditRevision \+= 1;\s+clearDefaultsSaveQueue\(\);/);
+  assert.match(adminScript, /else scheduleDefaultsSave\(\);/);
+});
+
 test("unknown public HEAD routes remain 404", async () => {
   const response = await handler(new Request("https://ai.ubq.fi/not-a-real-public-route", { method: "HEAD" }));
 
