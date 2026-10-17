@@ -64,6 +64,8 @@ type SidebandFixtureOptions = Readonly<{
   accounts?: readonly CodexAuthState[];
   delayUpstreamOpen?: boolean;
   upstreamBufferedBytes?: number;
+  upstreamRejectionStatus?: 404 | 410;
+  retireDeleteFailures?: number;
 }>;
 
 const seedApiKey = async (kv: CountingKv, keyId: string, name: string, token: string, nowMs: number): Promise<void> => {
@@ -132,6 +134,15 @@ const startSidebandFixture = async (options: SidebandFixtureOptions = {}): Promi
   const { config } = await import("../src/config.ts");
 
   const kv = new CountingKv();
+  let retireDeleteFailures = options.retireDeleteFailures ?? 0;
+  const deleteKv = kv.delete.bind(kv);
+  kv.delete = (key) => {
+    if (retireDeleteFailures > 0) {
+      retireDeleteFailures -= 1;
+      return Promise.reject(new Error("fixture retirement delete failure"));
+    }
+    return deleteKv(key);
+  };
   const upstreamSidebands: UpstreamSideband[] = [];
   const openSidebands: UpstreamClient[] = [];
   const refreshCalls: RefreshCall[] = [];
@@ -210,6 +221,7 @@ const startSidebandFixture = async (options: SidebandFixtureOptions = {}): Promi
   const upstreamUpgrade: ServeUpgradeHandler = async (request) => {
     const url = new URL(request.url);
     if (url.pathname !== `/v1/live/${CALL_ID}`) return new Response("not found", { status: 404 });
+    if (options.upstreamRejectionStatus !== undefined) return new Response("upstream call is gone", { status: options.upstreamRejectionStatus });
     upstreamHandshakeStarted = true;
     await upstreamHandshake.promise;
     if (closing || request.signal.aborted) return new Response(null, { status: 503 });
@@ -701,6 +713,33 @@ test("GET /v1/live/<call_id> answers 404 for an unknown call id without dialing 
     await expectHandshakeStatus(`${fixture.gatewayWsBaseUrl}/${UNKNOWN_CALL_ID}`, { authorization: `Bearer ${fixture.token}` }, 404);
     assert.equal(fixture.upstreamSidebands.length, 0);
   } finally {
+    await fixture.close();
+  }
+}, 300_000);
+
+test("GET /v1/live/<call_id> retires a terminal upstream mapping before closing and allowing reconnect", async () => {
+  const fixture = await startSidebandFixture({ delayUpstreamOpen: true, upstreamRejectionStatus: 404, retireDeleteFailures: 1 });
+  let client: UpstreamClient | null = null;
+  try {
+    client = await connectSideband(`${fixture.gatewayWsBaseUrl}/${CALL_ID}`, { authorization: `Bearer ${fixture.token}` });
+    await fixture.waitForUpstreamHandshake();
+    const { setKvForTest } = await import("../src/kv.ts");
+    let kvUnavailable = true;
+    setKvForTest(null, async () => {
+      if (kvUnavailable) {
+        kvUnavailable = false;
+        return null;
+      }
+      return fixture.kv as unknown as Kv;
+    });
+    fixture.releaseUpstreamHandshake();
+    const closed = await nextClose(client);
+    assert.deepEqual(closed, { code: 1011, reason: "realtime upstream rejected the sideband" });
+    assert.equal(fixture.kv.entries.get(JSON.stringify(["uos_ai", "codex_live_calls", "v1", CALL_ID]))?.value ?? null, null);
+    await expectHandshakeStatus(`${fixture.gatewayWsBaseUrl}/${CALL_ID}`, { authorization: `Bearer ${fixture.token}` }, 404);
+    assert.equal(fixture.upstreamSidebands.length, 0, "a retired mapping never dials the ended upstream call again");
+  } finally {
+    client?.terminate();
     await fixture.close();
   }
 }, 300_000);
