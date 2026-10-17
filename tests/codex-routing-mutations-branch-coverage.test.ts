@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { type AtomicOperation, type Kv, type KvCommitError, type KvEntryMaybe, type KvKey } from "#kv";
 // Branch-coverage tests for src/codex/routing-mutations.ts.
 //
 // The routing mutations are guard-heavy: every writer re-checks the durable
@@ -44,15 +46,15 @@ class FaultyRoutingKv extends RoutingKv {
   throwForKey: string | null = null;
   failCommits = false;
 
-  override get<T>(kvKey: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
+  override get<T>(kvKey: KvKey): Promise<KvEntryMaybe<T>> {
     if (this.throwOnGet || this.throwForKey === key(kvKey)) throw new Error("routing kv get failed");
     return super.get<T>(kvKey);
   }
 
-  override atomic(): Deno.AtomicOperation {
+  override atomic(): AtomicOperation {
     const operation = super.atomic();
     const commit = operation.commit.bind(operation);
-    operation.commit = async () => (this.failCommits ? ({ ok: false } as Deno.KvCommitError) : await commit());
+    operation.commit = async () => (this.failCommits ? ({ ok: false } as KvCommitError) : await commit());
     return operation;
   }
 }
@@ -94,9 +96,9 @@ const rotatedAuth = (accountId: string, accessToken: string): CodexAuthState => 
   updated_at_ms: NOW,
 });
 
-Deno.test("upstream timeout marker refuses a foreign slot, a lease-only slot and a stale lease", async () => {
+test("upstream timeout marker refuses a foreign slot, a lease-only slot and a stale lease", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const accounts = await selectedAccounts();
@@ -125,9 +127,9 @@ Deno.test("upstream timeout marker refuses a foreign slot, a lease-only slot and
   }
 });
 
-Deno.test("credential-invalid marker refuses a foreign slot and a foreign lease", async () => {
+test("credential-invalid marker refuses a foreign slot and a foreign lease", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const accounts = await selectedAccounts();
@@ -149,9 +151,9 @@ Deno.test("credential-invalid marker refuses a foreign slot and a foreign lease"
   }
 });
 
-Deno.test("credential reconciliation keeps a matching claim and drops an unrenewable one", async () => {
+test("credential reconciliation keeps a matching claim and drops an unrenewable one", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const accounts = await selectedAccounts();
@@ -215,9 +217,9 @@ Deno.test("credential reconciliation keeps a matching claim and drops an unrenew
   }
 });
 
-Deno.test("probe release refuses a slot that is not the claim and clears the claimed circuit", async () => {
+test("probe release refuses a slot that is not the claim and clears the claimed circuit", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const accounts = await selectedAccounts();
@@ -285,9 +287,9 @@ const blockedFenceFixture = async (kv: RoutingKv, resetAtMs: number) => {
   return { account, generation, state: requiredState(kv) };
 };
 
-Deno.test("quota block fence predicate and strong read reject invalid inputs and unreadable KV", async () => {
+test("quota block fence predicate and strong read reject invalid inputs and unreadable KV", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const resetAtMs = NOW + 60_000;
@@ -309,7 +311,7 @@ Deno.test("quota block fence predicate and strong read reject invalid inputs and
     faulty.values = kv.values;
     faulty.versions = kv.versions;
     faulty.throwOnGet = true;
-    setKvForTest(faulty as unknown as Deno.Kv);
+    setKvForTest(faulty as unknown as Kv);
     assert.equal(await getCodexQuotaBlockFence(account, resetAtMs), null);
 
     // KV itself being unavailable is also a fail-closed null.
@@ -321,9 +323,9 @@ Deno.test("quota block fence predicate and strong read reject invalid inputs and
   }
 });
 
-Deno.test("verified-reset reconciliation rejects invalid input, stale fences and unreadable fences", async () => {
+test("verified-reset reconciliation rejects invalid input, stale fences and unreadable fences", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const resetAtMs = NOW + 60_000;
@@ -332,9 +334,9 @@ Deno.test("verified-reset reconciliation rejects invalid input, stale fences and
     assert.equal(await reconcileCodexQuotaAfterVerifiedReset(account, { quotaResetAtMs: Number.NaN, routingGeneration: generation }), null);
     assert.equal(await reconcileCodexQuotaAfterVerifiedReset(account, { quotaResetAtMs: resetAtMs, routingGeneration: -1 }), null);
 
-    const fenceKey: Deno.KvKey = ["test", "reset-fence"];
+    const fenceKey: KvKey = ["test", "reset-fence"];
     const malformedFences = [{ key: "not-a-key", isCurrent: "no" }] as unknown as readonly {
-      key: Deno.KvKey;
+      key: KvKey;
       isCurrent: (value: unknown) => boolean;
     }[];
     assert.equal(
@@ -352,7 +354,7 @@ Deno.test("verified-reset reconciliation rejects invalid input, stale fences and
     faulty.values = kv.values;
     faulty.versions = kv.versions;
     faulty.throwForKey = key(fenceKey);
-    setKvForTest(faulty as unknown as Deno.Kv);
+    setKvForTest(faulty as unknown as Kv);
     const currentFence = { key: fenceKey, isCurrent: () => true };
     assert.equal(
       await reconcileCodexQuotaAfterVerifiedReset(account, { quotaResetAtMs: resetAtMs, routingGeneration: generation, fences: [currentFence] }),
@@ -363,14 +365,14 @@ Deno.test("verified-reset reconciliation rejects invalid input, stale fences and
     faulty.throwForKey = null;
     const claimed = await reconcileCodexQuotaAfterVerifiedReset(account, { quotaResetAtMs: resetAtMs, routingGeneration: generation, fences: [currentFence] });
     assert.ok(claimed);
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
 
     // Every lost compare-and-set exhausts the bounded retry loop.
     const retrying = new FaultyRoutingKv();
     retrying.values = kv.values;
     retrying.versions = kv.versions;
     retrying.failCommits = true;
-    setKvForTest(retrying as unknown as Deno.Kv);
+    setKvForTest(retrying as unknown as Kv);
     const before = structuredClone(requiredState(kv));
     assert.equal(await reconcileCodexQuotaAfterVerifiedReset(account, { quotaResetAtMs: resetAtMs, routingGeneration: generation }), null);
     assert.deepEqual(requiredState(kv), before);
@@ -378,9 +380,9 @@ Deno.test("verified-reset reconciliation rejects invalid input, stale fences and
     // A throwing read inside the attempt is a fail-closed null, not an escape.
     retrying.failCommits = false;
     retrying.throwOnGet = true;
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
     const fenceBeforeThrow = await blockedFenceFixture(kv, resetAtMs + 2_000);
-    setKvForTest(retrying as unknown as Deno.Kv);
+    setKvForTest(retrying as unknown as Kv);
     assert.equal(
       await reconcileCodexQuotaAfterVerifiedReset(fenceBeforeThrow.account, {
         quotaResetAtMs: resetAtMs + 2_000,
@@ -399,9 +401,9 @@ Deno.test("verified-reset reconciliation rejects invalid input, stale fences and
   }
 });
 
-Deno.test("verified-reset reconciliation refuses a generation it cannot advance", async () => {
+test("verified-reset reconciliation refuses a generation it cannot advance", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const resetAtMs = NOW + 60_000;
@@ -417,9 +419,9 @@ Deno.test("verified-reset reconciliation refuses a generation it cannot advance"
   }
 });
 
-Deno.test("probe claim returns early, claims locally without KV and fails closed on lost commits", async () => {
+test("probe claim returns early, claims locally without KV and fails closed on lost commits", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const accounts = await selectedAccounts();
@@ -450,7 +452,7 @@ Deno.test("probe claim returns early, claims locally without KV and fails closed
     retrying.values = kv.values;
     retrying.versions = kv.versions;
     retrying.failCommits = true;
-    setKvForTest(retrying as unknown as Deno.Kv);
+    setKvForTest(retrying as unknown as Kv);
     assert.equal(await claimCodexRoutingProbe(pool, retryExpired, secondAt), null);
 
     // A read failure falls back to the locally cached state (availability over coordination).
@@ -461,7 +463,7 @@ Deno.test("probe claim returns early, claims locally without KV and fails closed
     faulty.values = kv.values;
     faulty.versions = kv.versions;
     faulty.throwOnGet = true;
-    setKvForTest(faulty as unknown as Deno.Kv);
+    setKvForTest(faulty as unknown as Kv);
     const durableBeforeLocal = structuredClone(slotOf(kv, localExpired));
     const localFromFailure = await claimCodexRoutingProbe(pool, localExpired, thirdAt);
     assert.ok(localFromFailure);
@@ -476,9 +478,9 @@ Deno.test("probe claim returns early, claims locally without KV and fails closed
   }
 });
 
-Deno.test("probe claim falls back to the cached state when KV is unavailable", async () => {
+test("probe claim falls back to the cached state when KV is unavailable", async () => {
   const kv = new RoutingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAccountRoutingForTest();
   try {
     const account = (await selectedAccounts())[0];

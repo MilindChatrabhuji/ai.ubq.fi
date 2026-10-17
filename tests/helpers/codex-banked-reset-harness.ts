@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 // Shared harness for this suite, moved out of the original test file.
 
 import assert from "node:assert/strict";
@@ -23,10 +24,10 @@ import {
 import type { CodexResetRedemptionRecord } from "../../src/types.ts";
 
 const clone = <T>(value: T): T => structuredClone(value);
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 
 type StoredEntry = Readonly<{
-  key: Deno.KvKey;
+  key: KvKey;
   value: unknown;
   versionstamp: string;
 }>;
@@ -35,10 +36,10 @@ type StoredEntry = Readonly<{
 class MemoryKv {
   readonly entries = new Map<string, StoredEntry>();
   readonly failCommitNumbers = new Set<number>();
-  readonly atomicCheckBatches: Deno.KvKey[][] = [];
+  readonly atomicCheckBatches: KvKey[][] = [];
   atomicCommitCount = 0;
   beforeAtomicCommit: ((commitNumber: number) => void) | null = null;
-  beforeGet: ((key: Deno.KvKey, getNumber: number) => Promise<void> | null | undefined) | null = null;
+  beforeGet: ((key: KvKey, getNumber: number) => Promise<void> | null | undefined) | null = null;
   getFailure: Error | null = null;
   getCount = 0;
   #version = 0;
@@ -48,7 +49,7 @@ class MemoryKv {
     return String(this.#version).padStart(20, "0");
   }
 
-  #put(key: Deno.KvKey, value: unknown, versionstamp: string): void {
+  #put(key: KvKey, value: unknown, versionstamp: string): void {
     this.entries.set(encodeKey(key), {
       key: clone(key),
       value: clone(value),
@@ -56,11 +57,11 @@ class MemoryKv {
     });
   }
 
-  versionstamp(key: Deno.KvKey): string | null {
+  versionstamp(key: KvKey): string | null {
     return this.entries.get(encodeKey(key))?.versionstamp ?? null;
   }
 
-  async get<T>(key: Deno.KvKey, _options?: unknown): Promise<Deno.KvEntryMaybe<T>> {
+  async get<T>(key: KvKey, _options?: unknown): Promise<KvEntryMaybe<T>> {
     if (this.getFailure) throw this.getFailure;
     const pause = this.beforeGet?.(clone(key), ++this.getCount);
     if (pause) await pause;
@@ -69,33 +70,33 @@ class MemoryKv {
       key: clone(key),
       value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
-    } as Deno.KvEntryMaybe<T>;
+    } as KvEntryMaybe<T>;
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.#put(key, value, versionstamp);
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  redemptionRecord(key: Deno.KvKey): CodexResetRedemptionRecord | null {
+  redemptionRecord(key: KvKey): CodexResetRedemptionRecord | null {
     const value = this.entries.get(encodeKey(key))?.value;
     return value === undefined ? null : (clone(value) as CodexResetRedemptionRecord);
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>[] = [];
-    const writes: Readonly<{ key: Deno.KvKey; value: unknown }>[] = [];
+  atomic(): AtomicOperation {
+    const checks: Readonly<{ key: KvKey; versionstamp: string | null }>[] = [];
+    const writes: Readonly<{ key: KvKey; value: unknown }>[] = [];
     const operation = {
-      check: (entry: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>) => {
+      check: (entry: Readonly<{ key: KvKey; versionstamp: string | null }>) => {
         checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         writes.push({ key: clone(key), value: clone(value) });
         return operation;
       },
-      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+      commit: (): Promise<KvCommitResult | KvCommitError> => {
         this.atomicCommitCount += 1;
         this.atomicCheckBatches.push(checks.map((check) => clone(check.key)));
         this.beforeAtomicCommit?.(this.atomicCommitCount);
@@ -109,7 +110,7 @@ class MemoryKv {
         return Promise.resolve({ ok: true, versionstamp });
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 }
 
@@ -307,8 +308,8 @@ const testHash = (value: string): Promise<string> => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-const routingFenceKey = (accountId: string): Deno.KvKey => ["test", "codex-banked-reset", "routing", accountId];
-const credentialFenceKey = (accountId: string): Deno.KvKey => ["test", "codex-banked-reset", "credential", accountId];
+const routingFenceKey = (accountId: string): KvKey => ["test", "codex-banked-reset", "routing", accountId];
+const credentialFenceKey = (accountId: string): KvKey => ["test", "codex-banked-reset", "credential", accountId];
 
 const bankedResetFences = (accountId: string, routingGeneration: number, credentialVersion: string): readonly CodexBankedResetFence[] => [
   {
@@ -348,7 +349,7 @@ const seedFences = async (kv: MemoryKv, input: CodexBankedResetCandidate): Promi
   });
 };
 
-const hasKey = (keys: readonly Deno.KvKey[], expected: Deno.KvKey): boolean => keys.some((key) => encodeKey(key) === encodeKey(expected));
+const hasKey = (keys: readonly KvKey[], expected: KvKey): boolean => keys.some((key) => encodeKey(key) === encodeKey(expected));
 
 const config = (overrides: Partial<CodexBankedResetConfig> = {}): CodexBankedResetConfig => ({
   enabled: true,
@@ -370,7 +371,7 @@ const dependencies = (
   return {
     config: configured,
     provider,
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => clock.nowMs,
     newOwnerToken: () => `test-owner-${++owner}`,
     hash: testHash,

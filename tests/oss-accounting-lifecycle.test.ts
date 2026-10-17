@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { Kv, KvKey } from "#kv";
 import assert from "node:assert/strict";
 import { apiKeyHashKey } from "../src/api-keys.ts";
 import {
@@ -54,9 +56,9 @@ const setupPolicy = (id: string, usageLimitRequests: number, nowMs = Date.now())
   return { kv, policy };
 };
 
-const kvFor = (kv: CountingKv): Deno.Kv => kv as unknown as Deno.Kv;
+const kvFor = (kv: CountingKv): Kv => kv as unknown as Kv;
 
-const storedValue = (kv: CountingKv, key: Deno.KvKey): unknown => kv.entries.get(JSON.stringify(key))?.value ?? null;
+const storedValue = (kv: CountingKv, key: KvKey): unknown => kv.entries.get(JSON.stringify(key))?.value ?? null;
 
 const windowFor = (kv: CountingKv, policy: ApiKeyPolicy): ApiKeyUsageWindowV3 => {
   const window = storedValue(kv, apiKeyUsageV3WindowKey(policy)) as ApiKeyUsageWindowV3 | null;
@@ -98,7 +100,7 @@ const admitted = (decision: ApiKeyUsageReservationDecision) => {
   return decision.reservation;
 };
 
-Deno.test("a released request identity is refused at admission instead of admitted then failed", async () => {
+test("a released request identity is refused at admission instead of admitted then failed", async () => {
   const { kv, policy } = setupPolicy("released-identity", 2);
   const first = admitted(await reserve(kv, policy, "reused-request"));
   await first.release("validation_failed");
@@ -126,7 +128,7 @@ Deno.test("a released request identity is refused at admission instead of admitt
   assert.equal(windowFor(kv, policy).committed_requests, 1);
 });
 
-Deno.test("a dispatched request identity is never re-admitted without its own charge", async () => {
+test("a dispatched request identity is never re-admitted without its own charge", async () => {
   const { kv, policy } = setupPolicy("dispatched-identity", 2);
   const first = admitted(await reserve(kv, policy, "shared-request"));
   const firstDispatch = await first.beforeProviderDispatch("surplus");
@@ -149,7 +151,7 @@ Deno.test("a dispatched request identity is never re-admitted without its own ch
   assertLedgerConsistent(kv, policy, "shared-request", 2);
 });
 
-Deno.test("concurrent cancellation and dispatch settlement agree on one outcome", async () => {
+test("concurrent cancellation and dispatch settlement agree on one outcome", async () => {
   const { kv, policy } = setupPolicy("cancel-settlement-race", 1);
   const reservation = admitted(await reserve(kv, policy, "race-request"));
   const [dispatchOutcome, releaseOutcome] = await Promise.allSettled([reservation.beforeProviderDispatch("deepseek"), reservation.release("client_cancelled")]);
@@ -165,7 +167,7 @@ Deno.test("concurrent cancellation and dispatch settlement agree on one outcome"
   }
 });
 
-Deno.test("duplicate pre-transport cancellation callbacks refund exactly once", async () => {
+test("duplicate pre-transport cancellation callbacks refund exactly once", async () => {
   const { kv, policy } = setupPolicy("duplicate-cancellation", 1);
   const reservation = admitted(await reserve(kv, policy, "duplicate-cancel-request"));
   const dispatch = await reservation.beforeProviderDispatch("cerebras");
@@ -182,7 +184,7 @@ Deno.test("duplicate pre-transport cancellation callbacks refund exactly once", 
   assertLedgerConsistent(kv, policy, "duplicate-cancel-request", 1);
 });
 
-Deno.test("accepted upstream work is not refunded by a later completion callback", async () => {
+test("accepted upstream work is not refunded by a later completion callback", async () => {
   const { kv, policy } = setupPolicy("accepted-not-refunded", 1);
   const reservation = admitted(await reserve(kv, policy, "accepted-request"));
   const dispatch = await reservation.beforeProviderDispatch("chatgpt_codex");
@@ -202,7 +204,7 @@ Deno.test("accepted upstream work is not refunded by a later completion callback
   assertLedgerConsistent(kv, policy, "accepted-request", 1);
 });
 
-Deno.test("a reclaimed expired lease returns its slot once and never rides free later", async () => {
+test("a reclaimed expired lease returns its slot once and never rides free later", async () => {
   const baseMs = Date.now();
   const { kv, policy } = setupPolicy("lease-expiry-late-dispatch", 1, baseMs);
   const abandoned = admitted(await reserve(kv, policy, "abandoned-request", baseMs));
@@ -241,7 +243,7 @@ Deno.test("a reclaimed expired lease returns its slot once and never rides free 
   });
 });
 
-Deno.test("a request id reused on another route cannot share the first route's charge", async () => {
+test("a request id reused on another route cannot share the first route's charge", async () => {
   const { kv, policy } = setupPolicy("route-scoped-identity", 2);
   const first = admitted(await reserve(kv, policy, "cross-route-id", undefined, "chat.completions"));
 
@@ -254,7 +256,7 @@ Deno.test("a request id reused on another route cannot share the first route's c
   assertLedgerConsistent(kv, policy, "cross-route-id", 2);
 });
 
-Deno.test("a live duplicate admission still shares one reservation and one committed request", async () => {
+test("a live duplicate admission still shares one reservation and one committed request", async () => {
   const { kv, policy } = setupPolicy("live-idempotency", 1);
   const first = admitted(await reserve(kv, policy, "live-request"));
   const duplicate = admitted(await reserve(kv, policy, "live-request"));
@@ -328,9 +330,9 @@ const readmitAndSettle = async (requestId: string, nowMs: number): Promise<Reado
   };
 };
 
-Deno.test("a settled paid-fallback identity is not re-admitted as unrecorded new paid work", async () => {
+test("a settled paid-fallback identity is not re-admitted as unrecorded new paid work", async () => {
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     const nowMs = Date.now();
     const first = await admitPaidFallbackV3(paidAdmissionInput("paid-settled-request", nowMs));
@@ -364,9 +366,9 @@ Deno.test("a settled paid-fallback identity is not re-admitted as unrecorded new
   }
 });
 
-Deno.test("a not-billed paid-fallback identity is not re-admitted as unrecorded new paid work", async () => {
+test("a not-billed paid-fallback identity is not re-admitted as unrecorded new paid work", async () => {
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   try {
     const nowMs = Date.now();
     const first = await admitPaidFallbackV3(paidAdmissionInput("paid-not-billed-request", nowMs));

@@ -10,7 +10,7 @@ export const MICROCREDITS_PER_CREDIT = 1_000_000;
 
 const getEnvNumber = (key: string, defaultValue: number): number => {
   try {
-    const value = Deno.env.get(key);
+    const value = process.env[key];
     if (!value) return defaultValue;
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return defaultValue;

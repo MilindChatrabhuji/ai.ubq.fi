@@ -1,3 +1,5 @@
+import { KvU64 } from "#kv";
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 import { getKv } from "../kv.ts";
 import { RELEASE_GIT_SHA } from "../release.ts";
 import { sha256Hex } from "../utils.ts";
@@ -30,7 +32,7 @@ export type PromptCacheTelemetryEvent = Readonly<{
 
 export type PromptCacheTelemetryGateOptions = Readonly<{
   /** Supplying a KV instance makes focused tests and explicit control-plane reads deterministic. */
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   /** Defaults to the immutable source identity baked into this artifact. */
   release?: string;
 }>;
@@ -60,10 +62,10 @@ export type PromptCacheTelemetryCounterKeys = Readonly<{
   model_hash: string;
   routes: readonly Readonly<{
     route: PromptCacheTelemetryRoute;
-    completed: Deno.KvKey;
-    reported: Deno.KvKey;
-    cache_write_reported: Deno.KvKey;
-    invalid: Deno.KvKey;
+    completed: KvKey;
+    reported: KvKey;
+    cache_write_reported: KvKey;
+    invalid: KvKey;
   }>[];
 }>;
 
@@ -154,7 +156,7 @@ const isCompleted2xx = (event: PromptCacheTelemetryEvent): boolean =>
 
 const resolveRelease = (options: PromptCacheTelemetryGateOptions): string | null => normalizedRelease(options.release ?? RELEASE_GIT_SHA);
 
-const resolveKv = async (options: PromptCacheTelemetryGateOptions): Promise<Deno.Kv | null> => {
+const resolveKv = async (options: PromptCacheTelemetryGateOptions): Promise<Kv | null> => {
   try {
     return options.kv === undefined ? await getKv() : options.kv;
   } catch {
@@ -170,7 +172,7 @@ const counterKey = (
   modelHashValue: string,
   route: PromptCacheTelemetryRoute,
   counter: "completed" | "reported" | "cache_write_reported" | "invalid"
-): Deno.KvKey => [...PROMPT_CACHE_TELEMETRY_GATE_KV_PREFIX, release, provider, modelHashValue, route, counter];
+): KvKey => [...PROMPT_CACHE_TELEMETRY_GATE_KV_PREFIX, release, provider, modelHashValue, route, counter];
 
 const recordResult = (
   status: PromptCacheTelemetryRecordResult["status"],
@@ -190,7 +192,7 @@ const recordResult = (
   model_hash: input.modelHash ?? null,
 });
 
-const isKvU64 = (value: unknown): value is Deno.KvU64 => value instanceof Deno.KvU64 && typeof value.value === "bigint" && value.value >= 0n;
+const isKvU64 = (value: unknown): value is KvU64 => value instanceof KvU64 && typeof value.value === "bigint" && value.value >= 0n;
 
 /** A missing sibling counter counts as zero; a present but malformed one is invalid. */
 const siblingCounter = (missing: boolean, value: unknown): bigint | null => {
@@ -368,19 +370,19 @@ export const readPromptCacheTelemetryBaseline = async (
 
   let entriesByRoute: readonly Readonly<{
     route: PromptCacheTelemetryRoute;
-    completed: Deno.KvEntryMaybe<Deno.KvU64>;
-    reported: Deno.KvEntryMaybe<Deno.KvU64>;
-    cacheWriteReported: Deno.KvEntryMaybe<Deno.KvU64>;
-    invalid: Deno.KvEntryMaybe<Deno.KvU64>;
+    completed: KvEntryMaybe<KvU64>;
+    reported: KvEntryMaybe<KvU64>;
+    cacheWriteReported: KvEntryMaybe<KvU64>;
+    invalid: KvEntryMaybe<KvU64>;
   }>[];
   try {
     entriesByRoute = await Promise.all(
       PROMPT_CACHE_TELEMETRY_ROUTES.map(async (route) => {
         const [completed, reported, cacheWriteReported, invalid] = await Promise.all([
-          kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "completed"), { consistency: "strong" }),
-          kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "reported"), { consistency: "strong" }),
-          kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "cache_write_reported"), { consistency: "strong" }),
-          kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "invalid"), { consistency: "strong" }),
+          kv.get<KvU64>(counterKey(release, provider, hashedModel, route, "completed"), { consistency: "strong" }),
+          kv.get<KvU64>(counterKey(release, provider, hashedModel, route, "reported"), { consistency: "strong" }),
+          kv.get<KvU64>(counterKey(release, provider, hashedModel, route, "cache_write_reported"), { consistency: "strong" }),
+          kv.get<KvU64>(counterKey(release, provider, hashedModel, route, "invalid"), { consistency: "strong" }),
         ]);
         return { route, completed, reported, cacheWriteReported, invalid };
       })

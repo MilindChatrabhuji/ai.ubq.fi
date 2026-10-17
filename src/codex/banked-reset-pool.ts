@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 // Codex banked reset pool evaluation and shadow decisions, split out of src/codex_banked_reset.ts.
 
 import { getKv } from "../kv.ts";
@@ -103,14 +104,14 @@ const duplicateShadowDecision = (
 };
 
 const shadowDecisionRecord = async (
-  kv: Deno.Kv,
+  kv: Kv,
   record: CodexResetShadowDecisionRecord,
   nowMs: number,
-  settingsEntries: Deno.KvEntryMaybe<unknown>[]
+  settingsEntries: KvEntryMaybe<unknown>[]
 ): Promise<Readonly<{ kind: "written" | "duplicate"; record: CodexResetShadowDecisionRecord }> | null> => {
   const key = codexResetShadowDecisionKey(record.episode_hash);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-    let entry: Deno.KvEntryMaybe<unknown>;
+    let entry: KvEntryMaybe<unknown>;
     try {
       entry = await kv.get(key, { consistency: "strong" });
     } catch {
@@ -131,7 +132,7 @@ const shadowDecisionRecord = async (
   return null;
 };
 
-const readShadowDecision = async (kv: Deno.Kv, episodeHash: string): Promise<CodexResetShadowDecisionRecord | null> => {
+const readShadowDecision = async (kv: Kv, episodeHash: string): Promise<CodexResetShadowDecisionRecord | null> => {
   try {
     const entry = await kv.get(codexResetShadowDecisionKey(episodeHash), { consistency: "strong" });
     return entry.value === null ? null : parseCodexResetShadowDecisionRecord(entry.value);
@@ -141,8 +142,8 @@ const readShadowDecision = async (kv: Deno.Kv, episodeHash: string): Promise<Cod
 };
 
 /** Read-only, redacted administrative projection of recent shadow evidence. */
-export const listCodexResetShadowDecisions = async (kvOverride?: Deno.Kv | null): Promise<readonly CodexResetShadowDecisionRecord[] | null> => {
-  let kv: Deno.Kv | null;
+export const listCodexResetShadowDecisions = async (kvOverride?: Kv | null): Promise<readonly CodexResetShadowDecisionRecord[] | null> => {
+  let kv: Kv | null;
   try {
     kv = kvOverride === undefined ? await getKv() : kvOverride;
   } catch {
@@ -256,7 +257,7 @@ const poolEpisodeHash = async (
  * Re-check every fence. A selection based on any stale account state is not
  * audit evidence and can never become a live spend.
  */
-const stalePoolFenceReason = async (kv: Deno.Kv, complete: readonly ResolvedPoolCandidate[]): Promise<string | null> => {
+const stalePoolFenceReason = async (kv: Kv, complete: readonly ResolvedPoolCandidate[]): Promise<string | null> => {
   for (const { pool } of complete) {
     const current = await readCurrentFences(kv, pool.candidate);
     if (current.kind !== "valid") return current.kind === "stale" ? "routing_fence_stale" : current.code;
@@ -270,7 +271,7 @@ const auditedDecisionMatches = (audited: CodexResetShadowDecisionRecord, fences:
 
 /** Live mode reads its arm evidence; `audited === null` means arming is needed. */
 const resolveLiveArmingState = async (
-  kv: Deno.Kv,
+  kv: Kv,
   config: CodexBankedResetConfig,
   dependencies: CodexBankedResetDependencies,
   episodeHash: string,
@@ -290,7 +291,7 @@ const resolveLiveArmingState = async (
 
 /** The episode evidence: proven contexts, fences, hash, and live arm state. */
 const preparePoolEpisode = async (
-  kv: Deno.Kv,
+  kv: Kv,
   ordered: readonly CodexBankedResetPoolCandidate[],
   config: CodexBankedResetConfig,
   dependencies: CodexBankedResetDependencies,
@@ -301,7 +302,7 @@ const preparePoolEpisode = async (
       kind: "episode";
       complete: ResolvedPoolCandidate[];
       eligible: ResolvedPoolCandidate[];
-      settingsEntries: Deno.KvEntryMaybe<unknown>[];
+      settingsEntries: KvEntryMaybe<unknown>[];
       fences: CodexResetShadowDecisionRecord["fences"];
       episodeHash: string;
       audited: CodexResetShadowDecisionRecord | null;
@@ -353,7 +354,7 @@ const firstResolvedPoolCandidate = (complete: readonly ResolvedPoolCandidate[]):
 
 /** The already-persisted shadow decision for this episode, when it still holds. */
 const existingShadowDecisionOutcome = async (
-  kv: Deno.Kv,
+  kv: Kv,
   config: CodexBankedResetConfig,
   dependencies: CodexBankedResetDependencies,
   complete: readonly ResolvedPoolCandidate[],
@@ -472,7 +473,7 @@ const hasPoolInventory = (
  * never become a live spend.
  */
 const observePoolInventories = async (
-  kv: Deno.Kv,
+  kv: Kv,
   complete: readonly ResolvedPoolCandidate[],
   clock: () => number
 ): Promise<
@@ -569,12 +570,12 @@ const buildShadowDecision = (
 
 /** Persist the shadow decision and emit the telemetry that describes it. */
 const persistShadowDecisionOutcome = async (
-  kv: Deno.Kv,
+  kv: Kv,
   decision: CodexResetShadowDecisionRecord,
   episodeHash: string,
   dependencies: CodexBankedResetDependencies,
   complete: readonly ResolvedPoolCandidate[],
-  settingsEntries: Deno.KvEntryMaybe<unknown>[],
+  settingsEntries: KvEntryMaybe<unknown>[],
   selection: Readonly<{ selected: SelectedPoolCredit | null; decisionReason: string }>,
   nowMs: number
 ): Promise<CodexBankedResetPoolOutcome> => {
@@ -603,10 +604,10 @@ const persistShadowDecisionOutcome = async (
 
 /** Arm a live episode with the persisted decision for its exact evidence. */
 const armLiveWithShadowDecision = async (
-  kv: Deno.Kv,
+  kv: Kv,
   decision: CodexResetShadowDecisionRecord,
   dependencies: CodexBankedResetDependencies,
-  settingsEntries: Deno.KvEntryMaybe<unknown>[],
+  settingsEntries: KvEntryMaybe<unknown>[],
   selected: SelectedPoolCredit,
   nowMs: number
 ): Promise<CodexBankedResetPoolOutcome> => {
@@ -653,11 +654,11 @@ const liveAuditMatches = (audited: CodexResetShadowDecisionRecord | null, select
 
 /** The live tail: arming or audit proof, then one durable submission attempt. */
 const runLivePoolSubmission = async (
-  kv: Deno.Kv,
+  kv: Kv,
   dependencies: CodexBankedResetDependencies,
   episode: Readonly<{
     complete: ResolvedPoolCandidate[];
-    settingsEntries: Deno.KvEntryMaybe<unknown>[];
+    settingsEntries: KvEntryMaybe<unknown>[];
     episodeHash: string;
     audited: CodexResetShadowDecisionRecord | null;
     liveNeedsArming: boolean;
