@@ -43,6 +43,9 @@ export const EVICTION_MAX_CHUNK_DELETES = 512;
 // native atomic backend accepts at most ten checks, so four rows (nine checks)
 // is the largest portable batch.
 export const BOOTSTRAP_BATCH_ENTRIES = 4;
+// Owner rows (accounting + manifest) one bootstrap batch may read while indexing
+// chunk owners. Fixed, so a batch's owner reads never grow with retained captures.
+export const BOOTSTRAP_OWNER_SCAN_ENTRIES = 64;
 export const RESERVATION_REAP_LIMIT = 8;
 export const STATUS_PRUNE_BATCH = 16;
 export const CAS_ATTEMPTS = 5;

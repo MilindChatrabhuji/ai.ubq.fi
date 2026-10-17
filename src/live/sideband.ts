@@ -18,6 +18,7 @@ import {
   liveSidebandUpstreamHeaders,
   liveSidebandUrl,
   readLiveCallMapping,
+  retireLiveCallMapping,
 } from "./upstream.ts";
 
 type DownstreamSocket = WebSocket;
@@ -133,14 +134,18 @@ const bridgeLiveSideband = async (input: LiveSidebandBridge): Promise<void> => {
   const relay = { settled: false, upstreamOpen: false, dialed: false };
   let upstream: UpstreamSocket;
 
-  const finish = (code: number, reason: string): void => {
+  const finish = (code: number, reason: string, beforeClose?: Promise<void>): void => {
     if (relay.settled) return;
     relay.settled = true;
     preopenFrames.length = 0;
     preopenBytes = 0;
-    if (relay.dialed) closeUpstream(upstream, code, reason);
-    closeDownstream(downstream, code, reason);
-    logLiveSideband("closed", { call_id: callId, account_id: accountId, code });
+    const close = (): void => {
+      if (relay.dialed) closeUpstream(upstream, code, reason);
+      closeDownstream(downstream, code, reason);
+      logLiveSideband("closed", { call_id: callId, account_id: accountId, code });
+    };
+    if (beforeClose) void beforeClose.then(close, close);
+    else close();
   };
 
   const sendUpstreamFrame = (text: string): boolean => {
@@ -234,7 +239,14 @@ const bridgeLiveSideband = async (input: LiveSidebandBridge): Promise<void> => {
   upstream.on("error", () => {
     finish(SIDEBAND_FAILURE_CLOSE_CODE, "realtime upstream error");
   });
-  upstream.on("unexpected-response", () => {
+  upstream.on("unexpected-response", (_request, response: { statusCode?: number }) => {
+    if (response.statusCode === 404 || response.statusCode === 410) {
+      // A downstream 101 has already been sent by this point, so retire the
+      // mapping before closing it. Reconnects then receive the terminal 404
+      // instead of repeatedly dialing an ended upstream call.
+      finish(SIDEBAND_FAILURE_CLOSE_CODE, "realtime upstream rejected the sideband", retireLiveCallMapping(callId));
+      return;
+    }
     finish(SIDEBAND_FAILURE_CLOSE_CODE, "realtime upstream rejected the sideband");
   });
 };
