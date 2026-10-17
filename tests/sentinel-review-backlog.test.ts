@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
-import d465107dLocal from "../docs/sentinel-review-d465107d-local.json";
+import d465107dLocal from "../docs/sentinel-review-d465107d-local.json" with { type: "json" };
 import backlogText from "../docs/sentinel-review-backlog.md" with { type: "text" };
-import pr244Github from "../docs/sentinel-review-pr244-github.json";
-import pr246Github from "../docs/sentinel-review-pr246-github.json";
-import pr247Github from "../docs/sentinel-review-pr247-github.json";
-import pr247Local from "../docs/sentinel-review-pr247-local.json";
-import pr248Github from "../docs/sentinel-review-pr248-github.json";
-import pr249Github from "../docs/sentinel-review-pr249-github.json";
-import pr250Github from "../docs/sentinel-review-pr250-github.json";
-import pr250Local from "../docs/sentinel-review-pr250-local.json";
+import pr244Github from "../docs/sentinel-review-pr244-github.json" with { type: "json" };
+import pr246Github from "../docs/sentinel-review-pr246-github.json" with { type: "json" };
+import pr247Github from "../docs/sentinel-review-pr247-github.json" with { type: "json" };
+import pr247Local from "../docs/sentinel-review-pr247-local.json" with { type: "json" };
+import pr248Github from "../docs/sentinel-review-pr248-github.json" with { type: "json" };
+import pr249Github from "../docs/sentinel-review-pr249-github.json" with { type: "json" };
+import pr250Github from "../docs/sentinel-review-pr250-github.json" with { type: "json" };
+import pr250Local from "../docs/sentinel-review-pr250-local.json" with { type: "json" };
 
 type ReviewFinding = Readonly<{
   fingerprint: string;
