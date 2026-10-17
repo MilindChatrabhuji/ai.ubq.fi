@@ -124,13 +124,18 @@ const fetch = async (input, init = {}) => {
 
 const debounce = (fn, wait = 450) => {
   let timer = null;
-  return (...args) => {
+  const debounced = (...args) => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
       fn(...args);
     }, wait);
   };
+  debounced.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  return debounced;
 };
 
 const mustGet = (id) => {
@@ -375,6 +380,7 @@ let defaultsTouched = false;
 let defaultsEditRevision = 0;
 let defaultsLoadId = 0;
 let defaultsLoadedAt = 0;
+let cancelDefaultsSaveSchedule = () => {};
 
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelAttention = mustGet("kernel-attention");
@@ -6655,6 +6661,7 @@ const renderKeys = (keys, view = "all") => {
   filteredKeys.forEach((key, index) => {
     const statusKind = getApiKeyStatus(key);
     const keyLabel = key.name || key.id || "unnamed API key";
+    const currentKeyLabel = () => key.name || key.id || keyLabel;
     const row = document.createElement("div");
     row.dataset.key = "row";
     row.dataset.state = statusKind;
@@ -6822,21 +6829,25 @@ const renderKeys = (keys, view = "all") => {
     applyIconButton(editBtn, "edit", "Edit API key");
     actionRow.appendChild(editBtn);
 
-    if (statusKind !== "revoked") {
-      const revokeBtn = document.createElement("button");
-      revokeBtn.type = "button";
-      revokeBtn.dataset.variant = "danger";
-      applyIconButton(revokeBtn, "revoke", "Revoke API key");
-      revokeBtn.addEventListener("click", () => {
-        void revokeKey(key.id, keyLabel, revokeBtn);
-      });
-      actionRow.appendChild(revokeBtn);
-    } else if (statusKind === "revoked") {
+    const renderKeyActions = (nextStatusKind) => {
+      actionRow.textContent = "";
+      if (nextStatusKind !== "revoked") {
+        const revokeBtn = document.createElement("button");
+        revokeBtn.type = "button";
+        revokeBtn.dataset.variant = "danger";
+        applyIconButton(revokeBtn, "revoke", "Revoke API key");
+        revokeBtn.addEventListener("click", () => {
+          void revokeKey(key.id, currentKeyLabel(), revokeBtn);
+        });
+        actionRow.appendChild(revokeBtn);
+        return;
+      }
+
       const restoreBtn = document.createElement("button");
       restoreBtn.type = "button";
       applyIconButton(restoreBtn, "restore", "Unrevoke API key");
       restoreBtn.addEventListener("click", () => {
-        void unrevokeKey(key.id, keyLabel, restoreBtn);
+        void unrevokeKey(key.id, currentKeyLabel(), restoreBtn);
       });
       actionRow.appendChild(restoreBtn);
 
@@ -6845,10 +6856,11 @@ const renderKeys = (keys, view = "all") => {
       deleteBtn.dataset.variant = "danger";
       applyIconButton(deleteBtn, "trash", "Delete API key");
       deleteBtn.addEventListener("click", () => {
-        void deleteKey(key.id, keyLabel, deleteBtn);
+        void deleteKey(key.id, currentKeyLabel(), deleteBtn);
       });
       actionRow.appendChild(deleteBtn);
-    }
+    };
+    renderKeyActions(statusKind);
 
     controls.appendChild(status);
     controls.appendChild(actionRow);
@@ -7148,9 +7160,16 @@ const renderKeys = (keys, view = "all") => {
       status.dataset.state = nextStatusKind === "active" ? "ok" : nextStatusKind === "expired" ? "warning" : "bad";
       status.textContent =
         nextStatusKind === "revoked" ? "Revoked" : nextStatusKind === "expired" ? "Expired" : "Active";
+      renderKeyActions(nextStatusKind);
       expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
       if (nextStatusKind === "expired") expiresInfo.item.dataset.state = "bad";
       else delete expiresInfo.item.dataset.state;
+      row.hidden = currentKeyView !== "all" && currentKeyView !== nextStatusKind;
+      scheduleKeyExpiryRefresh();
+      if (row.hidden) {
+        const visibleCount = allKeys.filter((candidate) => getApiKeyStatus(candidate) === currentKeyView).length;
+        setKeysBadge("ok", visibleCount ? `${formatPlural(visibleCount, "API key")}` : `No ${currentKeyView} API keys`);
+      }
     };
 
     const buildEditPayload = () => {
@@ -8955,6 +8974,7 @@ const updateReasoningOptions = (modelSlug, preferred) => {
 
 const defaultsTarget = () => apiUrl("/admin/defaults");
 const clearDefaultsSaveQueue = () => {
+  cancelDefaultsSaveSchedule();
   defaultsSaveQueued = false;
   defaultsSaveQueuedTarget = "";
 };
@@ -10771,6 +10791,7 @@ const hydrateAdminSnapshots = async () => {
 const scheduleDefaultsSave = debounce(() => {
   void saveDefaults();
 }, 500);
+cancelDefaultsSaveSchedule = scheduleDefaultsSave.cancel;
 
 restoreSettings();
 syncCreateUsageLimitControls();
