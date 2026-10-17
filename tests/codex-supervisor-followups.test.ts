@@ -48,21 +48,21 @@ test("follow updates re-emit one command index as its output, status and exit co
 });
 
 test("follow retains a completed entry that falls outside a sampled update batch", () => {
-  const count = FOLLOW_MAX_ENTRIES + 1;
-  const partial = extractFollowEntries(
-    "turn-gap",
-    Array.from({ length: count }, (_, index) => ({
+  const count = FOLLOW_MAX_ENTRIES + 2;
+  const partial = extractFollowEntries("turn-gap", [
+    {
       type: "commandExecution",
-      id: `c${index}`,
-      command: `command ${index}`,
+      id: "c0",
+      command: "command 0",
       status: "in_progress",
       exitCode: null,
-      aggregatedOutput: `partial ${index}`,
-    })),
-  );
+      aggregatedOutput: "partial 0",
+    },
+  ]);
   const revisions = new Map<string, string>();
   const first = selectFollowUpdates(partial, -1, revisions);
-  assert.equal(first.length, FOLLOW_MAX_ENTRIES);
+  assert.equal(first.length, 1);
+  assert.equal(first[0]?.key, "turn-gap:c0");
 
   const completed = extractFollowEntries(
     "turn-gap",
@@ -75,12 +75,11 @@ test("follow retains a completed entry that falls outside a sampled update batch
       aggregatedOutput: index === 0 ? "final output" : `final ${index}`,
     })),
   );
-  const cursor = count - 1;
-  const second = selectFollowUpdates(completed, cursor, revisions);
+  const second = selectFollowUpdates(completed, 0, revisions);
   assert.equal(second.length, FOLLOW_MAX_ENTRIES);
   assert.equal(second.some((entry) => entry.key === "turn-gap:c0"), false, "the completed entry is outside this oversized update batch");
 
-  const [delivered] = selectFollowUpdates(completed, cursor, revisions);
+  const [delivered] = selectFollowUpdates(completed, count - 1, revisions);
   assert.ok(delivered);
   assert.equal(delivered.key, "turn-gap:c0");
   assert.equal(delivered.text, "final output");
