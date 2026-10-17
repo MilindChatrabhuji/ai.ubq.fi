@@ -500,6 +500,7 @@ test("openai: DeepSeek official Chat Completions adapter streams natively and st
           );
           assert.equal(response.status, 200);
           assert.equal(await response.text(), `${firstFrame}${secondFrame}data: [DONE]\n\n`);
+          assert.equal(bufferedDeadline.signal.aborted, true, "the producing stream must outlive the simulated buffered deadline");
           // The stream path must not install the buffered signal; its reader's
           // first-event watchdog becomes renewable inactivity instead.
         } finally {
