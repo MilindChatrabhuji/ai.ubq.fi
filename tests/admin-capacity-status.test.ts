@@ -10,6 +10,7 @@ class TestElement {
   value = "";
   hidden = false;
   open = false;
+  disabled = false;
   parentElement: TestElement | null = null;
   children: TestElement[] = [];
   listeners = new Map<string, (() => void)[]>();
@@ -100,6 +101,10 @@ test("Claude credential actions stay within the existing provider entry and surv
     claudeWorkspaceSave: buttons[1],
     claudeCredentialClear: buttons[2],
     claudeQuotaClear: buttons[3],
+    claudeAccountSelect: new TestElement(),
+    claudeAccountActivate: new TestElement(),
+    claudeAccessInput: new TestElement(),
+    claudeAccessSave: new TestElement(),
     saveClaudeCredential: () => calls[0]++,
     saveClaudeWorkspace: () => calls[1]++,
     clearClaudeCredential: () => calls[2]++,
@@ -187,6 +192,149 @@ test("shared Claude analytics diagnostics retain credential, workspace and routi
   assert.equal(facts["Principal allowlist"], "Configured");
   assert.equal(facts.Inference, "healthy");
   assert.equal(facts["Last event"], "success");
+});
+
+test("shipped Claude rows never reuse another account or replacement cohort's masked diagnostics", () => {
+  class Row extends TestElement {
+    setAttribute() {}
+  }
+  const providerA = { account_id: "local-a", account_cohort_id: "cohort-a", label: "A", credential: { hint: "masked-a" } };
+  const providerB = { account_id: "local-b", account_cohort_id: "cohort-b", label: "B", credential: { hint: "masked-b" } };
+  const rendered: unknown[] = [];
+  const fixture = {
+    document: { createElement: () => new Row() },
+    latestClaudeSubscription: { accounts: [providerA, providerB], enabled: true, principal_allowlist_configured: true },
+    latestProviderHealth: null,
+    setBadge: () => {},
+    capacityBadgeState: () => "unknown",
+    capacityStateLabel: () => "Unknown",
+    renderCapacityWindow: () => {},
+    appendCapacitySourceMeta: (_row: unknown, _source: unknown, provider: unknown) => rendered.push(provider),
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const claudeCapacityWindowForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
+      "\nglobalThis.render = renderClaudeCapacitySource;",
+    fixture
+  );
+  const render = (fixture as typeof fixture & { render: (source: unknown) => void }).render;
+  render({ source: "claude_code", account_id: "local-b", account_cohort_id: "cohort-b", windows: {} });
+  assert.equal((rendered[0] as { credential: { hint: string } }).credential.hint, "masked-b");
+  render({ source: "claude_code", account_id: "local-b", account_cohort_id: "old-cohort-b", windows: {} });
+  assert.equal(rendered[1], null, "a poll racing credential replacement displays unknown metadata, never the replacement's provenance");
+});
+
+test("shipped shared capacity list supports legacy singleton and distinct roster rows with stable disclosure state", () => {
+  class CapacityRow extends TestElement {
+    details = new TestElement();
+    querySelector() {
+      return this.details;
+    }
+  }
+  const list = new TestElement();
+  const fixture = {
+    providerCapacityList: list,
+    providerForCodexSlot: () => null,
+    renderCodexCapacitySource: () => new CapacityRow(),
+    renderClaudeCapacitySource: (entry: { account_id?: string }) => {
+      const row = new CapacityRow();
+      row.dataset.accountId = entry.account_id ?? "legacy";
+      return row;
+    },
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
+      "\nglobalThis.render = renderProviderCapacityList;",
+    fixture
+  );
+  const render = (fixture as typeof fixture & { render: (sources: unknown[], active: unknown, accounts?: unknown[]) => void }).render;
+  const sources = [
+    { source: "codex", slot: 1, account_cohort_id: "codex-a" },
+    { source: "codex", slot: 2, account_cohort_id: "codex-b" },
+  ];
+  const a = { source: "claude_code", account_id: "local-a" };
+  const b = { source: "claude_code", account_id: "local-b" };
+  render(sources, a);
+  assert.equal(list.children.length, 3, "an old server's singleton still renders once");
+  render(sources, a, [a, b]);
+  assert.equal(list.children.length, 4, "the active projection is not appended again beside the roster");
+  (list.children[2] as CapacityRow).details.open = true;
+  render(sources, b, [b, a]);
+  assert.equal((list.children[2] as CapacityRow).details.open, false, "reordering cannot move another account's disclosure state");
+  assert.equal((list.children[3] as CapacityRow).details.open, true);
+  render(sources, a, []);
+  assert.equal(list.children.length, 2, "an explicit empty roster does not resurrect a stale active projection");
+});
+
+test("shipped routing warnings describe only disabled capacity and paid fallback, not a false Claude paid-first route", () => {
+  const selection = new Set(["claude_code"]);
+  const fixture = {
+    providerSelection: selection,
+    providersSelectionIsEmpty: () => selection.size === 0,
+    providersMissingSelectionIds: () => [],
+    providerCodexSelection: () => ({ total: 2, selected: selection.has("codex") ? 2 : 0 }),
+    isProviderChecked: (id: string) => selection.has(id),
+    formatNumber: (value: number) => String(value),
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const providersRoutingWarnings ="), sourceText.indexOf("const providersHealthWarning =")) +
+      "\nglobalThis.warnings = providersRoutingWarnings;",
+    fixture
+  );
+  const warnings = (fixture as typeof fixture & { warnings: () => string[] }).warnings;
+  assert.deepEqual(Array.from(warnings()), [
+    "Codex is off; Codex subscription capacity stays unused.",
+    "Both paid tiers are off; no paid fallback is available after subscription routing.",
+  ]);
+  assert.doesNotMatch(warnings().join(" "), /requests start at the paid|outside the Codex roster/);
+  selection.add("codex");
+  assert.deepEqual(Array.from(warnings()), ["Both paid tiers are off; no paid fallback is available after subscription routing."]);
+  selection.add("surplus");
+  assert.deepEqual(Array.from(warnings()), []);
+  selection.clear();
+  assert.deepEqual(Array.from(warnings()), [], "an empty selection keeps its existing unfiltered semantics");
+});
+
+test("shipped capacity summary counts exactly displayed Claude roster or legacy rows without changing Codex chart inputs", () => {
+  const badges: string[] = [];
+  const chartSources: { source: string }[][] = [];
+  const fixture = {
+    latestProviderCapacityChartState: null,
+    providerCapacityBadge: new TestElement(),
+    providerCapacityUpdated: new TestElement(),
+    renderProviderCapacityChart: (_snapshot: unknown, sources: { source: string }[]) => chartSources.push(sources),
+    renderProviderCapacityList: () => {},
+    renderProviderCapacityLedger: () => {},
+    setBadge: (_element: unknown, _state: string, label: string) => badges.push(label),
+    formatCapacityTimestamp: () => "observed",
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
+      sourceText.slice(sourceText.indexOf("const unavailableCodexCapacitySource ="), sourceText.indexOf("const CAPACITY_CHART_SVG_NS =")) +
+      sourceText.slice(sourceText.indexOf("const renderProviderCapacity ="), sourceText.indexOf("const loadProviderCapacity =")) +
+      "\nglobalThis.render = renderProviderCapacity;",
+    fixture
+  );
+  const render = (fixture as typeof fixture & { render: (snapshot: unknown) => void }).render;
+  const codex = (state: string) => [1, 2].map((slot) => ({ source: "codex", slot, state }));
+  const account = (id: string, state: string) => ({ source: "claude_code", account_id: id, state });
+  const a = account("a", "available");
+  const b = account("b", "stale");
+  const snapshot = { sources: codex("unavailable"), claude: a, claude_accounts: [a, b], prompt_cache: { status: "ready" } };
+  const before = structuredClone(snapshot);
+  render(snapshot);
+  assert.equal(badges.at(-1), "Partial quota · 2 unavailable", "live Claude capacity cannot be summarized as wholly unavailable");
+  assert.deepEqual(snapshot, before, "summary presentation cannot fabricate a quota or mutate the snapshot");
+  render({ ...snapshot, sources: codex("available"), claude: account("old-active", "unavailable"), claude_accounts: [b] });
+  assert.equal(badges.at(-1), "Quota stale · 1 source", "do not append the active compatibility projection beside an explicit roster");
+  render({ ...snapshot, sources: codex("available"), claude: account("removed", "unavailable"), claude_accounts: [] });
+  assert.equal(badges.at(-1), "Up to date", "a present empty roster does not resurrect removed current evidence");
+  render({ sources: codex("unavailable"), claude: a, prompt_cache: { status: "ready" } });
+  assert.equal(badges.at(-1), "Partial quota · 2 unavailable", "old singleton servers retain truthful summary presentation");
+  render({ sources: codex("unavailable"), claude_accounts: [account("a", "unavailable")] });
+  assert.equal(badges.at(-1), "Quota unavailable");
+  render({});
+  assert.equal(badges.at(-1), "Quota unavailable", "missing evidence is not made available");
+  assert(chartSources.every((sources) => sources.length === 2 && sources.every((entry) => entry.source === "codex")));
 });
 
 test("current accepted quota access is reachable while its failed refresh attempt stays visible", () => {
@@ -408,4 +556,177 @@ test("shipped retention renderer refuses incomplete, errored, unavailable or cor
       "Capture storage usage unavailable · Gateway text logs 2 GiB · Text logs reached 1 GiB; rotation is separate."
     );
   }
+});
+
+const claudeChartContext = {
+  CAPACITY_CHART_BUCKET_MS: 900_000,
+  clampCapacityChartPercent: (value: number) => Math.max(0, Math.min(100, value)),
+  formatCapacityTimestamp: (value: unknown) => {
+    if (typeof value === "number" || typeof value === "string") return String(value);
+    return "Not reported";
+  },
+};
+runInNewContext(
+  sourceText.slice(sourceText.indexOf("const CLAUDE_CAPACITY_CHART_SERIES ="), sourceText.indexOf("const capacityChartFailureIsDowntime =")) +
+    "\nglobalThis.points = claudeCapacityChartPoints; globalThis.summary = claudeHistorySummary;",
+  claudeChartContext
+);
+const claudeChart = claudeChartContext as typeof claudeChartContext & {
+  points: (view: unknown, account: string, window: string, interval: unknown) => ({ remainingPercent: number } | null)[];
+  summary: (snapshot: unknown, now: number) => string;
+};
+const historyStart = 1_800_000_000_000;
+const historyInterval = { startAtMs: historyStart, resetAtMs: historyStart + 3_600_000, durationMs: 3_600_000 };
+const historySample = (offset: number, patch: Record<string, unknown> = {}) => ({
+  account_id: "local-a",
+  account_cohort_id: "cohort-a",
+  credential_kind: "oauth",
+  workspace_id: null,
+  state: "available",
+  sampled_at_ms: historyStart + offset,
+  source_observed_at_ms: historyStart + offset,
+  bucket_start_at_ms: Math.floor((historyStart + offset) / 900_000) * 900_000,
+  windows: { five_hour: { used_percent: 7, reset_at_ms: historyStart + 18_000_000, observed_at_ms: historyStart + offset } },
+  ...patch,
+});
+
+test("shipped Claude chart uses actual window timestamps and never anchors a current value", () => {
+  const view = { stale_after_ms: 1_800_000, points: [historySample(0), historySample(1_000)] };
+  const points = claudeChart.points(view, "local-a", "five_hour", historyInterval);
+  assert.equal(points.filter(Boolean).length, 2);
+  assert.equal(points.filter((point) => point === null).length, 1);
+  assert.equal(points.at(-1)?.remainingPercent, 93);
+  assert.deepEqual(Array.from(claudeChart.points(view, "local-a", "seven_day", historyInterval).filter(Boolean)), []);
+  const noTime = historySample(2_000, { windows: { five_hour: { used_percent: 0, reset_at_ms: null, observed_at_ms: null } } });
+  assert.equal(claudeChart.points({ points: [noTime] }, "local-a", "five_hour", historyInterval).filter(Boolean).length, 0);
+});
+
+test("shipped Claude chart breaks cohort, reset, unavailable and missing-bucket runs without inventing downtime", () => {
+  const cases = [
+    historySample(1_000, { account_cohort_id: "replacement" }),
+    historySample(1_000, { credential_kind: "api_key" }),
+    historySample(1_000, { workspace_id: "other-workspace" }),
+    historySample(1_000, { state: "unavailable" }),
+    historySample(1_000, { windows: { five_hour: { used_percent: 0, reset_at_ms: historyStart + 36_000_000, observed_at_ms: historyStart + 1_000 } } }),
+    historySample(2_700_000),
+  ];
+  for (const sample of cases) {
+    const points = claudeChart.points({ points: [historySample(0), sample] }, "local-a", "five_hour", historyInterval);
+    assert.equal(points.filter((point) => point === null).length, 2);
+    assert.equal(points.filter(Boolean).length, 2, "a measured zero stays an observed point, not a fabricated missing value");
+  }
+  assert.match(claudeChart.summary({ claude_history: { scan: "unavailable", points: [] } }, historyStart), /unavailable/);
+  assert.match(claudeChart.summary({ claude_history: { scan: "ok", truncated: true, points: [] } }, historyStart), /truncated/);
+  const aggregate = /const CAPACITY_CHART_SERIES = ([^;]+);/.exec(sourceText)?.[1] ?? "";
+  assert.doesNotMatch(aggregate, /claude/, "Claude never changes Codex aggregate membership");
+  assert.doesNotMatch(
+    sourceText.slice(sourceText.indexOf("const renderClaudeHistorySelector ="), sourceText.indexOf("const renderClaudeHistoryPaths =")),
+    /fetch\(|mutateClaude|activate/,
+    "history selection is view-only"
+  );
+});
+
+test("shipped shared account controls preserve scoped drafts and send only explicit account/access actions", async () => {
+  const names = [
+    "claudeCredentialSummary",
+    "claudeCredentialInput",
+    "claudeWorkspaceInput",
+    "claudeCredentialSave",
+    "claudeWorkspaceSave",
+    "claudeCredentialClear",
+    "claudeQuotaClear",
+    "claudeSubscriptionStatus",
+    "claudeAccountSelect",
+    "claudeAccountActivate",
+    "claudeAccountLabel",
+    "claudeAccessInput",
+    "claudeAccessSource",
+    "claudeAccessSave",
+  ] as const;
+  const elements = Object.fromEntries(names.map((name) => [name, new TestElement()])) as Record<(typeof names)[number], TestElement>;
+  const account = (id: string, active: boolean) => ({
+    account_id: id,
+    account_cohort_id: `cohort-${id}`,
+    label: `Local ${id}`,
+    active,
+    credential: { kind: "oauth", source: "kv", hint: "masked" },
+    workspace: null,
+  });
+  let status = {
+    accounts: [account("a", true), account("b", false)],
+    active_account_id: "a",
+    active_reason: "bootstrap",
+    access: { source: "env", allowed_key_ids: ["existing-key"], updated_at_ms: null as number | null },
+  };
+  const calls: { url: string; method: string; body: Record<string, unknown> | null }[] = [];
+  const fixture = {
+    ...elements,
+    document: { createElement: () => new TestElement() },
+    adminAccessState: { isAdmin: true },
+    hasAdminCredential: () => true,
+    getAdminToken: () => "fixture-admin",
+    apiUrl: (path: string) => `http://fixture.invalid${path}`,
+    formatDate: (value: unknown) => JSON.stringify(value),
+    toast: {
+      error: () => {
+        throw new Error("unexpected UI action failure");
+      },
+    },
+    fetch: (url: string, init: { method?: string; body?: string } = {}) => {
+      const method = init.method ?? "GET";
+      const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      calls.push({ url, method, body });
+      if (url.endsWith("/access") && method === "POST") {
+        status = { ...status, access: { source: "kv", allowed_key_ids: body?.allowed_key_ids as string[], updated_at_ms: 1 } };
+        return Promise.resolve(Response.json({ data: status.access }));
+      }
+      return Promise.resolve(Response.json({ data: status, guards_cleared: true }));
+    },
+  };
+  runInNewContext(
+    sourceText.slice(sourceText.indexOf("let latestClaudeSubscription = null;"), sourceText.indexOf("const loadProviders =")) +
+      "\nglobalThis.api = {apply:(value)=>{latestClaudeSubscription=value;renderClaudeSubscriptionControls();},save:saveClaudeCredential,clear:clearClaudeQuotaGuards};",
+    fixture
+  );
+  const ui = (fixture as typeof fixture & { api: { apply: (value: unknown) => void; save: () => Promise<void>; clear: () => Promise<void> } }).api;
+  ui.apply(status);
+  assert.equal(calls.length, 0, "loading controls never grants access or switches active account");
+  elements.claudeCredentialInput.value = "draft-a";
+  elements.claudeWorkspaceInput.value = "wrkspc_draft_a";
+  elements.claudeAccountLabel.value = "Label A";
+  const select = (value: string) => {
+    elements.claudeAccountSelect.value = value;
+    for (const listener of elements.claudeAccountSelect.listeners.get("change") ?? []) listener();
+  };
+  select("b");
+  elements.claudeCredentialInput.value = "draft-b";
+  select("a");
+  assert.equal(elements.claudeCredentialInput.value, "draft-a");
+  assert.equal(elements.claudeWorkspaceInput.value, "wrkspc_draft_a");
+  ui.apply({ ...status, active_account_id: "b", accounts: [account("a", false), account("b", true)] });
+  assert.equal(elements.claudeCredentialInput.value, "draft-a", "polling preserves the selected account's unsaved draft");
+  await ui.clear();
+  const clear = calls.find((call) => call.url.endsWith("/quota/clear"));
+  assert.deepEqual(clear?.body, { account_id: "a", account_cohort_id: "cohort-a" });
+  await ui.save();
+  const save = calls.find((call) => call.method === "POST" && call.url.endsWith("/auth"));
+  assert.deepEqual(save?.body, { account_id: "a", credential: "draft-a", workspace_id: "wrkspc_draft_a", label: "Label A" });
+  select("");
+  elements.claudeCredentialInput.value = "new-account-draft";
+  await ui.save();
+  const added = calls.filter((call) => call.method === "POST" && call.url.endsWith("/auth")).at(-1);
+  assert.equal(added?.body?.create_new, true);
+  assert.equal(added.body.activate, false);
+  elements.claudeAccessInput.value = "";
+  for (const listener of elements.claudeAccessInput.listeners.get("input") ?? []) listener();
+  elements.claudeAccessSave.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const access = calls.find((call) => call.url.endsWith("/access"));
+  assert.deepEqual(access?.body, { allowed_key_ids: [] });
+  assert.match(elements.claudeAccessSource.textContent, /stored policy.*0 allowed/);
+  assert.equal(
+    calls.some((call) => call.url.endsWith("/accounts/active")),
+    false,
+    "account viewing/import never silently changes active selection"
+  );
 });

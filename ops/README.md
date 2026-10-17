@@ -44,8 +44,12 @@ atomically selects the new release, validates the composed Caddy configuration a
 `systemctl reload caddy`, restarts only the gateway, and checks the exact health identity on the loopback listener and
 on the public `https://ai.ubq.fi/health` route. It fails closed when the branch, `HEAD`, or tracking ref does not match,
 and it never fetches, pulls, or switches branches itself: if `origin/development` is missing or stale, refresh it with
-the existing `git fetch origin development` step above. It refuses to overwrite an existing release. Use
-`systemctl restart` to restart the current release.
+the existing `git fetch origin development` step above. It refuses to overwrite an existing release. If a run fails
+after it created the release, fix the fault and rerun the same command for the same SHA: the private
+`.data/deploy-recovery.json` receipt lets it verify the existing release and continue. A failure before Caddy applies the
+new configuration restores the previous release. A first deployment has no previous release, so once the gateway
+restart was attempted its candidate stays selected, unaccepted, until a retry accepts it. Use `systemctl restart` to
+restart the current release.
 
 Verify authenticated inference and the public health route after deployment. A health response alone does not prove
 provider inference. The startup message, health body, and response headers identify the same immutable Git revision.

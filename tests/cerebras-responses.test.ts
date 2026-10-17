@@ -557,14 +557,14 @@ for (const stream of [false, true]) {
           assert.equal(calls[0].body.stream, false);
           assert.equal("stream_options" in calls[0].body, false);
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
-          const event = status === "completed" ? "success" : "upstream_error";
+          const event = status === "failed" ? "upstream_error" : "success";
           assert.deepEqual(cerebrasHealthWrites, [{ event, status: 200, observed_at_ms: nowMs, provider_request_id: "cerebras-req-1" }]);
           const health = await getCerebrasProviderHealth();
-          assert.equal(health.state, status === "completed" ? "healthy" : "degraded");
+          assert.equal(health.state, event === "success" ? "healthy" : "degraded");
           assert.equal(health.last_event, event);
           assert.equal(health.last_status, 200);
-          assert.equal(health.last_success_at_ms, status === "completed" ? nowMs : successAtMs);
-          assert.equal(health.last_error_at_ms, status === "completed" ? null : nowMs);
+          assert.equal(health.last_success_at_ms, event === "success" ? nowMs : successAtMs);
+          assert.equal(health.last_error_at_ms, event === "success" ? null : nowMs);
           assert.deepEqual(kvStore.get(keyOf([...PROVIDER_HEALTH_KEY_PREFIX, "cerebras", "default", event])), cerebrasHealthWrites[0]);
         } finally {
           await new Promise<void>((resolve) => setTimeout(resolve, 0));

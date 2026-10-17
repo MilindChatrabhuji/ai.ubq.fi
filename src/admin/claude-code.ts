@@ -12,16 +12,9 @@ import { readJsonBody } from "../request.ts";
 import { isRecord } from "../utils.ts";
 import {
   CLAUDE_CODE_CREDENTIAL_MAX_LENGTH,
-  clearClaudeCodeStoredCredential,
-  clearClaudeCodeWorkspaceState,
-  loadClaudeCodeWorkspaceState,
   mergeClaudeCodeWorkspaceState,
   parseClaudeCodeWorkspaceId,
-  resolveClaudeCodeCredential,
   partialClaudeCodeCredentialHint,
-  resolveClaudeCodeWorkspace,
-  storeClaudeCodeStoredCredential,
-  storeClaudeCodeWorkspaceState,
 } from "../provider/claude-code-credentials.ts";
 import { claudeCodeCredentialKind, type ClaudeCodeEnvLookup } from "../provider/claude-code.ts";
 import {
@@ -32,6 +25,14 @@ import {
 } from "../provider/claude-code-models.ts";
 import { clearClaudeCodeQuotaGuards } from "../provider/claude-code-quota.ts";
 import { getPassiveProviderHealthSnapshot } from "../health.ts";
+import {
+  resolveClaudeCodeAccount,
+  updateClaudeCodeAccount,
+  removeClaudeCodeAccount,
+  selectClaudeCodeAccount,
+  type ClaudeCodeAccountBinding,
+} from "../provider/claude-code-accounts.ts";
+import { loadClaudeCodeAccessPolicy, parseClaudeCodeAccessIds, storeClaudeCodeAccessPolicy } from "../provider/claude-code-access.ts";
 
 const CREDENTIAL_LABEL_MAX_LENGTH = 64;
 
@@ -98,99 +99,156 @@ const parseWorkspaceSubmission = (body: Record<string, unknown>): WorkspaceParse
   return workspaceId ? { workspaceId } : { error: openaiError(400, "workspace_id must be a wrkspc_ workspace id", "invalid_request_error") };
 };
 
-const validationSecret = async (kv: Kv, secret: string | null, env?: ClaudeCodeEnvLookup): Promise<string | null> => {
-  if (secret !== null) return secret;
-  return (await resolveClaudeCodeCredential(kv, env))?.secret ?? null;
+const submissionTarget = async (kv: Kv, body: Record<string, unknown>, env?: ClaudeCodeEnvLookup) => {
+  if (body.account_id !== undefined && (typeof body.account_id !== "string" || !/^[a-f0-9-]{36}$/.test(body.account_id)))
+    throw new Error("account_id is invalid");
+  if (body.create_new !== undefined && typeof body.create_new !== "boolean") throw new Error("create_new must be boolean");
+  if (body.activate !== undefined && typeof body.activate !== "boolean") throw new Error("activate must be boolean");
+  if (body.create_new === true && body.account_id !== undefined) throw new Error("create_new cannot target an existing account");
+  const target =
+    body.create_new === true ? null : await resolveClaudeCodeAccount(kv, env, { accountId: typeof body.account_id === "string" ? body.account_id : undefined });
+  if (body.account_id && !target) throw new Error("Claude account was not found");
+  return target;
 };
-
-const persistValidatedSubmission = async (
-  kv: Kv,
-  secret: string | null,
-  label: string | null,
-  workspaceId: string | null | undefined,
-  effectiveWorkspace: Awaited<ReturnType<typeof resolveClaudeCodeWorkspace>>
-): Promise<boolean> => {
-  if (secret !== null && !(await storeClaudeCodeStoredCredential(kv, { secret, label }))) return false;
-  if (workspaceId) {
-    const previous = await loadClaudeCodeWorkspaceState(kv).catch(() => null);
-    await storeClaudeCodeWorkspaceState(kv, mergeClaudeCodeWorkspaceState(previous, { id: workspaceId, source: "kv", verified: true }));
-  } else if (workspaceId === null) {
-    await clearClaudeCodeWorkspaceState(kv);
-  } else if (effectiveWorkspace) {
-    const previous = await loadClaudeCodeWorkspaceState(kv).catch(() => null);
-    await storeClaudeCodeWorkspaceState(
+type ValidatedSubmission = Readonly<{
+  body: Record<string, unknown>;
+  target: ClaudeCodeAccountBinding | null;
+  credential: Readonly<{ secret: string | null; label: string | null }>;
+  secret: string;
+  workspaceId: string | null;
+  requestedWorkspace: string | null | undefined;
+  validation: Awaited<ReturnType<typeof validateClaudeCodeCredential>>;
+  env?: ClaudeCodeEnvLookup;
+}>;
+const submittedWorkspace = (input: ValidatedSubmission) => {
+  if (!input.workspaceId) return null;
+  return mergeClaudeCodeWorkspaceState(input.target?.workspace ?? null, {
+    id: input.workspaceId,
+    name: input.target?.workspace?.id === input.workspaceId ? input.target.workspace.name : null,
+    source: input.requestedWorkspace === undefined ? (input.target?.workspace?.source ?? "kv") : "kv",
+    verified: input.validation.status === 200,
+  });
+};
+const persistSubmission = async (kv: Kv, input: ValidatedSubmission): Promise<ClaudeCodeAccountBinding | Response> => {
+  const credential = input.credential.secret
+    ? {
+        secret: input.secret,
+        label: input.credential.label,
+        kind: claudeCodeCredentialKind(input.secret),
+        hint: partialClaudeCodeCredentialHint(input.secret),
+        source: "kv" as const,
+        updated_at_ms: Date.now(),
+      }
+    : undefined;
+  try {
+    const account = await updateClaudeCodeAccount(
       kv,
-      mergeClaudeCodeWorkspaceState(previous, { id: effectiveWorkspace.id, name: effectiveWorkspace.name, source: effectiveWorkspace.source, verified: true })
+      {
+        accountId: input.target?.account_id,
+        createNew: input.body.create_new === true,
+        activate: input.body.activate === true,
+        expected: input.target ?? undefined,
+        credential,
+        workspace: submittedWorkspace(input),
+      },
+      input.env
     );
+    if (input.validation.snapshot) await cacheValidatedClaudeCodeModels(kv, input.secret, input.workspaceId, input.validation.snapshot, input.env, account);
+    return account;
+  } catch (error) {
+    return openaiError(409, error instanceof Error ? error.message : "Claude account changed before persistence", "claude_code_account_changed");
   }
-  return true;
 };
-
-export const handleAdminClaudeCodeAuthSet = async (
-  req: Request,
-  options: Readonly<{ /** Test seam: environment lookup for credential resolution. */ env?: ClaudeCodeEnvLookup }> = {}
-): Promise<Response> => {
+export const handleAdminClaudeCodeAuthSet = async (req: Request, options: Readonly<{ env?: ClaudeCodeEnvLookup }> = {}): Promise<Response> => {
   const kv = await getKv();
-  if (!kv) return openaiError(500, "Deno KV is not available; cannot persist the Claude credential", "server_error");
-
+  if (!kv) return openaiError(500, "KV is not available; cannot persist the Claude credential", "server_error");
   const body = await readJsonBody(req);
-  if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
-
+  if (!isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
   const credential = parseCredentialSubmission(body);
   if ("error" in credential) return credential.error;
-  const { secret, label } = credential;
-
-  // A workspace pin is optional: an organization-scoped key needs one, and a
-  // workspace-scoped key or OAuth token works without it. A submission with no
-  // credential field only changes the workspace selection.
   const workspace = parseWorkspaceSubmission(body);
   if ("error" in workspace) return workspace.error;
-  const { workspaceId } = workspace;
-
-  if (secret === null && workspaceId === undefined) {
+  if (credential.secret === null && workspace.workspaceId === undefined)
     return openaiError(400, "credential or workspace_id is required", "invalid_request_error");
+  let target: ClaudeCodeAccountBinding | null;
+  try {
+    target = await submissionTarget(kv, body, options.env);
+  } catch (error) {
+    return openaiError(400, error instanceof Error ? error.message : "Invalid account target", "invalid_request_error");
   }
-
-  // A workspace-only update validates against the credential that is already
-  // configured; a credential submission validates the submitted secret.
-  const credentialForValidation = await validationSecret(kv, secret, options.env);
-  if (!credentialForValidation) return openaiError(409, "No Claude credential is configured to validate this workspace against", "credential_missing");
-  let effectiveWorkspace: Awaited<ReturnType<typeof resolveClaudeCodeWorkspace>> = workspaceId ? { id: workspaceId, name: null, source: "kv" as const } : null;
-  if (workspaceId === undefined) effectiveWorkspace = await resolveClaudeCodeWorkspace(kv);
-  const validation = await validateClaudeCodeCredential(credentialForValidation, effectiveWorkspace?.id ?? null);
-  if (!validation.ok) {
-    return openaiError(400, validation.detail ?? "The credential was rejected upstream.", "invalid_api_key");
-  }
-
-  if (!(await persistValidatedSubmission(kv, secret, label, workspaceId, effectiveWorkspace))) {
-    return openaiError(500, "The credential could not be stored", "server_error");
-  }
-  if (validation.snapshot) {
-    await cacheValidatedClaudeCodeModels(kv, credentialForValidation, effectiveWorkspace?.id ?? null, validation.snapshot, options.env);
-  }
-
+  const secret = credential.secret ?? target?.credential.secret;
+  if (!secret) return openaiError(409, "No Claude credential is configured to validate this workspace against", "credential_missing");
+  const workspaceId = workspace.workspaceId === undefined ? (target?.workspace?.id ?? null) : workspace.workspaceId;
+  const validation = await validateClaudeCodeCredential(secret, workspaceId);
+  if (!validation.ok) return openaiError(400, validation.detail ?? "The credential was rejected upstream.", "invalid_api_key");
+  const account = await persistSubmission(kv, {
+    body,
+    target,
+    credential,
+    secret,
+    workspaceId,
+    requestedWorkspace: workspace.workspaceId,
+    validation,
+    env: options.env,
+  });
+  if (account instanceof Response) return account;
   return json(200, {
     data: await claudeSubscriptionBlock(),
+    account_id: account.account_id,
     validation: { status: validation.status, detail: validation.detail },
-    // Mirror the hint only; the stored secret is never echoed back.
-    hint: secret === null ? null : partialClaudeCodeCredentialHint(secret),
+    hint: credential.secret ? partialClaudeCodeCredentialHint(secret) : null,
   });
 };
 
-export const handleAdminClaudeCodeAuthDelete = async (): Promise<Response> => {
+export const handleAdminClaudeCodeAuthDelete = async (req?: Request): Promise<Response> => {
   const kv = await getKv();
-  if (!kv) return openaiError(500, "Deno KV is not available; cannot clear the Claude credential", "server_error");
-  await clearClaudeCodeStoredCredential(kv);
+  if (!kv) return openaiError(500, "KV is not available; cannot remove the Claude account", "server_error");
+  const accountId = req ? (new URL(req.url).searchParams.get("account_id") ?? undefined) : undefined;
+  const account = await resolveClaudeCodeAccount(kv, undefined, { accountId });
+  if (!account) return accountId ? openaiError(404, "Claude account was not found", "not_found") : json(200, { data: await claudeSubscriptionBlock() });
+  await removeClaudeCodeAccount(kv, account.account_id);
   return json(200, { data: await claudeSubscriptionBlock() });
 };
 
-/**
- * Drop the stored exhaustion guards (block, cooldown, last configuration error)
- * so the next eligible request retries the tier immediately.
- */
-export const handleAdminClaudeCodeQuotaClear = async (): Promise<Response> => {
+/** Clear only gateway guards for the targeted generation, never upstream quota or other accounts. */
+export const handleAdminClaudeCodeQuotaClear = async (req?: Request): Promise<Response> => {
   const kv = await getKv();
-  if (!kv) return openaiError(500, "Deno KV is not available; cannot clear the Claude quota guards", "server_error");
-  const cleared = await clearClaudeCodeQuotaGuards(kv);
-  return json(200, { data: await claudeSubscriptionBlock(), guards_cleared: cleared !== null });
+  if (!kv) return openaiError(500, "KV is not available; cannot clear Claude guards", "server_error");
+  const raw = req?.body ? await readJsonBody(req) : {};
+  if (!isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  if (raw.account_id !== undefined && typeof raw.account_id !== "string") return openaiError(400, "account_id must be a string", "invalid_request_error");
+  const account = await resolveClaudeCodeAccount(kv, undefined, { accountId: typeof raw.account_id === "string" ? raw.account_id : undefined });
+  if (!account)
+    return raw.account_id
+      ? openaiError(404, "Claude account was not found", "not_found")
+      : json(200, { data: await claudeSubscriptionBlock(), guards_cleared: false });
+  if (raw.account_id && typeof raw.account_cohort_id !== "string")
+    return openaiError(400, "account_cohort_id is required for a targeted clear", "invalid_request_error");
+  if (raw.account_cohort_id !== undefined && raw.account_cohort_id !== account.account_cohort_id)
+    return openaiError(409, "Claude account generation changed", "claude_code_account_changed");
+  const cleared = await clearClaudeCodeQuotaGuards(kv, account);
+  if (!cleared) return openaiError(409, "Claude guards changed during clear", "claude_code_account_changed");
+  return json(200, { data: await claudeSubscriptionBlock(), guards_cleared: true });
+};
+
+export const handleAdminClaudeCodeAccess = async (req: Request): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "Claude principal policy storage is unavailable", "server_error");
+  if (req.method === "GET") {
+    const policy = await loadClaudeCodeAccessPolicy(kv);
+    return json(200, { data: { source: policy.source, allowed_key_ids: policy.allowed_key_ids, updated_at_ms: policy.updated_at_ms } });
+  }
+  const body = await readJsonBody(req);
+  const ids = isRecord(body) ? parseClaudeCodeAccessIds(body.allowed_key_ids) : null;
+  if (!ids) return openaiError(400, "allowed_key_ids must be an explicit array of principal IDs", "invalid_request_error");
+  const policy = await storeClaudeCodeAccessPolicy(kv, ids);
+  return json(200, { data: { source: policy.source, allowed_key_ids: policy.allowed_key_ids, updated_at_ms: policy.updated_at_ms } });
+};
+export const handleAdminClaudeCodeAccountActive = async (req: Request): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "Claude account storage is unavailable", "server_error");
+  const body = await readJsonBody(req);
+  if (!isRecord(body) || typeof body.account_id !== "string") return openaiError(400, "account_id is required", "invalid_request_error");
+  if (!(await selectClaudeCodeAccount(kv, body.account_id))) return openaiError(404, "Claude account was not found", "not_found");
+  return json(200, { data: await claudeSubscriptionBlock() });
 };

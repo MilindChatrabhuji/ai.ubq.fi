@@ -33,7 +33,7 @@ import { warmOpenRouterModels, openRouterModelsSnapshot } from "./openrouter-mod
 import { getString, isRecord } from "../utils.ts";
 import { fetchMeteredModels } from "../provider/metered.ts";
 import { fetchSurplusModels } from "../provider/surplus.ts";
-import { fetchClaudeCodeModels, type ClaudeCodeModel } from "../provider/claude-code-models.ts";
+import { fetchClaudeCodeModels, claudeCodeReasoningLevels, type ClaudeCodeModel } from "../provider/claude-code-models.ts";
 import { resolveClaudeCodeCredential } from "../provider/claude-code-credentials.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { cerebrasProviderHint, LITHOS_PROVIDER_HINT, modelIdFromSnapshotRecord } from "../request-policy.ts";
@@ -87,11 +87,13 @@ const claudeCapabilities = (models: readonly ClaudeCodeModel[]): Record<string, 
     display_name: model.display_name ?? model.id,
     upstream_provider: "claude_code",
     supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
-    supported_reasoning_levels: model.supports_disabled_thinking === true ? ["none"] : [],
+    supported_reasoning_levels: claudeCodeReasoningLevels(model),
     ...(model.supports_disabled_thinking === true ? { default_reasoning_effort: "none" } : {}),
     context_window_tokens: model.context_window_tokens ?? null,
     context_source: model.context_window_tokens ? "provider_discovery" : "unknown",
-    reasoning_source: model.supports_disabled_thinking === true ? "provider_discovery" : "unknown",
+    reasoning_source: claudeCodeReasoningLevels(model).length ? "provider_discovery" : "unknown",
+    max_output_tokens: model.max_output_tokens ?? null,
+    upstream_capabilities: { image_input: model.supports_image_input ?? null, pdf_input: model.supports_pdf_input ?? null },
   }));
 
 export const handleModels = async (req?: Request): Promise<Response> => {
@@ -557,7 +559,9 @@ const discoveredModelCapabilitiesEntry = (
     upstream_provider: provider,
     supported_endpoints: supportedEndpoints,
     supported_reasoning_levels: resolved.supported_reasoning_levels ?? ["none"],
-    default_reasoning_effort: resolved.default_reasoning_effort ?? "none",
+    ...(resolved.default_reasoning_effort === null && resolved.supported_reasoning_levels !== null
+      ? {}
+      : { default_reasoning_effort: resolved.default_reasoning_effort ?? "none" }),
     reasoning_effort_wire_map: {},
     context_window_tokens: resolved.context_window_tokens,
     max_context_window_tokens: resolved.max_context_window_tokens,
