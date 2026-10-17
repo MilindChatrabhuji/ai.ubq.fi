@@ -1,0 +1,8 @@
+[install]
+exact = true
+
+[install.scopes]
+"@jsr" = "https://npm.jsr.io"
+
+[install.cache]
+dir = ".bun-cache"

@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { DEEPSEEK_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
 import { createResponseTelemetryState, type UsageContext } from "../src/openai-telemetry.ts";
@@ -26,7 +27,7 @@ const failingAdapter = (usage: unknown): ProviderStreamAdapter => ({
   responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
 });
 
-Deno.test("Chat and translated Responses preserve observed cache usage after a stream failure", async () => {
+test("Chat and translated Responses preserve observed cache usage after a stream failure", async () => {
   for (const wire of ["chat", "responses"]) {
     for (const usage of [measuredUsage, null]) {
       const telemetry = createResponseTelemetryState();

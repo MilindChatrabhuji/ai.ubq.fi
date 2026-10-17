@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import {
@@ -32,7 +33,7 @@ function guard(policy: VerificationPolicy, tracker: VerificationTracker, opts: P
   });
 }
 
-Deno.test("verify: a patch creates a pending verification satisfied by a later read with the marker", () => {
+test("verify: a patch creates a pending verification satisfied by a later read with the marker", () => {
   const tracker = new VerificationTracker();
   tracker.observe("editor.apply_patch", { path: "a.txt", old: "x", new: "y" }, patchOk("a.txt"));
   assert.equal(tracker.pending().length, 1);
@@ -41,14 +42,14 @@ Deno.test("verify: a patch creates a pending verification satisfied by a later r
   assert.equal(tracker.allVerified(), true);
 });
 
-Deno.test("verify: a read without the marker does not satisfy a pending write", () => {
+test("verify: a read without the marker does not satisfy a pending write", () => {
   const tracker = new VerificationTracker();
   tracker.observe("editor.apply_patch", { path: "a.txt", old: "x", new: "y" }, patchOk("a.txt"));
   assert.equal(tracker.observe("filesystem.read", { path: "a.txt" }, readOk("nothing relevant")), null);
   assert.equal(tracker.pending().length, 1);
 });
 
-Deno.test("verify: the declared verification command satisfies all pending writes", () => {
+test("verify: the declared verification command satisfies all pending writes", () => {
   const tracker = new VerificationTracker({ ...DEFAULT_VERIFICATION_POLICY, verificationCommand: "sh tests/run.sh" });
   tracker.observe("editor.apply_patch", { path: "a.txt", add: true, new: "1" }, patchOk("a.txt"));
   tracker.observe("editor.apply_patch", { path: "b.txt", add: true, new: "2" }, patchOk("b.txt"));
@@ -57,7 +58,7 @@ Deno.test("verify: the declared verification command satisfies all pending write
   assert.equal(tracker.allVerified(), true);
 });
 
-Deno.test("verify: a failed shell command is unresolved until a later successful command", () => {
+test("verify: a failed shell command is unresolved until a later successful command", () => {
   const tracker = new VerificationTracker();
   tracker.observe("shell.exec", { command: "grep -z nope file" }, execFail());
   assert.equal(tracker.unresolvedCommands().length, 1);
@@ -65,7 +66,7 @@ Deno.test("verify: a failed shell command is unresolved until a later successful
   assert.equal(tracker.unresolvedCommands().length, 0);
 });
 
-Deno.test("verify: a failed patch is unresolved until the same path is written successfully", () => {
+test("verify: a failed patch is unresolved until the same path is written successfully", () => {
   const tracker = new VerificationTracker();
   tracker.observe("editor.apply_patch", { path: "a.txt", old: "missing", new: "y" }, { ok: false, error_code: "patch_failed", error: "old text not found" });
   assert.equal(tracker.unresolvedEdits().length, 1);
@@ -73,7 +74,7 @@ Deno.test("verify: a failed patch is unresolved until the same path is written s
   assert.equal(tracker.unresolvedEdits().length, 0);
 });
 
-Deno.test("verify: guard rejects a final with unverified writes and lists the requirement", () => {
+test("verify: guard rejects a final with unverified writes and lists the requirement", () => {
   const tracker = new VerificationTracker();
   tracker.observe("editor.apply_patch", { path: "answer.txt", add: true, new: "42" }, patchOk("answer.txt"));
   const decision = guard(DEFAULT_VERIFICATION_POLICY, tracker);
@@ -83,7 +84,7 @@ Deno.test("verify: guard rejects a final with unverified writes and lists the re
   assert.match(renderGuardRequirements(decision.requirements), /unverified write: answer\.txt/);
 });
 
-Deno.test("verify: guard allows a final when everything is verified", () => {
+test("verify: guard allows a final when everything is verified", () => {
   const tracker = new VerificationTracker();
   tracker.observe("editor.apply_patch", { path: "a.txt", add: true, new: "42" }, patchOk("a.txt"));
   tracker.observe("filesystem.read", { path: "a.txt" }, readOk("42"));
@@ -92,7 +93,7 @@ Deno.test("verify: guard allows a final when everything is verified", () => {
   assert.deepEqual(decision.requirements, []);
 });
 
-Deno.test("verify: unresolved command and edit failures block the final", () => {
+test("verify: unresolved command and edit failures block the final", () => {
   const tracker = new VerificationTracker();
   tracker.observe("shell.exec", { command: "curl example" }, execFail());
   tracker.observe("editor.apply_patch", { path: "b.txt", old: "nope", new: "y" }, { ok: false, error_code: "patch_failed", error: "not found" });
@@ -103,14 +104,14 @@ Deno.test("verify: unresolved command and edit failures block the final", () => 
   assert.ok(kinds.includes("unresolved_edit"));
 });
 
-Deno.test("verify: an active semantic loop blocks the final", () => {
+test("verify: an active semantic loop blocks the final", () => {
   const tracker = new VerificationTracker();
   const decision = guard(DEFAULT_VERIFICATION_POLICY, tracker, { semanticLoopStreak: 3 });
   assert.equal(decision.allowed, false);
   assert.ok(decision.requirements.some((r) => r.kind === "active_loop"));
 });
 
-Deno.test("verify: a repeated final with no intervening action is a false completion", () => {
+test("verify: a repeated final with no intervening action is a false completion", () => {
   const tracker = new VerificationTracker();
   const policy = DEFAULT_VERIFICATION_POLICY;
   const first = guard(policy, tracker); // rejected (nothing to verify here? pending empty => allowed)
@@ -125,7 +126,7 @@ Deno.test("verify: a repeated final with no intervening action is a false comple
   assert.equal(second.attempt.repetitions, 1);
 });
 
-Deno.test("verify: requeued writes supersede earlier pending state per path", () => {
+test("verify: requeued writes supersede earlier pending state per path", () => {
   const tracker = new VerificationTracker();
   tracker.observe("editor.apply_patch", { path: "a.txt", old: "x", new: "y" }, patchOk("a.txt"));
   tracker.observe("editor.apply_patch", { path: "a.txt", old: "y", new: "z" }, patchOk("a.txt"));
@@ -133,6 +134,6 @@ Deno.test("verify: requeued writes supersede earlier pending state per path", ()
   assert.equal(tracker.pending()[0].marker, "z");
 });
 
-Deno.test("verify: the guard prefix is stable", () => {
+test("verify: the guard prefix is stable", () => {
   assert.equal(GUARD_PREFIX, "[guard] final answer rejected");
 });

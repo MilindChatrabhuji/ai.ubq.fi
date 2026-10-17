@@ -227,7 +227,7 @@ const createResponsesStreamSession = (
   };
   signal?.addEventListener("abort", abort, { once: true });
   const firstEventDeadlineAtMs = Date.now() + (options.firstEventTimeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS);
-  const readWithDeadline = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+  const readWithDeadline = async (): Promise<Awaited<ReturnType<typeof reader.read>>> => {
     const timeoutMs = sawEvent ? (options.inactivityTimeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS) : Math.max(0, firstEventDeadlineAtMs - Date.now());
     const timeout = AbortSignal.timeout(timeoutMs);
     let abortTimeout = (): void => {};
@@ -470,7 +470,7 @@ export const withSseKeepalive = (source: ReadableStream<Uint8Array>, options: Re
   // The pending timer is tracked by the call that cancels it: Deno's timer
   // handle type is not portable across the lint project's type environment.
   let clearPendingHeartbeat: (() => void) | null = null;
-  let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
+  let pendingRead: Promise<Awaited<ReturnType<typeof reader.read>>> | null = null;
   let resolveHeartbeat: (() => void) | null = null;
   const heartbeat = (): Promise<"heartbeat"> =>
     new Promise((resolve) => {

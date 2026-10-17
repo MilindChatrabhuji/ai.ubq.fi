@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
@@ -50,9 +50,7 @@
         <section data-hero data-docs-hero>
           <div>
             <h1>Developers</h1>
-            <p data-lead>
-              Connect with an OpenAI-compatible client.
-            </p>
+            <p data-lead> Connect with an OpenAI-compatible client. </p>
           </div>
           <div data-layout="row">
             <a data-button data-variant="primary" href="/openapi.json">
@@ -102,31 +100,40 @@ curl -sS https://ai.ubq.fi/v1/models \
 
             <details data-disclosure>
               <summary>API keys and authentication</summary>
-              <p>Get an API key from your UbiquityOS operator. Use it as a bearer token; client tokens are not forwarded upstream. Keep tokens out of chat, logs, and source code. Administrators manage keys in the protected admin console.</p>
+              <p
+                >Get an API key from your UbiquityOS operator. Use it as a bearer token; client tokens are not forwarded
+                upstream. Keep tokens out of chat, logs, and source code. Administrators manage keys in the protected
+                admin console.</p
+              >
             </details>
 
             <details data-disclosure>
               <summary>API behavior</summary>
               <p>
-              Use <code>POST /v1/chat/completions</code> for the Chat Completions API or
-              <code>POST /v1/responses</code> for the Responses API. Both support streaming and documented function
-              tools. The <a href="/openapi.json">OpenAPI 3.1 contract</a> contains typed request fields, unique
-              operation identifiers, response envelopes, authentication, and rate-limit headers for tool-aware clients.
-            </p>
+                Use <code>POST /v1/chat/completions</code> for the Chat Completions API or
+                <code>POST /v1/responses</code> for the Responses API. Both support streaming and documented function
+                tools. The <a href="/openapi.json">OpenAPI 3.1 contract</a> contains typed request fields, unique
+                operation identifiers, response envelopes, authentication, and rate-limit headers for tool-aware
+                clients.
+              </p>
               <p>
-              Parse JSON error responses as an <code>error</code> object with a message, type, and code. A matching
-              <code>If-None-Match</code> request to <code>GET /v1/models?client_version=X.Y.Z</code> can return
-              <code>304 Not Modified</code> with no body; reuse the cached catalog instead of parsing a response body.
-              For a <code>429</code> error, honor <code>Retry-After</code> when present. When an enforced gateway key
-              window is authoritative, the response also includes <code>RateLimit</code> fields for self-throttling.
-            </p>
+                Parse JSON error responses as an <code>error</code> object with a message, type, and code. A matching
+                <code>If-None-Match</code> request to <code>GET /v1/models?client_version=X.Y.Z</code> can return
+                <code>304 Not Modified</code> with no body; reuse the cached catalog instead of parsing a response body.
+                For a <code>429</code> error, honor <code>Retry-After</code> when present. When an enforced gateway key
+                window is authoritative, the response also includes <code>RateLimit</code> fields for self-throttling.
+              </p>
             </details>
             <h2>Try a request</h2>
             <p>Open <a href="/chat">Chat</a> to test a request with your existing key.</p>
 
             <details data-disclosure>
               <summary>Agent setup</summary>
-              <p>Start with <a href="/llms.txt">agent instructions</a>, then the <a href="/llms-full.txt">full guide</a>. Use approved credentials and the documented inference endpoints.</p>
+              <p
+                >Start with <a href="/llms.txt">agent instructions</a>, then the
+                <a href="/llms-full.txt">full guide</a>. Use approved credentials and the documented inference
+                endpoints.</p
+              >
             </details>
           </article>
 

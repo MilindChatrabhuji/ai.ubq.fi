@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvKey } from "#kv";
 // Codex catalog KV storage, leases and loading, split out of src/codex_catalog.ts.
 
 import { parseCodexClientVersion } from "../models/codex-models.ts";
@@ -46,31 +47,31 @@ export const resetCodexCatalogMemoForTest = (): void => {
 
 export const getCodexCatalogMemoVersionsForTest = (): string[] => [...catalogMemo.values()].map((catalog) => catalog.metadata.client_version);
 
-const metadataKey = (version: string): Deno.KvKey => [...CODEX_CATALOG_PREFIX, version];
-const chunkKey = (version: string, generation: string, index: number): Deno.KvKey => [...CODEX_CATALOG_CHUNK_PREFIX, version, generation, index];
-const sourceChunkKey = (version: string, generation: string, index: number): Deno.KvKey => [...CODEX_CATALOG_SOURCE_CHUNK_PREFIX, version, generation, index];
-const leaseKey = (version: string): Deno.KvKey => [...CODEX_CATALOG_LEASE_PREFIX, version];
+const metadataKey = (version: string): KvKey => [...CODEX_CATALOG_PREFIX, version];
+const chunkKey = (version: string, generation: string, index: number): KvKey => [...CODEX_CATALOG_CHUNK_PREFIX, version, generation, index];
+const sourceChunkKey = (version: string, generation: string, index: number): KvKey => [...CODEX_CATALOG_SOURCE_CHUNK_PREFIX, version, generation, index];
+const leaseKey = (version: string): KvKey => [...CODEX_CATALOG_LEASE_PREFIX, version];
 
-const deleteCatalogChunks = async (kv: Deno.Kv, version: string, generation: string, chunkCount: number): Promise<void> => {
+const deleteCatalogChunks = async (kv: Kv, version: string, generation: string, chunkCount: number): Promise<void> => {
   for (let index = 0; index < chunkCount; index += 1) {
     await kv.delete(chunkKey(version, generation, index));
   }
 };
 
-const deleteCatalogSourceChunks = async (kv: Deno.Kv, version: string, generation: string, chunkCount: number | undefined): Promise<void> => {
+const deleteCatalogSourceChunks = async (kv: Kv, version: string, generation: string, chunkCount: number | undefined): Promise<void> => {
   if (chunkCount === undefined) return;
   for (let index = 0; index < chunkCount; index += 1) {
     await kv.delete(sourceChunkKey(version, generation, index));
   }
 };
 
-const deleteCatalogBodies = async (kv: Deno.Kv, metadata: CodexCatalogMetadata): Promise<void> => {
+const deleteCatalogBodies = async (kv: Kv, metadata: CodexCatalogMetadata): Promise<void> => {
   await deleteCatalogChunks(kv, metadata.client_version, metadata.body_generation, metadata.chunk_count);
   await deleteCatalogSourceChunks(kv, metadata.client_version, metadata.body_generation, metadata.source_chunk_count);
 };
 
-const pruneCatalogVersions = async (kv: Deno.Kv, currentVersion: string): Promise<void> => {
-  const catalogs: { entry: Deno.KvEntry<CodexCatalogMetadata>; metadata: CodexCatalogMetadata }[] = [];
+const pruneCatalogVersions = async (kv: Kv, currentVersion: string): Promise<void> => {
+  const catalogs: { entry: KvEntry<CodexCatalogMetadata>; metadata: CodexCatalogMetadata }[] = [];
   for await (const entry of kv.list<CodexCatalogMetadata>({ prefix: CODEX_CATALOG_PREFIX })) {
     if (isCatalogMetadata(entry.value)) catalogs.push({ entry, metadata: entry.value });
   }
@@ -149,8 +150,8 @@ const isCatalogMetadata = (value: unknown): value is CodexCatalogMetadata =>
   hasValidSourceMetadata(value);
 
 const readCatalogBody = async (
-  kv: Deno.Kv,
-  keyForChunk: (index: number) => Deno.KvKey,
+  kv: Kv,
+  keyForChunk: (index: number) => KvKey,
   chunkCount: number,
   compressedBytes: number,
   bodyBytes: number,
@@ -181,7 +182,7 @@ const readCatalogBody = async (
   }
 };
 
-const loadCatalog = async (kv: Deno.Kv, version: string, authGeneration: string, nowMs: number): Promise<LoadedCodexCatalog | null> => {
+const loadCatalog = async (kv: Kv, version: string, authGeneration: string, nowMs: number): Promise<LoadedCodexCatalog | null> => {
   const entry = await kv.get<CodexCatalogMetadata>(metadataKey(version));
   const metadata = entry.value;
   if (!isCatalogMetadata(metadata) || metadata.auth_generation !== authGeneration) return null;
@@ -294,7 +295,7 @@ const widestWindowCount = (...values: readonly (number | null)[]): number | null
 };
 
 export const storeCodexCatalog = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{
     clientVersion: string;
     authGeneration: string;
@@ -365,7 +366,7 @@ export const storeCodexCatalog = async (
   return true;
 };
 
-const renewCatalogChunks = async (kv: Deno.Kv, keyForChunk: (index: number) => Deno.KvKey, chunkCount: number, expireIn: number): Promise<boolean> => {
+const renewCatalogChunks = async (kv: Kv, keyForChunk: (index: number) => KvKey, chunkCount: number, expireIn: number): Promise<boolean> => {
   const entries = await Promise.all(Array.from({ length: chunkCount }, (_, index) => kv.get<Uint8Array>(keyForChunk(index))));
   if (entries.some((entry) => !(entry.value instanceof Uint8Array))) return false;
   for (let index = 0; index < entries.length; index += 1) {
@@ -376,7 +377,7 @@ const renewCatalogChunks = async (kv: Deno.Kv, keyForChunk: (index: number) => D
 
 /** Refresh retention without passing the already enriched body through widening again. */
 export const touchCodexCatalog = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{ clientVersion: string; authGeneration: string; fetchedAtMs: number }>
 ): Promise<boolean> => {
   const metadataEntry = await kv.get<CodexCatalogMetadata>(metadataKey(input.clientVersion));
@@ -405,7 +406,7 @@ export const touchCodexCatalog = async (
   return true;
 };
 
-const getAuthGeneration = async (kv: Deno.Kv): Promise<string> => {
+const getAuthGeneration = async (kv: Kv): Promise<string> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY);
     if (entry.value) return entry.value;
@@ -418,7 +419,7 @@ const getAuthGeneration = async (kv: Deno.Kv): Promise<string> => {
   throw new Error("Deno KV could not initialize the Codex catalog auth generation");
 };
 
-const acquireRefreshLease = async (kv: Deno.Kv, version: string, owner: string, nowMs: number): Promise<boolean> => {
+const acquireRefreshLease = async (kv: Kv, version: string, owner: string, nowMs: number): Promise<boolean> => {
   const key = leaseKey(version);
   const entry = await kv.get<RefreshLease>(key);
   if (entry.value && entry.value.lease_until_ms > nowMs) return false;
@@ -432,7 +433,7 @@ const acquireRefreshLease = async (kv: Deno.Kv, version: string, owner: string, 
   ).ok;
 };
 
-const renewRefreshLease = async (kv: Deno.Kv, version: string, owner: string): Promise<boolean> => {
+const renewRefreshLease = async (kv: Kv, version: string, owner: string): Promise<boolean> => {
   const key = leaseKey(version);
   const entry = await kv.get<RefreshLease>(key);
   if (entry.value?.owner !== owner) return false;
@@ -447,7 +448,7 @@ const renewRefreshLease = async (kv: Deno.Kv, version: string, owner: string): P
 };
 
 const startRefreshLeaseHeartbeat = (
-  kv: Deno.Kv,
+  kv: Kv,
   version: string,
   owner: string
 ): {
@@ -488,7 +489,7 @@ const startRefreshLeaseHeartbeat = (
   };
 };
 
-const releaseRefreshLease = async (kv: Deno.Kv, version: string, owner: string): Promise<void> => {
+const releaseRefreshLease = async (kv: Kv, version: string, owner: string): Promise<void> => {
   try {
     const key = leaseKey(version);
     const entry = await kv.get<RefreshLease>(key);
@@ -498,15 +499,15 @@ const releaseRefreshLease = async (kv: Deno.Kv, version: string, owner: string):
   }
 };
 
-const authGenerationIsCurrent = async (kv: Deno.Kv, expected: string): Promise<boolean> =>
+const authGenerationIsCurrent = async (kv: Kv, expected: string): Promise<boolean> =>
   (await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY)).value === expected;
 
-const loadCurrentGenerationCatalog = async (kv: Deno.Kv, version: string): Promise<LoadedCodexCatalog | null> => {
+const loadCurrentGenerationCatalog = async (kv: Kv, version: string): Promise<LoadedCodexCatalog | null> => {
   const generation = (await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY)).value;
   return generation ? await loadCatalog(kv, version, generation, Date.now()) : null;
 };
 
-const waitForColdCatalog = async (kv: Deno.Kv, version: string): Promise<LoadedCodexCatalog | null> => {
+const waitForColdCatalog = async (kv: Kv, version: string): Promise<LoadedCodexCatalog | null> => {
   const deadline = Date.now() + CODEX_CATALOG_COLD_WAIT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));

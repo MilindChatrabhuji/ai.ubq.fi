@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { fetchSurplusModels, fetchSurplusResponses, resetSurplusModelsCacheForTest, type SurplusFetch } from "../src/provider/surplus.ts";
 
@@ -25,7 +26,7 @@ const bodyText = (body: BodyInit | null | undefined): string => {
   return JSON.stringify(body);
 };
 
-Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable routes only", async () => {
+test("fetchSurplusModels preserves exact IDs and exposes text-capable routes only", async () => {
   resetSurplusModelsCacheForTest();
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: SurplusFetch = (input, init) => {
@@ -97,7 +98,7 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
   assert.equal(new Headers(calls[0].init?.headers).has("Authorization"), false);
 });
 
-Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and returns the request ID", async () => {
+test("fetchSurplusResponses omits unsupported parallel-tool control and returns the request ID", async () => {
   const body = {
     model: "gpt-6-sol",
     input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
@@ -136,7 +137,7 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
   assert.equal(result.request_id, "surplus-request-1");
 });
 
-Deno.test("fetchSurplusResponses translates Codex ultra reasoning to the upstream max preset", async () => {
+test("fetchSurplusResponses translates Codex ultra reasoning to the upstream max preset", async () => {
   let forwarded: Record<string, unknown> | null = null;
   const fetcher: SurplusFetch = (_input, init) => {
     forwarded = JSON.parse(bodyText(init?.body)) as Record<string, unknown>;
@@ -152,7 +153,7 @@ Deno.test("fetchSurplusResponses translates Codex ultra reasoning to the upstrea
   });
 });
 
-Deno.test("fetchSurplusResponses maps Codex developer messages to Surplus system messages", async () => {
+test("fetchSurplusResponses maps Codex developer messages to Surplus system messages", async () => {
   let forwardedInput: unknown;
 
   await fetchSurplusResponses(
@@ -179,7 +180,7 @@ Deno.test("fetchSurplusResponses maps Codex developer messages to Surplus system
   ]);
 });
 
-Deno.test("fetchSurplusResponses completes sparse Surplus text streams for Codex", async () => {
+test("fetchSurplusResponses completes sparse Surplus text streams for Codex", async () => {
   const sparse = [
     { type: "response.created", response: { id: "resp_test", status: "in_progress" } },
     { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "hello" },
@@ -203,7 +204,7 @@ Deno.test("fetchSurplusResponses completes sparse Surplus text streams for Codex
   assert.match(output, /"text":"hello"/);
 });
 
-Deno.test("fetchSurplusResponses runs the quota hook immediately before transport", async () => {
+test("fetchSurplusResponses runs the quota hook immediately before transport", async () => {
   const events: string[] = [];
   const fetcher: SurplusFetch = (_input, init) => {
     events.push("fetch");

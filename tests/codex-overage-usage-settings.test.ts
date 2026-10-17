@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import { type Kv, type KvKey } from "#kv";
 // Per-account overage-usage setting: store round-trip, admin surface contract,
 // routing-cache refresh, and per-account isolation. The KV is an in-process
 // substitute so the handler contract and the durable rows can both be asserted.
@@ -19,11 +22,11 @@ import type { CodexAuthPoolState } from "../src/types.ts";
 import { sha256Hex } from "../src/utils.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
 
-const CODEX_AUTH_POOL_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
+const CODEX_AUTH_POOL_KEY: KvKey = ["ubq_ai", "codex_auth"];
 const OVERAGE_URL = "https://ai.ubq.fi/admin/providers/codex/overage-usage";
 
 const kv = new CountingKv();
-setKvForTest(kv as unknown as Deno.Kv);
+setKvForTest(kv as unknown as Kv);
 
 /** The same valid persisted pool shape the sibling admin settings tests seed. */
 const codexPoolEntry = (accountIds: readonly string[]): Record<string, unknown> => {
@@ -53,26 +56,26 @@ const patchRequest = (body: unknown): Request =>
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 
-Deno.test("the overage usage store round-trips and absent rows read as false", async () => {
+test("the overage usage store round-trips and absent rows read as false", async () => {
   resetOverageUsageCacheForTest();
   const accountIdHash = await sha256Hex("overage-store-account");
-  assert.equal(await readOverageUsage(kv as unknown as Deno.Kv, accountIdHash), false);
+  assert.equal(await readOverageUsage(kv as unknown as Kv, accountIdHash), false);
   assert.equal((await kv.get(codexOverageUsageKey(accountIdHash))).value, null);
 
-  await writeOverageUsage(kv as unknown as Deno.Kv, accountIdHash, true);
+  await writeOverageUsage(kv as unknown as Kv, accountIdHash, true);
   assert.deepEqual((await kv.get(codexOverageUsageKey(accountIdHash))).value, { allow: true });
-  assert.equal(await readOverageUsage(kv as unknown as Deno.Kv, accountIdHash), true);
+  assert.equal(await readOverageUsage(kv as unknown as Kv, accountIdHash), true);
 
-  await writeOverageUsage(kv as unknown as Deno.Kv, accountIdHash, false);
+  await writeOverageUsage(kv as unknown as Kv, accountIdHash, false);
   assert.deepEqual((await kv.get(codexOverageUsageKey(accountIdHash))).value, { allow: false });
-  assert.equal(await readOverageUsage(kv as unknown as Deno.Kv, accountIdHash), false);
+  assert.equal(await readOverageUsage(kv as unknown as Kv, accountIdHash), false);
 
   // A malformed row never enables overage spending.
   kv.seed(codexOverageUsageKey(accountIdHash), { allow: "yes" });
-  assert.equal(await readOverageUsage(kv as unknown as Deno.Kv, accountIdHash), false);
+  assert.equal(await readOverageUsage(kv as unknown as Kv, accountIdHash), false);
 });
 
-Deno.test("the admin overage surface lists every account, persists a patch, and refreshes the routing cache", async () => {
+test("the admin overage surface lists every account, persists a patch, and refreshes the routing cache", async () => {
   kv.clearData();
   resetCodexAuthCacheForTest();
   resetOverageUsageCacheForTest();
@@ -108,7 +111,7 @@ Deno.test("the admin overage surface lists every account, persists a patch, and 
   assert.equal(relistedRows[0].allow, true);
 });
 
-Deno.test("the admin overage surface rejects malformed bodies and stale subscriptions", async () => {
+test("the admin overage surface rejects malformed bodies and stale subscriptions", async () => {
   kv.clearData();
   resetCodexAuthCacheForTest();
   kv.seed(CODEX_AUTH_POOL_KEY, codexPoolEntry(["overage-account-one"]));
@@ -127,18 +130,18 @@ Deno.test("the admin overage surface rejects malformed bodies and stale subscrip
   assert.equal((await kv.get(codexOverageUsageKey(accountIdHash))).value, null);
 });
 
-Deno.test("the admin overage surface exposes the upstream balance and limit, or usage unavailable", async () => {
+test("the admin overage surface exposes the upstream balance and limit, or usage unavailable", async () => {
   const originalFetch = globalThis.fetch;
   kv.clearData();
   resetCodexAuthCacheForTest();
   resetOverageUsageCacheForTest();
   kv.seed(CODEX_AUTH_POOL_KEY, codexPoolEntry(["overage-account-one"]));
   const stubUsage = (response: () => Response | Promise<Response>) => {
-    globalThis.fetch = (input) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
+      const url = input instanceof Request ? input.url : String(input);
       if (!url.endsWith("/backend-api/wham/usage")) throw new Error(`unexpected request ${url}`);
       return Promise.resolve(response());
-    };
+    });
   };
   try {
     // The balance stays the upstream decimal string, and only the two
@@ -148,7 +151,7 @@ Deno.test("the admin overage surface exposes the upstream balance and limit, or 
     assert.equal(listed.status, 200);
     const row = ((await readBody(listed)).data as { overage: Record<string, unknown> | null }[])[0];
     assert.deepEqual(row.overage, { balance: "12.50", overage_limit_reached: false });
-    assert.deepEqual(Object.keys(row.overage ?? {}), ["balance", "overage_limit_reached"]);
+    assert.deepEqual(Object.keys(row.overage), ["balance", "overage_limit_reached"]);
 
     stubUsage(() => Response.json({ credits: { balance: "3.00", overage_limit_reached: true } }));
     const reached = await handleAdminCodexOverageUsage(new Request(OVERAGE_URL));
@@ -169,7 +172,7 @@ Deno.test("the admin overage surface exposes the upstream balance and limit, or 
   }
 });
 
-Deno.test("one subscription's overage choice never changes another account's value", async () => {
+test("one subscription's overage choice never changes another account's value", async () => {
   kv.clearData();
   resetCodexAuthCacheForTest();
   resetOverageUsageCacheForTest();

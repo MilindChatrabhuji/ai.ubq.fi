@@ -1,14 +1,17 @@
+import { test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { referenceAdapter } from "../adapter.ts";
 import { loadTasks } from "../manifest.ts";
-import { runOne, RunOptions } from "../runner.ts";
-import { TaskManifest, ToolResultEvent } from "../schemas.ts";
+import { runOne, type RunOptions } from "../runner.ts";
+import { type TaskManifest, type ToolResultEvent } from "../schemas.ts";
 
-const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
-const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
+const TASKS_DIR = `${process.cwd()}/benchmarks/tasks`;
+const FIXTURES_DIR = `${process.cwd()}/benchmarks/fixtures`;
 
 function freshOptions(): RunOptions & { runsRoot: string } {
-  Deno.mkdirSync(`${Deno.cwd()}/benchmark-runs`, { recursive: true });
-  const runsRoot = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+  mkdirSync(`${process.cwd()}/benchmark-runs`, { recursive: true });
+  const runsRoot = mkdtempSync(join(`${process.cwd()}/benchmark-runs`, "fixture-"));
   return {
     configs: ["reference"],
     taskSelectors: [],
@@ -30,7 +33,7 @@ function fail002(): TaskManifest {
   return task;
 }
 
-Deno.test("tools: canonical browser fakes resolve inside the reference adapter", async () => {
+test("tools: canonical browser fakes resolve inside the reference adapter", async () => {
   const opts = freshOptions();
   try {
     const task: TaskManifest = {
@@ -61,11 +64,11 @@ Deno.test("tools: canonical browser fakes resolve inside the reference adapter",
       throw new Error(`expected success, got ${result.failure_class}: ${result.failure_detail}`);
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("tools: canonical boundaries and error codes flow through the adapter", async () => {
+test("tools: canonical boundaries and error codes flow through the adapter", async () => {
   const opts = freshOptions();
   try {
     const task: TaskManifest = {
@@ -108,11 +111,11 @@ Deno.test("tools: canonical boundaries and error codes flow through the adapter"
       throw new Error("expected the final patch to be a clean success");
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });
 
-Deno.test("tools: shell.exec write-scope violations surface as write_scope failures and are rolled back", async () => {
+test("tools: shell.exec write-scope violations surface as write_scope failures and are rolled back", async () => {
   const opts = freshOptions();
   try {
     const task: TaskManifest = {
@@ -147,6 +150,6 @@ Deno.test("tools: shell.exec write-scope violations surface as write_scope failu
       throw new Error("expected the protected file to be restored for the follow-up read");
     }
   } finally {
-    Deno.removeSync(opts.runsRoot, { recursive: true });
+    rmSync(opts.runsRoot, { recursive: true });
   }
 });

@@ -407,7 +407,7 @@ const parseFrame = (raw: string): JsonRecord | null => {
 const abortError = (signal: AbortSignal): Error =>
   signal.reason instanceof Error ? signal.reason : new DOMException("Anthropic Messages stream was aborted.", "AbortError");
 
-const readWithAbort = async (reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): Promise<ReadableStreamReadResult<Uint8Array>> => {
+const readWithAbort = async (reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): Promise<Awaited<ReturnType<typeof reader.read>>> => {
   let abort = (): void => {};
   const aborted = new Promise<never>((_, reject) => {
     abort = () => {

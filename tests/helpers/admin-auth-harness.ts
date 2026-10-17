@@ -1,14 +1,16 @@
+import { setKvForTest } from "../../src/kv.ts";
+import type { Kv, KvEntryMaybe, KvKey, KvKeyPart, KvListOptions, KvListSelector } from "#kv";
 // Shared harness for this suite, moved out of the original test file.
 
-import { keyToJSON } from "@deno/kv-utils/json";
+import { keyToJson as keyToJSON } from "../../src/kv-conversion/profile-json.ts";
 
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const keyToString = (key: KvKey): string => JSON.stringify(key);
 const urlOf = (input: RequestInfo | URL): string => {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
   return input.url;
 };
-const stringEntryLine = (key: Deno.KvKey, value: string): string =>
+const stringEntryLine = (key: KvKey, value: string): string =>
   JSON.stringify({
     key: keyToJSON(key),
     value: { type: "string", value },
@@ -32,9 +34,9 @@ class TestKvStore extends Map<string, unknown> {
 const kvStore = new TestKvStore();
 
 /** Records the `expireIn` option every `kv.atomic().set()` call receives. */
-const atomicSetCalls: { key: Deno.KvKey; expireIn?: number }[] = [];
+const atomicSetCalls: { key: KvKey; expireIn?: number }[] = [];
 
-const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
+const compareKvKeyPart = (left: KvKeyPart, right: KvKeyPart): number => {
   if (left === right) return 0;
   if (typeof left === "number" && typeof right === "number") return left - right;
   const leftText = String(left);
@@ -42,7 +44,7 @@ const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number =
   return leftText < rightText ? -1 : 1;
 };
 
-const compareKvKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
+const compareKvKeys = (left: KvKey, right: KvKey): number => {
   const maxLength = Math.max(left.length, right.length);
   for (let index = 0; index < maxLength; index += 1) {
     if (index >= left.length) return -1;
@@ -53,24 +55,24 @@ const compareKvKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
   return 0;
 };
 
-const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
-const kvStoreHasPrefix = (prefix: Deno.KvKey): boolean => [...kvStore.keys()].some((encodedKey) => matchesPrefix(JSON.parse(encodedKey) as Deno.KvKey, prefix));
+const matchesPrefix = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => key[index] === part);
+const kvStoreHasPrefix = (prefix: KvKey): boolean => [...kvStore.keys()].some((encodedKey) => matchesPrefix(JSON.parse(encodedKey) as KvKey, prefix));
 
 const kvStub = {
-  get: (key: Deno.KvKey) => Promise.resolve({ key, value: kvStore.get(keyToString(key)) ?? null } as Deno.KvEntryMaybe<unknown>),
-  set: (key: Deno.KvKey, value: unknown) => {
+  get: (key: KvKey) => Promise.resolve({ key, value: kvStore.get(keyToString(key)) ?? null } as KvEntryMaybe<unknown>),
+  set: (key: KvKey, value: unknown) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
   },
-  delete: (key: Deno.KvKey) => {
+  delete: (key: KvKey) => {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: (selector: Deno.KvListSelector, options: Deno.KvListOptions = {}) => {
+  list: (selector: KvListSelector, options: KvListOptions = {}) => {
     const prefix = "prefix" in selector ? selector.prefix : [];
     let entries = [...kvStore.entries()]
       .map(([encodedKey, value]) => ({
-        key: JSON.parse(encodedKey) as Deno.KvKey,
+        key: JSON.parse(encodedKey) as KvKey,
         value,
         versionstamp: "00000000000000000000",
       }))
@@ -98,15 +100,15 @@ const kvStub = {
     };
   },
   atomic: () => {
-    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+    const ops: { type: "set" | "delete"; key: KvKey; value?: unknown }[] = [];
     const chain = {
       check: () => chain,
-      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+      set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value });
         atomicSetCalls.push({ key, expireIn: options?.expireIn });
         return chain;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         ops.push({ type: "delete", key });
         return chain;
       },
@@ -132,9 +134,7 @@ const kvStub = {
     return chain;
   },
   close: () => {},
-} as unknown as Deno.Kv;
-
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
+} as unknown as Kv;
 
 const {
   handleAdminApiKeysCreate,
@@ -261,3 +261,16 @@ resetRuntimeCache = resetRuntimeConfigCacheForTest;
 export { resetRuntimeConfigCacheForTest, resetCodexAuthCacheForTest };
 const { getKernelUsageLimitSnapshot, kernelRepoPolicyKey, kernelRepoWindowKey } = await import("../../src/kernel/quota-v2.ts");
 export { getKernelUsageLimitSnapshot, kernelRepoPolicyKey, kernelRepoWindowKey };
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  setKvForTest(kvStub);
+};
+export const resetHarness = (): void => {
+  kvStore.clear();
+  atomicSetCalls.length = 0;
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  setKvForTest(null);
+};

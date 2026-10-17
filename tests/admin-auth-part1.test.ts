@@ -1,3 +1,7 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import type { KvU64 } from "#kv";
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/admin-auth-harness.ts";
 // admin-auth suite part: tests moved out of tests/admin-auth.test.ts.
 
 import assert from "node:assert/strict";
@@ -29,7 +33,10 @@ import {
   urlOf,
 } from "./helpers/admin-auth-harness.ts";
 
-Deno.test("subscription reset settings require admin authentication", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("subscription reset settings require admin authentication", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
   for (const method of ["GET", "PATCH"]) {
     const response = await handler(new Request("http://localhost/admin/providers/codex/banked-resets", { method }));
@@ -38,7 +45,7 @@ Deno.test("subscription reset settings require admin authentication", async () =
   }
 });
 
-Deno.test("API key list reports committed V3 usage and ignores legacy counters", async () => {
+test("API key list reports committed V3 usage and ignores legacy counters", async () => {
   kvStore.clear();
   const id = "v2-usage-list";
   const windowMs = 60_000;
@@ -66,7 +73,7 @@ Deno.test("API key list reports committed V3 usage and ignores legacy counters",
     paid_fallback_quota_per_credit: 0,
     paid_fallback_pricing_checked_at_ms: null,
   });
-  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v2", id, String(windowMs), windowStartMs]), { value: 3n } as Deno.KvU64);
+  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v2", id, String(windowMs), windowStartMs]), { value: 3n } as KvU64);
   kvStore.set(keyToString(["uos_ai", "api_key_usage", "v3", "window", id, `v3:${windowMs}`, windowStartMs]), {
     v: 3,
     key_id: id,
@@ -92,7 +99,7 @@ Deno.test("API key list reports committed V3 usage and ignores legacy counters",
   assert.equal(withPayload.data[0]?.usage?.request_count, 4);
 });
 
-Deno.test("API key list projects current paid fallback totals from V3 only", async () => {
+test("API key list projects current paid fallback totals from V3 only", async () => {
   kvStore.clear();
   const id = "paid-fallback-v3-projection";
   const now = Date.now();
@@ -176,7 +183,7 @@ Deno.test("API key list projects current paid fallback totals from V3 only", asy
   assert.equal(payload.data[0]?.paid_fallback_provider_usage?.surplus?.spend_microcredits, 700);
 });
 
-Deno.test("API key limit edits retain V3 usage while resets create a fresh aggregate and reject live leases", async () => {
+test("API key limit edits retain V3 usage while resets create a fresh aggregate and reject live leases", async () => {
   kvStore.clear();
   const token = `u_${"d".repeat(64)}`;
   const createdResponse = await handleAdminApiKeysCreate(
@@ -253,7 +260,7 @@ Deno.test("API key limit edits retain V3 usage while resets create a fresh aggre
   assert.equal(blocked.status, 409);
 });
 
-Deno.test("admin Codex model GET returns the full catalog rather than the compact runtime record", async () => {
+test("admin Codex model GET returns the full catalog rather than the compact runtime record", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     models: [
@@ -279,7 +286,7 @@ Deno.test("admin Codex model GET returns the full catalog rather than the compac
   assert.equal(payload.data.models[0]?.context_window, 272_000);
 });
 
-Deno.test("admin Codex model update rejects a catalog whose compact runtime record exceeds 4 KiB", async () => {
+test("admin Codex model update rejects a catalog whose compact runtime record exceeds 4 KiB", async () => {
   kvStore.clear();
   const response = await handleAdminCodexModelsSet(
     makeRequest({
@@ -300,7 +307,7 @@ Deno.test("admin Codex model update rejects a catalog whose compact runtime reco
   assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
 });
 
-Deno.test("admin defaults includes serializable Metered quota diagnostics without credentials", async () => {
+test("admin defaults includes serializable Metered quota diagnostics without credentials", async () => {
   kvStore.clear();
   const response = await handleAdminDefaults(new Request("https://ai.ubq.fi/admin/defaults"), {
     getMeteredQuotaDiagnostics: () =>
@@ -335,7 +342,7 @@ Deno.test("admin defaults includes serializable Metered quota diagnostics withou
   assert.equal(Object.prototype.hasOwnProperty.call(payload.metered_quota ?? {}, "user_id"), false);
 });
 
-Deno.test("admin defaults permits kernel-only updates without runtime configuration", async () => {
+test("admin defaults permits kernel-only updates without runtime configuration", async () => {
   kvStore.clear();
 
   const response = await handleAdminDefaults(
@@ -380,7 +387,7 @@ Deno.test("admin defaults permits kernel-only updates without runtime configurat
   }
 });
 
-Deno.test("admin defaults rejects late invalid fields without partial writes", async () => {
+test("admin defaults rejects late invalid fields without partial writes", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     source: "codex_cli",
@@ -408,7 +415,7 @@ Deno.test("admin defaults rejects late invalid fields without partial writes", a
   assert.equal(JSON.stringify([...kvStore.entries()]), before);
 });
 
-Deno.test("admin kernel quota policies preserve usage until an explicit reset and return to default source", async () => {
+test("admin kernel quota policies preserve usage until an explicit reset and return to default source", async () => {
   kvStore.clear();
   const owner = "kernel-owner";
   const repo = "kernel-repo";
@@ -477,12 +484,12 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
   assert.equal(snapshot.record.usage_limit_requests, 9);
 });
 
-Deno.test("admin codex auth stores live upstream model catalog as source of truth", async () => {
+test("admin codex auth stores live upstream model catalog as source of truth", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
   const fetchUrls: string[] = [];
 
-  globalThis.fetch = (input: RequestInfo | URL) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = urlOf(input);
     fetchUrls.push(url);
     return Promise.resolve(
@@ -523,7 +530,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
         }
       )
     );
-  };
+  });
 
   try {
     const response = await handleAdminCodexAuth(
@@ -594,16 +601,17 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
   }
 });
 
-Deno.test("admin codex auth stores live model catalog without caller model snapshot", async () => {
+test("admin codex auth stores live model catalog without caller model snapshot", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.3-codex-spark", visibility: "list" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
-    );
+    )
+  );
 
   try {
     const response = await handleAdminCodexAuth(makeRequest({ auth: authPayload }));
@@ -618,7 +626,7 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
   }
 });
 
-Deno.test("admin Codex auth accepts authenticated 429 and preserves the last known-good catalog", async () => {
+test("admin Codex auth accepts authenticated 429 and preserves the last known-good catalog", async () => {
   kvStore.clear();
   const snapshot = {
     source: "chatgpt_codex" as const,
@@ -641,13 +649,14 @@ Deno.test("admin Codex auth accepts authenticated 429 and preserves the last kno
   });
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response('{"statusCode":429,"description":"Too Many Requests"}', {
         status: 429,
         headers: { "Content-Type": "application/json" },
       })
-    );
+    )
+  );
 
   try {
     const response = await handleAdminCodexAuth(makeRequest({ auth: authPayload }));
@@ -669,16 +678,17 @@ Deno.test("admin Codex auth accepts authenticated 429 and preserves the last kno
   }
 });
 
-Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async () => {
+test("admin Codex auth adds, rotates, and caps the two-account pool", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
-    );
+    )
+  );
   const upload = (accountId: string, accessToken: string) =>
     handleAdminCodexAuth(
       makeRequest({
@@ -727,10 +737,10 @@ Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async
   }
 });
 
-Deno.test("admin codex auth rotation replaces a prior account snapshot even at an older version", async () => {
+test("admin codex auth rotation replaces a prior account snapshot even at an older version", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = urlOf(input);
     const version = new URL(url).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(
@@ -739,7 +749,7 @@ Deno.test("admin codex auth rotation replaces a prior account snapshot even at a
         headers: { "Content-Type": "application/json", ETag: `"${version}"` },
       })
     );
-  };
+  });
 
   try {
     const newer = await handleAdminCodexAuth(
@@ -784,17 +794,18 @@ Deno.test("admin codex auth rotation replaces a prior account snapshot even at a
   }
 });
 
-Deno.test("admin codex auth retries transient snapshot contention", async () => {
+test("admin codex auth retries transient snapshot contention", async () => {
   kvStore.clear();
   setAtomicCommitsToFail(1);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
-    );
+    )
+  );
 
   try {
     const response = await handleAdminCodexAuth(
@@ -818,17 +829,18 @@ Deno.test("admin codex auth retries transient snapshot contention", async () => 
   }
 });
 
-Deno.test("admin codex auth fails atomically after snapshot contention retries are exhausted", async () => {
+test("admin codex auth fails atomically after snapshot contention retries are exhausted", async () => {
   kvStore.clear();
   setAtomicCommitsToFail(3);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  globalThis.fetch = createFetchMock(() =>
     Promise.resolve(
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
-    );
+    )
+  );
 
   try {
     const response = await handleAdminCodexAuth(
@@ -847,7 +859,7 @@ Deno.test("admin codex auth fails atomically after snapshot contention retries a
   }
 });
 
-Deno.test("admin KV migration import stays dry-run unless write is explicit", async () => {
+test("admin KV migration import stays dry-run unless write is explicit", async () => {
   kvStore.clear();
 
   const response = await handleAdminKvMigrationImport(
@@ -864,7 +876,7 @@ Deno.test("admin KV migration import stays dry-run unless write is explicit", as
   assert.equal(kvStore.has(keyToString(["default", "model"])), false);
 });
 
-Deno.test("admin KV migration import reports partial writes with HTTP 422", async () => {
+test("admin KV migration import reports partial writes with HTTP 422", async () => {
   kvStore.clear();
   const response = await handleAdminKvMigrationImport(
     new Request("https://ai.ubq.fi/admin/kv-migration/import?profile=prod&write=1&overwrite=true", {
@@ -880,7 +892,7 @@ Deno.test("admin KV migration import reports partial writes with HTTP 422", asyn
   assert.equal(kvStore.get(keyToString(["default", "model"])), "gpt-5.5");
 });
 
-Deno.test("admin defaults accepts none when the model supports none", async () => {
+test("admin defaults accepts none when the model supports none", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     source: "codex_cli",
@@ -912,7 +924,7 @@ Deno.test("admin defaults accepts none when the model supports none", async () =
   assert.equal((kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string }).default_reasoning_effort, "none");
 });
 
-Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", async () => {
+test("admin defaults accepts a tier advertised by the Codex CLI catalog", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     source: "codex_cli",
@@ -944,7 +956,7 @@ Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", a
   assert.equal((kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string }).default_reasoning_effort, "ultra");
 });
 
-Deno.test("admin defaults does not reject an unlisted reasoning tier", async () => {
+test("admin defaults does not reject an unlisted reasoning tier", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     source: "codex_cli",
@@ -976,7 +988,7 @@ Deno.test("admin defaults does not reject an unlisted reasoning tier", async () 
   assert.equal((kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string }).default_reasoning_effort, "future-tier");
 });
 
-Deno.test("admin defaults rejects null reasoning effort", async () => {
+test("admin defaults rejects null reasoning effort", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     source: "codex_cli",
@@ -1008,7 +1020,7 @@ Deno.test("admin defaults rejects null reasoning effort", async () => {
   assert.equal(kvStore.has(keyToString(["default", "reasoning_effort"])), false);
 });
 
-Deno.test("paid fallback pricing initializes only when a key becomes enabled", async () => {
+test("paid fallback pricing initializes only when a key becomes enabled", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     source: "chatgpt_codex",
@@ -1017,14 +1029,14 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
   });
 
   const originalFetch = globalThis.fetch;
-  const originalApiKey = Deno.env.get("METERED_API_KEY");
+  const originalApiKey = process.env.METERED_API_KEY;
   const metadataUrls: string[] = [];
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
-  globalThis.fetch = (input: RequestInfo | URL) => {
+  process.env.METERED_API_KEY = "metered-test-key";
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = urlOf(input);
     metadataUrls.push(url);
     return Promise.resolve(meteredMetadataResponse(url));
-  };
+  });
 
   try {
     const createResponse = await handleAdminApiKeysCreate(
@@ -1118,12 +1130,12 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
     );
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalApiKey;
   }
 });
 
-Deno.test("API key creation rejects custom tokens outside the v2 routable shape", async () => {
+test("API key creation rejects custom tokens outside the v2 routable shape", async () => {
   kvStore.clear();
   const response = await handleAdminApiKeysCreate(
     new Request("https://ai.ubq.fi/admin/api-keys", {
@@ -1144,7 +1156,7 @@ Deno.test("API key creation rejects custom tokens outside the v2 routable shape"
   );
 });
 
-Deno.test("API key creation generates a v2 token when token is null", async () => {
+test("API key creation generates a v2 token when token is null", async () => {
   kvStore.clear();
   const response = await handleAdminApiKeysCreate(
     new Request("https://ai.ubq.fi/admin/api-keys", {
@@ -1163,7 +1175,7 @@ Deno.test("API key creation generates a v2 token when token is null", async () =
   assert.equal(payload.prefix, payload.token?.slice(0, 12));
 });
 
-Deno.test("enabled key creation initializes once and failed enable leaves the key disabled", async () => {
+test("enabled key creation initializes once and failed enable leaves the key disabled", async () => {
   kvStore.clear();
   seedCodexSnapshot({
     source: "chatgpt_codex",
@@ -1172,14 +1184,14 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
   });
 
   const originalFetch = globalThis.fetch;
-  const originalApiKey = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("METERED_API_KEY", "metered-test-key");
+  const originalApiKey = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "metered-test-key";
   let metadataCalls = 0;
-  globalThis.fetch = (input: RequestInfo | URL) => {
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
     const url = urlOf(input);
     metadataCalls += 1;
     return Promise.resolve(meteredMetadataResponse(url));
-  };
+  });
 
   try {
     const enabledCreate = await handleAdminApiKeysCreate(
@@ -1230,13 +1242,13 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
     );
     const disabledPayload = (await disabledCreate.json()) as { id: string };
 
-    globalThis.fetch = (input: RequestInfo | URL) => {
+    globalThis.fetch = createFetchMock((input: RequestInfo | URL) => {
       const url = urlOf(input);
       if (url.endsWith("/api/status")) {
         return Promise.resolve(new Response("upstream unavailable", { status: 503 }));
       }
       return Promise.resolve(meteredMetadataResponse(url));
-    };
+    });
     const failedEnable = await handleAdminApiKeysUpdate(
       new Request("https://ai.ubq.fi/admin/api-keys", {
         method: "PATCH",
@@ -1253,7 +1265,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
     assert.equal(stored.paid_fallback_pricing_checked_at_ms, null);
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", originalApiKey);
+    if (originalApiKey === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = originalApiKey;
   }
 });

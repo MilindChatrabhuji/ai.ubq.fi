@@ -1,7 +1,8 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { extractCodexModelsFromText, resolveCodexBinaryPath } from "../scripts/codex-models.ts";
 
-Deno.test("resolveCodexBinaryPath uses vendor binary for wrapper script", async () => {
+test("resolveCodexBinaryPath uses vendor binary for wrapper script", async () => {
   const wrapper = `#!/usr/bin/env node
 const vendorRoot = "vendor";
 const targetTriple = "aarch64-apple-darwin";
@@ -11,12 +12,12 @@ const codexBinaryName = "codex";
   assert.equal(resolved, "/opt/vendor/aarch64-apple-darwin/codex/codex");
 });
 
-Deno.test("resolveCodexBinaryPath falls back for non-wrapper input", async () => {
+test("resolveCodexBinaryPath falls back for non-wrapper input", async () => {
   const resolved = await resolveCodexBinaryPath("/usr/local/bin/codex", () => Promise.resolve("binary"), "darwin", "aarch64");
   assert.equal(resolved, "/usr/local/bin/codex");
 });
 
-Deno.test("resolveCodexBinaryPath uses realPath for symlink wrappers", async () => {
+test("resolveCodexBinaryPath uses realPath for symlink wrappers", async () => {
   const wrapper = `#!/usr/bin/env node
 const vendorRoot = "vendor";
 const targetTriple = "aarch64-apple-darwin";
@@ -37,7 +38,7 @@ const codexBinaryName = "codex";
   assert.equal(resolved, "/opt/lib/node_modules/@openai/codex/vendor/aarch64-apple-darwin/codex/codex");
 });
 
-Deno.test("resolveCodexBinaryPath uses platform package for current npm wrapper", async () => {
+test("resolveCodexBinaryPath uses platform package for current npm wrapper", async () => {
   const wrapper = `#!/usr/bin/env node
 const PLATFORM_PACKAGE_BY_TARGET = {
   "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
@@ -57,7 +58,7 @@ let vendorRoot;
   assert.equal(resolved, "/usr/local/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex");
 });
 
-Deno.test("resolveCodexBinaryPath uses nested platform package for global npm wrapper", async () => {
+test("resolveCodexBinaryPath uses nested platform package for global npm wrapper", async () => {
   const wrapper = `#!/usr/bin/env node
 const PLATFORM_PACKAGE_BY_TARGET = {
   "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
@@ -79,7 +80,7 @@ let vendorRoot;
   assert.equal(resolved, nested);
 });
 
-Deno.test("extractCodexModelsFromText parses slugs and reasoning levels", () => {
+test("extractCodexModelsFromText parses slugs and reasoning levels", () => {
   const text =
     'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","context_window":272000,"max_context_window":1000000,"auto_compact_token_limit":null,"supported_reasoning_levels":[{"effort":null},{"effort":"low"},{"effort":"high"},{"effort":"ultra"}]}';
   const extracted = extractCodexModelsFromText(text);
@@ -92,7 +93,7 @@ Deno.test("extractCodexModelsFromText parses slugs and reasoning levels", () => 
   assert.deepEqual(extracted.models[0]?.supported_reasoning_levels, ["none", "low", "high", "ultra"]);
 });
 
-Deno.test("extractCodexModelsFromText trims large fields", () => {
+test("extractCodexModelsFromText trims large fields", () => {
   const text =
     'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","display_name":"Codex","description":"desc","base_instructions":"big","supported_reasoning_levels":["low"]}';
   const extracted = extractCodexModelsFromText(text);
@@ -104,7 +105,7 @@ Deno.test("extractCodexModelsFromText trims large fields", () => {
   assert.equal("base_instructions" in model, false);
 });
 
-Deno.test("extractCodexModelsFromText preserves API-supported hidden review models", () => {
+test("extractCodexModelsFromText preserves API-supported hidden review models", () => {
   const text = [
     'codex_cli_rs/0.99.0 {"slug":"codex-auto-review","display_name":"Codex Auto Review","visibility":"hide","supported_in_api":true}',
     '{"slug":"codex-internal-evals","visibility":"hide","supported_in_api":false}',
