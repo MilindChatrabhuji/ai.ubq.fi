@@ -304,20 +304,21 @@ const revalidateCachedCatalog = async (context: CodexCatalogRefreshContext, cach
   if (context.leaseLost() || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
     return rotatedCatalogResponse(context.kv, context.req, context.version);
   }
-  const revalidated = cached.source_body === undefined
-    ? await touchCodexCatalog(context.kv, {
-      clientVersion: context.version,
-      authGeneration: context.authGeneration,
-      fetchedAtMs: context.nowMs,
-    })
-    : await storeCodexCatalog(context.kv, {
-      clientVersion: context.version,
-      authGeneration: context.authGeneration,
-      body: cached.source_body,
-      etag: cached.metadata.etag,
-      contentType: cached.metadata.content_type,
-      fetchedAtMs: context.nowMs,
-    });
+  const revalidated =
+    cached.source_body === undefined
+      ? await touchCodexCatalog(context.kv, {
+          clientVersion: context.version,
+          authGeneration: context.authGeneration,
+          fetchedAtMs: context.nowMs,
+        })
+      : await storeCodexCatalog(context.kv, {
+          clientVersion: context.version,
+          authGeneration: context.authGeneration,
+          body: cached.source_body,
+          etag: cached.metadata.etag,
+          contentType: cached.metadata.content_type,
+          fetchedAtMs: context.nowMs,
+        });
   if (!revalidated || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
     return rotatedCatalogResponse(context.kv, context.req, context.version);
   }
