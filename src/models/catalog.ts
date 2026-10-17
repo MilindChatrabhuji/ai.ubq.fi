@@ -225,7 +225,7 @@ const mergeProviderMetadata = (entry: PublicModelCatalogEntry, id: string, sourc
   // A provider declaration describes this gateway route, not another serving of
   // the same weights. Do not let a cached enrichment entry win when the
   // declaration arrives after a paid discovery row.
-  const resolved = resolveModelMetadata(id, { ...sources, openRouter: null });
+  const resolved = resolveModelMetadata(id, { provider: sources.provider, openRouter: null });
   const hasContext = resolved.context_window_tokens !== null || resolved.max_context_window_tokens !== null;
   if (resolved.context_window_tokens !== null) entry.context_window_tokens = resolved.context_window_tokens;
   if (resolved.max_context_window_tokens !== null) entry.max_context_window_tokens = resolved.max_context_window_tokens;

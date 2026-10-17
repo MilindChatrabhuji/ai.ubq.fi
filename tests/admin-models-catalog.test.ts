@@ -253,39 +253,39 @@ test("the official DeepSeek ids are cataloged as their own provider category", a
 
 test("a paid-discovered DeepSeek id receives the later official route metadata", async () => {
   const originalFetch = globalThis.fetch;
-  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
-  delete process.env.CEREBRAS_API_KEY;
-  delete process.env.LITHOSAI_API_KEY;
-  delete process.env.METERED_API_KEY;
-  delete process.env.OPENROUTER_API_KEY;
+  const paidModelId = "deepseek-v4-flash";
+  const providerEnv = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "METERED_API_KEY", "OPENROUTER_API_KEY", "SURPLUS_API_KEY"] as const;
+  const originalProviderEnv = providerEnv.map((name) => [name, process.env[name]] as const);
+  for (const name of providerEnv) delete process.env[name];
   process.env.SURPLUS_API_KEY = "fixture-surplus-key";
   process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
   resetSurplusModelsCacheForTest();
+  resetMeteredModelsCacheForTest();
   resetOpenRouterModelsCacheForTest();
-  await fetchOpenRouterModels({
-    force: true,
-    fetcher: () =>
-      Promise.resolve(
-        Response.json({
-          data: [
-            {
-              id: "deepseek-v4-flash",
-              context_length: 1_048_576,
-              top_provider: { context_length: 1_048_576 },
-              reasoning: { supported_efforts: ["third-party"], default_effort: "third-party" },
-            },
-          ],
-        })
-      ),
-  });
-  globalThis.fetch = createFetchMock((input) => {
-    if (String(input).includes("surplusintelligence.ai/v1/models")) {
-      return Promise.resolve(Response.json({ data: [{ id: "deepseek-v4-flash", created: 1_800_000_000, provider: "surplus" }] }));
-    }
-    return Promise.reject(new Error(`Unexpected discovery request: ${String(input)}`));
-  });
   try {
-    const row = (await buildModelCatalogSnapshot()).models.find((model) => model.id === "deepseek-v4-flash");
+    await fetchOpenRouterModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(
+          Response.json({
+            data: [
+              {
+                id: paidModelId,
+                context_length: 1_048_576,
+                top_provider: { context_length: 1_048_576 },
+                reasoning: { supported_efforts: ["third-party"], default_effort: "third-party" },
+              },
+            ],
+          })
+        ),
+    });
+    globalThis.fetch = createFetchMock((input) => {
+      if (String(input).includes("surplusintelligence.ai/v1/models")) {
+        return Promise.resolve(Response.json({ data: [{ id: paidModelId, created: 1_800_000_000, provider: "surplus" }] }));
+      }
+      return Promise.reject(new Error(`Unexpected discovery request: ${String(input)}`));
+    });
+    const row = (await buildModelCatalogSnapshot()).models.find((model) => model.id === paidModelId);
     assert.ok(row);
     assert.deepEqual(row.providers.map((provider) => provider.id), ["surplus", "deepseek"]);
     assert.equal(row.context_window_tokens, 1_000_000);
@@ -297,11 +297,12 @@ test("a paid-discovered DeepSeek id receives the later official route metadata",
   } finally {
     globalThis.fetch = originalFetch;
     resetSurplusModelsCacheForTest();
+    resetMeteredModelsCacheForTest();
     resetOpenRouterModelsCacheForTest();
-    delete process.env.SURPLUS_API_KEY;
-    delete process.env.DEEPSEEK_API_KEY;
-    if (originalOpenRouterApiKey === undefined) delete process.env.OPENROUTER_API_KEY;
-    else process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    for (const [name, value] of originalProviderEnv) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });
 
