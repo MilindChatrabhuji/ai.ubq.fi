@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 // Codex auth refresh coordination, split out of src/codex.ts.
 
 import { readBoundedResponseBody } from "../bounded-response-body.ts";
@@ -129,7 +130,7 @@ const adoptConcurrentRefreshedAuth = (auth: CodexAuthState, generationAtStart: n
  * re-reads and re-validates the pool, adopts a token another writer already
  * rotated, and retries the compare-and-set while the pool keeps changing.
  */
-const persistRefreshedAuthAccount = async (current: CodexAuthAccountEntry, next: CodexAuthState, kv: Deno.Kv): Promise<CodexAuthState> => {
+const persistRefreshedAuthAccount = async (current: CodexAuthAccountEntry, next: CodexAuthState, kv: Kv): Promise<CodexAuthState> => {
   let poolEntry = current.entry;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     poolEntry ??= await kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" });
@@ -225,11 +226,11 @@ const refreshAuthWithHealth = async (current: CodexAuthAccountEntry): Promise<Co
 const sameCodexCredentials = (left: CodexAuthState, right: CodexAuthState): boolean =>
   left.access_token === right.access_token && left.refresh_token === right.refresh_token;
 
-const refreshLeaseKey = async (accountId: string): Promise<Deno.KvKey> => [...CODEX_AUTH_REFRESH_LEASE_PREFIX, await sha256Hex(accountId)];
+const refreshLeaseKey = async (accountId: string): Promise<KvKey> => [...CODEX_AUTH_REFRESH_LEASE_PREFIX, await sha256Hex(accountId)];
 
 const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const releaseRefreshLease = async (kv: Deno.Kv, key: Deno.KvKey, owner: string): Promise<void> => {
+const releaseRefreshLease = async (kv: Kv, key: KvKey, owner: string): Promise<void> => {
   try {
     const entry = await kv.get<CodexRefreshLease>(key, { consistency: "strong" });
     if (entry.value?.owner !== owner) return;
@@ -271,8 +272,8 @@ const adoptCodexCredentialsAtLeaseHandoff = async (current: CodexAuthAccountEntr
  * refresh another client still needs.
  */
 const waitForCodexRefreshLeaseHandoff = async (
-  kv: Deno.Kv,
-  key: Deno.KvKey,
+  kv: Kv,
+  key: KvKey,
   lease: CodexRefreshLease,
   nowMs: number,
   initial: CodexAuthAccountEntry
@@ -308,7 +309,7 @@ const waitForCodexRefreshLeaseHandoff = async (
  * caller falls open to a bounded direct refresh. OAuth itself never runs inside
  * this helper, so its deterministic errors are never retried here.
  */
-const acquireCodexRefreshLease = async (kv: Deno.Kv, key: Deno.KvKey, initial: CodexAuthAccountEntry): Promise<CodexRefreshLeaseAcquisition> => {
+const acquireCodexRefreshLease = async (kv: Kv, key: KvKey, initial: CodexAuthAccountEntry): Promise<CodexRefreshLeaseAcquisition> => {
   let current = initial;
   try {
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -356,7 +357,7 @@ const refreshAuthCoordinated = async (input: CodexAuthAccountEntry): Promise<Cod
 
   const kv = current.kv;
   if (!kv) return await refreshAuthWithHealth(current);
-  let key: Deno.KvKey;
+  let key: KvKey;
   try {
     key = await refreshLeaseKey(current.auth.account_id);
   } catch {

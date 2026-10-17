@@ -33,6 +33,8 @@ import { warmOpenRouterModels, openRouterModelsSnapshot } from "./openrouter-mod
 import { getString, isRecord } from "../utils.ts";
 import { fetchMeteredModels } from "../provider/metered.ts";
 import { fetchSurplusModels } from "../provider/surplus.ts";
+import { fetchClaudeCodeModels, claudeCodeReasoningLevels, type ClaudeCodeModel } from "../provider/claude-code-models.ts";
+import { resolveClaudeCodeCredential } from "../provider/claude-code-credentials.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { cerebrasProviderHint, LITHOS_PROVIDER_HINT, modelIdFromSnapshotRecord } from "../request-policy.ts";
 import {
@@ -68,6 +70,32 @@ const snapshotUpstreamSource = (snapshot: CodexModelsSnapshot | null): string =>
   return source;
 };
 
+const enabledClaudeCatalog = (selection: ProviderSelection | null) =>
+  isProviderEnabled("claude_code", selection) ? fetchClaudeCodeModels() : Promise.resolve(null);
+const appendClaudeModels = (models: Record<string, unknown>[], claude: readonly ClaudeCodeModel[]): void => {
+  const seen = new Set(models.map((model) => model.id));
+  for (const model of claude) {
+    if (!seen.has(model.id)) models.push({ id: model.id, object: "model", created: model.created, owned_by: "anthropic" });
+  }
+};
+
+const claudeCapabilities = (models: readonly ClaudeCodeModel[]): Record<string, unknown>[] =>
+  models.map((model) => ({
+    id: model.id,
+    object: "uos.model_capabilities",
+    owned_by: "anthropic",
+    display_name: model.display_name ?? model.id,
+    upstream_provider: "claude_code",
+    supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
+    supported_reasoning_levels: claudeCodeReasoningLevels(model),
+    ...(model.supports_disabled_thinking === true ? { default_reasoning_effort: "none" } : {}),
+    context_window_tokens: model.context_window_tokens ?? null,
+    context_source: model.context_window_tokens ? "provider_discovery" : "unknown",
+    reasoning_source: claudeCodeReasoningLevels(model).length ? "provider_discovery" : "unknown",
+    max_output_tokens: model.max_output_tokens ?? null,
+    upstream_capabilities: { image_input: model.supports_image_input ?? null, pdf_input: model.supports_pdf_input ?? null },
+  }));
+
 export const handleModels = async (req?: Request): Promise<Response> => {
   if (req) {
     const clientVersion = getCatalogClientVersion(req);
@@ -92,11 +120,13 @@ export const handleModels = async (req?: Request): Promise<Response> => {
     ),
     deepSeekWaterfallCatalogEnabled(selection)
   );
-  const [metered, surplus] = await Promise.all([
+  const [metered, surplus, claude] = await Promise.all([
     isProviderEnabled("openlux", selection) ? fetchMeteredModels() : Promise.resolve(null),
     isProviderEnabled("surplus", selection) ? fetchSurplusModels() : Promise.resolve(null),
+    enabledClaudeCatalog(selection),
   ]);
   const merged = [...providerModels];
+  appendClaudeModels(merged, claude?.models ?? []);
   for (const model of [...(metered?.models ?? []), ...(surplus?.models ?? [])]) {
     if (!model.supported_endpoint_types.some((type) => type === "openai" || type === "openai-response")) continue;
     if (merged.some((candidate) => candidate.id === model.id)) continue;
@@ -123,7 +153,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
 };
 
 type PublicModelProvider = Readonly<{
-  id: "codex" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos" | "openrouter" | "ubiquity";
+  id: "codex" | "claude_code" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos" | "openrouter" | "ubiquity";
   owned_by: string;
   supported_endpoints: readonly string[];
 }>;
@@ -221,7 +251,7 @@ const collectCodexSnapshotRecords = (snapshot: CodexModelsSnapshot | null): Map<
   return records;
 };
 
-export type ModelCatalogSourceId = "codex" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos" | "openrouter";
+export type ModelCatalogSourceId = "codex" | "claude_code" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos" | "openrouter";
 
 export type ModelCatalogSource = Readonly<{
   status: "available" | "unavailable";
@@ -235,6 +265,8 @@ export type ModelCatalogSource = Readonly<{
   configured?: boolean;
   /** Set when the operator switched this provider off in the admin console. */
   disabled?: boolean;
+  /** The same credential's last good discovery remains visible after a failed refresh. */
+  stale?: boolean;
 }>;
 
 export type ModelCatalogSnapshot = Readonly<{
@@ -344,7 +376,12 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
   // Codex override; the runtime copy is only a fallback when it is unavailable.
   const snapshot = (await loadFullCodexModelsSnapshot()) ?? (await loadCodexModelsSnapshot());
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0 ? normalizeModelList(snapshot) : null;
-  const [metered, surplus] = await Promise.all([fetchMeteredModels(), fetchSurplusModels({ requireApiKey: false })]);
+  const [metered, surplus, claude, claudeCredential] = await Promise.all([
+    fetchMeteredModels(),
+    fetchSurplusModels({ requireApiKey: false }),
+    fetchClaudeCodeModels(),
+    resolveClaudeCodeCredential(await getKv()),
+  ]);
   const codexModels = normalized?.data ?? [];
   const surplusModels = surplus?.models ?? [];
   const models = new Map<string, PublicModelCatalogEntry>();
@@ -392,6 +429,15 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
       model.created
     );
   }
+  for (const model of claude?.models ?? []) {
+    addPublicModelCatalogEntry(
+      models,
+      model.id,
+      { id: "claude_code", owned_by: "anthropic", supported_endpoints: ["/v1/responses", "/v1/chat/completions"] },
+      model.created,
+      { provider: { context_window_tokens: model.context_window_tokens, max_context_window_tokens: model.context_window_tokens } }
+    );
+  }
 
   const credentialGated = addCredentialGatedCatalogProviders(models);
   // The gateway-owned DeepSeek waterfall id is a real client-selectable model,
@@ -422,6 +468,13 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
         status: catalogAvailabilityStatus(normalized),
         count: normalized?.data.length ?? 0,
         updated_at_ms: snapshot?.updated_at_ms ?? null,
+      },
+      claude_code: {
+        status: catalogAvailabilityStatus(claude && !claude.stale),
+        count: claude?.models.length ?? 0,
+        updated_at_ms: claude?.updated_at_ms ?? null,
+        configured: claudeCredential !== null,
+        ...(claude?.stale ? { stale: true } : {}),
       },
       openlux: {
         status: catalogAvailabilityStatus(metered),
@@ -542,10 +595,13 @@ export const handleModelCapabilities = async (): Promise<Response> => {
       : [];
   // One entry per configured id, skipping any id the Codex snapshot already owns.
   appendConfiguredCerebrasRows(data, isProviderEnabled("cerebras", selection));
-  const [metered, surplus] = await Promise.all([
+  const [metered, surplus, claude] = await Promise.all([
     isProviderEnabled("openlux", selection) ? fetchMeteredModels() : Promise.resolve(null),
     isProviderEnabled("surplus", selection) ? fetchSurplusModels() : Promise.resolve(null),
+    enabledClaudeCatalog(selection),
   ]);
+  const seen = new Set(data.map((model) => model.id));
+  data.push(...claudeCapabilities(claude?.models ?? []).filter((model) => !seen.has(model.id)));
   for (const [provider, models] of [
     ["metered", metered?.models ?? []],
     ["surplus", surplus?.models ?? []],

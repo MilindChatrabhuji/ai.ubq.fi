@@ -3,6 +3,7 @@
 import {
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
+  CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE,
   CODEX_UPSTREAM_DEGRADED_ERROR_CODE,
   CodexError,
   fetchCodexResponses,
@@ -28,11 +29,11 @@ import { fetchMeteredModels, fetchMeteredResponses, METERED_MODELS_CACHE_TTL_MS,
 import { fetchSurplusModels, fetchSurplusResponses, SURPLUS_MODELS_CACHE_TTL_MS, SurplusError } from "../provider/surplus.ts";
 import { loadDebugRoutingConfig } from "../debug-routing.ts";
 import {
-  InferenceFallbackReason,
-  PaidProviderHealthClassification,
-  ResponseTelemetryState,
-  RoutedResponsesUpstream,
-  UsageContext,
+  type InferenceFallbackReason,
+  type PaidProviderHealthClassification,
+  type ResponseTelemetryState,
+  type RoutedResponsesUpstream,
+  type UsageContext,
   recordAttemptedProvider,
   recordFirstCodexDispatch,
   recordFirstCodexHeaders,
@@ -41,6 +42,7 @@ import {
 } from "../openai-telemetry.ts";
 import { cancelResponseBody, normalizeProviderRequestId, providerRequestIdFromResponse } from "../upstream-wire.ts";
 import { isTemporaryFreeSurplusModel, responseWarnings } from "../request-policy.ts";
+import { attemptClaudeCodeSubscription } from "./claude-code-route.ts";
 import {
   bestEffortPaidFallbackBookkeeping,
   codexCacheScopeForUsageContext,
@@ -145,8 +147,13 @@ const paidFallbackReasonFor = (
 ): InferenceFallbackReason | null => {
   if (directPaidProvider) return "dynamic_paid_model";
   if (primaryStatus === 429 && routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE) return "primary_quota_blocked";
+  if ((primaryStatus === 401 || primaryStatus === 503) && routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE)
+    return "primary_subscriptions_unavailable";
   return null;
 };
+
+const isGatewaySubscriptionsUnavailable = (status: number, routingError: string | null): boolean =>
+  routingError === CODEX_SUBSCRIPTIONS_UNAVAILABLE_ERROR_CODE && status !== 401;
 
 const resolvePaidFallbackAdmission = (
   routing: Readonly<{ meteredOnly: boolean; codexEnabled: boolean; paidProviders: readonly ("metered" | "surplus")[] }>,
@@ -171,8 +178,8 @@ const resolvePaidFallbackAdmission = (
   const keyId = usageContext?.keyId;
   const requestId = usageContext?.requestId;
   const createdAtMs = usageContext?.startedAtMs;
-  // Only a complete, authoritative Codex quota/capacity classification may
-  // admit paid fallback. Generic 429 responses remain request-local.
+  // Only a complete, authoritative Codex pool classification may admit paid
+  // fallback. Generic 429s and transient failures remain request-local.
   const fallbackReason = paidFallbackReasonFor(directPaidProvider, primaryStatus, routingError);
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (directPaidProvider && usageContext?.paidFallbackEnabled === false) {
@@ -687,6 +694,11 @@ export const fetchResponsesWithPaidFallback = async (
   if (isTemporaryFreeSurplusModel(options.model) && isProviderEnabled("surplus", selection)) {
     return fetchTemporaryFreeSurplusRoutedResponses(body, options);
   }
+  // The owner-gated Claude Code subscription hop runs before the paid route
+  // for Claude models. A null result means "not eligible" or "failed"; the
+  // request then continues through the unchanged paid waterfall below.
+  const subscription = await attemptClaudeCodeSubscription(body, { model: options.model, signal: options.signal, usageContext: options.usageContext });
+  if (subscription) return subscription;
   const catalogs = await loadPaidResponsesCatalogs(body, options, selection);
   const { codexModelKnown, endpointType, requestUsesTools } = catalogs;
   const meteredCatalog = catalogs.meteredCatalog;
@@ -712,7 +724,11 @@ export const fetchResponsesWithPaidFallback = async (
   const authReauthenticationPrimary = primaryStatus === 401 && responseWarnings(primary).includes(CODEX_AUTH_REAUTH_WARNING);
   await recordCodexPrimaryTelemetry(primary, telemetry);
   const routingError = getCodexRoutingError(primary);
-  const gatewayResponse = directPaidProvider !== null || routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE || routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
+  const gatewayResponse =
+    directPaidProvider !== null ||
+    routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
+    isGatewaySubscriptionsUnavailable(primaryStatus, routingError) ||
+    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
       status: 503,

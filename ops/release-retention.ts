@@ -1,3 +1,5 @@
+import { readdir, realpath, rm, stat } from "node:fs/promises";
+import { missing } from "./io.ts";
 /**
  * Release retention for the immutable deploy paths.
  *
@@ -8,6 +10,8 @@
  * pays for. Only rollback needs them, so both deploy scripts prune after the
  * new release is verified live: the running release and the newest few stay.
  */
+
+import { readVpsPins } from "./vps-release-journal.ts";
 
 export const RELEASE_RETENTION_KEEP = 5;
 
@@ -33,9 +37,9 @@ export type ReleasePruneOptions = Readonly<{
 
 const realPathOrNull = async (path: string): Promise<string | null> => {
   try {
-    return await Deno.realPath(path);
+    return await realpath(path);
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return null;
+    if (missing(error)) return null;
     throw error;
   }
 };
@@ -58,15 +62,17 @@ export const pruneReleases = async (options: ReleasePruneOptions = {}): Promise<
   const store = await realPathOrNull(releasesDir);
   if (store === null) return { removed: [], kept: [] };
   const current = await realPathOrNull(currentLink);
+  const pins = await readVpsPins(`${store}/../vps-release-pins.json`);
+  const pinned = new Set(pins.flatMap((pin) => [pin.candidate, pin.prior]));
 
   const releases: { name: string; path: string; modifiedAt: number }[] = [];
-  for await (const entry of Deno.readDir(store)) {
-    if (!entry.isDirectory || !RELEASE_NAME.test(entry.name)) continue;
+  for (const entry of await readdir(store, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !RELEASE_NAME.test(entry.name)) continue;
     const path = `${store}/${entry.name}`;
     // A name that resolves elsewhere was replaced by a link; leave it alone.
     if ((await realPathOrNull(path)) !== path) continue;
-    const stat = await Deno.stat(path);
-    releases.push({ name: entry.name, path, modifiedAt: stat.mtime?.getTime() ?? 0 });
+    const info = await stat(path);
+    releases.push({ name: entry.name, path, modifiedAt: info.mtime.getTime() });
   }
 
   releases.sort((left, right) => right.modifiedAt - left.modifiedAt || left.name.localeCompare(right.name));
@@ -75,11 +81,11 @@ export const pruneReleases = async (options: ReleasePruneOptions = {}): Promise<
   const removed: string[] = [];
   const kept: string[] = [];
   for (const release of releases) {
-    if (retained.has(release.path) || release.path === current) {
+    if (retained.has(release.path) || release.path === current || pinned.has(release.name)) {
       kept.push(release.name);
       continue;
     }
-    if (!options.dryRun) await Deno.remove(release.path, { recursive: true });
+    if (!options.dryRun) await rm(release.path, { recursive: true });
     removed.push(release.name);
   }
   return { removed, kept };

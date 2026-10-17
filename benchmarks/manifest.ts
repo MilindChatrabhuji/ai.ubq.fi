@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from "node:fs";
 /**
  * Task manifest loading and selection.
  *
@@ -6,7 +7,7 @@
  * patterns per segment, and `category:<name>` selectors, comma-separated.
  */
 
-import { TaskCategory, TaskManifest, validateTaskManifest } from "./schemas.ts";
+import { type TaskCategory, type TaskManifest, validateTaskManifest } from "./schemas.ts";
 
 export class ManifestError extends Error {
   constructor(message: string) {
@@ -17,12 +18,12 @@ export class ManifestError extends Error {
 
 export function loadTasks(tasksDir: string): TaskManifest[] {
   const files: string[] = [];
-  for (const entry of Deno.readDirSync(tasksDir)) {
-    if (entry.isFile && entry.name.endsWith(".json")) files.push(entry.name);
+  for (const entry of readdirSync(tasksDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".json")) files.push(entry.name);
   }
   files.sort((a, b) => a.localeCompare(b));
   const tasks = files.map((name) => {
-    const raw = Deno.readTextFileSync(`${tasksDir}/${name}`);
+    const raw = readFileSync(`${tasksDir}/${name}`, "utf8");
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
