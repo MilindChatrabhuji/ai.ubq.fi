@@ -403,7 +403,7 @@ test("a superseded provider failure cannot clear a newer healthy state", async (
 
 test("a provider timeout clears the previous healthy strip", async () => {
   const timeoutController = new AbortController();
-  const originalTimeout = AbortSignal.timeout;
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
   const timeoutApi = AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal };
   timeoutApi.timeout = () => timeoutController.signal;
   let calls = 0;
