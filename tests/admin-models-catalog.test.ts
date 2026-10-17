@@ -814,6 +814,14 @@ test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
 });
 
+test("admin metadata refresh does not announce an unchanged OpenRouter snapshot as success", () => {
+  const refreshHandler = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(
+    refreshHandler,
+    /if \(payload\?\.data\?\.openrouter\?\.refreshed === false\) \{[\s\S]*?toast\.error\("Metadata refresh failed", \{ description: "OpenRouter metadata was not refreshed" \}\);[\s\S]*?return;[\s\S]*?\}\s*toast\.success\("Model metadata refreshed"/
+  );
+});
+
 test("admin metadata refresh forces every upstream and reports what is cached", async () => {
   const calls: string[] = [];
   const enrichment: OpenRouterModelsSnapshot = {
