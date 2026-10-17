@@ -174,6 +174,10 @@ export const relayChatCompletionStream = (
   const refuseStream = async (controller: ReadableStreamDefaultController<Uint8Array>, refusal: Response): Promise<void> => {
     if (closed) return;
     closed = true;
+    // Capture the signal state when the refusal reaches the relay. Reading the
+    // bounded error body below is asynchronous; a later abort must not turn an
+    // already-arrived, unmarked provider 504 into a local deadline.
+    const gatewayDeadline = isGatewayDeadlineResponse(refusal, requestSignal);
     const detail = await readUpstreamStreamRefusal(refusal);
     // A wait the caller abandoned - a client cancellation, or the gateway's own
     // deadline - is not a provider refusal: it keeps its own terminal and emits
@@ -181,7 +185,7 @@ export const relayChatCompletionStream = (
     // 504 is a refusal when the inference signal is still live. Explicit
     // provenance also covers a per-attempt gateway timeout while that signal
     // remains live, and prevents a late signal abort from hiding a provider 504.
-    if (detail.status === 499 || isGatewayDeadlineResponse(refusal, requestSignal)) {
+    if (detail.status === 499 || gatewayDeadline) {
       settleTerminal(detail.status === 499 ? "cancelled" : "deadline");
       if (detail.status === 499) adapter.recordCancellation(usageContext);
       else adapter.recordTransportFailure(usageContext, new Error("The gateway deadline passed while waiting for the provider retry window."), "deadline");
@@ -450,12 +454,16 @@ export const relayResponsesStream = (
       closeController(controller);
       return;
     }
+    // Snapshot provenance before reading the refusal body. A signal abort that
+    // happens during that read must not hide a provider response that already
+    // reached this relay.
+    const gatewayDeadline = isGatewayDeadlineResponse(refusal, requestSignal);
     const detail = await readUpstreamStreamRefusal(refusal);
     // The caller's own cancellation or deadline keeps its terminal and emits no
     // error frame; only a provider refusal travels as one. An upstream 504 is a
     // refusal when the inference signal is still live. Explicit provenance also
     // distinguishes an attempt deadline from a provider response.
-    if (detail.status === 499 || isGatewayDeadlineResponse(refusal, requestSignal)) {
+    if (detail.status === 499 || gatewayDeadline) {
       settleTerminal(detail.status === 499 ? "cancelled" : "deadline");
       if (detail.status === 499) adapter.recordCancellation(usageContext);
       else adapter.recordTransportFailure(usageContext, new Error("The gateway deadline passed while waiting for the provider retry window."), "deadline");
