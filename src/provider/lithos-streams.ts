@@ -107,6 +107,8 @@ export const recordLithosResponseHealth = (status: number, providerRequestId: st
   void recordLithosProviderHealth("success", status, Date.now, providerRequestId);
 };
 
+const isClassifiedLithosRefusal = (status: number | null): boolean => status === 401 || status === 402 || status === 403 || status === 429;
+
 /**
  * Holds a client's SSE connection across provider quiet periods with the
  * gateway's standard `: keepalive` comment frames - the same mechanism the
@@ -124,7 +126,10 @@ const lithosStreamAdapter: ProviderStreamAdapter = {
   responseHeaders: lithosResponseHeaders,
   frames: lithosChatStreamFrames,
   recordResponseHealth: recordLithosResponseHealth,
-  recordProviderError: (status, providerRequestId) => void recordLithosProviderHealth("upstream_error", status, Date.now, providerRequestId),
+  recordProviderError: (status, providerRequestId) => {
+    if (isClassifiedLithosRefusal(status)) return;
+    void recordLithosProviderHealth("upstream_error", status, Date.now, providerRequestId);
+  },
   recordCancellation: (usageContext) => {
     recordLithosFailureKind(usageContext, "cancellation");
   },

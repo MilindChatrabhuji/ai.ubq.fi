@@ -66,6 +66,8 @@ export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, 
 
 let adminAuthDisabled = false;
 let adminAuthPeer: Addr | null = null;
+/** Set only by the Mac companion's listener; see `isMacCompanionServiceListener`. */
+let macCompanionListener = false;
 /**
  * Request-scoped peers for a LAN-facing listener. Routing awaits before it
  * authenticates, so a single process-wide slot can be overwritten by a
@@ -79,6 +81,7 @@ export const configureAdminAuthForListener = (options: ServeRuntimeOptions, addr
   const disabled = shouldDisableAdminAuthForListener(options, address);
   adminAuthDisabled = disabled;
   adminAuthPeer = null;
+  macCompanionListener = false;
   return disabled;
 };
 
@@ -113,8 +116,19 @@ export const configureMacLocalAdminAuthBypassForListener = (address: Addr): bool
   }
   adminAuthDisabled = true;
   adminAuthPeer = null;
+  macCompanionListener = true;
   return true;
 };
+
+/**
+ * True only in the Mac companion service process: `scripts/serve-mac.ts` is the
+ * one caller of `configureMacLocalAdminAuthBypassForListener`. A development
+ * server (`bun run dev`, `dev:local`) configures its loopback bypass through
+ * `configureAdminAuthForListener`, which clears this signal. Work that must run
+ * only on the real Mac service, such as pushing its capacity samples to the VPS
+ * chart, gates on this rather than on the request-level loopback bypass.
+ */
+export const isMacCompanionServiceListener = (): boolean => macCompanionListener;
 
 const isLoopbackPeer = (peer: Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
 

@@ -2009,6 +2009,7 @@ body[data-page="admin"] [data-provider-badges] {
 
 body[data-page="admin"] [data-model-provider-badge],
 body[data-page="admin"] [data-provider-tier-badge],
+body[data-page="admin"] [data-provider-activation-badge],
 body[data-page="admin"] [data-provider-health-badge] {
   padding: 3px 7px;
   border: 1px solid var(--border);
@@ -2016,6 +2017,15 @@ body[data-page="admin"] [data-provider-health-badge] {
   background: var(--surface);
   color: var(--text);
   font-size: 0.6875rem;
+}
+
+body[data-page="admin"] [data-provider-activation-badge="selected"] {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+body[data-page="admin"] [data-provider-activation-badge="disabled"] {
+  color: var(--muted);
 }
 
 body[data-page="admin"] [data-provider-health-badge="healthy"] {
