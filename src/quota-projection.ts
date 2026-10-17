@@ -289,14 +289,20 @@ const mergeObservedRefillEvent = (events: RefillEvent[], observedRefillAtMs: num
 
 const refillEvents = (quota: MeteredQuotaRunwayView, history: readonly MeteredQuotaBalanceSample[] | null, nowMs: number): RefillEvent[] => {
   const events: RefillEvent[] = history === null ? [] : refillEventsFromHistory(history, nowMs);
+  // An inferred credit has no provider completion timestamp; for an observed
+  // refill, last_credit_at_ms is only the observation time and must not become
+  // a second refill event.
+  const inferredCreditAtMs = quota.confidence === "inferred_adjustment" ? quota.last_credit_at_ms : null;
   const cycleStartIsRefill =
     quota.latest_refill_completed_at_ms !== null ||
     positiveFinite(quota.latest_refill_amount_credits) ||
     quota.confidence === "refill_observed" ||
     quota.confidence === "inferred_adjustment";
-  const observedRefillTimes = [cycleStartIsRefill ? quota.cycle_started_at_ms : null, quota.latest_refill_completed_at_ms].filter(
-    (atMs): atMs is number => nonNegativeFinite(atMs) && atMs <= nowMs
-  );
+  const observedRefillTimes = [
+    cycleStartIsRefill ? quota.cycle_started_at_ms : null,
+    inferredCreditAtMs,
+    quota.latest_refill_completed_at_ms,
+  ].filter((atMs): atMs is number => nonNegativeFinite(atMs) && atMs <= nowMs);
   for (const observedRefillAtMs of observedRefillTimes) mergeObservedRefillEvent(events, observedRefillAtMs);
   events.sort((left, right) => left.atMs - right.atMs);
   return events;
