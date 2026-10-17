@@ -286,10 +286,13 @@ type LithosDispatchProgress = Readonly<{
 /** Waits out one planned window while recording the elapsed time, including an abort. */
 const waitForLithosRateLimit = async (input: LithosDispatchInput, plannedWaitMs: number, elapsedWaitMs: number): Promise<number> => {
   let elapsed = 0;
-  await waitForLithosRetry(plannedWaitMs, input.requestSignal, (measuredMs) => {
-    elapsed = measuredMs;
-    recordLithosRateLimitWaitMs(input.usageContext, elapsedWaitMs + measuredMs);
-  });
+  try {
+    await waitForLithosRetry(plannedWaitMs, input.requestSignal, (measuredMs) => {
+      elapsed = measuredMs;
+    });
+  } finally {
+    recordLithosRateLimitWaitMs(input.usageContext, elapsedWaitMs + elapsed);
+  }
   return elapsed;
 };
 
