@@ -7,6 +7,7 @@ import {
   type DeepSeekResponsesResult,
   type OriginalToolName,
   failure,
+  originalToolName,
 } from "./responses.ts";
 import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
 import { getString, isRecord } from "../utils.ts";
@@ -645,10 +646,12 @@ const toChatTools = (
 };
 
 const chatToolName = (name: string, namespace: string | null, toolNames: ReadonlyMap<string, OriginalToolName>): string => {
-  // An unqualified name already identifies the bare Chat function unless a
-  // namespaced function took that Chat name first and the bare function was
-  // suffixed later.
-  if (namespace === null && !toolNames.has(name)) return name;
+  // Preserve the compatibility form's existing reverse lookup when it already
+  // supplies a flattened Chat name. A namespace-aware choice below is the
+  // forward lookup from the original Responses identity to that Chat name.
+  if (namespace === null) return originalToolName(name, toolNames);
+  // A namespace-aware choice must be resolved from the original identity so
+  // a colliding namespaced function gets its synthesized Chat name.
   for (const [chatName, original] of toolNames) {
     if (original.name === name && original.namespace === namespace) return chatName;
   }
