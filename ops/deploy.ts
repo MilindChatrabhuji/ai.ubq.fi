@@ -139,7 +139,11 @@ const launcherFingerprint = "50435a214d34cb7fbae3735a0a0502f8d96aaa3257dc502edc0
 type Release = { sha: string; path: string; archive: string; tree: string };
 type Previous = Release & { selector: string; port: number; profile: string };
 type Phase = "prepared" | "selected" | "candidate_ready" | "ingress_applied" | "rolled_back";
-type Recovery = { schema: 1; candidate: Release; previous: Previous | null; phase: Phase };
+/**
+ * `restart_issued` is saved before this deployment first asks systemd to restart the gateway for the
+ * candidate. A receipt written before the field existed leaves it undefined, which counts as issued.
+ */
+type Recovery = { schema: 1; candidate: Release; previous: Previous | null; phase: Phase; restart_issued?: boolean };
 const notFound = (error: unknown): boolean => missing(error);
 
 async function exists(path: string): Promise<boolean> {
@@ -178,6 +182,7 @@ async function readRecovery(): Promise<Recovery | null> {
     value.schema !== 1 ||
     !validRelease(value.candidate) ||
     !["prepared", "selected", "candidate_ready", "ingress_applied", "rolled_back"].includes(String(value.phase)) ||
+    !(value.restart_issued === undefined || typeof value.restart_issued === "boolean") ||
     !(
       value.previous === null ||
       (validRelease(value.previous) &&
@@ -229,7 +234,18 @@ async function verifyPreviousRecovery(previous: Previous): Promise<void> {
   if (JSON.stringify(checked) !== JSON.stringify(previous)) throw new Error("Previous immutable recovery profile changed");
 }
 
+/**
+ * A first-deployment candidate that no deployment ever restarted, with no selector, is the state a
+ * restoration leaves when it stops after clearing the selector and before recording `rolled_back`,
+ * or a run leaves when it stops after recording `prepared` and before selecting. There is no earlier
+ * release to protect and the candidate is verified again before it is selected, so a same-SHA retry
+ * may select and start it. Once a restart was issued, a missing selector stays unexplained.
+ */
+const unstartedFirstCandidate = (selected: string | null, receipt: Recovery): boolean =>
+  receipt.previous === null && selected === null && receipt.restart_issued === false && (receipt.phase === "prepared" || receipt.phase === "selected");
+
 async function assertUnselectedRecovery(selected: string | null, receipt: Recovery, fresh: boolean): Promise<void> {
+  if (unstartedFirstCandidate(selected, receipt)) return;
   if (!fresh && receipt.phase !== "rolled_back") throw new Error("Unselected recovery candidate has no proven rollback disposition");
   if (!["prepared", "rolled_back"].includes(receipt.phase) || selected !== (receipt.previous?.selector ?? null))
     throw new Error("Deployment recovery selector or phase mismatch");
@@ -258,28 +274,38 @@ async function selectedRecoveryServes(candidate: Release, receipt: Recovery): Pr
   throw new Error("Selected recovery candidate identity is ambiguous; refusing destructive recovery");
 }
 
+/**
+ * Selects and restarts the candidate. A first-deployment retry can restart a selected candidate whose
+ * Caddy configuration an earlier run already applied; its receipt keeps `ingress_applied`, so the
+ * phase never stops recording the applied ingress.
+ */
 async function startCandidate(candidate: Release, receipt: Recovery, state: ActivationState): Promise<void> {
-  receipt.phase = "prepared";
-  await saveRecovery(receipt);
+  const ingressApplied = receipt.phase === "ingress_applied";
+  const record = async (phase: Phase): Promise<void> => {
+    if (!ingressApplied) receipt.phase = phase;
+    await saveRecovery(receipt);
+  };
+  await record("prepared");
   await selectRelease("releases/" + candidate.sha);
-  receipt.phase = "selected";
-  await saveRecovery(receipt);
+  await record("selected");
   await command("sudo", ["-n", "systemctl", "daemon-reload"]);
   console.log(JSON.stringify({ systemd_daemon_reload: "before-restart", service: "ai-ubq-fi.service" }));
+  receipt.restart_issued = true;
+  await saveRecovery(receipt);
   state.restartAttempted = true;
   await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
   if (!(await ready(candidate.sha, 7999))) throw new Error("The VPS did not serve the expected release; inspect journalctl -u ai-ubq-fi.service");
-  receipt.phase = "candidate_ready";
-  await saveRecovery(receipt);
+  await record("candidate_ready");
 }
 
 /**
- * A first deployment has no earlier release to restore. Before the gateway
- * restart nothing ran from the candidate, so clearing its selector restores the
- * original state exactly. After a restart attempt the unit can only run this
- * candidate: clearing the selector would not stop it and would only break the
- * unit's next start, so the candidate stays selected, unaccepted and resumable
- * by the same SHA.
+ * A first deployment has no earlier release to restore. Before this deployment
+ * restarts the gateway, clearing the candidate's selector restores the original
+ * selector state; a candidate systemd started meanwhile (see `activate`) keeps
+ * running, and a same-SHA retry selects and restarts it. After a restart attempt
+ * the unit can only run this candidate: clearing the selector would not stop it
+ * and would only break the unit's next start, so the candidate stays selected,
+ * unaccepted and resumable by the same SHA.
  */
 async function restoreFirstDeployment(receipt: Recovery, restartAttempted: boolean): Promise<void> {
   if (restartAttempted) {
@@ -334,7 +360,12 @@ async function activate(candidate: Release, selected: string | null, receipt: Re
   if (!candidateSelected) await assertUnselectedRecovery(selected, receipt, fresh);
   // A candidate that is already selected may have been restarted by an earlier
   // run, so recovery must treat it as possibly running even when this run issues
-  // no restart: clearing or swapping its selector alone cannot stop it.
+  // no restart: clearing or swapping its selector alone cannot stop it. That holds
+  // even when the receipt says no restart was issued: an enabled unit that cannot
+  // start retries every RestartSec (ops/ai-ubq-fi.service) and resolves
+  // `.data/current` on each attempt, so on a first deployment systemd itself can
+  // start a candidate as soon as it is selected. `restart_issued` therefore never
+  // clears a selected candidate's selector.
   const state = { restartAttempted: candidateSelected, ingressApplied: receipt.phase === "ingress_applied" };
   try {
     if (!candidateServes) await startCandidate(candidate, receipt, state);
@@ -379,7 +410,7 @@ async function prepareCandidate(sha: string, preparePayload?: VpsPayloadPreparat
   const candidateStore = new ImmutableVpsReleaseStore(canonicalRoot, (program, args) => command(program, args), preparePayload);
   const candidate = await candidateStore.checkedRelease(sha, !present);
   if (!present) {
-    receipt = { schema: 1, candidate, previous, phase: "prepared" };
+    receipt = { schema: 1, candidate, previous, phase: "prepared", restart_issued: false };
     await saveRecovery(receipt);
   }
   await activate(candidate, selected, receipt, !present);

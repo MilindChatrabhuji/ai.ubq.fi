@@ -24,7 +24,10 @@ type Fixture = {
   seed: string;
   gpgconfLog: string;
   digestLog: string;
-  run: (mode: "sandboxed" | "writable", options?: { args?: string[]; env?: Record<string, string> }) => Promise<{ code: number; stdout: string; stderr: string }>;
+  run: (
+    mode: "sandboxed" | "writable",
+    options?: { args?: string[]; env?: Record<string, string> }
+  ) => Promise<{ code: number; stdout: string; stderr: string }>;
   dispose: () => Promise<void>;
 };
 
@@ -307,11 +310,13 @@ test("a seed left in the shared dsh-gnupg layout is discarded with its agent", a
   });
 });
 
-test("the sandboxed-signing decision records the helper and its private-key invalidation", async () => {
+test("the sandboxed-signing decision records the helper, its per-user seed and its invalidation rules", async () => {
   const decisions = await readFile(DECISIONS, "utf8");
   const entry = decisions.split(/^## /m).find((section) => section.startsWith("Sandboxed commits sign through a GNUPGHOME inside writable roots"));
   assert.ok(entry, "the sandboxed-signing decision entry exists");
   assert.match(entry, /`ops\/gpg-dsh\.sh`/);
   assert.match(entry, /deleted,\s+added,\s+or\s+re-protected\s+private\s+key/);
   assert.doesNotMatch(entry, /re-seeding\s+when\s+`pubring\.kbx`\s+changes/);
+  assert.match(entry, /`\$TMPDIR\/dsh-gnupg-<uid>\/seed`/);
+  assert.match(entry, /GnuPG\s+configuration\s+file\s+in\s+the\s+seed/);
 });

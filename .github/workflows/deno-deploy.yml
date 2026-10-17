@@ -122,6 +122,11 @@ jobs:
             console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, nativeKvLoaded: true }));
           '
           bun --no-env-file --no-install ops/verify-mac-sandbox.ts "--native-kv-binding=$binding"
+      - name: Sandboxed-signing helper on its macOS target
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun --no-env-file --no-install run test tests/gpg-dsh.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
 
   verify-artifact:
     needs: [validate, mac-containment, darwin-native]
