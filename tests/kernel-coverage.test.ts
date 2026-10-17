@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { Kv, KvKey } from "#kv";
 // Coverage tests for the kernel attestation verifier, the V2 kernel quota
 // projection and the API key V3 policy ledger. Every case drives the exported
 // production entry points and asserts the observable decision (HTTP status and
@@ -23,13 +25,13 @@ import { setKvForTest } from "../src/kv.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
 
-const KERNEL_PUBKEYS_KEY: Deno.KvKey = ["uos_ai", "kernel_pubkeys"];
-const REPO_POLICY_PREFIX: Deno.KvKey = ["uos_ai", "kernel_quota", "v2", "repo_policy"];
-const ORG_POLICY_PREFIX: Deno.KvKey = ["uos_ai", "kernel_quota", "v2", "org_policy"];
+const KERNEL_PUBKEYS_KEY: KvKey = ["uos_ai", "kernel_pubkeys"];
+const REPO_POLICY_PREFIX: KvKey = ["uos_ai", "kernel_quota", "v2", "repo_policy"];
+const ORG_POLICY_PREFIX: KvKey = ["uos_ai", "kernel_quota", "v2", "org_policy"];
 const TEXT_ENCODER = new TextEncoder();
 
 const kv = new CountingKv();
-setKvForTest(kv as unknown as Deno.Kv);
+setKvForTest(kv as unknown as Kv);
 
 const base64Url = (bytes: Uint8Array): string => {
   let binary = "";
@@ -123,7 +125,7 @@ const windowRecord = (scope: "repo" | "org", owner: string, repo: string | undef
   ...overrides,
 });
 
-Deno.test("kernel attestation requires the token header and a loaded public key", async () => {
+test("kernel attestation requires the token header and a loaded public key", async () => {
   kv.clearData();
   const keys = await createAttestationKeys();
   const apiToken = `u_${"a".repeat(64)}`;
@@ -158,7 +160,7 @@ Deno.test("kernel attestation requires the token header and a loaded public key"
   await reloadKernelPublicKeys();
 });
 
-Deno.test("kernel attestation rejects malformed JWT parts and unsigned headers", async () => {
+test("kernel attestation rejects malformed JWT parts and unsigned headers", async () => {
   kv.clearData();
   const keys = await createAttestationKeys();
   kv.seed(KERNEL_PUBKEYS_KEY, [{ app_id: 1, pem: keys.pem, owner: "acme", added_at_ms: 1 }]);
@@ -224,7 +226,7 @@ Deno.test("kernel attestation rejects malformed JWT parts and unsigned headers",
   assert.match(badSignatureBase64.message, /failed to decode kernel attestation signature/);
 });
 
-Deno.test("kernel attestation enforces clock, repo, installation and token-hash bindings", async () => {
+test("kernel attestation enforces clock, repo, installation and token-hash bindings", async () => {
   kv.clearData();
   const keys = await createAttestationKeys();
   kv.seed(KERNEL_PUBKEYS_KEY, [{ app_id: 1, pem: keys.pem, owner: "acme", added_at_ms: 1 }]);
@@ -277,7 +279,7 @@ Deno.test("kernel attestation enforces clock, repo, installation and token-hash 
   assert.equal(installationMatch.payload.installation_id, 42);
 });
 
-Deno.test("kernel attestation accepts a signed token, prunes expired jti entries and rejects tampering", async () => {
+test("kernel attestation accepts a signed token, prunes expired jti entries and rejects tampering", async () => {
   kv.clearData();
   const keys = await createAttestationKeys();
   kv.seed(KERNEL_PUBKEYS_KEY, [{ app_id: 1, pem: keys.pem, owner: "acme", added_at_ms: 1 }]);
@@ -307,7 +309,7 @@ Deno.test("kernel attestation accepts a signed token, prunes expired jti entries
   assert.match((await rejected.response.json()).error.message, /invalid kernel attestation/);
 });
 
-Deno.test("kernel attestation context resolves repository identity from request headers", async () => {
+test("kernel attestation context resolves repository identity from request headers", async () => {
   kv.clearData();
   const keys = await createAttestationKeys();
   kv.seed(KERNEL_PUBKEYS_KEY, [{ app_id: 1, pem: keys.pem, owner: "acme", added_at_ms: 1 }]);
@@ -333,7 +335,7 @@ Deno.test("kernel attestation context resolves repository identity from request 
   assert.equal(getGitHubRepoHeaders(tokenRequest(token)), null);
 });
 
-Deno.test("kernel quota normalizers reject malformed records and coerce loose values", () => {
+test("kernel quota normalizers reject malformed records and coerce loose values", () => {
   assert.equal(normalizeUsageLimit("30", 1), 30);
   assert.equal(normalizeUsageLimit("not-a-number", 7), 7);
   assert.equal(normalizeUsageLimit(-1, 7), -1);
@@ -406,7 +408,7 @@ Deno.test("kernel quota normalizers reject malformed records and coerce loose va
   assert.deepEqual(kernelOrgReservationKey("acme", 5, "req-1"), ["uos_ai", "kernel_quota", "v2", "org_reservation", "acme", 5, "req-1"]);
 });
 
-Deno.test("kernel quota snapshots and policy listings fail closed without KV", async () => {
+test("kernel quota snapshots and policy listings fail closed without KV", async () => {
   setKvForTest(null);
   try {
     assert.equal(await getKernelUsageLimitSnapshot("acme", "demo"), null);
@@ -414,11 +416,11 @@ Deno.test("kernel quota snapshots and policy listings fail closed without KV", a
     assert.equal(await listKernelUsageLimits(), null);
     assert.equal(await listKernelOrgUsageLimits(), null);
   } finally {
-    setKvForTest(kv as unknown as Deno.Kv);
+    setKvForTest(kv as unknown as Kv);
   }
 });
 
-Deno.test("kernel quota listings project stored policies and skip foreign rows", async () => {
+test("kernel quota listings project stored policies and skip foreign rows", async () => {
   kv.clearData();
   kv.seed([...REPO_POLICY_PREFIX, "acme", "demo"], policyRecord("repo", "acme", "demo", { usage_limit_requests: 4 }));
   kv.seed([...REPO_POLICY_PREFIX, "acme", "demo", "extra"], policyRecord("repo", "acme", "demo"));
