@@ -350,15 +350,43 @@ type Rule = (text: string) => RedactionSpan[];
 const TOKEN_RULES: readonly Rule[] = TOKEN_PATTERNS.map((pattern) => (text: string) => patternSpans(text, pattern));
 
 /**
- * The double-quoted rule as it was before a key could run on through `.` or
- * `-`, take `=>`, or hold a template literal. A value the broader rule
- * replaced first could hide a key whose bare value runs on past it, so the
- * previous order below keeps this one. The key word is taken whole, as above,
- * which matches the same text without backtracking through it.
+ * The key-value rules in the shapes they had before a key could run on
+ * through `.` or `-`, take `=>`, or hold a template literal. A value that a
+ * broader rule replaced first could hide a key whose bare value runs on past
+ * it, so every step that runs before another rule keeps these shapes; the
+ * broader rules run on the original text and as the last step. Each key word
+ * is taken whole, as above, which matches the same text without backtracking
+ * through it.
  */
 const PREVIOUS_QUOTED_ASSIGNMENT = /\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1["']?\s*[:=]\s*"(?:\\.|[^"\\])*"/gi;
+const PREVIOUS_BARE_ASSIGNMENT = /\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1\s*[:=]\s*\S{8,}/gi;
+const PREVIOUS_SINGLE_QUOTED_OPENING = /\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1["']?\s*[:=]\s*'/gi;
+const PREVIOUS_BRACKETED_OPENING = /\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1["']?\s*[:=]\s*[[{]/gi;
 
 const previousQuotedRule: Rule = (text) => patternSpans(text, PREVIOUS_QUOTED_ASSIGNMENT);
+
+/**
+ * The first pass the bracketed rule made before: each array or object value
+ * of a key in the previous shapes, merged with every token and previous-shape
+ * scalar span that overlaps it, all found on the original text. A scalar
+ * replaced on its own could remove a quote the bracket scan relies on, or
+ * leave a scalar's tail after the value's marker.
+ */
+const previousBracketedComponents = (text: string): RedactionSpan[] => {
+  const openings = patternSpans(text, PREVIOUS_BRACKETED_OPENING).map((span) => ({ start: span.start, bracket: span.end - 1 }));
+  const values = mergeSpans(QUOTE_READINGS.flatMap((reading) => bracketedValues(text, openings, reading)));
+  const scalars = [...TOKEN_RULES, previousQuotedRule].flatMap((rule) => rule(text));
+  scalars.push(...patternSpans(text, PREVIOUS_BARE_ASSIGNMENT));
+  for (const opening of patternSpans(text, PREVIOUS_SINGLE_QUOTED_OPENING)) {
+    const quote = opening.end - 1;
+    scalars.push({ start: opening.start, end: yamlScalarEnd(text, quote) }, { start: opening.start, end: escapedScalarEnd(text, quote) });
+  }
+  let next = 0;
+  return mergeSpans([...values, ...scalars]).filter((span) => {
+    while (next < values.length && values[next].end <= span.start) next += 1;
+    return next < values.length && values[next].start < span.end;
+  });
+};
 
 const scalarValueRule: Rule = (text) => scalarValueSpans(text, credentialKeys(text));
 
@@ -395,23 +423,16 @@ const sequentialMask = (text: string, mask: readonly RedactionSpan[], rules: rea
  * - every rule on the original text at once, so no match can hide the next
  *   key's own value;
  * - the previous order of the token and scalar rules;
- * - the same order after each array or object value is replaced together with
- *   every span that overlaps it, as the bracketed rule first ran: a scalar
- *   replaced on its own could remove a quote the bracket scan relies on, or
- *   leave a scalar's tail after the value's marker.
+ * - the same order after the first pass the bracketed rule made before.
  *
  * The result removes everything any one of them would.
  */
 export const redactSupervisorSecrets = (text: string): { text: string; redactions: number } => {
   const keys = credentialKeys(text);
-  const values = mergeSpans(bracketedValueSpans(text, keys));
   const tokens = TOKEN_RULES.flatMap((rule) => rule(text));
-  const everyRule = mergeSpans([...tokens, ...quotedValueSpans(text, keys), ...scalarValueSpans(text, keys), ...values]);
-  let next = 0;
-  const bracketedComponents = everyRule.filter((span) => {
-    while (next < values.length && values[next].end <= span.start) next += 1;
-    return next < values.length && values[next].start < span.end;
-  });
-  const mask = mergeSpans([...everyRule, ...sequentialMask(text, [], PREVIOUS_ORDER), ...sequentialMask(text, bracketedComponents, PREVIOUS_ORDER)]);
+  const everyRule = [...tokens, ...quotedValueSpans(text, keys), ...scalarValueSpans(text, keys), ...bracketedValueSpans(text, keys)];
+  const previousOrder = sequentialMask(text, [], PREVIOUS_ORDER);
+  const afterBracketedValues = sequentialMask(text, previousBracketedComponents(text), PREVIOUS_ORDER);
+  const mask = mergeSpans([...everyRule, ...previousOrder, ...afterBracketedValues]);
   return { text: render(text, mask).text, redactions: mask.length };
 };
