@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import type { HarmonyTransport } from "../src/harmony/adapter.ts";
@@ -58,7 +59,7 @@ const classifierOptions = {
   reasoningEffort: "low",
 } as const;
 
-Deno.test("argsJsonValid reports malformed tool arguments instead of throwing", () => {
+test("argsJsonValid reports malformed tool arguments instead of throwing", () => {
   assert.equal(argsJsonValid('{"location":"San Francisco"}'), true);
   assert.equal(argsJsonValid("4"), true);
   assert.equal(argsJsonValid(""), false);
@@ -66,7 +67,7 @@ Deno.test("argsJsonValid reports malformed tool arguments instead of throwing", 
   assert.equal(argsJsonValid("undefined"), false);
 });
 
-Deno.test("a raw probe summarizes a malformed wire body without leaking unknown shapes", async () => {
+test("a raw probe summarizes a malformed wire body without leaking unknown shapes", async () => {
   const body: Record<string, unknown> = {
     model: 7,
     messages: [
@@ -115,7 +116,7 @@ Deno.test("a raw probe summarizes a malformed wire body without leaking unknown 
   assert.equal(run.normalized?.content, "done");
 });
 
-Deno.test("a raw probe with no usable tools or messages summarizes an empty request", async () => {
+test("a raw probe with no usable tools or messages summarizes an empty request", async () => {
   const body: Record<string, unknown> = { model: "gpt-oss-120b", messages: "nope", tools: [], parallel_tool_calls: "yes" };
   const { ctx } = contextOf([{ payload: completion({ content: "ok" }) }]);
   const run = await ctx.runRaw(body);
@@ -134,7 +135,7 @@ Deno.test("a raw probe with no usable tools or messages summarizes an empty requ
   assert.equal(request.toolResultTurns, 0);
 });
 
-Deno.test("a raw probe reads every structured-output wrapper as probe vocabulary", async () => {
+test("a raw probe reads every structured-output wrapper as probe vocabulary", async () => {
   const replies: Reply[] = [
     { payload: completion({ content: "a" }) },
     { payload: completion({ content: "b" }) },
@@ -150,7 +151,7 @@ Deno.test("a raw probe reads every structured-output wrapper as probe vocabulary
   assert.deepEqual(formats, ["json_schema", "none", "none", "none"]);
 });
 
-Deno.test("a raw probe records a non-JSON success as a failed turn", async () => {
+test("a raw probe records a non-JSON success as a failed turn", async () => {
   const { ctx } = contextOf([{ payload: "<html>gateway</html>", contentType: "text/html" }]);
   const run = await ctx.runRaw({ model: "gpt-oss-120b" });
 
@@ -163,7 +164,7 @@ Deno.test("a raw probe records a non-JSON success as a failed turn", async () =>
   assert.equal(run.verdict, null);
 });
 
-Deno.test("a raw probe reports an unnormalizable completion with the adapter error", async () => {
+test("a raw probe reports an unnormalizable completion with the adapter error", async () => {
   const { ctx } = contextOf([{ payload: JSON.stringify({ id: "cmpl-coverage", created: 1, model: "gpt-oss-120b", choices: [] }) }]);
   const run = await ctx.runRaw({ model: "gpt-oss-120b" });
 
@@ -177,7 +178,7 @@ Deno.test("a raw probe reports an unnormalizable completion with the adapter err
   assert.equal(run.normalized, null);
 });
 
-Deno.test("a raw probe summary counts content, reasoning, refusal and tool-call validity", async () => {
+test("a raw probe summary counts content, reasoning, refusal and tool-call validity", async () => {
   const longContent = "x".repeat(200);
   const { ctx } = contextOf([
     {
@@ -214,7 +215,7 @@ Deno.test("a raw probe summary counts content, reasoning, refusal and tool-call 
   assert.equal(run.record.state, null);
 });
 
-Deno.test("a raw probe reports an upstream rejection with its sanitized error", async () => {
+test("a raw probe reports an upstream rejection with its sanitized error", async () => {
   const { ctx } = contextOf([{ payload: errorBody("invalid_request_error", "unsupported tools"), status: 400 }]);
   const run = await ctx.runRaw({ model: "gpt-oss-120b" });
 
@@ -225,7 +226,7 @@ Deno.test("a raw probe reports an upstream rejection with its sanitized error", 
   assert.equal(run.normalized, null);
 });
 
-Deno.test("a raw probe reports an upstream server error and a non-JSON error body", async () => {
+test("a raw probe reports an upstream server error and a non-JSON error body", async () => {
   const { ctx } = contextOf([
     { payload: errorBody("overloaded", "try later"), status: 503 },
     { payload: "gateway timeout", status: 504, contentType: "text/plain" },
@@ -242,7 +243,7 @@ Deno.test("a raw probe reports an upstream server error and a non-JSON error bod
   assert.deepEqual(noBody.record.upstreamError, { code: null, message: null });
 });
 
-Deno.test("a raw probe records a transport failure with the request summary intact", async () => {
+test("a raw probe records a transport failure with the request summary intact", async () => {
   const { ctx } = contextOf([{ reject: "socket hang up" }]);
   const run = await ctx.runRaw({ model: "gpt-oss-120b", messages: [{ role: "user", content: "hi" }] });
 
@@ -254,7 +255,7 @@ Deno.test("a raw probe records a transport failure with the request summary inta
   assert.equal(run.normalized, null);
 });
 
-Deno.test("a normalized turn of a scripted conversation reports ok with its state snapshot", async () => {
+test("a normalized turn of a scripted conversation reports ok with its state snapshot", async () => {
   const { ctx, bodies } = contextOf([
     {
       payload: completion(
@@ -282,7 +283,7 @@ Deno.test("a normalized turn of a scripted conversation reports ok with its stat
   assert.equal(bodies[0]?.model, "gpt-oss-120b");
 });
 
-Deno.test("a turn whose upstream reply is not JSON fails with a normalization error", async () => {
+test("a turn whose upstream reply is not JSON fails with a normalization error", async () => {
   const { ctx } = contextOf([{ payload: "not json", contentType: "text/plain" }]);
   const run = await ctx.runTurn(user("hello"), { style: "generic" });
 
@@ -295,7 +296,7 @@ Deno.test("a turn whose upstream reply is not JSON fails with a normalization er
   assert.deepEqual(run.record.state, { analysisLines: 0, analysisAfterDrop: 0, pendingToolCalls: 0, completedFinal: false });
 });
 
-Deno.test("a turn records every upstream rejection and an unexplained failure", async () => {
+test("a turn records every upstream rejection and an unexplained failure", async () => {
   const { ctx } = contextOf([
     { payload: errorBody("invalid_request_error", "unsupported"), status: 400 },
     { payload: errorBody("overloaded", "later"), status: 503 },
@@ -322,7 +323,7 @@ Deno.test("a turn records every upstream rejection and an unexplained failure", 
   assert.equal(unexplained.normalized, null);
 });
 
-Deno.test("a raw probe reads a top-level reasoning effort and defaults its clock", async () => {
+test("a raw probe reads a top-level reasoning effort and defaults its clock", async () => {
   const { transport } = scriptedTransport([{ payload: completion({ content: "ok" }) }]);
   const ctx = createProbeContext(transport);
 
@@ -333,7 +334,7 @@ Deno.test("a raw probe reads a top-level reasoning effort and defaults its clock
   assert.equal(run.record.outcome, "ok");
 });
 
-Deno.test("a request the adapter refuses is recorded as an adapter error turn", async () => {
+test("a request the adapter refuses is recorded as an adapter error turn", async () => {
   const { ctx, bodies } = contextOf([{ payload: completion({ content: "unused" }) }]);
   const run = await ctx.runTurn(user("hello"), { style: "generic", tools: [WEATHER_TOOL], responseFormat: { type: "json_object" } });
 
@@ -350,7 +351,7 @@ Deno.test("a request the adapter refuses is recorded as an adapter error turn", 
   assert.deepEqual(run.record.state, { analysisLines: 0, analysisAfterDrop: 0, pendingToolCalls: 0, completedFinal: false });
 });
 
-Deno.test("a turn whose transport rejects fails without an adapter code", async () => {
+test("a turn whose transport rejects fails without an adapter code", async () => {
   const { ctx } = contextOf([{ reject: "connection reset" }]);
   const run = await ctx.runTurn(user("hello"), { style: "generic" });
 
@@ -362,7 +363,7 @@ Deno.test("a turn whose transport rejects fails without an adapter code", async 
   assert.equal(run.verdict, null);
 });
 
-Deno.test("a classifier rejection yields an unknown verdict and no normalized response", async () => {
+test("a classifier rejection yields an unknown verdict and no normalized response", async () => {
   const { ctx, bodies } = contextOf([{ payload: errorBody("invalid_request_error", "unknown model"), status: 400 }]);
   const run = await ctx.runClassifier(classifierOptions);
 
@@ -382,7 +383,7 @@ Deno.test("a classifier rejection yields an unknown verdict and no normalized re
   assert.equal(bodies.length, 1);
 });
 
-Deno.test("a classifier upstream failure is an upstream error outcome", async () => {
+test("a classifier upstream failure is an upstream error outcome", async () => {
   const { ctx } = contextOf([{ payload: errorBody("internal_error", "boom"), status: 500 }]);
   const run = await ctx.runClassifier(classifierOptions);
 
@@ -391,7 +392,7 @@ Deno.test("a classifier upstream failure is an upstream error outcome", async ()
   assert.equal(run.verdict?.verdict, "unknown");
 });
 
-Deno.test("a classifier reply that is not JSON fails closed with an unknown verdict", async () => {
+test("a classifier reply that is not JSON fails closed with an unknown verdict", async () => {
   const { ctx } = contextOf([{ payload: "<html>", contentType: "text/html" }]);
   const run = await ctx.runClassifier(classifierOptions);
 
@@ -404,7 +405,7 @@ Deno.test("a classifier reply that is not JSON fails closed with an unknown verd
   assert.equal(run.record.state, null);
 });
 
-Deno.test("an invalid classifier completion fails closed with the normalization reason", async () => {
+test("an invalid classifier completion fails closed with the normalization reason", async () => {
   const { ctx } = contextOf([{ payload: JSON.stringify({ id: "cmpl", created: 1, model: "gpt-oss-120b", choices: [] }) }]);
   const run = await ctx.runClassifier(classifierOptions);
 
@@ -415,7 +416,7 @@ Deno.test("an invalid classifier completion fails closed with the normalization 
   assert.equal(run.normalized, null);
 });
 
-Deno.test("a classifier transport failure fails closed with a probe error", async () => {
+test("a classifier transport failure fails closed with a probe error", async () => {
   const { ctx } = contextOf([{ reject: "dns lookup failed" }]);
   const run = await ctx.runClassifier(classifierOptions);
 
@@ -431,7 +432,7 @@ Deno.test("a classifier transport failure fails closed with a probe error", asyn
   assert.equal(request.analysisInWire, false);
 });
 
-Deno.test("a classifier answer is parsed into a literal verdict", async () => {
+test("a classifier answer is parsed into a literal verdict", async () => {
   const { ctx } = contextOf([
     { payload: completion({ content: "true", reasoning_content: "Decided yes." }) },
     { payload: completion({ content: " FALSE " }) },
@@ -474,7 +475,7 @@ Deno.test("a classifier answer is parsed into a literal verdict", async () => {
   });
 });
 
-Deno.test("a probe context exposes the injected transport and clock", async () => {
+test("a probe context exposes the injected transport and clock", async () => {
   const { transport, bodies } = scriptedTransport([{ payload: completion({ content: "ok" }) }]);
   const now = (): Date => new Date(1_700_000_000_000);
   const ctx = createProbeContext(transport, now);
@@ -486,7 +487,7 @@ Deno.test("a probe context exposes the injected transport and clock", async () =
   assert.equal(bodies.length, 1);
 });
 
-Deno.test("a raw probe reports an adapter refusal thrown by the transport as a probe error", async () => {
+test("a raw probe reports an adapter refusal thrown by the transport as a probe error", async () => {
   const failing: HarmonyTransport = () => {
     throw new HarmonyAdapterError("simulated adapter refusal", "invalid-request");
   };

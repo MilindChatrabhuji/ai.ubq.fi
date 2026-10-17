@@ -1,22 +1,34 @@
-# Provider Sentinel redesign
+# [Superseded] Provider Sentinel redesign
 
-Status: proposed design, saved September 4, 2026 New York time. No implementation, workflow dispatch, production
-inference test, or deployment was performed for this design.
+> **Historical / superseded — 2026-10-11.** This document records a proposed design saved September 4, 2026; it is not
+> an active implementation plan or runbook. The active contracts are in `AGENTS.md`: production runs on
+> `codex@vps.pavlovcik.com` in `/home/codex/repos/ubiquity/ai.ubq.fi` and is deployed with `deno task deploy:vps`, while
+> Sentinel automation belongs to the standalone `ubiquity/sentinel` repository. Deno Deploy hosting and embedded
+> Sentinel workflows, schedules, workers, and deployment credentials in this repository are retired.
+>
+> Retain only ideas such as bounded repair, durable evidence, exact-build attestation, serialized promotion, and
+> rollback. Any future implementation must use the VPS deployment contract and standalone Sentinel; nothing below
+> authorizes restoring the retired orchestration or executing this document.
+
+Status: superseded (historical) as of October 11, 2026. No implementation, workflow dispatch, production inference test,
+or deployment was performed for the original design.
 
 ## Objective and success
 
-Make the provider recover from software defects without routine human intervention. A small deterministic bootstrap
-protects availability. An upgradeable Sentinel repairs production failures, then completed Codex review findings, then
-eligible GitHub issues. Codex review runs independently and never gates delivery.
+The historical objective was to make the provider recover from software defects without routine human intervention. It
+described a small deterministic bootstrap protecting availability and an upgradeable Sentinel repairing production
+failures, then completed Codex review findings, then eligible GitHub issues. Codex review would run independently and
+never gate delivery. Those Sentinel roles are no longer embedded in this repository; the active automation boundary is
+the standalone `ubiquity/sentinel` repository.
 
-Success is a real autonomous cycle: a captured defect produces a reproducible failure, a focused candidate passes
-independent acceptance, the PR merges, the exact merged revision serves production correctly, and delayed review
-findings become subsequent work. A separate drill must prove that bootstrap restores the recorded previous revision when
-both production and the coding workflow fail.
+The historical success criterion was a real autonomous cycle: a captured defect produced a reproducible failure, a
+focused candidate passed independent acceptance, the PR merged, the exact merged revision served production correctly,
+and delayed review findings became subsequent work. A separate drill would prove that bootstrap restored the recorded
+previous revision when both production and the coding workflow failed.
 
-The system must distinguish repairable defects from client errors, account authorization problems, exhausted capacity,
-and upstream outages. Code cannot guarantee successful inference when every permitted upstream is unavailable. These
-incidents remain visible and retryable; they cannot be relabeled as successful repairs.
+The historical design required distinguishing repairable defects from client errors, account authorization problems,
+exhausted capacity, and upstream outages. Code cannot guarantee successful inference when every permitted upstream is
+unavailable. These incidents remain visible and retryable; they cannot be relabeled as successful repairs.
 
 ## Current evidence
 
@@ -39,28 +51,27 @@ September 4 in New York. This is an inspection snapshot, not a current productio
 
 Source-confirmed mismatches at the inspection SHA:
 
-| Intended behavior                                | Current behavior and evidence                                                                                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Failed payloads first on every wake-up           | `scripts/sentinel/main.ts:273` makes hourly captures archive-only.                                                                                |
-| Required replays must pass                       | `main.ts:1259` accepts model dispositions for still-failing, regressed, and unavailable results.                                                  |
-| Success means a valid API result                 | `src/sentinel_replay_capture.ts:303` can classify malformed or non-JSON HTTP 200 as completed.                                                    |
-| Review latency is independent                    | `.github/workflows/provider-sentinel.yml:1552` runs the review worker before main repair; one review can occupy 40 minutes.                       |
-| Review merged changes                            | `scripts/sentinel/rolling-review.ts:630` treats an already merged ancestor head as unreachable instead of retaining the original comparison base. |
-| Main Sentinel can improve itself                 | `scripts/sentinel/policy.ts:41` protects all Sentinel source, workflows, and Sentinel tests.                                                      |
-| Bootstrap survives broken main code              | Preparation uses current development before convergence selects `activation.active_sha`; bootstrap imports modules outside its digest boundary.   |
-| Bootstrap can restore production                 | Bootstrap lacks Deno promotion authority. `bootstrap/main.ts:255` and `rollback-controller.ts:329` require healthy production before recovery.    |
-| Bootstrap decides availability deterministically | Main runs a 30-minute passive monitor and then invokes a model for keep/rollback at `main.ts:5499`.                                               |
+| Intended behavior                                | Current behavior and evidence                                                                                                                                 |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Failed payloads first on every wake-up           | `scripts/sentinel/main.ts:273` makes hourly captures archive-only.                                                                                            |
+| Required replays must pass                       | `main.ts:1259` accepts model dispositions for still-failing, regressed, and unavailable results.                                                              |
+| Success means a valid API result                 | `src/sentinel_replay_capture.ts:303` can classify malformed or non-JSON HTTP 200 as completed.                                                                |
+| Review latency is independent                    | `.github/workflows/provider-sentinel.yml:1552` runs the review worker before main repair; one review can occupy 40 minutes.                                   |
+| Review merged changes                            | `scripts/sentinel/rolling-review.ts:630` treats an already merged ancestor head as unreachable instead of retaining the original comparison base.             |
+| Main Sentinel can improve itself                 | `scripts/sentinel/policy.ts:41` protects all Sentinel source, workflows, and Sentinel tests.                                                                  |
+| Bootstrap survives broken main code              | Preparation uses current development before convergence selects `activation.active_sha`; bootstrap imports modules outside its digest boundary.               |
+| Bootstrap can restore production                 | Bootstrap lacks retired Deno Deploy promotion authority. `bootstrap/main.ts:255` and `rollback-controller.ts:329` require healthy production before recovery. |
+| Bootstrap decides availability deterministically | Main runs a 30-minute passive monitor and then invokes a model for keep/rollback at `main.ts:5499`.                                                           |
 
-Prior work exists in `docs/provider-sentinel-self-healing-plan.md` and its recorded worktrees, plus open Sentinel
-recovery PRs. Preserve those artifacts and their ownership. The proposal replaces the orchestration design if accepted;
-it does not authorize merging, discarding, or cleaning old candidates. Inventory them before implementation and reuse
-proved components.
+Prior work existed in `docs/provider-sentinel-self-healing-plan.md` and its recorded worktrees, plus open Sentinel
+recovery PRs. Preserve those artifacts and their ownership. The proposal would have replaced the orchestration design if
+accepted; it authorized no merging, discarding, or cleaning of old candidates. Those artifacts remain historical, and
+this document requests no inventory or reuse action.
 
-## Canonical implementation identity
+## Canonical implementation identity (historical only)
 
-This is a single-writer implementation plan. The sequence below is dependent work, not a parallel module assignment.
-Planning creates no implementation branch or worktree. The following identity was derived after saving this file at its
-final path.
+This was a single-writer implementation plan. The sequence below was dependent work, not a parallel module assignment.
+It creates no implementation branch or worktree, and its recorded lane must not be revived.
 
 - Canonical plan path and goal identifier:
   `/Users/nv/repos/ubiquity/ai.ubq.fi/docs/provider-sentinel-redesign-2026-09-04.md`.
@@ -71,16 +82,20 @@ final path.
   `/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/provider-sentinel-redesign-2026-09-04-gac146ab309`.
 - Canonical branch: `codex/provider-sentinel-redesign-2026-09-04-gac146ab309`.
 - Base ref: `origin/development`; inspected base SHA: `2ab2b39b61e6ae05584349e5a92d9275db1218c2`.
-- Lane state: planned; a future implementer owns and creates this exact lane after reconciliation. No module lanes are
+- Lane state: planned in the historical snapshot; no implementer owns or should create this lane. No module lanes were
   assigned.
 
-Before implementation, reconcile this base against current development, existing goal work, active writers, and open
-PRs. Record any base update explicitly; keep the recorded plan path and lane identity. Read `AGENTS.md`, this document,
-and applicable project workflow, Git coordination, Deno, and review instructions in full.
+The original plan instructed an implementer to reconcile this base against current development, existing goal work,
+active writers, and open PRs. That lane is retired. Current work follows `AGENTS.md` and the active VPS and standalone
+Sentinel contracts instead; this document does not prescribe a branch, worktree, or implementation sequence.
 
-## Architecture
+## Architecture (historical / superseded)
 
-There are two authority domains. The separate reviewer is a background worker, not another release decision-maker.
+The following records the proposal's retired authority model; it is not an instruction to restore embedded Sentinel
+automation. Sentinel scheduling, agents, review intake, and deployment credentials now belong to `ubiquity/sentinel`,
+while serving-code promotion remains governed by the VPS contract in `AGENTS.md`.
+
+There were two authority domains. The separate reviewer was a background worker, not another release decision-maker.
 
 | Component         | Responsibility                                                                                                               | Authority                                                                                        |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -88,20 +103,20 @@ There are two authority domains. The separate reviewer is a background worker, n
 | Evolving Sentinel | Diagnose incidents, implement repairs, improve its own allowed code, prepare candidate branches and PRs                      | Candidate workspace only; no bootstrap, release-state, credential, or acceptance-policy writes   |
 | Review worker     | Run native Codex review on frozen revisions and publish exact evidence                                                       | Read-only code access; write review results through a controlled interface; no release authority |
 
-Use one active coding candidate and one production release transaction. Remove repair matrix fan-out and convergence
-from the replacement. Read-only diagnosis can run concurrently when useful. No model is required to select a queue,
-determine a test result, promote a revision, or roll back.
+The proposal used one active coding candidate and one production release transaction. It would have removed repair
+matrix fan-out and convergence from the replacement. Read-only diagnosis could run concurrently when useful. No model
+was required to select a queue, determine a test result, promote a revision, or roll back.
 
-Bootstrap must be an independently pinned package with its whole import graph, runtime, and dependencies fixed. It must
-not import the provider, evolving Sentinel, current development configuration, or generated Markdown. The workflow that
-loads it must also be protected from candidate edits. A tiny protected workflow can load the pinned package in the
-current repository; a separate control repository is an optional stronger isolation choice, not a prerequisite for this
-prototype.
+The proposal required bootstrap to be an independently pinned package with its whole import graph, runtime, and
+dependencies fixed. It must not import the provider, evolving Sentinel, current development configuration, or generated
+Markdown. The workflow that loaded it would also be protected from candidate edits. A tiny protected workflow could load
+the pinned package in the current repository; a separate control repository was an optional stronger isolation choice,
+not a prerequisite for that prototype.
 
-Prompt instructions alone do not enforce this boundary. Use isolated jobs, restricted credentials, trusted diff checks,
-and an independently controlled merge/promotion executor. The coding process receives neither repository write nor Deno
-admin credentials. The executor verifies the actual Git diff and required checks. Repository rules must also prevent the
-automation identity from bypassing this path.
+The proposal noted that prompt instructions alone do not enforce this boundary. It called for isolated jobs, restricted
+credentials, trusted diff checks, and an independently controlled merge/promotion executor. Its coding process received
+neither repository write nor Deno admin credentials. The executor verified the actual Git diff and required checks, and
+repository rules were to prevent the automation identity from bypassing this path.
 
 Keep the existing direct Codex connection independent of `ai.ubq.fi`. Preserve `gpt-5.6-luna` with maximum reasoning for
 CI/runtime implementation. Local implementation uses the configured DSH model as required by `AGENTS.md`; it must not
@@ -137,9 +152,9 @@ Keep operational state bounded without dropping unresolved work. One malformed r
 ingestion failure and contributes no findings. It must not block capture intake, incident repair, or rollback. This
 preserves fail-closed review parsing without making review health a prerequisite for uptime.
 
-## Work selection and retries
+## Work selection and retries (historical / superseded)
 
-Both incident dispatch and scheduled wake-ups drain the same queue:
+The historical model had incident dispatch and scheduled wake-ups drain the same queue:
 
 1. Bootstrap handles an active production regression or interrupted release transaction.
 2. Resume an eligible saved repair or select the highest-impact current production failure family.
@@ -208,14 +223,14 @@ model cannot designate new exceptions after seeing candidate results.
 For concurrency failures, preserve the recorded overlap/load pattern in a bounded test. Serial payload replay cannot
 prove a race is fixed. Real traffic failure and latency observations remain necessary after promotion.
 
-## Delivery and rollback
+## Delivery and rollback (historical / superseded)
 
-Use this serial transaction:
+The proposed serial transaction was:
 
 1. Save the focused candidate and open/reuse its PR. Record the immutable review base/head and enqueue Codex review
    immediately.
-2. Run independent payload acceptance, the established healthy corpus, required deterministic CI, and the canonical
-   `deno task sentinel:test-local` for Sentinel changes. Merge only through the enforced delivery path using an
+2. Run independent payload acceptance, the established healthy corpus, required deterministic CI, and the standalone
+   Sentinel repository's canonical harness for Sentinel changes. Merge only through the enforced delivery path using an
    ancestry-preserving merge commit.
 3. Build the exact merged SHA without moving stable traffic. Verify the immutable revision's body and headers against
    the full Git SHA and revision ID. If the base changed or the merged tree differs from the tested candidate,
@@ -224,14 +239,17 @@ Use this serial transaction:
    is healthy, refresh its attestation. When production is already unavailable, retain the previously attested target
    from durable state, verify its immutable identity and configuration compatibility, and recover that transaction
    before starting a new ordinary release. Do not require a fresh healthy response from the broken app. Reconcile all
-   existing deployment writers so automatic Deno builds cannot silently replace the pinned stable route. Persist
-   promotion intent and an observation deadline before the API call.
-5. Promote only the identified candidate revision with the existing Deno API and require HTTP 204. Verify the exact
-   candidate on the managed production route, probe the custom domain, and run authenticated inference acceptance.
-   Identified Cloudflare challenges follow the existing warning policy; any HTTP 200 identity mismatch fails acceptance.
-6. Bootstrap observes production independently. A kept release updates the healthy record only after the defined
-   checks/window pass. Candidate-attributable acceptance failure triggers restoration of exactly the recorded previous
-   revision. Verify restored identity and inference before reporting recovery.
+   existing VPS deployment writers so an unselected release cannot silently replace the selected `.data/current`.
+   Persist promotion intent and an observation deadline before the VPS deployment command.
+5. Promote only the identified candidate through the active VPS contract: from the clean VPS checkout, serialize
+   `deno task deploy:vps` with `.data/deploy.lock` after required CI passes, and retain the immutable release under
+   `.data/releases/<full-git-sha>`. Require a direct Mac-to-VPS authenticated inference request and `/health` to report
+   the full Git SHA and `vps-<full-git-sha>` in both its body and identity headers; verify the public route after DNS or
+   proxy changes. Do not call the retired Deno Deploy API or restore embedded Sentinel workers.
+6. Keep Sentinel observation and evidence in the standalone `ubiquity/sentinel` repository. A kept release updates the
+   healthy record only after the defined checks/window pass. Candidate-attributable acceptance failure triggers
+   restoration of exactly the recorded previous VPS release. Verify restored identity and inference before reporting
+   recovery.
 
 Codex review completion and findings of any severity never gate this transaction. Existing deterministic checks and
 production acceptance still do. Preserve the current observation window initially; moving it out of the developer runner
@@ -249,15 +267,15 @@ promotions instead of cycling revisions. These initial thresholds are proposed f
 validated in preview drills before activation.
 
 Rollback must work when the current app times out, returns non-JSON, or returns HTTP 500. Use the durable transaction
-plus the authoritative Deno control-plane routing identity to prove ownership of the failing candidate. Do not require
-the broken app to return healthy identity data before restoration. A stale observer cannot roll back a later release. If
-routing identity or exclusive ownership cannot be established, retain the intent and report unresolved recovery; never
-guess a revision from time or list order.
+plus the authoritative VPS release identity to prove ownership of the failing candidate. Do not require the broken app
+to return healthy identity data before restoration. A stale observer cannot roll back a later release. If routing
+identity or exclusive ownership cannot be established, retain the intent and report unresolved recovery; never guess a
+revision from time or list order.
 
-Arm recovery before promotion. If the deployment worker dies after moving traffic, bootstrap reconciles the Deno route
-and the unfinished transaction. Loss of an observer is an uncertainty signal, not evidence by itself that the candidate
-caused an outage; run independent acceptance and restore on the defined candidate failure conditions. A missing
-transaction completion must never become an implicit healthy attestation.
+Arm recovery before promotion. If the VPS deployment command dies after selecting a release, reconcile the serving VPS
+release and unfinished transaction. Loss of an observer is an uncertainty signal, not evidence by itself that the
+candidate caused an outage; run independent acceptance and restore on the defined candidate failure conditions. A
+missing transaction completion must never become an implicit healthy attestation.
 
 All deployment operations, including bootstrap rollback and human/CI releases, use the same short promotion authority
 and generation checks. Keep model calls and long tests outside that lock. After runner loss, verify or cancel the old
@@ -268,30 +286,20 @@ effects. Keep destructive migrations, production secret changes, and incompatibl
 automatic repair lane. After rollback, leave Git history intact and prepare a focused revert or forward fix through the
 normal PR flow. Do not force-push development or republish the rejected candidate automatically.
 
-## Sentinel self-upgrades
+## Sentinel self-upgrades (historical / superseded)
 
-Allow edits to the evolving planner/worker and their tests through a narrow independent policy. Continue to protect
-bootstrap, release authority, fixed implementation model, credential handling, acceptance rules, and existing immutable
-fixtures. Avoid a blanket protection on all Sentinel source.
+The embedded planner/worker and self-upgrade design above is retired. Do not add or restore Sentinel workflows,
+schedules, workers, deployment credentials, or controller entrypoints in this repository. If bounded self-upgrades,
+queue selection, checkpoint recovery, or review intake remain wanted, implement and validate them in the standalone
+`ubiquity/sentinel` repository. Keep serving-code acceptance, exact-build evidence, and release/rollback execution
+aligned with the VPS contract in `AGENTS.md`; changing application code here must not implicitly activate Sentinel.
 
-The current stable Sentinel prepares an upgrade as a normal PR. Bootstrap checks its candidate at an exact SHA in an
-isolated runner: startup, policy enforcement, queue selection, a real fixture repair that creates a durable candidate,
-checkpoint recovery, and review intake. Run the candidate in observation mode against the queue without production
-writes. Bootstrap activates it only after those fixed checks pass and stores the previous controller SHA.
+## Independent asynchronous review (historical / superseded)
 
-If startup or required functional progress fails under available dependencies, bootstrap returns to the prior controller
-SHA and resumes the saved work. Do not count a green no-op or elapsed healthy provider time as successful controller
-validation. Restore the provider revision separately only if the provider also failed. Ordinary application changes must
-not implicitly upgrade Sentinel.
-
-Load the selected controller SHA before any evolving imports, preparation, or matrix-equivalent logic. The protected
-entrypoint must still start when a proposed workflow, Deno configuration, or main Sentinel file is syntactically broken.
-
-## Independent asynchronous review
-
-Run native Codex review in a separate workflow with its own concurrency group and frozen base/head. Do not derive a new
-comparison base from current development after merge. Git ancestry after merge is expected and does not make the
-original diff unreachable.
+The proposal called for native Codex review in a separate workflow with its own concurrency group and frozen base/head.
+Current review scheduling and intake belong to the standalone `ubiquity/sentinel` repository; this repository must not
+restore that embedded workflow. The historical comparison rule was not to derive a new base from current development
+after merge. Git ancestry after merge was expected and did not make the original diff unreachable.
 
 Persist pending review before dispatch. A failed dispatch or unavailable reviewer stays retryable and does not block
 delivery. The reviewer never holds coding or deployment locks. Validate the whole result and exact target identity
@@ -299,47 +307,48 @@ before ingesting; preserve original finding text and fingerprints. Malformed evi
 without partial salvage.
 
 Feed completed findings into the next eligible repair selection. A later PR must prove the finding is fixed on current
-code; merging the reviewed PR is not proof of remediation. Retain `docs/sentinel-review-backlog.md` as the official
-human-readable backlog view, generated from the validated operational records.
+code; merging the reviewed PR is not proof of remediation. The proposal retained `docs/sentinel-review-backlog.md` as an
+official human-readable backlog view; current review records and backlog ownership belong to standalone Sentinel.
 
-## Timing and uptime limits
+## Timing and uptime limits (historical / superseded)
 
-GitHub Actions can perform all coding, tests, PR delivery, and release operations. Use incident dispatch for prompt
-wake-ups and a schedule as a reconciliation fallback. GitHub documents a five-minute minimum schedule interval and
-possible delayed or dropped scheduled jobs; an Actions-only design therefore cannot promise recovery within seconds.
+The original proposal considered GitHub Actions for coding, tests, PR delivery, and release operations. That embedded
+automation is superseded: scheduling, agents, and incident dispatch belong to the standalone `ubiquity/sentinel`
+repository, and serving releases use the VPS deployment contract in `AGENTS.md`. GitHub documents a five-minute minimum
+schedule interval and possible delayed or dropped scheduled jobs; this historical Actions-only design therefore could
+not promise recovery within seconds.
 [GitHub scheduling documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
-For tighter recovery timing, the recommended later extension is a tiny independent deterministic watchdog on an already
-managed independent host or separate deployment. It must be able to perform the same serialized rollback without waiting
-for a new Actions runner; merely dispatching another job retains the scheduling dependency. Hosting, scoped credential
-access, and any new configuration require an explicit implementation decision. They are not provisioned by this plan. A
-separate Deno app isolates application bugs but not a Deno-wide outage.
+For tighter recovery timing, the historical recommendation was a tiny independent deterministic watchdog on an already
+managed independent host or separate deployment. Any surviving watchdog idea must be implemented in the standalone
+Sentinel repository and must invoke the approved VPS release contract; it must not restore embedded workflows or use a
+separate Deno Deploy app.
 
 Prevent immediate request storms with existing deterministic provider controls: bounded concurrency, request deadlines,
 backoff with jitter, and circuit breakers keyed to the actual provider/account failure. Change these only for a
 demonstrated incident. Preserve the rule that a timeout or upstream 5xx cannot authorize escalation to the next paid
 tier. Sentinel repairs the recurring cause while these controls limit damage.
 
-## Implementation sequence and acceptance
+## Implementation sequence and acceptance (historical / superseded)
 
-Use one writer and small PRs. Prove each behavior through its runtime before broad cleanup.
+The historical sequence used one writer and small PRs. Its ideas are retained only as evidence; do not execute this
+sequence or recreate its embedded orchestration.
 
 1. Restore the safety boundary: pinned bootstrap, independent provider/controller records, protected promotion executor,
    and rollback that survives unavailable app health. Demonstrate with two immutable preview revisions, a failed
    candidate, and a terminated release worker. Reuse exact revision attestation and promotion code.
 2. Deliver one incident end to end: one JSON queue, deterministic priority, faithful capture fixture, strict trusted
-   validator, one Luna candidate, one PR, exact merged deployment, and independent observation. Include independent
-   review dispatch in this first deployed slice; no deployed repair may wait for the old sequential review step. Before
-   enabling the replacement, reconcile active release transactions and import unresolved incident, candidate, review,
-   and issue identities with their original evidence. Keep the old writer disabled when enabling the new writer; do not
-   run competing release controllers.
-3. Complete and verify asynchronous review result intake. Prove a review can finish after merge and enter the backlog
-   while urgent repair proceeds. Prove malformed review data contributes no findings and does not stop incident work.
-4. Enable controller self-upgrades under bootstrap acceptance, then enable ordinary issue fallback. Demonstrate both a
-   successful controller upgrade and an automatic return from a broken one.
-5. Verify every imported unresolved identity has a preserved disposition and explicit deduplication evidence. Remove the
-   superseded matrix and orchestration entrypoints after the replacement's acceptance. Keep historical evidence and
-   unfinished user-owned work.
+   validator, one Luna candidate, one PR, exact merged deployment through the VPS contract, and independent observation
+   by standalone Sentinel. Keep review dispatch and unresolved evidence in `ubiquity/sentinel`; do not run competing
+   release controllers in this repository.
+3. Complete and verify asynchronous review result intake in the standalone Sentinel repository. Prove a review can
+   finish after merge and enter its backlog while urgent repair proceeds. Prove malformed review data contributes no
+   findings and does not stop incident work.
+4. If controller self-upgrades and ordinary issue fallback remain wanted, enable and validate them in standalone
+   Sentinel under its own acceptance and rollback policy. Do not add a controller or orchestration entrypoint here.
+5. Verify every imported unresolved identity has a preserved disposition and explicit deduplication evidence in the
+   standalone Sentinel records. Keep this document, historical evidence, and unfinished user-owned work; do not restore
+   the superseded matrix or orchestration entrypoints in this repository.
 
 Required evidence matrix:
 
@@ -356,13 +365,14 @@ Required evidence matrix:
 | Production app cannot answer               | Bootstrap restores the exact attested prior revision using control-plane identity                          |
 | Runner dies after promotion                | Independent bootstrap observes/reconciles transaction and applies the defined acceptance/rollback decision |
 | Stale observer races newer promotion       | Generation and exact routing checks prevent rollback of the later release                                  |
-| Broken Sentinel entrypoint                 | Pinned bootstrap starts and selects the previous controller before loading broken code                     |
+| Broken standalone Sentinel entrypoint      | Standalone Sentinel starts from its pinned controller and preserves the previous controller                |
 | No active incident or review work          | An eligible issue is implemented and delivered through the same acceptance path                            |
 
-Run `deno task sentinel:test-local` as the single canonical local Sentinel harness, extending it with focused
-deterministic cases for the new contracts. CI invokes that same command. Live replay is a separate explicitly evidenced
-stage; a hermetic harness cannot establish deployed inference or rollback. Do not deliberately take down production to
-prove recovery. Use preview drills first and perform any production fault exercise only with specific approval.
+The standalone Sentinel repository owns its canonical local harness and focused deterministic cases for these contracts.
+This repository must instead validate the active VPS release contract through required CI, direct authenticated
+inference, and `/health` identity checks. Live replay is a separate explicitly evidenced stage; a hermetic harness
+cannot establish deployed inference or rollback. Do not deliberately take down production to prove recovery. Use preview
+drills first and perform any production fault exercise only with specific approval.
 
 For repository implementation, follow the required commit, push, PR, asynchronous review, deterministic CI, merge,
 deployment identity, ancestry, and clean-development handoff rules. This planning document does not authorize executing
@@ -372,9 +382,9 @@ production proof, controller activation, and unresolved cases as distinct outcom
 ## Sources and design limits
 
 - Repository code and Actions evidence listed above are the primary basis for this proposal.
-- [Deno timeline documentation](https://docs.deno.com/deploy/reference/timelines/) describes selecting and locking an
-  existing revision for rollback without rebuilding. Exact promotion identity requirements come from this repository's
-  current contract and implementation.
+- [Deno timeline documentation](https://docs.deno.com/deploy/reference/timelines/) was cited by the original proposal
+  for selecting and locking an existing revision for rollback without rebuilding. It is historical context only; active
+  promotion identity requirements come from the VPS contract in `AGENTS.md` and the current implementation.
 - [Official OpenAI GitHub Action documentation](https://learn.chatgpt.com/docs/github-action) establishes independent CI
   execution and output capture; it does not establish this repository's native review implementation or model/account
   availability. Preserve the current native review and owner-selected model contracts.

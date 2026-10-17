@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/openai-compat-harness.ts";
 // Cerebras rejects a replayed assistant `reasoning_content` on both wires.
 
 import assert from "node:assert/strict";
@@ -26,13 +28,13 @@ const QWEN = CEREBRAS_QWEN_3_8_27B_MODEL;
 
 /** Runs `run` with the provider credential configured, restoring the ambient value after. */
 const withCerebrasKey = async (run: () => Promise<void>): Promise<void> => {
-  const previous = Deno.env.get(CEREBRAS_API_KEY_ENV);
-  Deno.env.set(CEREBRAS_API_KEY_ENV, CEREBRAS_API_KEY);
+  const previous = process.env[CEREBRAS_API_KEY_ENV];
+  process.env[CEREBRAS_API_KEY_ENV] = CEREBRAS_API_KEY;
   try {
     await run();
   } finally {
-    if (previous === undefined) Deno.env.delete(CEREBRAS_API_KEY_ENV);
-    else Deno.env.set(CEREBRAS_API_KEY_ENV, previous);
+    if (previous === undefined) Reflect.deleteProperty(process.env, CEREBRAS_API_KEY_ENV);
+    else process.env[CEREBRAS_API_KEY_ENV] = previous;
   }
 };
 
@@ -56,7 +58,10 @@ const messagesOf = (call: UpstreamCall | undefined): Record<string, unknown>[] =
   return messages as Record<string, unknown>[];
 };
 
-Deno.test("cerebras chat: a replayed assistant reasoning_content is absent upstream while content and the tool round trip survive", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("cerebras chat: a replayed assistant reasoning_content is absent upstream while content and the tool round trip survive", async () => {
   await withCerebrasKey(async () => {
     const calls: UpstreamCall[] = [];
     const upstreamText = JSON.stringify({ error: { message: "messages.3.assistant.reasoning_content is unsupported" } });
@@ -122,7 +127,7 @@ Deno.test("cerebras chat: a replayed assistant reasoning_content is absent upstr
   });
 });
 
-Deno.test("cerebras chat: the turn after a tool result keeps the whole history and completes", async () => {
+test("cerebras chat: the turn after a tool result keeps the whole history and completes", async () => {
   await withCerebrasKey(async () => {
     const calls: UpstreamCall[] = [];
 
@@ -174,7 +179,7 @@ Deno.test("cerebras chat: the turn after a tool result keeps the whole history a
   });
 });
 
-Deno.test("cerebras responses: replayed reasoning items are absent upstream while the client keeps its reasoning and tool call", async () => {
+test("cerebras responses: replayed reasoning items are absent upstream while the client keeps its reasoning and tool call", async () => {
   await withCerebrasKey(async () => {
     const calls: UpstreamCall[] = [];
     const upstreamText = JSON.stringify({

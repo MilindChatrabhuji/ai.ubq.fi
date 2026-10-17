@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
 import { persistInferenceExceptionReplay } from "../src/handler/terminal-route.ts";
@@ -41,7 +42,7 @@ const ignoredAnalytics: RecordAnalytics = () =>
     bucket_start_at_ms: null,
   });
 
-Deno.test("terminal logging reports admission busy failures to the admin error ledger", async () => {
+test("terminal logging reports admission busy failures to the admin error ledger", async () => {
   const recorded: Parameters<RecordAdminError>[0][] = [];
   const response = await withTerminalRequestLog(
     new Response(
@@ -79,7 +80,7 @@ type TestGlobals = typeof globalThis & {
   EdgeRuntime?: Readonly<{ waitUntil?: (task: Promise<unknown>) => void }>;
 };
 
-Deno.test("EdgeRuntime replay registration returns failure responses before deferred persistence settles", async () => {
+test("EdgeRuntime replay registration returns failure responses before deferred persistence settles", async () => {
   const globals = globalThis as TestGlobals;
   const previousEdgeRuntime = globals.EdgeRuntime;
   const registeredTasks: Promise<unknown>[] = [];
@@ -142,7 +143,7 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
   }
 });
 
-Deno.test("thrown inference errors propagate before deferred exception replay persistence settles", async () => {
+test("thrown inference errors propagate before deferred exception replay persistence settles", async () => {
   const globals = globalThis as TestGlobals;
   const previousEdgeRuntime = globals.EdgeRuntime;
   const registeredTasks: Promise<unknown>[] = [];
@@ -199,7 +200,7 @@ Deno.test("thrown inference errors propagate before deferred exception replay pe
   }
 });
 
-Deno.test("exception replay persistence is awaited and cleaned up without a background registrar", async () => {
+test("exception replay persistence is awaited and cleaned up without a background registrar", async () => {
   const globals = globalThis as TestGlobals;
   const previousEdgeRuntime = globals.EdgeRuntime;
   delete globals.EdgeRuntime;

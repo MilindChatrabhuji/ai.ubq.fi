@@ -18,8 +18,8 @@ import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
 import { recordCerebrasProviderHealth } from "./health.ts";
 import { isRecord } from "../utils.ts";
 import {
-  ResponseStreamTerminalType,
-  UsageContext,
+  type ResponseStreamTerminalType,
+  type UsageContext,
   extractChatUsageTokens,
   recordAttemptedProvider,
   recordCompletionUsage,

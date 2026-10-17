@@ -9,10 +9,11 @@
 
 import { readBoundedResponseBody } from "../bounded-response-body.ts";
 import { ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
-import { markChatSemanticOutput } from "../chat/stream-translation.ts";
+import { EMPTY_UPSTREAM_COMPLETION_MESSAGE, markChatSemanticOutput } from "../chat/stream-translation.ts";
 import { json, openaiError } from "../http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
 import { downstreamSignalFor, inferenceSignal } from "../openai.ts";
+import { responsesPayloadHasAnswerBearingOutput } from "../responses-failover-stream.ts";
 import {
   extractChatUsageTokens,
   extractUsageTokens,
@@ -24,10 +25,17 @@ import {
   recordFirstProviderHeaders,
   recordRequestUsage,
   recordStreamTerminalType,
+  recordTerminalUsage,
   type PromptCacheMode,
   type UsageContext,
+  type UsageTokens,
 } from "../openai-telemetry.ts";
-import { chatCompletionHasAnswerBearingOutput, providerRequestIdFromResponse, toOpenAiUpstreamErrorResponse } from "../upstream-wire.ts";
+import {
+  chatCompletionHasAnswerBearingOutput,
+  openRouterResponseHeaders,
+  providerRequestIdFromResponse,
+  toOpenAiUpstreamErrorResponse,
+} from "../upstream-wire.ts";
 import { getString, isRecord } from "../utils.ts";
 import { recordOpenRouterProviderHealth } from "./health.ts";
 import { withOpenRouterOpenAiWebTools } from "./openrouter-web-tools.ts";
@@ -155,6 +163,23 @@ const hooksFor = (usageContext: UsageContext | undefined) => ({
   sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
 });
 
+const respondOpenRouterEmptyBufferedCompletion = (
+  usageContext: UsageContext | undefined,
+  usage: UsageTokens | null,
+  providerRequestId: string | null
+): Response => {
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+    usageContext.responseTelemetry.semanticOutputObserved = false;
+  }
+  recordTerminalUsage(usageContext, usage, false);
+  recordStreamTerminalType(usageContext, "response.failed");
+  return openaiError(502, EMPTY_UPSTREAM_COMPLETION_MESSAGE, "empty_upstream_completion", {
+    type: "server_error",
+    headers: openRouterResponseHeaders(providerRequestId),
+  });
+};
+
 export const handleOpenRouterChatCompletions = async (
   req: Request,
   rawRecord: Record<string, unknown>,
@@ -279,9 +304,18 @@ export const handleOpenRouterResponses = async (
     recordStreamTerminalType(usageContext, "error");
     return openaiError(502, "OpenRouter returned an unusable body", "openrouter_upstream_invalid_response");
   }
-  if (Array.isArray(payload.output) && payload.output.length > 0) markChatSemanticOutput(usageContext);
-  await recordCompletionUsage(usageContext, extractUsageTokens(payload.usage));
-  recordStreamTerminalType(usageContext, "response.completed");
+  const hasAnswerBearingOutput = responsesPayloadHasAnswerBearingOutput(payload);
+  if (hasAnswerBearingOutput) markChatSemanticOutput(usageContext);
+  const usage = extractUsageTokens(payload.usage);
+  if (payload.status !== "incomplete" && !hasAnswerBearingOutput)
+    return respondOpenRouterEmptyBufferedCompletion(usageContext, usage, dispatched.providerRequestId);
+  if (payload.status === "incomplete") {
+    recordTerminalUsage(usageContext, usage, false);
+    recordStreamTerminalType(usageContext, "response.incomplete");
+  } else {
+    await recordCompletionUsage(usageContext, usage);
+    recordStreamTerminalType(usageContext, "response.completed");
+  }
   return json(200, payload, { "x-uos-upstream": OPENROUTER_UPSTREAM_LABEL });
 };
 

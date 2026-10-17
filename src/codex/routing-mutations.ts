@@ -1,15 +1,16 @@
+import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 // Codex routing account mutations and probe claiming, split out of src/codex_account_routing.ts.
 
 import { getKv } from "../kv.ts";
 import { isRecord } from "../utils.ts";
-import { CodexAuthPoolState, CodexAuthState } from "../types.ts";
+import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_HALF_OPEN_LEASE_MS,
   CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
-  CodexAccountRoutingState,
-  CodexRoutingSlot,
-  RoutingAccount,
+  type CodexAccountRoutingState,
+  type CodexRoutingSlot,
+  type RoutingAccount,
   hasUnresolvedLegacyResetIdentity,
   isSafeMs,
   parseCodexAccountRoutingState,
@@ -35,7 +36,7 @@ import {
   withSlot,
   withoutQuotaClass,
 } from "./capacity-routing.ts";
-import { Codex429Classification, CodexKnownProbeLease, markCodexQuotaBlockedWithMode } from "./rate-limit-429.ts";
+import { type Codex429Classification, type CodexKnownProbeLease, markCodexQuotaBlockedWithMode } from "./rate-limit-429.ts";
 
 export const markCodexRecoveryProbeQuotaBlocked = async (account: RoutingAccount, response: Response, now = Date.now()): Promise<Codex429Classification> =>
   await markCodexQuotaBlockedWithMode(account, response, now, true);
@@ -216,7 +217,7 @@ export const isCodexQuotaBlockFenceCurrent = (value: unknown, account: RoutingAc
  */
 export const getCodexQuotaBlockFence = async (account: RoutingAccount, quotaResetAtMs: number): Promise<number | null> => {
   if (!isSafeMs(quotaResetAtMs)) return null;
-  let kv: Deno.Kv | null;
+  let kv: Kv | null;
   try {
     kv = await getKv();
   } catch {
@@ -240,18 +241,18 @@ export const getCodexQuotaBlockFence = async (account: RoutingAccount, quotaRese
  * with a removed credential.
  */
 export type CodexQuotaResetReconciliationFence = Readonly<{
-  key: Deno.KvKey;
+  key: KvKey;
   isCurrent: (value: unknown) => boolean;
 }>;
 
 const readCurrentReconciliationFences = async (
-  kv: Deno.Kv,
+  kv: Kv,
   fences: readonly CodexQuotaResetReconciliationFence[]
-): Promise<readonly Deno.KvEntryMaybe<unknown>[] | null> => {
+): Promise<readonly KvEntryMaybe<unknown>[] | null> => {
   if (!Array.isArray(fences) || !fences.every((fence) => isRecord(fence) && Array.isArray(fence.key) && typeof fence.isCurrent === "function")) return null;
-  const entries: Deno.KvEntryMaybe<unknown>[] = [];
+  const entries: KvEntryMaybe<unknown>[] = [];
   for (const fence of fences) {
-    let entry: Deno.KvEntryMaybe<unknown>;
+    let entry: KvEntryMaybe<unknown>;
     try {
       entry = await kv.get(fence.key, { consistency: "strong" });
       if (!fence.isCurrent(entry.value)) return null;
@@ -263,7 +264,7 @@ const readCurrentReconciliationFences = async (
   return entries;
 };
 
-const withReconciliationFences = (operation: Deno.AtomicOperation, entries: readonly Deno.KvEntryMaybe<unknown>[]): Deno.AtomicOperation => {
+const withReconciliationFences = (operation: AtomicOperation, entries: readonly KvEntryMaybe<unknown>[]): AtomicOperation => {
   let next = operation;
   for (const entry of entries) next = next.check(entry);
   return next;
@@ -291,7 +292,7 @@ const applyRecoveryProbeLease = (account: RoutingAccount, next: CodexAccountRout
  * attempt must fail closed.
  */
 const attemptCodexQuotaRecoveryProbe = async (
-  kv: Deno.Kv,
+  kv: Kv,
   account: RoutingAccount,
   input: Readonly<{
     quotaResetAtMs: number;
@@ -485,7 +486,7 @@ const applyLocalExpiredProbeClaim = (state: CodexAccountRoutingState, account: R
   return applyClaimedProbeLease(account, claimed.lease);
 };
 
-const claimExpiredProbeFromKv = async (kv: Deno.Kv, account: RoutingAccount, state: CodexAccountRoutingState, now: number): Promise<RoutingAccount | null> => {
+const claimExpiredProbeFromKv = async (kv: Kv, account: RoutingAccount, state: CodexAccountRoutingState, now: number): Promise<RoutingAccount | null> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<CodexAccountRoutingState>(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" });
     const durable = parseCodexAccountRoutingState(entry.value);

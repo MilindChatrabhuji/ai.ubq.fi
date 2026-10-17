@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Paid-fallback ledger v3: admission layer, split out of src/paid_fallback_ledger.ts.
 
 import { PAID_FALLBACK_NO_LIMIT } from "../api-keys.ts";
@@ -5,13 +6,13 @@ import { getKv } from "../kv.ts";
 import { paidFallbackBackfillAttempted, paidFallbackBackfillRetryPending, schedulePaidFallbackBackfill } from "./ledger-backfill.ts";
 import {} from "./ledger-settlement.ts";
 import {
-  AdmissionInput,
+  type AdmissionInput,
   MAX_CAS_ATTEMPTS,
-  PaidFallbackAdmissionV3,
-  PaidFallbackDeletionGuardV3,
-  PaidFallbackOutstandingV3,
-  PaidFallbackPendingV3,
-  PaidFallbackReconciliationGateV3,
+  type PaidFallbackAdmissionV3,
+  type PaidFallbackDeletionGuardV3,
+  type PaidFallbackOutstandingV3,
+  type PaidFallbackPendingV3,
+  type PaidFallbackReconciliationGateV3,
   getPaidFallbackOutstandingV3,
   isPositiveSafeInteger,
   paidFallbackDeletionGuardV3Key,
@@ -29,7 +30,7 @@ import {
   resolveKv,
   windowExpireIn,
 } from "./ledger-state.ts";
-import { PaidFallbackProvider, PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../types.ts";
+import { type PaidFallbackProvider, type PaidFallbackRequestV3, type PaidFallbackWindowV3 } from "../types.ts";
 
 export type PaidFallbackDeletionV3 =
   | Readonly<{
@@ -42,7 +43,7 @@ export type PaidFallbackDeletionV3 =
   | Readonly<{ kind: "blocked"; outstanding: PaidFallbackOutstandingV3 }>
   | Readonly<{ kind: "unavailable" }>;
 
-const deleteKvKeys = async (kv: Deno.Kv, keys: readonly Deno.KvKey[]): Promise<void> => {
+const deleteKvKeys = async (kv: Kv, keys: readonly KvKey[]): Promise<void> => {
   for (let offset = 0; offset < keys.length; offset += 100) {
     let atomic = kv.atomic();
     for (const key of keys.slice(offset, offset + 100)) atomic = atomic.delete(key);
@@ -51,7 +52,7 @@ const deleteKvKeys = async (kv: Deno.Kv, keys: readonly Deno.KvKey[]): Promise<v
   }
 };
 
-export const deletePaidFallbackStateV3 = async (keyId: string, kvOverride?: Deno.Kv | null): Promise<PaidFallbackDeletionV3> => {
+export const deletePaidFallbackStateV3 = async (keyId: string, kvOverride?: Kv | null): Promise<PaidFallbackDeletionV3> => {
   const kv = await resolveKv(kvOverride);
   if (!kv) return { kind: "unavailable" };
   const guardKey = paidFallbackDeletionGuardV3Key(keyId);
@@ -68,9 +69,9 @@ export const deletePaidFallbackStateV3 = async (keyId: string, kvOverride?: Deno
   if (!outstanding) return { kind: "unavailable" };
   if (outstanding.has_outstanding) return { kind: "blocked", outstanding };
 
-  const requestKeys: Deno.KvKey[] = [];
-  const windowKeys: Deno.KvKey[] = [];
-  const pendingKeys: Deno.KvKey[] = [];
+  const requestKeys: KvKey[] = [];
+  const windowKeys: KvKey[] = [];
+  const pendingKeys: KvKey[] = [];
   for await (const entry of kv.list({ prefix: paidFallbackRequestV3Prefix(keyId) }, { consistency: "strong" })) {
     requestKeys.push(entry.key);
   }
@@ -142,13 +143,13 @@ const buildPaidFallbackRequestV3 = (input: AdmissionInput, reservation: number, 
 /** Everything the write phase of one admission attempt needs. */
 type AdmissionWriteContext = Readonly<{
   unlimited: boolean;
-  requestKey: Deno.KvKey;
-  pendingKey: Deno.KvKey;
-  windowKey: Deno.KvKey;
-  gateKey: Deno.KvKey;
-  requestEntry: Deno.KvEntryMaybe<PaidFallbackRequestV3>;
-  windowEntry: Deno.KvEntryMaybe<PaidFallbackWindowV3>;
-  deletionGuardEntry: Deno.KvEntryMaybe<PaidFallbackDeletionGuardV3>;
+  requestKey: KvKey;
+  pendingKey: KvKey;
+  windowKey: KvKey;
+  gateKey: KvKey;
+  requestEntry: KvEntryMaybe<PaidFallbackRequestV3>;
+  windowEntry: KvEntryMaybe<PaidFallbackWindowV3>;
+  deletionGuardEntry: KvEntryMaybe<PaidFallbackDeletionGuardV3>;
   transitioned: PaidFallbackWindowV3;
   reservation: number;
   now: number;
@@ -165,11 +166,11 @@ type AdmissionDecision =
  * report `limit_exceeded`, `false` when the CAS lost and the attempt retries.
  */
 const commitExhaustedPolicyTransitionV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: AdmissionInput,
-  windowKey: Deno.KvKey,
-  windowEntry: Deno.KvEntryMaybe<PaidFallbackWindowV3>,
-  deletionGuardEntry: Deno.KvEntryMaybe<PaidFallbackDeletionGuardV3>,
+  windowKey: KvKey,
+  windowEntry: KvEntryMaybe<PaidFallbackWindowV3>,
+  deletionGuardEntry: KvEntryMaybe<PaidFallbackDeletionGuardV3>,
   transitioned: PaidFallbackWindowV3,
   now: number
 ): Promise<boolean> => {
@@ -181,11 +182,11 @@ const commitExhaustedPolicyTransitionV3 = async (
 
 /** Outcome for a window with no remaining exposure: blocked, or a lost CAS to retry. */
 const exhaustedAdmissionV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: AdmissionInput,
-  windowKey: Deno.KvKey,
-  windowEntry: Deno.KvEntryMaybe<PaidFallbackWindowV3>,
-  deletionGuardEntry: Deno.KvEntryMaybe<PaidFallbackDeletionGuardV3>,
+  windowKey: KvKey,
+  windowEntry: KvEntryMaybe<PaidFallbackWindowV3>,
+  deletionGuardEntry: KvEntryMaybe<PaidFallbackDeletionGuardV3>,
   transitioned: PaidFallbackWindowV3,
   policyChanged: boolean,
   now: number
@@ -197,7 +198,7 @@ const exhaustedAdmissionV3 = async (
 
 /** Reads the current rows and decides what this admission attempt should do. */
 const decidePaidFallbackAdmissionV3 = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: AdmissionInput,
   unlimited: boolean,
   maximumExposure: number | null
@@ -210,7 +211,7 @@ const decidePaidFallbackAdmissionV3 = async (
   const [requestEntry, windowEntry, deletionGuardEntry] = await Promise.all([
     kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" }),
     unlimited
-      ? Promise.resolve({ key: windowKey, value: null, versionstamp: null } as Deno.KvEntryMaybe<PaidFallbackWindowV3>)
+      ? Promise.resolve({ key: windowKey, value: null, versionstamp: null } as KvEntryMaybe<PaidFallbackWindowV3>)
       : kv.get<PaidFallbackWindowV3>(windowKey, { consistency: "strong" }),
     kv.get<PaidFallbackDeletionGuardV3>(paidFallbackDeletionGuardV3Key(input.keyId), {
       consistency: "strong",
@@ -262,7 +263,7 @@ const decidePaidFallbackAdmissionV3 = async (
 };
 
 /** Writes one reservation; returns the admission, or `null` when the CAS lost. */
-const writePaidFallbackAdmissionV3 = async (kv: Deno.Kv, input: AdmissionInput, context: AdmissionWriteContext): Promise<PaidFallbackAdmissionV3 | null> => {
+const writePaidFallbackAdmissionV3 = async (kv: Kv, input: AdmissionInput, context: AdmissionWriteContext): Promise<PaidFallbackAdmissionV3 | null> => {
   const { unlimited, requestKey, pendingKey, windowKey, gateKey, requestEntry, windowEntry, deletionGuardEntry, transitioned, reservation, now } = context;
   const request = buildPaidFallbackRequestV3(input, reservation, now);
   const gateEntry = input.dispatchIntent ? await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" }) : null;
@@ -410,11 +411,7 @@ const buildRequestLifecycleRowV3 = (current: PaidFallbackRequestV3, resolved: Re
 };
 
 /** Reads the reconciliation gate when a lifecycle transition must arm it. */
-const loadLifecycleGateEntryV3 = async (
-  kv: Deno.Kv,
-  gateKey: Deno.KvKey,
-  shouldArm: boolean
-): Promise<Deno.KvEntryMaybe<PaidFallbackReconciliationGateV3> | null> =>
+const loadLifecycleGateEntryV3 = async (kv: Kv, gateKey: KvKey, shouldArm: boolean): Promise<KvEntryMaybe<PaidFallbackReconciliationGateV3> | null> =>
   shouldArm ? await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" }) : null;
 
 export const updatePaidFallbackRequestV3 = async (reservation: PaidFallbackAdmissionV3, patch: PaidFallbackRequestLifecyclePatchV3): Promise<void> => {
