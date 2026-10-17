@@ -97,7 +97,7 @@ test("empty-token local auth cancels a pending token check", async () => {
   const documentTarget = new ChatAuthDocument();
   const windowTarget = new EventTarget();
   const timers = new Map<number, { callback: () => void; delay: number }>();
-  let nextTimer = 0;
+  let nextTimer = -2; // Give the auth debounce handle 0; cancellation must not treat it as absent.
   const setTimeoutMock = (callback: () => void, delay = 0): number => {
     const handle = ++nextTimer;
     timers.set(handle, { callback, delay });
