@@ -32,7 +32,10 @@ const LITHOS_CANONICAL_FAILOVER_MODELS = new Map<string, string>(
     .map((model) => [model.toLowerCase(), model] as const)
 );
 
-const lithosCanonicalFailoverModelFor = (modelRaw: string): string => LITHOS_CANONICAL_FAILOVER_MODELS.get(modelRaw.trim().toLowerCase()) ?? modelRaw;
+const lithosCanonicalFailoverModelFor = (modelRaw: string): string => {
+  const trimmedModel = modelRaw.trim();
+  return LITHOS_CANONICAL_FAILOVER_MODELS.get(trimmedModel.toLowerCase()) ?? trimmedModel;
+};
 
 /** The ordered tiers to try after a request model refuses, or an empty list at the bottom. */
 export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => LITHOS_FAILOVER_LADDERS.get(lithosCanonicalFailoverModelFor(modelRaw)) ?? [];

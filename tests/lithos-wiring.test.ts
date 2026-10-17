@@ -1466,6 +1466,9 @@ test("lithos wiring: a differently-cased refused Ultra id serves from the siblin
       );
       assert.equal(third.calls.length, 1);
       assert.equal(third.calls[0].body.model, LITHOS_MODEL, "the window closed and ultra is asked again");
+      const thirdTelemetry = getResponseTelemetry(third.result);
+      if (thirdTelemetry === null) throw new Error("the chat terminal carries no telemetry");
+      assert.equal(thirdTelemetry.rateLimitFailoverModel, null, "the canonical requested tier served after reset");
     } finally {
       clearLithosFailoverWindows();
     }
