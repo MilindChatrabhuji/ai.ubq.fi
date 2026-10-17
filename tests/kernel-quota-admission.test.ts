@@ -1,3 +1,6 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test } from "bun:test";
+import type { AtomicOperation, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import assert from "node:assert/strict";
 import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api-keys.ts";
 import {
@@ -54,7 +57,7 @@ const toPublicKeyPem = (spki: Uint8Array): string => {
   return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
 };
 
-const keyHasPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => Object.is(part, key[index]));
+const keyHasPrefix = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => Object.is(part, key[index]));
 
 /** A promise plus its resolver, without the executor's definite-assignment dance. */
 const resolveAfter = (): Readonly<{ promise: Promise<void>; resolve: () => void }> => {
@@ -79,15 +82,15 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 };
 
-type AtomicCommitGate = Readonly<{ prefix: Deno.KvKey; started: () => void; wait: Promise<void> }>;
+type AtomicCommitGate = Readonly<{ prefix: KvKey; started: () => void; wait: Promise<void> }>;
 
 /** The fluent chain this fixture uses; `Deno.AtomicOperation` in Deno 2.9 carries extra mutations. */
 type GatedAtomicChain = Readonly<{
-  check: (entry: Deno.KvEntryMaybe<unknown>) => GatedAtomicChain;
-  set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => GatedAtomicChain;
-  delete: (key: Deno.KvKey) => GatedAtomicChain;
-  sum: (key: Deno.KvKey, value: bigint) => GatedAtomicChain;
-  commit: () => Promise<Deno.KvCommitResult | Deno.KvCommitError>;
+  check: (entry: KvEntryMaybe<unknown>) => GatedAtomicChain;
+  set: (key: KvKey, value: unknown, options?: { expireIn?: number }) => GatedAtomicChain;
+  delete: (key: KvKey) => GatedAtomicChain;
+  sum: (key: KvKey, value: bigint) => GatedAtomicChain;
+  commit: () => Promise<KvCommitResult | KvCommitError>;
 }>;
 
 /**
@@ -98,7 +101,7 @@ type GatedAtomicChain = Readonly<{
 class GatedAtomicKv extends CountingKv {
   gate: AtomicCommitGate | null = null;
 
-  override atomic(): Deno.AtomicOperation {
+  override atomic(): AtomicOperation {
     const operation = super.atomic();
     const gate = this.gate;
     if (!gate) return operation;
@@ -129,7 +132,7 @@ class GatedAtomicKv extends CountingKv {
         return await operation.commit();
       },
     };
-    return wrapper as unknown as Deno.AtomicOperation;
+    return wrapper as unknown as AtomicOperation;
   }
 }
 
@@ -219,7 +222,7 @@ const kernelReservationRows = (kv: CountingKv): readonly KernelQuotaReservationR
  */
 const abortDuringGatedCommit = async (
   kv: GatedAtomicKv,
-  gatePrefix: Deno.KvKey,
+  gatePrefix: KvKey,
   request: Request,
   abort: AbortController,
   handler: (request: Request) => Promise<Response>
@@ -238,128 +241,123 @@ const abortDuringGatedCommit = async (
   }
 };
 
-Deno.test({
-  name: "handler: an abort during awaited quota setup settles every acquired pre-dispatch resource",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
-    const originalDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
-    const originalFetch = globalThis.fetch;
-    const kv = new GatedAtomicKv();
-    const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
-    const nowMs = Date.now();
-    const { policy } = await seedApiKey(kv, token, nowMs);
-    const kernelToken = await installKernelPublicKey(kv, token);
-    Deno.env.set("DEEPSEEK_API_KEY", "kernel-quota-admission-dummy-key");
-    const { default: handler } = await import("../src/handler/index.ts");
-    const { setInferenceAdmissionControllerForTest } = await import("../src/handler/admission.ts");
-    const { createInferenceAdmissionController } = await import("../src/inference-admission.ts");
-    const controller = createInferenceAdmissionController({ maxActive: 4, maxWaiting: 2, maxQueueWaitMs: 500 });
-    setInferenceAdmissionControllerForTest(controller);
-    setKvForTest(kv as unknown as Deno.Kv);
-    resetApiKeyPolicyCacheForTest();
-    const dispatches: string[] = [];
-    globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
-      let url: string;
-      if (typeof input === "string") url = input;
-      else if (input instanceof URL) url = input.toString();
-      else url = input.url;
-      dispatches.push(url);
-      if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return Promise.resolve(bufferedChatResponse());
-      return Promise.resolve(new Response(JSON.stringify({ error: { message: "unexpected upstream" } }), { status: 502 }));
-    };
-    try {
-      // The caller leaves while the API-key reservation commit is parked: no
-      // kernel reservation exists yet, and the acquired API-key reservation must
-      // be released rather than left to its lease.
-      const apiKeyAbort = new AbortController();
-      const apiKeyRefusal = await abortDuringGatedCommit(
-        kv,
-        apiKeyUsageV3WindowKey(policy),
-        new Request("https://ai.ubq.fi/v1/responses", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "deepseek-flash", input: "abort during the api key reservation" }),
-          signal: apiKeyAbort.signal,
-        }),
-        apiKeyAbort,
-        handler
-      );
-      const apiKeyPayload = (await apiKeyRefusal.json()) as { error?: { code?: string } };
-      assert.equal(apiKeyRefusal.status, 499, "an aborted pre-dispatch request is a cancellation");
-      assert.equal(apiKeyPayload.error?.code, "request_cancelled");
-      const apiKeyRequestId = apiKeyRefusal.headers.get("x-uos-request-id");
-      assert.ok(apiKeyRequestId, "the 499 must carry the gateway request id");
-      const apiKeyRow = (await kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(policy, apiKeyRequestId))).value;
-      assert.equal(apiKeyRow?.state, "released", "a pre-dispatch abort must release the API-key reservation");
-      assert.equal(apiKeyRow.release_reason, ABORT_REASON);
-      const apiKeyWindow = (await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy))).value;
-      assert.equal(apiKeyWindow?.reserved_requests, 0, "the released reservation must return its window slot");
-      assert.equal(apiKeyWindow.committed_requests, 0, "work that never started must not be charged");
-      assert.equal(kernelReservationRows(kv).length, 0, "an abort before kernel admission must not create a kernel reservation");
-      assert.equal(dispatches.length, 0, "no provider dispatch for a request that never started");
-      assert.equal(controller.snapshot().active, 0, "the process permit returns through the rejection terminal log");
-      assert.equal(controller.snapshot().waiting, 0);
+test("handler: an abort during awaited quota setup settles every acquired pre-dispatch resource", async () => {
+  const originalDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+  const originalFetch = globalThis.fetch;
+  const kv = new GatedAtomicKv();
+  const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
+  const nowMs = Date.now();
+  const { policy } = await seedApiKey(kv, token, nowMs);
+  const kernelToken = await installKernelPublicKey(kv, token);
+  process.env.DEEPSEEK_API_KEY = "kernel-quota-admission-dummy-key";
+  const { default: handler } = await import("../src/handler/index.ts");
+  const { setInferenceAdmissionControllerForTest } = await import("../src/handler/admission.ts");
+  const { createInferenceAdmissionController } = await import("../src/inference-admission.ts");
+  const controller = createInferenceAdmissionController({ maxActive: 4, maxWaiting: 2, maxQueueWaitMs: 500 });
+  setInferenceAdmissionControllerForTest(controller);
+  setKvForTest(kv as unknown as Kv);
+  resetApiKeyPolicyCacheForTest();
+  const dispatches: string[] = [];
+  globalThis.fetch = createFetchMock((input: RequestInfo | URL): Promise<Response> => {
+    let url: string;
+    if (typeof input === "string") url = input;
+    else if (input instanceof URL) url = input.toString();
+    else url = input.url;
+    dispatches.push(url);
+    if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return Promise.resolve(bufferedChatResponse());
+    return Promise.resolve(new Response(JSON.stringify({ error: { message: "unexpected upstream" } }), { status: 502 }));
+  });
+  try {
+    // The caller leaves while the API-key reservation commit is parked: no
+    // kernel reservation exists yet, and the acquired API-key reservation must
+    // be released rather than left to its lease.
+    const apiKeyAbort = new AbortController();
+    const apiKeyRefusal = await abortDuringGatedCommit(
+      kv,
+      apiKeyUsageV3WindowKey(policy),
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "deepseek-flash", input: "abort during the api key reservation" }),
+        signal: apiKeyAbort.signal,
+      }),
+      apiKeyAbort,
+      handler
+    );
+    const apiKeyPayload = (await apiKeyRefusal.json()) as { error?: { code?: string } };
+    assert.equal(apiKeyRefusal.status, 499, "an aborted pre-dispatch request is a cancellation");
+    assert.equal(apiKeyPayload.error?.code, "request_cancelled");
+    const apiKeyRequestId = apiKeyRefusal.headers.get("x-uos-request-id");
+    assert.ok(apiKeyRequestId, "the 499 must carry the gateway request id");
+    const apiKeyRow = (await kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(policy, apiKeyRequestId))).value;
+    assert.equal(apiKeyRow?.state, "released", "a pre-dispatch abort must release the API-key reservation");
+    assert.equal(apiKeyRow.release_reason, ABORT_REASON);
+    const apiKeyWindow = (await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy))).value;
+    assert.equal(apiKeyWindow?.reserved_requests, 0, "the released reservation must return its window slot");
+    assert.equal(apiKeyWindow.committed_requests, 0, "work that never started must not be charged");
+    assert.equal(kernelReservationRows(kv).length, 0, "an abort before kernel admission must not create a kernel reservation");
+    assert.equal(dispatches.length, 0, "no provider dispatch for a request that never started");
+    assert.equal(controller.snapshot().active, 0, "the process permit returns through the rejection terminal log");
+    assert.equal(controller.snapshot().waiting, 0);
 
-      // The caller leaves while the kernel reservation commit is parked: the
-      // API-key reservation is already acquired, and both must settle uncharged.
-      const kernelAbort = new AbortController();
-      const kernelRefusal = await abortDuringGatedCommit(
-        kv,
-        [...KERNEL_ORG_RESERVATION_V2_PREFIX, KERNEL_OWNER],
-        new Request("https://ai.ubq.fi/v1/responses", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-            "X-Ubiquity-Kernel-Token": kernelToken,
-          },
-          body: JSON.stringify({ model: "deepseek-flash", input: "abort during the kernel reservation" }),
-          signal: kernelAbort.signal,
-        }),
-        kernelAbort,
-        handler
-      );
-      const kernelPayload = (await kernelRefusal.json()) as { error?: { code?: string } };
-      assert.equal(kernelRefusal.status, 499, "an aborted pre-dispatch request is a cancellation");
-      assert.equal(kernelPayload.error?.code, "request_cancelled");
-      const kernelRequestId = kernelRefusal.headers.get("x-uos-request-id");
-      assert.ok(kernelRequestId, "the kernel-scoped 499 must carry the gateway request id");
-      const kernelKeyRow = (await kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(policy, kernelRequestId))).value;
-      assert.equal(kernelKeyRow?.state, "released", "the API-key reservation acquired before the kernel step must be released");
-      assert.equal(kernelKeyRow.release_reason, ABORT_REASON);
-      const kernelReservations = kernelReservationRows(kv);
-      assert.equal(kernelReservations.length, 1, "the fixture must have acquired exactly one kernel reservation");
-      assert.equal(kernelReservations[0]?.state, "released", "an acquired kernel reservation must settle as released, not keep renewing");
-      assert.equal(kernelReservations[0]?.release_reason, ABORT_REASON);
-      const kernelWindow = (await kv.get<KernelQuotaWindowV2>(kernelOrgWindowKey(KERNEL_OWNER))).value;
-      assert.equal(kernelWindow?.reserved_requests, 0, "the released kernel reservation must return its slot");
-      assert.equal(kernelWindow.usage_requests, 0, "work that never started must not consume kernel usage");
-      assert.equal(dispatches.length, 0, "neither aborted request may reach a provider");
-      assert.equal(controller.snapshot().active, 0, "every aborted request returns its permit exactly once");
+    // The caller leaves while the kernel reservation commit is parked: the
+    // API-key reservation is already acquired, and both must settle uncharged.
+    const kernelAbort = new AbortController();
+    const kernelRefusal = await abortDuringGatedCommit(
+      kv,
+      [...KERNEL_ORG_RESERVATION_V2_PREFIX, KERNEL_OWNER],
+      new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Ubiquity-Kernel-Token": kernelToken,
+        },
+        body: JSON.stringify({ model: "deepseek-flash", input: "abort during the kernel reservation" }),
+        signal: kernelAbort.signal,
+      }),
+      kernelAbort,
+      handler
+    );
+    const kernelPayload = (await kernelRefusal.json()) as { error?: { code?: string } };
+    assert.equal(kernelRefusal.status, 499, "an aborted pre-dispatch request is a cancellation");
+    assert.equal(kernelPayload.error?.code, "request_cancelled");
+    const kernelRequestId = kernelRefusal.headers.get("x-uos-request-id");
+    assert.ok(kernelRequestId, "the kernel-scoped 499 must carry the gateway request id");
+    const kernelKeyRow = (await kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(policy, kernelRequestId))).value;
+    assert.equal(kernelKeyRow?.state, "released", "the API-key reservation acquired before the kernel step must be released");
+    assert.equal(kernelKeyRow.release_reason, ABORT_REASON);
+    const kernelReservations = kernelReservationRows(kv);
+    assert.equal(kernelReservations.length, 1, "the fixture must have acquired exactly one kernel reservation");
+    assert.equal(kernelReservations[0]?.state, "released", "an acquired kernel reservation must settle as released, not keep renewing");
+    assert.equal(kernelReservations[0]?.release_reason, ABORT_REASON);
+    const kernelWindow = (await kv.get<KernelQuotaWindowV2>(kernelOrgWindowKey(KERNEL_OWNER))).value;
+    assert.equal(kernelWindow?.reserved_requests, 0, "the released kernel reservation must return its slot");
+    assert.equal(kernelWindow.usage_requests, 0, "work that never started must not consume kernel usage");
+    assert.equal(dispatches.length, 0, "neither aborted request may reach a provider");
+    assert.equal(controller.snapshot().active, 0, "every aborted request returns its permit exactly once");
 
-      // The key, the ledger and the guard still serve ordinary work afterwards.
-      const recovered = await handler(
-        new Request("https://ai.ubq.fi/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "user", content: "recover" }] }),
-        })
-      );
-      assert.equal(recovered.status, 200, "a later request must be served after the aborted setup");
-      const recoveredPayload = (await recovered.json()) as { choices?: { message?: { content?: string } }[] };
-      assert.equal(recoveredPayload.choices?.[0]?.message?.content, "recovered answer");
-      assert.equal(dispatches.length, 1, "the recovered request is the only provider dispatch");
-      const recoveredWindow = (await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy))).value;
-      assert.equal(recoveredWindow?.committed_requests, 1, "only the dispatched work is charged");
-      assert.equal(controller.snapshot().active, 0, "the recovered request releases its permit");
-      assert.equal(controller.snapshot().waiting, 0);
-    } finally {
-      setInferenceAdmissionControllerForTest(null);
-      setKvForTest(null);
-      globalThis.fetch = originalFetch;
-      if (originalDeepSeekKey === undefined) Deno.env.delete("DEEPSEEK_API_KEY");
-      else Deno.env.set("DEEPSEEK_API_KEY", originalDeepSeekKey);
-    }
-  },
+    // The key, the ledger and the guard still serve ordinary work afterwards.
+    const recovered = await handler(
+      new Request("https://ai.ubq.fi/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "user", content: "recover" }] }),
+      })
+    );
+    assert.equal(recovered.status, 200, "a later request must be served after the aborted setup");
+    const recoveredPayload = (await recovered.json()) as { choices?: { message?: { content?: string } }[] };
+    assert.equal(recoveredPayload.choices?.[0]?.message?.content, "recovered answer");
+    assert.equal(dispatches.length, 1, "the recovered request is the only provider dispatch");
+    const recoveredWindow = (await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy))).value;
+    assert.equal(recoveredWindow?.committed_requests, 1, "only the dispatched work is charged");
+    assert.equal(controller.snapshot().active, 0, "the recovered request releases its permit");
+    assert.equal(controller.snapshot().waiting, 0);
+  } finally {
+    setInferenceAdmissionControllerForTest(null);
+    setKvForTest(null);
+    globalThis.fetch = originalFetch;
+    if (originalDeepSeekKey === undefined) Reflect.deleteProperty(process.env, "DEEPSEEK_API_KEY");
+    else process.env.DEEPSEEK_API_KEY = originalDeepSeekKey;
+  }
 });

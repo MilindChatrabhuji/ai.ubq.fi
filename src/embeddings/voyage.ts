@@ -1,9 +1,10 @@
+import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Voyage embeddings transport, cache, rate limits and request parsing, extracted from src/openai.ts.
 
 import { openaiError } from "../http.ts";
 import { base64ToBytes, bytesToBase64, getString, isRecord } from "../utils.ts";
 import { findUnknownKey } from "../openai.ts";
-import { UsageContext } from "../openai-telemetry.ts";
+import { type UsageContext } from "../openai-telemetry.ts";
 import {
   EMBEDDINGS_CACHE_EVICT_BATCH,
   EMBEDDINGS_CACHE_EVICT_MAX_BATCH,
@@ -12,10 +13,10 @@ import {
   EMBEDDINGS_MAX_INPUTS_PER_REQUEST,
   EMBEDDINGS_MAX_TOTAL_CHARS,
   EMBEDDINGS_TIMEOUT_MS,
-  EmbeddingsEncodingFormat,
-  EmbeddingsJobInputRecord,
-  EmbeddingsParseResult,
-  ResolvedEmbeddingsProfile,
+  type EmbeddingsEncodingFormat,
+  type EmbeddingsJobInputRecord,
+  type EmbeddingsParseResult,
+  type ResolvedEmbeddingsProfile,
   UOS_EMBEDDINGS_JOB_ALLOWED_KEYS,
   UOS_SYNC_EMBEDDINGS_ALLOWED_KEYS,
   VOYAGE_API_KEY_KV_KEY,
@@ -27,10 +28,10 @@ import {
   VOYAGE_RATE_LIMIT_RPM,
   VOYAGE_RATE_LIMIT_TPM,
   VOYAGE_SUPPORTED_DIMENSIONS,
-  VoyageEmbeddingsDimension,
-  VoyageEmbeddingsInputType,
-  VoyageEmbeddingsOutputDtype,
-  VoyageRateLimitState,
+  type VoyageEmbeddingsDimension,
+  type VoyageEmbeddingsInputType,
+  type VoyageEmbeddingsOutputDtype,
+  type VoyageRateLimitState,
   embeddingsCacheGlobalIndexKey,
   embeddingsCacheGlobalIndexPrefix,
   embeddingsCacheIndexByHashKey,
@@ -76,7 +77,7 @@ const isEmbeddingsCacheQuotaError = (error: unknown): boolean => {
 };
 
 const writeEmbeddingsCacheEntry = async (
-  kv: Deno.Kv,
+  kv: Kv,
   cacheProfileKey: string,
   hash: string,
   embedding: number[],
@@ -121,7 +122,7 @@ const writeEmbeddingsCacheEntry = async (
 };
 
 export const writeEmbeddingsCacheEntryBestEffort = async (
-  kv: Deno.Kv,
+  kv: Kv,
   cacheProfileKey: string,
   hash: string,
   embedding: number[],
@@ -161,11 +162,11 @@ export const writeEmbeddingsCacheEntryBestEffort = async (
 };
 
 const listEmbeddingsCacheEvictionCandidates = async (
-  kv: Deno.Kv,
+  kv: Kv,
   count: number
-): Promise<{ globalIndexKey: Deno.KvKey; cacheProfileKey: string; createdAtMs: number; hash: string }[]> => {
+): Promise<{ globalIndexKey: KvKey; cacheProfileKey: string; createdAtMs: number; hash: string }[]> => {
   const keys: {
-    globalIndexKey: Deno.KvKey;
+    globalIndexKey: KvKey;
     cacheProfileKey: string;
     createdAtMs: number;
     hash: string;
@@ -189,9 +190,9 @@ const listEmbeddingsCacheEvictionCandidates = async (
 };
 
 const evictEmbeddingsCacheCandidate = async (
-  kv: Deno.Kv,
-  candidate: { globalIndexKey: Deno.KvKey; cacheProfileKey: string; createdAtMs: number; hash: string },
-  pointerEntry: Deno.KvEntryMaybe<number>
+  kv: Kv,
+  candidate: { globalIndexKey: KvKey; cacheProfileKey: string; createdAtMs: number; hash: string },
+  pointerEntry: KvEntryMaybe<number>
 ): Promise<{ evicted: boolean; deletedStaleIndexKey: boolean }> => {
   const { globalIndexKey, cacheProfileKey, createdAtMs, hash } = candidate;
   const pointer = normalizeEmbeddingsCacheTimestampMs(pointerEntry.value);
@@ -233,7 +234,7 @@ const evictEmbeddingsCacheCandidate = async (
   return { evicted: commit.ok, deletedStaleIndexKey: false };
 };
 
-const evictOldestEmbeddingsCacheEntries = async (kv: Deno.Kv, count: number): Promise<EmbeddingsCacheEvictResult> => {
+const evictOldestEmbeddingsCacheEntries = async (kv: Kv, count: number): Promise<EmbeddingsCacheEvictResult> => {
   const candidates = await listEmbeddingsCacheEvictionCandidates(kv, count);
   if (!candidates.length) return { evicted_embeddings: 0, deleted_stale_index_keys: 0 };
 
@@ -265,7 +266,7 @@ const TOKEN_ESTIMATOR = new TextEncoder();
 
 export const getEnv = (key: string): string | undefined => {
   try {
-    return Deno.env.get(key);
+    return process.env[key];
   } catch {
     return undefined;
   }
@@ -339,7 +340,7 @@ const normalizeVoyageRateLimitState = (value: unknown): VoyageRateLimitState | n
 
 const wouldExceedVoyageRateLimit = (limit: number, wouldBeUsed: number): boolean => limit > 0 && wouldBeUsed > limit;
 
-export const tryReserveVoyageBudget = async (kv: Deno.Kv, tokens: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
+export const tryReserveVoyageBudget = async (kv: Kv, tokens: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
   const windowMs = 60_000;
   const now = Date.now();
   const entry = await kv.get<VoyageRateLimitState>(VOYAGE_RATE_LIMIT_KEY);
@@ -363,7 +364,7 @@ export const tryReserveVoyageBudget = async (kv: Deno.Kv, tokens: number): Promi
   return { ok: false, wait_ms: 0 };
 };
 
-const tryReserveVoyageBudgetWithRetries = async (kv: Deno.Kv, tokens: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
+const tryReserveVoyageBudgetWithRetries = async (kv: Kv, tokens: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
   let reserved: { ok: true } | { ok: false; wait_ms: number } = { ok: false, wait_ms: 0 };
   for (let attempt = 0; attempt < 6; attempt += 1) {
     reserved = await tryReserveVoyageBudget(kv, tokens);
@@ -374,7 +375,7 @@ const tryReserveVoyageBudgetWithRetries = async (kv: Deno.Kv, tokens: number): P
   return reserved;
 };
 
-export const applyVoyageRateLimit = async (kv: Deno.Kv, tokens: number, deadlineMs: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
+export const applyVoyageRateLimit = async (kv: Kv, tokens: number, deadlineMs: number): Promise<{ ok: true } | { ok: false; wait_ms: number }> => {
   // Best-effort concurrency-safe rate limiting using KV. If we can't reserve
   // within the request deadline, we fail with 429 and let clients retry.
   for (;;) {
@@ -714,7 +715,7 @@ const extractRetryAfterMs = (value: string | null): number | null => {
   return null;
 };
 
-export const readVoyageApiKey = async (kv: Deno.Kv | null): Promise<string | null> => {
+export const readVoyageApiKey = async (kv: Kv | null): Promise<string | null> => {
   const envKey = (getEnv("VOYAGEAI_API_KEY") ?? "").trim();
   if (envKey) return envKey;
   if (!kv) return null;

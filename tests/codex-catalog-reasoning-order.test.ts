@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { meteredCodexModelRecord, openRouterCodexModels } from "../src/catalog/models.ts";
@@ -8,8 +9,8 @@ const paidModel = { id: modelId, owned_by: "anthropic", supported_endpoint_types
 const nativeEfforts = (model: Record<string, unknown>): string[] => (model.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort);
 
 const withExternalReasoning = async (levels: readonly string[], defaultEffort: string, check: () => void): Promise<void> => {
-  const originalKey = Deno.env.get("OPENROUTER_API_KEY");
-  Deno.env.set("OPENROUTER_API_KEY", "catalog-reasoning-order-test-key");
+  const originalKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "catalog-reasoning-order-test-key";
   resetOpenRouterModelsCacheForTest();
   try {
     await fetchOpenRouterModels({
@@ -21,12 +22,12 @@ const withExternalReasoning = async (levels: readonly string[], defaultEffort: s
     assert.deepEqual(openRouterModelsSnapshot()?.models[0].reasoning?.supported_efforts, levels, "native projection does not mutate the external snapshot");
   } finally {
     resetOpenRouterModelsCacheForTest();
-    if (originalKey === undefined) Deno.env.delete("OPENROUTER_API_KEY");
-    else Deno.env.set("OPENROUTER_API_KEY", originalKey);
+    if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalKey;
   }
 };
 
-Deno.test("codex native catalog: reversed external Claude efforts become ascending without adding tiers", async () => {
+test("codex native catalog: reversed external Claude efforts become ascending without adding tiers", async () => {
   await withExternalReasoning(["max", "xhigh", "high", "medium", "low"], "high", () => {
     const openRouterRow = openRouterCodexModels().find((model) => model.slug === modelId);
     assert.ok(openRouterRow);
@@ -38,7 +39,7 @@ Deno.test("codex native catalog: reversed external Claude efforts become ascendi
   });
 });
 
-Deno.test("codex native catalog: standard tiers sort while unknown tiers keep their strings and positions", async () => {
+test("codex native catalog: standard tiers sort while unknown tiers keep their strings and positions", async () => {
   const levels = ["ultra", "custom-v1", "max", "high", "CUSTOM", "xhigh", "medium", "minimal", "low", "none"];
   await withExternalReasoning(levels, "custom-v1", () => {
     for (const row of [...openRouterCodexModels(), meteredCodexModelRecord(paidModel)]) {
@@ -48,7 +49,7 @@ Deno.test("codex native catalog: standard tiers sort while unknown tiers keep th
   });
 });
 
-Deno.test("codex native catalog: uploaded Codex effort order and default retain precedence over external metadata", async () => {
+test("codex native catalog: uploaded Codex effort order and default retain precedence over external metadata", async () => {
   await withExternalReasoning(["low", "medium", "high", "xhigh", "max"], "medium", () => {
     const uploadedLevels = ["max", "custom-v1", "xhigh", "high", "low"];
     const uploaded = { slug: modelId, supported_reasoning_levels: uploadedLevels, default_reasoning_level: "max" };

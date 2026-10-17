@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { createSupervisorView } from "../static/admin-supervisor.js";
@@ -246,7 +247,7 @@ const entriesFrame = (text: string) => {
   return `event: entries\ndata: ${JSON.stringify(payload)}\n\n`;
 };
 
-Deno.test("a late abort rejection from a superseded follow never reports against or clears the new session", async () => {
+test("a late abort rejection from a superseded follow never reports against or clears the new session", async () => {
   const harness = createHarness();
   try {
     harness.view.setActive(true);
@@ -270,7 +271,7 @@ Deno.test("a late abort rejection from a superseded follow never reports against
   }
 });
 
-Deno.test("frames from a superseded follow never reach the new session's log", async () => {
+test("frames from a superseded follow never reach the new session's log", async () => {
   const harness = createHarness();
   try {
     harness.view.setActive(true);
@@ -289,7 +290,7 @@ Deno.test("frames from a superseded follow never reach the new session's log", a
   }
 });
 
-Deno.test("the owning follow still consumes frames and cleans up when the stream closes", async () => {
+test("the owning follow still consumes frames and cleans up when the stream closes", async () => {
   const harness = createHarness();
   try {
     harness.view.setActive(true);

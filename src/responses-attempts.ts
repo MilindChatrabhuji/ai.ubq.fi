@@ -35,10 +35,10 @@ import {
 } from "./responses-failover-stream.ts";
 import { isRecord } from "./utils.ts";
 import {
-  ResponseStreamTerminalType,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
+  type ResponseStreamTerminalType,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
   classifyPreHeaderFailure,
   isTimeoutFailure,
   recordAttemptedProvider,
@@ -49,7 +49,7 @@ import {
   selectRemovedProviderTelemetry,
   streamErrorResponse,
   supportsReasoningProgressRelease,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "./openai-telemetry.ts";
 import {} from "./chat/stream-translation.ts";
 import { logRedactedUpstreamError, toCodexErrorResponse, toOpenAiUpstreamErrorResponse } from "./upstream-wire.ts";

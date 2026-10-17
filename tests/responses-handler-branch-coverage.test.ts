@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/openai-compat-harness.ts";
 import assert from "node:assert/strict";
 
 import {
@@ -109,12 +111,15 @@ const sseEventTypes = async (response: Response): Promise<string[]> => {
   return parseResponsesSseValues(text).map((event) => String(event.type));
 };
 
-Deno.test("a terminal buffered during preflight survives a client cancellation", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("a terminal buffered during preflight survives a client cancellation", async () => {
   await runValidatedTerminalCancellationCase({ provider: "chatgpt_codex", route: "responses", terminalType: "response.completed" });
   await runValidatedTerminalCancellationCase({ provider: "chatgpt_codex", route: "responses", terminalType: "response.incomplete" });
 });
 
-Deno.test("a failed removed-provider attempt recovers on the codex primary", async () => {
+test("a failed removed-provider attempt recovers on the codex primary", async () => {
   const run = await runRemovedProviderCase("recovery-ready", () => streamingCodexResponse("codex-recovery"));
 
   assert.equal(run.response.status, 200);
@@ -129,7 +134,7 @@ Deno.test("a failed removed-provider attempt recovers on the codex primary", asy
   assert.ok(events.includes("response.output_text.delta"));
 });
 
-Deno.test("a removed-provider-first request served upstream never touches codex", async () => {
+test("a removed-provider-first request served upstream never touches codex", async () => {
   setDebugScenario("removed_provider_first");
   setRemovedProviderApiKeyForTest("removed-provider-test-key");
   let codexCalls = 0;
@@ -173,7 +178,7 @@ Deno.test("a removed-provider-first request served upstream never touches codex"
   }
 });
 
-Deno.test("a codex recovery rejected before its headers returns the removed-provider fallback", async () => {
+test("a codex recovery rejected before its headers returns the removed-provider fallback", async () => {
   const run = await runRemovedProviderCase("recovery-400", () => new Response("bad request", { status: 400, headers: { "Content-Type": "text/plain" } }));
 
   assert.equal(run.response.status, 503);
@@ -185,7 +190,7 @@ Deno.test("a codex recovery rejected before its headers returns the removed-prov
   assert.equal(run.telemetry.failureKind, null);
 });
 
-Deno.test("an eligible codex recovery failure still returns the removed-provider fallback", async () => {
+test("an eligible codex recovery failure still returns the removed-provider fallback", async () => {
   const run = await runRemovedProviderCase("recovery-500", () => new Response("upstream down", { status: 500, headers: { "Content-Type": "text/plain" } }));
 
   assert.equal(run.response.status, 503);
@@ -195,7 +200,7 @@ Deno.test("an eligible codex recovery failure still returns the removed-provider
   assert.equal(run.telemetry.removedProviderTriggerClass, "http_5xx");
 });
 
-Deno.test("an empty codex recovery completion fails closed with the empty-completion kind", async () => {
+test("an empty codex recovery completion fails closed with the empty-completion kind", async () => {
   const run = await runRemovedProviderCase(
     "recovery-empty",
     () =>
@@ -224,7 +229,7 @@ Deno.test("an empty codex recovery completion fails closed with the empty-comple
   assert.equal(run.telemetry.completed, false);
 });
 
-Deno.test("a client cancellation before the codex recovery returns a cancellation error", async () => {
+test("a client cancellation before the codex recovery returns a cancellation error", async () => {
   const run = await runRemovedProviderCase("recovery-cancelled", () => streamingCodexResponse("unused"), { abortInsideRemovedProvider: true });
 
   assert.equal(run.response.status, 499);
@@ -234,7 +239,7 @@ Deno.test("a client cancellation before the codex recovery returns a cancellatio
   assert.deepEqual(run.telemetry.attemptedProviders, ["removed_provider", "chatgpt_codex"]);
 });
 
-Deno.test("a malformed responses request body is rejected before any provider runs", async () => {
+test("a malformed responses request body is rejected before any provider runs", async () => {
   let codexCalls = 0;
   const response = await withFetchMock(
     () => {
@@ -258,7 +263,7 @@ Deno.test("a malformed responses request body is rejected before any provider ru
   assert.equal(typeof payload.error?.message, "string");
 });
 
-Deno.test("a quota dispatch error during the codex recovery returns the removed-provider fallback", async () => {
+test("a quota dispatch error during the codex recovery returns the removed-provider fallback", async () => {
   const run = await runRemovedProviderCase("recovery-quota-error", () => {
     throw new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
   });
@@ -269,7 +274,7 @@ Deno.test("a quota dispatch error during the codex recovery returns the removed-
   assert.equal(run.telemetry.provider, "removed_provider");
 });
 
-Deno.test("a removed-provider failure after a codex primary failure returns the primary response", async () => {
+test("a removed-provider failure after a codex primary failure returns the primary response", async () => {
   setRemovedProviderApiKeyForTest("removed-provider-test-key");
   let removedCalls = 0;
   let codexCalls = 0;
@@ -309,7 +314,7 @@ Deno.test("a removed-provider failure after a codex primary failure returns the 
   }
 });
 
-Deno.test("an empty removed-provider completion fails closed without a codex recovery", async () => {
+test("an empty removed-provider completion fails closed without a codex recovery", async () => {
   setDebugScenario("removed_provider_first");
   setRemovedProviderApiKeyForTest("removed-provider-test-key");
   let codexCalls = 0;
@@ -372,7 +377,7 @@ const stalledSseChunks = (chunks: readonly string[]): ReadableStream<Uint8Array>
   });
 };
 
-Deno.test("a mid-stream client cancellation reconciles the committed failure", async () => {
+test("a mid-stream client cancellation reconciles the committed failure", async () => {
   const controller = new AbortController();
   let codexCalls = 0;
   const response = await withFetchMock(
@@ -399,7 +404,7 @@ Deno.test("a mid-stream client cancellation reconciles the committed failure", a
   assert.ok(text.length > 0);
 });
 
-Deno.test("a removed-provider stream that changes its model after release fails the stream", async () => {
+test("a removed-provider stream that changes its model after release fails the stream", async () => {
   setDebugScenario("removed_provider_first");
   setRemovedProviderApiKeyForTest("removed-provider-test-key");
   let codexCalls = 0;
@@ -456,7 +461,7 @@ Deno.test("a removed-provider stream that changes its model after release fails 
   }
 });
 
-Deno.test("a streaming upstream that ends without a terminal reconciles the committed failure", async () => {
+test("a streaming upstream that ends without a terminal reconciles the committed failure", async () => {
   const [created, delta] = baseSseChunks();
   let codexCalls = 0;
   const response = await withFetchMock(
@@ -481,7 +486,7 @@ Deno.test("a streaming upstream that ends without a terminal reconciles the comm
   assert.ok(text.includes("response"));
 });
 
-Deno.test("a removed-provider stream that ends without a terminal reconciles the committed failure", async () => {
+test("a removed-provider stream that ends without a terminal reconciles the committed failure", async () => {
   setDebugScenario("removed_provider_first");
   setRemovedProviderApiKeyForTest("removed-provider-test-key");
   let codexCalls = 0;
@@ -528,7 +533,7 @@ Deno.test("a removed-provider stream that ends without a terminal reconciles the
   }
 });
 
-Deno.test("a streaming upstream read error reconciles the committed failure", async () => {
+test("a streaming upstream read error reconciles the committed failure", async () => {
   const [created, delta] = baseSseChunks();
   const encoder = new TextEncoder();
   let pulls = 0;
@@ -568,7 +573,7 @@ Deno.test("a streaming upstream read error reconciles the committed failure", as
   );
 });
 
-Deno.test("a buffered upstream read error is delivered as a classified failure", async () => {
+test("a buffered upstream read error is delivered as a classified failure", async () => {
   const [created, delta] = baseSseChunks();
   const encoder = new TextEncoder();
   let pulls = 0;

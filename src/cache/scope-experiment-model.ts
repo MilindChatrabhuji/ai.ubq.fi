@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 // Prompt cache scope experiment model: constants, records, parsing and usage classification, split out of src/prompt_cache_scope_experiment.ts.
 
 import { CodexCacheScopeExperimentError, getCodexResponseSlot, markCodexResponseCompleted, releaseCodexResponseProbe } from "../codex/index.ts";
@@ -50,7 +51,7 @@ const CACHE_SCOPE_DISCRIMINATOR_INDEXES = new Set([2, 5, 7]);
  * arguments, binding the gate to this immutable artifact's release identity.
  */
 type PromptCacheScopeExperimentTelemetryBaselineTestOptions = Readonly<{
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   release?: string;
 }>;
 
@@ -219,15 +220,11 @@ const targetKeyParts = (
   target: Pick<PromptCacheScopeTargetBinding, "provider" | "telemetry_provider" | "topology_kind" | "probe_profile" | "model">
 ): readonly string[] => [target.provider, target.telemetry_provider, target.topology_kind, target.probe_profile, target.model];
 
-const stateKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "state", ...targetKeyParts(target)];
-const evidenceKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "evidence", ...targetKeyParts(target)];
-const cycleLeaseKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [
-  ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
-  "cycle_lease",
-  ...targetKeyParts(target),
-];
+const stateKey = (target: PromptCacheScopeTargetBinding): KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "state", ...targetKeyParts(target)];
+const evidenceKey = (target: PromptCacheScopeTargetBinding): KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "evidence", ...targetKeyParts(target)];
+const cycleLeaseKey = (target: PromptCacheScopeTargetBinding): KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "cycle_lease", ...targetKeyParts(target)];
 /** OAuth refresh mutates a shared Codex pool, so this fence is provider-wide. */
-const campaignLeaseKey = (target: Pick<PromptCacheScopeTargetBinding, "provider" | "telemetry_provider" | "probe_profile">): Deno.KvKey => [
+const campaignLeaseKey = (target: Pick<PromptCacheScopeTargetBinding, "provider" | "telemetry_provider" | "probe_profile">): KvKey => [
   ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
   "campaign",
   target.provider,
