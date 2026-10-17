@@ -1,3 +1,4 @@
+import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
 // Legacy paid fallback projection and repair, split out of src/kv_migration.ts.
 
 import type { ApiKeyRecord, ApiKeyRequestLogRecord, PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../types.ts";
@@ -25,13 +26,13 @@ import type { StrictApiKeyPair } from "./kv-migration-usage.ts";
 
 type LegacyPaidFallbackLedgerCandidate = Readonly<{
   value: ApiKeyRequestLogRecord;
-  ledgerKey: Deno.KvKey;
-  existing: Deno.KvEntryMaybe<ApiKeyRequestLogRecord>;
+  ledgerKey: KvKey;
+  existing: KvEntryMaybe<ApiKeyRequestLogRecord>;
 }>;
 
 type LegacyPaidFallbackProjectionCandidate = Readonly<{
   value: ApiKeyRequestLogRecord;
-  source_key: Deno.KvKey;
+  source_key: KvKey;
 }>;
 
 type LegacyPaidFallbackProjectionResult = Readonly<{
@@ -98,7 +99,7 @@ const legacyPaidFallbackValue = (
 
 const legacyPaidFallbackReference = (keyId: string, requestId: string): string => JSON.stringify([keyId, requestId]);
 
-const legacyPaidFallbackCandidate = (entry: Pick<Deno.KvEntry<unknown>, "key" | "value">): LegacyPaidFallbackProjectionCandidate | null => {
+const legacyPaidFallbackCandidate = (entry: Pick<KvEntry<unknown>, "key" | "value">): LegacyPaidFallbackProjectionCandidate | null => {
   if (!isRecord(entry.value) || entry.value.provider !== "metered") return null;
   const keyId = isApiKeyId(entry.value.key_id) ? entry.value.key_id : null;
   const keySuffix = entry.key.at(-2);
@@ -114,7 +115,7 @@ const legacyPaidFallbackCandidate = (entry: Pick<Deno.KvEntry<unknown>, "key" | 
   };
 };
 
-const listLegacyPaidFallbackProjectionCandidates = async (kv: Deno.Kv): Promise<LegacyPaidFallbackProjectionCandidate[]> => {
+const listLegacyPaidFallbackProjectionCandidates = async (kv: Kv): Promise<LegacyPaidFallbackProjectionCandidate[]> => {
   const byReference = new Map<string, LegacyPaidFallbackProjectionCandidate>();
   for (const prefix of [LEGACY_REQUEST_LOG_PREFIX, PAID_FALLBACK_LEDGER_PREFIX] as const) {
     for await (const entry of kv.list({ prefix })) {
@@ -155,7 +156,7 @@ const legacyMaximumExposure = (record: ApiKeyRecord, request: ApiKeyRequestLogRe
   return 0;
 };
 
-const paidFallbackV3WindowKey = (keyId: string, windowResetAtMs: number): Deno.KvKey => [...PAID_FALLBACK_WINDOW_V3_PREFIX, keyId, windowResetAtMs];
+const paidFallbackV3WindowKey = (keyId: string, windowResetAtMs: number): KvKey => [...PAID_FALLBACK_WINDOW_V3_PREFIX, keyId, windowResetAtMs];
 
 const isPaidFallbackPendingV3 = (
   value: unknown
@@ -174,7 +175,7 @@ const paidFallbackPendingIdentityMatches = (value: unknown, keyId: string, reque
   return (!("key_id" in record) || record.key_id === keyId) && (!("request_id" in record) || record.request_id === requestId);
 };
 
-const repairProjectedPaidFallbackPending = async (kv: Deno.Kv, nowMs: number): Promise<void> => {
+const repairProjectedPaidFallbackPending = async (kv: Kv, nowMs: number): Promise<void> => {
   for await (const requestEntry of kv.list({ prefix: PAID_FALLBACK_REQUEST_V3_PREFIX })) {
     if (!isPaidFallbackRequestV3(requestEntry.value)) continue;
     const request = requestEntry.value;
@@ -210,7 +211,7 @@ type PaidFallbackWindowReference = Readonly<{ key_id: string; window_reset_at_ms
 
 /** Every window reference that must agree with its projected request rows. */
 const collectRepairablePaidFallbackWindows = async (
-  kv: Deno.Kv,
+  kv: Kv,
   recordsByKey: ReadonlyMap<string, ApiKeyRecord>,
   candidateWindowReferences: ReadonlySet<string>
 ): Promise<Map<string, PaidFallbackWindowReference>> => {
@@ -243,7 +244,7 @@ const collectRepairablePaidFallbackWindows = async (
 };
 
 /** Request rows currently stored for one window. */
-const listPaidFallbackWindowRequests = async (kv: Deno.Kv, keyId: string, windowResetAtMs: number): Promise<PaidFallbackRequestV3[]> => {
+const listPaidFallbackWindowRequests = async (kv: Kv, keyId: string, windowResetAtMs: number): Promise<PaidFallbackRequestV3[]> => {
   const requests: PaidFallbackRequestV3[] = [];
   for await (const requestEntry of kv.list({ prefix: PAID_FALLBACK_REQUEST_V3_PREFIX })) {
     if (isPaidFallbackRequestV3(requestEntry.value) && requestEntry.value.key_id === keyId && requestEntry.value.window_reset_at_ms === windowResetAtMs) {
@@ -290,7 +291,7 @@ const projectedPaidFallbackWindow = (
 
 /** Repairs one window aggregate with a bounded CAS retry loop. */
 const repairOnePaidFallbackWindow = async (
-  kv: Deno.Kv,
+  kv: Kv,
   context: Readonly<{ keyId: string; windowResetAtMs: number; record: ApiKeyRecord | undefined; nowMs: number }>
 ): Promise<void> => {
   const windowKey = paidFallbackV3WindowKey(context.keyId, context.windowResetAtMs);
@@ -329,7 +330,7 @@ const repairOnePaidFallbackWindow = async (
 };
 
 const repairProjectedPaidFallbackWindows = async (
-  kv: Deno.Kv,
+  kv: Kv,
   pairs: readonly StrictApiKeyPair[],
   candidateWindowReferences: ReadonlySet<string>,
   nowMs: number
@@ -406,11 +407,11 @@ const legacyPaidFallbackRequestRow = (
 
 /** Writes the projected V3 request and pending rows for one legacy candidate. */
 const commitLegacyPaidFallbackStep = async (
-  kv: Deno.Kv,
-  keys: Readonly<{ requestKey: Deno.KvKey; pendingKey: Deno.KvKey }>,
+  kv: Kv,
+  keys: Readonly<{ requestKey: KvKey; pendingKey: KvKey }>,
   request: PaidFallbackRequestV3,
-  requestEntry: Deno.KvEntryMaybe<PaidFallbackRequestV3>,
-  pendingEntry: Deno.KvEntryMaybe<{ created_at_ms: number; next_reconciliation_at_ms: number }>,
+  requestEntry: KvEntryMaybe<PaidFallbackRequestV3>,
+  pendingEntry: KvEntryMaybe<{ created_at_ms: number; next_reconciliation_at_ms: number }>,
   nowMs: number
 ): Promise<LegacyPaidFallbackProjectionStep> => {
   const existingRequest = requestEntry.value;
@@ -454,7 +455,7 @@ const commitLegacyPaidFallbackStep = async (
 
 /** Projects one legacy paid-fallback candidate into the V3 rows. */
 const projectLegacyPaidFallbackCandidate = async (
-  kv: Deno.Kv,
+  kv: Kv,
   legacy: ApiKeyRequestLogRecord,
   recordsByKey: ReadonlyMap<string, ApiKeyRecord>,
   candidateWindowReferences: Set<string>,
@@ -488,7 +489,7 @@ const projectLegacyPaidFallbackCandidate = async (
   return await commitLegacyPaidFallbackStep(kv, { requestKey, pendingKey }, request, requestEntry, pendingEntry, nowMs);
 };
 
-const projectLegacyPaidFallbackV3 = async (kv: Deno.Kv, pairs: readonly StrictApiKeyPair[], nowMs: number): Promise<LegacyPaidFallbackProjectionResult> => {
+const projectLegacyPaidFallbackV3 = async (kv: Kv, pairs: readonly StrictApiKeyPair[], nowMs: number): Promise<LegacyPaidFallbackProjectionResult> => {
   const recordsByKey = new Map(pairs.map(({ record }) => [record.id, record]));
   const candidates = await listLegacyPaidFallbackProjectionCandidates(kv);
   let projected = 0;
@@ -513,7 +514,7 @@ const isPendingPaidFallbackLedgerValue = (value: unknown): boolean =>
   isRecord(value) && value.provider === "metered" && (value.billing_status === "pending" || value.billing_status === "unresolved");
 
 /** References of every pending row already stored in the dedicated ledger. */
-const collectPendingPaidFallbackLedgerReferences = async (kv: Deno.Kv, errors: string[]): Promise<Set<string>> => {
+const collectPendingPaidFallbackLedgerReferences = async (kv: Kv, errors: string[]): Promise<Set<string>> => {
   const availableReferences = new Set<string>();
   for await (const entry of kv.list({ prefix: PAID_FALLBACK_LEDGER_PREFIX })) {
     if (!isPendingPaidFallbackLedgerValue(entry.value)) continue;
@@ -529,7 +530,7 @@ const collectPendingPaidFallbackLedgerReferences = async (kv: Deno.Kv, errors: s
 
 /** Pending legacy request-log rows and their dedicated-ledger destinations. */
 const collectPendingLegacyPaidFallbackCandidates = async (
-  kv: Deno.Kv,
+  kv: Kv,
   availableReferences: Set<string>,
   errors: string[]
 ): Promise<LegacyPaidFallbackLedgerCandidate[]> => {
@@ -571,7 +572,7 @@ const auditPaidFallbackReservationLedgers = (pairs: readonly StrictApiKeyPair[],
 };
 
 const inspectPendingPaidFallbackLedgers = async (
-  kv: Deno.Kv,
+  kv: Kv,
   pairs: StrictApiKeyPair[]
 ): Promise<{ candidates: LegacyPaidFallbackLedgerCandidate[]; errors: string[] }> => {
   const errors: string[] = [];

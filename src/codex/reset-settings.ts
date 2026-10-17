@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 import { CODEX_AUTH_POOL_KV_KEY, parseCodexAuthPool } from "./auth.ts";
 import type { CodexAuthPoolState } from "../types.ts";
 import { isRecord, sha256Hex } from "../utils.ts";
@@ -15,7 +16,7 @@ export const CODEX_BANKED_RESET_USAGE_LEGACY_KEY = ["uos_ai", "codex_banked_rese
 export const CODEX_RESET_USAGE_MIGRATION_KEY = ["uos_ai", "migrations", "codex_reset_usage_legacy_global_v1"] as const;
 
 // Stable account identity, independent of API keys and subscription ordering.
-export const codexResetUsageKey = (accountIdHash: string): Deno.KvKey => [...CODEX_RESET_USAGE_PREFIX, "account", "v1", accountIdHash];
+export const codexResetUsageKey = (accountIdHash: string): KvKey => [...CODEX_RESET_USAGE_PREFIX, "account", "v1", accountIdHash];
 
 /**
  * The pre-migration switch was fail-closed: only an explicit `true` or an
@@ -41,7 +42,7 @@ const isLegacyOptOut = (value: unknown): boolean => value === false || (value !=
  * or empty pool stays `pending` so the opt-out can never retire early, and the
  * legacy key is left in place for rollback.
  */
-export const migrateLegacyCodexResetOptOut = async (kv: Deno.Kv): Promise<"done" | "pending"> => {
+export const migrateLegacyCodexResetOptOut = async (kv: Kv): Promise<"done" | "pending"> => {
   const marker = await kv.get(CODEX_RESET_USAGE_MIGRATION_KEY, { consistency: "strong" });
   if (marker.value !== null) return "done";
 
@@ -72,7 +73,7 @@ export const migrateLegacyCodexResetOptOut = async (kv: Deno.Kv): Promise<"done"
  * absent, so an account that first appears after a completed migration follows
  * current defaults instead of inheriting a seeded opt-out.
  */
-const ensureLegacyGlobalOptOutMigratedForAccount = async (kv: Deno.Kv, accountIdHash: string): Promise<void> => {
+const ensureLegacyGlobalOptOutMigratedForAccount = async (kv: Kv, accountIdHash: string): Promise<void> => {
   const [marker, legacy] = await Promise.all([
     kv.get(CODEX_RESET_USAGE_MIGRATION_KEY, { consistency: "strong" }),
     kv.get(CODEX_BANKED_RESET_USAGE_LEGACY_KEY, { consistency: "strong" }),
@@ -82,7 +83,7 @@ const ensureLegacyGlobalOptOutMigratedForAccount = async (kv: Deno.Kv, accountId
   await kv.atomic().check(marker).check({ key, versionstamp: null }).set(key, { enabled: false }).commit();
 };
 
-export const readCodexResetUsage = async (kv: Deno.Kv, accountIdHash: string) => {
+export const readCodexResetUsage = async (kv: Kv, accountIdHash: string) => {
   // A guarded read retries the bounded completion, so a snapshot conflict is
   // resolved by the next read instead of pinning the legacy switch forever.
   if ((await migrateLegacyCodexResetOptOut(kv)) !== "done") await ensureLegacyGlobalOptOutMigratedForAccount(kv, accountIdHash);
