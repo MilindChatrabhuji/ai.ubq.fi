@@ -82,28 +82,32 @@ export const chatOutputTextPartStorageKey = (event: Record<string, unknown>): st
 type ReconciledChatContent = Readonly<{ outputText: string; refusal: string }>;
 
 /**
- * True when an identity-less completed part only repeats content this stream has
- * already delivered at the same output/content position. Compatible upstreams
- * repeat the complete message content in their terminal payload, and one that
- * omits the message id there -- Surplus drops `id` inside `response.completed` --
+ * Returns the previously emitted text when an identity-less completed part only
+ * repeats content this stream has already delivered at the same output/content
+ * position. Compatible upstreams repeat the complete message content in their
+ * terminal payload, and one that omits the message id there -- Surplus drops
+ * `id` inside `response.completed` --
  * may not address the per-part entry its own deltas wrote, so the repeat would
  * otherwise look like new content. A longer or conflicting payload still takes
  * the ordinary path.
  */
-const completedPartRepeatsEmittedContent = (emittedParts: ReadonlyMap<string, string>, event: Record<string, unknown>, completed: string): boolean => {
-  if (!completed) return false;
+const completedPartRepeatsEmittedContent = (emittedParts: ReadonlyMap<string, string>, event: Record<string, unknown>, completed: string): string | null => {
+  if (!completed) return null;
   const positionKey = chatOutputTextPartPositionKey(event);
   if (positionKey !== null) {
     const emitted = emittedParts.get(positionKey);
-    if (emitted !== undefined) return emitted === completed || emitted.startsWith(completed);
-    return false;
+    if (emitted !== undefined) return emitted === completed || emitted.startsWith(completed) ? emitted : null;
+    const unpositioned = [...emittedParts.entries()].filter(([key]) => key.startsWith("item:"));
+    if (emittedParts.size !== 1 || unpositioned.length !== 1) return null;
+    const [, unpositionedText] = unpositioned[0];
+    return unpositionedText === completed || unpositionedText.startsWith(completed) ? unpositionedText : null;
   }
   // Without a position, infer a repeat only when the stream has one item-id entry;
   // never let another part's content become this part's deduplication key.
   const unpositioned = [...emittedParts.entries()].filter(([key]) => key.startsWith("item:"));
-  if (emittedParts.size !== 1 || unpositioned.length !== 1) return false;
+  if (emittedParts.size !== 1 || unpositioned.length !== 1) return null;
   const [, emitted] = unpositioned[0];
-  return emitted === completed || emitted.startsWith(completed);
+  return emitted === completed || emitted.startsWith(completed) ? emitted : null;
 };
 
 export const reconcileChatContentPart = (
@@ -124,7 +128,9 @@ export const reconcileChatContentPart = (
     if (completedText === null) {
       return malformedFunctionCallStream("Upstream completed content part is missing string output text.");
     }
-    if (!identified && !outputTextParts.has(key) && completedPartRepeatsEmittedContent(outputTextParts, event, completedText)) {
+    const repeatedText = !identified && !outputTextParts.has(key) ? completedPartRepeatsEmittedContent(outputTextParts, event, completedText) : null;
+    if (repeatedText !== null) {
+      outputTextParts.set(key, repeatedText);
       return { outputText: "", refusal: "" };
     }
     const emittedText = outputTextParts.get(key) ?? "";
@@ -137,7 +143,9 @@ export const reconcileChatContentPart = (
     if (completedRefusal === null) {
       return malformedFunctionCallStream("Upstream completed content part is missing string refusal text.");
     }
-    if (!identified && !refusalParts.has(key) && completedPartRepeatsEmittedContent(refusalParts, event, completedRefusal)) {
+    const repeatedRefusal = !identified && !refusalParts.has(key) ? completedPartRepeatsEmittedContent(refusalParts, event, completedRefusal) : null;
+    if (repeatedRefusal !== null) {
+      refusalParts.set(key, repeatedRefusal);
       return { outputText: "", refusal: "" };
     }
     const emittedRefusal = refusalParts.get(key) ?? "";
