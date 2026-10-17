@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 import { toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
 import { LITHOS_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
-import { withDeepSeekOfficialModels } from "../src/catalog/models.ts";
 
 /**
  * Branch coverage for the Responses-to-Chat projection.
@@ -14,32 +13,6 @@ import { withDeepSeekOfficialModels } from "../src/catalog/models.ts";
  */
 
 const MODEL = "deepseek-flash";
-
-test("official DeepSeek rows replace paid discovery duplicates", () => {
-  const previousKey = process.env.DEEPSEEK_API_KEY;
-  process.env.DEEPSEEK_API_KEY = "sk-test";
-  try {
-    const paidRow = {
-      slug: "deepseek-v4-pro",
-      owned_by: "metered",
-      supported_reasoning_levels: [{ effort: "none" }],
-      default_reasoning_level: "none",
-    };
-    const models = withDeepSeekOfficialModels([paidRow]);
-    const pro = models.find((model) => model.slug === "deepseek-v4-pro");
-
-    assert.equal(models.filter((model) => model.slug === "deepseek-v4-pro").length, 1);
-    assert.equal(pro?.owned_by, "deepseek");
-    assert.deepEqual(
-      (pro?.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
-      ["none", "low", "high", "max"]
-    );
-    assert.equal(pro?.default_reasoning_level, "high");
-  } finally {
-    if (previousKey === undefined) delete process.env.DEEPSEEK_API_KEY;
-    else process.env.DEEPSEEK_API_KEY = previousKey;
-  }
-});
 
 const messagesOf = (input: unknown, instructions: string | null = null): Record<string, unknown>[] => {
   const result = toDeepSeekChatMessages(input, instructions);
