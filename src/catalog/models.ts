@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 // Codex catalog model list assembly, split out of src/codex_catalog.ts.
 
 import { CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, preserveCodexDefaultModel } from "../codex/index.ts";
@@ -32,9 +33,42 @@ import { codexSnapshotMetadataHint, codexSubscriptionMetadataHint, resolveModelM
 import { openRouterModelsSnapshot } from "../models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "./types.ts";
+import { claudeCodeReasoningLevels, type ClaudeCodeModel } from "../provider/claude-code-models.ts";
+
+/** Codex shell defaults are generic; reasoning and windows require observed Claude capabilities. */
+export const claudeCodeCodexModels = (models: readonly ClaudeCodeModel[]): Record<string, unknown>[] =>
+  models.map((model) => ({
+    slug: model.id,
+    display_name: model.display_name ?? model.id,
+    owned_by: "anthropic",
+    supported_endpoint_types: ["openai-response", "openai"],
+    supported_reasoning_levels: claudeCodeReasoningLevels(model).map((effort) => ({ effort, description: effort === "none" ? "No reasoning" : effort })),
+    ...(model.supports_disabled_thinking === true ? { default_reasoning_level: "none" } : {}),
+    ...(model.context_window_tokens ? { context_window: model.context_window_tokens, max_context_window: model.context_window_tokens } : {}),
+    ...(model.max_output_tokens ? { max_output_tokens: model.max_output_tokens } : {}),
+    shell_type: "shell_command",
+    visibility: "list",
+    supported_in_api: true,
+    priority: 1000,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: "",
+    support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: null,
+    web_search_tool_type: "text",
+    truncation_policy: { mode: "tokens", limit: 10000 },
+    supports_parallel_tool_calls: false,
+    experimental_supported_tools: [],
+  }));
+
+export const withClaudeCodeModels = (models: readonly Record<string, unknown>[], claude: readonly ClaudeCodeModel[]): Record<string, unknown>[] => {
+  const seen = catalogModelIds(models);
+  return [...models, ...claudeCodeCodexModels(claude).filter((model) => !seen.has(String(model.slug)))];
+};
 
 const maybeUpdateNormalizedSnapshot = async (
-  kv: Deno.Kv,
+  kv: Kv,
   version: string,
   authGeneration: string,
   parsed: Record<string, unknown>,
@@ -92,6 +126,18 @@ const etagMatches = (requestValue: string | null, etag: string | null): boolean 
  */
 const codexReasoningEffortDescription = (effort: string): string => (effort === "none" ? "No reasoning" : `Reasoning effort: ${effort}`);
 
+/** Order standard external tiers for scalar pickers without moving model-defined tiers. */
+const ascendingExternalReasoningLevels = (levels: readonly string[] | null): readonly string[] | null => {
+  if (levels === null) return null;
+  const standardOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+  const rank = (effort: string): number => standardOrder.indexOf(effort);
+  const standardLevels = levels.filter((effort) => rank(effort) >= 0).sort((left, right) => rank(left) - rank(right));
+  let index = 0;
+  // This is a permutation of the source's values, not a supported-tier allowlist.
+  // Unknown strings retain both their position and their relative source order.
+  return levels.map((effort) => (rank(effort) < 0 ? effort : (standardLevels[index++] ?? effort)));
+};
+
 /**
  * Raw uploaded records by id. A Codex-served id must keep the Codex endpoint's
  * own window: discovery and enrichment describe how the gateway can serve the id,
@@ -123,7 +169,7 @@ const meteredCodexModelRecord = (
   const resolved = codexRecord
     ? resolveModelMetadata(model.id, { codex: codexSnapshotMetadataHint(codexRecord), codexSubscription: codexSubscriptionMetadataHint() })
     : resolveModelMetadata(model.id);
-  const levels = resolved.supported_reasoning_levels;
+  const levels = codexRecord ? resolved.supported_reasoning_levels : ascendingExternalReasoningLevels(resolved.supported_reasoning_levels);
   return {
     slug: model.id,
     display_name: model.id,
@@ -462,7 +508,7 @@ const openRouterCodexModels = (): Record<string, unknown>[] => {
   if (readOpenRouterApiKey() === null) return [];
   return (openRouterModelsSnapshot()?.models ?? []).map((model) => {
     const resolved = resolveModelMetadata(model.id);
-    const levels = resolved.supported_reasoning_levels;
+    const levels = ascendingExternalReasoningLevels(resolved.supported_reasoning_levels);
     return {
       slug: model.id,
       display_name: model.id,

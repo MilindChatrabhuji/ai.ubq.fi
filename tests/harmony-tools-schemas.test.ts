@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { type ToolDefinition } from "../src/harmony/types.ts";
@@ -13,7 +14,7 @@ import {
   validateToolArguments,
 } from "../src/harmony/tools/schemas.ts";
 
-Deno.test("tool schemas: the canonical surface is exactly the nine compact tools", () => {
+test("tool schemas: the canonical surface is exactly the nine compact tools", () => {
   assert.deepEqual(
     [...CANONICAL_TOOL_NAMES].sort((left, right) => left.localeCompare(right)),
     [
@@ -32,7 +33,7 @@ Deno.test("tool schemas: the canonical surface is exactly the nine compact tools
   assert.equal(lookupToolSchema("shell.execx"), null);
 });
 
-Deno.test("tool schemas: every schema is well-formed, bounded and strict-compatible", () => {
+test("tool schemas: every schema is well-formed, bounded and strict-compatible", () => {
   const proof = assertCanonicalToolSchemas(true);
   // Optional parameters (apply_patch old/new/add, filesystem.find pattern) are
   // intentional, so the strict-mode proof must fail exactly on those two.
@@ -68,7 +69,7 @@ Deno.test("tool schemas: every schema is well-formed, bounded and strict-compati
   }
 });
 
-Deno.test("tool schemas: definitions expose m01 ToolDefinitions with uniform strictness", () => {
+test("tool schemas: definitions expose m01 ToolDefinitions with uniform strictness", () => {
   const definitions = toolDefinitions();
   assert.equal(definitions.length, 9);
   for (const definition of definitions) {
@@ -103,7 +104,7 @@ const validExamples: Readonly<Record<string, Record<string, unknown>>> = {
   "task.update_plan": { plan: ["read the spec", "implement", "verify"] },
 };
 
-Deno.test("tool schemas: every canonical tool validates its documented argument shape", () => {
+test("tool schemas: every canonical tool validates its documented argument shape", () => {
   for (const [tool, args] of Object.entries(validExamples)) {
     const result = validateToolArguments(tool, args);
     assert.equal(result.valid, true, `${tool} should accept ${JSON.stringify(args)}`);
@@ -119,7 +120,7 @@ Deno.test("tool schemas: every canonical tool validates its documented argument 
   assert.equal(validateToolArguments("editor.apply_patch", { path: "a.txt", old: "", new: "x" }).valid, true);
 });
 
-Deno.test("tool schemas: validation rejects unknown tools, unknown args, missing and mistyped args", () => {
+test("tool schemas: validation rejects unknown tools, unknown args, missing and mistyped args", () => {
   const cases: readonly { tool: string; args: unknown; reason: string }[] = [
     { tool: "ghost.action", args: {}, reason: "unknown tool" },
     { tool: "filesystem.read", args: 42, reason: "arguments must be an object" },

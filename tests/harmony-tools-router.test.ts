@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { type ToolBackends } from "../src/harmony/tools/backend.ts";
@@ -20,13 +21,13 @@ function ok(result: ToolResult): asserts result is ToolResult & { ok: true } {
   assert.equal(result.error_code, undefined);
 }
 
-Deno.test("router: filesystem.read returns bounded file content verbatim", async () => {
+test("router: filesystem.read returns bounded file content verbatim", async () => {
   const result = await runTool(backends(), "filesystem.read", { path: "docs/spec.txt" });
   ok(result);
   assert.equal(result.output, "Section 1: stable line content\nSection 2: nothing here\n");
 });
 
-Deno.test("router: filesystem.read reports missing files and path escapes machine-readably", async () => {
+test("router: filesystem.read reports missing files and path escapes machine-readably", async () => {
   const missing = await runTool(backends(), "filesystem.read", { path: "docs/nope.txt" });
   assert.equal(missing.ok, false);
   assert.equal(missing.error_code, "not_found");
@@ -40,7 +41,7 @@ Deno.test("router: filesystem.read reports missing files and path escapes machin
   }
 });
 
-Deno.test("router: filesystem.find matches full paths and basenames", async () => {
+test("router: filesystem.find matches full paths and basenames", async () => {
   const full = await runTool(backends(), "filesystem.find", { path: "docs", pattern: "*.txt" });
   ok(full);
   assert.equal(full.output, "docs/notes.txt\ndocs/spec.txt");
@@ -58,7 +59,7 @@ Deno.test("router: filesystem.find matches full paths and basenames", async () =
   assert.deepEqual((defaultPattern.output ?? "").split("\n"), ["docs/notes.txt", "docs/spec.txt"]);
 });
 
-Deno.test("router: filesystem.search is case-insensitive, line numbered and bounded", async () => {
+test("router: filesystem.search is case-insensitive, line numbered and bounded", async () => {
   const result = await runTool(backends(), "filesystem.search", { path: "docs", query: "SECTION 1" });
   ok(result);
   assert.equal(result.output, "docs/spec.txt:1:Section 1: stable line content");
@@ -72,7 +73,7 @@ Deno.test("router: filesystem.search is case-insensitive, line numbered and boun
   assert.equal(escaped.error_code, "path_escape");
 });
 
-Deno.test("router: shell.exec returns exit code, stdout, stderr and error codes", async () => {
+test("router: shell.exec returns exit code, stdout, stderr and error codes", async () => {
   const shell = new FakeShell([
     { command: "echo hi", stdout: "hi\n" },
     { command: "both", stdout: "out\n", stderr: "err\n" },
@@ -114,7 +115,7 @@ Deno.test("router: shell.exec returns exit code, stdout, stderr and error codes"
   assert.match(timedOut.error ?? "", /timed out/);
 });
 
-Deno.test("router: editor.apply_patch creates, patches, and rejects scope and patch errors", async () => {
+test("router: editor.apply_patch creates, patches, and rejects scope and patch errors", async () => {
   const withScope = backends({ writeScope: ["**", "!protected/**"] });
 
   const created = await runTool(withScope, "editor.apply_patch", { path: "answer.txt", add: true, new: "done" });
@@ -171,7 +172,7 @@ Deno.test("router: editor.apply_patch creates, patches, and rejects scope and pa
   assert.ok((afterInsert.output ?? "").startsWith("# top\n"));
 });
 
-Deno.test("router: task.update_plan stores the plan and reports its size", async () => {
+test("router: task.update_plan stores the plan and reports its size", async () => {
   const result = await runTool(backends(), "task.update_plan", { plan: ["read", "edit", "verify"] });
   ok(result);
   assert.equal(result.output, "plan updated (3 items)");
@@ -186,7 +187,7 @@ Deno.test("router: task.update_plan stores the plan and reports its size", async
   assert.match(invalid.error ?? "", /invalid arguments/);
 });
 
-Deno.test("router: browser tools use deterministic fake backends with current-page state", async () => {
+test("router: browser tools use deterministic fake backends with current-page state", async () => {
   const backendsWithBrowser = createFakeToolBackends({
     files,
     browserPages: {
@@ -235,7 +236,7 @@ Deno.test("router: browser tools use deterministic fake backends with current-pa
   assert.equal(notFound.error_code, "not_found");
 });
 
-Deno.test("router: unavailable backends and invalid calls return bounded envelopes", async () => {
+test("router: unavailable backends and invalid calls return bounded envelopes", async () => {
   const layered = backends();
   const withoutBrowser: ToolBackends = { workspace: layered.workspace, plan: layered.plan };
   for (const tool of ["browser.search", "browser.open", "browser.find"]) {
@@ -253,7 +254,7 @@ Deno.test("router: unavailable backends and invalid calls return bounded envelop
   assert.equal(unknown.error_code, "invalid_args");
 });
 
-Deno.test("router: fake workspace write scope is enforced at the backend boundary too", () => {
+test("router: fake workspace write scope is enforced at the backend boundary too", () => {
   const workspace = new FakeWorkspaceBackend({ files, writeScope: ["src/**"] });
   assert.equal(workspace.isAllowedWrite("src/config.txt"), true);
   assert.equal(workspace.isAllowedWrite("docs/spec.txt"), false);
@@ -265,7 +266,7 @@ Deno.test("router: fake workspace write scope is enforced at the backend boundar
   assert.equal(workspace.listFiles("docs").length, 2);
 });
 
-Deno.test("router: tool outputs are clipped to the configured output limit", async () => {
+test("router: tool outputs are clipped to the configured output limit", async () => {
   const long = "x".repeat(10_000);
   const result = await runTool(createFakeToolBackends({ files: { "big.txt": long } }), "filesystem.read", {
     path: "big.txt",

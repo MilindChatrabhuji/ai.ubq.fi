@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { buildDeepSeekWaterfallCodexRecord } from "../src/catalog/models.ts";
@@ -20,6 +21,7 @@ import {
   isDeepSeekWaterfallRetryStatus,
 } from "../src/deepseek/waterfall.ts";
 import type { UsageContext } from "../src/openai-telemetry.ts";
+import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 
 const allEnabled = { enabled: () => true, configured: () => true };
 
@@ -43,13 +45,13 @@ const request = (): Request => new Request("http://127.0.0.1:7999/v1/responses",
 
 const record = (model: string): Record<string, unknown> => ({ model, input: [{ type: "message", role: "user", content: "hi" }] });
 
-Deno.test("waterfall: the synthetic id normalizes and resolves to the cost-first economy order", () => {
+test("waterfall: the synthetic id normalizes and resolves to the cost-first economy order", () => {
   assert.equal(isDeepSeekWaterfallModel("  Ubiquity/DeepSeek-V4.1-Flash "), true);
   assert.equal(isDeepSeekWaterfallModel("deepseek-flash"), false);
   assert.deepEqual(DEEPSEEK_WATERFALL_ORDER, ["lithos", "deepseek", "openrouter", "surplus", "openlux"]);
 });
 
-Deno.test("waterfall: the plan keeps order and drops switched-off or uncredentialed hops", () => {
+test("waterfall: the plan keeps order and drops switched-off or uncredentialed hops", () => {
   assert.deepEqual(deepSeekWaterfallPlan(allEnabled), ["lithos", "deepseek", "openrouter", "surplus", "openlux"]);
   assert.deepEqual(
     deepSeekWaterfallPlan({
@@ -61,16 +63,16 @@ Deno.test("waterfall: the plan keeps order and drops switched-off or uncredentia
   assert.deepEqual(deepSeekWaterfallPlan({ enabled: () => false, configured: () => true }), []);
 });
 
-Deno.test("waterfall: each paid hop is pinned to its own paid tier", () => {
+test("waterfall: each paid hop is pinned to its own paid tier", () => {
   assert.deepEqual(DEEPSEEK_WATERFALL_PAID_PIN, { surplus: ["surplus"], openlux: ["metered"] });
 });
 
-Deno.test("waterfall: only infrastructure or serving statuses advance the chain", () => {
+test("waterfall: only infrastructure or serving statuses advance the chain", () => {
   for (const status of [402, 403, 429, 500, 502, 504]) assert.equal(isDeepSeekWaterfallRetryStatus(status), true, `${status} must advance`);
   for (const status of [200, 400, 404, 422]) assert.equal(isDeepSeekWaterfallRetryStatus(status), false, `${status} must not advance`);
 });
 
-Deno.test("waterfall: the requested effort reads both wire fields and stays inside the advertised set", () => {
+test("waterfall: the requested effort reads both wire fields and stays inside the advertised set", () => {
   assert.equal(deepSeekWaterfallRequestedEffort({ reasoning: { effort: " max " } }), "max");
   assert.equal(deepSeekWaterfallRequestedEffort({ reasoning_effort: "low" }), "low");
   assert.equal(deepSeekWaterfallRequestedEffort({}), null);
@@ -81,7 +83,7 @@ Deno.test("waterfall: the requested effort reads both wire fields and stays insi
   assert.equal(deepSeekWaterfallFailureReason("lithos", "transport"), "deepseek_waterfall:lithos:transport_failure");
 });
 
-Deno.test("waterfall: handler rejects an unadvertised effort before dispatching anything", async () => {
+test("waterfall: handler rejects an unadvertised effort before dispatching anything", async () => {
   let calls = 0;
   const dispatch: DeepSeekWaterfallDispatch = () => {
     calls += 1;
@@ -95,7 +97,7 @@ Deno.test("waterfall: handler rejects an unadvertised effort before dispatching 
   assert.equal(body.error?.code, "unsupported_reasoning_effort");
 });
 
-Deno.test("waterfall: a failing first hop serves from the next provider and records the chain", async () => {
+test("waterfall: a failing first hop serves from the next provider and records the chain", async () => {
   const { context, telemetry } = usageContextWithTelemetry();
   const seen: Readonly<{ provider: string; model: string; recordModel: unknown }>[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider, model, rawRecord }) => {
@@ -121,7 +123,7 @@ Deno.test("waterfall: a failing first hop serves from the next provider and reco
   assert.equal(telemetry.fallbackReason, "deepseek_waterfall:lithos:503");
 });
 
-Deno.test("waterfall: a client-facing 4xx is the answer and never spends another provider", async () => {
+test("waterfall: a client-facing 4xx is the answer and never spends another provider", async () => {
   const attempted: string[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
     attempted.push(provider);
@@ -137,7 +139,7 @@ Deno.test("waterfall: a client-facing 4xx is the answer and never spends another
   assert.equal(response.headers.get("x-uos-attempted-providers"), "lithos");
 });
 
-Deno.test("waterfall: a transport failure advances and an exhausted chain returns the last failure", async () => {
+test("waterfall: a transport failure advances and an exhausted chain returns the last failure", async () => {
   const { context, telemetry } = usageContextWithTelemetry();
   const attempted: string[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
@@ -156,7 +158,7 @@ Deno.test("waterfall: a transport failure advances and an exhausted chain return
   assert.equal(telemetry.fallbackReason, "deepseek_waterfall:lithos:transport_failure");
 });
 
-Deno.test("waterfall: no usable hop is a 503 without dispatching", async () => {
+test("waterfall: no usable hop is a 503 without dispatching", async () => {
   let calls = 0;
   const dispatch: DeepSeekWaterfallDispatch = () => {
     calls += 1;
@@ -172,7 +174,7 @@ Deno.test("waterfall: no usable hop is a 503 without dispatching", async () => {
   assert.equal(calls, 0);
 });
 
-Deno.test("waterfall: the Codex catalogue record carries the advertised contract", () => {
+test("waterfall: the Codex catalogue record carries the advertised contract", () => {
   const row = buildDeepSeekWaterfallCodexRecord();
   assert.equal(row.slug, DEEPSEEK_WATERFALL_MODEL_ID);
   assert.equal(row.display_name, DEEPSEEK_WATERFALL_DISPLAY_NAME);
@@ -211,7 +213,7 @@ const completedEvent = (id: string): Record<string, unknown> => ({
   response: { id, object: "response", status: "completed", output: [] },
 });
 
-Deno.test("waterfall: the surplus hop re-enters the paid pipeline under the paid catalogue id, pinned to surplus", async () => {
+test("waterfall: the surplus hop re-enters the paid pipeline under the paid catalogue id, pinned to surplus", async () => {
   const seen: Record<string, unknown>[] = [];
   const pins: (readonly ("metered" | "surplus")[] | null | undefined)[] = [];
   const paidTail: DeepSeekWaterfallPaidTail = async (req, rawRecord, rawBody, _usageContext, options) => {
@@ -219,6 +221,8 @@ Deno.test("waterfall: the surplus hop re-enters the paid pipeline under the paid
     pins.push(options?.allowedPaidProviders);
     assert.equal(rawRecord.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
     assert.equal(rawBody.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+    assert.equal(options?.deepSeekWaterfallPaidHop, "surplus");
+    assert.equal(rawRecord.deepSeekWaterfallPaidHop, undefined);
     return Response.json({ id: "resp_paid" });
   };
   const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), { model: DEEPSEEK_WATERFALL_MODEL_ID }, undefined, {
@@ -234,7 +238,7 @@ Deno.test("waterfall: the surplus hop re-enters the paid pipeline under the paid
   assert.deepEqual(pins, [["surplus"]], "the surplus hop must never silently advance to metered");
 });
 
-Deno.test("waterfall: the openlux hop re-enters the paid pipeline pinned to metered", async () => {
+test("waterfall: the openlux hop re-enters the paid pipeline pinned to metered", async () => {
   const seen: Record<string, unknown>[] = [];
   const pins: (readonly ("metered" | "surplus")[] | null | undefined)[] = [];
   const paidTail: DeepSeekWaterfallPaidTail = async (req, rawRecord, rawBody, _usageContext, options) => {
@@ -242,6 +246,8 @@ Deno.test("waterfall: the openlux hop re-enters the paid pipeline pinned to mete
     pins.push(options?.allowedPaidProviders);
     assert.equal(rawRecord.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
     assert.equal(rawBody.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+    assert.equal(options?.deepSeekWaterfallPaidHop, "openlux");
+    assert.equal(rawRecord.deepSeekWaterfallPaidHop, undefined);
     return Response.json({ id: "resp_openlux" });
   };
   const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), { model: DEEPSEEK_WATERFALL_MODEL_ID }, undefined, {
@@ -257,13 +263,16 @@ Deno.test("waterfall: the openlux hop re-enters the paid pipeline pinned to mete
   assert.deepEqual(pins, [["metered"]], "the routing layer names OpenLux 'metered'");
 });
 
-Deno.test("waterfall: openlux as the last hop serves when every prior paid hop fails, pinned to metered", async () => {
+test("waterfall: openlux as the last hop serves when every prior paid hop fails, pinned to metered", async () => {
   const { context, telemetry } = usageContextWithTelemetry();
   const pins: (readonly ("metered" | "surplus")[] | null | undefined)[] = [];
   // Only the two paid hops are configured, so the plan is [surplus, openlux]
   // and every hop runs through the production default dispatch into the tail.
-  const paidTail: DeepSeekWaterfallPaidTail = async (req, _rawRecord, _rawBody, _usageContext, options) => {
+  const paidTail: DeepSeekWaterfallPaidTail = async (req, _rawRecord, _rawBody, paidContext, options) => {
     pins.push(options?.allowedPaidProviders);
+    assert.equal(paidContext?.requestId, context.requestId);
+    assert.equal(paidContext?.beforeProviderDispatch, context.beforeProviderDispatch);
+    assert.equal(paidContext?.paidFallbackRequestId, `${context.requestId}:deepseek_waterfall:${options?.deepSeekWaterfallPaidHop}`);
     const body = JSON.parse(await req.text()) as Record<string, unknown>;
     assert.equal(body.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
     if (options?.allowedPaidProviders?.includes("surplus")) {
@@ -283,7 +292,130 @@ Deno.test("waterfall: openlux as the last hop serves when every prior paid hop f
   assert.equal(telemetry.fallbackReason, "deepseek_waterfall:surplus:503");
 });
 
-Deno.test("waterfall: a stream that dies before output advances, and one that dies after output does not", async () => {
+test("waterfall: Surplus refusal and OpenLux completion keep separate paid ledgers and consume one request quota", async () => {
+  const {
+    fetchMeteredModels,
+    fetchSurplusModels,
+    getStoredPaidFallbackRequest,
+    handleResponses,
+    keyToString,
+    kvStore,
+    kvStub,
+    installHarness,
+    cleanupHarness,
+    resetMeteredModelsCacheForTest,
+    resetSurplusModelsCacheForTest,
+    responsesRequest,
+    seedPaidFallbackKey,
+    waitForPaidFallbackTerminal,
+    withDiscoveryKeys,
+    withFetchMock,
+    withProviderSelection,
+  } = await import("./helpers/openai-compat-harness.ts");
+  const { apiKeyPolicyFromHashRecord, apiKeyUsageV3RequestKey, apiKeyUsageV3WindowKey, reserveApiKeyUsageV3 } = await import("../src/api-key-policy.ts");
+  installHarness();
+  const keyId = "waterfall-paid-ledger";
+  const requestId = "waterfall-paid-ledger-parent";
+  const transports: string[] = [];
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  seedPaidFallbackKey(keyId, { modelIds: [DEEPSEEK_WATERFALL_PAID_MODEL_ID] });
+  const keyRecordKey = keyToString(["ubq_ai", "api_keys", "id", keyId]);
+  const hashRecordKey = keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]);
+  const keyRecord = kvStore.get(keyRecordKey) as Record<string, unknown>;
+  const hashRecord = { ...(kvStore.get(hashRecordKey) as ApiKeyHashRecord), usage_limit_requests: 1, usage_quota_version: 3 as const };
+  kvStore.set(keyRecordKey, {
+    ...keyRecord,
+    usage_limit_requests: 1,
+    paid_fallback_max_exposure_microcredits: { [DEEPSEEK_WATERFALL_PAID_MODEL_ID]: 250_000 },
+  });
+  kvStore.set(hashRecordKey, hashRecord);
+  const policy = apiKeyPolicyFromHashRecord(`hash-${keyId}`, hashRecord, Date.now());
+  assert.ok(policy);
+  const admitted = await reserveApiKeyUsageV3(policy, requestId, "responses", { kv: kvStub });
+  assert.ok(admitted.ok);
+  try {
+    await withDiscoveryKeys("fixture-openlux-key", async () => {
+      process.env.SURPLUS_API_KEY = "fixture-surplus-key";
+      await withProviderSelection(["ubiquity"], () =>
+        withFetchMock(
+          (url, bodyText) => {
+            if (url === "https://api.openlux.ai/v1/models") {
+              return Response.json({ data: [{ id: DEEPSEEK_WATERFALL_PAID_MODEL_ID, supported_endpoint_types: ["openai", "anthropic"] }] });
+            }
+            if (url === "https://api.surplusintelligence.ai/v1/models") {
+              return Response.json({ data: [{ id: DEEPSEEK_WATERFALL_PAID_MODEL_ID, pricing: { prompt: 0.000001, completion: 0.000003 } }] });
+            }
+            const wireBody = JSON.parse(bodyText ?? "null") as Record<string, unknown>;
+            assert.equal(wireBody.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+            assert.equal(wireBody.paidFallbackRequestId, undefined);
+            if (url === "https://api.surplusintelligence.ai/v1/responses") {
+              transports.push("surplus");
+              return Response.json(
+                { error: { message: "fixture capacity exhausted" } },
+                { status: 429, headers: { "x-request-id": "upstream-surplus-refused" } }
+              );
+            }
+            assert.equal(url, "https://api.openlux.ai/v1/responses");
+            transports.push("metered");
+            return new Response(sseResponse(sseBody([createdEvent("resp_ledger_openlux"), deltaEvent(), completedEvent("resp_ledger_openlux")])).body, {
+              headers: { "content-type": "text/event-stream", "x-request-id": "upstream-openlux-completed" },
+            });
+          },
+          async () => {
+            await fetchMeteredModels({ fetcher: globalThis.fetch, force: true });
+            await fetchSurplusModels({ fetcher: globalThis.fetch, force: true });
+            const context: UsageContext = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+              paidFallbackEnabled: true,
+              beforeProviderDispatch: admitted.reservation.beforeProviderDispatch,
+            };
+            const response = await handleResponses(responsesRequest({ model: DEEPSEEK_WATERFALL_MODEL_ID, stream: false }), context);
+            const body = (await response.json()) as Record<string, unknown>;
+            assert.equal(response.status, 200, JSON.stringify(body));
+            assert.equal(body.status, "completed");
+            assert.equal(context.requestId, requestId);
+            assert.equal(response.headers.get("x-uos-attempted-providers"), "surplus,openlux");
+            assert.deepEqual(transports, ["surplus", "metered"]);
+            const failed = await waitForPaidFallbackTerminal(keyId, `${requestId}:deepseek_waterfall:surplus`, "failed");
+            const completed = await waitForPaidFallbackTerminal(keyId, `${requestId}:deepseek_waterfall:openlux`, "completed");
+            assert.equal(failed.provider, "surplus");
+            assert.equal(failed.provider_request_id, "upstream-surplus-refused");
+            assert.equal(completed.provider, "metered");
+            assert.equal(completed.provider_request_id, "upstream-openlux-completed");
+            assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null, "the parent correlation is never reused as a paid-hop ledger key");
+            const paidWindow = kvStore.get(keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, policy.usage_reset_at_ms])) as {
+              reserved_microcredits: number;
+              pending_count: number;
+            };
+            assert.equal(paidWindow.reserved_microcredits, 500_000, "both independent attempts retain their finite paid exposure");
+            assert.equal(paidWindow.pending_count, 2);
+            const quota = kvStore.get(keyToString(apiKeyUsageV3WindowKey(policy))) as ApiKeyUsageWindowV3;
+            assert.equal(quota.committed_requests, 1);
+            assert.equal(quota.reserved_requests, 0);
+            const quotaRequest = kvStore.get(keyToString(apiKeyUsageV3RequestKey(policy, requestId))) as ApiKeyUsageRequestV3;
+            assert.equal(quotaRequest.request_id, requestId);
+            assert.equal(quotaRequest.state, "dispatched");
+            assert.equal(quotaRequest.provider, "surplus");
+          }
+        )
+      );
+    });
+  } finally {
+    await admitted.reservation.release();
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    kvStore.delete(keyRecordKey);
+    kvStore.delete(hashRecordKey);
+    cleanupHarness();
+  }
+});
+
+test("waterfall: a stream that dies before output advances, and one that dies after output does not", async () => {
   const { context, telemetry } = usageContextWithTelemetry();
   const attemptedProviders: string[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
@@ -321,11 +453,11 @@ Deno.test("waterfall: a stream that dies before output advances, and one that di
   assert.match(await committed.text(), /"delta":"he"/);
 });
 
-Deno.test("waterfall: allowedPaidProviders pins the Surplus hop without changing the default order", () => {
-  const savedSurplus = Deno.env.get("SURPLUS_API_KEY");
-  const savedMetered = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("SURPLUS_API_KEY", "fixture-surplus-key");
-  Deno.env.set("METERED_API_KEY", "fixture-metered-key");
+test("waterfall: allowedPaidProviders pins the Surplus hop without changing the default order", () => {
+  const savedSurplus = process.env.SURPLUS_API_KEY;
+  const savedMetered = process.env.METERED_API_KEY;
+  process.env.SURPLUS_API_KEY = "fixture-surplus-key";
+  process.env.METERED_API_KEY = "fixture-metered-key";
   try {
     const meteredCatalog = { models: [{ id: "deepseek-v4.1-flash", supported_endpoint_types: ["openai-response"] }], updated_at_ms: Date.now() };
     const surplusCatalog = {
@@ -352,15 +484,27 @@ Deno.test("waterfall: allowedPaidProviders pins the Surplus hop without changing
     assert.deepEqual(resolvePaidRoutingState(base as never).paidProviders, ["surplus", "metered"]);
     assert.deepEqual(resolvePaidRoutingState({ ...base, allowedPaidProviders: ["surplus"] } as never).paidProviders, ["surplus"]);
     assert.deepEqual(resolvePaidRoutingState({ ...base, allowedPaidProviders: ["metered"] } as never).paidProviders, ["metered"]);
+    const gatewaySelection = { provider_ids: ["ubiquity"], updated_at_ms: 1 };
+    assert.deepEqual(resolvePaidRoutingState({ ...base, selection: gatewaySelection } as never).paidProviders, []);
+    assert.deepEqual(
+      resolvePaidRoutingState({ ...base, selection: gatewaySelection, allowedPaidProviders: ["surplus"], deepSeekWaterfallPaidHop: "surplus" } as never)
+        .paidProviders,
+      ["surplus"]
+    );
+    assert.deepEqual(
+      resolvePaidRoutingState({ ...base, selection: gatewaySelection, allowedPaidProviders: ["metered"], deepSeekWaterfallPaidHop: "openlux" } as never)
+        .paidProviders,
+      ["metered"]
+    );
   } finally {
-    if (savedSurplus === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", savedSurplus);
-    if (savedMetered === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", savedMetered);
+    if (savedSurplus === undefined) Reflect.deleteProperty(process.env, "SURPLUS_API_KEY");
+    else process.env.SURPLUS_API_KEY = savedSurplus;
+    if (savedMetered === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = savedMetered;
   }
 });
 
-Deno.test("waterfall: an active selection without the gateway identity is a 503 without dispatching", async () => {
+test("waterfall: an active selection without the gateway identity is a 503 without dispatching", async () => {
   let calls = 0;
   const dispatch: DeepSeekWaterfallDispatch = () => {
     calls += 1;
@@ -375,7 +519,7 @@ Deno.test("waterfall: an active selection without the gateway identity is a 503 
   assert.equal(calls, 0);
 });
 
-Deno.test("waterfall: checking the gateway identity serves the configured chain", async () => {
+test("waterfall: checking the gateway identity serves the configured chain", async () => {
   const seen: string[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
     seen.push(provider);
@@ -389,4 +533,148 @@ Deno.test("waterfall: checking the gateway identity serves the configured chain"
   assert.equal(response.status, 200);
   assert.deepEqual(seen, ["lithos"], "the first configured hop of the fixed order serves");
   assert.equal(response.headers.get("x-uos-attempted-providers"), "lithos");
+});
+
+test("waterfall: verified OpenLux Responses capability stays scoped to the exact synthetic paid hop", () => {
+  const savedMetered = process.env.METERED_API_KEY;
+  process.env.METERED_API_KEY = "fixture-metered-key";
+  try {
+    const model = {
+      id: DEEPSEEK_WATERFALL_PAID_MODEL_ID,
+      object: "model" as const,
+      created: 0,
+      owned_by: "openlux",
+      supported_endpoint_types: ["openai", "anthropic"],
+    };
+    const base: Parameters<typeof resolvePaidRoutingState>[0] = {
+      meteredCatalog: { models: [model], updated_at_ms: Date.now() },
+      surplusCatalog: null,
+      codexModelKnown: false,
+      endpointType: "openai-response",
+      requestUsesTools: true,
+      model: DEEPSEEK_WATERFALL_PAID_MODEL_ID,
+      selection: { provider_ids: ["ubiquity"], updated_at_ms: 1 },
+      allowedPaidProviders: ["metered"],
+      deepSeekWaterfallPaidHop: "openlux",
+    };
+    assert.deepEqual(resolvePaidRoutingState(base).paidProviders, ["metered"]);
+    const rejected: Parameters<typeof resolvePaidRoutingState>[0][] = [
+      { ...base, deepSeekWaterfallPaidHop: null },
+      { ...base, selection: null, deepSeekWaterfallPaidHop: null },
+      { ...base, meteredCatalog: null },
+      { ...base, meteredCatalog: { models: [], updated_at_ms: Date.now() } },
+      { ...base, model: "unverified-model", meteredCatalog: { models: [{ ...model, id: "unverified-model" }], updated_at_ms: Date.now() } },
+      { ...base, endpointType: "anthropic" },
+      { ...base, selection: { provider_ids: ["codex"], updated_at_ms: 1 } },
+      { ...base, allowedPaidProviders: null },
+      { ...base, allowedPaidProviders: ["surplus", "metered"] },
+      { ...base, allowedPaidProviders: ["surplus"] },
+      { ...base, deepSeekWaterfallPaidHop: "surplus" },
+    ];
+    for (const input of rejected) assert.deepEqual(resolvePaidRoutingState(input).paidProviders, []);
+    Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    assert.deepEqual(resolvePaidRoutingState(base).paidProviders, [], "a capability exception never supplies credentials");
+  } finally {
+    if (savedMetered === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+    else process.env.METERED_API_KEY = savedMetered;
+  }
+});
+
+test("waterfall: the verified OpenLux hop dispatches through paid admission and records its completed terminal", async () => {
+  const {
+    handleResponses,
+    fetchMeteredModels,
+    keyToString,
+    kvStore,
+    resetMeteredModelsCacheForTest,
+    resetSurplusModelsCacheForTest,
+    responsesRequest,
+    seedPaidFallbackKey,
+    installHarness,
+    cleanupHarness,
+    waitForPaidFallbackTerminal,
+    withDiscoveryKeys,
+    withFetchMock,
+    withProviderSelection,
+  } = await import("./helpers/openai-compat-harness.ts");
+  const keyId = "waterfall-openlux-native";
+  installHarness();
+  const requestId = "waterfall-openlux-native-request";
+  const calls: string[] = [];
+  const dispatched: string[] = [];
+  const beforeProviderDispatch: UsageContext["beforeProviderDispatch"] = (provider) => {
+    dispatched.push(provider);
+    return Promise.resolve(undefined);
+  };
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  seedPaidFallbackKey(keyId, { modelIds: [DEEPSEEK_WATERFALL_PAID_MODEL_ID] });
+  const keyRecordKey = keyToString(["ubq_ai", "api_keys", "id", keyId]);
+  const keyRecord = kvStore.get(keyRecordKey) as Record<string, unknown>;
+  kvStore.set(keyRecordKey, { ...keyRecord, paid_fallback_max_exposure_microcredits: { [DEEPSEEK_WATERFALL_PAID_MODEL_ID]: 250_000 } });
+  try {
+    await withDiscoveryKeys("fixture-openlux-key", () =>
+      withProviderSelection(["ubiquity"], () =>
+        withFetchMock(
+          (url, bodyText) => {
+            calls.push(url);
+            if (url === "https://api.openlux.ai/v1/models") {
+              return Response.json({ data: [{ id: DEEPSEEK_WATERFALL_PAID_MODEL_ID, supported_endpoint_types: ["openai", "anthropic"] }] });
+            }
+            assert.equal(url, "https://api.openlux.ai/v1/responses");
+            const wireBody = JSON.parse(bodyText ?? "null") as Record<string, unknown>;
+            assert.equal(wireBody.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+            assert.deepEqual(wireBody.reasoning, { effort: "max" });
+            assert.equal(wireBody.deepSeekWaterfallPaidHop, undefined, "the trusted routing context must never enter the upstream wire body");
+            return new Response(sseResponse(sseBody([createdEvent("resp_openlux_native"), deltaEvent(), completedEvent("resp_openlux_native")])).body, {
+              headers: { "content-type": "text/event-stream", "x-request-id": "upstream-openlux-native" },
+            });
+          },
+          async () => {
+            await fetchMeteredModels({ fetcher: globalThis.fetch, force: true });
+            const context: UsageContext = {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId,
+              startedAtMs: Date.now(),
+              paidFallbackEnabled: true,
+              beforeProviderDispatch,
+            };
+            const response = await handleResponses(
+              responsesRequest({ model: DEEPSEEK_WATERFALL_MODEL_ID, reasoning: { effort: "max" }, stream: false }),
+              context
+            );
+            const body = (await response.json()) as Record<string, unknown>;
+            assert.equal(response.status, 200, JSON.stringify(body));
+            assert.equal(body.status, "completed");
+            assert.equal(response.headers.get("x-uos-upstream"), "metered");
+            assert.equal(response.headers.get("x-uos-attempted-providers"), "openlux");
+            assert.deepEqual(dispatched, ["metered"]);
+            assert.deepEqual(calls, ["https://api.openlux.ai/v1/models", "https://api.openlux.ai/v1/responses"]);
+            const stored = await waitForPaidFallbackTerminal(keyId, `${requestId}:deepseek_waterfall:openlux`, "completed");
+            assert.equal(stored.provider, "metered");
+            assert.equal(stored.provider_request_id, "upstream-openlux-native");
+            const denied = await handleResponses(responsesRequest({ model: DEEPSEEK_WATERFALL_MODEL_ID, stream: false }), {
+              ...context,
+              requestId: "waterfall-openlux-disabled-request",
+              paidFallbackEnabled: false,
+            });
+            assert.equal(denied.status, 403, "the verified capability cannot override the caller's paid-provider policy");
+            const ordinary = await handleResponses(responsesRequest({ model: DEEPSEEK_WATERFALL_PAID_MODEL_ID, stream: false }));
+            assert.equal(ordinary.status, 404, "the ordinary route still requires catalog evidence of Responses support");
+            const forged = await handleResponses(responsesRequest({ model: DEEPSEEK_WATERFALL_MODEL_ID, deepSeekWaterfallPaidHop: "openlux" }));
+            assert.equal(forged.status, 400, "a client cannot set the trusted synthetic-hop option");
+            assert.equal(calls.length, 2, "the rejected client field never dispatches");
+          }
+        )
+      )
+    );
+  } finally {
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    cleanupHarness();
+  }
 });

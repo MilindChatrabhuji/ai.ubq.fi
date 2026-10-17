@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 // Prompt-cache scope experiment coverage, split out of
 // tests/cache-kv-migration-usage-coverage.test.ts so both files stay under the 1500-line cap.
 
@@ -120,7 +121,7 @@ const probeCycle = (
   return { samples, signals, classification };
 };
 
-Deno.test("scope experiment: the failure error keeps its own name and message", () => {
+test("scope experiment: the failure error keeps its own name and message", () => {
   const error = new PromptCacheScopeExperimentFailedError("campaign aborted");
 
   assert.equal(error.name, "PromptCacheScopeExperimentFailedError");
@@ -128,7 +129,7 @@ Deno.test("scope experiment: the failure error keeps its own name and message", 
   assert.ok(error instanceof Error);
 });
 
-Deno.test("scope experiment: a complete target binding round-trips and every literal fence is enforced", () => {
+test("scope experiment: a complete target binding round-trips and every literal fence is enforced", () => {
   const binding = parseTargetBinding(targetBinding());
   assert.equal(binding?.id, "target-1");
   assert.equal(binding.model, SCOPE_MODEL);
@@ -160,7 +161,7 @@ Deno.test("scope experiment: a complete target binding round-trips and every lit
   }
 });
 
-Deno.test("scope experiment: state parsing accepts a fresh campaign and rejects drifted counters", () => {
+test("scope experiment: state parsing accepts a fresh campaign and rejects drifted counters", () => {
   const now = Date.now();
   const state = {
     v: 3,
@@ -203,7 +204,7 @@ Deno.test("scope experiment: state parsing accepts a fresh campaign and rejects 
   }
 });
 
-Deno.test("scope experiment: a finished campaign requires the pending scope to agree with all three cycles", () => {
+test("scope experiment: a finished campaign requires the pending scope to agree with all three cycles", () => {
   const now = Date.now();
   const classifications = [observation(), observation(), observation()];
   const pending = observation();
@@ -230,14 +231,14 @@ Deno.test("scope experiment: a finished campaign requires the pending scope to a
   assert.equal(parseState({ ...state, classifications: [observation(), observation(), observation({ token_refresh: "changed" })] }), null);
 });
 
-Deno.test("scope experiment: sharedObservation agrees only on a non-empty unanimous sequence", () => {
+test("scope experiment: sharedObservation agrees only on a non-empty unanimous sequence", () => {
   const shared = observation() as Parameters<typeof sharedObservation>[0][number];
   assert.equal(sharedObservation([]), null);
   assert.deepEqual(sharedObservation([shared, shared]), shared);
   assert.equal(sharedObservation([shared, observation({ conversation_id: "scoped" }) as typeof shared]), null);
 });
 
-Deno.test("scope experiment: cycle classification derives the concrete scope from the discriminator steps", () => {
+test("scope experiment: cycle classification derives the concrete scope from the discriminator steps", () => {
   const cycle = probeCycle();
   const samples = cycle.samples;
   const signals = cycle.signals;
@@ -293,14 +294,14 @@ Deno.test("scope experiment: cycle classification derives the concrete scope fro
   );
 });
 
-Deno.test("scope experiment: the reusable counter matcher accepts zero or the exact cycle counter", () => {
+test("scope experiment: the reusable counter matcher accepts zero or the exact cycle counter", () => {
   const usage = probeCycleSamples()[0].usage;
   assert.equal(matchesCycleReusableCounter(usage, 2_560), true);
   assert.equal(matchesCycleReusableCounter({ ...usage, cached_tokens: 0, cache_write_tokens: 0 }, 2_560), true);
   assert.equal(matchesCycleReusableCounter({ ...usage, cached_tokens: 2_500, cache_write_tokens: 0 }, 2_560), false);
 });
 
-Deno.test("scope experiment: stored evidence accepts a coherent campaign and rejects incomplete cycles", () => {
+test("scope experiment: stored evidence accepts a coherent campaign and rejects incomplete cycles", () => {
   const now = Date.now();
   const samples = probeCycleSamples();
   const evidence = {
@@ -359,7 +360,7 @@ Deno.test("scope experiment: stored evidence accepts a coherent campaign and rej
   }
 });
 
-Deno.test("scope experiment: sample rows must carry a known step, matching slot and identical usage tuples", () => {
+test("scope experiment: sample rows must carry a known step, matching slot and identical usage tuples", () => {
   const sample = probeCycleSamples()[0];
   const valid = {
     v: 3,
@@ -387,7 +388,7 @@ Deno.test("scope experiment: sample rows must carry a known step, matching slot 
   }
 });
 
-Deno.test("scope experiment: an inconclusive cycle must carry a reason while an unclassified one must match the evidence", () => {
+test("scope experiment: an inconclusive cycle must carry a reason while an unclassified one must match the evidence", () => {
   const now = Date.now();
   const base = {
     v: 3,
@@ -420,7 +421,7 @@ Deno.test("scope experiment: an inconclusive cycle must carry a reason while an 
   assert.equal(parseEvidence({ ...base, outcome: "failed", inconclusive_reason: "slot_drift", cycles: [] }), null);
 });
 
-Deno.test("scope experiment: active state and evidence must describe one campaign", () => {
+test("scope experiment: active state and evidence must describe one campaign", () => {
   const now = Date.now();
   // The state's classification and the cycle's derived scope agree here.
   const independent = probeCycle(SIGNAL_SHAPES_INDEPENDENT);
@@ -473,7 +474,7 @@ Deno.test("scope experiment: active state and evidence must describe one campaig
   assert.equal(activeStateEvidenceIsConsistent(shortCampaign, parsedEvidence), false);
 });
 
-Deno.test("scope experiment: an aborted probe signal raises the supplied reason or a DOMException", () => {
+test("scope experiment: an aborted probe signal raises the supplied reason or a DOMException", () => {
   throwIfAborted(new AbortController().signal);
 
   const reason = new Error("campaign cancelled");
@@ -496,7 +497,7 @@ Deno.test("scope experiment: an aborted probe signal raises the supplied reason 
   );
 });
 
-Deno.test("scope experiment: an unreadable upstream response fails closed with a cancellation attempt", async () => {
+test("scope experiment: an unreadable upstream response fails closed with a cancellation attempt", async () => {
   const cancelled: string[] = [];
   const unreadable = {
     ok: false,
@@ -516,7 +517,7 @@ Deno.test("scope experiment: an unreadable upstream response fails closed with a
   assert.deepEqual(cancelled, ["cancelled"]);
 });
 
-Deno.test("scope experiment: a cancellation failure while discarding the body does not mask the failure reason", async () => {
+test("scope experiment: a cancellation failure while discarding the body does not mask the failure reason", async () => {
   const exploding = {
     ok: false,
     status: 502,
@@ -533,7 +534,7 @@ Deno.test("scope experiment: a cancellation failure while discarding the body do
   );
 });
 
-Deno.test("scope experiment: a response without a registered slot is reported as slot drift", async () => {
+test("scope experiment: a response without a registered slot is reported as slot drift", async () => {
   const response = new Response("data: {}\n\n", { status: 200, headers: { "Content-Type": "text/event-stream" } });
 
   const result = await readPromptCacheScopeExperimentCompletedUsage(response, 3, SCOPE_MODEL, performance.now(), new AbortController().signal);

@@ -1,3 +1,8 @@
+import { writePackage } from "./fixture-release.ts";
+import { test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawnFixture, outputFixture, type FixtureOutput } from "./fixture-process.ts";
+import { createTestNativeKvPreload, currentTestNativeKvBinding } from "../../scripts/test-native-kv.ts";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +16,7 @@ const importSource = (path: string): string => JSON.stringify(moduleUrl(path));
 
 const bootstrapSource = (fixture: string): string => `
 import assert from "node:assert/strict";
+import { openKv, KvU64 } from ${importSource("src/storage/kv.ts")};
 import { apiKeyIdKey } from ${importSource("src/api-keys.ts")};
 import { getKv, setKvForTest } from ${importSource("src/kv.ts")};
 import { admitPaidFallbackV3, updatePaidFallbackRequestV3 } from ${importSource("src/paid-fallback/ledger-admission.ts")};
@@ -26,8 +32,8 @@ const realNow = Date.now;
 const realSetTimeout = setTimeout;
 let clock = realNow();
 Date.now = () => clock;
-const nativeOpen = Deno.openKv;
-const mac = await nativeOpen(fixture + "/.data/kv.sqlite3");
+const nativeOpen = openKv;
+const mac = await nativeOpen(fixture + "/.data/kv-bun.sqlite3");
 const isolated = await nativeOpen(fixture + "/.data/isolated.sqlite3");
 await isolated.set(["isolation"], "untouched");
 const isolatedBefore = await isolated.get(["isolation"]);
@@ -36,7 +42,7 @@ const state = { intervalArms: 0, intervalCallbacks: [], startupReconciles: 0, st
   startupSettled: 0, stopCalls: 0, stopSettled: 0, closeCalls: 0, providerReads: 0,
   timeoutArms: 0,
   sameKv: false, nativeOpenCalls: 0, shutdownTelemetry: 0, serveCalls: 0,
-  actualHostOs: Deno.build.os, targetEntryOs: "darwin" };
+  actualHostOs: process.platform, targetEntryOs: "darwin", realMacKernel: process.platform === "darwin" };
 globalThis.maintenanceFixture = state;
 globalThis.setInterval = (callback) => { state.intervalArms += 1; state.intervalCallbacks.push(callback); return 1; };
 globalThis.clearInterval = () => {};
@@ -100,7 +106,7 @@ setKvForTest(mac);
 const baseline = await seedBilling("baseline");
 await markPaidFallbackTerminalV3(baseline, "completed");
 const baselineCounter = expiredCounterKey();
-await mac.set(baselineCounter, new Deno.KvU64(1n));
+await mac.set(baselineCounter, new KvU64(1n));
 assert.equal(await reconcileDuePaidFallbacksV3(clock, mac), 1);
 await assertReleased(baseline);
 assert.equal((await prunePromptCacheAnalytics({ kv: mac, now: () => clock })).status, "pruned");
@@ -109,33 +115,21 @@ assert.equal((await mac.get(baselineCounter)).value, null);
 const startup = await seedBilling("startup");
 await markPaidFallbackTerminalV3(startup, "completed");
 const startupCounter = expiredCounterKey();
-await mac.set(startupCounter, new Deno.KvU64(1n));
+await mac.set(startupCounter, new KvU64(1n));
 setKvForTest(null);
 
 let finishServe;
 const finished = new Promise(resolve => { finishServe = resolve; });
-Deno.serve = () => {
-  state.serveCalls += 1;
-  return { finished, shutdown: () => { finishServe(); return Promise.resolve(); } };
-};
-Object.defineProperty(Deno, "openKv", { value: async path => {
-  state.nativeOpenCalls += 1;
-  assert.equal(path, fixture + "/.data/kv.sqlite3");
-  return mac;
-} });
+state.kv = mac;
+state.serve = () => { state.serveCalls += 1; return { finished, shutdown: () => { finishServe(); return Promise.resolve(); } }; };
 const close = mac.close.bind(mac);
 mac.close = () => {
   assert.equal(state.stopSettled >= 1, true, "startup jobs must settle before KV close");
   assert.equal(state.shutdownTelemetry, 1);
   state.closeCalls += 1;
-  console.log(JSON.stringify({ fixture: "mac-event-maintenance", ...state, intervalCallbacks: undefined }));
+  console.log(JSON.stringify({ fixture: "mac-event-maintenance", ...state, kv: undefined, serve: undefined, stop: undefined, intervalCallbacks: undefined }));
   close();
 };
-// Only this disposable child presents the Mac capability to the unchanged entry.
-// A facade can shadow readonly build metadata without redefining it or violating Proxy invariants.
-const entryDeno = Object.create(Deno, { build: { value: Object.freeze({ ...Deno.build, os: state.targetEntryOs }) } });
-Object.defineProperty(globalThis, "Deno", { value: entryDeno });
-assert.equal(Deno.build.os, state.targetEntryOs);
 const entry = import(${JSON.stringify(`${fixture}/.data/releases/${revision}/scripts/serve-mac.ts`)});
 await waitFor(() => state.serveCalls === 1 && state.startupSettled === 2, "startup maintenance did not settle");
 assert.equal(await getKv(), mac);
@@ -208,7 +202,8 @@ await waitFor(async () => (await mac.get(paidFallbackPendingV3Key("fixture-key",
   && (await mac.get(paidFallbackReconciliationLeaseV3Key("fixture-key"))).value === null,
   "the terminal event must release its native lease before KV shutdown");
 const laterCounter = expiredCounterKey();
-await mac.set(laterCounter, new Deno.KvU64(1n));
+await mac.set(laterCounter, new KvU64(1n));
+assert.equal(await getKv(), mac, "the event must retain the initialized native fixture handle");
 const analytics = await recordPromptCacheAnalytics({ provider: "chatgpt_codex", model: "fixture-model",
   route: "responses", status: 200, completed: true, usageTelemetryStatus: "reported",
   inputTokens: 100, cachedInputTokens: 25, cacheWriteInputTokens: null,
@@ -231,6 +226,10 @@ await entry;
 `;
 
 const fixtureSources = (fixture: string): Record<string, string> => ({
+  "ops/release-artifact.ts": `export const verifyReleasePayload = () => Promise.resolve({ schema: 3, native_kv: {} });`,
+  "ops/native-kv-release.ts": `export const nativeKvReleaseBinding = () => ({});`,
+  "src/storage/native-addon.ts": `export const prepareNativeKvBackend = () => {};`,
+  "src/runtime/native-kv-bootstrap.ts": `export const prepareNativeKvForDevelopment = () => Promise.resolve();`,
   "src/config.ts": `export const config = { isDeploy: false }; export const runtimeGitSha = () => ${JSON.stringify(revision)};`,
   "src/kv.ts": `import { initializeKv as install, getKv } from ${importSource("src/kv.ts")};
     export { getKv }; export const initializeKv = kv => { install(kv); globalThis.maintenanceFixture.sameKv = true; };`,
@@ -252,9 +251,9 @@ const fixtureSources = (fixture: string): Record<string, string> => ({
       globalThis.maintenanceFixture.startupReconciles += 1;
       const value = await reconcile(now, kv); globalThis.maintenanceFixture.startupSettled += 1; return value;
     };`,
-  "src/handler/serve-handler.ts": `export const createServeHandler = () => () => new Response("fixture");`,
-  "serve.ts": `import handler, { startMacMaintenance as start, shutdownOptionalTelemetry as drain } from "./maintenance.ts";
-    export default handler;
+  "src/handler/serve-handler.ts": `export const createServeHandler = () => () => new Response("fixture"); export const createServeUpgradeHandler = () => () => undefined;`,
+  "serve.ts": `import { application as handler, startMacMaintenance as start, shutdownOptionalTelemetry as drain } from "./maintenance.ts";
+    export const application = handler;
     export const startMacMaintenance = kv => {
       const stop = start(kv); globalThis.maintenanceFixture.stop = stop;
       return () => {
@@ -265,59 +264,72 @@ const fixtureSources = (fixture: string): Record<string, string> => ({
     export const shutdownOptionalTelemetry = async () => {
       await drain(); globalThis.maintenanceFixture.shutdownTelemetry += 1;
     };`,
+  "fixture-kv.ts": `export * from ${importSource("src/storage/kv.ts")}; export const openKv = async path => { const state = globalThis.maintenanceFixture;
+    state.nativeOpenCalls += 1; if (path !== ${JSON.stringify(fixture + "/.data/kv-bun.sqlite3")}) throw new Error("wrong KV"); return state.kv; };`,
+  "fixture-http.ts": `export * from ${importSource("src/runtime/http.ts")}; export const serveHttp = () => globalThis.maintenanceFixture.serve();`,
   "bootstrap.ts": bootstrapSource(fixture),
 });
 
 const sha256 = async (value: string): Promise<string> =>
   Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
-Deno.test("Mac entry preserves event maintenance and defers missing settlement logs without periodic intervals", async () => {
-  const launcher = await Deno.readTextFile(`${root}scripts/serve-mac.ts`);
-  const maintenance = await Deno.readTextFile(`${root}serve.ts`);
-  await Deno.mkdir(fixtureParent, { recursive: true });
-  const fixture = await Deno.makeTempDir({ dir: fixtureParent, prefix: "native-" });
+test("Mac entry preserves event maintenance and defers missing settlement logs without periodic intervals", async () => {
+  const originalLauncher = await readFile(`${root}scripts/serve-mac.ts`, "utf8");
+  const guard = 'if (process.platform !== "darwin") throw new Error("The Mac service requires macOS");';
+  assert.equal(originalLauncher.split(guard).length - 1, 1);
+  let launcher = originalLauncher;
+  const hostGuard = 'if (process.platform !== "linux") throw new Error("Fixture host mismatch");';
+  if (process.platform !== "darwin") launcher = launcher.replace(guard, hostGuard);
+  assert.equal(launcher.split('import("#kv")').length - 1, 1);
+  assert.equal(launcher.split('import("#http")').length - 1, 1);
+  launcher = launcher.replace('import("#kv")', 'import("../fixture-kv.ts")').replace('import("#http")', 'import("../fixture-http.ts")');
+  const restored = launcher.replace('import("../fixture-kv.ts")', 'import("#kv")').replace('import("../fixture-http.ts")', 'import("#http")');
+  assert.equal(process.platform === "darwin" ? restored : restored.replace(hostGuard, guard), originalLauncher);
+  const maintenance = await readFile(`${root}serve.ts`, "utf8");
+  await mkdir(fixtureParent, { recursive: true });
+  const fixture = await mkdtemp(fixtureParent + "/" + "native-");
   const release = `${fixture}/.data/releases/${revision}`;
   const hashes: Record<string, string> = {};
   try {
-    await Deno.mkdir(`${fixture}/.data`, { recursive: true });
+    await mkdir(`${fixture}/.data`, { recursive: true });
+    await mkdir(release, { recursive: true });
+    await writePackage(release, { "#kv": "./fixture-kv.ts", "#http": "./fixture-http.ts" });
+    await writePackage(fixture, { "#kv": `./.data/releases/${revision}/fixture-kv.ts`, "#http": `./.data/releases/${revision}/fixture-http.ts` });
     for (const [path, source] of Object.entries(fixtureSources(fixture))) {
       const absolute = path === "bootstrap.ts" ? `${fixture}/${path}` : `${release}/${path}`;
-      await Deno.mkdir(absolute.slice(0, absolute.lastIndexOf("/")), { recursive: true });
-      await Deno.writeTextFile(absolute, source);
-      hashes[path] = await sha256(await Deno.readTextFile(absolute));
+      await mkdir(absolute.slice(0, absolute.lastIndexOf("/")), { recursive: true });
+      await writeFile(absolute, source);
+      hashes[path] = await sha256(await readFile(absolute, "utf8"));
     }
-    await Deno.mkdir(`${release}/scripts`, { recursive: true });
-    await Deno.writeTextFile(`${release}/scripts/serve-mac.ts`, launcher);
-    await Deno.writeTextFile(`${release}/maintenance.ts`, maintenance);
-    assert.equal(await sha256(await Deno.readTextFile(`${release}/scripts/serve-mac.ts`)), await sha256(launcher));
-    assert.equal(await sha256(await Deno.readTextFile(`${release}/maintenance.ts`)), await sha256(maintenance));
+    await mkdir(`${release}/scripts`, { recursive: true });
+    await writeFile(`${release}/scripts/serve-mac.ts`, launcher);
+    await writeFile(`${release}/maintenance.ts`, maintenance);
+    assert.equal(await sha256(await readFile(`${release}/scripts/serve-mac.ts`, "utf8")), await sha256(launcher));
+    assert.equal(await sha256(await readFile(`${release}/maintenance.ts`, "utf8")), await sha256(maintenance));
     hashes["scripts/serve-mac.ts"] = await sha256(launcher);
     hashes["maintenance.ts"] = await sha256(maintenance);
-    const child = new Deno.Command(Deno.execPath(), {
+    const child = spawnFixture(process.execPath, {
       args: [
-        "run",
-        "--frozen",
-        "--no-prompt",
-        `--config=${root}deno.json`,
-        `--lock=${root}deno.lock`,
-        "--unstable-kv",
-        `--allow-read=${fixture},${root}src`,
-        `--allow-write=${fixture}`,
-        "--allow-env=DENO_DEPLOY,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID,DENO_REGION,DENO_TIMELINE,METERED_API_KEY",
+        "--no-env-file",
+        "--no-install",
+        "--define",
+        "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(currentTestNativeKvBinding()),
+        "--preload",
+        createTestNativeKvPreload(fixture),
         `${fixture}/bootstrap.ts`,
       ],
       cwd: fixture,
       clearEnv: true,
-      env: { METERED_API_KEY: "synthetic-mac-fixture" },
+      env: { HOME: fixture, METERED_API_KEY: "synthetic-mac-fixture" },
       stdout: "piped",
       stderr: "piped",
-    }).spawn();
+    });
     const deadline = setTimeout(() => {
       child.kill("SIGKILL");
     }, 20_000);
-    let result: Deno.CommandOutput;
+    let result: FixtureOutput;
     try {
-      result = await child.output();
+      result = await outputFixture(child);
     } finally {
       clearTimeout(deadline);
     }
@@ -336,10 +348,16 @@ Deno.test("Mac entry preserves event maintenance and defers missing settlement l
     assert.equal(probe.nativeOpenCalls, 1);
     assert.equal(probe.serveCalls, 1);
     assert.equal(probe.shutdownTelemetry, 1);
-    assert.equal(probe.actualHostOs, Deno.build.os);
+    assert.equal(probe.actualHostOs, process.platform);
     assert.equal(probe.targetEntryOs, "darwin");
-    console.info(JSON.stringify({ fixtureManifest: { ...hashes, actualHostOs: Deno.build.os, targetEntryOs: "darwin" }, probe }));
+    assert.equal(probe.realMacKernel, process.platform === "darwin");
+    console.info(
+      JSON.stringify({
+        fixtureManifest: { ...hashes, actualHostOs: process.platform, targetEntryOs: "darwin", realMacKernel: process.platform === "darwin" },
+        probe,
+      })
+    );
   } finally {
-    await Deno.remove(fixture, { recursive: true });
+    await rm(fixture, { recursive: true });
   }
 });

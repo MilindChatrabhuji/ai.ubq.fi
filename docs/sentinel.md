@@ -377,8 +377,7 @@ artifact. Normal push and manual deployment runs retain the workflow-owned verif
 Deployment success alone is not production identity. The orchestrator resolves the new routed revision whose revision
 URL `/health` reports the exact candidate Git SHA, promotes that revision with Deno's revision API, requires HTTP 204,
 and verifies the public Deno host and `ai.ubq.fi` report both the candidate SHA and promoted revision. It records the
-previous healthy SHA and revision before deployment so rollback has an exact target. Health attestation requires HTTP
-200. An identity-bearing error response is not treated as healthy.
+previous healthy SHA and revision before deployment so rollback has an exact target. Health attestation requires HTTP 200. An identity-bearing error response is not treated as healthy.
 
 Every preview, production, rollback, and revert promotion is dispatched to
 `.github/workflows/sentinel-revision-control.yml`. That short workflow shares the `ai-ubq-fi-deploy` concurrency queue
