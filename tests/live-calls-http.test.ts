@@ -411,7 +411,9 @@ test("POST /v1/live retries a credential failure once with the next eligible acc
 }, 300_000);
 
 test("POST /v1/live relays an upstream credential failure verbatim when no other account is eligible", async () => {
-  const fixture = await startLiveCallsFixture(() => Response.json({ detail: "credential expired" }, { status: 401 }));
+  const fixture = await startLiveCallsFixture(() => Response.json({ detail: "credential expired" }, { status: 401 }), {
+    accounts: [codexAccount(ACCOUNT_A, Date.now())],
+  });
   try {
     const response = await postLiveCall(fixture);
     const body = await response.text();
