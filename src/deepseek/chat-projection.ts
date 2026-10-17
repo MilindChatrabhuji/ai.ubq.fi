@@ -693,11 +693,20 @@ const applyReasoning = (
   rawRecord: Record<string, unknown>,
   profile: ChatOnlyResponsesProfile
 ): DeepSeekResponsesResult<void> => {
+  // Keep the provider's wire mode aligned with the mode used below to decide
+  // whether sampling controls are effective.
+  const thinkingDisabled = profile.id === "deepseek" && !deepSeekThinkingModeActive(undefined, rawRecord.thinking);
   const raw = rawRecord.reasoning;
-  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (raw === undefined || raw === null) {
+    if (thinkingDisabled) body.reasoning_effort = "none";
+    return { ok: true, value: undefined };
+  }
   if (!isRecord(raw) || Array.isArray(raw)) return failure("reasoning", "reasoning must be an object");
   const effort = getString(raw.effort);
-  if (!effort) return { ok: true, value: undefined };
+  if (!effort) {
+    if (thinkingDisabled) body.reasoning_effort = "none";
+    return { ok: true, value: undefined };
+  }
   const wireEffort = profile.projectReasoningEffort(effort);
   if (wireEffort === null) return failure("reasoning.effort", `reasoning.effort '${effort}' is not supported by ${profile.label}`);
   body.reasoning_effort = wireEffort;

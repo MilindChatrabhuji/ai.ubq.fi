@@ -16,6 +16,16 @@ test("deepseek responses: forwards sampling controls when thinking is disabled",
   assert.equal(disabled.value.body.top_p, 0.4);
   assert.deepEqual(disabled.value.warnings, []);
 
+  const disabledByThinking = toDeepSeekResponsesChatBody(
+    { input: "hi", thinking: { type: "disabled" }, temperature: 0 },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(disabledByThinking.ok, true);
+  assert.equal(disabledByThinking.value.body.reasoning_effort, "none");
+  assert.equal(disabledByThinking.value.body.temperature, 0);
+  assert.deepEqual(disabledByThinking.value.warnings, []);
+
   const active = toDeepSeekResponsesChatBody(
     { input: "hi", reasoning: { effort: "high" }, temperature: 0, top_p: 0.4 },
     "deepseek-flash",
