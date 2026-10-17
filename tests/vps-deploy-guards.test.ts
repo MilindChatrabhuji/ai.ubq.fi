@@ -767,6 +767,7 @@ withLauncher("VPS same-SHA retry restores the previous release after an interrup
   assert.equal(await recoveryPhase(f), "candidate_ready");
 
   const before = (await calls(f)).filter((line) => line === RESTART_COMMAND).length;
+  assert.equal(before, 1, "the interrupted first run started the candidate exactly once");
   await write(f.root, "reload-refused", "fault\n");
   const retry = await runDeployFixture(f, a.options);
   assert.notEqual(retry.code, 0);
@@ -789,13 +790,15 @@ withLauncher("VPS legacy same-SHA retry refuses cross-codec rollback after an in
   assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
   assert.equal(await recoveryPhase(f), "candidate_ready");
 
+  const before = (await calls(f)).filter((line) => line === RESTART_COMMAND).length;
+  assert.equal(before, 1, "the interrupted first run started the candidate exactly once");
   await write(f.root, "reload-refused", "fault\n");
   const retry = await runDeployFixture(f, a.options);
   assert.notEqual(retry.code, 0);
   assert.match(retry.stderr, /Cross-codec rollback/);
   assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
   assert.equal(await recoveryPhase(f), "candidate_ready");
-  assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, 1);
+  assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, before);
 }, "legacy-supported");
 withLauncher("VPS post-ingress failure retains candidate and retries without restart", async (f, a) => {
   await write(f.root, "public-refused", "fault\n");
