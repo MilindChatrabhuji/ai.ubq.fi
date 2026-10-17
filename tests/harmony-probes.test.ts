@@ -156,8 +156,12 @@ test("native probe records the projected Cerebras message roles", async () => {
     apiKey: "test-key",
     fetcher: (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      wireRoles = Array.isArray(body.messages) ? body.messages.map((message) => (message as Record<string, unknown>).role) : [];
-      return Promise.resolve(new Response(scriptedCompletion({ content: "done" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (Array.isArray(body.messages)) {
+        wireRoles = body.messages.map((message) => (message as Record<string, unknown>).role);
+      }
+      const payload = scriptedCompletion({ content: "done" });
+      const response = new Response(payload, { status: 200, headers: { "Content-Type": "application/json" } });
+      return Promise.resolve(response);
     },
   });
   const ctx = createProbeContext(transport, () => new Date(0));
