@@ -259,14 +259,16 @@ export const handleLiveCallCreate = async (req: Request, principal: string): Pro
       await recordCodexThrownHealth(accountId, error);
       return captured ?? liveCallDispatchFailureResponse(error);
     }
-    await recordCodexResponseHealth(accountId, upstream, auth, "success");
-
     const credentialFailure = upstream.status === 401 || upstream.status === 403;
+    if (credentialFailure) {
+      // Passive provider health does not participate in account eligibility. Fence
+      // the credential before recording optional telemetry or reselecting so the
+      // attempted-account filter does not turn the bounded retry into the captured
+      // first failure.
+      await markCodexCredentialInvalid(routing);
+    }
+    await recordCodexResponseHealth(accountId, upstream, auth, "success");
     if (!credentialFailure) return await relayLiveCallResponse(upstream, accountId, principal);
-    // Passive provider health does not participate in account eligibility. Fence
-    // the credential before the strong reselection so the attempted-account
-    // filter does not turn the bounded retry into the captured first failure.
-    await markCodexCredentialInvalid(routing);
     if (attempt === LIVE_CALL_MAX_UPSTREAM_ATTEMPTS) return await relayLiveCallResponse(upstream, accountId, principal);
     // The retry re-evaluates durable routing after the credential fence, so any
     // transition it started must be observable first. The serial selector exposes one
