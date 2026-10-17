@@ -4,8 +4,8 @@
  * Source files are capped at 1000 lines and test files at 1500. Files that
  * predate the caps carry a recorded per-file ceiling in
  * `file-size-baseline.json`; nothing over a cap may be added, and a recorded
- * ceiling may only tighten. `deno task size:check` fails whenever the tree and
- * the baseline disagree, and `deno task size:update` is the only writer: it can
+ * ceiling may only tighten. `bun run size:check` fails whenever the tree and
+ * the baseline disagree, and `bun run size:update` is the only writer: it can
  * lower or drop a ceiling and refuses to raise one or to record a new file.
  *
  * Check rules:
@@ -19,9 +19,9 @@
  * and vendored, generated, scratch, and worktree directories excluded.
  *
  * Usage:
- *   deno run --allow-read scripts/file-size-ratchet.ts
- *   deno run --allow-read --allow-write=file-size-baseline.json scripts/file-size-ratchet.ts --update
- *   deno run --allow-read --allow-write=file-size-baseline.json scripts/file-size-ratchet.ts --init
+ *   bun --no-env-file scripts/file-size-ratchet.ts
+ *   bun --no-env-file scripts/file-size-ratchet.ts --update
+ *   bun --no-env-file scripts/file-size-ratchet.ts --init
  *
  * `--init` is the one-time bootstrap; it refuses to run once the baseline
  * exists. Do not delete the baseline to re-record debt.
@@ -34,14 +34,15 @@ import { fileURLToPath } from "node:url";
 const SOURCE_CAP = 1000;
 const TEST_CAP = 1500;
 const BASELINE_PATH = "file-size-baseline.json";
-const UPDATE_HINT = "`deno task size:update`";
+const UPDATE_HINT = "`bun run size:update`";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Mirrors the ESLint flat-config ignores plus test scratch directories.
 const SKIP_DIRECTORIES = new Set([
   ".git",
   "node_modules",
-  "lib",
+  ".bun-cache",
+  ".tmp",
   ".codex-worktrees",
   ".data",
   ".release",
@@ -57,6 +58,10 @@ const SKIP_DIRECTORIES = new Set([
 // and the benchmark harness.
 const TEST_DIRECTORY = /(?:^|\/)(?:tests?|__tests__)(?:\/|$)/;
 const TEST_FILENAME = /\.(?:test|spec)\.ts$/;
+// This executable is an asserted official-Codex acceptance harness, not app source.
+// Keep its test ceiling explicit; every other first-party library file stays covered.
+const ACCEPTANCE_TEST_FILES = new Set(["lib/jev_compaction/jev-codex-smoke.ts"]);
+const VENDORED_PATHS = new Set(["lib/codex"]);
 
 type CountedFile = Readonly<{ path: string; lines: number; cap: number }>;
 
@@ -71,7 +76,8 @@ const listFiles = (): CountedFile[] => {
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const full = join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (!SKIP_DIRECTORIES.has(entry.name)) walk(full);
+        const path = relative(ROOT, full).split(sep).join("/");
+        if (!SKIP_DIRECTORIES.has(entry.name) && !VENDORED_PATHS.has(path)) walk(full);
       } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
         paths.push(relative(ROOT, full).split(sep).join("/"));
       }
@@ -79,7 +85,8 @@ const listFiles = (): CountedFile[] => {
   };
   walk(ROOT);
   return paths.map((path) => {
-    const cap = TEST_DIRECTORY.test(path) || TEST_FILENAME.test(path) || path.startsWith("benchmarks/") ? TEST_CAP : SOURCE_CAP;
+    const cap =
+      TEST_DIRECTORY.test(path) || TEST_FILENAME.test(path) || path.startsWith("benchmarks/") || ACCEPTANCE_TEST_FILES.has(path) ? TEST_CAP : SOURCE_CAP;
     return { path, lines: countLines(readFileSync(join(ROOT, path), "utf8")), cap };
   });
 };
@@ -114,7 +121,7 @@ const readBaseline = (): Map<string, number> => {
 const initialize = (files: readonly CountedFile[]): void => {
   if (existsSync(baselineLocation())) {
     console.error(`size:init: ${BASELINE_PATH} already exists; use --update to tighten it`);
-    Deno.exit(1);
+    process.exit(1);
   }
   const oversized = files.filter((file) => file.lines > file.cap);
   writeBaseline(new Map(oversized.map((file) => [file.path, file.lines])));
@@ -152,7 +159,7 @@ const check = (files: readonly CountedFile[], baseline: ReadonlyMap<string, numb
   if (failures.length > 0) {
     for (const failure of failures) console.error(`FAIL ${failure}`);
     console.error(`size:check: FAILED (${failures.length} problems; ${files.length} files checked, ${oversized} over the caps)`);
-    Deno.exit(1);
+    process.exit(1);
   }
   console.log(`size:check: OK (${files.length} files checked, ${oversized} grandfathered, caps ${SOURCE_CAP} source / ${TEST_CAP} test)`);
 };
@@ -182,7 +189,7 @@ const update = (files: readonly CountedFile[], baseline: ReadonlyMap<string, num
   if (refusals.length > 0) {
     for (const refusal of refusals) console.error(`REFUSED ${refusal}`);
     console.error("size:update: no changes written");
-    Deno.exit(1);
+    process.exit(1);
   }
   const paths = new Set(files.map((file) => file.path));
   const next = new Map<string, number>();
@@ -213,14 +220,14 @@ const parseMode = (args: readonly string[]): "check" | "update" | "init" => {
     else {
       console.error(`unknown argument: ${arg}`);
       console.error("usage: file-size-ratchet.ts [--check|--update|--init]");
-      Deno.exit(1);
+      process.exit(1);
     }
   }
   return mode;
 };
 
 const main = (): void => {
-  const mode = parseMode(Deno.args);
+  const mode = parseMode(process.argv.slice(2));
   const files = listFiles();
   if (mode === "init") {
     initialize(files);
@@ -235,5 +242,5 @@ try {
   main();
 } catch (error) {
   console.error(`size:check: ${error instanceof Error ? error.message : String(error)}`);
-  Deno.exit(1);
+  process.exit(1);
 }

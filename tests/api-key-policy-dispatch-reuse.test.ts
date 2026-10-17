@@ -1,3 +1,5 @@
+import type { Kv, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { apiKeyHashKey } from "../src/api-keys.ts";
 import {
@@ -13,7 +15,7 @@ import {
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
 
-const storedValue = (kv: CountingKv, key: Deno.KvKey): unknown => kv.entries.get(JSON.stringify(key))?.value ?? null;
+const storedValue = (kv: CountingKv, key: KvKey): unknown => kv.entries.get(JSON.stringify(key))?.value ?? null;
 
 const setupPolicy = (id: string, usageLimitRequests: number, nowMs = Date.now()): { kv: CountingKv; policy: ApiKeyPolicy } => {
   const tokenHash = `dispatch-reuse-${id}`;
@@ -41,7 +43,7 @@ const setupPolicy = (id: string, usageLimitRequests: number, nowMs = Date.now())
 
 const reserve = async (kv: CountingKv, policy: ApiKeyPolicy, requestId: string, nowMs = Date.now()): Promise<ApiKeyUsageReservation> => {
   const decision = await reserveApiKeyUsageV3(policy, requestId, "responses", {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     nowMs,
   });
   if (!decision.ok) throw new Error(`unexpected admission failure: ${decision.response.status}`);
@@ -60,7 +62,7 @@ const requestFor = (kv: CountingKv, policy: ApiKeyPolicy, requestId: string): Ap
   return request;
 };
 
-Deno.test("V3 local dispatch state skips only the redundant post-dispatch release reads", async () => {
+test("V3 local dispatch state skips only the redundant post-dispatch release reads", async () => {
   const { kv, policy } = setupPolicy("normal-dispatch", 2);
   const finish = kv.beginMeasurement({ authKind: "bounded_api_key", outcome: "post_dispatch_release" });
   try {
@@ -105,7 +107,7 @@ Deno.test("V3 local dispatch state skips only the redundant post-dispatch releas
   );
 });
 
-Deno.test("V3 pre-transport cancellation still compensates before the local completion no-op", async () => {
+test("V3 pre-transport cancellation still compensates before the local completion no-op", async () => {
   const { kv, policy } = setupPolicy("pre-transport-cancellation", 1);
   const reservation = await reserve(kv, policy, "pre-transport-cancellation-request");
   const dispatch = await reservation.beforeProviderDispatch("chatgpt_codex");
@@ -128,7 +130,7 @@ Deno.test("V3 pre-transport cancellation still compensates before the local comp
   );
 });
 
-Deno.test("V3 retry and upstream failure retain one dispatch while completion stays read-free", async () => {
+test("V3 retry and upstream failure retain one dispatch while completion stays read-free", async () => {
   const { kv, policy } = setupPolicy("retry-and-upstream-failure", 2);
   const reservation = await reserve(kv, policy, "retry-and-upstream-failure-request");
   const firstDispatch = await reservation.beforeProviderDispatch("chatgpt_codex");
@@ -153,7 +155,7 @@ Deno.test("V3 retry and upstream failure retain one dispatch while completion st
   );
 });
 
-Deno.test("V3 non-dispatch paths retain the durable release CAS", async () => {
+test("V3 non-dispatch paths retain the durable release CAS", async () => {
   const { kv, policy } = setupPolicy("non-dispatch", 1);
   const reservation = await reserve(kv, policy, "non-dispatch-request");
   const beforeRelease = kv.commands.length;
@@ -172,7 +174,7 @@ Deno.test("V3 non-dispatch paths retain the durable release CAS", async () => {
   );
 });
 
-Deno.test("V3 duplicate admission and concurrent bounded admission preserve one reservation and dispatch", async () => {
+test("V3 duplicate admission and concurrent bounded admission preserve one reservation and dispatch", async () => {
   const { kv, policy } = setupPolicy("idempotency-and-concurrency", 1);
   const first = await reserve(kv, policy, "same-request");
   const duplicate = await reserve(kv, policy, "same-request");
@@ -188,7 +190,7 @@ Deno.test("V3 duplicate admission and concurrent bounded admission preserve one 
   const decisions = await Promise.all(
     Array.from({ length: 8 }, (_, index) =>
       reserveApiKeyUsageV3(concurrentPolicy, `concurrent-${index}`, "responses", {
-        kv: concurrentKv as unknown as Deno.Kv,
+        kv: concurrentKv as unknown as Kv,
       })
     )
   );
@@ -209,7 +211,7 @@ Deno.test("V3 duplicate admission and concurrent bounded admission preserve one 
   );
 });
 
-Deno.test("V3 abandoned reservations remain reclaimable after a simulated process crash", async () => {
+test("V3 abandoned reservations remain reclaimable after a simulated process crash", async () => {
   const nowMs = Date.now();
   const { kv, policy } = setupPolicy("crash-reclaim", 1, nowMs);
   await reserve(kv, policy, "abandoned-request", nowMs);
@@ -235,13 +237,13 @@ Deno.test("V3 abandoned reservations remain reclaimable after a simulated proces
   );
 });
 
-Deno.test("bounded API-key quota responses publish standard rate-limit headers", async () => {
+test("bounded API-key quota responses publish standard rate-limit headers", async () => {
   const nowMs = Date.now();
   const { kv, policy } = setupPolicy("rate-limit-headers", 1, nowMs);
   await reserve(kv, policy, "first-request", nowMs);
 
   const decision = await reserveApiKeyUsageV3(policy, "blocked-request", "responses", {
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     nowMs,
   });
   if (decision.ok) throw new Error("second bounded request should be rate limited");

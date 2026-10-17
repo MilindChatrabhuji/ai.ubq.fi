@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, parseCodexAuthPool } from "../codex/index.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
@@ -115,7 +116,7 @@ export type DerivePromptCacheScopeTargetInventoryInput = Readonly<{
 
 export type LoadPromptCacheScopeTargetInventoryOptions = Readonly<{
   /** Injection keeps the loader deterministic in focused tests. */
-  kv?: Deno.Kv | null;
+  kv?: Kv | null;
   meteredFallbackRoster?: MeteredFallbackRoster;
 }>;
 
@@ -498,8 +499,8 @@ export const loadPromptCacheScopeTargetInventory = async (
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return unavailableInventory("kv_unavailable", roster);
 
-  let catalogEntry: Deno.KvEntryMaybe<CodexModelsSnapshot>;
-  let authPoolEntry: Deno.KvEntryMaybe<unknown>;
+  let catalogEntry: KvEntryMaybe<CodexModelsSnapshot>;
+  let authPoolEntry: KvEntryMaybe<unknown>;
   try {
     [catalogEntry, authPoolEntry] = await Promise.all([
       kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY, { consistency: "strong" }),

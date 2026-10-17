@@ -5,9 +5,9 @@ import { type ChatOnlyResponsesProfile, type OriginalToolName } from "../deepsee
 import { type DeepSeekResponsesEcho } from "../deepseek/responses-payload.ts";
 import { createDeepSeekResponsesStreamTranslator, encodeResponsesEvent } from "../deepseek/responses-stream.ts";
 import {
-  ResponseStreamTerminalType,
-  UsageContext,
-  UsageTokens,
+  type ResponseStreamTerminalType,
+  type UsageContext,
+  type UsageTokens,
   extractChatUsageTokens,
   recordCompletionUsage,
   recordErrorUsage,
@@ -170,6 +170,7 @@ export const relayChatCompletionStream = (
     const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
     settleTerminal(terminalType);
     adapter.recordTransportFailure(usageContext, error, terminalType);
+    if (usage) recordTerminalUsage(usageContext, usage, false);
     if (terminalType !== "cancelled") {
       adapter.recordProviderError(null, providerRequestId);
       await recordErrorUsage(usageContext);
@@ -555,6 +556,7 @@ export const relayResponsesStream = (
     const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
     settleTerminal(terminalType);
     adapter.recordTransportFailure(usageContext, error, terminalType);
+    if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
     try {
       if (terminalType !== "cancelled") {
         adapter.recordProviderError(null, providerRequestId);

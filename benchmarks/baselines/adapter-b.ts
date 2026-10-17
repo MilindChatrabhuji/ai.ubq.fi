@@ -1,3 +1,4 @@
+import { runCommand } from "../process.ts";
 /**
  * Baseline B: codex-infinity-compatible process/trajectory bridge.
  *
@@ -420,13 +421,8 @@ export function parseCodexProcessLine(line: string): BridgeProcessEvent | null {
 }
 
 async function assertPinnedCheckout(checkoutPath: string): Promise<void> {
-  const proc = new Deno.Command("git", {
-    args: ["-C", checkoutPath, "rev-parse", "HEAD"],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const out = await proc.output();
-  const ref = new TextDecoder().decode(out.stdout).trim();
+  const out = await runCommand(["git", "-C", checkoutPath, "rev-parse", "HEAD"]);
+  const ref = out.stdout.trim();
   if (out.code !== 0 || ref !== CODEX_INFINITY_SOURCE_PIN.pinnedRef) {
     throw new BaselineAdapterError(
       `codex-infinity checkout at ${checkoutPath} is at ${ref || "(unknown)"}, expected ` + CODEX_INFINITY_SOURCE_PIN.pinnedRef,
@@ -453,14 +449,13 @@ export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig)
   return {
     async *run(input: ProcessDriverInput): AsyncIterable<BridgeProcessEvent> {
       const args = ["-m", config.modelSlug, "--cd", input.workspace.root, ...config.extraArgs, input.task.description];
-      const command = new Deno.Command(config.binary, {
-        args,
+      const child = Bun.spawn([config.binary, ...args], {
         cwd: input.workspace.root,
-        stdout: "piped",
-        stderr: "piped",
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
         signal: input.signal,
       });
-      const child = command.spawn();
       // Start draining before reading stdout. A verbose child can fill its
       // stderr pipe before emitting the next JSONL event and otherwise
       // deadlock both processes.
@@ -487,9 +482,9 @@ export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig)
         // sensitive model output; only summary counts are reported.
         await stderrDrain;
       }
-      const status = await child.status;
-      if (status.code !== 0) {
-        throw new BaselineAdapterError(`codex-infinity exited with code ${status.code} (${skipped} skipped lines)`, "bridge-parse");
+      const code = await child.exited;
+      if (code !== 0) {
+        throw new BaselineAdapterError(`codex-infinity exited with code ${code} (${skipped} skipped lines)`, "bridge-parse");
       }
       if (skipped > 0) {
         throw new BaselineAdapterError(

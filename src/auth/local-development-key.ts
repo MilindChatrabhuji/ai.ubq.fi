@@ -1,3 +1,4 @@
+import type { Kv, KvKey } from "#kv";
 import {
   API_KEY_NO_EXPIRATION_MS,
   API_KEY_NO_USAGE_LIMIT,
@@ -91,7 +92,7 @@ export type LocalDevelopmentKeyStatus = "created" | "present" | "revoked" | "unc
 
 type LocalDevelopmentKeyMaterial = Readonly<{
   record: ApiKeyRecord;
-  hashKey: Deno.KvKey;
+  hashKey: KvKey;
   hashRecord: ApiKeyHashRecord;
   policy: ApiKeyPolicy;
 }>;
@@ -182,7 +183,7 @@ const buildLocalDevelopmentKey = async (
 };
 
 /** Completion is owner-published only after every old cleanup iterator settles. */
-const localDevelopmentDeletionStateEmpty = async (kv: Deno.Kv): Promise<boolean> => {
+const localDevelopmentDeletionStateEmpty = async (kv: Kv): Promise<boolean> => {
   const outstanding = await getPaidFallbackOutstandingV3(LOCAL_DEVELOPMENT_KEY_ID, kv);
   if (!outstanding || outstanding.has_outstanding) return false;
   const lease = await kv.get(paidFallbackReconciliationLeaseV3Key(LOCAL_DEVELOPMENT_KEY_ID), { consistency: "strong" });
@@ -212,7 +213,7 @@ const localDevelopmentDeletionStateEmpty = async (kv: Deno.Kv): Promise<boolean>
  * even when the initializer never settles.
  */
 export const ensureLocalDevelopmentApiKey = async (
-  kv: Deno.Kv,
+  kv: Kv,
   options: Readonly<{ signal?: AbortSignal; initializePolicy?: LocalDevelopmentPricingInitializer }> = {}
 ): Promise<LocalDevelopmentKeyStatus> => {
   const idKey = apiKeyIdKey(LOCAL_DEVELOPMENT_KEY_ID);
@@ -274,7 +275,7 @@ export const ensureLocalDevelopmentApiKey = async (
  * A null result degrades the local principal to the policy-free `disabled`
  * method, which is the pre-existing behavior.
  */
-export const resolveLocalDevelopmentApiKeyPolicy = async (kv: Deno.Kv | null, nowMs = Date.now()): Promise<ApiKeyPolicy | null> => {
+export const resolveLocalDevelopmentApiKeyPolicy = async (kv: Kv | null, nowMs = Date.now()): Promise<ApiKeyPolicy | null> => {
   if (!kv) return null;
   const record = (await kv.get<ApiKeyRecord>(apiKeyIdKey(LOCAL_DEVELOPMENT_KEY_ID), { consistency: "strong" })).value;
   if (record?.revoked_at_ms !== null) return null;
