@@ -29,7 +29,6 @@ import {
   releaseRefreshLease,
   startRefreshLeaseHeartbeat,
   storeCodexCatalog,
-  touchCodexCatalog,
   waitForColdCatalog,
 } from "./store.ts";
 import {
@@ -304,21 +303,20 @@ const revalidateCachedCatalog = async (context: CodexCatalogRefreshContext, cach
   if (context.leaseLost() || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
     return rotatedCatalogResponse(context.kv, context.req, context.version);
   }
-  const revalidated =
-    cached.source_body === undefined
-      ? await touchCodexCatalog(context.kv, {
-          clientVersion: context.version,
-          authGeneration: context.authGeneration,
-          fetchedAtMs: context.nowMs,
-        })
-      : await storeCodexCatalog(context.kv, {
-          clientVersion: context.version,
-          authGeneration: context.authGeneration,
-          body: cached.source_body,
-          etag: cached.metadata.etag,
-          contentType: cached.metadata.content_type,
-          fetchedAtMs: context.nowMs,
-        });
+  // A legacy cache has no trustworthy endpoint declaration to re-enrich. Do
+  // not renew its already-enriched bytes on a 304; the next refresh is
+  // deliberately unconditional and must obtain the source body.
+  if (cached.source_body === undefined) {
+    return staleOrRotatedOrUnavailable(context, "Codex catalog source body is unavailable for revalidation");
+  }
+  const revalidated = await storeCodexCatalog(context.kv, {
+    clientVersion: context.version,
+    authGeneration: context.authGeneration,
+    body: cached.source_body,
+    etag: cached.metadata.etag,
+    contentType: cached.metadata.content_type,
+    fetchedAtMs: context.nowMs,
+  });
   if (!revalidated || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
     return rotatedCatalogResponse(context.kv, context.req, context.version);
   }

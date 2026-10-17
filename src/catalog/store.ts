@@ -366,46 +366,6 @@ export const storeCodexCatalog = async (
   return true;
 };
 
-const renewCatalogChunks = async (kv: Kv, keyForChunk: (index: number) => KvKey, chunkCount: number, expireIn: number): Promise<boolean> => {
-  const entries = await Promise.all(Array.from({ length: chunkCount }, (_, index) => kv.get<Uint8Array>(keyForChunk(index))));
-  if (entries.some((entry) => !(entry.value instanceof Uint8Array))) return false;
-  for (let index = 0; index < entries.length; index += 1) {
-    await kv.set(keyForChunk(index), entries[index].value, { expireIn });
-  }
-  return true;
-};
-
-/** Refresh retention without passing the already enriched body through widening again. */
-export const touchCodexCatalog = async (
-  kv: Kv,
-  input: Readonly<{ clientVersion: string; authGeneration: string; fetchedAtMs: number }>
-): Promise<boolean> => {
-  const metadataEntry = await kv.get<CodexCatalogMetadata>(metadataKey(input.clientVersion));
-  const metadata = metadataEntry.value;
-  if (!isCatalogMetadata(metadata) || metadata.auth_generation !== input.authGeneration) return false;
-  const expireIn = Math.max(1, input.fetchedAtMs + CODEX_CATALOG_RETENTION_MS - Date.now());
-  const chunksRenewed = await renewCatalogChunks(kv, (index) => chunkKey(input.clientVersion, metadata.body_generation, index), metadata.chunk_count, expireIn);
-  if (!chunksRenewed) return false;
-  if (metadata.source_chunk_count !== undefined) {
-    const sourceChunksRenewed = await renewCatalogChunks(
-      kv,
-      (index) => sourceChunkKey(input.clientVersion, metadata.body_generation, index),
-      metadata.source_chunk_count,
-      expireIn
-    );
-    if (!sourceChunksRenewed) return false;
-  }
-  const generation = await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY);
-  if (generation.value !== input.authGeneration) return false;
-  const refreshedMetadata = { ...metadata, fetched_at_ms: input.fetchedAtMs };
-  const published = (
-    await kv.atomic().check(generation).check(metadataEntry).set(metadataKey(input.clientVersion), refreshedMetadata, { expireIn }).commit()
-  ).ok;
-  if (!published) return false;
-  deleteCatalogMemoVersion(input.clientVersion);
-  return true;
-};
-
 const getAuthGeneration = async (kv: Kv): Promise<string> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<string>(CODEX_CATALOG_AUTH_GENERATION_KEY);
