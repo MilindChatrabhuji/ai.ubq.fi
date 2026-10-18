@@ -2,9 +2,11 @@
 //! The store must atomically commit every check and mutation, durably, before returning.
 //! Independent records preserve history without a bounded whole-ledger snapshot.
 
+pub mod claude;
 mod kernel;
 pub mod keys;
 pub mod paid;
+pub mod paid_control;
 mod paid_types;
 mod probes;
 pub mod quota;

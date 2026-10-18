@@ -4,6 +4,7 @@ members = [
   "crates/gateway-schema",
   "crates/gateway-providers",
   "crates/gateway-authority",
+  "crates/gateway-admission",
   "crates/gateway-auth",
   "crates/gateway-admin",
   "crates/gateway-admin-data",
@@ -27,6 +28,7 @@ gateway-core = { path = "crates/gateway-core" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
+gateway-admission = { path = "crates/gateway-admission" }
 gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
