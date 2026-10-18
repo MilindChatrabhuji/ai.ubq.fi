@@ -100,15 +100,6 @@ impl serde::Serialize for AuthResponseBody {
         }
     }
 }
-/// Legacy JSON inspections remain valid; lossless bodies require the explicit byte API.
-impl std::ops::Deref for AuthResponseBody {
-    type Target = Value;
-    fn deref(&self) -> &Value {
-        self.as_json().expect(
-            "A source JSON body cannot be inspected through serde_json::Value; use to_bytes",
-        )
-    }
-}
 impl PartialEq<Value> for AuthResponseBody {
     fn eq(&self, other: &Value) -> bool {
         self.as_json() == Some(other)
