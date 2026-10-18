@@ -109,7 +109,11 @@ pub fn provider_ids(input: &RoutingInput, provider: UpstreamProvider) -> Vec<Str
         _ => "",
     }))
 }
-pub(crate) fn validate_model(input: &RoutingInput, model: &str, now: i64) -> Result<(), GatewayError> {
+pub(crate) fn validate_model(
+    input: &RoutingInput,
+    model: &str,
+    now: i64,
+) -> Result<(), GatewayError> {
     let mut catalog = input.catalog.clone();
     catalog.snapshot = input.catalog.codex().cloned();
     let responses = input.surface != ClientSurface::Chat;
@@ -125,10 +129,11 @@ pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
         .map(str::to_owned)
         .or_else(|| input.catalog.codex().and_then(|s| s.default_model()));
     let model = gateway_schema::request::resolve_model(input.raw.get("model"), default.as_deref())?;
-    let codex_known = model == "gpt-reserve" || input
-        .catalog
-        .codex()
-        .is_some_and(|s| s.find(&model).is_some());
+    let codex_known = model == "gpt-reserve"
+        || input
+            .catalog
+            .codex()
+            .is_some_and(|s| s.find(&model).is_some());
     let paid = policy::resolve_paid_route(&PaidRoutingInput {
         model: model.clone(),
         endpoint_type: endpoint(input.surface).into(),

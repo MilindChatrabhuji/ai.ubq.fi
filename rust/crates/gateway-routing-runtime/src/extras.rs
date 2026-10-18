@@ -385,35 +385,35 @@ impl<
             failure.body_complete,
             model,
         ) && self
-                .authority()
-                .learn_model_unavailable(admission, &detail, self.clock.now_ms()?)
-                .await?
-            {
-                if current.model_sibling_retries >= 1 {
-                    return Err(GatewayError::new(
-                        404,
-                        format!("The model '{model}' is not available for these subscriptions."),
-                        Some("model_not_found"),
-                    )
-                    .into());
-                }
-                journal::change(
-                    &self.store,
-                    &self.tokens,
-                    &self.parent,
-                    self.clock.now_ms()?,
-                    &[],
-                    |j| {
-                        let child = j
-                            .children
-                            .get_mut(attempt.scope.index as usize)
-                            .ok_or_else(|| journal::unavailable("Image child disappeared."))?;
-                        child.model_sibling_retries += 1;
-                        Ok(())
-                    },
+            .authority()
+            .learn_model_unavailable(admission, &detail, self.clock.now_ms()?)
+            .await?
+        {
+            if current.model_sibling_retries >= 1 {
+                return Err(GatewayError::new(
+                    404,
+                    format!("The model '{model}' is not available for these subscriptions."),
+                    Some("model_not_found"),
                 )
-                .await?;
-                retry = true;
+                .into());
+            }
+            journal::change(
+                &self.store,
+                &self.tokens,
+                &self.parent,
+                self.clock.now_ms()?,
+                &[],
+                |j| {
+                    let child = j
+                        .children
+                        .get_mut(attempt.scope.index as usize)
+                        .ok_or_else(|| journal::unavailable("Image child disappeared."))?;
+                    child.model_sibling_retries += 1;
+                    Ok(())
+                },
+            )
+            .await?;
+            retry = true;
         }
         Ok(if retry {
             RefusalDecision::Continue

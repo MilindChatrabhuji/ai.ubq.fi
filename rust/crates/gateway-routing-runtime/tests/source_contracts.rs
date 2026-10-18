@@ -561,24 +561,28 @@ fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() {
 
 #[test]
 fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() {
-    let mut request=input("model-gate","unknown-model",&[]);
-    assert_eq!(policy::plan(&request,NOW).unwrap_err().status,404);
-    request.catalog.snapshot=request.catalog.full_snapshot.take();
-    assert_eq!(policy::plan(&request,NOW).unwrap_err().status,404);
+    let mut request = input("model-gate", "unknown-model", &[]);
+    assert_eq!(policy::plan(&request, NOW).unwrap_err().status, 404);
+    request.catalog.snapshot = request.catalog.full_snapshot.take();
+    assert_eq!(policy::plan(&request, NOW).unwrap_err().status, 404);
     request.catalog.snapshot.as_mut().unwrap().models.clear();
-    assert!(policy::plan(&request,NOW).is_ok());
-    request.catalog.snapshot=None;
-    assert!(policy::plan(&request,NOW).is_ok());
-    let mut reserve=input("reserve-model","gpt-reserve",&["surplus"]);
-    reserve.catalog.providers.get_mut("surplus").unwrap().models=vec![json!({"id":"gpt-reserve","supported_endpoint_types":["openai-response"],"input_price_per_token":0.001,"output_price_per_token":0.002})];
-    let plan=policy::plan(&reserve,NOW).unwrap();
+    assert!(policy::plan(&request, NOW).is_ok());
+    request.catalog.snapshot = None;
+    assert!(policy::plan(&request, NOW).is_ok());
+    let mut reserve = input("reserve-model", "gpt-reserve", &["surplus"]);
+    reserve.catalog.providers.get_mut("surplus").unwrap().models = vec![
+        json!({"id":"gpt-reserve","supported_endpoint_types":["openai-response"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
+    ];
+    let plan = policy::plan(&reserve, NOW).unwrap();
     assert!(!plan.paid.metered_only);
-    assert!(matches!(plan.hops.get(1),Some(policy::RouteHop::Codex)));
-    let mut paid=input("paid-endpoint","paid-model",&["surplus"]);
-    paid.catalog.providers.get_mut("surplus").unwrap().models=vec![json!({"id":"paid-model","supported_endpoint_types":["openai"],"input_price_per_token":0.001,"output_price_per_token":0.002})];
-    assert_eq!(policy::plan(&paid,NOW).unwrap_err().status,404);
-    paid.surface=gateway_providers::ClientSurface::Chat;
-    assert!(policy::plan(&paid,NOW).is_ok());
+    assert!(matches!(plan.hops.get(1), Some(policy::RouteHop::Codex)));
+    let mut paid = input("paid-endpoint", "paid-model", &["surplus"]);
+    paid.catalog.providers.get_mut("surplus").unwrap().models = vec![
+        json!({"id":"paid-model","supported_endpoint_types":["openai"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
+    ];
+    assert_eq!(policy::plan(&paid, NOW).unwrap_err().status, 404);
+    paid.surface = gateway_providers::ClientSurface::Chat;
+    assert!(policy::plan(&paid, NOW).is_ok());
 }
 #[test]
 fn frozen_source_classifier_quota_classes_and_fallback_matrix() {

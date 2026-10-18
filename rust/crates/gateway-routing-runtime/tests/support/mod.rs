@@ -410,20 +410,18 @@ impl RoutingHost for Host {
             source_revision,
             ..
         } = fence
-        {
-            if self
+            && self
                 .store
                 .read(source_key)
                 .await?
                 .as_ref()
                 .map(|r| &r.revision)
                 != Some(source_revision)
-            {
-                return Err(GatewayError::unavailable(
-                    "fixture publication changed",
-                    "fixture_generation_changed",
-                ));
-            }
+        {
+            return Err(GatewayError::unavailable(
+                "fixture publication changed",
+                "fixture_generation_changed",
+            ));
         }
         Ok(())
     }
