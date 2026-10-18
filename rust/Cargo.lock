@@ -410,6 +410,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-admission"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+]
+
+[[package]]
 name = "gateway-auth"
 version = "0.1.0"
 dependencies = [
