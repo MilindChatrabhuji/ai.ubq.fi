@@ -10387,6 +10387,7 @@ const saveProviderSelection = async () => {
     return;
   }
   if (providerSelectionSaving || !providersHasUnsavedChanges() || !providersHasActiveTier()) return;
+  const saveLoadId = providerSelectionLoadId;
   const submittedSelection = new Set(providerSelection);
   const submittedIds = providersSelectedIds();
   providerSelectionSaving = true;
@@ -10399,6 +10400,7 @@ const saveProviderSelection = async () => {
       body: JSON.stringify({ provider_ids: submittedIds }),
     });
     const payload = await response.json().catch(() => null);
+    if (saveLoadId !== providerSelectionLoadId) return;
     if (!response.ok) {
       providerSelectionSaving = false;
       providerSelectionSaveError = "Failed to save";
