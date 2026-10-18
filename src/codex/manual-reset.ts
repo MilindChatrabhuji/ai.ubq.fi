@@ -39,7 +39,6 @@ import {
 } from "./routing-state.ts";
 
 import { intentKey, parseManualResetIntent, type ManualIntent } from "./manual-reset-state.ts";
-export { CODEX_MANUAL_RESET_PREFIX, parseManualResetIntent } from "./manual-reset-state.ts";
 export class ManualResetError extends Error {
   constructor(
     readonly status: number,
