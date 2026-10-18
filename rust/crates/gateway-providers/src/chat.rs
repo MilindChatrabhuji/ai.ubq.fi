@@ -236,7 +236,9 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
             "reasoning" => pending.push_str(&reasoning_text(item)),
             "message" => {
                 let role = item["role"].as_str().unwrap_or("user");
-                if role == "user" { pending.clear(); }
+                if role == "user" {
+                    pending.clear();
+                }
                 let role = if role == "developer" { "system" } else { role };
                 let mut message = json!({"role":role,"content":content(item.get("content").unwrap_or(&Value::Null),role,&format!("{path}.content"),reject,&mut elisions)?});
                 if role == "assistant" && !pending.is_empty() {
@@ -351,11 +353,16 @@ pub fn project_responses(
     } else if profile == ChatProfile::Deepseek && !thinking_active(None, &raw["thinking"]) {
         body["reasoning_effort"] = json!("none");
     }
-    let thinking = profile == ChatProfile::Deepseek && thinking_active(body["reasoning_effort"].as_str(), &raw["thinking"]);
+    let thinking = profile == ChatProfile::Deepseek
+        && thinking_active(body["reasoning_effort"].as_str(), &raw["thinking"]);
     let mut warnings = Vec::new();
     for field in ["temperature", "top_p"] {
         if let Some(value) = raw.get(field) {
-            if thinking { warnings.push(format!("{field}_ignored")); } else { body[field] = value.clone(); }
+            if thinking {
+                warnings.push(format!("{field}_ignored"));
+            } else {
+                body[field] = value.clone();
+            }
         }
     }
     if let Some(max) = raw.get("max_output_tokens").filter(|v| !v.is_null()) {
@@ -467,7 +474,10 @@ pub fn thinking_active(effort: Option<&str>, thinking: &Value) -> bool {
     if let Some(effort) = effort.map(str::trim).filter(|effort| !effort.is_empty()) {
         return !effort.eq_ignore_ascii_case("none");
     }
-    thinking.get("type").and_then(Value::as_str).is_none_or(|kind| !kind.trim().eq_ignore_ascii_case("disabled"))
+    thinking
+        .get("type")
+        .and_then(Value::as_str)
+        .is_none_or(|kind| !kind.trim().eq_ignore_ascii_case("disabled"))
 }
 pub fn validate_thinking_choice(body: &Value, field: &str) -> Result<(), GatewayError> {
     let effort = body["reasoning_effort"].as_str();

@@ -141,17 +141,36 @@ pub fn project_tool_choice(
     let name = value
         .get("name")
         .and_then(Value::as_str)
-        .or_else(|| value.get("function").and_then(|f| f.get("name")).and_then(Value::as_str))
+        .or_else(|| {
+            value
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
+        })
         .filter(|name| !name.is_empty())
         .ok_or_else(|| invalid("a named tool_choice requires a name", "tool_choice.name"))?;
-    let namespace = if value.get("namespace").is_some() { value.get("namespace").and_then(Value::as_str) } else { value.get("function").and_then(|f| f.get("namespace")).and_then(Value::as_str) };
+    let namespace = if value.get("namespace").is_some() {
+        value.get("namespace").and_then(Value::as_str)
+    } else {
+        value
+            .get("function")
+            .and_then(|f| f.get("namespace"))
+            .and_then(Value::as_str)
+    };
     let projected = names
         .iter()
-        .find(|(_, item)| {
-            item.name == name && item.namespace.as_deref() == namespace
-        })
+        .find(|(_, item)| item.name == name && item.namespace.as_deref() == namespace)
         .map(|(wire, _)| wire.as_str())
-        .unwrap_or_else(|| if namespace.is_none() { names.get(name).map(|item|item.name.as_str()).unwrap_or(name) } else { name });
+        .unwrap_or_else(|| {
+            if namespace.is_none() {
+                names
+                    .get(name)
+                    .map(|item| item.name.as_str())
+                    .unwrap_or(name)
+            } else {
+                name
+            }
+        });
     Ok(Some(
         json!({"type":"function","function":{"name":projected}}),
     ))
