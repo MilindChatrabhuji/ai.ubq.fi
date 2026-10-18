@@ -336,7 +336,7 @@ pub fn verify_attestation_at_time(
             let root = chain.last().ok_or_else(failure)?;
             let encoded = STANDARD.encode(root.to_der().map_err(|_| failure())?);
             let lines = encoded.as_bytes().chunks(64).map(|line| std::str::from_utf8(line).map_err(|_| failure())).collect::<Result<Vec<_>,_>>()?.join("\n");
-            let root_pem = format!("-----BEGIN CERTIFICATE-----\n{lines}\n-----END CERTIFICATE-----");
+            let root_pem = format!("-----BEGIN CERTIFICATE-----\n{lines}\n-----END CERTIFICATE-----\n");
             if !root_pems.contains(&root_pem.as_str()) { return Err(WebauthnError::AttestationTrustFailure); }
             trusted_chain(&chain, std::slice::from_ref(root), now)
         }
