@@ -21,6 +21,8 @@ pub fn nonnegative_truncated(value: Option<&Value>) -> Option<i64> {
     let number = value?.as_f64()?;
     (number.is_finite() && number >= 0.0).then_some(number.trunc() as i64)
 }
+/// Keep finite integral values outside i64/safe-integer range as JavaScript numbers.
+pub fn nonnegative_truncated_value(value:Option<&Value>)->Option<Value>{let number=value?.as_f64()?.trunc();if !number.is_finite()||number<0.0{return None;}Some(if number<=MAX_SAFE_INTEGER{serde_json::json!(number as i64)}else{serde_json::json!(number)})}
 pub fn identifier(record: &Value) -> Option<&str> {
     ["slug", "id", "model", "name"].iter().find_map(|key| record.get(key).and_then(Value::as_str))
 }

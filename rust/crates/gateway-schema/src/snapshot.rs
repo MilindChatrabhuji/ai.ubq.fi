@@ -21,7 +21,7 @@ pub fn normalize_snapshot(value:&Value,overrides:&SnapshotOverrides,now_ms:i64)-
         if let Some(name)=item.get("display_name").and_then(Value::as_str).or_else(||item.get("displayName").and_then(Value::as_str)).or_else(||item.get("name").and_then(Value::as_str)).filter(|s|!s.is_empty()){model["display_name"]=json!(name);}
         for key in ["description","visibility"]{if let Some(s)=item.get(key).and_then(Value::as_str).filter(|s|!s.is_empty()){model[key]=json!(s);}}
         if let Some(v)=item.get("supported_in_api").filter(|v|v.is_boolean()){model["supported_in_api"]=v.clone();}
-        for key in ["context_window","max_context_window","auto_compact_token_limit","effective_context_window_percent"]{if item.get(key)==Some(&Value::Null){model[key]=Value::Null;}else if let Some(n)=nonnegative_truncated(item.get(key)){model[key]=json!(n);}}
+        for key in ["context_window","max_context_window","auto_compact_token_limit","effective_context_window_percent"]{if item.get(key)==Some(&Value::Null){model[key]=Value::Null;}else if let Some(n)=nonnegative_truncated_value(item.get(key)){model[key]=n;}}
         if let Some(v)=item.get("default_reasoning_level"){if v.is_null(){model["default_reasoning_level"]=json!("none");}else if let Some(level)=normalized_string(Some(v)){model["default_reasoning_level"]=json!(level);}}
         if let Some(raw_levels)=item.get("supported_reasoning_levels").and_then(Value::as_array){
             let levels:Vec<_>=raw_levels.iter().filter_map(advertised_effort).collect();if !levels.is_empty(){model["supported_reasoning_levels"]=json!(levels);}

@@ -1,5 +1,5 @@
 use std::{cell::RefCell,collections::BTreeMap,future::Future,sync::Arc,task::{Context,Poll,Wake,Waker}};
-use gateway_core::{GatewayError,state::*};
+use gateway_core::{GatewayError,state::*,query::*,tuple_key::TupleKey};
 use gateway_schema::{catalog::CatalogInput,catalog_cache::*,catalog_store::*,metadata::MetadataHint,selection::ProviderSelection};
 use serde_json::{Value,json};
 struct WakeThread(std::thread::Thread);impl Wake for WakeThread{fn wake(self:Arc<Self>){self.0.unpark();}}
@@ -24,4 +24,16 @@ fn prepared(generation:&str,body_generation:&str,now:i64)->PreparedCatalog{prepa
     let mut runtime=store.records.borrow().get(&runtime_config_key().0).unwrap().clone();runtime.value["default_model"]=json!("b");runtime.value["default_reasoning_effort"]=json!("custom");runtime.revision="operator".into();store.records.borrow_mut().insert(runtime_config_key().0,runtime);
     let next=run(publish_normalized_snapshot(&store,&source,"0.3.0","auth","r2",2000)).unwrap().unwrap();assert_eq!(next["default_model"],"b");assert_eq!(next["default_reasoning_effort"],"custom");assert!(run(publish_normalized_snapshot(&store,&source,"0.1.0","auth","old",3000)).unwrap().is_none());assert_eq!(store.records.borrow().get(&codex_snapshot_key().0).unwrap().value["client_version"],"0.3.0");
     store.seed_generation("rotated");assert!(run(publish_normalized_snapshot(&store,&source,"0.4.0","auth","stale",4000)).unwrap().is_none());
+}
+
+impl QueryStore for Store{
+    async fn query(&self,request:QueryRequest)->Result<QueryPage,GatewayError>{
+        let validated=request.validate()?;let mut entries=Vec::new();for(key,record)in self.records.borrow().iter(){let key=RecordKey(key.clone());if validated.accepts_record(&key,record)?{entries.push(QueryEntry{key,record:record.clone()});}}
+        entries.sort_by_key(|entry|TupleKey::from_record_key(&entry.key).expect("validated tuple"));if request.reverse{entries.reverse();}let limit=(request.limit as usize).min(2);let more=entries.len()>limit;entries.truncate(limit);let next_cursor=if more{entries.last().map(|e|validated.cursor_after(&e.key)).transpose()?}else{None};Ok(QueryPage{entries,next_cursor})
+    }
+}
+#[test]fn typed_catalog_keys_and_paginated_pruning_use_shared_tuple_contract(){
+    for key in [auth_generation_key(),metadata_key("0.163.0"),chunk_key("0.163.0","generation",10,false),lease_key("0.163.0"),codex_snapshot_key(),runtime_config_key()]{assert!(key.0.starts_with("tuple-v1:"));TupleKey::from_record_key(&key).unwrap().validate_stored_key().unwrap();}
+    let store=Store::default();store.seed_generation("auth");for index in 0..35{let mut prepared=prepared("auth",&format!("g{index}"),1000+index);prepared.metadata.client_version=format!("0.{index}.0");assert!(run(publish_catalog(&store,&prepared)).unwrap());}
+    run(prune_stored_catalog_versions(&store,"0.0.0",2000)).unwrap();let count=store.records.borrow().values().filter(|record|record.value.get("client_version").is_some()).count();assert_eq!(count,32);assert!(store.records.borrow().contains_key(&metadata_key("0.0.0").0));assert!(!store.records.borrow().contains_key(&metadata_key("0.1.0").0));assert!(!store.records.borrow().contains_key(&chunk_key("0.1.0","g1",0,false).0));
 }

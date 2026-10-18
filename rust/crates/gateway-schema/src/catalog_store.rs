@@ -1,12 +1,15 @@
 //! Strong catalog persistence against the shared authority; no independent ledger or timers.
 use serde::{Serialize,Deserialize};
+use gateway_core::{tuple_key::{TupleKey,ScalarKeyPart,KeyPart},query::{QueryStore,QuerySelector,QueryRequest}};
 use serde_json::{Value,json};
 use gateway_core::{GatewayError,state::{AuthorityStore,RecordKey,StoredRecord,RecordMutation,RevisionCheck,AtomicTransition,CommitOutcome,PORTABLE_STATE_VERSION}};
 use crate::{catalog_cache::*,snapshot::{ModelSnapshot,SnapshotOverrides,normalize_snapshot,compare_client_versions},util::*};
-pub fn auth_generation_key()->RecordKey{RecordKey(json_stringify(&json!(["ubq_ai","codex_catalog_auth_generation"])))}
-pub fn metadata_key(version:&str)->RecordKey{RecordKey(json_stringify(&json!(["ubq_ai","codex_catalog",version])))}
-pub fn chunk_key(version:&str,generation:&str,index:usize,source:bool)->RecordKey{RecordKey(json_stringify(&json!(["ubq_ai",if source{"codex_catalog_source_chunk"}else{"codex_catalog_chunk"},version,generation,index])))}
-pub fn lease_key(version:&str)->RecordKey{RecordKey(json_stringify(&json!(["ubq_ai","codex_catalog_refresh_lease",version])))}
+fn string_tuple(parts:&[&str])->RecordKey{TupleKey::from_scalar_parts(&parts.iter().map(|part|ScalarKeyPart::String(part)).collect::<Vec<_>>()).to_record_key()}
+pub fn auth_generation_key()->RecordKey{string_tuple(&["ubq_ai","codex_catalog_auth_generation"])}
+pub fn metadata_key(version:&str)->RecordKey{string_tuple(&["ubq_ai","codex_catalog",version])}
+pub fn metadata_prefix()->RecordKey{string_tuple(&["ubq_ai","codex_catalog"])}
+pub fn chunk_key(version:&str,generation:&str,index:usize,source:bool)->RecordKey{TupleKey::from_parts(&[KeyPart::String("ubq_ai".into()),KeyPart::String(if source{"codex_catalog_source_chunk"}else{"codex_catalog_chunk"}.into()),KeyPart::String(version.into()),KeyPart::String(generation.into()),KeyPart::Number(index as f64)]).expect("catalog chunk indices are finite numbers").to_record_key()}
+pub fn lease_key(version:&str)->RecordKey{string_tuple(&["ubq_ai","codex_catalog_refresh_lease",version])}
 fn cache_error(message:&str)->GatewayError{GatewayError::new(502,message,Some("codex_catalog_unavailable"))}
 async fn read<S:AuthorityStore>(store:&S,key:&RecordKey)->Result<Option<StoredRecord>,GatewayError>{let record=store.read(key).await?;if let Some(record)=&record{record.validate_version()?;}Ok(record)}
 fn check(key:RecordKey,record:Option<&StoredRecord>)->RevisionCheck{RevisionCheck{key,expected_revision:record.map(|r|r.revision.clone())}}
@@ -55,8 +58,8 @@ pub fn normalized_snapshot_plan(parsed:&Value,version:&str,current:Option<&Model
     let current_runtime=crate::runtime_config::normalize_runtime_config(runtime);let default=next.preserve_default(current_runtime.as_ref().and_then(|r|r.get("default_model")).and_then(Value::as_str));let runtime=crate::runtime_config::build_runtime_config(&next,default.as_deref(),current_runtime.as_ref().and_then(|r|r.get("default_reasoning_effort")).and_then(Value::as_str),updated_at_ms).ok()?;Some((next,runtime))
 }
 
-pub fn codex_snapshot_key()->RecordKey{RecordKey(json_stringify(&json!(["ubq_ai","codex_models"])))}
-pub fn runtime_config_key()->RecordKey{RecordKey(json_stringify(&json!(["uos_ai","runtime_config","v2"])))}
+pub fn codex_snapshot_key()->RecordKey{string_tuple(&["ubq_ai","codex_models"])}
+pub fn runtime_config_key()->RecordKey{string_tuple(&["uos_ai","runtime_config","v2"])}
 /// A rich refresh can update the compact runtime only through the same authority transaction.
 pub async fn publish_normalized_snapshot<S:AuthorityStore>(store:&S,parsed:&Value,version:&str,expected_generation:&str,revision:&str,updated_at_ms:i64)->Result<Option<Value>,GatewayError>{
     for _ in 0..3{
@@ -68,4 +71,14 @@ pub async fn publish_normalized_snapshot<S:AuthorityStore>(store:&S,parsed:&Valu
         let transition=AtomicTransition{checks:vec![check(auth_generation_key(),generation.as_ref()),check(codex_snapshot_key(),snapshot_record.as_ref()),check(runtime_config_key(),runtime_record.as_ref())],mutations:vec![put(codex_snapshot_key(),serde_json::to_value(&next).map_err(|_|cache_error("Codex snapshot could not be encoded"))?,revision,None),put(runtime_config_key(),next_runtime.clone(),revision,None)]};
         if store.commit(transition).await?==CommitOutcome::Committed{return Ok(Some(next_runtime));}
     }Ok(None)
+}
+
+/// Follow the shared opaque continuation to terminal pagination before choosing old versions.
+pub async fn prune_stored_catalog_versions<S:QueryStore>(store:&S,current_version:&str,now_ms:i64)->Result<(),GatewayError>{
+    let mut cursor=None;let mut all_metadata=Vec::new();let mut seen_cursors=std::collections::BTreeSet::new();
+    loop{let request=QueryRequest{selector:QuerySelector::Prefix{prefix:metadata_prefix(),start:None,end:None},reverse:false,limit:100,cursor:cursor.clone(),now_ms};let page=store.query(request).await?;
+        for entry in page.entries{entry.record.validate_version()?;let metadata=serde_json::from_value::<CatalogMetadata>(entry.record.value).map_err(|_|cache_error("Stored Codex catalog metadata is corrupt"))?;if !metadata.valid(){return Err(cache_error("Stored Codex catalog metadata is corrupt"));}all_metadata.push(metadata);}
+        match page.next_cursor{Some(next)=>{if !seen_cursors.insert(next.clone()){return Err(cache_error("Codex catalog query repeated its continuation"));}cursor=Some(next);},None=>break}
+    }
+    prune_catalog_versions(store,&all_metadata,current_version).await
 }

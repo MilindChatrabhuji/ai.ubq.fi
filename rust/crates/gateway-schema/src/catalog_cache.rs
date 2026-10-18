@@ -82,3 +82,9 @@ pub fn catalog_response(catalog:&LoadedCatalog,conditional:Option<&str>,cache_st
     let body=if stored_only{catalog.body.clone()}else{json_stringify(&crate::native_catalog::native_catalog(Some(&catalog.parsed),input))};let etag=client_etag(&body);let not_modified=conditional_matches(conditional,&etag);
     let headers=[("Content-Type".into(),catalog.metadata.content_type.clone()),("Cache-Control".into(),"private, max-age=300".into()),("x-uos-upstream".into(),"chatgpt_codex".into()),("x-uos-cache".into(),cache_state.as_str().into()),("ETag".into(),etag)].into_iter().collect();CatalogResponse{status:if not_modified{304}else{200},body:(!not_modified).then_some(body),headers}
 }
+
+pub fn fallback_response(input:&crate::catalog::CatalogInput)->Option<CatalogResponse>{
+    let body=crate::native_catalog::native_catalog_fallback(input)?;Some(CatalogResponse{status:200,body:Some(json_stringify(&body)),headers:[("Content-Type".into(),"application/json".into()),("Cache-Control".into(),"private, max-age=300".into()),("x-uos-upstream".into(),"metered".into())].into_iter().collect()})
+}
+/// A rotation during fenced publication cannot reuse an old generation or invent a fallback.
+pub fn rotation_unavailable()->GatewayError{GatewayError::new(502,"Codex authentication changed during catalog refresh",Some("codex_catalog_unavailable"))}

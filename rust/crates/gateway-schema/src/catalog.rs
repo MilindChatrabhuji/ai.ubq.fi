@@ -26,7 +26,7 @@ pub fn endpoint_paths(model:&Value)->Vec<String>{let types=model.get("supported_
 pub fn endpoint_supports(model:&Value,endpoint:&str)->bool{model.get("supported_endpoint_types").and_then(Value::as_array).is_some_and(|types|types.iter().any(|v|v.as_str()==Some(endpoint)))}
 pub fn model_list_row(record:&Value,fallback_created:i64)->Option<Value>{
     let id=["id","slug","model","name"].iter().find_map(|key|record.get(key).and_then(Value::as_str))?;if id.is_empty(){return None;}
-    Some(json!({"id":id,"object":"model","created":nonnegative_truncated(record.get("created")).unwrap_or(fallback_created),"owned_by":record.get("owned_by").and_then(Value::as_str).unwrap_or("openai")}))
+    Some(json!({"id":id,"object":"model","created":nonnegative_truncated_value(record.get("created")).unwrap_or_else(||json!(fallback_created)),"owned_by":record.get("owned_by").and_then(Value::as_str).unwrap_or("openai")}))
 }
 pub fn normalize_model_list(payload:&Value)->Option<Value>{
     if !is_record(payload){return None;}let fallback=payload.get("updated_at_ms").and_then(Value::as_f64).filter(|n|n.is_finite()).map(|n|(n/1000.0).trunc().max(0.0) as i64).unwrap_or(0);
