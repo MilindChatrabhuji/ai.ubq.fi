@@ -55,12 +55,22 @@ export class HttpUpstreamTransport implements UpstreamTransport {
     if (attempt.provider !== this._capability.provider) throw new AuthorityError("provider_capability_mismatch", 403);
     const headers = await this._capability.headers(attempt.account);
     headers.set("content-type", "application/json");
-    const request = new Request(new URL(input.route, this._capability.baseUrl), { method: "POST", headers, body: JSON.stringify(input.body), signal });
+    const request = new Request(new URL(input.route, this._capability.baseUrl), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(input.body),
+      signal,
+      redirect: "manual",
+    });
     signal.throwIfAborted();
     await onDispatched();
     // Once dispatch intent is durable, ambiguous fetch failures keep accounting pending.
     const fetchUpstream = this._capability.fetch;
     const response = await fetchUpstream(request);
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new AuthorityError("upstream_redirect_refused", 502);
+    }
     // Observe one streaming body; cloning would allow a faster terminal reader to buffer unbounded data.
     return this._capability.observe(response, input);
   }

@@ -151,8 +151,12 @@ const refuseRequest = async ({
   authority: PortableAuthority;
 }>): Promise<Response> => {
   request.signal.removeEventListener("abort", abortFromRequest);
-  if (handle && !dispatchState.intent) await authority.cancelUndispatched(handle);
-  if (handle && dispatchState.intent) await authority.observeDelivery(handle, abort.signal.aborted ? "interrupted" : "unobserved");
+  try {
+    if (handle && !dispatchState.intent) await authority.cancelUndispatched(handle);
+    if (handle && dispatchState.intent) await authority.observeDelivery(handle, abort.signal.aborted ? "interrupted" : "unobserved");
+  } catch {
+    // The durable admission/attempt remains unresolved; cleanup failure cannot replace the original refusal.
+  }
   if (error instanceof AuthorityError) return errorResponse(error.code, error.status);
   return errorResponse(abort.signal.aborted ? "request_cancelled" : "upstream_unavailable", abort.signal.aborted ? 499 : 502);
 };
