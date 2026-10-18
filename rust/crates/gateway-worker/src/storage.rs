@@ -19,7 +19,7 @@ const MAX_REVISION_BYTES: usize = 4096;
 // The platform limits one SQL row to 2 MB; this is not a history retention limit.
 const MAX_SQL_ROW_BYTES: usize = 2_000_000;
 const RECORD_COLUMNS: &str =
-    "record_key, sort_key, schema_version, revision, payload, expires_at_ms";
+    "record_key, sort_key, schema_version, value_encoding, revision, payload, expires_at_ms";
 // A page may end before its row limit, with a continuation, to bound wire memory.
 const QUERY_PAGE_BYTE_BUDGET: usize = 8 * 1024 * 1024;
 
@@ -37,6 +37,7 @@ struct TableName {
 struct FormatVersion {
     schema_version: u32,
     key_codec: String,
+    value_codec: String,
 }
 
 enum PreparedMutation {
@@ -45,6 +46,7 @@ enum PreparedMutation {
         sort_key: Vec<u8>,
         record: StoredRecord,
         payload: String,
+        encoding: String,
     },
     Delete {
         key: String,
@@ -70,19 +72,19 @@ impl SqliteAuthorityStore {
             let records = names.iter().any(|table| table.name == "uos_authority_records");
             match (metadata, records) {
                 (false, false) => {
-                    sql.exec("CREATE TABLE uos_authority_metadata (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), schema_version INTEGER NOT NULL, key_codec TEXT NOT NULL)", None)?;
-                    sql.exec("CREATE TABLE uos_authority_records (record_key TEXT PRIMARY KEY NOT NULL, sort_key BLOB UNIQUE NOT NULL, schema_version INTEGER NOT NULL, revision TEXT NOT NULL, payload TEXT NOT NULL, expires_at_ms INTEGER)", None)?;
-                    sql.exec("INSERT INTO uos_authority_metadata (singleton, schema_version, key_codec) VALUES (1, ?, 'tuple-v1')", Some(vec![SqlStorageValue::Integer(i64::from(PORTABLE_STATE_VERSION))]))?;
+                    sql.exec("CREATE TABLE uos_authority_metadata (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), schema_version INTEGER NOT NULL, key_codec TEXT NOT NULL, value_codec TEXT NOT NULL)", None)?;
+                    sql.exec("CREATE TABLE uos_authority_records (record_key TEXT PRIMARY KEY NOT NULL, sort_key BLOB UNIQUE NOT NULL, schema_version INTEGER NOT NULL, value_encoding TEXT NOT NULL, revision TEXT NOT NULL, payload TEXT NOT NULL, expires_at_ms INTEGER)", None)?;
+                    sql.exec("INSERT INTO uos_authority_metadata (singleton, schema_version, key_codec, value_codec) VALUES (1, ?, 'tuple-v1', 'explicit-value-v1')", Some(vec![SqlStorageValue::Integer(i64::from(PORTABLE_STATE_VERSION))]))?;
                 }
                 (true, true) => {}
                 _ => return Err(worker::Error::RustError("Incomplete authority storage schema".to_owned())),
             }
-            let versions: Vec<FormatVersion> = sql.exec("SELECT schema_version, key_codec FROM uos_authority_metadata WHERE singleton = 1", None)?.to_array()?;
-            if versions.len() != 1 || versions[0].schema_version != PORTABLE_STATE_VERSION || versions[0].key_codec != "tuple-v1" {
+            let versions: Vec<FormatVersion> = sql.exec("SELECT schema_version, key_codec, value_codec FROM uos_authority_metadata WHERE singleton = 1", None)?.to_array()?;
+            if versions.len() != 1 || versions[0].schema_version != PORTABLE_STATE_VERSION || versions[0].key_codec != "tuple-v1" || versions[0].value_codec != "explicit-value-v1" {
                 return Err(worker::Error::RustError("Unsupported authority storage schema".to_owned()));
             }
             // Existing table names alone cannot establish the expected columns/types.
-            sql.exec("SELECT record_key, sort_key, schema_version, revision, payload, expires_at_ms FROM uos_authority_records LIMIT 0", None)?;
+            sql.exec("SELECT record_key, sort_key, schema_version, value_encoding, revision, payload, expires_at_ms FROM uos_authority_records LIMIT 0", None)?;
             Ok(())
         }).await.map_err(|_| unavailable("authority_storage_schema_unavailable"))?;
         storage
@@ -120,11 +122,11 @@ impl AuthorityStore for SqliteAuthorityStore {
                 // also protects against an error in a later mutation.
                 for mutation in &mutations {
                     match mutation {
-                        PreparedMutation::Put { key, sort_key, record, payload } => {
+                        PreparedMutation::Put { key, sort_key, record, payload, encoding } => {
                             let expiry = record.expires_at_ms.map_or(SqlStorageValue::Null, SqlStorageValue::Integer);
                             sql.exec(
-                                "INSERT INTO uos_authority_records (record_key, sort_key, schema_version, revision, payload, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(record_key) DO UPDATE SET sort_key = excluded.sort_key, schema_version = excluded.schema_version, revision = excluded.revision, payload = excluded.payload, expires_at_ms = excluded.expires_at_ms",
-                                Some(vec![SqlStorageValue::String(key.clone()), SqlStorageValue::Blob(sort_key.clone()), SqlStorageValue::Integer(i64::from(record.schema_version)), SqlStorageValue::String(record.revision.clone()), SqlStorageValue::String(payload.clone()), expiry]),
+                                "INSERT INTO uos_authority_records (record_key, sort_key, schema_version, value_encoding, revision, payload, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(record_key) DO UPDATE SET sort_key = excluded.sort_key, schema_version = excluded.schema_version, value_encoding = excluded.value_encoding, revision = excluded.revision, payload = excluded.payload, expires_at_ms = excluded.expires_at_ms",
+                                Some(vec![SqlStorageValue::String(key.clone()), SqlStorageValue::Blob(sort_key.clone()), SqlStorageValue::Integer(i64::from(record.schema_version)), SqlStorageValue::String(encoding.clone()), SqlStorageValue::String(record.revision.clone()), SqlStorageValue::String(payload.clone()), expiry]),
                             ).map_err(|_| unavailable("authority_storage_unavailable"))?;
                         }
                         PreparedMutation::Delete { key } => {
@@ -192,12 +194,16 @@ fn prepare_transition(transition: AtomicTransition) -> Result<PreparedTransition
                 let sort_key = TupleKey::from_record_key(&key)?.sort_bytes().to_vec();
                 let payload = serde_json::to_string(&record.value)
                     .map_err(|_| invalid("Authority data cannot be encoded."))?;
+                let encoding = serde_json::to_value(record.value_encoding)
+                    .map_err(|_| invalid("Authority value encoding is invalid."))?
+                    .as_str().ok_or_else(|| invalid("Authority value encoding is invalid."))?.to_owned();
                 let bytes = key
                     .0
                     .len()
                     .checked_add(sort_key.len())
                     .and_then(|size| size.checked_add(record.revision.len()))
                     .and_then(|size| size.checked_add(payload.len()))
+                    .and_then(|size| size.checked_add(encoding.len()))
                     .and_then(|size| size.checked_add(48));
                 if bytes.is_none_or(|size| size > MAX_SQL_ROW_BYTES) {
                     return Err(invalid(
@@ -209,6 +215,7 @@ fn prepare_transition(transition: AtomicTransition) -> Result<PreparedTransition
                     sort_key,
                     record,
                     payload,
+                    encoding,
                 });
             }
             RecordMutation::Delete { key } => {
@@ -334,6 +341,7 @@ fn decode_row(row: &[SqlStorageValue]) -> Result<(QueryEntry, usize), GatewayErr
         SqlStorageValue::String(key),
         SqlStorageValue::Blob(sort_key),
         SqlStorageValue::Integer(version),
+        SqlStorageValue::String(encoding),
         SqlStorageValue::String(revision),
         SqlStorageValue::String(payload),
         expiry,
@@ -356,6 +364,8 @@ fn decode_row(row: &[SqlStorageValue]) -> Result<(QueryEntry, usize), GatewayErr
     let record = StoredRecord {
         schema_version: u32::try_from(*version)
             .map_err(|_| invalid("Stored authority version is malformed."))?,
+        value_encoding: serde_json::from_value(serde_json::Value::String(encoding.clone()))
+            .map_err(|_| invalid("Stored authority value encoding is unsupported."))?,
         revision: revision.clone(),
         value: serde_json::from_str(payload)
             .map_err(|_| invalid("Stored authority data is malformed."))?,
@@ -367,6 +377,7 @@ fn decode_row(row: &[SqlStorageValue]) -> Result<(QueryEntry, usize), GatewayErr
         .len()
         .saturating_add(revision.len())
         .saturating_add(payload.len())
+        .saturating_add(encoding.len())
         .saturating_add(128);
     Ok((QueryEntry { key, record }, encoded_bytes))
 }

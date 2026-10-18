@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { connect } from "node:net";
-import { networkInterfaces } from "node:os";
+import { lookup } from "node:dns/promises";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,12 +28,8 @@ async function outer(): Promise<void> {
   const parent = join(root, ".data/rust-storage-conformance");
   await mkdir(parent, { recursive: true });
   const workspace = await mkdtemp(join(parent, "run-"));
-  const ownAddress = Object.values(networkInterfaces())
-    .flat()
-    .find((address) => address?.family === "IPv4" && !address.internal)?.address;
-  assert(ownAddress, "A real nonloopback interface is required for the OS boundary control.");
-  const control = Bun.serve({ hostname: ownAddress, port: 0, fetch: () => new Response("boundary-control") });
-  assert.equal((await fetch(`http://${ownAddress}:${control.port}`)).status, 200, "The outside-boundary control must be reachable.");
+  const control = await lookup(new URL("https://developers.cloudflare.com").hostname, { family: 4 });
+  await reachableControl(control.address, 443);
   const command = testNetworkArgv([
     process.execPath,
     "--no-env-file",
@@ -42,8 +38,8 @@ async function outer(): Promise<void> {
     "--fixture-child",
     expectedSha,
     workspace,
-    ownAddress,
-    String(control.port),
+    control.address,
+    "443",
   ]);
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: workspace, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
   if (process.env.HOME) env.HOME = process.env.HOME;
@@ -58,8 +54,9 @@ async function outer(): Promise<void> {
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     await Promise.all([writeFile(join(workspace, "stdout.log"), stdout), writeFile(join(workspace, "stderr.log"), stderr)]);
     assert.equal(code, 0, `Actual workerd conformance failed; evidence: ${workspace}`);
+    await reachableControl(control.address, 443);
     const receipt: unknown = JSON.parse(stdout.trim());
-    assert(isObject(receipt) && Array.isArray(receipt.cases) && receipt.cases.length >= 18, "A nonzero complete case floor is required.");
+    assert(isObject(receipt) && Array.isArray(receipt.cases) && receipt.cases.length >= 22, "A nonzero complete case floor is required.");
     await writeFile(join(workspace, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
     console.log(JSON.stringify({ evidence: workspace, ...receipt }));
   } finally {
@@ -67,8 +64,26 @@ async function outer(): Promise<void> {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     stop();
-    await control.stop(true);
   }
+}
+
+async function reachableControl(host: string, port: number): Promise<void> {
+  await new Promise<void>((resolveProbe, rejectProbe) => {
+    const socket = connect({ host, port });
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      rejectProbe(new Error("The outside-boundary TCP control is unavailable."));
+    }, 3000);
+    socket.once("connect", () => {
+      clearTimeout(timeout);
+      socket.destroy();
+      resolveProbe();
+    });
+    socket.once("error", (error: Error) => {
+      clearTimeout(timeout);
+      rejectProbe(error);
+    });
+  });
 }
 
 async function deniedEgress(host: string, port: number): Promise<void> {
@@ -85,7 +100,11 @@ async function deniedEgress(host: string, port: number): Promise<void> {
     });
     socket.once("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timeout);
-      if (["EPERM", "EACCES", "ENETUNREACH", "EHOSTUNREACH"].includes(error.code ?? "")) resolveProbe();
+      const denied = ["EPERM", "EACCES", "ENETUNREACH", "EHOSTUNREACH"];
+      // Seatbelt reports a refused connect on this Bun/Darwin build. The same
+      // endpoint must accept native TCP both before and after the isolated run.
+      if (process.platform === "darwin") denied.push("ECONNREFUSED");
+      if (denied.includes(error.code ?? "")) resolveProbe();
       else rejectProbe(error);
     });
   });
@@ -211,6 +230,12 @@ async function inner(): Promise<void> {
   const prefix = "tuple-v1:027000";
   const key = "tuple-v1:027000026100";
   const next = "tuple-v1:027000026200";
+  const typedKey = "tuple-v1:027600026100";
+  const jsonKey = "tuple-v1:027600026200";
+  const typedValue = {
+    type: "array",
+    value: [{ type: "big_int", value: "9007199254740993" }, { type: "number_bits", value: "8000000000000000" }, { type: "undefined" }],
+  };
   try {
     const health = await fetch(`${running.origin}/public/health`);
     const body: unknown = await health.json();
@@ -276,6 +301,33 @@ async function inner(): Promise<void> {
       503
     );
     cases.push("unsafe_expiry_rejected");
+    assert.equal((await put(jsonKey, "json-shape", typedValue)).committed, true);
+    const jsonShape = await read(jsonKey);
+    assert(isObject(jsonShape));
+    assert.equal(jsonShape.value_encoding, "json");
+    assert.deepEqual(jsonShape.value, typedValue);
+    cases.push("json_shapes_are_not_guessed_as_typed");
+    assert.equal(
+      (
+        await rpc({
+          operation: "commit",
+          checks: [{ key: typedKey, expected_revision: null }],
+          mutations: [
+            {
+              operation: "put",
+              key: typedKey,
+              record: { schema_version: 1, value_encoding: "profile-v1", revision: "typed", value: typedValue, expires_at_ms: null },
+            },
+          ],
+        })
+      ).committed,
+      true
+    );
+    const typed = await read(typedKey);
+    assert(isObject(typed));
+    assert.equal(typed.value_encoding, "profile-v1");
+    assert.deepEqual(typed.value, typedValue);
+    cases.push("profile_bigint_signed_zero_undefined_roundtrip");
     assert.equal((await put(prefix, "prefix-row", true)).committed, true);
     const query = {
       operation: "query",
@@ -303,6 +355,11 @@ async function inner(): Promise<void> {
     const restored = await read(key);
     assert(isObject(restored) && restored.revision === "retained");
     cases.push("real_sqlite_restart_durability");
+    const typedRestored = await read(typedKey);
+    assert(isObject(typedRestored));
+    assert.equal(typedRestored.value_encoding, "profile-v1");
+    assert.deepEqual(typedRestored.value, typedValue);
+    cases.push("typed_encoding_survives_sqlite_restart");
     await running.stop();
     let corrupted = false;
     for (const file of await sqliteFiles(join(workspace, "state"))) {
@@ -320,7 +377,7 @@ async function inner(): Promise<void> {
     running = await start(config, workspace);
     await rpc({ operation: "read", key }, 503);
     cases.push("persisted_schema_corruption_refused");
-    assert(cases.length >= 18);
+    assert(cases.length >= 22);
     const wasm = await readFile(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"));
     console.log(
       JSON.stringify({
@@ -328,6 +385,18 @@ async function inner(): Promise<void> {
         wasmSha256: createHash("sha256").update(wasm).digest("hex"),
         workerd: "1.20261012.1",
         platform: process.platform,
+        harnessSha256: createHash("sha256")
+          .update(await readFile(fileURLToPath(import.meta.url)))
+          .digest("hex"),
+        fixtureSha256: createHash("sha256")
+          .update(await readFile(join(root, "tools/cloudflare/fixtures/storage-driver.mjs")))
+          .digest("hex"),
+        boundarySha256: createHash("sha256")
+          .update(await readFile(join(root, "scripts/test-network.ts")))
+          .digest("hex"),
+        workerdSha256: createHash("sha256")
+          .update(await readFile(workerdBinary))
+          .digest("hex"),
         cases,
       })
     );
