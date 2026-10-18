@@ -440,6 +440,20 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
     async fn prepare_key_deletion(&self, key_id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
         self.prepare_deletion(key_id).await
     }
+    async fn finish_key_deletion(
+        &self,
+        key_id: &str,
+        prepared_checks: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        self.finish_deletion(key_id, prepared_checks).await
+    }
+    async fn abort_key_deletion(
+        &self,
+        key_id: &str,
+        prepared_checks: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        self.abort_deletion(key_id, prepared_checks).await
+    }
     async fn paid_key_policy(&self, body: &Value) -> Result<PaidKeyFields, GatewayError> {
         self.paid_policy(body).await
     }

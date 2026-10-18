@@ -1067,3 +1067,17 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     assert_eq!(complete["local_deletion"]["completed_at_ms"], 1000000);
     assert!(complete["local_deletion"]["owner"].is_string());
 }
+
+#[test]
+fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let runtime=runtime(&store,&host,&config);
+    let auth=AuthConfig{admin_tokens:vec![gateway_auth::crypto::Secret::new("fixture-admin".into())],..AuthConfig::default()};
+    let admin=gateway_admin::AdminService{store:&store,host:&host,capabilities:&runtime,config:&auth,release:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"};
+    let mut request=AuthRequest{method:"POST".into(),url:"https://ai.ubq.fi/admin/api-keys".into(),headers:BTreeMap::from([("authorization".into(),"Bearer fixture-admin".into())]),body:serde_json::to_vec(&json!({"name":"source lifecycle","expires_at_ms":-1,"usage_limit_requests":-1})).unwrap(),..AuthRequest::default()};
+    let created=run(admin.handle_route(&request,"create-key")).unwrap().unwrap();let id=created.body["id"].as_str().unwrap().to_owned();assert_eq!(created.status,200);
+    request.url="https://ai.ubq.fi/admin/api-keys/revoke".into();request.body=serde_json::to_vec(&json!({"id":id})).unwrap();run(admin.handle_route(&request,"revoke-key")).unwrap().unwrap();
+    store.put(json!(["uos_ai","paid_fallback","ledger",id,900000,"record"]),json!({"retained":true}));
+    request.method="DELETE".into();request.url="https://ai.ubq.fi/admin/api-keys".into();let deleted=run(admin.handle_route(&request,"delete-key")).unwrap().unwrap();assert_eq!(deleted.status,200);
+    assert!(store.get(json!(["ubq_ai","api_keys","id",id])).is_none());assert!(store.get(json!(["uos_ai","paid_fallback","ledger",id,900000,"record"])).is_none());assert!(store.get(json!(["uos_ai","paid_fallback","v3","deletion_guard",id])).is_some());
+    let before=store.rows.borrow().clone();request.headers.clear();assert_eq!(run(admin.handle_route(&request,"unauthorized-delete")).unwrap_err().status,401);assert_eq!(*store.rows.borrow(),before);
+}
