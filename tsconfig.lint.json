@@ -8,6 +8,8 @@
     "scripts/**/*.ts",
     "benchmarks/**/*.ts",
     "ops/**/*.ts",
+    "tools/cloudflare/generate-types.ts",
+    "tools/cloudflare/storage-conformance.ts",
     "lib/jev_compaction/**/*.ts"
   ]
 }
