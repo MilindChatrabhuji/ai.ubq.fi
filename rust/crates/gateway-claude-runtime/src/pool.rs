@@ -125,7 +125,7 @@ impl ClaudePoolSession {
                     .map(|n| n as u16)
                     .unwrap_or(429);
                 let message = error.and_then(|e| e.message.clone()).unwrap_or_else(|| {
-                    JsString16::from_str(
+                    JsString16::from(
                         "The Claude subscription is cooling down after an upstream rejection.",
                     )
                 });

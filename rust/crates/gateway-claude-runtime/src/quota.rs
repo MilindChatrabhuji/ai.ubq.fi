@@ -144,7 +144,7 @@ fn standard(value: &Value) -> Option<StandardWindow> {
     })
 }
 pub fn sanitize_error(raw: Option<&str>) -> Option<JsString16> {
-    JsString16::from_str(raw?).sanitize_js_whitespace_prefix(240)
+    JsString16::from(raw?).sanitize_js_whitespace_prefix(240)
 }
 fn error(value: &Value) -> Option<QuotaError> {
     let kind = js_trim(value.get("kind")?.as_str()?);
