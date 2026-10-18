@@ -9,7 +9,8 @@ mod projection;
 pub use capture::{PrivateCapture, SourceEntry};
 pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
 pub use gateway_admin_data::profile::{CanonicalDates, SourceDateHost};
-pub use inverse::export_latest;
+pub use inverse::{export_latest,export_rollback_bundle,ArtifactContext,CustodyRecord,PrivateRollbackBundle};
+pub use projection::known_source_family;
 
 use gateway_core::{
     GatewayError,
@@ -85,9 +86,9 @@ fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
             }),
             DecodedKeyPart::Number(v) if v.is_finite() => Ok(serde_json::json!(v)),
             DecodedKeyPart::Boolean(v) => Ok(Value::Bool(v)),
-            _ => Err(unavailable(
-                "A new non-scalar application key requires its original typed mapping",
-            )),
+            DecodedKeyPart::Bytes(bytes)=>Ok(serde_json::json!({"type":"Uint8Array","value":gateway_admin_data::profile::encode_base64(&bytes)})),
+            DecodedKeyPart::BigInt{negative,magnitude}=>Ok(serde_json::json!({"type":"bigint","value":crate::inverse::decimal_key(negative,&magnitude)})),
+            DecodedKeyPart::Number(value)=>Ok(serde_json::json!({"type":"number","value":if value.is_nan(){"NaN"}else if value.is_sign_negative(){"-Infinity"}else{"Infinity"}})),
         })
         .collect()
 }
