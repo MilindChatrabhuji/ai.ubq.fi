@@ -79,6 +79,7 @@ export const isProviderSelectionId = (value: unknown): value is ProviderSelectio
 /** Last selection served to the routing path, with the write path priming it. */
 let cachedSelection: Readonly<{ value: ProviderSelection | null; expires_at_ms: number }> | null = null;
 let selectionLoadInFlight: Promise<ProviderSelection | null> | null = null;
+let selectionCacheMutationSeq = 0;
 
 export const isSelectableProviderId = (value: unknown): value is SelectableProviderId => typeof value === "string" && selectableProviderIdSet.has(value.trim());
 
@@ -142,6 +143,7 @@ export const storeProviderSelection = async (kv: Kv, providerIds: readonly Provi
   } catch {
     return null;
   }
+  selectionCacheMutationSeq++;
   cachedSelection = { value: selection, expires_at_ms: selection.updated_at_ms + PROVIDER_SELECTION_CACHE_TTL_MS };
   return selection;
 };
@@ -223,13 +225,19 @@ export const loadProviderSelectionCached = async (nowMs = Date.now()): Promise<P
   if (cachedSelection && cachedSelection.expires_at_ms > nowMs) return cachedSelection.value;
   if (selectionLoadInFlight) return await selectionLoadInFlight;
   const stale = cachedSelection?.value ?? null;
+  const readSeq = selectionCacheMutationSeq;
   selectionLoadInFlight = (async () => {
     try {
       const value = await loadProviderSelection(await getKv());
-      cachedSelection = { value, expires_at_ms: nowMs + PROVIDER_SELECTION_CACHE_TTL_MS };
-      return value;
+      // An admin save that commits and primes cachedSelection while this read
+      // was in flight must not be overwritten by this older read result.
+      if (selectionCacheMutationSeq === readSeq) {
+        cachedSelection = { value, expires_at_ms: nowMs + PROVIDER_SELECTION_CACHE_TTL_MS };
+        return value;
+      }
+      return cachedSelection?.value ?? value;
     } catch {
-      return stale;
+      return cachedSelection?.value ?? stale;
     } finally {
       selectionLoadInFlight = null;
     }
@@ -240,4 +248,5 @@ export const loadProviderSelectionCached = async (nowMs = Date.now()): Promise<P
 export const resetProviderSelectionCacheForTest = (): void => {
   cachedSelection = null;
   selectionLoadInFlight = null;
+  selectionCacheMutationSeq = 0;
 };

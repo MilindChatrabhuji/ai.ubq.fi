@@ -282,6 +282,39 @@ test("the routing selection read is cached, primed by a save, and fails open", a
   });
 });
 
+test("an in-flight loadProviderSelectionCached racing an admin save does not overwrite the newer saved value", async () => {
+  const kv = new SelectionKv();
+  await withKv(kv, async () => {
+    await storeProviderSelection(kv as unknown as Kv, ["openlux"]);
+    assert.deepEqual((await loadProviderSelectionCached())?.provider_ids, ["openlux"]);
+
+    const expiredTime = Date.now() + PROVIDER_SELECTION_CACHE_TTL_MS + 10;
+
+    let unblockRead: () => void;
+    const gate = new Promise<void>((resolve) => {
+      unblockRead = resolve;
+    });
+
+    const originalGet = kv.get.bind(kv);
+    kv.get = async <T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }) => {
+      await gate;
+      return originalGet(key, options);
+    };
+
+    const inFlightRead = loadProviderSelectionCached(expiredTime);
+
+    const saved = await storeProviderSelection(kv as unknown as Kv, ["codex"]);
+    assert.ok(saved);
+    assert.deepEqual(saved.provider_ids, ["codex"]);
+
+    unblockRead!();
+    const result = await inFlightRead;
+
+    assert.deepEqual(result?.provider_ids, ["codex"]);
+    assert.deepEqual((await loadProviderSelectionCached(expiredTime + 10))?.provider_ids, ["codex"]);
+  });
+});
+
 // ── Admin API ────────────────────────────────────────────────────────────────
 
 const catalogFixture = () => ({
