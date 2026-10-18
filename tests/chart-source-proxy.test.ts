@@ -8,6 +8,8 @@ import { configureAdminAuthForListener, configureMacLocalAdminAuthBypassForListe
 import { MAX_REMOTE_CAPACITY_OBSERVATIONS } from "../src/provider/capacity-analytics.ts";
 import { createFetchMock } from "./helpers/fetch-mock.ts";
 
+const acknowledgedAt = (state: CapacityPushState): number | null => state.acknowledgedSampledAtMs;
+
 const jsonResponse = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 const capacityPayload = (label: string, usedPercent: number, sampledAtMs: number) => ({
@@ -252,10 +254,15 @@ test("a refused catch-up batch isolates only the bad row and delivers every vali
         }
         return acknowledgePush(call);
       };
-      for (let attempt = 0; attempt < 12 && state.acknowledgedSampledAtMs !== history.at(-1)?.sampled_at_ms; attempt += 1) {
+      const acknowledgedLastSample = (): boolean => (acknowledgedAt(state) ?? -1) >= (history.at(-1)?.sampled_at_ms ?? 0);
+      for (let attempt = 0; attempt < 12 && !acknowledgedLastSample(); attempt += 1) {
         await poll(history, state, calls, respond);
       }
-      assert.deepEqual(stored, history.filter((_, index) => index !== badIndex).map((point) => point.sampled_at_ms), `status ${status}, bad row ${badIndex}`);
+      assert.deepEqual(
+        stored,
+        history.filter((_, index) => index !== badIndex).map((point) => point.sampled_at_ms),
+        `status ${status}, bad row ${badIndex}`
+      );
       assert.equal(state.acknowledgedSampledAtMs, history.at(-1)?.sampled_at_ms);
       assert.ok(pushedSamples(calls).some((batch) => batch.length === 1 && batch[0] === badSample));
     }
@@ -281,8 +288,14 @@ test("timeouts halve later catch-up batches without acknowledging or losing samp
     assert.equal(state.batchSize, batchSize);
   }
   for (let attempt = 0; attempt < 10; attempt += 1) await poll(history, state, calls, respond);
-  assert.deepEqual(stored, history.map((point) => point.sampled_at_ms));
-  assert.deepEqual(pushedSamples(calls).map((batch) => batch.length), [512, 256, 128, ...Array<number>(8).fill(64), 5]);
+  assert.deepEqual(
+    stored,
+    history.map((point) => point.sampled_at_ms)
+  );
+  assert.deepEqual(
+    pushedSamples(calls).map((batch) => batch.length),
+    [512, 256, 128, ...Array<number>(8).fill(64), 5]
+  );
   assert.equal(state.batchSize, 64);
   assert.equal(state.inFlight, null);
 });

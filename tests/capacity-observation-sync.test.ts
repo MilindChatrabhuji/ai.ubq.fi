@@ -22,6 +22,8 @@ import {
   storeRemoteCapacityObservations,
 } from "../src/provider/capacity-analytics.ts";
 
+const acknowledgedAt = (state: CapacityPushState): number | null => state.acknowledgedSampledAtMs;
+
 const COHORT_A = "a".repeat(64);
 const COHORT_B = "b".repeat(64);
 const COHORT_C = "c".repeat(64);
@@ -153,22 +155,18 @@ const ingest = (kv: Kv, body: unknown, nowMs: number): Promise<Response> =>
 
 /** Exercise the companion's real selection/recovery and the VPS's real validation/storage together. */
 const syncMacHistory = async (kv: Kv, history: readonly ProviderCapacityHistoryPoint[], nowMs: number, pushState: CapacityPushState): Promise<void> => {
-  await proxyAdminChartSource(
-    new Request("http://localhost:7999/admin/providers/capacity"),
-    new Response(JSON.stringify({ snapshot_at_ms: nowMs, history })),
-    {
-      token: "test-token",
-      hostId: "mac",
-      isLoopbackAdmin: () => true,
-      isMacCompanionService: () => true,
-      pushState,
-      fetch: createFetchMock((input, init) =>
-        init?.method === "POST"
-          ? handleCapacityObservationIngest(new Request(input, init), { kv, now: () => nowMs })
-          : Promise.resolve(new Response(JSON.stringify({ history: [] })))
-      ),
-    }
-  );
+  await proxyAdminChartSource(new Request("http://localhost:7999/admin/providers/capacity"), new Response(JSON.stringify({ snapshot_at_ms: nowMs, history })), {
+    token: "test-token",
+    hostId: "mac",
+    isLoopbackAdmin: () => true,
+    isMacCompanionService: () => true,
+    pushState,
+    fetch: createFetchMock((input, init) =>
+      init?.method === "POST"
+        ? handleCapacityObservationIngest(new Request(input, init), { kv, now: () => nowMs })
+        : Promise.resolve(new Response(JSON.stringify({ history: [] })))
+    ),
+  });
   await pushState.inFlight;
 };
 
@@ -187,7 +185,10 @@ test("240 companion polls store one finalized point per bucket, including after 
   await syncMacHistory(kv, [...local.values()], bucket(9), state);
   assert.equal(rows.size, 8);
   assert.equal(stats.commits, 8);
-  assert.deepEqual((await readRemoteCapacityObservations(kv, bucket(9))).map(({ point }) => point), [...local.values()]);
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(9))).map(({ point }) => point),
+    [...local.values()]
+  );
   await syncMacHistory(kv, [...local.values()], bucket(9), { acknowledgedSampledAtMs: null, inFlight: null });
   assert.equal(rows.size, 8);
 });
@@ -203,7 +204,10 @@ test("open-bucket transitions survive without retaining intermediate companion r
   await syncMacHistory(kv, [exhausted, latest], latest.sampled_at_ms, state);
   assert.equal(rows.size, 1);
   await syncMacHistory(kv, [exhausted, latest], bucket(2), state);
-  assert.deepEqual((await readRemoteCapacityObservations(kv, bucket(2))).map(({ point }) => point), [exhausted, latest]);
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(2))).map(({ point }) => point),
+    [exhausted, latest]
+  );
 });
 
 test("one row refused by the real ingest does not drop its 511 valid neighbours", async () => {
@@ -214,7 +218,8 @@ test("one row refused by the real ingest does not drop its 511 valid neighbours"
   const bad = history[badIndex];
   assert.ok(bad);
   history[badIndex] = { ...bad, bucket_start_at_ms: bad.bucket_start_at_ms + 1 }; // Unaligned: ingest rejects the whole attempted batch.
-  for (let poll = 0; poll < 12 && state.acknowledgedSampledAtMs !== history.at(-1)?.sampled_at_ms; poll += 1) {
+  const acknowledgedLastSample = (): boolean => (acknowledgedAt(state) ?? -1) >= (history.at(-1)?.sampled_at_ms ?? 0);
+  for (let poll = 0; poll < 12 && !acknowledgedLastSample(); poll += 1) {
     await syncMacHistory(kv, history, bucket(520), state);
   }
   assert.deepEqual(
