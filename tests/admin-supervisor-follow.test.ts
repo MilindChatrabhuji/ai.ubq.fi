@@ -141,7 +141,7 @@ class FakeDocument {
 
 class FakeSection {
   private readonly _elements = new Map<string, FakeElement>();
-  private readonly children: FakeElement[] = [];
+  private readonly _children: FakeElement[] = [];
 
   querySelector(selector: string): FakeElement {
     if (selector.startsWith("#")) {
@@ -153,7 +153,7 @@ class FakeSection {
       }
       return element;
     }
-    for (const child of this.children) {
+    for (const child of this._children) {
       if (child.matches(selector)) return child;
       const nested = child.querySelector(selector);
       if (nested) return nested;
@@ -162,7 +162,7 @@ class FakeSection {
   }
 
   append(...nodes: FakeElement[]): void {
-    for (const node of nodes) this.children.push(node);
+    for (const node of nodes) this._children.push(node);
   }
 }
 
@@ -287,8 +287,7 @@ const PROVIDER_SELECTION = {
 };
 const PROVIDER_HEALTH = { codex: { configured: true, state: "healthy" } };
 
-const providerResponse = (body: unknown, status = 200): Response =>
-  new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
+const providerResponse = (body: unknown, status = 200): Response => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
 
 type PendingProvider = {
   path: string;
@@ -296,9 +295,7 @@ type PendingProvider = {
   reject: (error: unknown) => void;
 };
 
-type ProviderFailure =
-  | { name: string; rejected: true }
-  | { name: string; rejected: false; selection: Response; health: Response };
+type ProviderFailure = { name: string; rejected: true } | { name: string; rejected: false; selection: Response; health: Response };
 
 const createProviderQueue = () => {
   const pending: PendingProvider[] = [];
@@ -417,7 +414,10 @@ test("a provider timeout clears the previous healthy strip", async () => {
       return Promise.resolve(path === "/admin/providers/selection" ? providerResponse(PROVIDER_SELECTION) : providerResponse(PROVIDER_HEALTH));
     }
     return new Promise<Response>((_resolve, reject) => {
-      const abort = () => reject(signal?.reason ?? new DOMException("timed out", "TimeoutError"));
+      const abort = () => {
+        const reason: unknown = signal?.reason;
+        reject(reason instanceof Error ? reason : new DOMException("timed out", "TimeoutError"));
+      };
       if (signal?.aborted) abort();
       else signal?.addEventListener("abort", abort, { once: true });
     });
