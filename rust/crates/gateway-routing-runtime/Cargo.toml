@@ -1,0 +1,20 @@
+[package]
+name = "gateway-routing-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-authority = { path = "../gateway-authority" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-providers = { path = "../gateway-providers" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true
