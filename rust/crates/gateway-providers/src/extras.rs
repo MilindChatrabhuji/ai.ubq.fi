@@ -429,13 +429,11 @@ pub fn prepare_image(
 ) -> Result<ImagePlan, GatewayError> {
     prepare_image_inner(raw, base_model, edit, request_id, false)
 }
-fn prepare_image_inner(
+fn validate_image_scalars(
     raw: &Value,
-    base_model: &str,
     edit: bool,
-    request_id: &str,
     multipart: bool,
-) -> Result<ImagePlan, GatewayError> {
+) -> Result<(Value, u64), GatewayError> {
     let mut body = raw.clone();
     let object = body
         .as_object_mut()
@@ -582,6 +580,57 @@ fn prepare_image_inner(
             "response_format",
         ));
     }
+    Ok((body, count))
+}
+fn validate_multipart_scalars(raw: &Value) -> Result<(), GatewayError> { validate_image_scalars(raw, true, true).map(|_| ()) }
+fn parse_image_inner(
+    raw: &Value,
+    edit: bool,
+    multipart: bool,
+) -> Result<ParsedImageRequest, GatewayError> {
+    let (mut body, count) = validate_image_scalars(raw, edit, multipart)?;
+    if edit {
+        let images = body["images"].as_array().filter(|v| !v.is_empty() && v.len() <= 16)
+            .ok_or_else(|| image_invalid("images must contain from 1 to 16 image references.", "images"))?;
+        if !multipart {
+            let normalized = images.iter().map(|v| normalize_image_reference(v, false)).collect::<Result<Vec<_>, _>>()?;
+            body["images"] = json!(normalized);
+            if let Some(mask) = body.get("mask") { body["mask"] = normalize_image_reference(mask, true)?; }
+        }
+    }
+    let input_bytes = image_input_bytes(&body);
+    if input_bytes > 50 * 1024 * 1024 / count as usize {
+        return Err(image_invalid(
+            if multipart {
+                "n and multipart image inputs exceed the 50 MiB request work limit."
+            } else {
+                "n and inline image inputs exceed the 50 MiB request work limit."
+            },
+            "n",
+        ));
+    }
+    Ok(ParsedImageRequest { body, count, input_bytes, edit })
+}
+
+/// Opaque validated image input; a host model is selected only after parsing.
+#[derive(Clone, Debug)]
+pub struct ParsedImageRequest { body: Value, count: u64, input_bytes: usize, edit: bool }
+impl ParsedImageRequest {
+    pub fn count(&self) -> u64 { self.count }
+    pub fn input_bytes(&self) -> usize { self.input_bytes }
+}
+pub fn parse_image(raw: &Value, edit: bool) -> Result<ParsedImageRequest, GatewayError> {
+    parse_image_inner(raw, edit, false)
+}
+fn prepare_image_inner(raw: &Value, base_model: &str, edit: bool, request_id: &str, multipart: bool) -> Result<ImagePlan, GatewayError> {
+    let parsed = parse_image_inner(raw, edit, multipart)?;
+    Ok(prepare_parsed_image(&parsed, base_model, request_id))
+}
+pub fn prepare_parsed_image(parsed: &ParsedImageRequest, base_model: &str, request_id: &str) -> ImagePlan {
+    let edit = parsed.edit;
+    let body = &parsed.body;
+    let count = parsed.count;
+    let prompt = body["prompt"].as_str().expect("validated image prompt");
     let mut tool = json!({"type":"image_generation","action":if edit{"edit"}else{"generate"}});
     if let Some(model) = body["model"].as_str() {
         tool["model"] = json!(model.trim_matches(js_whitespace));
@@ -601,49 +650,14 @@ fn prepare_image_inner(
         }
     }
     let input = if edit {
-        let images = body["images"]
-            .as_array()
-            .filter(|i| !i.is_empty() && i.len() <= 16)
-            .ok_or_else(|| {
-                image_invalid(
-                    "images must contain from 1 to 16 image references.",
-                    "images",
-                )
-            })?;
         let mut content = vec![json!({"type":"input_text","text":prompt})];
-        for image in images {
-            let image = if multipart {
-                image.clone()
-            } else {
-                normalize_image_reference(image, false)?
-            };
+        for image in body["images"].as_array().expect("validated image inputs") {
             content.push(json!({"type":"input_image","image_url":image["image_url"]}));
         }
-        if let Some(mask) = body.get("mask") {
-            tool["input_image_mask"] = if multipart {
-                mask.clone()
-            } else {
-                normalize_image_reference(mask, true)?
-            };
-        }
-        if let Some(fidelity) = body.get("input_fidelity") {
-            tool["input_fidelity"] = fidelity.clone();
-        }
+        if let Some(mask) = body.get("mask") { tool["input_image_mask"] = mask.clone(); }
+        if let Some(value) = body.get("input_fidelity") { tool["input_fidelity"] = value.clone(); }
         json!([{"role":"user","content":content}])
-    } else {
-        json!(prompt)
-    };
-    let input_bytes = image_input_bytes(&body);
-    if input_bytes > 50 * 1024 * 1024 / count as usize {
-        return Err(image_invalid(
-            if multipart {
-                "n and multipart image inputs exceed the 50 MiB request work limit."
-            } else {
-                "n and inline image inputs exceed the 50 MiB request work limit."
-            },
-            "n",
-        ));
-    }
+    } else { json!(prompt) };
     let mut responses = json!({"model":base_model,"input":input,"tools":[tool],"tool_choice":{"type":"image_generation"}});
     if let Some(user) = body.get("user") {
         responses["user"] = user.clone();
@@ -658,12 +672,12 @@ fn prepare_image_inner(
             }
         })
         .collect();
-    Ok(ImagePlan {
+    ImagePlan {
         responses,
         count,
         request_ids,
         codex_only: true,
-    })
+    }
 }
 fn image_invalid(message: impl Into<String>, param: &str) -> GatewayError {
     GatewayError::new(400, message, Some("invalid_request_error"))
@@ -835,7 +849,7 @@ pub fn multipart_image_references(
     }
     if images.is_empty() || images.len() > 16 {
         return Err(image_invalid(
-            "image must contain between 1 and 16 files",
+            "image must contain from 1 to 16 files.",
             "image",
         ));
     }
@@ -858,17 +872,32 @@ fn image_input_bytes(body: &Value) -> usize {
         })
         .sum()
 }
-pub fn prepare_multipart_image(
-    raw: &Value,
-    files: &[MultipartFile],
-    base_model: &str,
-    request_id: &str,
-) -> Result<ImagePlan, GatewayError> {
-    let (images, mask) = multipart_image_references(files)?;
-    let mut body = raw.clone();
-    body["images"] = json!(images);
-    if let Some(mask) = mask {
-        body["mask"] = mask;
+pub fn parse_multipart_image(raw: &Value, files: &[MultipartFile]) -> Result<ParsedImageRequest, GatewayError> {
+    let raw = raw.as_object().ok_or_else(|| image_invalid("Image edits must include valid multipart form data.", ""))?;
+    let allowed = ["model","prompt","n","size","quality","background","output_format","output_compression","stream","partial_images","user","input_fidelity","response_format"];
+    let mut body = Value::Object(raw.clone());
+    for (key, value) in raw {
+        if !allowed.contains(&key.as_str()) { return Err(image_invalid(format!("Unsupported image edit field: {key}."), key)); }
+        if let Some(text) = value.as_str() {
+            let trimmed = text.trim_matches(js_whitespace);
+            if ["n", "partial_images"].contains(&key.as_str()) {
+                if !trimmed.is_empty() && trimmed.bytes().all(|v| v.is_ascii_digit()) && (trimmed == "0" || !trimmed.starts_with('0')) {
+                    if let Ok(value) = serde_json::from_str::<Value>(trimmed) { body[key] = value; }
+                }
+            } else if key == "output_compression" {
+                if let Ok(value) = serde_json::from_str::<Value>(trimmed) { if value.is_number() { body[key] = value; } }
+            } else if key == "stream" && ["true","false"].contains(&trimmed) { body[key] = json!(trimmed == "true"); }
+        }
     }
-    prepare_image_inner(&body, base_model, true, request_id, true)
+    // Scalar validation precedes file selection in the source. Images are not
+    // required until after scalar validation, so use the same private front end.
+    let _ = validate_multipart_scalars(&body)?;
+    let (images, mask) = multipart_image_references(files)?;
+    body["images"] = json!(images);
+    if let Some(mask) = mask { body["mask"] = mask; }
+    parse_image_inner(&body, true, true)
+}
+pub fn prepare_multipart_image(raw: &Value, files: &[MultipartFile], base_model: &str, request_id: &str) -> Result<ImagePlan, GatewayError> {
+    let parsed = parse_multipart_image(raw, files)?;
+    Ok(prepare_parsed_image(&parsed, base_model, request_id))
 }
