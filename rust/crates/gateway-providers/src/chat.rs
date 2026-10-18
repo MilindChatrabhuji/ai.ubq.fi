@@ -11,6 +11,7 @@ pub struct ChatProjection {
     pub body: Value,
     pub tool_names: ToolMap,
     pub elisions: Vec<Elision>,
+    pub warnings: Vec<String>,
 }
 fn bound(
     text: &str,
@@ -225,6 +226,7 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
         let path = format!("input[{index}]");
         let kind = item["type"].as_str().unwrap_or("message");
         if let Some(text) = item.as_str() {
+            pending.clear();
             messages.push(
                 json!({"role":"user","content":bound(text,&path,"message",reject,&mut elisions)?}),
             );
@@ -234,6 +236,7 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
             "reasoning" => pending.push_str(&reasoning_text(item)),
             "message" => {
                 let role = item["role"].as_str().unwrap_or("user");
+                if role == "user" { pending.clear(); }
                 let role = if role == "developer" { "system" } else { role };
                 let mut message = json!({"role":role,"content":content(item.get("content").unwrap_or(&Value::Null),role,&format!("{path}.content"),reject,&mut elisions)?});
                 if role == "assistant" && !pending.is_empty() {
@@ -292,6 +295,7 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
                 messages.push(json!({"role":"tool","tool_call_id":call_id,"content":bound(&text,&format!("{path}.output"),"tool_output",reject,&mut elisions)?}));
             }
             "agent_message" => {
+                pending.clear();
                 let author = item["author"].as_str().unwrap_or("agent");
                 let recipient = item["recipient"].as_str().unwrap_or("root");
                 let mut texts = vec![];
@@ -344,6 +348,15 @@ pub fn project_responses(
     let mut body = json!({"model":model,"messages":[],"stream":stream});
     if let Some(effort) = raw["reasoning"]["effort"].as_str() {
         body["reasoning_effort"] = json!(project_effort(effort, profile)?);
+    } else if profile == ChatProfile::Deepseek && !thinking_active(None, &raw["thinking"]) {
+        body["reasoning_effort"] = json!("none");
+    }
+    let thinking = profile == ChatProfile::Deepseek && thinking_active(body["reasoning_effort"].as_str(), &raw["thinking"]);
+    let mut warnings = Vec::new();
+    for field in ["temperature", "top_p"] {
+        if let Some(value) = raw.get(field) {
+            if thinking { warnings.push(format!("{field}_ignored")); } else { body[field] = value.clone(); }
+        }
     }
     if let Some(max) = raw.get("max_output_tokens").filter(|v| !v.is_null()) {
         if !max
@@ -423,6 +436,7 @@ pub fn project_responses(
         body,
         tool_names: names,
         elisions,
+        warnings,
     })
 }
 pub fn project_effort(value: &str, profile: ChatProfile) -> Result<String, GatewayError> {
@@ -449,11 +463,15 @@ pub fn project_effort(value: &str, profile: ChatProfile) -> Result<String, Gatew
     }
     Ok(effort)
 }
+pub fn thinking_active(effort: Option<&str>, thinking: &Value) -> bool {
+    if let Some(effort) = effort.map(str::trim).filter(|effort| !effort.is_empty()) {
+        return !effort.eq_ignore_ascii_case("none");
+    }
+    thinking.get("type").and_then(Value::as_str).is_none_or(|kind| !kind.trim().eq_ignore_ascii_case("disabled"))
+}
 pub fn validate_thinking_choice(body: &Value, field: &str) -> Result<(), GatewayError> {
     let effort = body["reasoning_effort"].as_str();
-    let thinking = effort.map_or(body["thinking"]["type"] != "disabled", |s| {
-        !s.eq_ignore_ascii_case("none")
-    });
+    let thinking = thinking_active(effort, &body["thinking"]);
     if thinking && (body["tool_choice"] == "required" || body["tool_choice"].is_object()) {
         let choice = body["tool_choice"]
             .as_str()

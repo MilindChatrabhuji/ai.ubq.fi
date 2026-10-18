@@ -182,6 +182,8 @@ pub struct LithosWindows {
     deadlines: std::collections::BTreeMap<String, i64>,
 }
 pub fn lithos_ladder(model: &str) -> Vec<String> {
+    let canonical = lithos_canonical(model);
+    let model = canonical.as_str();
     let family = if model.starts_with("deepseek-ai/DeepSeek-V4.1-Flash") {
         "deepseek-ai/DeepSeek-V4.1-Flash"
     } else if model.starts_with("moonshotai/Kimi-K3") {
@@ -197,16 +199,21 @@ pub fn lithos_ladder(model: &str) -> Vec<String> {
         vec![]
     }
 }
+fn lithos_canonical(model: &str) -> String {
+    crate::request::LITHOS_MODELS.iter().find(|known| known.eq_ignore_ascii_case(model.trim())).copied().unwrap_or(model.trim()).to_owned()
+}
 impl LithosWindows {
     pub fn refuse(&mut self, rung: &str, now: i64, wait_ms: i64) {
         if wait_ms > 0
             && let Some(deadline) = now.checked_add(wait_ms)
         {
-            let row = self.deadlines.entry(rung.into()).or_insert(deadline);
+            let row = self.deadlines.entry(lithos_canonical(rung)).or_insert(deadline);
             *row = (*row).max(deadline);
         }
     }
     pub fn select(&self, model: &str, now: i64) -> String {
+        let canonical = lithos_canonical(model);
+        let model = canonical.as_str();
         std::iter::once(model.to_owned())
             .chain(lithos_ladder(model))
             .find(|r| self.deadlines.get(r).is_none_or(|d| *d <= now))

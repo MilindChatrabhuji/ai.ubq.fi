@@ -29,6 +29,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) lithos: RefCell<LithosWindows>,
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
+    pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
     pub(crate) extra_lock: std::rc::Rc<futures_util::lock::Mutex<()>>,
 }
 impl<
@@ -38,6 +39,7 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
+    pub fn elapsed_wait_ms(&self) -> i64 { self.elapsed_wait_ms.get() }
     pub(crate) fn authority(&self) -> Authority<S, I> {
         Authority::with_clock(self.store.clone(), self.tokens.clone(), self.clock.clone())
     }
@@ -223,6 +225,7 @@ impl<
                 streamed,
             }),
             conversation_id,
+            elapsed_wait_ms: std::cell::Cell::new(0),
             extra_lock: std::rc::Rc::new(futures_util::lock::Mutex::new(())),
         })
     }

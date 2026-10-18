@@ -129,6 +129,16 @@ pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
         .map(str::to_owned)
         .or_else(|| input.catalog.codex().and_then(|s| s.default_model()));
     let model = gateway_schema::request::resolve_model(input.raw.get("model"), default.as_deref())?;
+    if input.surface == ClientSurface::Chat && input.raw.get("thinking").is_some() {
+        let requested = input.raw.get("model").and_then(Value::as_str).unwrap_or("");
+        let direct = gateway_providers::request::canonical_model(UpstreamProvider::Deepseek, requested, &[]).is_some();
+        if direct && !input.catalog.enabled("deepseek") {
+            return Err(GatewayError::new(400,"The DeepSeek `thinking` extension requires the DeepSeek provider to be enabled; remove `thinking` or enable provider `deepseek`.",Some("invalid_request_error")).with_param(Some("thinking")));
+        }
+        if !direct {
+            gateway_schema::request::validate_request_fields(&input.raw,gateway_schema::request::RequestSurface::ChatCompletions,&gateway_schema::request::RequestExtensions::default())?;
+        }
+    }
     let codex_known = model == "gpt-reserve"
         || input
             .catalog

@@ -1,5 +1,5 @@
 use gateway_schema::{catalog::*, metadata::MetadataHint};
-use serde_json::json;
+use serde_json::{Value,json};
 
 #[test]
 fn configured_deepseek_replaces_same_id_at_original_slot_and_preserves_envelope() {
@@ -14,6 +14,9 @@ fn configured_deepseek_replaces_same_id_at_original_slot_and_preserves_envelope(
         assert_eq!(row["supported_reasoning_levels"].as_array().unwrap().iter().map(|v|v["effort"].as_str().unwrap()).collect::<Vec<_>>(),vec!["none","low","high","max"]);
     }
     assert_eq!(output["models"].as_array().unwrap().iter().filter(|r|r["slug"]=="deepseek-flash").count(),1);
+    let golden:Value=serde_json::from_str(include_str!("fixtures/source-currency-golden.json")).unwrap();
+    let observed=output["models"].as_array().unwrap().iter().map(|row|json!({"slug":row["slug"],"id":row["id"],"future":row["future"],"efforts":row["supported_reasoning_levels"].as_array().map(|levels|levels.iter().map(|l|l["effort"].clone()).collect::<Vec<_>>()),"default":row["default_reasoning_level"]})).collect::<Vec<_>>();
+    assert_eq!(json!(observed),golden["native"]);
 }
 
 #[test]
@@ -30,4 +33,6 @@ fn public_provider_declaration_overwrites_discovery_enrichment_only_on_collision
     assert_eq!(collision["supported_reasoning_levels"],json!(["none","low","high","max"]));assert_eq!(collision["default_reasoning_effort"],"high");
     assert_eq!(collision["context_source"],"provider_discovery");assert_eq!(collision["reasoning_source"],"provider_discovery");
     let unrelated=rows.iter().find(|r|r["id"]=="unrelated").unwrap();assert_eq!(unrelated["context_window_tokens"],123_456);assert_eq!(unrelated["default_reasoning_effort"],"retained-custom");
+    let golden:Value=serde_json::from_str(include_str!("fixtures/source-currency-golden.json")).unwrap();
+    for (field,value) in golden["collision"].as_object().unwrap() {if field!="providers" {assert_eq!(&collision[field],value,"{field}");}}
 }

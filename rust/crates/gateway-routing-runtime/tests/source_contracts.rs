@@ -510,6 +510,7 @@ fn embedding_job_poll_never_dispatches_or_commits_kernel_admission() {
 
 fn refusal(status: u16, transport: TransportState) -> AttemptFailure {
     AttemptFailure {
+        origin: if status == 499 { gateway_routing_runtime::FailureOrigin::Transport } else { gateway_routing_runtime::FailureOrigin::Provider },
         status: Some(status),
         headers: BTreeMap::new(),
         body: vec![],
@@ -1003,4 +1004,53 @@ fn cancellation_before_admission_preserves_original_reason() {
         assert_eq!(error.error.status, 499);
         assert_eq!(error.error.envelope.error.message, "fixture cancelled");
     })
+}
+
+#[test]
+fn source_deepseek_extension_uses_one_captured_route_selection() {
+    run(async {
+        let store=Store::new();seed_key(&store);
+        let mut request=input("captured-selection","deepseek-flash",&["deepseek"]);
+        request.surface=gateway_providers::ClientSurface::Chat;
+        request.raw=json!({"model":"deepseek-flash","messages":[{"role":"user","content":"fixture"}],"thinking":{"type":"disabled"}});
+        request.catalog.selection=gateway_schema::selection::ProviderSelection::normalize(&json!({"provider_ids":["cerebras"],"updated_at_ms":NOW}));
+        let error=policy::plan(&request,NOW).unwrap_err();assert_eq!(error.status,400);assert_eq!(error.envelope.error.param,Some(Some("thinking".into())));
+        request.catalog.selection=None;
+        let session=RoutingSession::begin(request.clone(),store.clone(),Host::new(&store),store.clone(),store.clone()).await.unwrap();
+        request.catalog.selection=gateway_schema::selection::ProviderSelection::normalize(&json!({"provider_ids":["cerebras"],"updated_at_ms":NOW+1}));
+        assert!(!request.catalog.enabled("deepseek"));
+        let attempt=session.next_attempt().await.unwrap().unwrap();assert_eq!(attempt.request.provider,UpstreamProvider::Deepseek);assert_eq!(attempt.request.body["reasoning_effort"],"none");
+        session.finish(TransportObservation::default()).await.unwrap();
+    });
+}
+
+#[test]
+fn measured_cancelled_wait_is_recorded_before_original_cancellation_error() {
+    run(async {
+        let golden:Value=serde_json::from_str(include_str!("fixtures/source-currency-wait.json")).unwrap();
+        let elapsed=golden["cancelled"]["elapsed_ms"].as_i64().unwrap();
+        let store=Store::new();seed_key(&store);let mut host=Host::new(&store);host.cancel_wait_after_ms=Some(elapsed);
+        let session=RoutingSession::begin(input("wait-cancel","deepseek-ai/DeepSeek-V4.1-Flash-ultra",&["lithos"]),store.clone(),host,store.clone(),store.clone()).await.unwrap();
+        let attempt=session.next_attempt().await.unwrap().unwrap();session.before_dispatch(&attempt).await.unwrap();session.transport_started(&attempt).await.unwrap();
+        let mut failure=refusal(429,TransportState::Started);failure.headers.insert("retry-after".into(),"60".into());
+        let error=session.refusal(&attempt,failure).await.unwrap_err();assert_eq!(error.error.status,499);assert_eq!(session.elapsed_wait_ms(),elapsed);
+        session.finish(TransportObservation::default()).await.unwrap();assert_eq!(window(&store)["committed_requests"],1);
+    });
+}
+
+#[test]
+fn explicit_provider_504_survives_late_abort_and_local_deadline_never_advances() {
+    run(async {
+        let store=Store::new();seed_key(&store);let host=Host::new(&store);
+        let session=RoutingSession::begin(input("provider-504","ubiquity/deepseek-flash",&["lithos","deepseek"]),store.clone(),host.clone(),store.clone(),store.clone()).await.unwrap();
+        let attempt=session.next_attempt().await.unwrap().unwrap();session.before_dispatch(&attempt).await.unwrap();session.transport_started(&attempt).await.unwrap();
+        host.cancelled.store(true,Ordering::SeqCst);
+        assert_eq!(session.refusal(&attempt,refusal(504,TransportState::Started)).await.unwrap(),RefusalDecision::Return);
+        session.finish(TransportObservation::default()).await.unwrap();
+        let session=RoutingSession::begin(input("local-504","ubiquity/deepseek-flash",&["lithos","deepseek"]),store.clone(),Host::new(&store),store.clone(),store.clone()).await.unwrap();
+        let attempt=session.next_attempt().await.unwrap().unwrap();session.before_dispatch(&attempt).await.unwrap();session.transport_started(&attempt).await.unwrap();
+        let mut deadline=refusal(504,TransportState::Started);deadline.origin=gateway_routing_runtime::FailureOrigin::GatewayDeadline;
+        assert_eq!(session.refusal(&attempt,deadline).await.unwrap(),RefusalDecision::Abort);
+        session.finish(TransportObservation::default()).await.unwrap();
+    });
 }
