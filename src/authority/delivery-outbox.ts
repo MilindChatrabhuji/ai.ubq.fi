@@ -1,10 +1,10 @@
-import type { PortableAuthority } from "./admission-state.ts";
+import type { AuthorityOperations } from "./authority-rpc.ts";
 import type { AdmissionHandle, DeliveryOutcome, TerminalEvidence } from "./contracts.ts";
 
 /** Durable observations are individually replayable after a lost response/acknowledgment. */
 export class DeliveryOutbox {
   constructor(
-    private readonly _authority: PortableAuthority,
+    private readonly _authority: AuthorityOperations,
     private readonly _handle: AdmissionHandle
   ) {}
 
