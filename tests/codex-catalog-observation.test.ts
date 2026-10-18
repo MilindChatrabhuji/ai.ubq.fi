@@ -30,7 +30,7 @@ const {
   resetCodexAccountModelsCacheForTest,
 } = await import("../src/models/codex-models-availability.ts");
 const { setProviderCapacitySampleTriggerForTest } = await import("../src/provider/capacity-events.ts");
-const { buildModelCatalogSnapshot } = await import("../src/models/catalog.ts");
+const { buildModelCatalogSnapshot, handleModelCapabilities } = await import("../src/models/catalog.ts");
 const { RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../src/runtime-config.ts");
 const { handleCodexCatalogModels } = await import("../src/catalog/index.ts");
 const { resetCodexCatalogMemoForTest } = await import("../src/catalog/store.ts");
@@ -265,7 +265,19 @@ test("catalog observation preserves the optional full-snapshot read failure boun
     version: 2,
     default_model: MODEL,
     default_reasoning_effort: "none",
-    codex_models: { source: "chatgpt_codex", client_version: VERSION, updated_at_ms: Date.now(), models: [{ slug: MODEL }] },
+    codex_models: {
+      source: "chatgpt_codex",
+      client_version: VERSION,
+      updated_at_ms: Date.now(),
+      models: [
+        {
+          slug: MODEL,
+          supported_reasoning_levels: ["high", "medium", "low"],
+          default_reasoning_level: "medium",
+          reasoning_effort_wire_map: { ultra: "max" },
+        },
+      ],
+    },
     updated_at_ms: Date.now(),
   });
   const nativeGet = kv.get.bind(kv);
@@ -277,6 +289,13 @@ test("catalog observation preserves the optional full-snapshot read failure boun
     snapshot.models.some((model) => model.id === MODEL),
     "the real catalog builder still serves the runtime fallback"
   );
+  const capabilities = (await (await handleModelCapabilities()).json()) as { data: Array<Record<string, unknown>> };
+  const modelCapability = capabilities.data.find((entry) => entry.id === MODEL);
+  assert.ok(modelCapability, "the model capabilities handler still serves the runtime fallback");
+  assert.equal(modelCapability.upstream_provider, "codex_chatgpt");
+  assert.deepEqual(modelCapability.supported_reasoning_levels, ["high", "medium", "low"]);
+  assert.equal(modelCapability.default_reasoning_effort, "medium");
+  assert.deepEqual(modelCapability.reasoning_effort_wire_map, { ultra: "max" });
 });
 
 test("bounded single-account observation keeps versioned client validators separate from upstream revalidation", async () => {

@@ -378,8 +378,8 @@ const fetchCodexModelsUnion = async (
   return buildCodexModelsUnionResponse(collected.contributions);
 };
 
-export const loadCodexModelsSnapshot = async (): Promise<CodexModelsSnapshot | null> => {
-  return (await loadRuntimeConfig())?.codex_models ?? null;
+export const loadCodexModelsSnapshot = async (kvOverride?: Kv | null): Promise<CodexModelsSnapshot | null> => {
+  return (await loadRuntimeConfig(kvOverride))?.codex_models ?? null;
 };
 
 export const preserveCodexDefaultModel = (snapshot: CodexModelsSnapshot, candidate: string | null | undefined): string | undefined => {
