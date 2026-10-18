@@ -84,7 +84,8 @@ impl AuthorityStore for SqliteNonceStore {
         if key != &native_nonce_key() {
             return Err(unavailable());
         }
-        read(&self.connection.lock().map_err(|_| unavailable())?)
+        let connection = self.connection.lock().map_err(|_| unavailable())?;
+        read(&connection)
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
         let key = native_nonce_key();
