@@ -191,10 +191,16 @@ impl Socket {
         self.socket.get_mut().deadline = self
             .overall_deadline
             .map_or(close_deadline, |overall| overall.min(close_deadline));
-        let _ = self.socket.close(None);
-        let _ = self.socket.flush();
-        // Close is a bounded send/flush, not another application-frame read.
-        // Re-reading a rejected oversized header can panic in tungstenite0.28.
+        if self.socket.close(None).is_ok() && self.socket.flush().is_ok() {
+            // Healthy connections retain the source's bounded close grace.
+            // Stop at the first error: a rejected header must not be read twice.
+            while Instant::now() < self.socket.get_ref().deadline {
+                match self.socket.read() {
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        }
         let _ = self.socket.get_mut().stream.shutdown(Shutdown::Both);
         self.failed = true;
     }
