@@ -239,6 +239,13 @@ const parseArguments = (args: readonly string[]): SpecDriftArguments => {
   };
 };
 
+const reportFailures = (heading: string, failures: readonly string[], error: (line: string) => void): boolean => {
+  if (failures.length === 0) return false;
+  error(heading);
+  for (const failure of failures) error(failure);
+  return true;
+};
+
 /** Runs the gate and returns its exit code: 0 aligned, 1 drift or verification failure, 2 usage error. */
 export const runSpecDriftCheck = async (args: readonly string[], dependencies: SpecDriftDependencies = {}): Promise<number> => {
   const log =
@@ -286,22 +293,14 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
     if (parsed.verifySource) await verifyOfficialCommit(pin.commit, readGitHub);
     const location = specLocation ?? pin.source;
     const failures = verifySpecAgainstPin(pin, await readSpec(location));
-    if (failures.length) {
-      error(`OpenAI spec verification failed for ${location}`);
-      for (const failure of failures) error(failure);
-      return 1;
-    }
+    if (reportFailures(`OpenAI spec verification failed for ${location}`, failures, error)) return 1;
     log(`Verified ${location} against ${pin.repository}@${pin.commit}`);
   } else {
     pin = await readOpenAiSpecPin();
   }
 
   const failures = checkRuntimeAgainstPin(pin);
-  if (failures.length) {
-    error(`OpenAI request-schema drift against ${pin.repository}@${pin.commit}`);
-    for (const failure of failures) error(failure);
-    return 1;
-  }
+  if (reportFailures(`OpenAI request-schema drift against ${pin.repository}@${pin.commit}`, failures, error)) return 1;
   for (const surface of RUNTIME_REQUEST_SURFACES) log(`${surface.label}: aligned (${surface.keys.length} request keys) with ${pin.repository}@${pin.commit}`);
   return 0;
 };
