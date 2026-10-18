@@ -10,7 +10,7 @@ use gateway_admin::{
     keys::*,
     *,
 };
-use gateway_auth::{crypto::Secret, passkeys::*, upstream::*, *};
+use gateway_auth::{crypto::Secret, upstream::*, *};
 use gateway_core::state::*;
 use serde_json::{Value, json};
 

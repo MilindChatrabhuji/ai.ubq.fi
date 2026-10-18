@@ -318,12 +318,15 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
         let changed = change_fields(None, &record, "create", raw);
         append_audit(
             self.host,
-            actor,
-            request_id,
-            self.release,
-            "create",
-            &record,
-            &changed,
+            audit::ChangeInput {
+                principal: actor,
+                request_id,
+                release: self.release,
+                action: "create",
+                id: &record.policy.id,
+                name: Some(&record.name),
+                changed: &changed,
+            },
             &mut checks,
             &mut writes,
         )?;
@@ -376,8 +379,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
             store::check(&dk, dr.as_ref()),
         ];
         let mut writes = Vec::new();
-        let action;
-        match operation {
+        let action = match operation {
             AdminOperation::ApiKeysDelete => {
                 if record.policy.revoked_at_ms.is_none() {
                     return Err(invalid("Only revoked keys can be deleted"));
@@ -388,11 +390,11 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     RecordMutation::Delete { key: hk.clone() },
                     RecordMutation::Delete { key: pk.clone() },
                 ]);
-                action = "delete";
+                "delete"
             }
             AdminOperation::ApiKeysRevoke => {
                 record.policy.revoked_at_ms = Some(record.policy.revoked_at_ms.unwrap_or(now));
-                action = "revoke";
+                "revoke"
             }
             AdminOperation::ApiKeysUnrevoke => {
                 if dr.is_some() {
@@ -409,7 +411,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     ));
                 }
                 record.policy.revoked_at_ms = None;
-                action = "unrevoke";
+                "unrevoke"
             }
             AdminOperation::ApiKeysUpdate => {
                 if let Some(value) = raw.get("name") {
@@ -461,10 +463,10 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                 record.paid_fallback_quota_per_credit = paid.quota_per_credit;
                 record.paid_fallback_max_exposure_microcredits = paid.max_exposure_microcredits;
                 record.paid_fallback_pricing_checked_at_ms = paid.pricing_checked_at_ms;
-                action = "update";
+                "update"
             }
             _ => return Err(invalid("Invalid API key operation")),
-        }
+        };
         if operation != AdminOperation::ApiKeysDelete {
             let rev = self.revision()?;
             writes.extend([
@@ -476,12 +478,15 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
         let changed = change_fields(Some(&original), &record, action, raw);
         append_audit(
             self.host,
-            actor,
-            request_id,
-            self.release,
-            action,
-            &record,
-            &changed,
+            audit::ChangeInput {
+                principal: actor,
+                request_id,
+                release: self.release,
+                action,
+                id: &record.policy.id,
+                name: Some(&record.name),
+                changed: &changed,
+            },
             &mut checks,
             &mut writes,
         )?;
@@ -540,25 +545,11 @@ fn change_fields(
 
 fn append_audit<H: AuthHost>(
     host: &H,
-    actor: &AuthPrincipal,
-    request_id: &str,
-    release: &str,
-    action: &str,
-    record: &ApiKeyRecord,
-    raw: &Value,
+    input: audit::ChangeInput<'_>,
     checks: &mut Vec<RevisionCheck>,
     writes: &mut Vec<RecordMutation>,
 ) -> Result<(), GatewayError> {
-    let mutation = audit::mutation(
-        host,
-        actor,
-        request_id,
-        release,
-        action,
-        &record.policy.id,
-        Some(&record.name),
-        raw.clone(),
-    )?;
+    let mutation = audit::mutation(host, input)?;
     if let RecordMutation::Put { key, .. } = &mutation {
         checks.push(store::check(key, None));
     }

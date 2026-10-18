@@ -70,7 +70,7 @@ pub async fn passkey_users<S: QueryStore>(
             })?;
         users.push(user);
     }
-    users.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
+    users.sort_by_key(|user| std::cmp::Reverse(user.updated_at_ms));
     Ok(AuthResponse::json(
         200,
         json!({"object":"list","data":users.iter().map(user_wire).collect::<Vec<_>>()}),
@@ -171,7 +171,7 @@ pub async fn api_keys<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
             })?;
         records.push(record);
     }
-    records.sort_by(|left, right| right.created_at_ms.cmp(&left.created_at_ms));
+    records.sort_by_key(|record| std::cmp::Reverse(record.created_at_ms));
     let mut data = Vec::new();
     for record in records {
         data.push(effective_key_record(store, &record, now).await?);
