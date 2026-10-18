@@ -1,0 +1,45 @@
+[package]
+name = "webauthn-rs-core"
+description = "Webauthn Cryptographic Operation Handling"
+readme = "README.md"
+keywords = ["webauthn", "authentication"]
+categories = ["authentication", "web-programming"]
+
+version = { workspace = true }
+authors = { workspace = true }
+rust-version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+base64.workspace = true
+crypto-glue.workspace = true
+hex.workspace = true
+webauthn-attestation-ca.workspace = true
+webauthn-rs-proto.workspace = true
+serde.workspace = true
+serde_cbor_2.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+nom.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+url = { workspace = true, features = ["serde"] }
+x509-parser = "0.16"
+der-parser = "9.0"
+uuid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+hex-literal = "0.4"
+tracing-subscriber.workspace = true
+webauthn-rs-device-catalog.workspace = true

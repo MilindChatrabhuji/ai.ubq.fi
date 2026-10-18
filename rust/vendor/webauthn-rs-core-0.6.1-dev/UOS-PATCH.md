@@ -1,0 +1,9 @@
+# Pinned host-time extension
+
+This directory preserves the published `webauthn-rs-core` 0.6.1-dev source, except for the documented change to `src/core.rs`. The original crates.io archive has SHA-256 `4df5bb62f5cb2b5653bbdee8529d676b5e9df1b864f5d60fd9ea45b940415d10` and records upstream commit `8a80623acc8826360c90c69023a258ec4c64adcc` in `.cargo_vcs_info.json`. Keep the original release digest, authorship and MPL-2.0 license when updating this copy.
+
+The published archive omits its repository-level license file. `LICENSE.md` is copied from that exact upstream commit, with Git blob ID `52d135112eeb402d23eeabbcd23513d389553ddd`, rather than from a moving branch.
+
+`uos-host-time.patch` adds `register_credential_at_time`, which uses the unchanged registration ceremony, attestation and cryptographic verification with a caller-supplied `SystemTime`. The original native entry point still calls `SystemTime::now()` and delegates to the same method. There is no global clock replacement, fixed-time fallback or skipped verification. The WASM adapter must validate its real host time as a nonnegative safe integer before constructing `UNIX_EPOCH + Duration`.
+
+On 2026-10-18 the unmodified published core compiled to WASM and generated distinct 32-byte challenges in actual workerd 1.20261012.1, but registration trapped at `std::time::SystemTime::now()`. With this exact patch, an actual workerd ES256 attestation-none registration succeeded using real `Date.now()` input; negative host time was rejected, and the direct standard-clock diagnostic continued to trap. The comparison held the complete dependency name/version set constant. This proves the clock extension for that ceremony; wider source algorithm, attestation, legacy credential and runtime integration compatibility still require their own conformance evidence.
