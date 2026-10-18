@@ -79,7 +79,7 @@ jobs:
   validate:
     needs: scope
     if: ${{ needs.scope.outputs.needs_validate == 'true' }}
-    runs-on: ubuntu-26.04-arm
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -207,7 +207,7 @@ jobs:
   verify-artifact:
     needs: [scope, validate, mac-containment, darwin-native]
     if: ${{ always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped') }}
-    runs-on: ubuntu-26.04-arm
+    runs-on: ubuntu-24.04-arm
     permissions:
       actions: read
       contents: read
