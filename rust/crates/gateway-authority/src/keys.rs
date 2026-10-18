@@ -19,7 +19,13 @@ pub fn claude_accounts() -> RecordKey {
     key(&[Text("uos_ai"), Text("claude_code_accounts"), Text("v1")])
 }
 pub fn claude_quota(account: &str, cohort: &str) -> RecordKey {
-    key(&[Text("uos_ai"), Text("claude_code_quota"), Text("v1"), Text(account), Text(cohort)])
+    key(&[
+        Text("uos_ai"),
+        Text("claude_code_quota"),
+        Text("v1"),
+        Text(account),
+        Text(cohort),
+    ])
 }
 pub fn active() -> RecordKey {
     key(&[Text("uos_ai"), Text("codex_active_account"), Text("v1")])

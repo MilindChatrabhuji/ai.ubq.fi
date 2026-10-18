@@ -177,9 +177,13 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 }
                 PaidAuthorization::ClaudeSubscriptionUnavailable(proof) => {
                     if routing.codex_enabled && routing.codex_models.contains(&input.model) {
-                        return Err(unavailable("codex_routing_unavailable", "Claude evidence cannot replace current Codex full-pool proof."));
+                        return Err(unavailable(
+                            "codex_routing_unavailable",
+                            "Claude evidence cannot replace current Codex full-pool proof.",
+                        ));
                     }
-                    self.require_claude_proof(&mut tx, proof, &input.model, now).await?;
+                    self.require_claude_proof(&mut tx, proof, &input.model, now)
+                        .await?;
                 }
             }
             let deletion: Option<serde_json::Value> =
@@ -205,7 +209,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 }
                 validate_attempt(&existing, &existing.reservation)?;
                 if let PaidAuthorization::ClaudeSubscriptionUnavailable(proof) = authorization {
-                    self.require_claude_proof(&mut tx, proof, &input.model, now).await?;
+                    self.require_claude_proof(&mut tx, proof, &input.model, now)
+                        .await?;
                 }
                 if tx.commit().await? {
                     return Ok(PaidAdmission::Existing(existing.reservation));
@@ -325,7 +330,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 )?;
             }
             if let PaidAuthorization::ClaudeSubscriptionUnavailable(proof) = authorization {
-                self.require_claude_proof(&mut tx, proof, &input.model, now).await?;
+                self.require_claude_proof(&mut tx, proof, &input.model, now)
+                    .await?;
             }
             if tx.commit().await? {
                 return Ok(PaidAdmission::Reserved(reservation));
