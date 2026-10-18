@@ -1,6 +1,5 @@
 use auth::{AuthConfig, AuthHost, AuthService, session_index::*};
 use gateway_auth as auth;
-use gateway_core::state::*;
 use serde_json::json;
 #[path = "session_index_cases/support.rs"]
 mod support;
