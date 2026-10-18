@@ -14,8 +14,14 @@ use std::{
 };
 
 // Assertions inspect the actual JSON wire of either explicit response arm.
-trait WireBody { fn wire_json(&self)->Value; }
-impl WireBody for AuthResponseBody {fn wire_json(&self)->Value{serde_json::from_slice(&self.to_bytes().unwrap()).unwrap()}}
+trait WireBody {
+    fn wire_json(&self) -> Value;
+}
+impl WireBody for AuthResponseBody {
+    fn wire_json(&self) -> Value {
+        serde_json::from_slice(&self.to_bytes().unwrap()).unwrap()
+    }
+}
 
 fn run<F: Future>(future: F) -> F::Output {
     let mut cx = TaskContext::from_waker(Waker::noop());
@@ -292,7 +298,8 @@ fn debug_expiry_and_unknown_scenarios_follow_source() {
     assert_eq!(
         run(service.execute(AdminOperation::DebugGet, request))
             .unwrap()
-            .body.wire_json()["routing"]["scenario"],
+            .body
+            .wire_json()["routing"]["scenario"],
         "normal"
     );
     assert_eq!(
@@ -353,7 +360,8 @@ fn claude_empty_access_is_authoritative_and_corruption_never_seeds() {
     assert_eq!(
         run(service.execute(AdminOperation::ClaudeAccessGet, input(Value::Null)))
             .unwrap()
-            .body.wire_json()["data"]["allowed_key_ids"],
+            .body
+            .wire_json()["data"]["allowed_key_ids"],
         json!([])
     );
     store.put(
@@ -375,7 +383,10 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
     seed_catalog(&store, true);
     let service = runtime(&store, &host, &config);
     let response=run(service.execute(AdminOperation::DefaultsSet,input(json!({"model":"gpt-source","reasoning_effort":"future-tier","kernel_policy_limit_requests":25})))).unwrap();
-    assert_eq!(response.body.wire_json()["defaults"]["reasoning_effort"], "future-tier");
+    assert_eq!(
+        response.body.wire_json()["defaults"]["reasoning_effort"],
+        "future-tier"
+    );
     assert_eq!(
         store
             .get(json!(["uos_ai", "authority", "v1", "kernel_defaults"]))
@@ -399,7 +410,8 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
             input(json!({"model":"gpt-source"}))
         ))
         .unwrap()
-        .body.wire_json()["defaults"]["reasoning_effort"],
+        .body
+        .wire_json()["defaults"]["reasoning_effort"],
         "none"
     );
 }
@@ -623,8 +635,14 @@ fn errors_limit_does_not_truncate_five_xx_buckets() {
     let mut request = input(Value::Null);
     request.query.insert("limit".into(), vec!["1".into()]);
     let response = run(service.execute(AdminOperation::Errors, request)).unwrap();
-    assert_eq!(response.body.wire_json()["data"].as_array().unwrap().len(), 1);
-    assert_eq!(response.body.wire_json()["five_xx_buckets"][0]["count"], 205);
+    assert_eq!(
+        response.body.wire_json()["data"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        response.body.wire_json()["five_xx_buckets"][0]["count"],
+        205
+    );
 }
 
 #[test]
@@ -789,7 +807,7 @@ fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
         .query
         .insert("include_usage".into(), vec!["true".into()]);
     let result = run(service.execute(AdminOperation::KernelUsageGet, request)).unwrap();
-    let body=result.body.wire_json();
+    let body = result.body.wire_json();
     let series = body["usage"]["daily_requests"].as_array().unwrap();
     assert_eq!(series.len(), 30);
     assert_eq!(series[29], 5);
@@ -1242,7 +1260,10 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
         input(json!({"scenario":"\u{feff}codex_429\u{feff}","duration_ms":["16"]})),
     ))
     .unwrap();
-    assert_eq!(response.body.wire_json()["routing"]["expires_at_ms"], 1000016);
+    assert_eq!(
+        response.body.wire_json()["routing"]["expires_at_ms"],
+        1000016
+    );
     let response = run(service.execute(
         AdminOperation::ClaudeAccessSet,
         input(json!({"allowed_key_ids":["\u{0085}key\u{0085}"]})),
