@@ -25,3 +25,7 @@ Destination C is not a frozen prefetch input: every bounded CAS retry strongly r
 Freshness uses original sample time and source maximum age. Named additional-limit applicability, newer/equal inference quota signals, legacy fallback, independent classes, reset ambiguity/recovery and half-open ownership remain source-compatible. Stale/error/health observations cannot mint exhaustion, credential invalidity, reset eligibility or paid authority. Full-pool proof remains selection-owned. Credential rotation and pool reorder retain the source identity/generation rules.
 
 Acceptance requires source decision/write-set vectors, original pool/credential/observation races, wrong slot/account/time, named limits, positive capacity versus newer 429, timeout/probe/legacy preservation, C conflict and restart between C and R, and quota/paid/reset separation. Exact native/WASM/strict-Clippy/rustfmt receipts remain required before integration.
+
+## Version 1.1 fixed-fetch readback
+
+The opaque fence exposes `fetch_bindings()` read-only borrowed views with `source_slot()`, `account_id()`, `credential_version()`, `native_generation_hash()` and optional `native_owner()`. These contain the original prefetch identities, never credentials, caller-defined checks or accepted outcome flags. M19 consumes the views and trusted capture time; M05 validates the actual fixed-GET publication and credential against them. Record still rechecks every original source revision and owner after I/O.

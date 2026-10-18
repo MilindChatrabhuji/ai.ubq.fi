@@ -1816,6 +1816,247 @@
           }
         }
       }
+    },
+    {
+      "revision": "future-winner",
+      "current": [
+        {
+          "slot": 0,
+          "account_id_hash": "account-a",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "account_id_hash": "account-a",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000100,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "kind": "capacity_observations",
+        "checks": {
+          "capacity": "future-winner"
+        },
+        "writes": {
+          "capacity": {
+            "v": 1,
+            "updated_at_ms": 1000000,
+            "observations": []
+          }
+        }
+      }
+    },
+    {
+      "revision": "stable-slot-order",
+      "current": [
+        {
+          "slot": 0,
+          "account_id_hash": "z-account",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "account_id_hash": "a-account",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "kind": "capacity_observations",
+        "checks": {
+          "capacity": "stable-slot-order"
+        },
+        "writes": {
+          "capacity": {
+            "v": 1,
+            "updated_at_ms": 1000000,
+            "observations": [
+              {
+                "slot": 0,
+                "account_id_hash": "z-account",
+                "state": "available",
+                "source_observed_at_ms": 1000000,
+                "snapshot_at_ms": 1000000,
+                "windows": {
+                  "primary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 0,
+                    "reset_at_ms": 1060000
+                  },
+                  "secondary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 25,
+                    "reset_at_ms": 1060000
+                  }
+                },
+                "additional_rate_limits": [
+                  {
+                    "limit_name": " GPT_Test ",
+                    "metered_feature": "test",
+                    "windows": {
+                      "primary": {
+                        "limit_window_seconds": 300,
+                        "used_percent": 80,
+                        "reset_at_ms": 1060000
+                      },
+                      "secondary": null
+                    }
+                  }
+                ]
+              },
+              {
+                "slot": 0,
+                "account_id_hash": "a-account",
+                "state": "available",
+                "source_observed_at_ms": 1000000,
+                "snapshot_at_ms": 1000000,
+                "windows": {
+                  "primary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 0,
+                    "reset_at_ms": 1060000
+                  },
+                  "secondary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 25,
+                    "reset_at_ms": 1060000
+                  }
+                },
+                "additional_rate_limits": [
+                  {
+                    "limit_name": " GPT_Test ",
+                    "metered_feature": "test",
+                    "windows": {
+                      "primary": {
+                        "limit_window_seconds": 300,
+                        "used_percent": 80,
+                        "reset_at_ms": 1060000
+                      },
+                      "secondary": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "windows": [

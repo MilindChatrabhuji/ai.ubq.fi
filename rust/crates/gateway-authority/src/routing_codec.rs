@@ -215,7 +215,7 @@ fn parse_slot(raw: &Value, allow_repair: bool) -> Result<RoutingSlot, GatewayErr
         && slot.retained_reset_at_ms == slot.quota_blocked_until_ms
         && slot.reset_identity_stable
         && slot.probe_lease.is_none()
-        && slot.invalid_credential_version.is_none();
+        && raw.get("invalid_credential_version") == Some(&Value::Null);
     slot.reset_identity_ambiguous = !(allow_repair && (neutral_legacy || first_body))
         && raw
             .get("banked_reset_generation_ambiguous")
@@ -305,12 +305,20 @@ fn rotate(
             recovery_pending: slot.recovery_pending,
         })
     });
-    let preserved = slot
-        .quota_blocks
-        .values()
-        .cloned()
-        .chain(fallback)
-        .max_by_key(|b| b.blocked_until_ms);
+    let preserved = fallback
+        .into_iter()
+        .chain(
+            CLASSES
+                .iter()
+                .filter_map(|class| slot.quota_blocks.get(*class).cloned()),
+        )
+        .reduce(|a, b| {
+            if b.blocked_until_ms > a.blocked_until_ms {
+                b
+            } else {
+                a
+            }
+        });
     let generation = next_generation(slot.generation)?;
     let old_stable = stable(slot);
     let recovery = slot.recovery_pending;

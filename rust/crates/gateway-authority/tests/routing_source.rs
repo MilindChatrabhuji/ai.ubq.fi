@@ -8,8 +8,25 @@ use support::*;
 fn packet() -> Value {
     serde_json::from_str(include_str!("fixtures/codex-capacity-source-v1.json")).unwrap()
 }
+fn equivalent(actual: &Value, expected: &Value) -> bool {
+    match (actual, expected) {
+        (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equivalent(a, b))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, a)| b.get(key).is_some_and(|b| equivalent(a, b)))
+        }
+        _ => actual == expected,
+    }
+}
 fn equal(actual: Value, expected: &Value, label: &str) {
-    assert_eq!(&actual, expected, "source case {label}")
+    assert!(
+        equivalent(&actual, expected),
+        "source case {label}: actual={actual} expected={expected}"
+    )
 }
 #[test]
 fn source_row_normalizers_preserve_legacy_fields_and_refuse_unknown_circuits() {

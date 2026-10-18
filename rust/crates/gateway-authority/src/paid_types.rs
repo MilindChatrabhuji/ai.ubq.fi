@@ -124,6 +124,7 @@ pub struct PaidRollup {
     pub model: String,
     pub provider: PaidProvider,
     pub request_count: i64,
+    #[serde(rename = "quota_sum")]
     pub provider_quota: f64,
     pub input_tokens: i64,
     pub cached_input_tokens: i64,
