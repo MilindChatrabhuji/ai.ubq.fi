@@ -282,7 +282,7 @@ test("codex catalog: the metered fallback omits disabled OpenRouter rows with an
     resetProviderSelectionCacheForTest();
     process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.resolve(new Response("unavailable", { status: 503 }));
+    globalThis.fetch = createFetchMock(() => Promise.resolve(new Response("unavailable", { status: 503 })));
     try {
       const response = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
       assert.equal(response.status, 200);
