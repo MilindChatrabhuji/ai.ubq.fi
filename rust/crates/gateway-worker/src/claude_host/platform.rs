@@ -65,6 +65,26 @@ pub(super) fn bootstrap(platform: &PlatformHost) -> Result<Bootstrap, GatewayErr
         workspace,
     })
 }
+pub(super) async fn bootstrap_for_source(
+    store: &RemoteAuthorityStore,
+    platform: &PlatformHost,
+) -> Result<Bootstrap, GatewayError> {
+    // Existing roster/tombstone and source legacy credential win over environment values.
+    if claude::read_roster(store, platform.now_ms())
+        .await?
+        .is_some()
+    {
+        return Ok(Bootstrap::default());
+    }
+    if claude::load_roster(store, platform, &Bootstrap::default())
+        .await?
+        .revision
+        .is_some()
+    {
+        return Ok(Bootstrap::default());
+    }
+    bootstrap(platform)
+}
 impl WebAuthnCrypto for Host {
     async fn fetch_certificate_revocation_list(&self, url: &str) -> Result<Vec<u8>, GatewayError> {
         self.platform.fetch_certificate_revocation_list(url).await
