@@ -1,7 +1,7 @@
-use gateway_auth::crypto::{Secret, decode_base64url, sha256_hex};
+use gateway_auth::crypto::{Secret, decode_base64url};
 use gateway_core::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -31,32 +31,39 @@ impl NativeCredentials {
     /// Source routing identity is salted and deliberately differs from the
     /// administrative SHA-256(account_id) and the native generation fingerprint.
     pub fn routing_account_hash(&self) -> String {
-        sha256_hex(format!("uos_ai\0codex_routing_account\0{}", self.account_id).as_bytes())
+        gateway_auth::provider_credentials::codex_credential_identity(
+            &self.account_id,
+            &self.access_token,
+            &self.refresh_token,
+        )
+        .routing_account_hash
+        .0
     }
     pub fn administrative_account_hash(&self) -> String {
-        sha256_hex(self.account_id.as_bytes())
+        gateway_auth::provider_credentials::codex_credential_identity(
+            &self.account_id,
+            &self.access_token,
+            &self.refresh_token,
+        )
+        .administrative_account_hash
+        .0
     }
     pub fn routing_credential_version(&self) -> String {
-        sha256_hex(
-            format!(
-                "{}\0{}\0{}",
-                self.account_id,
-                self.access_token.expose(),
-                self.refresh_token.expose()
-            )
-            .as_bytes(),
+        gateway_auth::provider_credentials::codex_credential_identity(
+            &self.account_id,
+            &self.access_token,
+            &self.refresh_token,
         )
+        .credential_version
+        .0
     }
     pub fn generation_hash(&self) -> String {
-        sha256_hex(
-            json!([
-                self.account_id,
-                self.access_token.expose(),
-                self.refresh_token.expose()
-            ])
-            .to_string()
-            .as_bytes(),
+        gateway_auth::provider_credentials::codex_credential_identity(
+            &self.account_id,
+            &self.access_token,
+            &self.refresh_token,
         )
+        .native_generation_hash
     }
     pub fn same_credentials(&self, other: &Self) -> bool {
         self.access_token == other.access_token && self.refresh_token == other.refresh_token
