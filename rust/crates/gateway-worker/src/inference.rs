@@ -315,7 +315,8 @@ pub async fn run(
             None,
             finish,
         );
-        let mut response = Response::from_stream(stream)
+        let mut response = stream
+            .into_response()
             .map_err(|_| invalid("The downstream stream is unavailable."))?
             .with_status(status);
         response
@@ -382,7 +383,8 @@ pub async fn run(
         Some(deadline),
         finish,
     );
-    let mut response = Response::from_stream(stream)
+    let mut response = stream
+        .into_response()
         .map_err(|_| invalid("The downstream body is unavailable."))?
         .with_status(decoded.status);
     for (name, value) in decoded.headers {

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -9,7 +9,8 @@ use futures_util::task::AtomicWaker;
 use gateway_core::lifecycle::{
     BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
 };
-use worker::Context;
+use worker::wasm_bindgen_futures::JsFuture;
+use worker::{Context, Response, ResponseBody};
 
 use super::outbound::{Cancellation, Deadline};
 
@@ -19,6 +20,17 @@ pub type FinishHook = Box<dyn FnOnce(TransportObservation) -> FinishFuture>;
 struct FinishSignal {
     observation: RefCell<Option<TransportObservation>>,
     waker: AtomicWaker,
+    completed: Cell<bool>,
+}
+
+impl FinishSignal {
+    fn complete(&self, observation: TransportObservation) {
+        if self.completed.replace(true) {
+            return;
+        }
+        *self.observation.borrow_mut() = Some(observation);
+        self.waker.wake();
+    }
 }
 
 #[derive(Clone, Default)]
@@ -41,9 +53,11 @@ impl ObservationHandle {
 pub struct ObservedStream<S> {
     source: S,
     observation: ObservationHandle,
+    context: Rc<Context>,
     cancellation: Rc<Cancellation>,
     _deadline: Option<Deadline>,
     finish: Option<Rc<FinishSignal>>,
+    native_pipe: bool,
 }
 
 impl<S> ObservedStream<S> {
@@ -58,6 +72,7 @@ impl<S> ObservedStream<S> {
         let signal = Rc::new(FinishSignal {
             observation: RefCell::new(None),
             waker: AtomicWaker::new(),
+            completed: Cell::new(false),
         });
         let receiver = signal.clone();
         // Register while the invocation is alive. Registering only after a
@@ -77,9 +92,11 @@ impl<S> ObservedStream<S> {
         Self {
             source,
             observation,
+            context,
             cancellation,
             _deadline: deadline,
             finish: Some(signal),
+            native_pipe: false,
         }
     }
 
@@ -87,6 +104,9 @@ impl<S> ObservedStream<S> {
         let Some(signal) = self.finish.take() else {
             return;
         };
+        if signal.completed.get() {
+            return;
+        }
         let observed = {
             let mut state = self.observation.0.borrow_mut();
             state.reader_termination = Some(reader);
@@ -98,8 +118,57 @@ impl<S> ObservedStream<S> {
             };
             *state
         };
-        *signal.observation.borrow_mut() = Some(observed);
-        signal.waker.wake();
+        if !self.native_pipe {
+            signal.complete(observed);
+        }
+    }
+}
+
+impl<S> ObservedStream<S>
+where
+    S: Stream<Item = worker::Result<Vec<u8>>> + Unpin + 'static,
+{
+    pub fn into_response(mut self) -> worker::Result<Response> {
+        self.native_pipe = true;
+        let context = self.context.clone();
+        let signal = self.finish.as_ref().cloned();
+        let observation = self.observation.clone();
+        let cancellation = self.cancellation.clone();
+        let response = Response::from_stream(self)?;
+        let (builder, body) = response.into_parts();
+        let ResponseBody::Stream(source) = body else {
+            return Err(worker::Error::RustError(
+                "Missing streaming response body".into(),
+            ));
+        };
+        let bridge = worker::web_sys::TransformStream::new()
+            .map_err(|_| worker::Error::RustError("Native stream bridge unavailable".into()))?;
+        let pipe = source.pipe_to(&bridge.writable());
+        // Observe native pipe cancellation independently of a pending Rust pull.
+        // Pipe completion remains producer/body evidence, never delivery proof.
+        context.wait_until(async move {
+            let failed = JsFuture::from(pipe).await.is_err();
+            if let Some(signal) = signal
+                && !signal.completed.get()
+            {
+                let mut observed = observation.snapshot();
+                if failed {
+                    cancellation.abort();
+                    observed.reader_termination = Some(ReaderTermination::Cancelled);
+                    observed.body = Some(BodyOutcome::Interrupted);
+                } else {
+                    observed.reader_termination = Some(ReaderTermination::Eof);
+                    observed.body = Some(BodyOutcome::Drained);
+                }
+                observed.delivery = if cancellation.client_aborted() {
+                    DeliveryOutcome::Interrupted
+                } else {
+                    DeliveryOutcome::Unobserved
+                };
+                signal.complete(observed);
+            }
+        });
+        Ok(builder.stream(bridge.readable()))
     }
 }
 
