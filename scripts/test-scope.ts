@@ -117,6 +117,10 @@ const dependenciesOf = (file: string, root: string): readonly string[] => {
     dependencyCache.set(file, []);
     return [];
   }
+  if (!SOURCE_FILE.test(file)) {
+    dependencyCache.set(file, []);
+    return [];
+  }
   const loader = extension === ".tsx" || extension === ".jsx" ? "tsx" : "ts";
   const source = readFileSync(file, "utf8");
   const withoutShebang = source.startsWith("#!") ? source.slice(source.indexOf("\n") + 1) : source;
