@@ -203,7 +203,7 @@ fn malformed_raw_keys_graphs_counters_queues_and_business_aliases_are_atomic_ref
     invalids.push(candidate);
     let mut candidate = input.clone();
     candidate.entries[0].raw_key = TupleKey::from_json_parts(
-        &json!(["uos_ai", "auth", "session_revision_index", "v1", "fake"])
+        json!(["uos_ai", "auth", "session_revision_index", "v1", "fake"])
             .as_array()
             .unwrap(),
     )
