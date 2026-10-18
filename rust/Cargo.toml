@@ -10,6 +10,7 @@ members = [
   "crates/gateway-admin",
   "crates/gateway-admin-data",
   "crates/gateway-admin-runtime",
+  "crates/gateway-observability",
   "crates/gateway-routing-runtime",
   "crates/gateway-extras-runtime",
   "crates/gateway-publication",
@@ -40,6 +41,7 @@ gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
+gateway-observability = { path = "crates/gateway-observability" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
 gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
 gateway-publication = { path = "crates/gateway-publication" }

@@ -284,6 +284,7 @@ pub fn prepare_request(
                 )?;
                 body = projection.body;
                 names = projection.tool_names;
+                warnings.extend(projection.warnings);
                 if body.get("reasoning_effort").is_none() {
                     body["reasoning_effort"] = json!(match profile {
                         ChatProfile::Deepseek => "high",

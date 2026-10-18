@@ -1,0 +1,42 @@
+{
+  "source_sha": "ba5ef05e74e7684589981c9b2a22518137a964f1",
+  "host": "m1.local",
+  "argv": [
+    "/usr/bin/sandbox-exec",
+    "-p",
+    "(version 1) (allow default) (deny network*)",
+    "/usr/bin/env",
+    "-i",
+    "HOME=/Users/nv",
+    "PATH=/usr/bin:/bin",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.data/runtimes/bun/darwin-arm64/1.4.0-539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf/bun",
+    "--no-env-file",
+    "--no-install",
+    "oracle.ts"
+  ],
+  "cwd": "/tmp/ai-rust-wasm-20261018/m18-oracle-input",
+  "exit": 0,
+  "stdout": "{\"projection_cases\":15,\"catalog_cases\":2,\"credential_discovery\":false}\n",
+  "stderr": "",
+  "runtime_sha256": "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf",
+  "finished_at": "2026-10-18T19:56:12.421525+00:00",
+  "files": {
+    "lithos.ts": "91ed63cab95b70be12ea2e5200bdc983c9d7dbd7efabdd6d8b0a6bfb3b4793cc",
+    "projection.ts": "24e3cbfd0a666250eb6211788e3ba3769a584c5a2d23f021a67a4f0bf1870565",
+    "oracle.ts": "465cd796f55a1480f68c26e67e610b07535cf4995f0ca5fe3cc2f86758c16fb8",
+    "defaults.ts": "34da29036c8a1461fb050e0fcbb12c69929f3f89313f9621d144ad75726eb52d",
+    "recent.ts": "f649978d650f53998c931b81a6a0d6f44013e530af98729cd06a2f1c5da651da",
+    "utils.ts": "600174311bb74dda4729a26ee2fb34811d118db4ce882ed3d99ab10868317b7f",
+    "receipt-failed-wait-export.json": "3e0fb93b0b6ce055deb192ef75671e5791fdd4dde456239bbc3807c31aaabdc7",
+    "source-custody.json": "e9e308cf20b67328d250544e15f14173cee694ca288589b7d50e30e5aa9edef5",
+    "forwarded.ts": "85c6f2c3ad80c5135c27a7976656bb841ce087a0e1e219c5cf0536b20001de23",
+    "receipt-passed-14cases.json": "fedb344febe128aa44e38e82169df3752e2a082aff246d7da8a1bc33f8aa118c",
+    "cases.json": "58131d0ec95bec5906d20884f6105b2ba4fd617d5c52deca0a3400c9bfe8f98a",
+    "source-golden.json": "fafde73f2505e9aef8baf4c377f3fe9b7c55bb9e775723cde99adb0f19d52c5b",
+    "index.ts": "89dadd9ff7e96647c6d2ca03a8cb7e223d1635f0efc26d26127f6ede7084345b",
+    "metadata.ts": "af2dd9ca2ee4dcdcb6787ac140e73e809c08baa5ae130de6faf462ecd54feba8",
+    "receipt-passed-15cases.json": "fe9062266746b71bfda1b7e0544d634ae31949b60f5a79f358ff4cfd8b69738f",
+    "responses.ts": "8ac1343a712e06676ddbad91ec9ed9ea207eff3f4a27f58519b165a3424ff682",
+    "catalog.ts": "b2ec6302ae6a76159980c232479c02f9fc86a3326d85b2e05e94ba21cac55925"
+  }
+}

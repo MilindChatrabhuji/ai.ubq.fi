@@ -84,7 +84,7 @@ impl Server {
                 let rollout = rollout.clone();
                 connections.push(thread::spawn(move||{stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();let Ok(mut socket)=tungstenite::accept(stream)else{return;};while let Ok(message)=socket.read(){if message.is_close(){let _=socket.flush();break;}let Ok(value)=serde_json::from_slice::<Value>(&message.into_data())else{continue;};let Some(method)=value["method"].as_str()else{continue;};record.lock().unwrap().push(method.into());let Some(id)=value.get("id")else{continue;};if fail_full && method=="thread/turns/list" && value["params"]["itemsView"]=="full" {let oversized="x".repeat(1_048_577);let _=socket.send(tungstenite::Message::Text(oversized.into()));break;}let result=match method {
       "initialize"=>json!({"protocolVersion":1}),"thread/loaded/list"=>json!({"data":["thread-a"]}),
-      "thread/list"=>{list_count.fetch_add(1,Ordering::Relaxed);json!({"data":[{"id":"thread-a","name":"password=ZQ_SYNTHETIC_VALUE_12345","model":"live-model","reasoningEffort":"high","source":"cli","updatedAt":1700000001000}],"nextCursor":null})},
+      "thread/list"=>{list_count.fetch_add(1,Ordering::Relaxed);json!({"data":[{"id":"thread-a","name":"password=ZQ_SYNTHETIC_VALUE_12345","model":"live-model","reasoningEffort":"high","source":"cli","updatedAt":1700000001000i64}],"nextCursor":null})},
       "thread/read"=>json!({"thread":{"id":"thread-a","name":"password=ZQ_SYNTHETIC_VALUE_12345","model":"live-model","reasoningEffort":"high","status":{"type":"active","activeFlags":["needsInput"]},"updatedAt":1700000002000i64,"path":rollout}}),
       "thread/turns/list"=>{if value["params"]["itemsView"]=="full" {json!({"data":[{"id":"turn-a","status":"inProgress","startedAt":1700000000,"items":[{"type":"userMessage","content":[{"type":"text","text":"Fix the synthetic fixture"}]},{"type":"agentMessage","id":"message-a","text":"password:\"zqfirst"},{"type":"commandExecution","id":"command-a","command":"echo fixture","status":"completed","exitCode":0,"aggregatedOutput":"zqsecond\" done"},{"type":"reasoning","text":"zqPRIVATE_REASONING"}]}]})}else{json!({"data":[{"id":"turn-a","status":"inProgress","startedAt":1700000000,"items":[]}]})}},
       "account/rateLimits/read"=>json!({"rateLimits":{"usedPercent":35,"windowDurationMins":300,"resetsAt":1700000100}}),_=>panic!("Unexpected non-read method: {method}")};
@@ -247,7 +247,8 @@ fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() {
     assert!(context.rollout_tail_events > 0);
     let mut actual = serde_json::to_value(&context).unwrap();
     actual["rolloutPath"] = json!("/fixture/home/sessions/rollout-thread-a.jsonl");
-    let golden: Value = serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json")).unwrap();
+    let golden: Value =
+        serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json")).unwrap();
     assert_eq!(actual, golden["collection"]["expected"]);
     let wire = serde_json::to_string(&context).unwrap();
     assert!(!wire.contains("zqfirst") && !wire.contains("zqsecond") && !wire.contains("zqPRIVATE"));
@@ -322,9 +323,17 @@ fn failed_full_frame_degrades_to_recorded_summary_without_inventing_transcript()
     let fixture = Fixture::new();
     let path = fixture.root.join("source.sock");
     let _server = Server::start_with_full_failure(path.clone(), None, true);
-    let source = SupervisorSourceConfig::configured(SourceId::parse("fixture").unwrap(), "Fixture Machine".into(), path, None).unwrap();
+    let source = SupervisorSourceConfig::configured(
+        SourceId::parse("fixture").unwrap(),
+        "Fixture Machine".into(),
+        path,
+        None,
+    )
+    .unwrap();
     let data = SupervisorData::configured(vec![source]).unwrap();
-    let selected = data.select("fixture", "thread-a", 1_700_000_000_000).unwrap();
+    let selected = data
+        .select("fixture", "thread-a", 1_700_000_000_000)
+        .unwrap();
     let context = data.brief_context(&selected, 1_700_000_000_000).unwrap();
     assert_eq!(context.state.as_deref(), Some("active"));
     assert!(!context.transcript_available);

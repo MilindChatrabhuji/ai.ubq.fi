@@ -325,12 +325,18 @@ impl<
         } else if !record.transport_started {
             self.transport_started(attempt).await?;
         }
-        if failure.cancelled
-            || self.host.cancelled()
-            || matches!(
-                failure.failure,
-                HopFailure::Cancelled | HopFailure::Deadline
-            )
+        if failure.cancelled || self.host.cancelled() || failure.failure == HopFailure::Cancelled {
+            return Ok(
+                if failure.origin == FailureOrigin::Provider && failure.status.is_some() {
+                    RefusalDecision::Return
+                } else {
+                    RefusalDecision::Abort
+                },
+            );
+        }
+        if failure.origin == FailureOrigin::GatewayDeadline
+            || (failure.origin != FailureOrigin::Provider
+                && failure.failure == HopFailure::Deadline)
         {
             return Ok(RefusalDecision::Abort);
         }
@@ -348,7 +354,9 @@ impl<
                 HopDecision::Abort => RefusalDecision::Abort,
                 HopDecision::Deliver => RefusalDecision::Return,
             };
-        } else if let CredentialFence::Codex { admission, .. } = &record.fence {
+        } else if let CredentialFence::Codex { admission, .. } = &record.fence
+            && failure.origin == FailureOrigin::Provider
+        {
             if let Some(block) = classify::codex_quota(
                 failure.status,
                 &failure.headers,
@@ -418,7 +426,9 @@ impl<
                     .into());
                 }
             }
-        } else if matches!(record.fence, CredentialFence::Claude { .. }) {
+        } else if matches!(record.fence, CredentialFence::Claude { .. })
+            && failure.origin == FailureOrigin::Provider
+        {
             if self
                 .host
                 .record_claude_refusal(&record.fence, &record.model, &failure)
@@ -426,7 +436,7 @@ impl<
             {
                 decision = RefusalDecision::Continue;
             }
-        } else if record.paid.is_some() {
+        } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
             if gateway_providers::policy::paid_should_advance(
                 failure.status,
                 self.plan.hops.get(cursor + 1).is_some(),
@@ -435,6 +445,7 @@ impl<
                 decision = RefusalDecision::Continue;
             }
         } else if record.provider == UpstreamProvider::Lithos
+            && failure.origin == FailureOrigin::Provider
             && failure.status == Some(429)
             && let Some(wait) = classify::retry_after_millis(&failure.headers, self.now()?)
         {
@@ -444,7 +455,16 @@ impl<
                 .claim(wait, self.input.retry_prohibited);
             if allowed {
                 self.renew().await?;
-                self.host.wait(wait).await?;
+                let outcome = self.host.wait(wait).await;
+                if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
+                    return Err(journal::unavailable("The host wait duration is invalid.").into());
+                }
+                self.elapsed_wait_ms.set(
+                    self.elapsed_wait_ms
+                        .get()
+                        .saturating_add(outcome.elapsed_ms),
+                );
+                outcome.result?;
                 if self.host.cancelled() {
                     return Ok(RefusalDecision::Abort);
                 }
