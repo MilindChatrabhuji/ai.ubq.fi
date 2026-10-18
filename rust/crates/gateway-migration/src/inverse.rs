@@ -10,16 +10,27 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn source_profile_key(key: &RecordKey) -> Result<Vec<SourceJson>, GatewayError> {
-    TupleKey::from_record_key(key)?.decoded_parts()?.into_iter().map(|part| match part {
-        DecodedKeyPart::String(bytes) => {
-            let text=String::from_utf8(bytes).map_err(|_|unavailable("New non-UTF8 source key needs exact typed encoding"))?;
-            to_profile(&PortableValue::String(text))
-        }
-        DecodedKeyPart::Number(number)=>to_profile(&PortableValue::number(number)),
-        DecodedKeyPart::Boolean(value)=>to_profile(&PortableValue::Boolean(value)),
-        DecodedKeyPart::Bytes(bytes)=>SourceJson::from_serializable(&json!({"type":"Uint8Array","value":encode_base64(&bytes)})),
-        DecodedKeyPart::BigInt{negative,magnitude}=>to_profile(&PortableValue::BigInt(decimal_key(negative,&magnitude))),
-    }).collect()
+    TupleKey::from_record_key(key)?
+        .decoded_parts()?
+        .into_iter()
+        .map(|part| match part {
+            DecodedKeyPart::String(bytes) => {
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    unavailable("New non-UTF8 source key needs exact typed encoding")
+                })?;
+                to_profile(&PortableValue::String(text))
+            }
+            DecodedKeyPart::Number(number) => to_profile(&PortableValue::number(number)),
+            DecodedKeyPart::Boolean(value) => to_profile(&PortableValue::Boolean(value)),
+            DecodedKeyPart::Bytes(bytes) => SourceJson::from_serializable(
+                &json!({"type":"Uint8Array","value":encode_base64(&bytes)}),
+            ),
+            DecodedKeyPart::BigInt {
+                negative,
+                magnitude,
+            } => to_profile(&PortableValue::BigInt(decimal_key(negative, &magnitude))),
+        })
+        .collect()
 }
 
 pub(crate) fn decimal_key(negative: bool, magnitude: &[u8]) -> String {

@@ -1,8 +1,8 @@
 //! Pure admin calculations and offline migration plans. No clocks, storage or network are read.
 pub mod migration;
 pub mod profile;
-mod profile_source;
 mod profile_date;
+mod profile_source;
 pub mod projection;
 
 use gateway_core::GatewayError;

@@ -75,7 +75,11 @@ impl PrivateCapture {
                 } else if decoded.value.validate_for_storage().is_ok() {
                     StoredRecord::profile(&entry.versionstamp, decoded.value, entry.expires_at_ms)?
                 } else {
-                    StoredRecord::profile_v2(&entry.versionstamp, decoded.value, entry.expires_at_ms)?
+                    StoredRecord::profile_v2(
+                        &entry.versionstamp,
+                        decoded.value,
+                        entry.expires_at_ms,
+                    )?
                 };
                 Ok(Row {
                     key: decoded.key,

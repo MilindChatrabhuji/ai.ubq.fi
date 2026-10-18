@@ -1,6 +1,9 @@
 //! Profile NDJSON conversion; never loads a VM-specific value codec or executes JavaScript.
 use crate::migration::NormalizedEntry;
-pub use crate::profile_source::{from_source_profile,from_source_profile_with_host,to_source_profile,normalize_source_import_line_with_host,SourceNormalizedEntry};
+pub use crate::profile_source::{
+    SourceNormalizedEntry, from_source_profile, from_source_profile_with_host,
+    normalize_source_import_line_with_host, to_source_profile,
+};
 use crate::{error, json_number};
 use chrono::{DateTime, NaiveDate};
 use gateway_core::{
@@ -339,8 +342,20 @@ pub(crate) fn collection_key(value: PortableValue) -> PortableValue {
 pub trait SourceDateHost {
     fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError>;
     /// Raw source Date inputs require a host realm capable of parsing their original JSON.
-    fn source_date_value(&self, input: Option<&gateway_core::source_json::SourceJson>) -> Result<Option<i64>, GatewayError> {
-        let input = input.map(|value| value.deserialize::<Value>().map_err(|_| GatewayError::unavailable("Raw source Date input requires its source-compatible realm", "source_date_host_missing"))).transpose()?;
+    fn source_date_value(
+        &self,
+        input: Option<&gateway_core::source_json::SourceJson>,
+    ) -> Result<Option<i64>, GatewayError> {
+        let input = input
+            .map(|value| {
+                value.deserialize::<Value>().map_err(|_| {
+                    GatewayError::unavailable(
+                        "Raw source Date input requires its source-compatible realm",
+                        "source_date_host_missing",
+                    )
+                })
+            })
+            .transpose()?;
         self.date_value(input.as_ref())
     }
 }
@@ -566,7 +581,14 @@ pub fn to_profile(value: &PortableValue) -> Result<Value, GatewayError> {
                     .collect::<Result<_, GatewayError>>()?,
             ),
         ),
-        PortableValue::StringUtf16(_) | PortableValue::ObjectUtf16(_) | PortableValue::RegExpUtf16 { .. } | PortableValue::ErrorUtf16 { .. } => return Err(error("ProfileV2 strings require the raw source-profile writer; Value cannot preserve them.")),
+        PortableValue::StringUtf16(_)
+        | PortableValue::ObjectUtf16(_)
+        | PortableValue::RegExpUtf16 { .. }
+        | PortableValue::ErrorUtf16 { .. } => {
+            return Err(error(
+                "ProfileV2 strings require the raw source-profile writer; Value cannot preserve them.",
+            ));
+        }
         PortableValue::Error {
             kind,
             message,
