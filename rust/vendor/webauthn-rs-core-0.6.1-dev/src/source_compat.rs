@@ -332,16 +332,12 @@ pub fn verify_attestation_at_time(
         "android-key" => {
             verify_source_android_key_attestation(acd, &att, hash)?;
             let chain = certificates(&att.att_stmt)?;
-            let anchors = roots(&[
-                include_str!("../source-roots/Google_Hardware_Attestation_Root_1.pem"),
-                include_str!("../source-roots/Google_Hardware_Attestation_Root_2.pem"),
-                include_str!("../source-roots/Google_Hardware_Attestation_Root_3.pem"),
-                include_str!("../source-roots/Google_Hardware_Attestation_Root_4.pem"),
-            ])?;
+            let root_pems = [include_str!("../source-roots/Google_Hardware_Attestation_Root_1.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_2.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_3.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_4.pem")];
             let root = chain.last().ok_or_else(failure)?;
-            if !anchors.contains(root) {
-                return Err(WebauthnError::AttestationTrustFailure);
-            }
+            let encoded = STANDARD.encode(root.to_der().map_err(|_| failure())?);
+            let lines = encoded.as_bytes().chunks(64).map(|line| std::str::from_utf8(line).map_err(|_| failure())).collect::<Result<Vec<_>,_>>()?.join("\n");
+            let root_pem = format!("-----BEGIN CERTIFICATE-----\n{lines}\n-----END CERTIFICATE-----");
+            if !root_pems.contains(&root_pem.as_str()) { return Err(WebauthnError::AttestationTrustFailure); }
             trusted_chain(&chain, std::slice::from_ref(root), now)
         }
         "android-safetynet" => safetynet(&att, hash, now),

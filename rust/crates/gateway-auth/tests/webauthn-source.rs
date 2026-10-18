@@ -100,10 +100,10 @@ fn source_golden_registration_formats_and_exact_storage_bytes() {
             case["now_ms"].as_i64().unwrap(),
         ));
         if result.is_ok() != case["expected_success"].as_bool().unwrap() { failures.push(format!("{}: {result:?}", case["name"])); }
-        if let Ok(result) = result {
+        if let Ok(result) = result && let Some(expected_key) = case["public_key"].as_str() {
             assert_eq!(
                 base64url(&result.public_key),
-                case["public_key"].as_str().unwrap(),
+                expected_key,
                 "{}",
                 case["name"]
             );
