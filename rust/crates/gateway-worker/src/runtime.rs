@@ -114,10 +114,29 @@ pub async fn route(
     }
     if path == "/health/providers" || path == "/health/upstream" {
         auth.authenticate_admin(&auth_request).await?;
-        return Err(GatewayError::unavailable(
-            "Provider health observations are not yet integrated.",
-            "provider_health_unavailable",
-        ));
+        let observations = crate::observability_host::bind(
+            &request_id,
+            &[],
+            store.clone(),
+            &host,
+            context.clone(),
+        );
+        let operation = if path == "/health/providers" {
+            gateway_admin_runtime::capabilities::ProviderRequest::PassiveHealth
+        } else {
+            gateway_admin_runtime::capabilities::ProviderRequest::UpstreamHealth
+        };
+        return auth_response(
+            observations
+                .provider(
+                    operation,
+                    gateway_admin_runtime::capabilities::Context {
+                        request_id: request_id.0.clone(),
+                        now_ms: now_ms()?,
+                    },
+                )
+                .await?,
+        );
     }
     let principal = if path.starts_with("/v1/")
         || path == "/uos/models/capabilities"
