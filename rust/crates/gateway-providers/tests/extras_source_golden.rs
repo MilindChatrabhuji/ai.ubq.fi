@@ -410,13 +410,34 @@ fn opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind() 
 
 #[test]
 fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validation() {
-    let file = extras::MultipartFile { name:"image".into(),filename:"image.png".into(),content_type:"image/png".into(),bytes:vec![1] };
+    let file = extras::MultipartFile {
+        name: "image".into(),
+        filename: "image.png".into(),
+        content_type: "image/png".into(),
+        bytes: vec![1],
+    };
     let parsed = extras::parse_multipart_image(&json!({"prompt":"image","n":" 2 ","stream":"false","output_compression":"1e2","response_format":"b64_json"}), &[file.clone()]).unwrap();
-    let plan = extras::prepare_parsed_image(&parsed,"host","original");
-    assert_eq!(plan.count,2);
-    assert_eq!(plan.responses["tools"][0]["action"],"edit");
-    assert_eq!(plan.responses["tools"][0]["output_compression"],100.0);
-    for n in ["01","1e0","+1","1.0"] { assert!(extras::parse_multipart_image(&json!({"prompt":"image","n":n}), &[file.clone()]).is_err()); }
-    error(extras::parse_multipart_image(&json!({"prompt":"image","n":"0"}), &[]).unwrap_err(),"n must be an integer from 1 to 10.","invalid_request_error",Some(Some("n")));
-    error(extras::parse_multipart_image(&json!({"prompt":"image","moderation":"auto"}), &[]).unwrap_err(),"Unsupported image edit field: moderation.","invalid_request_error",Some(Some("moderation")));
+    let plan = extras::prepare_parsed_image(&parsed, "host", "original");
+    assert_eq!(plan.count, 2);
+    assert_eq!(plan.responses["tools"][0]["action"], "edit");
+    assert_eq!(plan.responses["tools"][0]["output_compression"], 100.0);
+    for n in ["01", "1e0", "+1", "1.0"] {
+        assert!(
+            extras::parse_multipart_image(&json!({"prompt":"image","n":n}), &[file.clone()])
+                .is_err()
+        );
+    }
+    error(
+        extras::parse_multipart_image(&json!({"prompt":"image","n":"0"}), &[]).unwrap_err(),
+        "n must be an integer from 1 to 10.",
+        "invalid_request_error",
+        Some(Some("n")),
+    );
+    error(
+        extras::parse_multipart_image(&json!({"prompt":"image","moderation":"auto"}), &[])
+            .unwrap_err(),
+        "Unsupported image edit field: moderation.",
+        "invalid_request_error",
+        Some(Some("moderation")),
+    );
 }
