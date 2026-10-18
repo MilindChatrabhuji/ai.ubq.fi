@@ -39,10 +39,9 @@ struct PendingGuard {
 }
 impl Drop for PendingGuard {
     fn drop(&mut self) {
-        if let Some(entry) = self.memo.borrow_mut().entries.get_mut(&self.provider) {
-            if entry.shared_request == Some(self.request) {
-                entry.shared_request = None;
-            }
+        if let Some(entry) = self.memo.borrow_mut().entries.get_mut(&self.provider)
+            && entry.shared_request == Some(self.request) {
+            entry.shared_request = None;
         }
     }
 }
@@ -180,10 +179,9 @@ impl CatalogRuntime {
                 .checked_add(1)
                 .ok_or_else(|| unavailable("Provider catalog request generation overflowed"))?;
             let request = memo.next_request;
-            if !force || provider == CatalogProvider::ClaudeCode {
-                if let Some(entry) = memo.entries.get_mut(&provider) {
-                    entry.shared_request = Some(request);
-                }
+            if (!force || provider == CatalogProvider::ClaudeCode)
+                && let Some(entry) = memo.entries.get_mut(&provider) {
+                entry.shared_request = Some(request);
             }
             request
         };
@@ -261,7 +259,9 @@ impl CatalogRuntime {
             };
             let max_bytes = request.max_body_bytes();
             let response = host.fetch(request).await?;
-            if max_bytes.is_some_and(|limit| response.body.len() > limit) || !(200..300).contains(&response.status) {
+            if max_bytes.is_some_and(|limit| response.body.len() > limit)
+                || !(200..300).contains(&response.status)
+            {
                 return Err(unavailable("Provider model discovery is unavailable"));
             }
             if provider == CatalogProvider::ClaudeCode

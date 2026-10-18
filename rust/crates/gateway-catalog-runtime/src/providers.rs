@@ -222,19 +222,10 @@ fn claude(raw: &Value) -> Option<Value> {
     let mut levels = Vec::new();
     if raw.pointer("/capabilities/effort/supported") == Some(&Value::Bool(true))
         && row.get("supports_adaptive_thinking") == Some(&Value::Bool(true))
-    {
-        if let Some(effort) = raw
-            .pointer("/capabilities/effort")
-            .and_then(Value::as_object)
-        {
-            for (key, value) in effort {
-                if key != "supported"
-                    && key != "none"
-                    && !key.is_empty()
-                    && value.get("supported") == Some(&Value::Bool(true))
-                {
-                    levels.push(key.clone());
-                }
+        && let Some(effort) = raw.pointer("/capabilities/effort").and_then(Value::as_object) {
+        for (key, value) in effort {
+            if key != "supported" && key != "none" && !key.is_empty() && value.get("supported") == Some(&Value::Bool(true)) {
+                levels.push(key.clone());
             }
         }
     }
@@ -389,7 +380,11 @@ pub fn match_openrouter<'a>(models: &'a [Value], model_id: &str) -> Option<&'a V
         let alias = id
             .strip_prefix('~')
             .and_then(|id| id.rsplit('/').next())
-            .map(|s| s.strip_suffix("-latest").or_else(|| s.strip_suffix(":latest")).unwrap_or(s))
+            .map(|s| {
+                s.strip_suffix("-latest")
+                    .or_else(|| s.strip_suffix(":latest"))
+                    .unwrap_or(s)
+            })
             .map(normalize_key);
         let keys = [
             Some(id.to_lowercase()),

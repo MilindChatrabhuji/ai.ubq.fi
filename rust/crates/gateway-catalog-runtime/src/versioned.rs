@@ -51,7 +51,10 @@ async fn fetch_account<H: CatalogHost>(
         };
         response = observed_fetch(host, request.clone(), &account).await?;
     }
-    if request.max_body_bytes().is_some_and(|limit| response.body.len() > limit) {
+    if request
+        .max_body_bytes()
+        .is_some_and(|limit| response.body.len() > limit)
+    {
         return Err(unavailable(
             "Codex model catalog exceeded its response bound",
         ));
@@ -151,7 +154,10 @@ async fn fetch_codex<H: CatalogHost>(
         }
         accepted = latest;
         if !union {
-            let evidence = if (200..300).contains(&response.status) && response.single_account_observation_complete && response.body.len() <= 4 * 1024 * 1024 {
+            let evidence = if (200..300).contains(&response.status)
+                && response.single_account_observation_complete
+                && response.body.len() <= 4 * 1024 * 1024
+            {
                 serde_json::from_str(&response.body)
                     .ok()
                     .map(|p| evidence(&used.account_id, &p))
@@ -166,13 +172,11 @@ async fn fetch_codex<H: CatalogHost>(
                 degraded,
             });
         }
-        if (200..300).contains(&response.status) {
-            if let Ok(parsed) = serde_json::from_str::<Value>(&response.body) {
-                if parsed.is_object() && parsed.get("models").is_some_and(Value::is_array) {
-                    catalogs.push((used.account_id, parsed));
-                    continue;
-                }
-            }
+        if (200..300).contains(&response.status)
+            && let Ok(parsed) = serde_json::from_str::<Value>(&response.body)
+            && parsed.is_object() && parsed.get("models").is_some_and(Value::is_array) {
+            catalogs.push((used.account_id, parsed));
+            continue;
         }
         fallback = Some(response);
     }
@@ -303,7 +307,7 @@ async fn current<S: QueryStore, H: CatalogHost>(
     else {
         return Ok(None);
     };
-    catalog_store::load_catalog(store, version, &generation, host.now_ms()).await
+    state::load_exact_catalog(store, version, &generation, host.now_ms()).await
 }
 async fn recover<S: QueryStore, H: CatalogHost>(
     runtime: &CatalogRuntime,
@@ -317,10 +321,8 @@ async fn recover<S: QueryStore, H: CatalogHost>(
     let current_generation = state::generation_current(store, lease.generation)
         .await
         .unwrap_or(false);
-    if current_generation {
-        if let Some(cached) = cached {
-            return response(runtime, store, host, cached, conditional, CacheState::Stale).await;
-        }
+    if current_generation && let Some(cached) = cached {
+        return response(runtime, store, host, cached, conditional, CacheState::Stale).await;
     }
     if let Some(replacement) = current(store, host, lease.version).await? {
         return response(
@@ -389,11 +391,9 @@ pub(crate) async fn serve<S: QueryStore, H: CatalogHost>(
         }
     };
     let now = host.now_ms();
-    let cached = catalog_store::load_catalog(store, &version, &generation, now).await?;
-    if let Some(cached) = &cached {
-        if cached.metadata.fresh(now) {
-            return response(runtime, store, host, cached, conditional, CacheState::Hit).await;
-        }
+    let cached = state::load_exact_catalog(store, &version, &generation, now).await?;
+    if let Some(cached) = &cached && cached.metadata.fresh(now) {
+        return response(runtime, store, host, cached, conditional, CacheState::Hit).await;
     }
     let owner = host.unique_id();
     if !catalog_store::acquire_refresh_lease(store, &version, &owner, now).await? {
@@ -451,10 +451,8 @@ pub(crate) async fn serve<S: QueryStore, H: CatalogHost>(
     .await;
     // A failed release never deletes a successor's lease; publication and response are already settled.
     let released = catalog_store::release_refresh_lease(store, &version, &owner).await;
-    if let Err(error) = released {
-        if result.is_err() {
-            return Err(error);
-        }
+    if let Err(error) = released && result.is_err() {
+        return Err(error);
     }
     result
 }
@@ -507,7 +505,13 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
     {
         return recover(runtime, store, host, lease, None, conditional, true).await;
     }
-    let context = state::PublicationContext { version: lease.version, generation: lease.generation, publication: &fetched.publication, revision: &host.unique_id(), now: host.now_ms() };
+    let context = state::PublicationContext {
+        version: lease.version,
+        generation: lease.generation,
+        publication: &fetched.publication,
+        revision: &host.unique_id(),
+        now: host.now_ms(),
+    };
     state::publish_account_models(store, &fetched.evidence, &context).await?;
     let revalidated = fetched.response.status == 304 && cached.is_some();
     let body = if revalidated {
@@ -578,18 +582,31 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
             &serde_json::from_str(&body).map_err(|_| unavailable("Catalog parsing failed"))?,
             &context,
         )
-        .await {
-            let _ = host.observe(CatalogObservation::MaintenanceFailure { operation: CatalogMaintenance::SnapshotPublication, code: error.envelope.error.code }).await;
+        .await
+        {
+            let _ = host
+                .observe(CatalogObservation::MaintenanceFailure {
+                    operation: CatalogMaintenance::SnapshotPublication,
+                    code: error.envelope.error.code,
+                })
+                .await;
         }
     }
-    if let Err(error) = catalog_store::prune_stored_catalog_versions(store, lease.version, host.now_ms()).await {
-        let _ = host.observe(CatalogObservation::MaintenanceFailure { operation: CatalogMaintenance::VersionPruning, code: error.envelope.error.code }).await;
+    if let Err(error) =
+        catalog_store::prune_stored_catalog_versions(store, lease.version, host.now_ms()).await
+    {
+        let _ = host
+            .observe(CatalogObservation::MaintenanceFailure {
+                operation: CatalogMaintenance::VersionPruning,
+                code: error.envelope.error.code,
+            })
+            .await;
     }
     if !state::generation_current(store, lease.generation).await? {
         return recover(runtime, store, host, lease, None, conditional, true).await;
     }
     let catalog =
-        catalog_store::load_catalog(store, lease.version, lease.generation, host.now_ms())
+        state::load_exact_catalog(store, lease.version, lease.generation, host.now_ms())
             .await?
             .ok_or_else(|| unavailable("Codex model catalog could not be read after caching"))?;
     response(

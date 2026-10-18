@@ -44,6 +44,7 @@ struct Store {
     rows: Rc<RefCell<BTreeMap<String, StoredRecord>>>,
     now: Rc<Cell<i64>>,
     after_chunks: Rc<RefCell<Option<Callback>>>,
+    fail_query: Rc<Cell<bool>>,
 }
 impl Store {
     fn new() -> Self {
@@ -51,6 +52,7 @@ impl Store {
             rows: Rc::default(),
             now: Rc::new(Cell::new(1_800_000_000_000)),
             after_chunks: Rc::default(),
+            fail_query: Rc::default(),
         }
     }
     fn put(&self, key: RecordKey, revision: &str, value: Value) {
@@ -92,11 +94,17 @@ impl AuthorityStore for Store {
             return Ok(CommitOutcome::Conflict);
         }
         let chunks = transition.mutations.iter().any(|mutation| {
-            let RecordMutation::Put { key, .. } = mutation else { return false; };
+            let RecordMutation::Put { key, .. } = mutation else {
+                return false;
+            };
             let tuple = TupleKey::from_record_key(key).unwrap();
-            ["codex_catalog_chunk", "codex_catalog_source_chunk"].iter().any(|prefix| {
-                tuple.is_strict_descendant_of(&TupleKey::from_record_key(&source_key(&["ubq_ai", prefix])).unwrap())
-            })
+            ["codex_catalog_chunk", "codex_catalog_source_chunk"]
+                .iter()
+                .any(|prefix| {
+                    tuple.is_strict_descendant_of(
+                        &TupleKey::from_record_key(&source_key(&["ubq_ai", prefix])).unwrap(),
+                    )
+                })
         });
         for mutation in transition.mutations {
             match mutation {
@@ -119,6 +127,7 @@ impl AuthorityStore for Store {
 }
 impl QueryStore for Store {
     async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
+        if self.fail_query.get() { return Err(GatewayError::unavailable("Query unavailable", "test_query_unavailable")); }
         let validated = request.validate()?;
         let mut rows = Vec::new();
         for (key, record) in self.rows.borrow().iter() {
@@ -755,35 +764,103 @@ fn openrouter_empty_failure_retains_cache_and_ambiguous_matches_are_unknown() {
 
 #[test]
 fn client_validator_changes_when_whitelist_changes_final_bytes() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new();
-    host.queue(Outcome::json(json!({"models":[{"slug":"one"},{"slug":"two"}]})));
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.queue(Outcome::json(
+        json!({"models":[{"slug":"one"},{"slug":"two"}]}),
+    ));
     let initial = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
-    store.put(state::whitelist_key(), "whitelist", json!({"model_ids":["one"],"updated_at_ms":store.now.get()}));
-    let narrowed = run(runtime.versioned_models(&store, &host, "0.163.0", Some(&initial.headers["ETag"]))).unwrap();
-    assert_eq!(narrowed.status, 200); assert_eq!(ids(&narrowed), ["one"]); assert_ne!(narrowed.headers["ETag"], initial.headers["ETag"]); assert_eq!(host.requests.borrow().len(), 1);
+    store.put(
+        state::whitelist_key(),
+        "whitelist",
+        json!({"model_ids":["one"],"updated_at_ms":store.now.get()}),
+    );
+    let narrowed =
+        run(runtime.versioned_models(&store, &host, "0.163.0", Some(&initial.headers["ETag"])))
+            .unwrap();
+    assert_eq!(narrowed.status, 200);
+    assert_eq!(ids(&narrowed), ["one"]);
+    assert_ne!(narrowed.headers["ETag"], initial.headers["ETag"]);
+    assert_eq!(host.requests.borrow().len(), 1);
 }
 
 #[test]
 fn runtime_catalog_body_is_not_capped_by_the_single_account_observation_limit() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new();
-    host.queue(Outcome::json(json!({"models":[{"slug":"large","opaque_source_metadata":"x".repeat(4 * 1024 * 1024)}]})));
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.queue(Outcome::json(
+        json!({"models":[{"slug":"large","opaque_source_metadata":"x".repeat(4 * 1024 * 1024)}]}),
+    ));
     let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
-    assert_eq!(ids(&response), ["large"]); assert!(response.body.as_ref().unwrap().len() > 4 * 1024 * 1024); assert!(store.live(&state::account_models_key()).is_none());
+    assert_eq!(ids(&response), ["large"]);
+    assert!(response.body.as_ref().unwrap().len() > 4 * 1024 * 1024);
+    assert!(store.live(&state::account_models_key()).is_none());
 }
 
 #[test]
 fn complete_empty_account_observation_survives_invalid_rich_catalog() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new();
-    let mut observed = CatalogFetchResponse::json(200, "{\"models\":[]}"); observed.single_account_observation_complete = true;
-    host.queue(Outcome { response: Ok(observed), ticks: 0, callback: None });
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    let mut observed = CatalogFetchResponse::json(200, "{\"models\":[]}");
+    observed.single_account_observation_complete = true;
+    host.queue(Outcome {
+        response: Ok(observed),
+        ticks: 0,
+        callback: None,
+    });
     assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err());
-    assert_eq!(store.live(&state::account_models_key()).unwrap().value["accounts"]["account-a"]["slugs"], json!([]));
+    assert_eq!(
+        store.live(&state::account_models_key()).unwrap().value["accounts"]["account-a"]["slugs"],
+        json!([])
+    );
 }
 
 #[test]
 fn logical_lease_expiry_between_chunk_and_metadata_publication_fails_closed() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new(); let shared = store.clone();
-    store.after_chunks.replace(Some(Rc::new(move || shared.now.set(shared.now.get() + 30001))));
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    let shared = store.clone();
+    store.after_chunks.replace(Some(Rc::new(move || {
+        shared.now.set(shared.now.get() + 30001)
+    })));
     host.queue(Outcome::json(catalog("late")));
-    assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err()); assert!(store.live(&catalog_store::metadata_key("0.163.0")).is_none());
+    assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err());
+    assert!(
+        store
+            .live(&catalog_store::metadata_key("0.163.0"))
+            .is_none()
+    );
+}
+
+#[test]
+fn wrong_version_metadata_never_serves_another_versions_rows() {
+    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new();
+    store.seed("0.162.0", store.now.get(), &catalog("other").to_string(), None);
+    let other = store.live(&catalog_store::metadata_key("0.162.0")).unwrap();
+    store.put(catalog_store::metadata_key("0.163.0"), "corrupt", other.value);
+    assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err()); assert!(host.requests.borrow().is_empty());
+}
+
+#[test]
+fn overlapping_forced_provider_refreshes_keep_the_newer_publication() {
+    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new(); host.provider(CatalogProvider::Openlux, "openlux-owner");
+    let mut slow = Outcome::json(json!({"data":[{"id":"older"}]})); slow.ticks = 1; host.queue(slow);
+    host.queue(Outcome::json(json!({"data":[{"id":"newer"}]})));
+    let mut first = std::pin::pin!(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true));
+    let waker = Waker::from(Arc::new(Noop)); let mut cx = Context::from_waker(&waker);
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    let second = run(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true)).unwrap().unwrap();
+    let first = run(first).unwrap().unwrap(); assert_eq!(second.models[0]["id"], "newer"); assert_eq!(first.models[0]["id"], "newer");
+}
+
+#[test]
+fn version_pruning_failure_is_observed_without_discarding_the_catalog_answer() {
+    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new(); store.fail_query.set(true);
+    host.queue(Outcome::json(catalog("served")));
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap(); assert_eq!(ids(&response), ["served"]);
+    assert!(host.observations.borrow().iter().any(|event| matches!(event, CatalogObservation::MaintenanceFailure { operation: CatalogMaintenance::VersionPruning, .. })));
 }

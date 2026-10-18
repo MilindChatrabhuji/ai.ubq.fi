@@ -178,10 +178,16 @@ pub enum CatalogObservation {
     ProviderDegradation {
         client_version: String,
     },
-    MaintenanceFailure { operation: CatalogMaintenance, code: Option<String> },
+    MaintenanceFailure {
+        operation: CatalogMaintenance,
+        code: Option<String>,
+    },
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CatalogMaintenance { SnapshotPublication, VersionPruning }
+pub enum CatalogMaintenance {
+    SnapshotPublication,
+    VersionPruning,
+}
 /// Implementations own cancellation and actual response bounds. Fetches must bind the
 /// exact current reference before sending; a different credential may not be substituted.
 pub trait CatalogHost {

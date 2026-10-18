@@ -55,6 +55,13 @@ pub async fn read_json<S: AuthorityStore>(
     }
     Ok(record)
 }
+pub(crate) async fn load_exact_catalog<S: AuthorityStore>(store: &S, version: &str, generation: &str, now: i64) -> Result<Option<gateway_schema::catalog_cache::LoadedCatalog>, GatewayError> {
+    let loaded = catalog_store::load_catalog(store, version, generation, now).await?;
+    if loaded.as_ref().is_some_and(|c| c.metadata.client_version != version) {
+        return Err(unavailable("Stored Codex catalog belongs to another exact client version"));
+    }
+    Ok(loaded)
+}
 pub(crate) fn check(key: RecordKey, record: Option<&StoredRecord>) -> RevisionCheck {
     RevisionCheck {
         key,
@@ -165,7 +172,11 @@ pub(crate) async fn load_state<S: QueryStore>(
         .map(str::to_owned)
         .collect::<Vec<_>>();
     for provider in ["deepseek", "lithos", "cerebras", "ubiquity"] {
-        ids.extend(gateway_schema::provider_catalog::provider_ids(provider).iter().map(|id| (*id).to_owned()));
+        ids.extend(
+            gateway_schema::provider_catalog::provider_ids(provider)
+                .iter()
+                .map(|id| (*id).to_owned()),
+        );
     }
     let openrouter = input.rows("openrouter").to_vec();
     for id in ids {
@@ -292,7 +303,9 @@ pub(crate) async fn publish_account_models<S: AuthorityStore>(
     entries: &[(String, Vec<String>)],
     context: &PublicationContext<'_>,
 ) -> Result<(), GatewayError> {
-    if entries.is_empty() { return Ok(()); }
+    if entries.is_empty() {
+        return Ok(());
+    }
     let PublicationContext {
         version,
         publication,
