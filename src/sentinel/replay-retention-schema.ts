@@ -46,9 +46,10 @@ export const BOOTSTRAP_BATCH_ENTRIES = 4;
 // Owner rows (accounting + manifest) one slice of the chunk owner index reads.
 // Fixed, so no single owner read grows with retained captures.
 export const BOOTSTRAP_OWNER_SCAN_ENTRIES = 64;
-// Longest a bootstrap batch waits for its sweep's owner index fill, which runs
-// in the background, before it leaves the sweep in place for a later batch. A
-// small store's index fills well inside it; a large one keeps filling after.
+// Longest a maintenance/admin batch waits on each call for its sweep's
+// background owner fill before leaving the sweep in place for a later batch.
+// Inference-path reservation and status admission use zero instead: on the VPS,
+// replay tasks can be awaited before client-visible failure responses.
 export const BOOTSTRAP_OWNER_INDEX_WAIT_MS = 500;
 export const RESERVATION_REAP_LIMIT = 8;
 export const STATUS_PRUNE_BATCH = 16;
