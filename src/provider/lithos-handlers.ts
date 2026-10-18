@@ -560,6 +560,9 @@ const dispatchLithosUpstreamResult = async (
 ): Promise<LithosDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
+  // Keep the upstream attempt identity canonical while letting the rate-limit
+  // seam apply the same case-insensitive lookup to the client's spelling.
+  const canonicalModel = lithosUpstreamModelFor(modelRaw) ?? modelRaw.trim();
   // A tier whose window is open is served by the ladder target it points at
   // without asking the saturated tier again, and that decision is announced
   // exactly like a per-request failover. A deeper target resumes mid-ladder, so
@@ -570,15 +573,23 @@ const dispatchLithosUpstreamResult = async (
   if (stickyTarget !== null) {
     logLithosRateLimitFailover({
       request_id: usageContext?.requestId ?? null,
-      model: modelRaw,
+      model: canonicalModel,
       sibling_model: stickyTarget,
       attempt: 1,
     });
     recordLithosFailoverModel(usageContext, stickyTarget);
   }
   return await runLithosDispatch(
-    { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, noRetryModels: new Set(), waitedMs: 0, elapsedWaitMs: 0, waits: 0 },
+    { body, modelRaw: canonicalModel, requestSignal, downstreamSignal, usageContext },
+    {
+      attempt: 0,
+      attemptModel: stickyTarget ?? canonicalModel,
+      ladderIndex: stickyIndex + 1,
+      noRetryModels: new Set(),
+      waitedMs: 0,
+      elapsedWaitMs: 0,
+      waits: 0,
+    },
     streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
     streamed
   );
