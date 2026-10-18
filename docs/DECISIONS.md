@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Assistant output replay accepts and drops log probabilities - 2026-10-17
+
+Responses `output_text` accepts the official `logprobs` field when it is an array, including an empty array. Validation intentionally checks only the array shape, matching the existing `annotations` rule; neither field's entries affect generation. Both fields are dropped when constructing `MessageContentItem`, so the Codex subscription and paid provider request bodies carry only the replayed text. Non-array values retain a precise nested field error, non-assistant `output_text` remains invalid, and genuinely unknown fields remain rejected.
+
+Reason: Codex 0.163.0 replays `output_text.logprobs`, so the missing documented field made the gateway reject the next model call. The [content allowlist audit](research/responses-content-allowlist-2026-10-17.md) records the remaining field, type and nullability decisions. Other existing content allowlists already include their documented field names; unrelated unsupported modalities and nullable values do not justify accepting arbitrary metadata.
+
+Reversal risk: rejecting this output metadata again breaks replay, while forwarding it unnecessarily extends every provider's input contract. This source change makes no claim of deployment or live client acceptance.
+
 ## First Bun cutover uses a stopped-state operator capability - 2026-10-15
 
 The first cross-codec deployment uses `ops/first-bun-cutover.ts` through a private pinned operator invocation. Ordinary CLI and bound-driver tracked-clean guards remain unchanged. The new operator executes from the complete accepted CI artifact and proves current shipping push CI, every required job, hosted ZIP digest, exact Git source archive/materialized source, dependency/native/permissions trees and matching service bootstrap bytes. The mutable checkout is a data/runtime anchor and immutable Git-object store; unrelated working-tree or submodule state never supplies executable source or a fabricated clean predicate.
