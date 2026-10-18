@@ -85,6 +85,7 @@ impl WebAuthnCrypto for MaintainedCrypto {
 fn source_golden_registration_formats_and_exact_storage_bytes() {
     let data: Value =
         serde_json::from_str(include_str!("fixtures/webauthn-source-golden.json")).unwrap();
+    let mut failures = Vec::new();
     for case in data["cases"].as_array().unwrap() {
         let input = RegistrationVerification {
             response: case["response"].clone(),
@@ -98,12 +99,7 @@ fn source_golden_registration_formats_and_exact_storage_bytes() {
             input,
             case["now_ms"].as_i64().unwrap(),
         ));
-        assert_eq!(
-            result.is_ok(),
-            case["expected_success"].as_bool().unwrap(),
-            "{}: {result:?}",
-            case["name"]
-        );
+        if result.is_ok() != case["expected_success"].as_bool().unwrap() { failures.push(format!("{}: {result:?}", case["name"])); }
         if let Ok(result) = result {
             assert_eq!(
                 base64url(&result.public_key),
@@ -113,6 +109,7 @@ fn source_golden_registration_formats_and_exact_storage_bytes() {
             );
         }
     }
+    assert!(failures.is_empty(),"{}",failures.join("\n"));
 }
 
 #[test]

@@ -297,12 +297,18 @@ pub fn verify_attestation_at_time(
             Ok(vec![])
         }
         "packed" => {
-            verify_packed_attestation(acd, &att, hash)?;
-            if let Some(Value::Array(_)) =
-                cbor_try_map!(&att.att_stmt)?.get(&Value::Text("x5c".into()))
-            {
+            let statement = cbor_try_map!(&att.att_stmt)?;
+            if statement.contains_key(&Value::Text("x5c".into())) {
+                verify_packed_attestation(acd, &att, hash)?;
                 let chain = certificates(&att.att_stmt)?;
                 cert_time(chain.first().ok_or_else(failure)?, now)?;
+            } else {
+                let alg = cbor_try_i128!(statement.get(&Value::Text("alg".into())).ok_or(WebauthnError::AttestationStatementAlgMissing)?)?;
+                let mut key = COSEKey::try_from(&acd.credential_pk)?;
+                key.type_ = COSEAlgorithm::try_from(alg).map_err(|_| WebauthnError::COSEKeyInvalidAlgorithm)?;
+                let signature = cbor_try_bytes!(statement.get(&Value::Text("sig".into())).ok_or(WebauthnError::AttestationStatementSigMissing)?)?;
+                let mut signed = att.auth_data_bytes.clone(); signed.extend(hash);
+                if !key.verify_signature(signature, &signed)? { return Err(WebauthnError::AttestationStatementSigInvalid); }
             }
             Ok(vec![])
         }

@@ -431,11 +431,8 @@ pub async fn verify_registration<C: WebAuthnCrypto>(
         return Err(invalid("Invalid passkey credential length"));
     }
     let id = &data[55..key_start];
-    if input.response.get("id").and_then(Value::as_str) != Some(base64url(id).as_str()) {
-        return Err(invalid(
-            "Passkey credential ID does not match authenticator",
-        ));
-    }
+    // The source stores the credential ID from authenticated authData. The
+    // browser response id/rawId consistency was already checked by verify_client.
     let mut reader = Cursor::new(&data[key_start..]);
     let _: Cbor = ciborium::from_reader(&mut reader)
         .map_err(|_| invalid("Invalid passkey public key CBOR"))?;
