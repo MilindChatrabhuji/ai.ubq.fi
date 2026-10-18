@@ -168,6 +168,51 @@ fn expired_renewal_deadline_refuses_before_opening_registered_socket() {
 fn renewal_fixture(
     persist_generation: bool,
 ) -> Result<NativeGeneration, gateway_core::GatewayError> {
+    renewal_with_guard(persist_generation, GuardPolicy::Allow)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum GuardPolicy {
+    Allow,
+    RefuseStart,
+    RevokeAfterIdentity,
+}
+
+struct FixtureGuard {
+    observed: Arc<Mutex<Vec<(String, Option<Value>)>>>,
+    policy: GuardPolicy,
+}
+impl gateway_native::owner_control::NativeRenewalGuard for FixtureGuard {
+    fn now_ms(&self) -> Result<i64, gateway_core::GatewayError> {
+        Ok(1_000_000)
+    }
+    async fn ensure_current(&self) -> Result<(), gateway_core::GatewayError> {
+        if self.policy == GuardPolicy::RevokeAfterIdentity
+            && self.observed.lock().unwrap().len() >= 3
+        {
+            return Err(gateway_core::GatewayError::new(
+                409,
+                "Synthetic current authority changed",
+                Some("native_owner_changed"),
+            ));
+        }
+        Ok(())
+    }
+    async fn start_refresh(&self) -> Result<(), gateway_core::GatewayError> {
+        if self.policy == GuardPolicy::RefuseStart {
+            return Err(gateway_core::GatewayError::unavailable(
+                "Synthetic original operation is already started",
+                "native_control_outcome_unknown",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn renewal_with_guard(
+    persist_generation: bool,
+    policy: GuardPolicy,
+) -> Result<NativeGeneration, gateway_core::GatewayError> {
     run(async {
         let home = FixtureHome::new();
         let old = document("fixture-refresh-a", "2026-10-18T12:00:00.000000001Z");
@@ -235,16 +280,44 @@ fn renewal_fixture(
             NativeOwnerLocation::configured(owner, home.0.clone()).unwrap(),
         ])
         .unwrap();
-        let result = renew_owned(&transport, fence, &current, 1_000_000).await;
+        let guard = FixtureGuard {
+            observed: observed.clone(),
+            policy,
+        };
+        let result = renew_owned_guarded(&transport, &guard, fence, &current).await;
         server.join().unwrap();
         let observed = observed.lock().unwrap();
-        assert_eq!(observed.len(), 4);
+        assert_eq!(
+            observed.len(),
+            if policy == GuardPolicy::Allow { 4 } else { 3 }
+        );
         assert_eq!(observed[0].0, "initialize");
         assert_eq!(observed[1].0, "initialized");
         assert_eq!(observed[2].1.as_ref().unwrap()["refreshToken"], false);
-        assert_eq!(observed[3].1.as_ref().unwrap()["refreshToken"], true);
+        if policy == GuardPolicy::Allow {
+            assert_eq!(observed[3].1.as_ref().unwrap()["refreshToken"], true);
+        }
         result
     })
+}
+
+#[test]
+fn current_authority_replacement_or_replayed_start_prevents_actual_refresh_rpc() {
+    assert_eq!(
+        renewal_with_guard(true, GuardPolicy::RevokeAfterIdentity)
+            .unwrap_err()
+            .status,
+        409
+    );
+    assert_eq!(
+        renewal_with_guard(true, GuardPolicy::RefuseStart)
+            .unwrap_err()
+            .envelope
+            .error
+            .code
+            .as_deref(),
+        Some("native_control_outcome_unknown")
+    );
 }
 
 #[test]
