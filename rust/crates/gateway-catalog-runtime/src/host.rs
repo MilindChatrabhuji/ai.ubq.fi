@@ -129,19 +129,31 @@ impl CatalogFetch {
     pub fn timeout_ms(&self) -> Option<u32> {
         match self {
             Self::Codex { .. } => None,
-            Self::Provider { provider: CatalogProvider::ClaudeCode, .. } => Some(8_000),
+            Self::Provider {
+                provider: CatalogProvider::ClaudeCode,
+                ..
+            } => Some(8_000),
             Self::Provider { .. } => Some(10_000),
         }
     }
     pub fn remaining_timeout_ms(&self, now_ms: i64) -> Result<Option<u32>, GatewayError> {
-        if let Self::Provider { deadline_ms: Some(deadline), .. } = self {
+        if let Self::Provider {
+            deadline_ms: Some(deadline),
+            ..
+        } = self
+        {
             let remaining = deadline.saturating_sub(now_ms);
-            if remaining <= 0 { return Err(unavailable("Provider model discovery exceeded its request deadline")); }
-            return Ok(Some((remaining as u64).min(u64::from(self.timeout_ms().unwrap_or(u32::MAX))) as u32));
+            if remaining <= 0 {
+                return Err(unavailable(
+                    "Provider model discovery exceeded its request deadline",
+                ));
+            }
+            return Ok(Some(
+                (remaining as u64).min(u64::from(self.timeout_ms().unwrap_or(u32::MAX))) as u32,
+            ));
         }
         Ok(self.timeout_ms())
     }
-
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct CatalogFetchResponse {

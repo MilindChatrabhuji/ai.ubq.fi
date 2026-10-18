@@ -900,15 +900,43 @@ fn version_pruning_failure_is_observed_without_discarding_the_catalog_answer() {
 
 #[test]
 fn claude_pages_share_the_original_deadline_and_codex_has_no_invented_timeout() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new(); host.provider(CatalogProvider::ClaudeCode, "claude-owner"); let start = store.now.get();
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.provider(CatalogProvider::ClaudeCode, "claude-owner");
+    let start = store.now.get();
     let shared = store.clone();
-    host.queue(Outcome { response: Ok(CatalogFetchResponse::json(200, json!({"data":[{"id":"claude-one"}],"has_more":true,"last_id":"one"}).to_string())), ticks: 0, callback: Some(Rc::new(move || shared.now.set(shared.now.get() + 7000))) });
-    host.queue(Outcome::json(json!({"data":[{"id":"claude-two"}],"has_more":false})));
-    let snapshot = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false)).unwrap().unwrap(); assert_eq!(snapshot.models.len(), 2);
+    host.queue(Outcome {
+        response: Ok(CatalogFetchResponse::json(
+            200,
+            json!({"data":[{"id":"claude-one"}],"has_more":true,"last_id":"one"}).to_string(),
+        )),
+        ticks: 0,
+        callback: Some(Rc::new(move || shared.now.set(shared.now.get() + 7000))),
+    });
+    host.queue(Outcome::json(
+        json!({"data":[{"id":"claude-two"}],"has_more":false}),
+    ));
+    let snapshot = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false))
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.models.len(), 2);
     let requests = host.requests.borrow();
-    for request in requests.iter() { assert!(matches!(request, CatalogFetch::Provider { deadline_ms: Some(deadline), .. } if *deadline == start + 8000)); }
-    assert_eq!(requests[1].remaining_timeout_ms(store.now.get()).unwrap(), Some(1000));
+    for request in requests.iter() {
+        assert!(
+            matches!(request, CatalogFetch::Provider { deadline_ms: Some(deadline), .. } if *deadline == start + 8000)
+        );
+    }
+    assert_eq!(
+        requests[1].remaining_timeout_ms(store.now.get()).unwrap(),
+        Some(1000)
+    );
     assert!(requests[1].remaining_timeout_ms(start + 8000).is_err());
-    let codex = CatalogFetch::Codex { account: host.published.borrow().codex_accounts[0].clone(), client_version: "0.163.0".into(), if_none_match: None };
-    assert_eq!(codex.remaining_timeout_ms(start).unwrap(), None); assert_eq!(codex.max_body_bytes(), None);
+    let codex = CatalogFetch::Codex {
+        account: host.published.borrow().codex_accounts[0].clone(),
+        client_version: "0.163.0".into(),
+        if_none_match: None,
+    };
+    assert_eq!(codex.remaining_timeout_ms(start).unwrap(), None);
+    assert_eq!(codex.max_body_bytes(), None);
 }

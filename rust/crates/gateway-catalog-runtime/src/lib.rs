@@ -258,7 +258,8 @@ impl CatalogRuntime {
                 provider,
                 binding: binding.clone(),
                 after_id: cursor,
-                deadline_ms: (provider == CatalogProvider::ClaudeCode).then_some(started.saturating_add(8_000)),
+                deadline_ms: (provider == CatalogProvider::ClaudeCode)
+                    .then_some(started.saturating_add(8_000)),
             };
             let _remaining_timeout = request.remaining_timeout_ms(host.now_ms())?;
             let max_bytes = request.max_body_bytes();
