@@ -5,6 +5,7 @@ use std::rc::Rc;
 use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
 
+mod admin_host;
 mod admission;
 mod agent_messages;
 mod assets;
@@ -15,6 +16,7 @@ mod cors;
 mod host;
 mod inference;
 mod lifecycle;
+mod routing_host;
 mod runtime;
 pub mod storage;
 pub mod transport;

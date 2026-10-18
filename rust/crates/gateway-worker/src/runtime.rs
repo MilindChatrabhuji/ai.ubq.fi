@@ -1,9 +1,9 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
 use std::rc::Rc;
 
-use gateway_admin::{AdminHost, AdminInput, AdminOperation, AdminService, PaidKeyFields};
+use gateway_admin::AdminService;
 use gateway_auth::{AuthPrincipal, AuthRequest, AuthResponse, AuthService};
-use gateway_core::{GatewayError, identity::RequestId, state::RevisionCheck};
+use gateway_core::{GatewayError, identity::RequestId};
 use gateway_schema::{catalog, catalog_cache::CatalogResponse};
 use serde_json::Value;
 use worker::{Context, Env, Method, Request, Response};
@@ -41,6 +41,7 @@ pub async fn route(
     let host = PlatformHost {
         cancellation,
         store: store.clone(),
+        env: env.clone(),
     };
     let config = auth_config(&env);
     let mut auth_request = AuthRequest {
@@ -71,7 +72,14 @@ pub async fn route(
         if !matches!(request.method(), Method::Get | Method::Head) {
             auth_request.body = body::inference_bytes(&mut request).await?;
         }
-        let capabilities = PlatformAdmin;
+        let bindings = crate::admin_host::Capabilities;
+        let runtime_config = crate::admin_host::config(&env);
+        let capabilities = gateway_admin_runtime::AdminRuntime {
+            store: &store,
+            host: &host,
+            capabilities: &bindings,
+            config: &runtime_config,
+        };
         let admin = AdminService {
             store: &store,
             host: &host,
@@ -192,6 +200,12 @@ pub async fn route(
 }
 
 pub fn auth_response(response: AuthResponse) -> Result<Response, GatewayError> {
+    if response.stream.is_some() {
+        return Err(GatewayError::unavailable(
+            "The native stream carrier is not configured.",
+            "native_stream_unavailable",
+        ));
+    }
     let mut wire = json_response(response.body)?.with_status(response.status);
     for (name, value) in response.headers {
         wire.headers_mut()
@@ -239,35 +253,6 @@ fn decorate_api_policy(
             .map_err(|_| invalid_url())?;
     }
     Ok(())
-}
-
-struct PlatformAdmin;
-impl AdminHost for PlatformAdmin {
-    async fn execute(
-        &self,
-        operation: AdminOperation,
-        _input: AdminInput,
-    ) -> Result<AuthResponse, GatewayError> {
-        Err(gateway_admin::missing_capability(operation))
-    }
-    async fn prepare_key_deletion(
-        &self,
-        _key_id: &str,
-    ) -> Result<Vec<RevisionCheck>, GatewayError> {
-        Err(GatewayError::unavailable(
-            "The source paid deletion fence is not integrated.",
-            "paid_deletion_guard_unavailable",
-        ))
-    }
-    async fn paid_key_policy(&self, body: &Value) -> Result<PaidKeyFields, GatewayError> {
-        if body.get("paid_fallback_enabled").and_then(Value::as_bool) == Some(true) {
-            return Err(GatewayError::unavailable(
-                "Source paid model pricing is not integrated.",
-                "paid_fallback_pricing_unavailable",
-            ));
-        }
-        Ok(PaidKeyFields::disabled())
-    }
 }
 
 fn invalid_url() -> GatewayError {

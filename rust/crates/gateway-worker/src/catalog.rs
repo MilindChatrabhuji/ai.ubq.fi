@@ -1,12 +1,8 @@
 //! Source catalog runtime over one strong authority and credential-owner publication.
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
 use gateway_catalog_runtime::{CatalogHost, CatalogRuntime};
-use gateway_core::{
-    GatewayError,
-    state::RecordKey,
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_core::GatewayError;
 use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
 use serde_json::Value;
 use worker::{Context, Env, Request};
@@ -24,16 +20,6 @@ pub const DIRECT_PROVIDERS: &[(&str, &str)] = &[
     ("openlux", "OPENLUX_API_KEY"),
 ];
 
-pub fn key(parts: &[&str]) -> RecordKey {
-    TupleKey::from_scalar_parts(
-        &parts
-            .iter()
-            .map(|part| ScalarKeyPart::String(part))
-            .collect::<Vec<_>>(),
-    )
-    .to_record_key()
-}
-
 thread_local! {
     static RUNTIME: CatalogRuntime = CatalogRuntime::new();
 }
@@ -41,7 +27,6 @@ thread_local! {
 pub struct CatalogState {
     pub input: CatalogInput,
     pub runtime: Option<Value>,
-    pub secrets: BTreeMap<String, String>,
     service: CatalogRuntime,
     host: Host,
 }
@@ -80,7 +65,6 @@ impl CatalogState {
         Ok(Self {
             input: state.input,
             runtime: state.runtime,
-            secrets: crate::catalog_host::secrets(env),
             service,
             host,
         })

@@ -401,8 +401,8 @@ async function inner(): Promise<void> {
   const lifecycle = async (id: string, waitMs = 3000): Promise<Record<string, unknown>> => {
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
-      const row = await read(tuple("uos_ai", "authority", "v1", "request_lifecycle", id));
-      if (row && isObject(row.value) && row.value.settled === true) return row.value;
+      const row = await read(tuple("uos_ai", "routing_runtime", "v1", "session", id));
+      if (row && isObject(row.value) && row.value.finished === true) return row.value;
       await Bun.sleep(10);
     }
     throw new Error(`Lifecycle ${id} did not settle; evidence: ${workspace}`);
@@ -460,7 +460,8 @@ async function inner(): Promise<void> {
     assert(isObject(settled.terminal_intent));
     assert.equal(settled.terminal_intent.semantic_terminal, "response.completed");
     assert.equal(settled.terminal_intent.delivery, "unobserved");
-    assert.equal(settled.transport_started, true);
+    assert(Array.isArray(settled.attempts) && settled.attempts.length === 1 && isObject(settled.attempts[0]));
+    assert.equal(settled.attempts[0].transport_started, true);
     cases.push("durable_terminal_and_unobserved_delivery_remain_separate");
     const chat = await post("/v1/chat/completions", { model: "deepseek-flash", messages: [{ role: "user", content: "fixture:chat" }], stream: false });
     assert.equal(chat.status, 200);
@@ -482,7 +483,7 @@ async function inner(): Promise<void> {
     assert(text.includes("response.completed") && text.includes("fixture "));
     const streamedId = streamed.headers.get("x-uos-request-id");
     assert(streamedId);
-    assert.equal((await lifecycle(streamedId)).settled, true);
+    assert.equal((await lifecycle(streamedId)).finished, true);
     cases.push("progressive_responses_sse_and_durable_settlement");
     const chatStream = await post("/v1/chat/completions", {
       model: "deepseek-flash",

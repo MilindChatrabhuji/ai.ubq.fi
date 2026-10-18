@@ -6,13 +6,14 @@ use gateway_auth::AuthPrincipal;
 use gateway_core::{
     GatewayError, identity::RequestId, lifecycle::SemanticTerminal, provider::UpstreamProvider,
 };
-use gateway_providers::{
-    AuthMaterial, ClientSurface, PrepareOptions, ProviderEvent, StreamDecoder, decode_response,
-    prepare_request,
+use gateway_providers::{ClientSurface, ProviderEvent, StreamDecoder, decode_response};
+use gateway_routing_runtime::{
+    AttemptFailure, AttemptUsage, PreparedAttempt, RefusalDecision, RoutingInput, RoutingSession,
+    TransportState,
 };
 use gateway_schema::{
     content,
-    request::{self, RequestExtensions, RequestSurface},
+    request::{self},
 };
 use serde_json::{Value, json};
 use worker::{Context, Method, Request, Response};
@@ -21,12 +22,12 @@ use crate::{
     authority::RemoteAuthorityStore,
     catalog::CatalogState,
     host::PlatformHost,
-    lifecycle::Lifecycle,
+    host::{PlatformClock, PlatformTokens},
+    routing_host,
     storage::now_ms,
     transport::{
         body,
         outbound::{DispatchAttempt, PinnedDestination, send_http},
-        random,
         stream::{FinishHook, ObservationHandle, ObservedStream},
     },
 };
@@ -39,16 +40,167 @@ pub struct RequestResources {
     pub permit: Option<gateway_admission::Permit>,
 }
 
-fn direct_provider(model: &str) -> Option<(&'static str, UpstreamProvider)> {
-    [
-        ("deepseek", UpstreamProvider::Deepseek),
-        ("lithos", UpstreamProvider::Lithos),
-        ("cerebras", UpstreamProvider::Cerebras),
-    ]
-    .into_iter()
-    .find(|(_, provider)| {
-        gateway_providers::request::canonical_model(*provider, model, &[]).is_some()
-    })
+async fn dispatch_attempts(
+    session: Rc<Session>,
+    cancellation: &crate::transport::outbound::Cancellation,
+) -> Result<(Response, PreparedAttempt), GatewayError> {
+    loop {
+        let attempt = match session.next_attempt().await.map_err(|error| *error.error)? {
+            Some(attempt) => attempt,
+            None => {
+                return Err(GatewayError::unavailable(
+                    "No eligible provider remains for this request.",
+                    "provider_routing_unavailable",
+                ));
+            }
+        };
+        let target = PinnedDestination::new(&attempt.request.url)?;
+        let wire = serde_json::to_vec(&attempt.request.body)
+            .map_err(|_| invalid("Request could not be encoded."))?;
+        let result = send_http(
+            &target,
+            Method::Post,
+            &attempt.request.headers,
+            &wire,
+            cancellation,
+            || async {
+                session
+                    .before_dispatch(&attempt)
+                    .await
+                    .map_err(|error| *error.error)
+            },
+        )
+        .await;
+        let mut response = match result {
+            Ok(response) => {
+                session
+                    .transport_started(&attempt)
+                    .await
+                    .map_err(|error| *error.error)?;
+                response
+            }
+            Err(failure) => {
+                let decision = session
+                    .refusal(
+                        &attempt,
+                        AttemptFailure {
+                            status: None,
+                            headers: Default::default(),
+                            body: Vec::new(),
+                            body_complete: false,
+                            failure: if cancellation.signal().aborted() {
+                                gateway_providers::policy::HopFailure::Cancelled
+                            } else {
+                                gateway_providers::policy::HopFailure::Transport
+                            },
+                            transport: if failure.attempt == DispatchAttempt::Started {
+                                TransportState::Started
+                            } else {
+                                TransportState::NotStarted
+                            },
+                            semantic_committed: false,
+                            cancelled: cancellation.signal().aborted(),
+                        },
+                    )
+                    .await
+                    .map_err(|error| *error.error)?;
+                if decision == RefusalDecision::Continue {
+                    continue;
+                }
+                return Err(failure.error);
+            }
+        };
+        if response.status_code() < 400 {
+            return Ok((response, attempt));
+        }
+        let status = response.status_code();
+        let headers = response
+            .headers()
+            .entries()
+            .collect::<gateway_providers::Headers>();
+        let bytes = body::response_bytes(
+            &mut response,
+            body::INFERENCE_JSON_MAX_BYTES,
+            &cancellation.signal(),
+        )
+        .await?;
+        let decision = session
+            .refusal(
+                &attempt,
+                AttemptFailure {
+                    status: Some(status),
+                    headers: headers.clone(),
+                    body: bytes.clone(),
+                    body_complete: true,
+                    failure: gateway_providers::policy::HopFailure::Status(status),
+                    transport: TransportState::Started,
+                    semantic_committed: false,
+                    cancelled: cancellation.signal().aborted(),
+                },
+            )
+            .await
+            .map_err(|error| *error.error)?;
+        if decision == RefusalDecision::Continue {
+            continue;
+        }
+        if decision == RefusalDecision::Abort {
+            return Err(gateway_admission::cancellation_error());
+        }
+        let mut preserved = Response::from_bytes(bytes)
+            .map_err(|_| invalid("Upstream refusal cannot be retained."))?
+            .with_status(status);
+        for (name, value) in headers {
+            preserved
+                .headers_mut()
+                .set(&name, &value)
+                .map_err(|_| invalid("Invalid upstream refusal header."))?;
+        }
+        return Ok((preserved, attempt));
+    }
+}
+
+type Session =
+    RoutingSession<RemoteAuthorityStore, PlatformTokens, PlatformClock, routing_host::Host>;
+
+struct Lifecycle {
+    session: Rc<Session>,
+    attempt: PreparedAttempt,
+    provider_request_id: Option<String>,
+    status: u16,
+}
+
+impl Lifecycle {
+    async fn observe_terminal(
+        &self,
+        observation: gateway_core::lifecycle::TransportObservation,
+        usage: Option<Value>,
+    ) -> Result<(), GatewayError> {
+        self.session
+            .observe_terminal(
+                &self.attempt,
+                observation,
+                AttemptUsage {
+                    usage,
+                    provider_request_id: self.provider_request_id.clone(),
+                    status: Some(self.status),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| *error.error)
+    }
+    async fn finish(
+        &self,
+        observation: gateway_core::lifecycle::TransportObservation,
+        usage: Option<Value>,
+    ) -> Result<(), GatewayError> {
+        self.observe_terminal(observation, usage).await?;
+        self.session
+            .finish(observation)
+            .await
+            .map_err(|error| *error.error)?;
+        Ok(())
+    }
 }
 
 pub async fn run(
@@ -89,36 +241,6 @@ pub async fn run(
         });
     let model = request::resolve_model(raw.get("model"), default.as_deref())?;
     raw["model"] = json!(model);
-    let Some((label, provider)) = direct_provider(&model) else {
-        return Err(GatewayError::unavailable(
-            "This model's credential publication and routing operation are not yet integrated.",
-            "provider_routing_unavailable",
-        ));
-    };
-    if !catalog.input.enabled(label) {
-        return Err(GatewayError::unavailable(
-            "The selected provider is disabled.",
-            &format!("{label}_disabled"),
-        ));
-    }
-    let secret = catalog.secrets.get(label).ok_or_else(|| {
-        GatewayError::unavailable(
-            "The requested provider is not configured.",
-            &format!("{label}_api_key_missing"),
-        )
-    })?;
-    request::validate_request_fields(
-        &raw,
-        if responses {
-            RequestSurface::Responses
-        } else {
-            RequestSurface::ChatCompletions
-        },
-        &RequestExtensions {
-            deepseek_thinking: provider == UpstreamProvider::Deepseek,
-            openrouter_cache_control: false,
-        },
-    )?;
     let client_stream = request::parse_stream(raw.get("stream"))?;
     if responses {
         raw["input"] = json!(content::normalize_responses_input(raw.get("input"))?);
@@ -130,55 +252,118 @@ pub async fn run(
         request::parse_max_completion_tokens(raw.get("max_completion_tokens"))?;
         gateway_schema::reasoning::parse_effort(raw.get("reasoning_effort"), "reasoning_effort")?;
     }
-    let options = PrepareOptions {
-        auth: AuthMaterial {
-            secret: secret.clone(),
-            ..Default::default()
-        },
-        response_id: format!("resp_{}", random::random_uuid()?.replace('-', "")),
-        created_at: now_ms()? / 1000,
-        ..Default::default()
-    };
-    let prepared = prepare_request(provider, surface, &raw, &options)?;
-    let destination = PinnedDestination::new(&prepared.url)?;
-    let wire =
-        serde_json::to_vec(&prepared.body).map_err(|_| invalid("Request could not be encoded."))?;
-    let lifecycle = Lifecycle::admit(store, principal, request_id, route).await?;
+    let session = Rc::new(
+        RoutingSession::begin(
+            RoutingInput {
+                context: gateway_core::identity::RequestContext {
+                    request_id,
+                    principal: gateway_core::identity::PrincipalId(crate::lifecycle::principal_id(
+                        principal,
+                    )),
+                    key_id: match &principal.method {
+                        gateway_auth::AuthMethod::KvApiKey { key_id, .. } => {
+                            Some(gateway_core::identity::ApiKeyId(key_id.clone()))
+                        }
+                        _ => None,
+                    },
+                    route: route.to_owned(),
+                    started_at_ms: now_ms()?,
+                },
+                principal: principal.clone(),
+                raw,
+                surface,
+                catalog: catalog.input,
+                runtime: catalog.runtime,
+                client_version: request
+                    .headers()
+                    .get("user-agent")
+                    .ok()
+                    .flatten()
+                    .and_then(|value| {
+                        value.strip_prefix("codex_cli_rs/").map(|value| {
+                            value
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or("0.100.0")
+                                .to_owned()
+                        })
+                    })
+                    .unwrap_or_else(|| "0.100.0".into()),
+                native_session_id: None,
+                retry_prohibited: false,
+            },
+            store.clone(),
+            routing_host::Host {
+                store,
+                env: host.env.clone(),
+                platform: host.clone(),
+            },
+            PlatformClock,
+            PlatformTokens,
+        )
+        .await
+        .map_err(|error| *error.error)?,
+    );
     let deadline = host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
-    let result = send_http(
-        &destination,
-        Method::Post,
-        &prepared.headers,
-        &wire,
-        &host.cancellation,
-        || lifecycle.dispatch_intent(provider),
-    )
-    .await;
-    let mut upstream = match result {
-        Ok(response) => response,
-        Err(failure) => {
-            match failure.attempt {
-                DispatchAttempt::NotStarted => lifecycle.before_transport_failure().await?,
-                DispatchAttempt::Started => {
-                    lifecycle.started(None).await?;
-                    lifecycle.finish(Default::default(), None).await?;
-                }
-            }
-            return Err(failure.error);
+    let (mut upstream, attempt) = match dispatch_attempts(session.clone(), &host.cancellation).await
+    {
+        Ok(dispatched) => dispatched,
+        Err(error) => {
+            session
+                .finish(Default::default())
+                .await
+                .map_err(|error| *error.error)?;
+            return Err(error);
         }
     };
     let status = upstream.status_code();
-    lifecycle.started(Some(status)).await?;
+    let provider = attempt.request.decode.provider;
+    let prepared = attempt.request.clone();
     let headers = upstream
         .headers()
         .entries()
         .collect::<gateway_providers::Headers>();
+    let lifecycle = Rc::new(Lifecycle {
+        session,
+        attempt,
+        provider_request_id: correlation(provider, &headers).map(str::to_owned),
+        status,
+    });
     let event_stream = headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("content-type") && value.contains("text/event-stream")
     });
     let observation = ObservationHandle::default();
     let usage = Rc::new(RefCell::new(None));
     let finish = finish_hook(lifecycle.clone(), usage.clone(), permit);
+    if status >= 400 {
+        let observation = ObservationHandle::default();
+        let bytes = body::response_bytes(
+            &mut upstream,
+            body::INFERENCE_JSON_MAX_BYTES,
+            &host.cancellation.signal(),
+        )
+        .await?;
+        let stream = ObservedStream::new(
+            futures_util::stream::iter(vec![Ok(bytes)]),
+            observation,
+            context,
+            host.cancellation.clone(),
+            Some(deadline),
+            finish,
+        );
+        let mut response = stream
+            .into_response()
+            .map_err(|_| invalid("The downstream refusal body is unavailable."))?
+            .with_status(status);
+        for (name, value) in &headers {
+            response
+                .headers_mut()
+                .set(name, value)
+                .map_err(|_| invalid("Invalid upstream refusal header."))?;
+        }
+        provider_correlation(&mut response, provider, &headers)?;
+        return Ok(response);
+    }
     if client_stream && event_stream && status < 400 {
         let source = upstream
             .stream()
@@ -270,7 +455,10 @@ pub async fn run(
                             if state.observation.snapshot().semantic_terminal.is_some()
                                 && let Err(error) = state
                                     .lifecycle
-                                    .observe_terminal(state.observation.snapshot())
+                                    .observe_terminal(
+                                        state.observation.snapshot(),
+                                        state.usage.borrow().clone(),
+                                    )
                                     .await
                             {
                                 state.done = true;
@@ -299,7 +487,10 @@ pub async fn run(
                             );
                             if let Err(error) = state
                                 .lifecycle
-                                .observe_terminal(state.observation.snapshot())
+                                .observe_terminal(
+                                    state.observation.snapshot(),
+                                    state.usage.borrow().clone(),
+                                )
                                 .await
                             {
                                 return Some((
@@ -364,7 +555,9 @@ pub async fn run(
         observation.semantic_terminal(terminal);
     }
     if observation.snapshot().semantic_terminal.is_some() {
-        lifecycle.observe_terminal(observation.snapshot()).await?;
+        lifecycle
+            .observe_terminal(observation.snapshot(), decoded.usage.clone())
+            .await?;
     }
     *usage.borrow_mut() = decoded.usage;
     let payload = if client_stream && !decoded.events.is_empty() {
@@ -508,11 +701,10 @@ fn copy_headers(
     Ok(())
 }
 
-fn provider_correlation(
-    response: &mut Response,
+fn correlation<'a>(
     provider: UpstreamProvider,
-    headers: &gateway_providers::Headers,
-) -> Result<(), GatewayError> {
+    headers: &'a gateway_providers::Headers,
+) -> Option<&'a str> {
     let names: &[&str] = if provider == UpstreamProvider::Deepseek {
         &["x-request-id", "x-ds-request-id", "x-deepseek-request-id"]
     } else if provider == UpstreamProvider::Cerebras {
@@ -525,7 +717,7 @@ fn provider_correlation(
     } else {
         &["x-request-id", "request-id"]
     };
-    let id = names
+    names
         .iter()
         .find_map(|wanted| {
             headers
@@ -535,7 +727,15 @@ fn provider_correlation(
         })
         .filter(|id| {
             !id.is_empty() && id.len() <= 256 && !id.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
-        });
+        })
+}
+
+fn provider_correlation(
+    response: &mut Response,
+    provider: UpstreamProvider,
+    headers: &gateway_providers::Headers,
+) -> Result<(), GatewayError> {
+    let id = correlation(provider, headers);
     for name in [
         "x-request-id",
         "x-api-request-id",

@@ -46,6 +46,7 @@ pub fn auth_config(env: &Env) -> AuthConfig {
 pub struct PlatformHost {
     pub cancellation: Rc<Cancellation>,
     pub store: crate::authority::RemoteAuthorityStore,
+    pub env: Env,
 }
 
 #[derive(Clone, Copy)]
