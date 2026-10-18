@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { lookup } from "node:dns/promises";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -204,6 +205,41 @@ async function assertUpstreamCancelled(events: () => Promise<unknown[]>): Promis
   assert(cancelled, "Caller abort must reach the actual controlled upstream.");
 }
 
+async function disconnectAfterFirstChunk(url: string, body: unknown): Promise<string> {
+  return new Promise<string>((resolveRequest, rejectRequest) => {
+    let disconnected = false;
+    const request = httpRequest(
+      url,
+      { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-access" } },
+      (response) => {
+        response.once("data", () => {
+          const id = response.headers["x-uos-request-id"];
+          if (typeof id !== "string") {
+            rejectRequest(new Error("Missing request correlation"));
+            return;
+          }
+          disconnected = true;
+          response.destroy();
+          request.destroy();
+          resolveRequest(id);
+        });
+        response.on("error", (error) => {
+          if (!disconnected) rejectRequest(error);
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      request.destroy();
+      rejectRequest(new Error("Streaming cancellation fixture did not receive output"));
+    }, 5000);
+    request.on("error", (error) => {
+      if (!disconnected) rejectRequest(error);
+    });
+    request.once("close", () => clearTimeout(timer));
+    request.end(JSON.stringify(body));
+  });
+}
+
 async function inner(): Promise<void> {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
@@ -353,19 +389,7 @@ async function inner(): Promise<void> {
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:still-blocked" }, key.token)).status, 429);
     assert.equal((await events()).length, before);
     cases.push("actual_sqlite_restart_preserves_key_and_quota");
-    const cancellation = new AbortController();
-    const cancelled = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:abort", stream: true }, "fixture-access", cancellation.signal);
-    assert(cancelled.body);
-    const cancelReader = cancelled.body.getReader();
-    await cancelReader.read();
-    cancellation.abort();
-    try {
-      await cancelReader.read();
-    } catch {
-      /* The real caller cancelled its HTTP body. */
-    }
-    const cancelId = cancelled.headers.get("x-uos-request-id");
-    assert(cancelId);
+    const cancelId = await disconnectAfterFirstChunk(url("/v1/responses"), { model: "deepseek-flash", input: "fixture:abort", stream: true });
     const cancelState = await lifecycle(cancelId);
     assert(isObject(cancelState.terminal_intent));
     assert.equal(cancelState.terminal_intent.delivery, "interrupted");

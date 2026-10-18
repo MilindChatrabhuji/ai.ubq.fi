@@ -92,6 +92,7 @@ where
         if self.finish.is_none() {
             return Poll::Ready(None);
         }
+        self.cancellation.register_waker(context.waker());
         if self.cancellation.signal().aborted() {
             let reader = if self.cancellation.client_aborted() {
                 ReaderTermination::Cancelled
