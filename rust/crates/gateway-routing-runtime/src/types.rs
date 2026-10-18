@@ -243,6 +243,9 @@ pub trait RoutingHost {
 pub enum TransportState {
     NotStarted,
     Started,
+    /// Actual fetch was invoked but its durable started marker is unavailable.
+    /// This cannot prove no spend, cancel a claim or mint provider quota proof.
+    Unknown,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FailureOrigin {
