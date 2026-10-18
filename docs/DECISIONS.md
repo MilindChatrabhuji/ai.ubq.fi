@@ -2178,3 +2178,11 @@ The foundation refuses every unfinished route with an explicit non-success respo
 Before any Rust persistence or deployment, retire provisional JSON-array key identity. Every read, write, query and future migration uses the core `tuple-v1:<lowercase hex>` codec and its exact binary sort bytes. Preserve current source bytes/string/bigint/number/boolean distinctions, signed zeros, infinities, positive NaN and the proven negative-NaN refusal. No per-module JSON comparator, dual-codec fallback or live migration is authorized. A shared typed builder and raw validator prevent different modules from naming or ordering the same source key differently.
 
 The additive query interface preserves pinned source selectors: prefix alone or prefix with one strict descendant start/end bound, and ranges with both bounds. Exact-prefix rows are excluded, start is inclusive and end exclusive; empty prefix is the whole-keyspace form. Pages filter absolute expiry before their limit and use opaque version/selector/direction-bound continuations. Changed limits are allowed on resume; malformed and cross-query tokens fail closed. This shared contract adds no new gateway scheduler or provider behavior, and source/runtime/deployment acceptance remains separate.
+
+## Surplus inference enables provider secret masking - 2026-10-18
+
+Enable [Surplus Secret Masking](https://www.surplusintelligence.ai/docs/guides/secret-masking) for every Surplus inference POST with exactly one `X-SI-Mask-Secrets: on` header from the shared authenticated-header builder. This covers native Responses and native Claude Chat, streamed and buffered. The provider handles masking and restoration while the gateway retains its existing request and response contracts.
+
+Reason: the owner requested the announced feature. Surplus can globally pause masking and forward requests without protection or a receipt, so this opt-in does not guarantee that every request is masked. The gateway does not require or parse a masking receipt.
+
+Reversal risk: removing the header returns request-level enablement to the provider's defaults.
