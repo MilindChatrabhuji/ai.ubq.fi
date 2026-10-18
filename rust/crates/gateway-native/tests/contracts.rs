@@ -1,0 +1,52 @@
+use std::collections::BTreeSet;
+
+use gateway_auth::crypto::{Secret,base64url};
+use gateway_native::*;
+use serde_json::json;
+
+fn token(expiry:i64,user:&str,account:&str)->String{format!("e30.{}.fixture",base64url(json!({"exp":expiry,"email":"fixture@example.invalid","https://api.openai.com/auth":{"chatgpt_user_id":user,"chatgpt_account_id":account}}).to_string().as_bytes()))}
+fn credentials(expiry:i64,refresh:&str,time:&str)->NativeCredentials{NativeCredentials{account_id:"workspace".into(),access_token:Secret::new(token(expiry,"user","workspace")),refresh_token:Secret::new(refresh.into()),email:Some("fixture@example.invalid".into()),native_refreshed_at:Some(time.into()),external_user_id:None}}
+
+#[test]fn ownership_bootstrap_needs_exact_credentials(){
+    let old=credentials(2000,"refresh-a","2026-10-18T12:00:00Z");let changed=credentials(2000,"refresh-b","2026-10-18T12:00:00Z");assert!(verify_bootstrap(&old,&old).is_ok());assert_eq!(verify_bootstrap(&old,&changed).unwrap_err().status,409);assert_ne!(old.generation_hash(),changed.generation_hash());
+    assert!(!format!("{old:?}").contains("refresh-a"));
+}
+
+#[test]fn persisted_native_time_orders_equal_expiry_below_milliseconds(){
+    let old=credentials(2000,"refresh-a","2026-10-18T12:00:00.000000001Z");let next=credentials(2000,"refresh-b","2026-10-18T12:00:00.000000002Z");assert!(verify_generation(&old,&next,1_000_000,true).is_ok());assert!(verify_generation(&next,&old,1_000_000,true).is_err());let mut regressing=next.clone();regressing.access_token=Secret::new(token(1999,"user","workspace"));assert!(verify_generation(&old,&regressing,1_000_000,true).is_err());
+    assert!(native_refresh_time_ns(old.native_refreshed_at.as_deref())<native_refresh_time_ns(next.native_refreshed_at.as_deref()));
+}
+
+#[test]fn access_expiry_margin_and_account_binding_fail_closed(){
+    let old=credentials(1000,"a","2026-10-18T12:00:00Z");let next=credentials(1120,"b","2026-10-18T12:01:00Z");assert!(verify_generation(&old,&next,1_000_000,true).is_err());assert!(verify_generation(&old,&next,1_000_000,false).is_ok());let mut changed=next;changed.account_id="other".into();assert_eq!(verify_generation(&old,&changed,1_000_000,true).unwrap_err().status,409);
+}
+
+#[test]fn native_account_null_fallback_is_exact_and_fixed_home_bound(){
+    let exact=json!({"account":null,"requiresOpenaiAuth":false});assert!(verify_daemon_account(&exact,"fixture@example.invalid","workspace",Some("workspace")).is_ok());assert!(verify_daemon_account(&exact,"fixture@example.invalid","workspace",Some("other")).is_err());assert!(verify_daemon_account(&json!({"account":null,"requiresOpenaiAuth":true}),"fixture@example.invalid","workspace",Some("workspace")).is_err());
+    let named=json!({"account":{"type":"chatgpt","email":"fixture@example.invalid"},"workspaceRouting":{"chatgptAccountId":"workspace"}});assert!(verify_daemon_account(&named,"fixture@example.invalid","workspace",None).is_ok());assert!(verify_daemon_account(&named,"other@example.invalid","workspace",None).is_err());
+}
+
+#[test]fn external_leaf_never_carries_refresh_material(){
+    let access=token(2000,"user","workspace");let raw=json!({"auth_mode":"chatgptAuthTokens","OPENAI_API_KEY":null,"tokens":{"access_token":access,"id_token":access,"refresh_token":"","account_id":"workspace"},"last_refresh":"2026-10-18T12:00:00Z"});let parsed=parse_native_document(&raw).unwrap();assert_eq!(parsed.external_user_id.as_deref(),Some("user"));assert!(parsed.refresh_token.expose().is_empty());let mut wrong=raw.clone();wrong["tokens"]["refresh_token"]=json!("a-rotating-token");assert!(parse_native_document(&wrong).is_err());wrong=raw;wrong["tokens"]["account_id"]=json!("other");assert!(parse_native_document(&wrong).is_err());
+}
+
+#[test]fn supervisor_allowlist_cannot_reach_mutation_or_renewal(){
+    for method in ["initialize","thread/list","thread/loaded/list","thread/read","thread/turns/list","account/rateLimits/read"]{assert_eq!(SupervisorMethod::parse(method).unwrap().as_str(),method);}
+    for method in ["turn/start","turn/steer","account/read","exec","file/read","thread/resume"]{assert_eq!(SupervisorMethod::parse(method).unwrap_err().status,403);}
+    assert_eq!(RenewalStep::IdentityRead.wire(),("account/read",json!({"refreshToken":false})));assert_eq!(RenewalStep::RefreshRead.wire(),("account/read",json!({"refreshToken":true})));
+}
+
+#[test]fn inventory_fences_unknown_threads_and_live_state_is_authoritative(){
+    let scope=InventoryScope{generation:"g1".into(),source:SourceId::parse("local").unwrap(),available:true,thread_ids:BTreeSet::from(["known".into()])};assert_eq!(scope.select("unknown").unwrap_err().status,409);assert!(scope.select("../known").is_err());assert_eq!(scope.select("known").unwrap().inventory_generation(),"g1");
+    assert_eq!(classify_state(Some("active"),Some("completed"),false),SupervisorState::Active);assert_eq!(classify_state(None,None,true),SupervisorState::Unknown);assert_eq!(classify_state(Some("notLoaded"),Some("running"),false),SupervisorState::Stale);
+}
+
+#[test]fn follow_keeps_visible_items_and_source_utf16_revisions(){
+    let entries=extract_follow("turn",&json!([{"type":"reasoning","text":"private"},{"type":"userMessage","text":"private"},{"type":"agentMessage","id":"a","text":"visible😀","phase":"final"},{"type":"commandExecution","id":"c","command":"cargo check","aggregatedOutput":"building","status":"inProgress"}]));assert_eq!(entries.len(),2);assert_eq!(entries[0].key,"turn:a");assert!(entries[0].revision.starts_with("9:"));assert!(entries.iter().all(|entry|!entry.text.contains("private")));
+    assert!(resolve_rollout_path("/fixed","known","/fixed/sessions/rollout-known.jsonl").is_some());assert!(resolve_rollout_path("/fixed","known","/fixed/sessions/../auth.json").is_none());assert!(resolve_rollout_path("/fixed","known","/other/sessions/rollout-known.jsonl").is_none());
+}
+
+#[test]fn closed_secrets_cross_records_but_unclosed_values_do_not(){
+    let parts=vec!["password: \"first-secret".into(),"second-secret\" done".into()];let masked=gateway_native::redaction::redact_parts(&parts);assert!(masked.iter().all(|part|!part.text.contains("secret")));assert!(masked[1].text.ends_with(" done"));
+    let parts=vec!["password: \"private".into(),"Working on refresh".into()];let masked=gateway_native::redaction::redact_parts(&parts);assert_eq!(masked[1].text,"Working on refresh");
+}

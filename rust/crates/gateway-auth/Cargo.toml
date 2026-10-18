@@ -1,0 +1,18 @@
+[package]
+name = "gateway-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core = { path = "../gateway-core" }
+serde.workspace = true
+serde_json.workspace = true
+base64 = "=0.22.1"
+sha2 = "=0.10.9"
+url = "=2.5.8"
+rsa = { version = "=0.9.10", features = ["sha2", "pem"] }
+
+[lints]
+workspace = true
