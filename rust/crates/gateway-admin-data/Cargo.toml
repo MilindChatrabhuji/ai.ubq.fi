@@ -11,7 +11,7 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 regress = "=0.12.0"
-ryu-js = "=1.0.3"
+ryu-js = "=1.0.2"
 
 [lints]
 workspace = true
