@@ -20,8 +20,7 @@ const isIpv4Loopback = (hostname) => {
   const parsed = octets.map((octet) => Number(octet));
   return (
     parsed.every(
-      (octet, index) =>
-        Number.isInteger(octet) && octet >= 0 && octet <= 255 && String(octet) === octets[index]
+      (octet, index) => Number.isInteger(octet) && octet >= 0 && octet <= 255 && String(octet) === octets[index]
     ) && parsed[0] === 127
   );
 };
@@ -34,9 +33,7 @@ export const isLocalDevelopmentOrigin = () => {
   const hostname = String(location.hostname ?? "").toLowerCase();
   const unbracketedHostname = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
   return (
-    unbracketedHostname === "localhost" ||
-    isIpv6Loopback(unbracketedHostname) ||
-    isIpv4Loopback(unbracketedHostname)
+    unbracketedHostname === "localhost" || isIpv6Loopback(unbracketedHostname) || isIpv4Loopback(unbracketedHostname)
   );
 };
 
