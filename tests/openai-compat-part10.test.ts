@@ -49,14 +49,13 @@ test("openai: DeepSeek thinking is rejected when the direct provider is disabled
             )
         );
         assert.equal(response.status, 400);
-        const payload = (await response.json()) as { error?: { message?: unknown; type?: unknown } };
-        assert.equal(payload.error?.type, "invalid_request_error");
-        assert.match(String(payload.error?.message), /thinking/);
+        const payload = (await response.json()) as { error: { message?: unknown; type?: unknown } };
+        assert.equal(payload.error.type, "invalid_request_error");
+        assert.match(String(payload.error.message), /thinking/);
         assert.equal(dispatched, false);
       });
     });
-  })
-);
+  }));
 
 test("openai: DeepSeek official Chat Completions adapter streams natively and stays content-safe", async () =>
   runSequence(async (step) => {
