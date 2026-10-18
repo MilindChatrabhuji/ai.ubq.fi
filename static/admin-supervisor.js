@@ -227,57 +227,56 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
 
   const loadProviders = async () => {
     if (!active) return;
-    const id = ++providersLoadId;
-    if (providersController) providersController.abort();
+    if (providerController) providerController.abort();
     const request = new AbortController();
-    providersController = request;
+    providerController = request;
+    const loadId = ++providerLoadId;
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(REFRESH_MS - 1000)]);
     const token = typeof getToken === "function" ? getToken() : "";
+    const selectionTarget = apiUrl("/admin/providers/selection");
+    const healthTarget = apiUrl("/admin/providers");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const isCurrent = () =>
+      loadId === providerLoadId &&
+      providerController === request &&
+      !request.signal.aborted &&
+      active &&
+      selectionTarget === apiUrl("/admin/providers/selection") &&
+      healthTarget === apiUrl("/admin/providers") &&
+      token === (typeof getToken === "function" ? getToken() : "");
+    const canRender = () => {
+      if (!isCurrent()) return false;
+      if (!signal.aborted) return true;
+      markProvidersUnavailable();
+      return false;
+    };
     try {
       const [selectionResponse, healthResponse] = await Promise.all([
-        fetch(apiUrl("/admin/providers/selection"), {
-          headers,
-          credentials: "include",
-          cache: "no-store",
-          signal,
-        }),
-        fetch(apiUrl("/admin/providers"), { headers, credentials: "include", cache: "no-store", signal }),
+        fetch(selectionTarget, { headers, credentials: "include", cache: "no-store", signal }),
+        fetch(healthTarget, { headers, credentials: "include", cache: "no-store", signal }),
       ]);
-      if (id !== providersLoadId || !active) return;
-      if (signal.aborted) {
-        markProvidersUnavailable();
-        return;
-      }
+      if (!canRender()) return;
       const selection = selectionResponse.ok ? await selectionResponse.json().catch(() => null) : null;
-      if (id !== providersLoadId || !active) return;
-      if (signal.aborted) {
-        markProvidersUnavailable();
-        return;
-      }
+      if (!canRender()) return;
       const healthSnapshot = healthResponse.ok ? await healthResponse.json().catch(() => null) : null;
-      if (id !== providersLoadId || !active) return;
-      if (signal.aborted) {
-        markProvidersUnavailable();
-        return;
-      }
+      if (!canRender()) return;
       if (selection && healthSnapshot) renderProviders(selection, healthSnapshot);
       else if (selection) renderProviders(selection, null, true);
       else markProvidersUnavailable();
     } catch {
-      if (id !== providersLoadId || !active) return;
+      if (!isCurrent()) return;
       request.abort();
       markProvidersUnavailable();
     } finally {
-      if (providersController === request) providersController = null;
+      if (providerController === request) providerController = null;
     }
   };
 
   let active = false;
   let timer = 0;
-  let providersLoadId = 0;
-  let providersController = null;
   let controller = null;
+  let providerController = null;
+  let providerLoadId = 0;
   let snapshot = null;
   const rows = new Map();
   const filters = { search: "", machine: "all", state: "active" };
@@ -856,6 +855,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     if (document.hidden) {
       if (controller) controller.abort();
       controller = null;
+      if (providerController) providerController.abort();
+      providerController = null;
+      providerLoadId += 1;
       stopFollow("Follow stopped while the tab was hidden.");
       return;
     }
@@ -943,11 +945,11 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     if (!active) {
       if (timer) globalThis.clearInterval(timer);
       timer = 0;
-      providersLoadId += 1;
-      if (providersController) providersController.abort();
-      providersController = null;
       if (controller) controller.abort();
       controller = null;
+      if (providerController) providerController.abort();
+      providerController = null;
+      providerLoadId += 1;
       stopFollow();
       return;
     }
