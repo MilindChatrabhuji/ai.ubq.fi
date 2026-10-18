@@ -64,7 +64,8 @@ test("portable runtime crates outside the Worker closure receive scoped native t
   const root = fixture();
   const runtimes = ["gateway-admin-runtime", "gateway-routing-runtime"];
   const members = ["gateway-core", "gateway-worker", "gateway-native", ...runtimes];
-  writeFileSync(join(root, "rust/Cargo.toml"), `[workspace]\nmembers=${JSON.stringify(members.map((name) => `crates/${name}`))}\n`);
+  const memberPaths = members.map((name) => `crates/${name}`);
+  writeFileSync(join(root, "rust/Cargo.toml"), `[workspace]\nmembers=${JSON.stringify(memberPaths)}\n`);
   for (const name of runtimes) {
     const directory = join(root, "rust/crates", name);
     mkdirSync(join(directory, "tests"), { recursive: true });
