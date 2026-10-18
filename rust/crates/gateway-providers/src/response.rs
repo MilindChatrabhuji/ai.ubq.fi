@@ -136,9 +136,10 @@ pub fn chat_completion_to_responses(
             .as_str()
             .or_else(|| message["reasoning"].as_str())
             .filter(|s| !s.is_empty())
- && plan.reasoning_summary.as_deref() != Some("none") {
-                output.push(json!({"id":format!("rs_{}_{choice_index}",plan.response_id),"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":reason}]}));
-            }
+            && plan.reasoning_summary.as_deref() != Some("none")
+        {
+            output.push(json!({"id":format!("rs_{}_{choice_index}",plan.response_id),"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":reason}]}));
+        }
         let mut parts = vec![];
         if let Some(text) = message["content"].as_str().filter(|s| !s.is_empty()) {
             parts.push(json!({"type":"output_text","text":text,"annotations":[]}));
@@ -396,9 +397,10 @@ pub fn decode_response(
             body
         };
         if plan.surface == ClientSurface::Chat
- && let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat) {
-                body["usage"] = usage;
-            }
+            && let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat)
+        {
+            body["usage"] = usage;
+        }
         if plan.stream {
             output_headers.insert("Content-Type".into(), "text/event-stream".into());
         }
@@ -493,9 +495,10 @@ pub fn decode_response(
                 events = replay_chat(&completion, plan, profile);
             }
             if plan.decode == ResponseDecode::AnthropicChatToResponses
- && body["status"] == "completed" {
-                    native_replay = value["choices"][0].get("message").cloned();
-                }
+                && body["status"] == "completed"
+            {
+                native_replay = value["choices"][0].get("message").cloned();
+            }
             if plan.surface == ClientSurface::Chat {
                 response_to_chat(&body, plan)?
             } else {

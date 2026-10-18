@@ -279,9 +279,10 @@ impl ResponseWriter {
                 events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.delta","item_id":item_id,"output_index":index,"delta":call.args})));
             }
         } else if let Some(index) = call.index
- && !args.is_empty() {
-                events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.delta","item_id":call.item_id,"output_index":index,"delta":args})));
-            }
+            && !args.is_empty()
+        {
+            events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.delta","item_id":call.item_id,"output_index":index,"delta":args})));
+        }
         events
     }
     pub fn chat_chunk(&mut self, chunk: &Value, profile: ChatProfile) -> Vec<ProviderEvent> {

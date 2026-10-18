@@ -230,9 +230,10 @@ impl StreamDecoder {
                 return Err(malformed("Upstream SSE event must be an object."));
             }
             if value.get("type").is_none()
- && let Some(kind) = frame.event {
-                    value["type"] = json!(kind);
-                }
+                && let Some(kind) = frame.event
+            {
+                value["type"] = json!(kind);
+            }
             match self.plan.decode {
                 ResponseDecode::Responses | ResponseDecode::ResponsesToChat => {
                     let kind = value["type"]
