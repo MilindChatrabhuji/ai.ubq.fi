@@ -63,9 +63,40 @@ pub struct CodexCapacityObservationFence {
     requested: Vec<CodexCapacityAccountRef>,
     observed_at_ms: i64,
 }
+/// A borrowed fixed-GET identity, never a credential or an accepted outcome.
+/// Only a successfully captured fence can construct these read-only views.
+pub struct CodexCapacityFetchBinding<'a> {
+    source_slot: u8,
+    source: &'a AccountSource,
+}
+impl CodexCapacityFetchBinding<'_> {
+    pub fn source_slot(&self) -> u8 {
+        self.source_slot
+    }
+    pub fn account_id(&self) -> &str {
+        &self.source.account_id
+    }
+    pub fn credential_version(&self) -> &CredentialVersion {
+        &self.source.credential
+    }
+    pub fn native_generation_hash(&self) -> &str {
+        &self.source.native_generation
+    }
+    pub fn native_owner(&self) -> Option<&CodexNativeOwner> {
+        self.source.native_owner.as_ref()
+    }
+}
 impl CodexCapacityObservationFence {
     pub fn observed_at_ms(&self) -> i64 {
         self.observed_at_ms
+    }
+    pub fn fetch_bindings(&self) -> impl ExactSizeIterator<Item = CodexCapacityFetchBinding<'_>> {
+        self.requested
+            .iter()
+            .map(|account| CodexCapacityFetchBinding {
+                source_slot: account.source_slot,
+                source: &self.facts.accounts[usize::from(account.source_slot - 1)],
+            })
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -315,8 +346,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .map(parse_capacity_store)
                 .transpose()?
                 .unwrap_or_default();
-            let current_time = self.fresh_time(fence.observed_at_ms)?;
-            let merged = merge_capacity(&current, &observations, current_time);
+            self.fresh_time(fence.observed_at_ms)?;
+            let merged = merge_capacity(&current, &observations, fence.observed_at_ms);
             tx.put(&keys::capacity(), &merged, None)?;
             let revision = tx
                 .post_checks()

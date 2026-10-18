@@ -44,6 +44,7 @@ impl RoutingSlot {
         let legacy = self
             .quota_blocked_until_ms
             .zip(self.quota_block_source)
+            .filter(|_| self.quota_blocks.is_empty())
             .filter(|_| {
                 let known: Vec<_> = self
                     .quota_blocked_classes
@@ -108,10 +109,16 @@ impl RoutingSlot {
             .filter(|c| self.quota_blocks.contains_key(*c))
             .map(str::to_owned)
             .collect();
-        let latest = self
-            .quota_blocks
-            .values()
-            .max_by_key(|b| b.blocked_until_ms);
+        let latest = CLASSES
+            .iter()
+            .filter_map(|class| self.quota_blocks.get(*class))
+            .reduce(|a, b| {
+                if b.blocked_until_ms > a.blocked_until_ms {
+                    b
+                } else {
+                    a
+                }
+            });
         self.quota_blocked_until_ms = latest.map(|b| b.blocked_until_ms);
         self.quota_block_source = latest.map(|b| b.source);
         self.quota_signal_observed_at_ms = self

@@ -112,7 +112,7 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
     if value["source"] != "codex" {
         return None;
     }
-    let slot = value["slot"].as_u64().filter(|n| *n == 1 || *n == 2)? as u8;
+    let slot = store::safe_i64(&value["slot"]).filter(|n| *n == 1 || *n == 2)? as u8;
     let state = source_state(&value["state"])?;
     if !nullable(value.get("source_observed_at_ms"), timestamp) || !value["windows"].is_object() {
         return None;
@@ -202,7 +202,7 @@ pub fn source(value: &Value, slot: u8) -> Option<&Value> {
     value["sources"]
         .as_array()?
         .iter()
-        .find(|v| v["source"] == "codex" && v["slot"] == slot)
+        .find(|v| v["source"] == "codex" && store::safe_i64(&v["slot"]) == Some(i64::from(slot)))
 }
 pub fn read_snapshot(value: &Value) -> Option<Value> {
     let at = store::safe_i64(&value["snapshot_at_ms"])?;
@@ -213,11 +213,11 @@ pub fn read_snapshot(value: &Value) -> Option<Value> {
     Some(json!({"snapshot_at_ms":at,"stale_after_ms":STALE_MS,"sources":[one,two,metered]}))
 }
 pub fn read_history(value: &Value) -> Option<Value> {
-    let bucket = store::safe_i64(&value["bucket_start_at_ms"])?;
+    store::safe_i64(&value["bucket_start_at_ms"])?;
     let at = store::safe_i64(&value["sampled_at_ms"])?;
     let sources = value["sources"].as_array()?;
     Some(
-        json!({"bucket_start_at_ms":bucket,"sampled_at_ms":at,"sources":[read_codex(source(value,1)?,at)?,read_codex(source(value,2)?,at)?,sources.iter().find(|v|v["source"]=="metered").and_then(|v|read_metered(v,at)).unwrap_or_else(||unavailable_metered(at))]}),
+        json!({"bucket_start_at_ms":value["bucket_start_at_ms"],"sampled_at_ms":value["sampled_at_ms"],"sources":[read_codex(source(value,1)?,at)?,read_codex(source(value,2)?,at)?,sources.iter().find(|v|v["source"]=="metered").and_then(|v|read_metered(v,at)).unwrap_or_else(||unavailable_metered(at))]}),
     )
 }
 pub fn history_point(snapshot: &Value) -> Value {
@@ -254,7 +254,7 @@ pub fn metered_source(snapshot: Option<&Value>, at: i64) -> Value {
     let Some(snapshot) = snapshot else {
         return unavailable_metered(at);
     };
-    let observed = snapshot["state"]["observed_at_ms"].as_i64();
+    let observed = store::safe_i64(&snapshot["state"]["observed_at_ms"]);
     let stale =
         snapshot["cache_state"] == "stale" || observed.is_none_or(|t| at - t >= METERED_FRESH_MS);
     let token = snapshot["unlimited_quota"] == true

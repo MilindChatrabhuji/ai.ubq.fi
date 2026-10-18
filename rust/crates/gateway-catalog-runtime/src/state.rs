@@ -75,7 +75,10 @@ pub fn parse_full_snapshot(value: &Value) -> Option<ModelSnapshot> {
         models: models.clone(),
         source: source.into(),
         updated_at_ms: updated as i64,
-        client_version: value.get("client_version").and_then(Value::as_str).map(str::to_owned),
+        client_version: value
+            .get("client_version")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 pub(crate) async fn load_exact_catalog<S: AuthorityStore>(

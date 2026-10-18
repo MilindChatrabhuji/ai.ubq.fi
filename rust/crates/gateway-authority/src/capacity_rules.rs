@@ -175,21 +175,29 @@ pub(crate) fn merge_capacity(
     inputs: &[CapacityObservation],
     now: i64,
 ) -> CapacityStore {
-    let mut merged = std::collections::BTreeMap::new();
+    let mut merged: Vec<&CapacityObservation> = Vec::new();
     for row in store.observations.iter().chain(inputs) {
-        if row.snapshot_at_ms < now.saturating_sub(CAPACITY_MAX_AGE_MS).max(0)
-            || row.snapshot_at_ms > now
+        if let Some(prior) = merged
+            .iter_mut()
+            .find(|prior| prior.account_id_hash == row.account_id_hash)
         {
-            continue;
-        }
-        if merged
-            .get(&row.account_id_hash.0)
-            .is_none_or(|prior: &&CapacityObservation| row.snapshot_at_ms >= prior.snapshot_at_ms)
-        {
-            merged.insert(row.account_id_hash.0.clone(), row);
+            if row.snapshot_at_ms >= prior.snapshot_at_ms {
+                *prior = row;
+            }
+        } else {
+            merged.push(row);
         }
     }
-    let mut observations: Vec<_> = merged.into_values().cloned().collect();
+    // The source merges first, then drops stale/future winners. Filtering inputs
+    // first could resurrect an older observation shadowed by a newer row.
+    let mut observations: Vec<_> = merged
+        .into_iter()
+        .filter(|row| {
+            row.snapshot_at_ms >= now.saturating_sub(CAPACITY_MAX_AGE_MS).max(0)
+                && row.snapshot_at_ms <= now
+        })
+        .cloned()
+        .collect();
     observations.sort_by_key(|row| row.slot);
     CapacityStore {
         v: 1,

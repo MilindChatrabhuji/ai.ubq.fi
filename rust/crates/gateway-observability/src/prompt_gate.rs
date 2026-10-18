@@ -38,11 +38,7 @@ fn result(
 }
 fn summary(c: &[u128; 4]) -> Value {
     let coverage = |n: u128| {
-        if c[0] == 0 {
-            Value::Null
-        } else {
-            json!((n * 1_000_000 / c[0]) as f64 / 1_000_000.0)
-        }
+        (n*1_000_000).checked_div(c[0]).map(|n|json!(n as f64/1_000_000.0)).unwrap_or(Value::Null)
     };
     json!({"completed":c[0].to_string(),"reported":c[1].to_string(),"cache_write_reported":c[2].to_string(),"invalid":c[3].to_string(),"reported_coverage":coverage(c[1]),"reported_coverage_passed":c[0]>0&&c[1]*200>=c[0]*199,"cache_write_reported_coverage":coverage(c[2]),"cache_write_reported_coverage_passed":c[0]>0&&c[2]*200>=c[0]*199})
 }
