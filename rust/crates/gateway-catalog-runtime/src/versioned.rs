@@ -68,22 +68,37 @@ async fn observed_fetch<H: CatalogHost>(
 ) -> Result<CatalogFetchResponse, GatewayError> {
     match host.fetch(request).await {
         Ok(response) => {
-            host.observe(CatalogObservation::CodexResponse {
-                account: account.clone(),
-                status: response.status,
-            })
-            .await?;
+            let _ = host
+                .observe(CatalogObservation::CodexResponse {
+                    account: account.clone(),
+                    status: response.status,
+                    provider_request_id: response
+                        .provider_request_id
+                        .as_deref()
+                        .and_then(normalized_request_id),
+                    access_token_expired: response.access_token_expired,
+                    observed_at_ms: response.observed_at_ms,
+                })
+                .await;
             Ok(response)
         }
         Err(error) => {
-            host.observe(CatalogObservation::CodexTransportFailure {
-                account: account.clone(),
-                code: error.envelope.error.code.clone(),
-            })
-            .await?;
+            let _ = host
+                .observe(CatalogObservation::CodexTransportFailure {
+                    account: account.clone(),
+                    code: error.envelope.error.code.clone(),
+                })
+                .await;
             Err(error)
         }
     }
+}
+fn normalized_request_id(raw: &str) -> Option<String> {
+    let value = gateway_schema::util::js_trim(raw);
+    (!value.is_empty()
+        && value.encode_utf16().count() <= 256
+        && !value.chars().any(|c| (c as u32) < 0x20 || c == '\u{7f}'))
+    .then(|| value.to_owned())
 }
 fn degraded(error: &GatewayError) -> bool {
     matches!(
@@ -489,10 +504,11 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         Ok(fetched) => fetched,
         Err(error) => {
             if degraded(&error) {
-                host.observe(CatalogObservation::ProviderDegradation {
-                    client_version: lease.version.into(),
-                })
-                .await?;
+                let _ = host
+                    .observe(CatalogObservation::ProviderDegradation {
+                        client_version: lease.version.into(),
+                    })
+                    .await;
             }
             if error.status == 499 {
                 return Err(error);
@@ -501,10 +517,11 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         }
     };
     if fetched.degraded {
-        host.observe(CatalogObservation::ProviderDegradation {
-            client_version: lease.version.into(),
-        })
-        .await?;
+        let _ = host
+            .observe(CatalogObservation::ProviderDegradation {
+                client_version: lease.version.into(),
+            })
+            .await;
     }
     if !state::generation_current(store, lease.generation).await?
         || !state::checks_current(store, &fetched.publication.source_checks).await?
