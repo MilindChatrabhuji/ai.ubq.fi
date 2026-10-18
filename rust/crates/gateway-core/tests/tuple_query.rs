@@ -28,6 +28,7 @@ fn prefix(parts: &[Value]) -> QuerySelector {
 fn row(expires_at_ms: Option<i64>) -> StoredRecord {
     StoredRecord {
         schema_version: 1,
+        value_encoding: gateway_core::value::ValueEncoding::Json,
         revision: "1".to_owned(),
         value: json!({"value":1}),
         expires_at_ms,
@@ -358,6 +359,7 @@ fn expiry_is_filtered_before_page_limit_and_never_rewritten() {
     assert_eq!(rows[2].1.expires_at_ms, Some(1_001));
     let corrupt_live = StoredRecord {
         schema_version: 2,
+        value_encoding: gateway_core::value::ValueEncoding::Json,
         ..row(None)
     };
     assert!(query.accepts_record(&rows[2].0, &corrupt_live).is_err());
