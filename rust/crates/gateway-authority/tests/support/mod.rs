@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 use gateway_authority::quota::ApiKeyPolicy;
 use gateway_authority::routing::{
@@ -105,75 +105,70 @@ impl AuthorityStore for MemoryStore {
             Ok(row.filter(|row| row.expires_at_ms.is_none_or(|expiry| expiry > now)))
         }
     }
-    fn commit(
-        &self,
-        transition: AtomicTransition,
-    ) -> impl Future<Output = Result<CommitOutcome, GatewayError>> {
-        async move {
-            if self
-                .conflicts
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-                    count.checked_sub(1)
-                })
-                .is_ok()
-            {
+    async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        if self
+            .conflicts
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                count.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Ok(CommitOutcome::Conflict);
+        }
+        let mut rows = self.rows.lock().unwrap();
+        let now = self.now.load(Ordering::SeqCst);
+        if let Some((key, value)) = self.race.lock().unwrap().take() {
+            rows.insert(
+                key.0,
+                StoredRecord {
+                    schema_version: PORTABLE_STATE_VERSION,
+                    revision: format!("race-{}", self.sequence.fetch_add(1, Ordering::SeqCst)),
+                    value,
+                    expires_at_ms: None,
+                },
+            );
+        }
+        let checked: BTreeSet<_> = transition
+            .checks
+            .iter()
+            .map(|check| check.key.0.clone())
+            .collect();
+        let mut mutated = BTreeSet::new();
+        for check in &transition.checks {
+            TupleKey::from_record_key(&check.key)?.validate_stored_key()?;
+            let actual = rows
+                .get(&check.key.0)
+                .filter(|row| row.expires_at_ms.is_none_or(|expiry| expiry > now))
+                .map(|row| row.revision.clone());
+            if actual != check.expected_revision {
                 return Ok(CommitOutcome::Conflict);
             }
-            let mut rows = self.rows.lock().unwrap();
-            let now = self.now.load(Ordering::SeqCst);
-            if let Some((key, value)) = self.race.lock().unwrap().take() {
-                rows.insert(
-                    key.0,
-                    StoredRecord {
-                        schema_version: PORTABLE_STATE_VERSION,
-                        revision: format!("race-{}", self.sequence.fetch_add(1, Ordering::SeqCst)),
-                        value,
-                        expires_at_ms: None,
-                    },
-                );
-            }
-            let checked: BTreeSet<_> = transition
-                .checks
-                .iter()
-                .map(|check| check.key.0.clone())
-                .collect();
-            let mut mutated = BTreeSet::new();
-            for check in &transition.checks {
-                TupleKey::from_record_key(&check.key)?.validate_stored_key()?;
-                let actual = rows
-                    .get(&check.key.0)
-                    .filter(|row| row.expires_at_ms.is_none_or(|expiry| expiry > now))
-                    .map(|row| row.revision.clone());
-                if actual != check.expected_revision {
-                    return Ok(CommitOutcome::Conflict);
-                }
-            }
-            for mutation in &transition.mutations {
-                let key = match mutation {
-                    RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
-                };
-                assert!(
-                    checked.contains(&key.0),
-                    "mutation without a checked strong read"
-                );
-                assert!(mutated.insert(key.0.clone()), "duplicate mutation");
-                if let RecordMutation::Put { record, .. } = mutation {
-                    record.validate_version()?;
-                    assert!(!record.revision.is_empty());
-                }
-            }
-            for mutation in transition.mutations {
-                match mutation {
-                    RecordMutation::Put { key, record } => {
-                        rows.insert(key.0, record);
-                    }
-                    RecordMutation::Delete { key } => {
-                        rows.remove(&key.0);
-                    }
-                }
-            }
-            Ok(CommitOutcome::Committed)
         }
+        for mutation in &transition.mutations {
+            let key = match mutation {
+                RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
+            };
+            assert!(
+                checked.contains(&key.0),
+                "mutation without a checked strong read"
+            );
+            assert!(mutated.insert(key.0.clone()), "duplicate mutation");
+            if let RecordMutation::Put { record, .. } = mutation {
+                record.validate_version()?;
+                assert!(!record.revision.is_empty());
+            }
+        }
+        for mutation in transition.mutations {
+            match mutation {
+                RecordMutation::Put { key, record } => {
+                    rows.insert(key.0, record);
+                }
+                RecordMutation::Delete { key } => {
+                    rows.remove(&key.0);
+                }
+            }
+        }
+        Ok(CommitOutcome::Committed)
     }
 }
 
@@ -192,13 +187,9 @@ pub fn authority(store: &MemoryStore) -> TestAuthority {
     Authority::with_clock(store.clone(), Tokens::default(), store.clone())
 }
 
-struct WakeNow;
-impl Wake for WakeNow {
-    fn wake(self: Arc<Self>) {}
-}
 pub fn run<F: Future>(future: F) -> F::Output {
-    let waker = Waker::from(Arc::new(WakeNow));
-    let mut context = Context::from_waker(&waker);
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
     let mut future = std::pin::pin!(future);
     loop {
         match future.as_mut().poll(&mut context) {

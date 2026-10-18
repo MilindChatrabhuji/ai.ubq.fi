@@ -696,7 +696,6 @@ fn reset_identity_deduplicates_refresh_and_utc_days_and_expiry_remain_absolute()
 fn bad_stored_versions_are_not_replaced_with_empty_state() {
     let store = MemoryStore::default();
     store.seed(keys::pool(), &pool());
-    let authority = authority(&store);
     let mut bad = store.row(&keys::pool()).unwrap();
     bad.schema_version = 99;
     run(store.commit(gateway_core::state::AtomicTransition {
