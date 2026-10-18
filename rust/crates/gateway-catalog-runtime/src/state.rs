@@ -58,14 +58,25 @@ pub async fn read_json<S: AuthorityStore>(
 /// Validate the stored full snapshot without normalizing its model records.
 /// Callers that need source Get semantics retain their original raw value/revision.
 pub fn parse_full_snapshot(value: &Value) -> Option<ModelSnapshot> {
-    serde_json::from_value::<ModelSnapshot>(value.clone())
-        .ok()
-        .filter(|snapshot| {
-            !snapshot.models.is_empty()
-                && snapshot.models.iter().all(Value::is_object)
-                && !snapshot.source.trim().is_empty()
-                && snapshot.updated_at_ms > 0
-        })
+    let models = value.get("models")?.as_array()?;
+    let source = value.get("source")?.as_str()?;
+    let updated = value.get("updated_at_ms")?.as_f64()?;
+    if models.is_empty()
+        || !models.iter().all(gateway_schema::util::is_record)
+        || gateway_schema::util::js_trim(source).is_empty()
+        || !updated.is_finite()
+        || updated.fract() != 0.0
+        || updated <= 0.0
+        || updated > gateway_core::identity::MAX_SAFE_INTEGER as f64
+    {
+        return None;
+    }
+    Some(ModelSnapshot {
+        models: models.clone(),
+        source: source.into(),
+        updated_at_ms: updated as i64,
+        client_version: value.get("client_version").and_then(Value::as_str).map(str::to_owned),
+    })
 }
 pub(crate) async fn load_exact_catalog<S: AuthorityStore>(
     store: &S,
@@ -135,7 +146,9 @@ pub(crate) async fn load_state<S: QueryStore>(
         .and_then(|r| r.get("codex_models"))
         .and_then(|v| serde_json::from_value::<ModelSnapshot>(v.clone()).ok());
     let full_snapshot = read_json(store, &catalog_store::codex_snapshot_key())
-        .await?
+        .await
+        .ok()
+        .flatten()
         .and_then(|r| parse_full_snapshot(&r.value));
     let selection = read_json(store, &selection_key())
         .await?
