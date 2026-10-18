@@ -2,7 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { DEEPSEEK_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
 import { iterateDeepSeekChatCompletionStream } from "../src/deepseek/stream.ts";
-import { createResponseTelemetryState, type UsageTokens } from "../src/openai-telemetry.ts";
+import { createResponseTelemetryState, getResponseTelemetry, type UsageTokens } from "../src/openai-telemetry.ts";
 import { relayChatCompletionStream, relayResponsesStream, type ProviderStreamAdapter, type ProviderStreamFrame } from "../src/provider/stream-relay.ts";
 import {
   appendResponsesPrecommitEvent,
@@ -86,7 +86,7 @@ type UpstreamProbe = Readonly<{
  * `null` to hold that read open until the source is cancelled. Entering a pull
  * is the handshake these fixtures wait on instead of assuming microtask turns.
  */
-const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null): UpstreamProbe => {
+const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null, highWaterMark = 1): UpstreamProbe => {
   let started = 0;
   let pending = 0;
   let cancelCount = 0;
@@ -110,32 +110,35 @@ const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null): Upst
       waiters.add(waiter);
     });
   };
-  const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      started += 1;
-      pending += 1;
-      notify();
-      try {
-        const chunk = produce?.(started) ?? null;
-        if (chunk === null) {
-          await new Promise<void>((resolve) => {
-            releaseQuiet = resolve;
-          });
-          return;
-        }
-        controller.enqueue(chunk);
-      } finally {
-        pending -= 1;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        started += 1;
+        pending += 1;
         notify();
-      }
+        try {
+          const chunk = produce?.(started) ?? null;
+          if (chunk === null) {
+            await new Promise<void>((resolve) => {
+              releaseQuiet = resolve;
+            });
+            return;
+          }
+          controller.enqueue(chunk);
+        } finally {
+          pending -= 1;
+          notify();
+        }
+      },
+      cancel() {
+        cancelCount += 1;
+        releaseQuiet?.();
+        releaseQuiet = null;
+        resolveCancelled();
+      },
     },
-    cancel() {
-      cancelCount += 1;
-      releaseQuiet?.();
-      releaseQuiet = null;
-      resolveCancelled();
-    },
-  });
+    { highWaterMark }
+  );
   return { stream, started: () => started, pending: () => pending, startedAtLeast, cancelled, cancelCount: () => cancelCount };
 };
 
@@ -318,6 +321,216 @@ for (const wire of ["chat", "responses"] as const) {
       await fixture.cleanup();
       await output.catch(() => {});
     }
+  });
+}
+
+test("Provider relays cancel a late deferred response without reading it", async () => {
+  const adapter: ProviderStreamAdapter = {
+    responseHeaders: () => ({}),
+    frames: iterateDeepSeekChatCompletionStream,
+    recordResponseHealth: () => {},
+    recordProviderError: () => {},
+    recordCancellation: () => {},
+    recordIncompleteResponse: () => {},
+    recordFinishFailureKind: () => {},
+    recordTransportFailure: () => {},
+    terminalTypeForError: () => "cancelled",
+    streamErrorCode: "upstream_stream_error",
+    responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
+  };
+  for (const wire of ["chat", "responses"] as const) {
+    // Bun eagerly pulls a normal stream once it enters the microtask queue;
+    // keep this late body genuinely unread until the relay owns it.
+    const lateUpstream = probeUpstream(undefined, 0);
+    let resolvePending: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      resolvePending = resolve;
+    });
+    let pendingResolved = false;
+    const signal = new AbortController().signal;
+    const pendingDispatch = new AbortController();
+    let pendingCancellationCount = 0;
+    const cancelPending = (reason?: unknown): void => {
+      pendingCancellationCount += 1;
+      pendingDispatch.abort(reason);
+    };
+    const response =
+      wire === "chat"
+        ? relayChatCompletionStream(adapter, pending, null, undefined, signal, signal, "deepseek-flash", cancelPending)
+        : relayResponsesStream(adapter, {
+            upstream: pending,
+            requestedModel: "deepseek-flash",
+            responseId: "resp_deferred_cancel",
+            createdAtSeconds: 1,
+            echo: { tools: [], tool_choice: "auto", parallel_tool_calls: true, instructions: null },
+            toolNames: new Map(),
+            customToolNames: new Set(),
+            providerRequestId: null,
+            usageContext: undefined,
+            downstreamSignal: signal,
+            requestSignal: signal,
+            upstreamModel: "deepseek-flash",
+            cancelPending,
+          });
+    const body = response.body;
+    assert.ok(body);
+    const reader = body.getReader();
+    const pendingRead = reader.read();
+    try {
+      await reader.cancel("client disconnected");
+      assert.equal(pendingCancellationCount, 1, "client cancellation must reach the deferred dispatch");
+      assert.equal(pendingDispatch.signal.aborted, true);
+      pendingResolved = true;
+      resolvePending(new Response(lateUpstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      assert.equal(await settlesWithin(pendingRead, 500), true, "the abandoned downstream read must settle");
+      assert.equal((await pendingRead).done, true, "client cancellation must not emit an error frame");
+      assert.equal(await settlesWithin(lateUpstream.cancelled, 500), true, "the late upstream body must be cancelled");
+      assert.equal(lateUpstream.cancelCount(), 1, "the late upstream body must be cancelled exactly once");
+      assert.equal(lateUpstream.started(), 0, "cancellation must not start an upstream read");
+    } finally {
+      if (!pendingResolved) resolvePending(new Response(lateUpstream.stream));
+      await reader.cancel("test cleanup").catch(() => {});
+      await releaseProbe(lateUpstream);
+    }
+  }
+});
+
+test("Lithos handlers cancel deferred waits and report elapsed time through both stream relays", async () => {
+  const { handleChatCompletions } = await import("../src/chat/envelope.ts");
+  const { handleResponses } = await import("../src/responses-handler.ts");
+  const { setKvForTest, resetKvForTest } = await import("../src/kv.ts");
+  const { clearLithosFailoverWindows } = await import("../src/provider/lithos-rate-limits.ts");
+  const { SentinelKvStub } = await import("./helpers/sentinel-kv-stub.ts");
+  const { createFetchMock } = await import("./helpers/fetch-mock.ts");
+  const originalFetch = globalThis.fetch;
+  const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+  const originalKey = process.env.LITHOSAI_API_KEY;
+  let now = 100;
+  setKvForTest(new SentinelKvStub());
+  process.env.LITHOSAI_API_KEY = "lith_sk_fixture";
+  Object.defineProperty(performance, "now", { configurable: true, value: () => now });
+  try {
+    for (const route of ["chat", "responses"] as const) {
+      clearLithosFailoverWindows();
+      now = 100;
+      let calls = 0;
+      globalThis.fetch = createFetchMock(() => {
+        calls += 1;
+        return Promise.resolve(Response.json({ error: { message: "rate limit exceeded" } }, { status: 429, headers: { "retry-after-ms": "5000" } }));
+      });
+      const controller = new AbortController();
+      try {
+        const body = {
+          model: "deepseek-ai/DeepSeek-V4.1-Flash",
+          stream: true,
+          ...(route === "chat" ? { messages: [{ role: "user", content: "hi" }] } : { input: "hi" }),
+        };
+        const request = new Request(`https://ai.ubq.fi/v1/${route === "chat" ? "chat/completions" : "responses"}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const context = {
+          keyId: null,
+          kernelRepo: null,
+          kernelOrg: null,
+          requestId: `lithos-deferred-cancel-${route}`,
+          responseTelemetry: createResponseTelemetryState(),
+        };
+        const response = await (route === "chat" ? handleChatCompletions(request, context) : handleResponses(request, context));
+        assert.equal(response.status, 200);
+        assert.equal(calls, 1);
+        assert.equal(getResponseTelemetry(response)?.rateLimitWaitMs, null, "the pending window has not elapsed");
+        now = 125;
+        assert.ok(response.body);
+        await response.body.cancel("client disconnected");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(getResponseTelemetry(response)?.rateLimitWaitMs, 25, "stream cancellation records the elapsed wait, not the planned 5000ms");
+        assert.equal(getResponseTelemetry(response)?.streamTerminalType, "cancelled");
+        assert.equal(calls, 1, "cancelling the deferred stream must not dispatch again");
+      } finally {
+        controller.abort("test cleanup");
+        await Promise.resolve();
+      }
+    }
+  } finally {
+    clearLithosFailoverWindows();
+    resetKvForTest();
+    globalThis.fetch = originalFetch;
+    if (originalNow === undefined) Reflect.deleteProperty(performance, "now");
+    else Object.defineProperty(performance, "now", originalNow);
+    if (originalKey === undefined) Reflect.deleteProperty(process.env, "LITHOSAI_API_KEY");
+    else process.env.LITHOSAI_API_KEY = originalKey;
+  }
+});
+
+const refusalAdapter: ProviderStreamAdapter = {
+  responseHeaders: () => ({}),
+  frames: async function* () {
+    await Promise.resolve();
+    yield* [] as ProviderStreamFrame[];
+  },
+  recordResponseHealth: () => {},
+  recordProviderError: () => {},
+  recordCancellation: () => {},
+  recordIncompleteResponse: () => {},
+  recordFinishFailureKind: () => {},
+  recordTransportFailure: () => {},
+  terminalTypeForError: () => "response.failed",
+  streamErrorCode: "provider_gateway_timeout",
+  responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
+};
+
+for (const wire of ["chat", "responses"] as const) {
+  test(`Provider ${wire} distinguishes an upstream 504 from a local deadline`, async () => {
+    const downstream = new AbortController();
+    const request = new AbortController();
+    const refused = new Response(JSON.stringify({ error: { code: "provider_gateway_timeout", message: "provider gateway timed out" } }), { status: 504 });
+    const upstreamFailure =
+      wire === "chat"
+        ? relayChatCompletionStream(refusalAdapter, refused, null, undefined, downstream.signal, request.signal, "deepseek-flash")
+        : relayResponsesStream(refusalAdapter, {
+            upstream: refused,
+            requestedModel: "deepseek-flash",
+            responseId: "resp_refusal",
+            createdAtSeconds: 1,
+            echo: { tools: [], tool_choice: "auto", parallel_tool_calls: true, instructions: null },
+            toolNames: new Map(),
+            customToolNames: new Set(),
+            providerRequestId: null,
+            usageContext: undefined,
+            downstreamSignal: downstream.signal,
+            requestSignal: request.signal,
+            upstreamModel: "deepseek-flash",
+          });
+    const upstreamText = await upstreamFailure.text();
+    assert.match(upstreamText, /provider_gateway_timeout/);
+    assert.match(upstreamText, /provider gateway timed out/);
+
+    const localDeadline = new AbortController();
+    localDeadline.abort(new DOMException("Gateway deadline fixture", "TimeoutError"));
+    const localResponse = new Response(JSON.stringify({ error: { code: "gateway_timeout", message: "Upstream request exceeded the gateway deadline." } }), {
+      status: 504,
+    });
+    const localFailure =
+      wire === "chat"
+        ? relayChatCompletionStream(refusalAdapter, localResponse, null, undefined, downstream.signal, localDeadline.signal, "deepseek-flash")
+        : relayResponsesStream(refusalAdapter, {
+            upstream: localResponse,
+            requestedModel: "deepseek-flash",
+            responseId: "resp_deadline",
+            createdAtSeconds: 1,
+            echo: { tools: [], tool_choice: "auto", parallel_tool_calls: true, instructions: null },
+            toolNames: new Map(),
+            customToolNames: new Set(),
+            providerRequestId: null,
+            usageContext: undefined,
+            downstreamSignal: downstream.signal,
+            requestSignal: localDeadline.signal,
+            upstreamModel: "deepseek-flash",
+          });
+    assert.equal(await localFailure.text(), "");
   });
 }
 

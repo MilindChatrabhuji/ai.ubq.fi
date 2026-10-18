@@ -289,15 +289,21 @@ const deepSeekOfficialCodexModels = (): Record<string, unknown>[] => {
 };
 
 /**
- * Appends the official ids that the stored catalog does not already advertise.
- * A discovery source may already publish the legacy alias with equivalent
- * tiers, and replacing it would churn that record for no behavioral gain.
+ * Ensures official rows win over discovery records for the same id, then
+ * appends any official ids that are still missing from the catalog.
  */
 const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
   const configured = deepSeekOfficialCodexModels();
   if (!configured.length) return [...models];
-  const present = new Set(models.map((model) => getString(model.slug) ?? getString(model.id) ?? ""));
-  return [...models, ...configured.filter((model) => !present.has(String(model.slug)))];
+  const modelId = (model: Record<string, unknown>): string => {
+    const slug = getString(model.slug)?.trim();
+    if (slug) return slug;
+    return getString(model.id)?.trim() ?? "";
+  };
+  const configuredById = new Map(configured.map((model) => [modelId(model), model]));
+  const present = new Set(models.map(modelId));
+  const merged = models.map((model) => configuredById.get(modelId(model)) ?? model);
+  return [...merged, ...configured.filter((model) => !present.has(modelId(model)))];
 };
 
 /**
