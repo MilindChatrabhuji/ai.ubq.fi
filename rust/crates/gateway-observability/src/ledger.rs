@@ -23,7 +23,7 @@ pub fn normalize_request_record(
     crate::records::RequestLogRecord::normalize(
         input,
         key_id,
-        &gateway_core::js_string::JsString16::from_str(request_id),
+        &gateway_core::js_string::JsString16::from_utf8(request_id),
         created_at_ms,
     )
 }
@@ -57,11 +57,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let raw_id = input
             .get("id")
             .and_then(Value::as_str)
-            .map(gateway_core::js_string::JsString16::from_str);
+            .map(gateway_core::js_string::JsString16::from_utf8);
         let id = crate::records::bounded_text(
             raw_id.as_ref(),
             120,
-            &gateway_core::js_string::JsString16::from_str(&store::uuid(self.host.as_ref())?),
+            &gateway_core::js_string::JsString16::from_utf8(&store::uuid(self.host.as_ref())?),
         );
         let created = integer(input.get("created_at_ms"), at as f64);
         self.mutate_request_log(key_id, created, &id, input, false)
@@ -77,7 +77,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         self.mutate_request_log(
             key_id,
             created_at_ms as f64,
-            &gateway_core::js_string::JsString16::from_str(request_id),
+            &gateway_core::js_string::JsString16::from_utf8(request_id),
             patch,
             true,
         )

@@ -164,3 +164,79 @@ pub async fn renew_owned<T: NativeOwnerTransport>(
         observed_at_ms: now_ms,
     })
 }
+
+/// Source renewal with current shared-authority checks around every awaited
+/// owner boundary and one durable possible-effect claim before refresh RPC.
+pub async fn renew_owned_guarded<
+    T: NativeOwnerTransport,
+    G: crate::owner_control::NativeRenewalGuard,
+>(
+    transport: &T,
+    guard: &G,
+    fence: OwnerFence,
+    current: &NativeCredentials,
+) -> Result<NativeGeneration, GatewayError> {
+    guard.ensure_current().await?;
+    let checked = GuardedOwnerTransport { transport, guard };
+    let mut generation = renew_owned(&checked, fence, current, guard.now_ms()?).await?;
+    guard.ensure_current().await?;
+    generation.observed_at_ms = guard.now_ms()?;
+    verify_generation(
+        current,
+        &generation.credentials,
+        generation.observed_at_ms,
+        true,
+    )?;
+    Ok(generation)
+}
+
+struct GuardedOwnerTransport<'a, T, G> {
+    transport: &'a T,
+    guard: &'a G,
+}
+impl<T: NativeOwnerTransport, G: crate::owner_control::NativeRenewalGuard> NativeOwnerTransport
+    for GuardedOwnerTransport<'_, T, G>
+{
+    async fn read_credentials(
+        &self,
+        owner: &NativeOwnerId,
+    ) -> Result<NativeCredentials, GatewayError> {
+        self.guard.ensure_current().await?;
+        let value = self.transport.read_credentials(owner).await?;
+        self.guard.ensure_current().await?;
+        Ok(value)
+    }
+    async fn request(
+        &self,
+        owner: &NativeOwnerId,
+        step: RenewalStep,
+    ) -> Result<Value, GatewayError> {
+        self.guard.ensure_current().await?;
+        if step == RenewalStep::RefreshRead {
+            self.guard.start_refresh().await?;
+            self.guard.ensure_current().await?;
+        }
+        let value = self.transport.request(owner, step).await?;
+        self.guard.ensure_current().await?;
+        Ok(value)
+    }
+    async fn verify_initialized_home(
+        &self,
+        owner: &NativeOwnerId,
+        reply: &Value,
+    ) -> Result<(), GatewayError> {
+        self.guard.ensure_current().await?;
+        self.transport.verify_initialized_home(owner, reply).await?;
+        self.guard.ensure_current().await
+    }
+    async fn initialized(&self, owner: &NativeOwnerId) -> Result<(), GatewayError> {
+        self.guard.ensure_current().await?;
+        self.transport.initialized(owner).await?;
+        self.guard.ensure_current().await
+    }
+    async fn close(&self, owner: &NativeOwnerId) -> Result<(), GatewayError> {
+        // Closing an owned transport must remain possible after cancellation,
+        // owner replacement or an unknown upstream outcome.
+        self.transport.close(owner).await
+    }
+}
