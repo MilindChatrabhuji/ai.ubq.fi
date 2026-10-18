@@ -4,7 +4,16 @@ use std::{fs,future::Future,os::unix::net::UnixListener,path::PathBuf,sync::{Arc
 use gateway_auth::crypto::base64url;
 use gateway_native::{*,unix::{NativeOwnerLocation,UnixOwnerTransport,UnixSupervisor}};
 use serde_json::{Value,json};
-use tungstenite::{Message,accept_hdr,handshake::server::{Request,Response}};
+use tungstenite::{Message,accept_hdr,handshake::server::{Callback,ErrorResponse,Request,Response}};
+
+struct HeaderCheck;
+impl Callback for HeaderCheck {
+    fn on_request(self, request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+        assert_eq!(request.headers().get("host").unwrap(), "localhost");
+        assert!(!request.headers().contains_key("sec-websocket-extensions"));
+        Ok(response)
+    }
+}
 
 fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
@@ -31,7 +40,7 @@ fn document(refresh:&str,timestamp:&str)->Value{
     let home=FixtureHome::new();let listener=UnixListener::bind(home.socket()).unwrap();let observed=Arc::new(Mutex::new(Vec::new()));let seen=observed.clone();
     let server=thread::spawn(move||{
         let(stream,_)=listener.accept().unwrap();stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();stream.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
-        let mut socket=accept_hdr(stream,|request:&Request,response:Response|{assert_eq!(request.headers().get("host").unwrap(),"localhost");assert!(!request.headers().contains_key("sec-websocket-extensions"));Ok(response)}).unwrap();
+        let mut socket=accept_hdr(stream,HeaderCheck).unwrap();
         while let Ok(message)=socket.read(){
             if matches!(message,Message::Close(_)){break;}
             let Message::Text(text)=message else{continue;};let value:Value=serde_json::from_str(&text).unwrap();let method=value["method"].as_str().unwrap();seen.lock().unwrap().push(method.to_owned());
