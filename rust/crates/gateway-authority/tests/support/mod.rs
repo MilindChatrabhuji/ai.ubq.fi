@@ -66,6 +66,9 @@ impl MemoryStore {
     pub fn row(&self, key: &RecordKey) -> Option<StoredRecord> {
         self.rows.lock().unwrap().get(&key.0).cloned()
     }
+    pub fn seed_record(&self, key: RecordKey, record: StoredRecord) {
+        self.rows.lock().unwrap().insert(key.0, record);
+    }
     pub fn clock(&self, now: i64) {
         self.now.store(now, Ordering::SeqCst);
     }

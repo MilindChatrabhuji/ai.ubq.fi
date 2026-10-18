@@ -86,7 +86,21 @@ impl<
                                     Some("claude_code_refused"),
                                 )),
                                 headers,
-                                source_body: Some(body),
+                                source_body: Some(SourceRefusalBody::Json(body)),
+                            });
+                        }
+                        ClaudeSelection::InternalServerError => {
+                            return Err(RoutingError {
+                                error: Box::new(GatewayError::new(
+                                    500,
+                                    "Internal Server Error",
+                                    None,
+                                )),
+                                headers: gateway_providers::Headers::from([(
+                                    "Content-Type".into(),
+                                    "text/plain; charset=utf-8".into(),
+                                )]),
+                                source_body: Some(SourceRefusalBody::InternalServerError),
                             });
                         }
                         ClaudeSelection::Unavailable => {

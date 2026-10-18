@@ -367,3 +367,35 @@ fn source_cooldown_refusal_retains_lone_surrogate_json_and_never_dispatches() {
         assert_eq!(host.claude_heads.load(Ordering::SeqCst), 0);
     });
 }
+
+#[test]
+fn malformed_stored_claude_status_keeps_exact_plain_internal_error_without_dispatch() {
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let mut host = Host::new(&store);
+        host.claude_internal_error = true;
+        let session = RoutingSession::begin(
+            request("plain-constructor-error", false),
+            store.clone(),
+            host.clone(),
+            store.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let error = session.next_attempt().await.err().unwrap();
+        assert_eq!(error.error.status, 500);
+        assert_eq!(error.headers["Content-Type"], "text/plain; charset=utf-8");
+        assert_eq!(
+            error.source_body.unwrap().as_bytes(),
+            b"Internal Server Error"
+        );
+        session
+            .finish(TransportObservation::default())
+            .await
+            .unwrap();
+        assert_eq!(window(&store)["committed_requests"], 0);
+        assert_eq!(host.claude_heads.load(Ordering::SeqCst), 0);
+    });
+}
