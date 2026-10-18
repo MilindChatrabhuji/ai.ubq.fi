@@ -226,7 +226,7 @@ pub fn append_rollout_tail(
     let mut dropped = 0;
     for (event, result) in filtered.into_iter().zip(texts) {
         let clipped = bounded(&result.text, if event.kind == "tool" { 400 } else { 1200 });
-        let content = clipped.trim();
+        let content = clipped.trim_matches(crate::redaction::source_whitespace);
         if content.is_empty() || !known.insert(content.into()) {
             dropped += 1;
             continue;

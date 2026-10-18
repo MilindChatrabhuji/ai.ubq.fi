@@ -3,7 +3,7 @@ use crate::{
     redaction::redact,
     supervisor::{InventoryScope, KnownThread, SourceId},
     supervisor_brief::{self, SupervisorBriefContext},
-    supervisor_inventory::{self as inventory, ListedThread, SessionParts, ThreadProbe, text},
+    supervisor_inventory::{self as inventory, SessionParts, ThreadProbe, text},
     supervisor_metadata::{self, MetadataRead},
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
@@ -33,7 +33,7 @@ impl SupervisorSourceConfig {
         socket: PathBuf,
         codex_home: Option<PathBuf>,
     ) -> Result<Self, GatewayError> {
-        let name = name.trim().to_owned();
+        let name = name.trim_matches(crate::redaction::source_whitespace).to_owned();
         if name.is_empty()
             || name.encode_utf16().count() > 64
             || !socket.is_absolute()

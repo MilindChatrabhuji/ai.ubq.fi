@@ -1,4 +1,101 @@
 {
+  "collection": {
+    "expected": {
+      "sourceId": "fixture",
+      "machine": "Fixture Machine",
+      "threadId": "thread-a",
+      "title": "[redacted]",
+      "cwd": null,
+      "model": "live-model",
+      "provider": null,
+      "effort": "high",
+      "state": "active",
+      "activeFlags": [
+        "needsInput"
+      ],
+      "updatedAtMs": 1700000002000,
+      "rolloutPath": "/fixture/home/sessions/rollout-thread-a.jsonl",
+      "turns": [
+        {
+          "id": "turn-a",
+          "status": "inProgress",
+          "startedAtMs": 1700000000000,
+          "completedAtMs": null,
+          "items": [
+            {
+              "type": "user",
+              "text": "Fix the synthetic fixture"
+            },
+            {
+              "type": "assistant",
+              "text": "[redacted]"
+            },
+            {
+              "type": "command",
+              "text": "[redacted] done"
+            }
+          ],
+          "droppedItems": 0
+        },
+        {
+          "id": "rollout-tail:thread-a",
+          "status": "active",
+          "startedAtMs": 1767225601000,
+          "completedAtMs": 1767225601000,
+          "items": [
+            {
+              "type": "assistant",
+              "text": "Fresh visible rollout result"
+            }
+          ],
+          "droppedItems": 0,
+          "freshTail": true
+        }
+      ],
+      "transcriptAvailable": true,
+      "truncated": false,
+      "redactions": 2,
+      "contextBytes": 78,
+      "rolloutTailEvents": 1,
+      "projectedHistoryBehindMs": 2000
+    },
+    "calls": [
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "thread-a",
+          "includeTurns": false
+        }
+      },
+      {
+        "method": "thread/turns/list",
+        "params": {
+          "threadId": "thread-a",
+          "limit": 1,
+          "sortDirection": "asc",
+          "itemsView": "summary"
+        }
+      },
+      {
+        "method": "thread/turns/list",
+        "params": {
+          "threadId": "thread-a",
+          "limit": 6,
+          "sortDirection": "desc",
+          "itemsView": "summary"
+        }
+      },
+      {
+        "method": "thread/turns/list",
+        "params": {
+          "threadId": "thread-a",
+          "limit": 1,
+          "sortDirection": "desc",
+          "itemsView": "full"
+        }
+      }
+    ]
+  },
   "sourceFiles": [
     "supervisor-config",
     "supervisor-inventory",
@@ -496,6 +593,202 @@
       "input": "😀中文 client_secret: `zqunclosed done",
       "expected": {
         "text": "😀中文 [redacted]",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "Tokens=Bearer abcdefghijklmnop",
+      "expected": {
+        "text": "[redacted]",
+        "redactions": 2
+      }
+    },
+    {
+      "input": "apiKeys.forEach(key => {\n  const label = describe(key);\n  console.log(label);\n});\nnext();",
+      "expected": {
+        "text": "apiKeys.forEach(key => {\n  const label = describe(key);\n  console.log(label);\n});\nnext();",
+        "redactions": 0
+      }
+    },
+    {
+      "input": "\"password\": hunter2hunter2",
+      "expected": {
+        "text": "\"[redacted]",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "{\"password\": 12345678, \"model\": \"m\"}",
+      "expected": {
+        "text": "{\"[redacted], \"model\": \"m\"}",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "'password' => SECRETCONSTANT1",
+      "expected": {
+        "text": "'[redacted]",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "'password'=>SECRETCONSTANT1;next();",
+      "expected": {
+        "text": "'[redacted];next();",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "{\"password\":12345678,\"model\":\"m\"}",
+      "expected": {
+        "text": "{\"[redacted],\"model\":\"m\"}",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "{\"password\":\"zqsecretvalue\",\"model\":\"m\"}",
+      "expected": {
+        "text": "{\"[redacted],\"model\":\"m\"}",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "{\"password\":[\"zqsecretvalue\"],\"model\":\"m\"}",
+      "expected": {
+        "text": "{\"[redacted],\"model\":\"m\"}",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "[\"password\":12345678] done",
+      "expected": {
+        "text": "[\"[redacted]] done",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "api_keys: [it's, 'zqsecretvalue'] done",
+      "expected": {
+        "text": "[redacted] done",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "api_keys: [\"zqone\\\\\"zqtwo\", {secret:'zqthree'}] rest",
+      "expected": {
+        "text": "[redacted]",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix password:zqsecretvalue rest",
+      "expected": {
+        "text": "prefix [redacted] rest",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix password:﻿zqsecretvalue rest",
+      "expected": {
+        "text": "prefix [redacted] rest",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "token = zqsecretvalue rest",
+      "expected": {
+        "text": "[redacted] rest",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "\"api_key\".nested: \"zqsecretvalue\"",
+      "expected": {
+        "text": "\"api_key\".nested: \"zqsecretvalue\"",
+        "redactions": 0
+      }
+    },
+    {
+      "input": "api_key..nested: \"zqsecretvalue\"",
+      "expected": {
+        "text": "[redacted]",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "secret.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x: \"zqsecretvalue\"",
+      "expected": {
+        "text": "secret.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x: \"zqsecretvalue\"",
+        "redactions": 0
+      }
+    },
+    {
+      "input": "prefix u_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA suffix",
+      "expected": {
+        "text": "prefix [redacted] suffix",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix ghp_ZQSYNTHETIC123456789ZQ suffix",
+      "expected": {
+        "text": "prefix [redacted] suffix",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix github_pat_ZQ_SYNTHETIC_CREDENTIAL_12345 suffix",
+      "expected": {
+        "text": "prefix [redacted] suffix",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix dsk-ZQ_SYNTHETIC_CREDENTIAL_12345 suffix",
+      "expected": {
+        "text": "prefix [redacted] suffix",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix token=\"zqquoted\\\"value\" trailing",
+      "expected": {
+        "text": "prefix [redacted] trailing",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix password='zqquoted''value' trailing",
+      "expected": {
+        "text": "prefix [redacted] trailing",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "prefix password='zqquoted\\'value' trailing",
+      "expected": {
+        "text": "prefix [redacted] trailing",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "tokens: [`A 'B \\'C `D ]E ",
+      "expected": {
+        "text": "[redacted]",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "{\"api_keys\": [`A 'B \\'C `D ]E ",
+      "expected": {
+        "text": "{\"[redacted]",
+        "redactions": 1
+      }
+    },
+    {
+      "input": "api_key: {a: `A 'B \\'C `D ]E ",
+      "expected": {
+        "text": "[redacted]",
         "redactions": 1
       }
     }

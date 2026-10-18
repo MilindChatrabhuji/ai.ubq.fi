@@ -47,8 +47,11 @@ const MARKER: &[u16] = &[91, 114, 101, 100, 97, 99, 116, 101, 100, 93];
 fn ascii(c: u16) -> bool {
     c <= 127 && ((c as u8).is_ascii_alphanumeric() || c == 95)
 }
+pub(crate) fn source_whitespace(c: char) -> bool {
+    matches!(c as u32, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+}
 fn white(c: u16) -> bool {
-    char::from_u32(u32::from(c)).is_some_and(char::is_whitespace) || c == 0xfeff
+    char::from_u32(u32::from(c)).is_some_and(source_whitespace)
 }
 fn unicode_word(c: u16) -> bool {
     c == 95 || char::from_u32(u32::from(c)).is_some_and(char::is_alphanumeric)

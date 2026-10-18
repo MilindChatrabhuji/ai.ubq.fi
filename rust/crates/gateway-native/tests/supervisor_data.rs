@@ -242,6 +242,10 @@ fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() {
     assert_eq!(context.state.as_deref(), Some("active"));
     assert_eq!(context.title.as_deref(), Some("[redacted]"));
     assert!(context.rollout_tail_events > 0);
+    let mut actual = serde_json::to_value(&context).unwrap();
+    actual["rolloutPath"] = json!("/fixture/home/sessions/rollout-thread-a.jsonl");
+    let golden: Value = serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json")).unwrap();
+    assert_eq!(actual, golden["collection"]["expected"]);
     let wire = serde_json::to_string(&context).unwrap();
     assert!(!wire.contains("zqfirst") && !wire.contains("zqsecond") && !wire.contains("zqPRIVATE"));
     assert!(wire.contains("Fresh visible rollout result"));
