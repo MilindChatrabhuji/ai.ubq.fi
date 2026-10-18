@@ -5,7 +5,7 @@ use crate::{
 };
 use gateway_admin::AdminInput;
 use gateway_auth::{AuthHost, AuthResponse, invalid};
-use gateway_core::{GatewayError, query::QueryStore};
+use gateway_core::{GatewayError, query::QueryStore, state::StoredRecord, value::{PortableValue,ValueEncoding}};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -26,40 +26,55 @@ const LEGACY_INTERRUPTED: [&str; 15] = [
     "ce37210d58746a2ed3aec34c38b370f7060639e1",
     "f9dec6c3b6270813be7b4a957221f7130c37a52b",
 ];
-fn nullable_string(v: Option<&Value>) -> bool {
-    v.is_some_and(|v| v.is_null() || v.is_string())
+fn member<'a>(value:&'a PortableValue,name:&str)->Option<&'a PortableValue>{
+    match value {
+        PortableValue::Object(fields)=>fields.iter().rev().find(|(key,_)|key==name).map(|(_,value)|value),
+        PortableValue::ObjectUtf16(fields)=>fields.iter().rev().find(|(key,_)|key.as_units().iter().copied().eq(name.encode_utf16())).map(|(_,value)|value),
+        _=>None,
+    }
 }
-fn valid(v: &Value) -> bool {
-    v.get("version") == Some(&json!(1))
-        && [
-            "request_id",
-            "route",
-            "provider",
-            "terminal_type",
-            "failure_kind",
-        ]
-        .into_iter()
-        .all(|name| v.get(name).is_some_and(Value::is_string))
-        && ["status", "created_at_ms", "latency_ms"]
-            .into_iter()
-            .all(|name| v.get(name).is_some_and(Value::is_number))
-        && ["model", "reasoning", "git_sha", "deno_revision"]
-            .into_iter()
-            .all(|name| nullable_string(v.get(name)))
-        && v.get("stream")
-            .is_some_and(|v| v.is_null() || v.is_boolean())
-        && [Some("delivered"), Some("interrupted"), Some("unobserved")]
-            .contains(&v.get("delivery_outcome").and_then(Value::as_str))
+fn text(value:Option<&PortableValue>)->bool{matches!(value,Some(PortableValue::String(_)|PortableValue::StringUtf16(_)))}
+fn text_is(value:Option<&PortableValue>,expected:&str)->bool{
+    match value {Some(PortableValue::String(value))=>value==expected,Some(PortableValue::StringUtf16(value))=>value.as_units().iter().copied().eq(expected.encode_utf16()),_=>false}
 }
-fn suppress(v: &Value) -> bool {
-    v["status"] == 200
-        && v["stream"] == true
-        && v["terminal_type"] == "error"
-        && v["failure_kind"] == "missing_sse_terminal"
-        && v["delivery_outcome"] == "interrupted"
-        && v["git_sha"]
-            .as_str()
-            .is_some_and(|sha| LEGACY_INTERRUPTED.contains(&sha))
+fn number(value:Option<&PortableValue>)->Option<f64>{value?.number_value()}
+fn nullable_string(value:Option<&PortableValue>)->bool{matches!(value,Some(PortableValue::Null))||text(value)}
+fn valid(value:&PortableValue)->bool{
+    number(member(value,"version"))==Some(1.0)
+    &&["request_id","route","provider","terminal_type","failure_kind"].into_iter().all(|name|text(member(value,name)))
+    &&["status","created_at_ms","latency_ms"].into_iter().all(|name|number(member(value,name)).is_some())
+    &&["model","reasoning","git_sha","deno_revision"].into_iter().all(|name|nullable_string(member(value,name)))
+    &&matches!(member(value,"stream"),Some(PortableValue::Null|PortableValue::Boolean(_)))
+    &&["delivered","interrupted","unobserved"].into_iter().any(|outcome|text_is(member(value,"delivery_outcome"),outcome))
+}
+fn suppress(value:&PortableValue)->bool{
+    number(member(value,"status"))==Some(200.0)
+    &&member(value,"stream")==Some(&PortableValue::Boolean(true))
+    &&text_is(member(value,"terminal_type"),"error")
+    &&text_is(member(value,"failure_kind"),"missing_sse_terminal")
+    &&text_is(member(value,"delivery_outcome"),"interrupted")
+    &&LEGACY_INTERRUPTED.iter().any(|sha|text_is(member(value,"git_sha"),sha))
+}
+fn error_row(record:&StoredRecord)->Result<PortableValue,GatewayError>{
+    record.validate_version()?;
+    match record.value_encoding {
+        ValueEncoding::Json=>Ok(PortableValue::from_json(record.json_value()?)),
+        ValueEncoding::ProfileV2=>record.profile_v2_value(),
+        ValueEncoding::ProfileV1=>Err(GatewayError::unavailable("Error history requires JSON or explicit ProfileV2", "incompatible_value_encoding")),
+    }
+}
+// This is the fixed error-log JSON wire projection only. JSON.stringify maps
+// nonfinite numbers to null and signed zero to zero; UTF16 strings stay strings.
+// Other typed payloads never acquire a generic JSON interpretation here.
+fn wire_value(value:&PortableValue)->Result<PortableValue,GatewayError>{
+    Ok(match value {
+        PortableValue::Null|PortableValue::Boolean(_)|PortableValue::String(_)|PortableValue::StringUtf16(_)=>value.clone(),
+        PortableValue::NumberBits(_)=>match value.number_value(){Some(value) if value.is_finite()=>PortableValue::number(if value==0.0{0.0}else{value}),_=>PortableValue::Null},
+        PortableValue::Array(values)=>PortableValue::Array(values.iter().map(wire_value).collect::<Result<_,_>>()?),
+        PortableValue::Object(values)=>PortableValue::Object(values.iter().map(|(key,value)|Ok((key.clone(),wire_value(value)?))).collect::<Result<_,GatewayError>>()?),
+        PortableValue::ObjectUtf16(values)=>PortableValue::ObjectUtf16(values.iter().map(|(key,value)|Ok((key.clone(),wire_value(value)?))).collect::<Result<_,GatewayError>>()?),
+        _=>return Err(GatewayError::unavailable("Error history ProfileV2 contains a non-JSON field", "incompatible_value_encoding")),
+    })
 }
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
     pub(crate) async fn errors(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
@@ -81,15 +96,14 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             true,
             input.now_ms,
             |entry| {
-                let row = entry.record.json_value()?;
-                if !valid(row) {
+                let row = error_row(&entry.record)?;
+                if !valid(&row) {
                     return Ok(());
                 }
-                if row["status"]
-                    .as_f64()
-                    .is_some_and(|s| (500.0..=599.0).contains(&s))
+                if number(member(&row,"status")).is_some_and(|s| (500.0..=599.0).contains(&s))
                 {
-                    let time = row["created_at_ms"].as_f64().expect("validated number");
+                    let time=number(member(&row,"created_at_ms")).ok_or_else(||store::corrupt("Error history timestamp is missing"))?;
+                    if !time.is_finite(){return Err(store::corrupt("Error history timestamp cannot be represented"));}
                     let bucket = ((time / 900000.0).floor() as i64)
                         .checked_mul(900000)
                         .ok_or_else(|| {
@@ -97,8 +111,8 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                         })?;
                     *buckets.entry(bucket).or_default() += 1;
                 }
-                if data.len() < limit && !suppress(row) {
-                    data.push(row.clone())
+                if data.len() < limit && !suppress(&row) {
+                    data.push(wire_value(&row)?)
                 }
                 Ok(())
             },
@@ -115,9 +129,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             .into_iter()
             .map(|(time, count)| json!({"bucket_start_at_ms":time,"count":count}))
             .collect();
-        Ok(AuthResponse::json(
-            200,
-            json!({"object":"list","data":data,"five_xx_buckets":buckets,"retention":diagnostics.retention,"log_files":diagnostics.log_files}),
-        ))
+        let body=PortableValue::Object(vec![
+            ("object".into(),PortableValue::String("list".into())),
+            ("data".into(),PortableValue::Array(data)),
+            ("five_xx_buckets".into(),PortableValue::from_json(&json!(buckets))),
+            ("retention".into(),PortableValue::from_json(&diagnostics.retention)),
+            ("log_files".into(),PortableValue::from_json(&diagnostics.log_files)),
+        ]);
+        Ok(AuthResponse::source_json(200,body.to_source_json()?))
     }
 }
