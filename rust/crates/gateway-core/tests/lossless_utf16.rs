@@ -25,7 +25,7 @@ fn exact_source_sanitizer_and_prefix_vectors_keep_unpaired_units() {
             case["json"].as_str().unwrap()
         );
     }
-    let prefix = JsString16::from_str(&format!("{}😀tail", "x".repeat(4095))).prefix_units(4096);
+    let prefix = JsString16::from_utf8(&format!("{}😀tail", "x".repeat(4095))).prefix_units(4096);
     assert_eq!(
         prefix.as_units().len(),
         source["prefix"]["length"].as_u64().unwrap() as usize
@@ -36,7 +36,7 @@ fn exact_source_sanitizer_and_prefix_vectors_keep_unpaired_units() {
     );
     assert!(prefix.try_utf8().is_err());
     assert_eq!(
-        JsString16::from_str("\u{feff} a\t\u{2003}b \n")
+        JsString16::from_utf8("\u{feff} a\t\u{2003}b \n")
             .sanitize_js_whitespace_prefix(240)
             .unwrap()
             .try_utf8()
@@ -44,12 +44,12 @@ fn exact_source_sanitizer_and_prefix_vectors_keep_unpaired_units() {
         "a b"
     );
     assert!(
-        JsString16::from_str("\t\u{feff} ")
+        JsString16::from_utf8("\t\u{feff} ")
             .sanitize_js_whitespace_prefix(240)
             .is_none()
     );
     assert_eq!(
-        JsString16::from_str("\u{85}")
+        JsString16::from_utf8("\u{85}")
             .sanitize_js_whitespace_prefix(240)
             .unwrap()
             .as_units(),
@@ -75,7 +75,7 @@ fn every_utf16_unit_and_source_escape_token_round_trip_without_replacement() {
         assert_eq!(raw.as_str(), case["json"].as_str().unwrap());
         assert_eq!(raw.deserialize::<JsString16>().unwrap(), text);
     }
-    let literal = JsString16::from_str(r"\ud83d");
+    let literal = JsString16::from_utf8(r"\ud83d");
     let lone = JsString16::from_units(vec![0xd83d]);
     assert_ne!(
         literal.to_source_json().unwrap(),

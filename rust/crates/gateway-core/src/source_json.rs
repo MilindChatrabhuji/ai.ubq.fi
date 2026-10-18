@@ -191,7 +191,7 @@ fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayErr
     match value {
         PortableValue::Null => out.push_str("null"),
         PortableValue::Boolean(v) => out.push_str(if *v { "true" } else { "false" }),
-        PortableValue::String(v) => out.push_str(&JsString16::from_str(v).json_token()),
+        PortableValue::String(v) => out.push_str(&JsString16::from_utf8(v).json_token()),
         PortableValue::StringUtf16(v) => out.push_str(&v.json_token()),
         PortableValue::NumberBits(_) => {
             let v = value.to_json_lossless().ok_or_else(invalid)?;
@@ -213,7 +213,7 @@ fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayErr
                 if at != 0 {
                     out.push(',');
                 }
-                out.push_str(&JsString16::from_str(key).json_token());
+                out.push_str(&JsString16::from_utf8(key).json_token());
                 out.push(':');
                 write_value(value, out)?;
             }
