@@ -414,21 +414,25 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 {
                     return Err(invalid("Invalid thread id"));
                 }
-                // AuthResponse has no stream carrier. Do not disguise native SSE follow as JSON.
-                if operation == SupervisorOutput {
-                    return Err(GatewayError::unavailable(
-                        "Supervisor output requires an authenticated native streaming bridge",
-                        "native_supervisor_stream_unavailable",
-                    ));
-                }
+                let request = if operation == SupervisorOutput {
+                    NativeRequest::SupervisorOutput {
+                        source_id,
+                        thread_id,
+                        cursor: parse::first(&input.query, "cursor")
+                            .unwrap_or("")
+                            .trim()
+                            .chars()
+                            .take(240)
+                            .collect(),
+                    }
+                } else {
+                    NativeRequest::SupervisorBrief {
+                        source_id,
+                        thread_id,
+                    }
+                };
                 self.capabilities
-                    .native(
-                        NativeRequest::SupervisorBrief {
-                            source_id,
-                            thread_id,
-                        },
-                        context,
-                    )
+                    .native(request, context)
                     .await
             }
             // AdminService owns these operations; never duplicate key/passkey/public-key writers.
