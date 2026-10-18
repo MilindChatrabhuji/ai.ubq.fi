@@ -1111,3 +1111,204 @@ test("review F13 retention-expired paid history cannot recreate a permanent logi
     f.db.close();
   }
 });
+
+test("round2 R1 paid transport replay rechecks terminal and settlement states without rewriting history", async () => {
+  for (const state of ["completed", "failed", "cancelled", "settled-pending", "settled-completed", "unresolved"] as const) {
+    const f = serviceFixture();
+    try {
+      const attempt = await reviewPaid(f, "transport-" + state);
+      const args = { handle: attempt.requestHandle, provider: "metered" as const, attemptHandle: attempt.attemptHandle };
+      await f.client.call("markApiDispatch", { handle: attempt.requestHandle, provider: "metered" });
+      expect((await f.client.call("recordTransportStarted", args, "start-paid")).kind).toBe("started");
+      const active = f.sql.page("attempt_lifetime", now, "", 100);
+      expect((await f.client.call("recordTransportStarted", args, "start-paid")).kind).toBe("started");
+      expect(f.sql.page("attempt_lifetime", now, "", 100)).toEqual(active);
+      const settled = state.startsWith("settled");
+      const observedAt = state === "unresolved" ? now + 86_400_001 : now;
+      if (state === "unresolved") {
+        f.setTime(observedAt);
+        expect((await f.client.call("deferPaidReconciliation", { attemptHandle: attempt.attemptHandle })).kind).toBe("write");
+        expect(f.sql.page("paid_request", observedAt, "", 100)[0].row.value?.billing_state).toBe("unresolved");
+      } else {
+        await f.client.call("recordPaidAttemptLifecycle", {
+          attemptHandle: attempt.attemptHandle,
+          patch: settled
+            ? { provider_request_id: "settled-transport", ...(state === "settled-completed" ? { terminal_state: "completed" as const } : {}) }
+            : { terminal_state: state as "completed" | "failed" | "cancelled" },
+        });
+      }
+      if (settled) {
+        const log = { request_id: "settled-transport", quota: 7, prompt_tokens: 3, completion_tokens: 2, model: "fixture", created_at: now / 1000 };
+        expect((await f.client.call("recordVerifiedPaidBilling", { attemptHandle: attempt.attemptHandle, log })).kind).toBe("settled");
+      }
+      const before = ["paid_request", "paid_window", "request_lifetime", "attempt_lifetime"] as const;
+      const snapshot = before.map((table) => f.sql.page(table, observedAt, "", 100));
+      const restarted = new NativeAuthority(storage(f.db), f.options, () => observedAt);
+      const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, cap.id), cap.epoch);
+      const outcomes = await Promise.allSettled([
+        client.call("recordTransportStarted", args, "start-paid"),
+        client.call("recordTransportStarted", args, "fresh-paid"),
+      ]);
+      reviewTrace(f, "R2-1-" + state);
+      expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
+      expect(before.map((table) => f.sql.page(table, observedAt, "", 100))).toEqual(snapshot);
+      expect(required(f.sql.read("request_lifetime", [attempt.requestHandle], now).value).semantic).toBeNull();
+      expect((await client.call("readRequestStatus", { handle: attempt.requestHandle, limit: 10 })).kind).toBe("status");
+    } finally {
+      f.db.close();
+    }
+  }
+});
+
+const round2MixedAttempts = async (f: ReturnType<typeof serviceFixture>, other: NativeAuthorityClient, foreignIndex: number) => {
+  const attempts: string[] = [];
+  const pages: string[][] = [];
+  for (const index of [0, 1, 2]) {
+    const client = index === foreignIndex ? other : f.client;
+    const requestHandle = handle(
+      await client.call("reserveApiUsage", { requestId: "claim-" + String(index), route: "/v1/responses", model: "fixture", stream: false })
+    );
+    const attempt = required((await client.call("reservePaidAttempt", { handle: requestHandle, hopId: "openlux-hop" })).attemptHandle);
+    attempts.push(attempt);
+    pages.push(index === foreignIndex ? [] : [attempt]);
+  }
+  return { own: pages.flat(), foreignHandle: attempts[foreignIndex], pages };
+};
+const round2ClaimPage = async (f: ReturnType<typeof serviceFixture>, other: NativeAuthorityClient, cursor: string | undefined, expected: string[]) => {
+  const restarted = new NativeAuthority(storage(f.db), f.options, () => now);
+  const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, cap.id), cap.epoch);
+  const claim = await client.call("claimPaidReconciliation", { limit: 1, ...(cursor ? { cursor } : {}) });
+  expect(claim.kind).toBe("claimed");
+  expect((await client.call("claimPaidReconciliation", { limit: 1 })).kind).toBe("leased");
+  expect(claim.detail).toMatchObject(expected.map((attemptHandle) => ({ attemptHandle })));
+  expect(Array.isArray(claim.detail) ? claim.detail.length : -1).toBe(expected.length);
+  for (const attemptHandle of expected) expect((await client.call("deferPaidReconciliation", { attemptHandle })).kind).toBe("write");
+  if (claim.cursor) expect((await other.call("claimPaidReconciliation", { limit: 1, cursor: claim.cursor })).kind).toBe("leased");
+  await client.call("finishPaidReconciliation", { lease: required(claim.lease) });
+  if (claim.cursor) {
+    const unauthorized = await Promise.allSettled([other.call("claimPaidReconciliation", { limit: 1, cursor: claim.cursor })]);
+    expect(unauthorized[0].status).toBe("rejected");
+  }
+  return claim.cursor ?? undefined;
+};
+test("round2 R2 shared-key mixed-principal pages retain private handles and resumable leases", async () => {
+  for (const foreignIndex of [0, 1, 2]) {
+    const options = withPool();
+    const foreign = { ...cap, id: "foreign-cap", principalId: "foreign" };
+    const f = serviceFixture({
+      ...options,
+      capabilities: [cap, foreign],
+      keys: options.keys.map((key) => ({ ...key, api: { ...key.api, paid_fallback_limit_microcredits: 200 } })),
+    });
+    try {
+      const other = new NativeAuthorityClient(new NativeAuthorityRpcServer(f.authority, foreign.id), cap.epoch);
+      const attempts = await round2MixedAttempts(f, other, foreignIndex);
+      const recovered: string[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 4; page++) {
+        const expected = attempts.pages[page] ?? [];
+        cursor = await round2ClaimPage(f, other, cursor, expected);
+        recovered.push(...expected);
+        if (!cursor) break;
+      }
+      reviewTrace(f, "R2-2-" + String(foreignIndex));
+      expect(recovered).toEqual(attempts.own);
+      expect(recovered).not.toContain(attempts.foreignHandle);
+      expect(f.sql.page("paid_pending", now, "", 100)).toHaveLength(3);
+      expect(f.sql.page("paid_window", now, "", 100)[0].row.value?.reserved_microcredits).toBe(120);
+      expect(f.sql.read("paid_lease", nativePaid.paidFallbackReconciliationLeaseV3Key(cap.keyId), now).value).toBeNull();
+    } finally {
+      f.db.close();
+    }
+  }
+});
+
+test("round2 R3 classified Codex success owns terminal usage with and without optional start", async () => {
+  for (const start of [false, true]) {
+    const f = serviceFixture();
+    try {
+      const handle = await clientReserve(f, "codex-success-" + String(start));
+      await f.client.call("selectCodexAccount", { handle });
+      await f.client.call("markApiDispatch", { handle, provider: "chatgpt_codex" });
+      if (start) await f.client.call("recordTransportStarted", { handle, provider: "chatgpt_codex" });
+      await f.client.call("recordCodexAttemptSignal", { handle, signal: "success" });
+      const terminal = { handle, outcome: "completed" as const, usage: { input_tokens: 3, cached_input_tokens: null, output_tokens: 2 } };
+      await f.client.call("recordSemanticTerminal", terminal, "codex-terminal");
+      await f.client.call("recordSemanticTerminal", terminal, "codex-terminal");
+      reviewTrace(f, "R2-3-" + String(start));
+      const rollups = f.sql.page("paid_rollup", now, "", 100);
+      expect(rollups).toHaveLength(1);
+      expect(rollups[0].row.value).toMatchObject({ provider: "chatgpt_codex", request_count: 1, input_tokens: 3, output_tokens: 2, spend_microcredits: 0 });
+      expect(required(f.sql.read("request_lifetime", [handle], now).value).responding).toEqual({ provider: "chatgpt_codex", attemptHandle: null });
+    } finally {
+      f.db.close();
+    }
+  }
+});
+
+test("round2 R4 compensation cancellation is distinct from positive lifecycle evidence", async () => {
+  const patches = {
+    empty: {},
+    not_dispatched: { dispatch_state: "not_dispatched" },
+    provider_id: { provider_request_id: "real-provider-observation" },
+    completed: { terminal_state: "completed" },
+    failed: { terminal_state: "failed" },
+    cancelled: { terminal_state: "cancelled" },
+    fetch: {},
+  } as const;
+  for (const evidence of ["empty", "not_dispatched", "provider_id", "completed", "failed", "cancelled", "fetch"] as const) {
+    const f = serviceFixture();
+    try {
+      const attempt = await reviewPaid(f, "compensation-" + evidence);
+      await f.client.call("markApiDispatch", { handle: attempt.requestHandle, provider: "metered" });
+      expect((await f.client.call("releasePaidBeforeFetch", { attemptHandle: attempt.attemptHandle })).kind).toBe("released");
+      const releasedStart = await Promise.allSettled([
+        f.client.call("recordTransportStarted", { handle: attempt.requestHandle, provider: "metered", attemptHandle: attempt.attemptHandle }),
+      ]);
+      expect(releasedStart[0].status).toBe("rejected");
+      await f.client.call("recordPaidAttemptLifecycle", {
+        attemptHandle: attempt.attemptHandle,
+        patch: patches[evidence],
+        ...(evidence === "fetch" ? { fetchStarted: true } : {}),
+      });
+      const positive = evidence !== "empty" && evidence !== "not_dispatched";
+      const outcome = await Promise.allSettled([f.client.call("recordApiDispatchCancellation", { handle: attempt.requestHandle })]);
+      reviewTrace(f, "R2-4-" + evidence);
+      expect(outcome[0].status).toBe(positive ? "rejected" : "fulfilled");
+      expect(required(f.sql.read("request_lifetime", [attempt.requestHandle], now).value).providerObserved).toBe(positive);
+      expect(f.sql.page("api_window", now, "", 100)[0].row.value?.committed_requests).toBe(positive ? 1 : 0);
+      expect(f.sql.page("paid_request", now, "", 100)[0].row.value).toMatchObject({
+        billing_state: "not_billed",
+        dispatch_state: "not_dispatched",
+        spend_microcredits: 0,
+      });
+      expect(f.sql.page("paid_window", now, "", 100)[0].row.value).toMatchObject({ reserved_microcredits: 0, pending_count: 0 });
+    } finally {
+      f.db.close();
+    }
+  }
+});
+
+test("round2 R5 current refresh preserves routing revisions while real credential refresh fences", async () => {
+  const f = serviceFixture();
+  try {
+    const handle = await clientReserve(f, "unchanged-refresh");
+    await f.client.call("selectCodexAccount", { handle });
+    const before = f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now);
+    for (const operation of ["refresh-noop-1", "refresh-noop-2", "refresh-noop-1"]) {
+      expect((await f.client.call("refreshCodexAdmission", { handle }, operation)).kind).toBe("current");
+      expect(f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now)).toEqual(before);
+    }
+    reviewRotate(f, "e".repeat(64));
+    expect((await f.client.call("refreshCodexAdmission", { handle }, "refresh-changed")).kind).toBe("current");
+    const after = f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now);
+    reviewTrace(f, "R2-5");
+    expect(after.revision).not.toBe(before.revision);
+    expect(after.value?.slots[0].credential_version).toBe("e".repeat(64));
+    const stale = await Promise.allSettled([f.client.call("refreshCodexAdmission", { handle }, "refresh-noop-1")]);
+    expect(stale[0].status).toBe("rejected");
+    expect((await f.client.call("markApiDispatch", { handle, provider: "chatgpt_codex" })).kind).toBe("dispatched");
+  } finally {
+    f.db.close();
+  }
+});
