@@ -60,6 +60,9 @@ struct Server {
 }
 impl Server {
     fn start(path: PathBuf, rollout: Option<PathBuf>) -> Self {
+        Self::start_with_full_failure(path, rollout, false)
+    }
+    fn start_with_full_failure(path: PathBuf, rollout: Option<PathBuf>, fail_full: bool) -> Self {
         let listener = UnixListener::bind(&path).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
@@ -79,7 +82,7 @@ impl Server {
                 let record = record.clone();
                 let list_count = list_count.clone();
                 let rollout = rollout.clone();
-                connections.push(thread::spawn(move||{stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();let Ok(mut socket)=tungstenite::accept(stream)else{return;};while let Ok(message)=socket.read(){if message.is_close(){let _=socket.flush();break;}let Ok(value)=serde_json::from_slice::<Value>(&message.into_data())else{continue;};let Some(method)=value["method"].as_str()else{continue;};record.lock().unwrap().push(method.into());let Some(id)=value.get("id")else{continue;};let result=match method {
+                connections.push(thread::spawn(move||{stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();let Ok(mut socket)=tungstenite::accept(stream)else{return;};while let Ok(message)=socket.read(){if message.is_close(){let _=socket.flush();break;}let Ok(value)=serde_json::from_slice::<Value>(&message.into_data())else{continue;};let Some(method)=value["method"].as_str()else{continue;};record.lock().unwrap().push(method.into());let Some(id)=value.get("id")else{continue;};if fail_full && method=="thread/turns/list" && value["params"]["itemsView"]=="full" {let oversized="x".repeat(1_048_577);let _=socket.send(tungstenite::Message::Text(oversized.into()));break;}let result=match method {
       "initialize"=>json!({"protocolVersion":1}),"thread/loaded/list"=>json!({"data":["thread-a"]}),
       "thread/list"=>{list_count.fetch_add(1,Ordering::Relaxed);json!({"data":[{"id":"thread-a","name":"password=ZQ_SYNTHETIC_VALUE_12345","model":"live-model","reasoningEffort":"high","source":"cli","updatedAt":1700000001000}],"nextCursor":null})},
       "thread/read"=>json!({"thread":{"id":"thread-a","name":"password=ZQ_SYNTHETIC_VALUE_12345","model":"live-model","reasoningEffort":"high","status":{"type":"active","activeFlags":["needsInput"]},"updatedAt":1700000002000i64,"path":rollout}}),
@@ -312,4 +315,19 @@ fn raw_follow_redaction_precedes_clipping_and_preserves_indices() {
     assert_eq!(entries[0].index, 1);
     assert_eq!(entries[1].index, 2);
     assert!(entries[0].text.encode_utf16().count() <= 4000);
+}
+
+#[test]
+fn failed_full_frame_degrades_to_recorded_summary_without_inventing_transcript() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("source.sock");
+    let _server = Server::start_with_full_failure(path.clone(), None, true);
+    let source = SupervisorSourceConfig::configured(SourceId::parse("fixture").unwrap(), "Fixture Machine".into(), path, None).unwrap();
+    let data = SupervisorData::configured(vec![source]).unwrap();
+    let selected = data.select("fixture", "thread-a", 1_700_000_000_000).unwrap();
+    let context = data.brief_context(&selected, 1_700_000_000_000).unwrap();
+    assert_eq!(context.state.as_deref(), Some("active"));
+    assert!(!context.transcript_available);
+    assert!(context.turns.is_empty());
+    assert_eq!(context.title.as_deref(), Some("[redacted]"));
 }

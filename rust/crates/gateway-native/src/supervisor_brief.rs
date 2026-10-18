@@ -432,8 +432,10 @@ pub(crate) fn collect_context(
         sanitize_context_metadata(&mut context);
         Ok(context)
     })();
-    let closed = futures_executor::block_on(socket.close());
-    result.and_then(|v| closed.map(|()| v))
+    // A failed newest-full read may already have dropped its socket; closing
+    // cannot replace the recorded-summary fallback with a transport failure.
+    let _ = futures_executor::block_on(socket.close());
+    result
 }
 
 /// Matches source per-field prompt framing; flags are redacted after comma join.
