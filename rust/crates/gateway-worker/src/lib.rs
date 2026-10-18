@@ -1,7 +1,9 @@
 use gateway_core::GatewayError;
 use gateway_core::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, HealthResponse, ReleaseIdentity};
 use std::rc::Rc;
-use worker::{Context, Env, Method, Request, Response, Result, event};
+#[cfg(feature = "entrypoint")]
+use worker::event;
+use worker::{Context, Env, Method, Request, Response, Result};
 
 mod admission;
 mod agent_messages;
@@ -31,7 +33,7 @@ fn error_response(error: GatewayError) -> Result<Response> {
     Ok(response)
 }
 
-#[event(fetch)]
+#[cfg_attr(feature = "entrypoint", event(fetch))]
 pub async fn fetch(request: Request, env: Env, context: Context) -> Result<Response> {
     let identity = match ReleaseIdentity::cloudflare(
         env!("UOS_RUST_BUILD_GIT_SHA"),
