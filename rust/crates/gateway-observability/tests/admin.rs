@@ -138,7 +138,10 @@ fn reset_settings_reject_an_old_account_without_a_write_and_show_unknown_diagnos
     .unwrap();
     assert_eq!(response.body.as_json().unwrap()["enabled"], false);
     let response = run(runtime.reset_settings_response(None)).unwrap();
-    assert_eq!(response.body.as_json().unwrap()["data"][0]["enabled"], false);
+    assert_eq!(
+        response.body.as_json().unwrap()["data"][0]["enabled"],
+        false
+    );
     assert!(response.body.as_json().unwrap()["data"][0]["available_count"].is_null());
     assert!(response.body.as_json().unwrap()["data"][0]["credits"].is_null());
 }
@@ -223,19 +226,34 @@ fn projection_distinguishes_failed_scans_and_retains_both_ends_of_long_balance_h
     }
     let response = run(runtime.quota_projection_response(30, 365)).unwrap();
     assert_eq!(
-        response.body.as_json().unwrap()["balance_history"].as_array().unwrap().len(),
+        response.body.as_json().unwrap()["balance_history"]
+            .as_array()
+            .unwrap()
+            .len(),
         2
     );
-    assert_eq!(response.body.as_json().unwrap()["balance_history_scan"], "ok");
+    assert_eq!(
+        response.body.as_json().unwrap()["balance_history_scan"],
+        "ok"
+    );
     assert_eq!(
         response.body.as_json().unwrap()["retention"]["balance_history_bucket_ms"],
         25 * 3600000
     );
     memory.unavailable.set(true);
     let response = run(runtime.quota_projection_response(30, 365)).unwrap();
-    assert_eq!(response.body.as_json().unwrap()["rollup_scan"], "unavailable");
-    assert_eq!(response.body.as_json().unwrap()["balance_history_scan"], "unavailable");
-    assert_eq!(response.body.as_json().unwrap()["ledger_growth"]["scan"], "unavailable");
+    assert_eq!(
+        response.body.as_json().unwrap()["rollup_scan"],
+        "unavailable"
+    );
+    assert_eq!(
+        response.body.as_json().unwrap()["balance_history_scan"],
+        "unavailable"
+    );
+    assert_eq!(
+        response.body.as_json().unwrap()["ledger_growth"]["scan"],
+        "unavailable"
+    );
 }
 #[test]
 fn resampling_keeps_newest_observation_without_changing_its_time() {
