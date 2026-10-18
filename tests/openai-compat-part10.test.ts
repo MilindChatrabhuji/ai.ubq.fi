@@ -841,6 +841,33 @@ test("openai: DeepSeek official Responses adapter serves the Codex wire protocol
 
     process.env[envKey] = fakeApiKey;
     try {
+      await step("Responses sampling reaches the provider or returns an ignored-field warning", async () => {
+        for (const effort of ["none", "high"]) {
+          const upstreamBodies: Record<string, unknown>[] = [];
+          const response = await withFetchMock(
+            (url, bodyText) => {
+              assert.equal(url, DEEPSEEK_CHAT_COMPLETIONS_URL);
+              upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+              return Response.json(chatCompletion({ role: "assistant", content: "sampled" }));
+            },
+            () => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", reasoning: { effort }, temperature: 0, top_p: 0.4, stream: false }))
+          );
+          assert.equal(response.status, 200);
+          assert.equal(upstreamBodies.length, 1);
+          assert.equal(upstreamBodies[0].reasoning_effort, effort);
+          if (effort === "none") {
+            assert.equal(upstreamBodies[0].temperature, 0);
+            assert.equal(upstreamBodies[0].top_p, 0.4);
+            assert.equal(response.headers.get("x-uos-warning"), null);
+          } else {
+            assert.equal(Object.hasOwn(upstreamBodies[0], "temperature"), false);
+            assert.equal(Object.hasOwn(upstreamBodies[0], "top_p"), false);
+            assert.equal(response.headers.get("x-uos-warning"), "temperature_ignored, top_p_ignored");
+          }
+          assert.equal(((await response.json()) as { status: string }).status, "completed");
+        }
+      });
+
       await step("translates a Responses request before the Codex catalog lookup", async () => {
         const upstreamCalls: { url: string; body: Record<string, unknown> }[] = [];
         const response = await withFetchMock(

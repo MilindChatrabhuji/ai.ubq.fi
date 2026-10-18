@@ -25,6 +25,8 @@ export const LIVE_SIDEBAND_PREOPEN_MAX_FRAMES = 32;
 export const LIVE_SIDEBAND_HANDSHAKE_TIMEOUT_MS = 10_000;
 /** The sideband reconnects quickly; one hour outlives any call that can still be joined. */
 export const LIVE_CALL_ACCOUNT_TTL_MS = 60 * 60_000;
+/** A terminal sideband mapping is retried until KV accepts its retirement. */
+const LIVE_CALL_RETIRE_RETRY_MS = 250;
 /** The frameless (v3) alpha selector the client sends; forwarded, with this default. */
 export const LIVE_OPENAI_ALPHA_DEFAULT = "quicksilver=v2";
 
@@ -115,6 +117,9 @@ export const liveCallLocation = (callId: string): string => `/v1/live/${encodeUR
 
 export const liveCallAccountKey = (callId: string): KvKey => [...LIVE_CALL_ACCOUNT_KV_PREFIX, callId];
 
+/** A pending terminal delete makes concurrent reconnects fail closed. */
+const pendingLiveCallRetirements = new Set<string>();
+
 /** The account that created a call and the authenticated principal it was created for. */
 export type LiveCallMapping = Readonly<{ accountId: string; principalId: string | null }>;
 
@@ -147,10 +152,12 @@ export const writeLiveCallAccount = async (callId: string, accountId: string, pr
  * rather than joining a call whose creating principal cannot be proven.
  */
 export const readLiveCallMapping = async (callId: string): Promise<LiveCallMapping | null> => {
+  if (pendingLiveCallRetirements.has(callId)) return null;
   const kv = await getKv();
   if (!kv) return null;
   try {
     const entry = await kv.get(liveCallAccountKey(callId));
+    if (pendingLiveCallRetirements.has(callId)) return null;
     if (!isRecord(entry.value)) return null;
     const accountId = getString(entry.value.account_id);
     if (accountId === null) return null;
@@ -160,16 +167,28 @@ export const readLiveCallMapping = async (callId: string): Promise<LiveCallMappi
   }
 };
 
+const waitForLiveCallRetirementRetry = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, LIVE_CALL_RETIRE_RETRY_MS));
+
 /** Retires a call after the upstream says that it no longer exists. */
 export const retireLiveCallMapping = async (callId: string): Promise<void> => {
-  const kv = await getKv();
-  if (!kv) return;
+  pendingLiveCallRetirements.add(callId);
   try {
-    await kv.delete(liveCallAccountKey(callId));
-  } catch (error) {
-    console.warn(
-      "[ai.ubq.fi] live_call_account_mapping_retire_failed",
-      JSON.stringify({ call_id: callId, reason: error instanceof Error ? error.name : "unknown" })
-    );
+    for (;;) {
+      const kv = await getKv();
+      if (kv) {
+        try {
+          await kv.delete(liveCallAccountKey(callId));
+          return;
+        } catch (error) {
+          console.warn(
+            "[ai.ubq.fi] live_call_account_mapping_retire_failed",
+            JSON.stringify({ call_id: callId, reason: error instanceof Error ? error.name : "unknown" })
+          );
+        }
+      }
+      await waitForLiveCallRetirementRetry();
+    }
+  } finally {
+    pendingLiveCallRetirements.delete(callId);
   }
 };
