@@ -73,7 +73,7 @@ test("follow retains a completed entry that falls outside a sampled update batch
       status: "completed",
       exitCode: index === 0 ? 7 : 0,
       aggregatedOutput: index === 0 ? "final output" : `final ${index}`,
-    }))
+    })),
   );
   const second = selectFollowUpdates(completed, 0, revisions);
   assert.equal(second.length, FOLLOW_MAX_ENTRIES);
