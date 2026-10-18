@@ -221,6 +221,22 @@ const publicModelCatalogEntry = (id: string, provider: PublicModelProvider, crea
   };
 };
 
+const mergeProviderMetadata = (entry: PublicModelCatalogEntry, id: string, sources: ModelMetadataSources): void => {
+  // A provider declaration describes this gateway route, not another serving of
+  // the same weights. Do not let a cached enrichment entry win when the
+  // declaration arrives after a paid discovery row.
+  const resolved = resolveModelMetadata(id, { provider: sources.provider, openRouter: null });
+  const hasContext = resolved.context_window_tokens !== null || resolved.max_context_window_tokens !== null;
+  if (resolved.context_window_tokens !== null) entry.context_window_tokens = resolved.context_window_tokens;
+  if (resolved.max_context_window_tokens !== null) entry.max_context_window_tokens = resolved.max_context_window_tokens;
+  if (resolved.auto_compact_token_limit_tokens !== null) entry.auto_compact_token_limit_tokens = resolved.auto_compact_token_limit_tokens;
+  if (resolved.effective_context_window_percent !== null) entry.effective_context_window_percent = resolved.effective_context_window_percent;
+  if (hasContext) entry.context_source = resolved.context_source;
+  if (resolved.supported_reasoning_levels !== null) entry.supported_reasoning_levels = resolved.supported_reasoning_levels;
+  if (resolved.default_reasoning_effort !== null) entry.default_reasoning_effort = resolved.default_reasoning_effort;
+  if (resolved.supported_reasoning_levels !== null || resolved.default_reasoning_effort !== null) entry.reasoning_source = resolved.reasoning_source;
+};
+
 const addPublicModelCatalogEntry = (
   models: Map<string, PublicModelCatalogEntry>,
   id: string,
@@ -234,6 +250,7 @@ const addPublicModelCatalogEntry = (
     if (existing.created === undefined && typeof created === "number" && Number.isSafeInteger(created) && created > 0) {
       existing.created = created;
     }
+    if (sources.provider) mergeProviderMetadata(existing, id, sources);
     return;
   }
   models.set(id, publicModelCatalogEntry(id, provider, created, sources));

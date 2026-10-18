@@ -205,11 +205,33 @@ lock=$seed.lock
 stale_lock_seconds=15
 lock_wait_seconds=60
 
+# A verified live holder needs no reaping. Leave the gate available for its release; uncertain
+# observations still enter the gate below, where ownership is read again before any mutation.
+lock_owner_is_live() {
+  owner=$(cat "$lock/owner" 2>/dev/null) || return 1
+  case $owner in
+    *' '*) ;;
+    *) return 1 ;;
+  esac
+  owner_pid=${owner%% *}
+  started=${owner#* }
+  case $owner_pid in '' | 0 | *[!0-9]*) return 1 ;; esac
+  case $started in '' | *[!0-9]*) return 1 ;; esac
+  kill -0 "$owner_pid" 2>/dev/null
+}
+
 take_lock() {
   wait_start=$(date +%s) || die "cannot read the clock"
   blank_since=
   trap 'die "interrupted"' HUP INT TERM
   while :; do
+    [ -L "$lock" ] && die "$lock is a symbolic link"
+    if lock_owner_is_live; then
+      now=$(date +%s) || die "cannot read the clock"
+      [ $((now - wait_start)) -lt "$lock_wait_seconds" ] || die "timed out waiting for the rebuild lock $lock (owner: $owner)"
+      sleep 0.1 2>/dev/null || sleep 1
+      continue
+    fi
     if take_breaker; then
       breaker=$lock.break
       if mkdir "$lock" 2>/dev/null; then

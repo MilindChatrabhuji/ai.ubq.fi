@@ -25,11 +25,22 @@ const LITHOS_FAILOVER_LADDERS: ReadonlyMap<string, readonly string[]> = new Map(
   ["moonshotai/Kimi-K3-fast", ["moonshotai/Kimi-K3"]],
 ]);
 
+/** Canonical spellings for ladder rungs, using the same trim/case contract as model dispatch. */
+const LITHOS_CANONICAL_FAILOVER_MODELS = new Map<string, string>(
+  [...LITHOS_FAILOVER_LADDERS.entries()].flatMap(([model, ladder]) => [model, ...ladder]).map((model) => [model.toLowerCase(), model] as const)
+);
+
+const lithosCanonicalFailoverModelFor = (modelRaw: string): string => {
+  const trimmedModel = modelRaw.trim();
+  return LITHOS_CANONICAL_FAILOVER_MODELS.get(trimmedModel.toLowerCase()) ?? trimmedModel;
+};
+
 /** The ordered tiers to try after a request model refuses, or an empty list at the bottom. */
-export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => LITHOS_FAILOVER_LADDERS.get(modelRaw) ?? [];
+export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => LITHOS_FAILOVER_LADDERS.get(lithosCanonicalFailoverModelFor(modelRaw)) ?? [];
 
 /** True when `target` is a legal failover destination for `modelRaw`. */
-export const lithosIsLadderTarget = (modelRaw: string, target: string): boolean => lithosFailoverLadderFor(modelRaw).includes(target);
+export const lithosIsLadderTarget = (modelRaw: string, target: string): boolean =>
+  lithosFailoverLadderFor(modelRaw).includes(lithosCanonicalFailoverModelFor(target));
 
 /**
  * The in-process failover windows: a tier whose refusal named a reset instant
@@ -46,24 +57,27 @@ const lithosFailoverWindows = new Map<string, number>();
 /** The ladder tier this request model must start on right now, or null once the window has passed. */
 export const lithosFailoverTargetAt = (modelRaw: string, nowMs: number): string | null => {
   if (!Number.isFinite(nowMs)) return null;
-  for (const rung of [modelRaw, ...lithosFailoverLadderFor(modelRaw)]) {
+  const canonicalModel = lithosCanonicalFailoverModelFor(modelRaw);
+  for (const rung of [canonicalModel, ...lithosFailoverLadderFor(canonicalModel)]) {
     const deadlineMs = lithosFailoverWindows.get(rung);
     if (deadlineMs !== undefined && nowMs < deadlineMs) continue;
     lithosFailoverWindows.delete(rung);
-    return rung === modelRaw ? null : rung;
+    return rung === canonicalModel ? null : rung;
   }
   return null;
 };
 
 /** Opens (or extends) the refused rung's own window, inferred from its legal next target unless supplied. */
 export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number, target: string, refusedRungOverride?: string): void => {
-  const ladder = lithosFailoverLadderFor(modelRaw);
-  const targetIndex = ladder.indexOf(target);
+  const canonicalModel = lithosCanonicalFailoverModelFor(modelRaw);
+  const ladder = lithosFailoverLadderFor(canonicalModel);
+  const targetIndex = ladder.indexOf(lithosCanonicalFailoverModelFor(target));
   const deadlineMs = nowMs + waitMs;
   if (targetIndex === -1 || !Number.isFinite(nowMs) || !Number.isFinite(waitMs) || waitMs <= 0 || !Number.isFinite(deadlineMs)) return;
-  const refusedRung = refusedRungOverride ?? (targetIndex === 0 ? modelRaw : ladder[targetIndex - 1]);
-  const refusedIndex = refusedRung === modelRaw ? -1 : ladder.indexOf(refusedRung);
-  if (refusedRung !== modelRaw && refusedIndex === -1) return;
+  const inferredRefusedRung = targetIndex === 0 ? canonicalModel : ladder[targetIndex - 1];
+  const refusedRung = refusedRungOverride === undefined ? inferredRefusedRung : lithosCanonicalFailoverModelFor(refusedRungOverride);
+  const refusedIndex = refusedRung === canonicalModel ? -1 : ladder.indexOf(refusedRung);
+  if (refusedRung !== canonicalModel && refusedIndex === -1) return;
   if (refusedIndex >= targetIndex) return;
   const currentDeadlineMs = lithosFailoverWindows.get(refusedRung);
   const unexpiredDeadlineMs = currentDeadlineMs !== undefined && currentDeadlineMs > nowMs ? currentDeadlineMs : deadlineMs;
@@ -144,9 +158,9 @@ export const lithosRefusalWait = (
   return planned;
 };
 
-/** Records the absorbed wait total so a terminal can report it. */
-export const recordLithosRateLimitWaitMs = (usageContext: UsageContext | undefined, waitedMs: number): void => {
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitWaitMs = waitedMs;
+/** Records the elapsed absorbed wait total so a terminal can report it. */
+export const recordLithosRateLimitWaitMs = (usageContext: UsageContext | undefined, elapsedMs: number): void => {
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitWaitMs = elapsedMs;
 };
 
 /** One absorbed pause, logged with the header it came from. */
@@ -167,19 +181,29 @@ const lithosRetryAbortError = (signal: AbortSignal): Error => {
   return error;
 };
 
-/** Abort-aware sleep: an abandoned request never keeps waiting for a provider window. */
-export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): Promise<void> => {
-  if (milliseconds <= 0) return Promise.resolve();
+/** Abort-aware sleep: an abandoned request never keeps waiting for a provider window; the observer sees elapsed time on either outcome. */
+export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal, onElapsed?: (elapsedMs: number) => void): Promise<void> => {
+  if (milliseconds <= 0) {
+    onElapsed?.(0);
+    return Promise.resolve();
+  }
   if (signal.aborted) {
+    onElapsed?.(0);
     return Promise.reject(lithosRetryAbortError(signal));
   }
+  const startedAt = performance.now();
+  const reportElapsed = (): void => {
+    onElapsed?.(Math.max(0, Math.round(performance.now() - startedAt)));
+  };
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
+      reportElapsed();
       resolve();
     }, milliseconds);
     function onAbort(): void {
       clearTimeout(timer);
+      reportElapsed();
       reject(lithosRetryAbortError(signal));
     }
     signal.addEventListener("abort", onAbort, { once: true });
