@@ -34,7 +34,22 @@ pub struct RoutingInput {
 pub struct RoutingError {
     pub error: Box<GatewayError>,
     pub headers: Headers,
-    pub source_body: Option<gateway_core::source_json::SourceJson>,
+    pub source_body: Option<SourceRefusalBody>,
+}
+
+#[derive(Clone, Debug)]
+pub enum SourceRefusalBody {
+    Json(gateway_core::source_json::SourceJson),
+    /// Exact source HTTP-constructor failure; never a quota or paid proof.
+    InternalServerError,
+}
+impl SourceRefusalBody {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Json(body) => body.as_bytes(),
+            Self::InternalServerError => b"Internal Server Error",
+        }
+    }
 }
 impl From<GatewayError> for RoutingError {
     fn from(error: GatewayError) -> Self {
@@ -116,6 +131,7 @@ pub enum ClaudeSelection {
     NotApplicable,
     Eligible(Box<PublishedCredential>),
     Unavailable,
+    InternalServerError,
     Refused {
         status: u16,
         headers: Headers,

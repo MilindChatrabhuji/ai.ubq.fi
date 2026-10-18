@@ -12,6 +12,8 @@ pub enum ValueEncoding {
     ProfileV1,
     #[serde(rename = "profile-v2")]
     ProfileV2,
+    #[serde(rename = "source-graph-v1")]
+    SourceGraphV1,
 }
 
 /// Number bits and integer decimal strings avoid JSON numeric coercion.
