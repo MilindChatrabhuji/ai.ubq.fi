@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 gateway-core.workspace = true
+gateway-authority.workspace = true
+gateway-providers.workspace = true
 gateway-schema.workspace = true
 serde.workspace = true
 serde_json.workspace = true
