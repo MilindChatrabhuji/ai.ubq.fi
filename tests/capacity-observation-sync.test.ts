@@ -3,17 +3,32 @@ import assert from "node:assert/strict";
 
 import type { Kv, KvKey } from "#kv";
 import { handleCapacityObservationIngest } from "../src/admin/capacity-observation-sync.ts";
-import type { ProviderCapacityHistoryPoint } from "../src/provider/capacity-contract.ts";
+import { type CapacityPushState, proxyAdminChartSource } from "../src/admin/chart-source-proxy.ts";
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import {
+  PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
+  PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
+  type ProviderCapacityCodexSource,
+  type ProviderCapacityHistoryPoint,
+} from "../src/provider/capacity-contract.ts";
 import {
   isRemoteCapacityHostId,
+  MAX_REMOTE_CAPACITY_OBSERVATIONS,
   mergeCapacityHistory,
   parseRemoteCapacityObservations,
   readRemoteCapacityObservations,
+  REMOTE_CAPACITY_OBSERVATION_PREFIX,
+  type RemoteCapacityObservation,
   storeRemoteCapacityObservations,
 } from "../src/provider/capacity-analytics.ts";
 
+const acknowledgedAt = (state: CapacityPushState): number | null => state.acknowledgedSampledAtMs;
+
 const COHORT_A = "a".repeat(64);
 const COHORT_B = "b".repeat(64);
+const COHORT_C = "c".repeat(64);
+const BUCKET_MS = PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+const bucket = (index: number): number => index * BUCKET_MS;
 
 const historyPoint = (bucketStartAtMs: number, sampledAtMs: number, usedPercent: number): ProviderCapacityHistoryPoint => ({
   bucket_start_at_ms: bucketStartAtMs,
@@ -70,14 +85,53 @@ const historyPoint = (bucketStartAtMs: number, sampledAtMs: number, usedPercent:
   ],
 });
 
-const createFakeKv = (): { kv: Kv; rows: Map<string, { key: KvKey; value: unknown }> } => {
+/** Replaces one Codex slot of a fixture point. */
+const withSlot = (point: ProviderCapacityHistoryPoint, slot: 1 | 2, patch: Partial<ProviderCapacityCodexSource>): ProviderCapacityHistoryPoint => {
+  const [one, two, metered] = point.sources;
+  return {
+    ...point,
+    sources:
+      slot === 1 ? [{ ...one, ...patch } as ProviderCapacityCodexSource, two, metered] : [one, { ...two, ...patch } as ProviderCapacityCodexSource, metered],
+  };
+};
+
+const unreachable = (point: ProviderCapacityHistoryPoint, slot: 1 | 2): ProviderCapacityHistoryPoint =>
+  withSlot(point, slot, { state: "unavailable", failure_kind: "unreachable", windows: { primary: null, secondary: null } });
+
+const notConfigured = (point: ProviderCapacityHistoryPoint, slot: 1 | 2): ProviderCapacityHistoryPoint =>
+  withSlot(point, slot, { state: "unavailable", failure_kind: "not_configured", account_cohort_id: null, windows: { primary: null, secondary: null } });
+
+const remote = (point: ProviderCapacityHistoryPoint, host = "mac"): RemoteCapacityObservation => ({ host, point });
+
+const createFakeKv = () => {
   const rows = new Map<string, { key: KvKey; value: unknown }>();
+  const stats = { directSets: 0, commits: 0, largestCommit: 0 };
   const keyId = (key: KvKey): string => JSON.stringify(key);
+  const write = (key: KvKey, value: unknown): void => {
+    rows.set(keyId(key), { key: [...key], value });
+  };
   const matchesPrefix = (key: KvKey, prefix: KvKey): boolean => prefix.every((part, index) => key[index] === part);
   const fake = {
     set(key: KvKey, value: unknown) {
-      rows.set(keyId(key), { key: [...key], value });
+      stats.directSets += 1;
+      write(key, value);
       return Promise.resolve({ ok: true, versionstamp: "1" });
+    },
+    atomic() {
+      const pending: [KvKey, unknown][] = [];
+      const operation = {
+        set(key: KvKey, value: unknown) {
+          pending.push([key, value]);
+          return operation;
+        },
+        commit() {
+          stats.commits += 1;
+          stats.largestCommit = Math.max(stats.largestCommit, pending.length);
+          for (const [key, value] of pending) write(key, value);
+          return Promise.resolve({ ok: true, versionstamp: "1" });
+        },
+      };
+      return operation;
     },
     list({ prefix }: { prefix: KvKey }) {
       const entries = [...rows.values()].filter((entry) => matchesPrefix(entry.key, prefix));
@@ -86,8 +140,94 @@ const createFakeKv = (): { kv: Kv; rows: Map<string, { key: KvKey; value: unknow
       })();
     },
   };
-  return { kv: fake as unknown as Kv, rows };
+  return { kv: fake as unknown as Kv, rows, stats };
 };
+
+const ingest = (kv: Kv, body: unknown, nowMs: number): Promise<Response> =>
+  handleCapacityObservationIngest(
+    new Request("https://ai.ubq.fi/admin/providers/capacity/observations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    { kv, now: () => nowMs }
+  );
+
+/** Exercise the companion's real selection/recovery and the VPS's real validation/storage together. */
+const syncMacHistory = async (kv: Kv, history: readonly ProviderCapacityHistoryPoint[], nowMs: number, pushState: CapacityPushState): Promise<void> => {
+  await proxyAdminChartSource(new Request("http://localhost:7999/admin/providers/capacity"), new Response(JSON.stringify({ snapshot_at_ms: nowMs, history })), {
+    token: "test-token",
+    hostId: "mac",
+    isLoopbackAdmin: () => true,
+    isMacCompanionService: () => true,
+    pushState,
+    fetch: createFetchMock((input, init) =>
+      init?.method === "POST"
+        ? handleCapacityObservationIngest(new Request(input, init), { kv, now: () => nowMs })
+        : Promise.resolve(new Response(JSON.stringify({ history: [] })))
+    ),
+  });
+  await pushState.inFlight;
+};
+
+test("240 companion polls store one finalized point per bucket, including after a restart", async () => {
+  const { kv, rows, stats } = createFakeKv();
+  const state: CapacityPushState = { acknowledgedSampledAtMs: null, inFlight: null };
+  const local = new Map<number, ProviderCapacityHistoryPoint>();
+  for (let poll = 0; poll < 240; poll += 1) {
+    const nowMs = bucket(1) + poll * 30_000 + 1_000;
+    const bucketStart = Math.floor(nowMs / BUCKET_MS) * BUCKET_MS;
+    local.set(bucketStart, historyPoint(bucketStart, nowMs, 7));
+    await syncMacHistory(kv, [...local.values()], nowMs, state);
+  }
+  assert.equal(local.size, 8);
+  assert.equal(rows.size, 7); // The eighth bucket is still open.
+  await syncMacHistory(kv, [...local.values()], bucket(9), state);
+  assert.equal(rows.size, 8);
+  assert.equal(stats.commits, 8);
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(9))).map(({ point }) => point),
+    [...local.values()]
+  );
+  await syncMacHistory(kv, [...local.values()], bucket(9), { acknowledgedSampledAtMs: null, inFlight: null });
+  assert.equal(rows.size, 8);
+});
+
+test("open-bucket transitions survive without retaining intermediate companion refreshes", async () => {
+  const { kv, rows } = createFakeKv();
+  const state: CapacityPushState = { acknowledgedSampledAtMs: null, inFlight: null };
+  const exhausted = historyPoint(bucket(1), bucket(1) + 1_000, 99); // Slot two is at 100% usage.
+  const refilled = historyPoint(bucket(1), bucket(1) + 30_000, 5);
+  await syncMacHistory(kv, [exhausted, refilled], refilled.sampled_at_ms, state);
+  assert.equal(rows.size, 1);
+  const latest = historyPoint(bucket(1), bucket(1) + 60_000, 6);
+  await syncMacHistory(kv, [exhausted, latest], latest.sampled_at_ms, state);
+  assert.equal(rows.size, 1);
+  await syncMacHistory(kv, [exhausted, latest], bucket(2), state);
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(2))).map(({ point }) => point),
+    [exhausted, latest]
+  );
+});
+
+test("one row refused by the real ingest does not drop its 511 valid neighbours", async () => {
+  const { kv } = createFakeKv();
+  const state: CapacityPushState = { acknowledgedSampledAtMs: null, inFlight: null };
+  const history = Array.from({ length: MAX_REMOTE_CAPACITY_OBSERVATIONS }, (_, index) => historyPoint(bucket(index), bucket(index) + 1_000, 7));
+  const badIndex = 250;
+  const bad = history[badIndex];
+  assert.ok(bad);
+  history[badIndex] = { ...bad, bucket_start_at_ms: bad.bucket_start_at_ms + 1 }; // Unaligned: ingest rejects the whole attempted batch.
+  const acknowledgedLastSample = (): boolean => (acknowledgedAt(state) ?? -1) >= (history.at(-1)?.sampled_at_ms ?? 0);
+  for (let poll = 0; poll < 12 && !acknowledgedLastSample(); poll += 1) {
+    await syncMacHistory(kv, history, bucket(520), state);
+  }
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(520))).map(({ point }) => point),
+    history.filter((_, index) => index !== badIndex)
+  );
+  assert.equal(state.acknowledgedSampledAtMs, history.at(-1)?.sampled_at_ms);
+});
 
 test("remote capacity host ids stay bounded lowercase labels", () => {
   assert.equal(isRemoteCapacityHostId("mac"), true);
@@ -98,72 +238,190 @@ test("remote capacity host ids stay bounded lowercase labels", () => {
 });
 
 test("remote capacity observations reject any malformed row", () => {
-  const valid = historyPoint(0, 1_000, 7);
+  const valid = historyPoint(bucket(1), bucket(1) + 1_000, 7);
   assert.equal(parseRemoteCapacityObservations([valid])?.length, 1);
   assert.equal(parseRemoteCapacityObservations([]), null);
   assert.equal(parseRemoteCapacityObservations([{ ...valid, bucket_start_at_ms: -1 }]), null);
   assert.equal(parseRemoteCapacityObservations([valid, { nope: true }]), null);
 });
 
-test("remote capacity observations persist in the analytics namespace", async () => {
+test("remote capacity observations reject unaligned buckets, samples outside their bucket, and oversized batches", () => {
+  const valid = historyPoint(bucket(1), bucket(1) + 1_000, 7);
+  // A bucket that does not start on a fifteen-minute boundary.
+  assert.equal(parseRemoteCapacityObservations([historyPoint(bucket(1) + 1, bucket(1) + 1_000, 7)]), null);
+  // A sample taken before its bucket starts, or in the next bucket.
+  assert.equal(parseRemoteCapacityObservations([historyPoint(bucket(1), bucket(1) - 1, 7)]), null);
+  assert.equal(parseRemoteCapacityObservations([historyPoint(bucket(1), bucket(2), 7)]), null);
+  assert.equal(parseRemoteCapacityObservations([historyPoint(bucket(1), bucket(2) - 1, 7)])?.length, 1);
+  // One request carries less than a full week of buckets, so a whole-history re-push cannot fit in one batch.
+  assert.ok(MAX_REMOTE_CAPACITY_OBSERVATIONS < PROVIDER_CAPACITY_HISTORY_RETENTION_MS / BUCKET_MS);
+  const full = Array.from({ length: MAX_REMOTE_CAPACITY_OBSERVATIONS }, (_, index) => historyPoint(bucket(index), bucket(index) + 1, 7));
+  assert.equal(parseRemoteCapacityObservations(full)?.length, MAX_REMOTE_CAPACITY_OBSERVATIONS);
+  assert.equal(parseRemoteCapacityObservations([...full, valid]), null);
+  // A single oversized row is refused before it reaches KV.
+  assert.equal(parseRemoteCapacityObservations([withSlot(valid, 1, { label: "x".repeat(64 * 1024) })]), null);
+});
+
+test("remote capacity observations persist in the analytics namespace with their host", async () => {
   const { kv } = createFakeKv();
-  const accepted = await storeRemoteCapacityObservations(kv, "mac", [historyPoint(0, 1_000, 7), historyPoint(900_000, 1_001_000, 0)], 2_000_000);
-  assert.equal(accepted, 2);
-  const read = await readRemoteCapacityObservations(kv, 2_000_000);
-  assert.deepEqual(
-    read.map((point) => point.bucket_start_at_ms),
-    [0, 900_000]
+  const accepted = await storeRemoteCapacityObservations(
+    kv,
+    "mac",
+    [historyPoint(bucket(0), 1_000, 7), historyPoint(bucket(1), bucket(1) + 1_000, 0)],
+    bucket(2)
   );
+  assert.equal(accepted, 2);
+  const read = await readRemoteCapacityObservations(kv, bucket(2));
+  assert.deepEqual(
+    read.map(({ host, point }) => [host, point.bucket_start_at_ms]),
+    [
+      ["mac", bucket(0)],
+      ["mac", bucket(1)],
+    ]
+  );
+});
+
+test("remote capacity observations keep same-bucket transition points", async () => {
+  const { kv, rows } = createFakeKv();
+  const exhausted = historyPoint(bucket(1), bucket(1) + 1_000, 100);
+  const refilled = historyPoint(bucket(1), bucket(1) + 600_000, 0);
+  assert.equal(await storeRemoteCapacityObservations(kv, "mac", [exhausted, refilled], bucket(2)), 2);
+  const read = await readRemoteCapacityObservations(kv, bucket(2));
+  assert.deepEqual(
+    read.map(({ point }) => point.sampled_at_ms),
+    [exhausted.sampled_at_ms, refilled.sampled_at_ms]
+  );
+  assert.deepEqual(
+    [...rows.values()].map(({ key }) => key),
+    [
+      [...REMOTE_CAPACITY_OBSERVATION_PREFIX, "mac", bucket(1), exhausted.sampled_at_ms],
+      [...REMOTE_CAPACITY_OBSERVATION_PREFIX, "mac", bucket(1), refilled.sampled_at_ms],
+    ]
+  );
+});
+
+test("remote capacity observation writes are committed in bounded atomic batches", async () => {
+  const { kv, stats } = createFakeKv();
+  const points = Array.from({ length: 130 }, (_, index) => historyPoint(bucket(index), bucket(index) + 1, 7));
+  assert.equal(await storeRemoteCapacityObservations(kv, "mac", points, bucket(200)), 130);
+  assert.equal(stats.directSets, 0);
+  assert.ok(stats.commits >= 2 && stats.commits <= 3, `commits: ${stats.commits}`);
+  assert.ok(stats.largestCommit <= 64, `largest commit: ${stats.largestCommit}`);
+  assert.equal((await readRemoteCapacityObservations(kv, bucket(200))).length, 130);
 });
 
 test("remote capacity observations drop points outside the seven-day retention", async () => {
   const { kv } = createFakeKv();
   const nowMs = 8 * 24 * 60 * 60_000;
-  const accepted = await storeRemoteCapacityObservations(kv, "mac", [historyPoint(0, 1_000, 7), historyPoint(nowMs - 60_000, nowMs - 59_000, 0)], nowMs);
+  const recentBucket = nowMs - BUCKET_MS;
+  const accepted = await storeRemoteCapacityObservations(kv, "mac", [historyPoint(0, 1_000, 7), historyPoint(recentBucket, recentBucket + 1_000, 0)], nowMs);
   assert.equal(accepted, 1);
   const read = await readRemoteCapacityObservations(kv, nowMs);
   assert.equal(read.length, 1);
-  assert.equal(read[0]?.bucket_start_at_ms, nowMs - 60_000);
+  assert.equal(read[0]?.point.bucket_start_at_ms, recentBucket);
 });
 
-test("capacity history merge keeps the union and prefers the local duplicate", () => {
-  const merged = mergeCapacityHistory([historyPoint(0, 1_000, 7)], [historyPoint(0, 1_000, 99), historyPoint(900_000, 1_001_000, 0)]);
-  assert.equal(merged.length, 2);
-  assert.equal(merged.find((point) => point.sampled_at_ms === 1_000)?.sources[0]?.windows.primary?.used_percent, 7);
-  assert.equal(merged.find((point) => point.sampled_at_ms === 1_001_000)?.sources[0]?.windows.primary?.used_percent, 0);
+test("pushed samples fill only empty VPS buckets, and only when available", () => {
+  const local = [historyPoint(bucket(0), bucket(0) + 1_000, 7), historyPoint(bucket(3), bucket(3) + 1_000, 9)];
+  const merged = mergeCapacityHistory(local, [
+    // The VPS already observed this bucket: its own sample stays canonical.
+    remote(historyPoint(bucket(0), bucket(0) + 5_000, 99)),
+    // An available sample with the same slot accounts fills the gap, including its same-bucket transition point.
+    remote(historyPoint(bucket(1), bucket(1) + 1_000, 100)),
+    remote(historyPoint(bucket(1), bucket(1) + 600_000, 0)),
+    // The Mac's own unreachable or 401 sample is not a VPS outage and never enters the chart.
+    remote(unreachable(historyPoint(bucket(2), bucket(2) + 1_000, 8), 1)),
+    remote(withSlot(historyPoint(bucket(2), bucket(2) + 2_000, 8), 2, { state: "unavailable", failure_kind: "http_error", failure_status: 401 })),
+  ]);
+  assert.deepEqual(
+    merged.map((point) => [point.bucket_start_at_ms, point.sampled_at_ms]),
+    [
+      [bucket(0), bucket(0) + 1_000],
+      [bucket(1), bucket(1) + 1_000],
+      [bucket(1), bucket(1) + 600_000],
+      [bucket(3), bucket(3) + 1_000],
+    ]
+  );
+  assert.equal(merged[0]?.sources[0].windows.primary?.used_percent, 7);
+});
+
+test("pushed samples from other slot accounts never fill a VPS gap", () => {
+  const before = historyPoint(bucket(0), bucket(0) + 1_000, 7);
+  const after = withSlot(historyPoint(bucket(4), bucket(4) + 1_000, 7), 1, { account_cohort_id: COHORT_C });
+  const merged = mergeCapacityHistory(
+    [before, after],
+    [
+      // Matches the preceding VPS sample.
+      remote(historyPoint(bucket(1), bucket(1) + 1_000, 8)),
+      // Matches the following VPS sample after the VPS slot moved to another account.
+      remote(withSlot(historyPoint(bucket(3), bucket(3) + 1_000, 8), 1, { account_cohort_id: COHORT_C })),
+      // A Mac slot bound to an account neither neighbour shows would zig-zag the series.
+      remote(withSlot(historyPoint(bucket(2), bucket(2) + 1_000, 8), 2, { account_cohort_id: COHORT_C })),
+      // An unknown cohort cannot be matched.
+      remote(withSlot(historyPoint(bucket(2), bucket(2) + 2_000, 8), 1, { account_cohort_id: null })),
+      // A slot the VPS has not configured.
+      remote(notConfigured(historyPoint(bucket(2), bucket(2) + 3_000, 8), 2)),
+    ]
+  );
+  assert.deepEqual(
+    merged.map((point) => point.bucket_start_at_ms),
+    [bucket(0), bucket(1), bucket(3), bucket(4)]
+  );
+});
+
+test("pushed samples match an unconfigured slot only against an unconfigured VPS slot", () => {
+  const local = [notConfigured(historyPoint(bucket(0), bucket(0) + 1_000, 7), 2)];
+  const merged = mergeCapacityHistory(local, [
+    remote(notConfigured(historyPoint(bucket(1), bucket(1) + 1_000, 8), 2)),
+    remote(historyPoint(bucket(2), bucket(2) + 1_000, 8)),
+  ]);
+  assert.deepEqual(
+    merged.map((point) => point.bucket_start_at_ms),
+    [bucket(0), bucket(1)]
+  );
+});
+
+test("one observer fills a VPS gap bucket, and a VPS with no samples takes none", () => {
+  const local = [historyPoint(bucket(0), bucket(0) + 1_000, 7)];
+  const merged = mergeCapacityHistory(local, [
+    remote(historyPoint(bucket(1), bucket(1) + 2_000, 50), "mac-studio"),
+    remote(historyPoint(bucket(1), bucket(1) + 1_000, 8), "mac"),
+    remote(historyPoint(bucket(1), bucket(1) + 1_000, 8), "mac"),
+  ]);
+  assert.deepEqual(
+    merged.map((point) => point.sampled_at_ms),
+    [bucket(0) + 1_000, bucket(1) + 1_000]
+  );
+  assert.deepEqual(mergeCapacityHistory([], [remote(historyPoint(bucket(1), bucket(1) + 1_000, 8))]), []);
 });
 
 test("capacity observation ingest validates and stores a batch", async () => {
   const { kv } = createFakeKv();
-  const response = await handleCapacityObservationIngest(
-    new Request("https://ai.ubq.fi/admin/providers/capacity/observations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ host: "mac", history: [historyPoint(1_000_000, 1_001_000, 7)] }),
-    }),
-    { kv, now: () => 1_002_000 }
-  );
+  const response = await ingest(kv, { host: "mac", history: [historyPoint(bucket(1), bucket(1) + 1_000, 7)] }, bucket(2));
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { accepted: 1, host: "mac" });
-  assert.equal((await readRemoteCapacityObservations(kv, 1_002_000)).length, 1);
+  assert.equal((await readRemoteCapacityObservations(kv, bucket(2))).length, 1);
 });
 
 test("capacity observation ingest rejects invalid hosts and malformed rows", async () => {
+  const { kv, rows } = createFakeKv();
+  const nowMs = bucket(2);
+  assert.equal((await ingest(kv, { host: "Mac!", history: [historyPoint(bucket(1), bucket(1) + 1_000, 7)] }, nowMs)).status, 400);
+  assert.equal((await ingest(kv, { host: "mac", history: [{ nope: true }] }, nowMs)).status, 400);
+  assert.equal((await ingest(kv, { host: "mac", history: [historyPoint(bucket(1) + 1, bucket(1) + 1_000, 7)] }, nowMs)).status, 400);
+  assert.equal(rows.size, 0);
+});
+
+test("capacity observation ingest reports a failed write instead of a partial acknowledgement", async () => {
   const { kv } = createFakeKv();
-  const invalidHost = await handleCapacityObservationIngest(
-    new Request("https://ai.ubq.fi/admin/providers/capacity/observations", {
-      method: "POST",
-      body: JSON.stringify({ host: "Mac!", history: [historyPoint(0, 1_000, 7)] }),
-    }),
-    { kv, now: () => 1_000 }
-  );
-  assert.equal(invalidHost.status, 400);
-  const invalidRow = await handleCapacityObservationIngest(
-    new Request("https://ai.ubq.fi/admin/providers/capacity/observations", {
-      method: "POST",
-      body: JSON.stringify({ host: "mac", history: [{ nope: true }] }),
-    }),
-    { kv, now: () => 1_000 }
-  );
-  assert.equal(invalidRow.status, 400);
+  const failing = {
+    ...kv,
+    list: kv.list.bind(kv),
+    atomic: () => {
+      throw new Error("database is locked");
+    },
+    set: () => Promise.reject(new Error("database is locked")),
+  } as unknown as Kv;
+  const response = await ingest(failing, { host: "mac", history: [historyPoint(bucket(1), bucket(1) + 1_000, 7)] }, bucket(2));
+  assert.equal(response.status, 503);
 });

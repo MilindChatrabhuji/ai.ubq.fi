@@ -487,14 +487,19 @@ test("quota proof is exact-model and expires at its recorded reset boundary", as
   await recordClaudeCodeQuotaOutcome(kv, {
     binding: first,
     model_id: routeModel,
-    observation: observation("1"),
+    observation: observation("1", now),
     exhaustion: { window: "5h", reset_at_ms: now + 60_000 },
     response_status: 429,
+    nowMs: now,
   });
   const state = await loadClaudeCodeQuotaState(kv, first);
-  assert(claudeCodePoolProofForModel(state, first, routeModel, now));
+  const proof = claudeCodePoolProofForModel(state, first, routeModel, now);
+  assert(proof);
+  assert.equal(proof.observed_at_ms, now);
+  assert.equal(claudeCodePoolProofForModel(state, first, routeModel, now - 1), null);
   assert.equal(claudeCodePoolProofForModel(state, first, "claude-different", now), null);
-  assert.equal(claudeCodePoolProofForModel(state, first, routeModel, now + 600_000), null);
+  assert.equal(claudeCodePoolProofForModel(state, first, routeModel, proof.expires_at_ms - 1), proof);
+  assert.equal(claudeCodePoolProofForModel(state, first, routeModel, proof.expires_at_ms), null);
   const result = await route(() => Promise.resolve(success("claude-different")), "claude-different");
   assert.equal(result?.response.status, 200);
   await result.response.body?.cancel();

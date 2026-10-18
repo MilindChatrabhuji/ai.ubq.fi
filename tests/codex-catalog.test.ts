@@ -1064,7 +1064,7 @@ test("codex catalog: model picker receives the complete unique union of paid pro
       "deepseek-v4-flash-0731",
       "deepseek-v4-flash:web",
       "minimax-m2.7",
-      "ubiquity/deepseek-v4.1-flash",
+      "ubiquity/deepseek-flash",
     ]);
     assert.equal(new Set(slugs).size, slugs.length);
     assert.equal(payload.models.find((model) => model.slug === "shared-paid-model")?.visibility, "list");

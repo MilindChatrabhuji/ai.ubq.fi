@@ -39,7 +39,7 @@ class FakeElement {
   }
 
   get textContent(): string {
-    return this._text;
+    return this._text || this.children.map((child) => child.textContent).join("");
   }
 
   set textContent(value: string) {
@@ -61,6 +61,13 @@ class FakeElement {
   appendChild(node: FakeElement): FakeElement {
     this.append(node);
     return node;
+  }
+
+  replaceChildren(...nodes: FakeElement[]): void {
+    for (const child of this.children) child.parentElement = null;
+    this.children.length = 0;
+    this._text = "";
+    this.append(...nodes);
   }
 
   remove(): void {
@@ -134,20 +141,29 @@ class FakeDocument {
 
 class FakeSection {
   private readonly _elements = new Map<string, FakeElement>();
+  private readonly _children: FakeElement[] = [];
 
   querySelector(selector: string): FakeElement {
-    const id = selector.startsWith("#") ? selector.slice(1) : selector;
-    let element = this._elements.get(id);
-    if (!element) {
-      element = new FakeElement("section");
-      this._elements.set(id, element);
+    if (selector.startsWith("#")) {
+      const id = selector.slice(1);
+      let element = this._elements.get(id);
+      if (!element) {
+        element = new FakeElement("section");
+        this._elements.set(id, element);
+      }
+      return element;
     }
-    return element;
+    for (const child of this._children) {
+      if (child.matches(selector)) return child;
+      const nested = child.querySelector(selector);
+      if (nested) return nested;
+    }
+    throw new Error(`expected a section element for ${selector}`);
   }
 
-  // The view appends its read-only providers card to the real section; the
-  // follow harness never reads that card back.
-  append(): void {}
+  append(...nodes: FakeElement[]): void {
+    for (const node of nodes) this._children.push(node);
+  }
 }
 
 const requestUrlOf = (input: unknown): string => {
@@ -156,7 +172,9 @@ const requestUrlOf = (input: unknown): string => {
   return (input as { url: string }).url;
 };
 
-const createHarness = () => {
+type ProviderFetch = (path: string, signal: AbortSignal | null) => Promise<Response>;
+
+const createHarness = (providerFetch?: ProviderFetch) => {
   const globalRecord = globalThis as unknown as Record<string, unknown>;
   const originalDocument = globalRecord.document;
   const originalElement = globalRecord.Element;
@@ -188,6 +206,9 @@ const createHarness = () => {
       signals.set(threadId, init?.signal ?? null);
       return Promise.resolve({ ok: true, status: 200, body: { getReader: () => readerFor(threadId) } });
     }
+    if (parsed.pathname === "/admin/providers/selection" || parsed.pathname === "/admin/providers") {
+      if (providerFetch) return providerFetch(parsed.pathname, init?.signal ?? null);
+    }
     return Promise.reject(new Error(`unexpected fetch: ${url}`));
   }) as unknown as typeof fetch;
 
@@ -198,6 +219,7 @@ const createHarness = () => {
     apiUrl: (path: string) => `https://supervisor.test${path}`,
   });
   const list = section.querySelector("#supervisor-list");
+  const providerList = section.querySelector("[data-provider-list]");
   const followStatus = section.querySelector("#supervisor-follow-status");
   const followLog = section.querySelector("#supervisor-follow-log");
   const followStop = section.querySelector("#supervisor-follow-stop");
@@ -211,6 +233,7 @@ const createHarness = () => {
 
   return {
     view,
+    providerList,
     followStatus,
     followLog,
     followStop,
@@ -246,6 +269,177 @@ const entriesFrame = (text: string) => {
   const payload = { entries: [{ key: `late:${text}`, kind: "message", text }], sampledAtMs: 1_790_000_000_001 };
   return `event: entries\ndata: ${JSON.stringify(payload)}\n\n`;
 };
+
+const PROVIDER_SELECTION = {
+  data: {
+    providers: [
+      {
+        id: "codex",
+        label: "Codex",
+        tier: "subscription",
+        tier_label: "Subscription",
+        health_key: "codex",
+        model_count: 1,
+        endpoints: ["responses"],
+      },
+    ],
+  },
+};
+const PROVIDER_HEALTH = { codex: { configured: true, state: "healthy" } };
+
+const providerResponse = (body: unknown, status = 200): Response => new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
+
+type PendingProvider = {
+  path: string;
+  resolve: (response: Response) => void;
+  reject: (error: unknown) => void;
+};
+
+type ProviderFailure = { name: string; rejected: true } | { name: string; rejected: false; selection: Response; health: Response };
+
+const createProviderQueue = () => {
+  const pending: PendingProvider[] = [];
+  const fetch: ProviderFetch = (path) =>
+    new Promise<Response>((resolve, reject) => {
+      pending.push({ path, resolve, reject });
+    });
+  const resolveRefresh = (index: number, selection: Response, health: Response): void => {
+    const requests = pending.splice(index * 2, 2);
+    assert.equal(requests.length, 2, `expected provider refresh ${index}`);
+    assert.equal(requests[0]?.path, "/admin/providers/selection");
+    assert.equal(requests[1]?.path, "/admin/providers");
+    requests[0]?.resolve(selection);
+    requests[1]?.resolve(health);
+  };
+  const rejectRefresh = (index: number): void => {
+    const requests = pending.splice(index * 2, 2);
+    assert.equal(requests.length, 2, `expected provider refresh ${index}`);
+    const error = new Error("provider request failed");
+    requests[0]?.reject(error);
+    requests[1]?.reject(error);
+  };
+  return { fetch, resolveRefresh, rejectRefresh };
+};
+
+const startProviderRefresh = async (harness: ReturnType<typeof createHarness>): Promise<void> => {
+  harness.view.setActive(false);
+  harness.view.setActive(true);
+  await flush();
+};
+
+test("a provider failure clears a previously healthy strip", async () => {
+  const failures: ProviderFailure[] = [
+    { name: "selection 502", rejected: false, selection: providerResponse({}, 502), health: providerResponse(PROVIDER_HEALTH) },
+    { name: "health 500", rejected: false, selection: providerResponse(PROVIDER_SELECTION), health: providerResponse({}, 500) },
+    { name: "malformed body", rejected: false, selection: providerResponse("not json"), health: providerResponse(PROVIDER_HEALTH) },
+    { name: "empty provider list", rejected: false, selection: providerResponse({ data: { providers: [] } }), health: providerResponse(PROVIDER_HEALTH) },
+    { name: "rejected fetch", rejected: true },
+  ];
+
+  for (const failure of failures) {
+    const queue = createProviderQueue();
+    const harness = createHarness(queue.fetch);
+    try {
+      harness.view.setActive(true);
+      await flush();
+      queue.resolveRefresh(0, providerResponse(PROVIDER_SELECTION), providerResponse(PROVIDER_HEALTH));
+      await flush();
+      await flush();
+      assert.match(harness.providerList.textContent, /Health healthy/);
+
+      await startProviderRefresh(harness);
+      if (failure.rejected) queue.rejectRefresh(0);
+      else queue.resolveRefresh(0, failure.selection, failure.health);
+      await flush();
+      await flush();
+      assert.doesNotMatch(harness.providerList.textContent, /Health healthy/, failure.name);
+      assert.equal(harness.providerList.children[0]?.attributes.get("role"), "listitem");
+    } finally {
+      harness.restore();
+    }
+  }
+});
+
+test("a superseded provider refresh cannot overwrite a newer unavailable state", async () => {
+  const queue = createProviderQueue();
+  const harness = createHarness(queue.fetch);
+  try {
+    harness.view.setActive(true);
+    await flush();
+    await startProviderRefresh(harness);
+    queue.resolveRefresh(1, providerResponse({}, 502), providerResponse({}, 500));
+    await flush();
+    await flush();
+    assert.match(harness.providerList.textContent, /unavailable/);
+
+    queue.resolveRefresh(0, providerResponse(PROVIDER_SELECTION), providerResponse(PROVIDER_HEALTH));
+    await flush();
+    await flush();
+    assert.doesNotMatch(harness.providerList.textContent, /Health healthy/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("a superseded provider failure cannot clear a newer healthy state", async () => {
+  const queue = createProviderQueue();
+  const harness = createHarness(queue.fetch);
+  try {
+    harness.view.setActive(true);
+    await flush();
+    await startProviderRefresh(harness);
+    queue.resolveRefresh(1, providerResponse(PROVIDER_SELECTION), providerResponse(PROVIDER_HEALTH));
+    await flush();
+    await flush();
+    assert.match(harness.providerList.textContent, /Health healthy/);
+
+    queue.rejectRefresh(0);
+    await flush();
+    await flush();
+    assert.match(harness.providerList.textContent, /Health healthy/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("a provider timeout clears the previous healthy strip", async () => {
+  const timeoutController = new AbortController();
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const timeoutApi = AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal };
+  timeoutApi.timeout = () => timeoutController.signal;
+  let calls = 0;
+  const providerFetch: ProviderFetch = (path, signal) => {
+    calls += 1;
+    if (calls <= 2) {
+      return Promise.resolve(path === "/admin/providers/selection" ? providerResponse(PROVIDER_SELECTION) : providerResponse(PROVIDER_HEALTH));
+    }
+    return new Promise<Response>((_resolve, reject) => {
+      const abort = () => {
+        const reason: unknown = signal?.reason;
+        reject(reason instanceof Error ? reason : new DOMException("timed out", "TimeoutError"));
+      };
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
+  const harness = createHarness(providerFetch);
+  try {
+    harness.view.setActive(true);
+    await flush();
+    await flush();
+    assert.match(harness.providerList.textContent, /Health healthy/);
+
+    await startProviderRefresh(harness);
+    timeoutController.abort(new DOMException("timed out", "TimeoutError"));
+    await flush();
+    await flush();
+    assert.doesNotMatch(harness.providerList.textContent, /Health healthy/);
+    assert.match(harness.providerList.textContent, /previous observations cleared/);
+  } finally {
+    harness.restore();
+    timeoutApi.timeout = originalTimeout;
+  }
+});
 
 test("a late abort rejection from a superseded follow never reports against or clears the new session", async () => {
   const harness = createHarness();
