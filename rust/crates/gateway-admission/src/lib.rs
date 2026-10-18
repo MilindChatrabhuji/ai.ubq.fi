@@ -78,10 +78,18 @@ pub enum LocalOverloadCause {
 }
 
 pub enum AdmissionResult {
-    Admitted { permit: Permit, waited_ms: u64 },
+    Admitted {
+        permit: Permit,
+        waited_ms: u64,
+    },
     Bypassed,
-    LocalOverload { cause: LocalOverloadCause, waited_ms: u64 },
-    CallerAborted { waited_ms: u64 },
+    LocalOverload {
+        cause: LocalOverloadCause,
+        waited_ms: u64,
+    },
+    CallerAborted {
+        waited_ms: u64,
+    },
 }
 
 /// Exact src/handler/admission.ts labels. Models and realtime are excluded.
@@ -155,8 +163,7 @@ enum Decision {
 /// Source Math.max(0, Math.round(now - queuedAt)), including fractional ms.
 fn elapsed_ms(now: Duration, since: Duration) -> u64 {
     let elapsed = now.saturating_sub(since);
-    let rounded = elapsed.as_millis()
-        + u128::from(elapsed.subsec_nanos() % 1_000_000 >= 500_000);
+    let rounded = elapsed.as_millis() + u128::from(elapsed.subsec_nanos() % 1_000_000 >= 500_000);
     u64::try_from(rounded).unwrap_or(u64::MAX)
 }
 
@@ -224,7 +231,11 @@ impl AdmissionController {
             if !state.waiting.contains_key(&principal) {
                 state.turns.push_back(principal.clone());
             }
-            state.waiting.entry(principal).or_default().push_back(waiter.clone());
+            state
+                .waiting
+                .entry(principal)
+                .or_default()
+                .push_back(waiter.clone());
             state.waiting_count += 1;
         }
         drop(state);
@@ -284,7 +295,12 @@ impl State {
             let Some(principal) = self.turns.pop_front() else {
                 break;
             };
-            let Some(waiter) = self.waiting.get(&principal).and_then(|queue| queue.front()).cloned() else {
+            let Some(waiter) = self
+                .waiting
+                .get(&principal)
+                .and_then(|queue| queue.front())
+                .cloned()
+            else {
                 continue;
             };
             let entry = waiter.borrow();
@@ -292,7 +308,10 @@ impl State {
             let refused = if entry.cancellation.is_cancelled() {
                 Some(Decision::Aborted(waited))
             } else if waited >= limits.max_queue_wait_ms {
-                Some(Decision::Overloaded(LocalOverloadCause::QueueWaitTimeout, waited))
+                Some(Decision::Overloaded(
+                    LocalOverloadCause::QueueWaitTimeout,
+                    waited,
+                ))
             } else {
                 None
             };
@@ -319,7 +338,10 @@ impl Inner {
         let mut wakes = Vec::new();
         {
             let mut state = self.state.borrow_mut();
-            state.active = state.active.checked_sub(1).expect("A held permit is active");
+            state.active = state
+                .active
+                .checked_sub(1)
+                .expect("A held permit is active");
             state.pump(self.clock.now(), self.limits, &mut wakes);
         }
         for waker in wakes {
@@ -393,7 +415,10 @@ impl Future for Acquisition<'_> {
             let now = this.inner.clock.now();
             let waited = elapsed_ms(now, this.waiter.borrow().queued_at);
             let cancelled = this.cancellation.is_cancelled();
-            let wait_ready = this.wait.as_mut().is_some_and(|wait| wait.as_mut().poll(context).is_ready());
+            let wait_ready = this
+                .wait
+                .as_mut()
+                .is_some_and(|wait| wait.as_mut().poll(context).is_ready());
             if cancelled || waited >= this.inner.limits.max_queue_wait_ms || wait_ready {
                 let decision = if this.cancellation.is_cancelled() {
                     Decision::Aborted(waited)
@@ -403,7 +428,10 @@ impl Future for Acquisition<'_> {
                 // This future is already being polled, so its waker need not
                 // wake itself after removal. Other pending futures are intact.
                 this.waiter.borrow_mut().waker = None;
-                this.inner.state.borrow_mut().settle(&this.waiter, decision, &mut Vec::new());
+                this.inner
+                    .state
+                    .borrow_mut()
+                    .settle(&this.waiter, decision, &mut Vec::new());
             }
         }
         let Some(decision) = this.waiter.borrow_mut().result.take() else {
@@ -422,7 +450,9 @@ impl Future for Acquisition<'_> {
                 waited_ms,
             },
             Decision::Bypassed => AdmissionResult::Bypassed,
-            Decision::Overloaded(cause, waited_ms) => AdmissionResult::LocalOverload { cause, waited_ms },
+            Decision::Overloaded(cause, waited_ms) => {
+                AdmissionResult::LocalOverload { cause, waited_ms }
+            }
             Decision::Aborted(waited_ms) => AdmissionResult::CallerAborted { waited_ms },
         })
     }
