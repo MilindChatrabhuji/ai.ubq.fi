@@ -79,7 +79,7 @@ const { buildDeepSeekWaterfallCodexRecord } = await import("../src/catalog/model
 const { handleModels } = await import("../src/models/catalog.ts");
 const { DEEPSEEK_WATERFALL_MODEL_ID } = await import("../src/deepseek/waterfall.ts");
 const { storeCodexCatalog } = await import("../src/catalog/store.ts");
-const { CODEX_CATALOG_AUTH_GENERATION_KEY } = await import("../src/catalog/types.ts");
+const { CODEX_CATALOG_AUTH_GENERATION_KEY, CODEX_CATALOG_FRESH_MS } = await import("../src/catalog/types.ts");
 const { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
 const { setKvForTest } = await import("../src/kv.ts");
 const { CODEX_MODELS_WHITELIST_KV_KEY } = await import("../src/models/codex-models-whitelist.ts");
@@ -273,6 +273,30 @@ test("codex catalog: an empty whitelist is no filter and OpenRouter rows still l
   });
 });
 
+test("codex catalog: the metered fallback omits disabled OpenRouter rows with an empty whitelist", async () => {
+  await withFixture([], async () => {
+    kvStore.set(keyToString([...PROVIDER_SELECTION_KV_KEY]), {
+      value: { provider_ids: ["codex", "deepseek"], updated_at_ms: 1 },
+      versionstamp: nextVersion(),
+    });
+    resetProviderSelectionCacheForTest();
+    process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = createFetchMock(() => Promise.resolve(new Response("unavailable", { status: 503 })));
+    try {
+      const response = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as { models: Record<string, unknown>[] };
+      const slugs = payload.models.map((model) => model.slug);
+      assert.equal(slugs.includes("vendor/alpha"), false);
+      assert.equal(slugs.includes("vendor/beta"), false);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("codex catalog: an active whitelist filters a fresh stored-catalog hit instead of short-circuiting", async () => {
   await withFixture(["gpt-0.100.0"], async () => {
     kvStore.set(keyToString([...PROVIDER_SELECTION_KV_KEY]), { value: { provider_ids: ["codex"], updated_at_ms: 1 }, versionstamp: nextVersion() });
@@ -351,6 +375,54 @@ test("codex catalog: served-byte ETags change when OpenRouter enriches an unchan
       assert.equal(current.headers.get("ETag"), changedTag);
       assert.equal(await current.text(), "");
     } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("codex catalog: revalidation reapplies narrower OpenRouter windows to the source body", async () => {
+  await withFixture(["gpt-6-astra"], async () => {
+    const originalFetch = globalThis.fetch;
+    const originalNow = Date.now;
+    let now = originalNow();
+    Date.now = () => now;
+    try {
+      resetOpenRouterModelsCacheForTest();
+      await fetchOpenRouterModels({
+        force: true,
+        fetcher: () => Promise.resolve(Response.json({ data: [{ id: "openai/gpt-6-astra", context_length: 1_050_000 }] })),
+      });
+      const sourceBody = JSON.stringify({ models: [{ slug: "gpt-6-astra", context_window: 272_000, max_context_window: 872_000 }] });
+      assert.equal(
+        await storeCodexCatalog(kvStub, {
+          clientVersion: "0.100.0",
+          authGeneration: AUTH_GENERATION,
+          body: sourceBody,
+          etag: '"catalog-etag"',
+          fetchedAtMs: now - CODEX_CATALOG_FRESH_MS - 1,
+        }),
+        true
+      );
+      let upstreamIfNoneMatch: string | null = null;
+      globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamIfNoneMatch = new Request(input, init).headers.get("If-None-Match");
+        return Promise.resolve(new Response(null, { status: 304, headers: { ETag: '"catalog-etag"' } }));
+      });
+      const first = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
+      const firstModel = ((await first.json()) as { models: { context_window: number; max_context_window: number }[] }).models[0];
+      assert.deepEqual([firstModel.context_window, firstModel.max_context_window], [1_050_000, 1_050_000]);
+      assert.equal(upstreamIfNoneMatch, '"catalog-etag"');
+
+      await fetchOpenRouterModels({
+        force: true,
+        fetcher: () => Promise.resolve(Response.json({ data: [{ id: "openai/gpt-6-astra", context_length: 128_000 }] })),
+      });
+      now += CODEX_CATALOG_FRESH_MS + 1;
+      const second = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
+      const secondModel = ((await second.json()) as { models: { context_window: number; max_context_window: number }[] }).models[0];
+      assert.deepEqual([secondModel.context_window, secondModel.max_context_window], [872_000, 872_000]);
+    } finally {
+      Date.now = originalNow;
       globalThis.fetch = originalFetch;
     }
   });

@@ -297,12 +297,26 @@ export default tsEslint.config(
     },
   },
   {
-    // DIVERGENCE: this presenter regression executes only bounded functions
+    // DIVERGENCE: these admin regressions execute only bounded functions
     // from the tracked static/admin.js text in a fixture VM. No user input,
     // application bootstrap, credentials or network enter that context.
     // Measured 2026-10-03: the shipped status/DOM cases pass; code-eval alone
-    // flags this intentional execution. Keep the exception to this one test.
-    files: ["tests/admin-capacity-status.test.ts"],
+    // flags this intentional execution. Measured 2026-10-17: the Models
+    // save-pending cases (#669), which run the shipped whitelist save handler
+    // and checkbox listener the same way, pass; code-eval alone flags their
+    // VM call. Keep the exception to these named tests.
+    files: ["tests/admin-capacity-status.test.ts", "tests/admin-models-save-pending.test.ts"],
+    rules: { "sonarjs/code-eval": "off" },
+  },
+  {
+    // DIVERGENCE: the bridge regression evaluates only its tracked, transpiled
+    // driver graph in a fixture VM with Bun absent and fake command/runtime
+    // capabilities. The real OS fixture network boundary remains in force;
+    // no user source, credentials or provider calls enter the realm.
+    // Measured 2026-10-18: all 10 bridge cases pass, including verified-runtime
+    // preparation and corrupt-runtime/archive refusal. code-eval flags the
+    // intentional SourceTextModule construction; keep this one-file exception.
+    files: ["ops/tests/vps-bridge-host.test.ts"],
     rules: { "sonarjs/code-eval": "off" },
   },
   {

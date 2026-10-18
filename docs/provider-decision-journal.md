@@ -131,11 +131,14 @@ telemetry) and `src/provider/lithos-handlers.ts` (the failover step in the dispa
 health-verified.
 
 Live acceptance 2026-09-24 15:20Z on the VPS: a 96-way concurrent Ultra burst over the loopback produced 54
-`lithos_rate_limit_failover` events and 54 terminals served by `deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat` - every
-failover recovered - alongside 42 absorbed waits. The 30 requests that still ended 429 were that burst saturating both
-tiers (96 requests against two 60-request buckets) and exhausting the wait budget. A public authenticated streamed
-`/v1/responses` with tools and `reasoning.effort: max` returned a `get_weather` `function_call` and `response.completed`
-on the same release.
+`lithos_rate_limit_failover` events and 54 `request_terminal` records carrying
+`rate_limit_failover_model=deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat`, alongside 42 absorbed waits (counts from the VPS
+`journalctl -u ai-ubq-fi.service` output). These figures show 54 failovers were attempted and 54 terminals carried the
+sibling marker; they do not establish that 54 requests recovered. The failover marker is written before the sibling is
+attempted, and the terminal field is emitted on every terminal, so no request-id outcome join was captured for this
+burst. The 30 requests that still ended 429 were that burst saturating both tiers (96 requests against two 60-request
+buckets) and exhausting the wait budget. A public authenticated streamed `/v1/responses` with tools and
+`reasoning.effort: max` returned a `get_weather` `function_call` and `response.completed` on the same release.
 
 ## 2026-09-24 — A streamed LithosAI refusal is absorbed for up to five minutes behind the open stream
 

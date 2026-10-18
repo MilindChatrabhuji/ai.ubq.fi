@@ -129,6 +129,7 @@ const runnerFixture = (directory: string): void => {
   writeFileSync(join(directory, "scripts/test-runner.ts"), readFileSync("scripts/test-runner.ts", "utf8"));
   symlinkSync(resolve("scripts/test-network.ts"), join(directory, "scripts/test-network.ts"));
   symlinkSync(resolve("scripts/test-native-kv.ts"), join(directory, "scripts/test-native-kv.ts"));
+  symlinkSync(resolve("scripts/test-scope.ts"), join(directory, "scripts/test-scope.ts"));
   writeFileSync(join(directory, "bun.lock"), "{}\n");
 };
 const runFixture = async (directory: string, args: readonly string[]): Promise<{ code: number; output: string }> => {
@@ -410,7 +411,7 @@ test("combined verify includes the benchmark stage after an earlier failed gate"
     const receipt = join(directory, "gates.txt");
     const child = Bun.spawn(["/bin/sh", "scripts/verify.sh", bindingArgument()], {
       cwd: directory,
-      env: { PATH: binaryDirectory + ":/usr/bin:/bin", UOS_GATE_RECEIPT: receipt },
+      env: { PATH: binaryDirectory + ":/usr/bin:/bin", TEST_SCOPE_FORCE: "1", UOS_GATE_RECEIPT: receipt },
       stdout: "pipe",
       stderr: "pipe",
     });

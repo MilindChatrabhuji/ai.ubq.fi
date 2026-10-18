@@ -1,9 +1,11 @@
-// `ubiquity/deepseek-v4.1-flash` — the synthetic DeepSeek V4.1 Flash model that
-// walks the measured provider waterfall on the client's behalf. The order is
-// data from the 2026-10-06 benchmark (docs/deepseek-waterfall-model-plan.md)
-// with the 2026-10-07 economy reorder (docs/DECISIONS.md), not control flow:
-// the cost-first order runs the three direct routes, then the two paid hops
-// through the ordinary paid pipeline, and pins each paid hop to its own tier.
+// `ubiquity/deepseek-flash` — the synthetic, versionless DeepSeek Flash model
+// that walks the measured provider waterfall on the client's behalf. The order
+// is data from the 2026-10-06 benchmark (docs/deepseek-waterfall-model-plan.md)
+// with the 2026-10-07 economy reorder (docs/DECISIONS.md), not control flow: the
+// cost-first order runs the direct routes, then the paid hops through the
+// ordinary paid pipeline, and pins each paid hop to its own tier. Provider model
+// ids are the provider-owned latest aliases, so a DeepSeek release does not
+// require a gateway rename or a per-release code change.
 
 import type { DeepSeekWaterfallFallbackReason } from "../openai-telemetry.ts";
 import { readMeteredApiKey } from "../provider/metered.ts";
@@ -13,11 +15,14 @@ import { readLithosApiKey } from "../provider/lithos.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { GATEWAY_PROVIDER_ID } from "../provider/presentation.ts";
 import { isProviderEnabled, type ProviderSelection } from "../provider/selection.ts";
+import { DEEPSEEK_FLASH_FALLBACK_ALIASES, type DeepSeekFlashProvider } from "./flash-aliases.ts";
 
-export const DEEPSEEK_WATERFALL_MODEL_ID = "ubiquity/deepseek-v4.1-flash";
-export const DEEPSEEK_WATERFALL_DISPLAY_NAME = "Ubiquity DeepSeek V4.1 Flash";
+export const DEEPSEEK_WATERFALL_MODEL_ID = "ubiquity/deepseek-flash";
+/** The pre-rename id remains accepted for clients and saved sessions. */
+export const DEEPSEEK_WATERFALL_LEGACY_MODEL_ID = "ubiquity/deepseek-v4.1-flash";
+export const DEEPSEEK_WATERFALL_DISPLAY_NAME = "Ubiquity DeepSeek Flash";
 export const DEEPSEEK_WATERFALL_DESCRIPTION =
-  "Cost-first DeepSeek V4.1 Flash waterfall: LithosAI, then the official DeepSeek API, then OpenRouter, then Surplus, then OpenLux. Falls back only on infrastructure or serving failures.";
+  "Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures.";
 export const DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS = 1_048_576;
 export const DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
 export const DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT = 891_289;
@@ -26,14 +31,14 @@ export const DEEPSEEK_WATERFALL_CREATED = 1_791_244_800;
 export const DEEPSEEK_WATERFALL_REASONING_LEVELS = ["low", "high", "max"] as const;
 export const DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL = "high";
 
-export type DeepSeekWaterfallProvider = "lithos" | "deepseek" | "openrouter" | "surplus" | "openlux";
+export type DeepSeekWaterfallProvider = DeepSeekFlashProvider;
 
 /**
- * The paid catalogue id whose Surplus tier is the waterfall's final hop. The
- * hop re-enters the ordinary Responses pipeline under this id so admission,
- * reservation and ledger settlement stay the paid path's.
+ * The paid catalogue alias used by the Surplus and OpenLux hops. Paid hops
+ * re-enter the ordinary Responses pipeline under this provider-owned alias so
+ * admission, reservation and ledger settlement stay the paid path's.
  */
-export const DEEPSEEK_WATERFALL_PAID_MODEL_ID = "deepseek-v4.1-flash";
+export const DEEPSEEK_WATERFALL_PAID_MODEL_ID = DEEPSEEK_FLASH_FALLBACK_ALIASES.models.surplus;
 
 /**
  * The cost-first economy order (2026-10-07): LithosAI Base and the DeepSeek
@@ -43,14 +48,11 @@ export const DEEPSEEK_WATERFALL_PAID_MODEL_ID = "deepseek-v4.1-flash";
  */
 export const DEEPSEEK_WATERFALL_ORDER: readonly DeepSeekWaterfallProvider[] = ["lithos", "deepseek", "openrouter", "surplus", "openlux"];
 
-/** The provider-specific id each hop is dispatched with. */
-export const DEEPSEEK_WATERFALL_PROVIDER_MODEL: Readonly<Record<DeepSeekWaterfallProvider, string>> = {
-  lithos: "deepseek-ai/DeepSeek-V4.1-Flash",
-  deepseek: "deepseek-flash",
-  openrouter: "deepseek/deepseek-v4.1-flash",
-  surplus: DEEPSEEK_WATERFALL_PAID_MODEL_ID,
-  openlux: DEEPSEEK_WATERFALL_PAID_MODEL_ID,
-};
+/**
+ * The provider-owned latest alias each hop is dispatched with. These are not
+ * gateway release pins: no snapshot date or gateway-side version is encoded.
+ */
+export const DEEPSEEK_WATERFALL_PROVIDER_MODEL: Readonly<Record<DeepSeekWaterfallProvider, string>> = DEEPSEEK_FLASH_FALLBACK_ALIASES.models;
 
 /**
  * The paid tier each paid hop is pinned to. Both paid hops re-enter the
@@ -65,7 +67,10 @@ export const DEEPSEEK_WATERFALL_PAID_PIN: Readonly<Partial<Record<DeepSeekWaterf
   openlux: ["metered"],
 };
 
-export const isDeepSeekWaterfallModel = (model: string): boolean => model.trim().toLowerCase() === DEEPSEEK_WATERFALL_MODEL_ID;
+export const isDeepSeekWaterfallModel = (model: string): boolean => {
+  const normalized = model.trim().toLowerCase();
+  return normalized === DEEPSEEK_WATERFALL_MODEL_ID || normalized === DEEPSEEK_WATERFALL_LEGACY_MODEL_ID;
+};
 
 export const isDeepSeekWaterfallReasoningLevel = (effort: string): boolean => (DEEPSEEK_WATERFALL_REASONING_LEVELS as readonly string[]).includes(effort);
 

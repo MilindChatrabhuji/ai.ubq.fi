@@ -1,16 +1,33 @@
-# The `ubiquity/deepseek-v4.1-flash` waterfall model — implementation plan
+# The `ubiquity/deepseek-flash` waterfall model — implementation plan
 
 Decision: one synthetic model id that the gateway serves by walking the measured provider order on the client's behalf.
 Agents keep addressing one id; the gateway owns provider choice, failover, and evidence.
 
 ## Identity and wire
 
-- Model id: `ubiquity/deepseek-v4.1-flash`; display name: `Ubiquity DeepSeek V4.1 Flash`; description states the
-  automatic provider fallback.
+- Model id: `ubiquity/deepseek-flash`; display name: `Ubiquity DeepSeek Flash`; description states the automatic
+  provider fallback. The pre-rename id `ubiquity/deepseek-v4.1-flash` stays accepted as a hidden compatibility alias.
 - Wire: `/v1/responses` only (the subagent wire). Chat Completions is out of scope for phase 1.
-- Provider-specific ids stay unchanged: `deepseek/deepseek-v4.1-flash` (OpenRouter), `deepseek-ai/DeepSeek-V4.1-Flash`
-  (LithosAI), `deepseek-flash` (official), `deepseek-v4.1-flash` (paid catalogue for Surplus and OpenLux). Operators
-  keep the existing provider-selection pinning, so benchmark batches can still force a single provider.
+- Provider-specific ids are the provider-owned latest aliases listed below. Operators keep the existing
+  provider-selection pinning, so benchmark batches can still force a single provider.
+
+## Latest provider aliases
+
+The gateway encodes no DeepSeek release number or snapshot date in the synthetic identity. At request time it resolves
+each provider's latest Flash alias from the cached provider catalogues:
+
+- official DeepSeek: always `deepseek-flash`
+- OpenRouter: the explicit `~deepseek/deepseek-flash-latest` alias when present
+- LithosAI, Surplus, OpenLux: the undated base id of the newest Flash entry the provider advertises
+
+The fallback aliases are `deepseek-ai/DeepSeek-V4.1-Flash`, `deepseek-v4.1-flash`, and the same paid alias, used only
+while a catalogue is cold or unreadable. Every configured provider stays in the hop plan; a catalogue gap never removes
+a provider. LithosAI republished its base `deepseek-ai/DeepSeek-V4.1-Flash` alias under the same id with a new creation
+instant on 2026-10-17. If a provider later adds a new base id such as `deepseek-v4.2-flash`, the resolver selects it
+automatically. No gateway release pin or release-date parser exists.
+
+The admin metadata-refresh button still force-fetches the provider catalogues, but the synthetic route does not depend
+on their release dates. Paid hops use `deepseek-v4.1-flash`, the base paid alias already present in key policies.
 
 ## Order and semantics
 
@@ -83,7 +100,7 @@ Phase 1 shipped as PR #938 (merged `05f59243`). Phase 2 executes with these conc
      `buildResponsesDelivery` → `deliverPreparedResponses`) from `src/responses-handler.ts` as one function and call it
      from both the ordinary router and the waterfall, so nothing is duplicated.
    - The waterfall handler keeps `rawBody` (its dispatch branch gains the argument) and, for the final hop, builds a
-     fresh `Request` whose body is `{...rawBody, model: "deepseek-v4.1-flash"}` and calls that tail. Admission,
+     fresh `Request` whose body is `{...rawBody, model: <the resolved paid snapshot id>}` and calls that tail. Admission,
      reservation and ledger settlement stay exactly the paid path's.
    - `fetchResponsesWithPaidFallback` gains an optional `allowedPaidProviders` filter (default unchanged) so this hop
      pins `["surplus"]` and can never silently advance to metered/OpenLux.

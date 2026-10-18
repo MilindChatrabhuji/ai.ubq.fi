@@ -1,8 +1,10 @@
 import { prepareReleasePayload, verifyReleasePayload, releaseSourceTree, type BunReleaseManifest } from "./release-artifact.ts";
 import { chmod, lstat, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runtimePath, selectedRuntime, verifyRuntimeBinary } from "./bun-runtime.ts";
 import type { NativeKvArtifactBinding } from "../src/storage/native-addon.ts";
-import { missing } from "./io.ts";
+import { digest, hostRuntime, missing, runOutput } from "./io.ts";
 const readTextFile = (path: string): Promise<string> => readFile(path, "utf8");
 /** Shared immutable-release primitives for the existing CLI and bound controller. */
 export const VPS_UNIT_SHA256 = "6563f11090766cc784361bc71a0c9c244bfa41c0f0e2163355a1f558000d3d44";
@@ -37,6 +39,32 @@ export function bindPreparedVpsPayload(inputs: PreparedVpsPayload): VpsPayloadPr
     return await prepareReleasePayload(root, sha, archive, `${dependencies}/node-api-headers/include`, nativeArtifact, dependencies);
   };
 }
+/** Deno bridge capability: prepare only in the independently verified, already-installed Bun runtime. */
+export function bindBunVpsPayload(runtimeRoot: string): VpsPayloadPreparation {
+  const root = resolve(runtimeRoot);
+  const entrypoint = fileURLToPath(new URL("./release-artifact.ts", import.meta.url));
+  const configuration = fileURLToPath(new URL("./runtime-bunfig.toml", import.meta.url));
+  return async (release, sha, archive) => {
+    const target = resolve(release);
+    const artifact = selectedRuntime();
+    const binary = runtimePath(root, artifact);
+    await verifyRuntimeBinary(binary, artifact);
+    const configInfo = await lstat(configuration);
+    if (
+      !configInfo.isFile() ||
+      configInfo.isSymbolicLink() ||
+      digest(await readFile(configuration)) !== "ffdc178d11d982efb34166963791f34b630aad6341f9fab8b252353189b50baa"
+    )
+      throw new Error("Pinned bridge Bun configuration is unavailable or invalid");
+    await runOutput(binary, [`--config=${configuration}`, "--no-env-file", "--no-install", entrypoint, "prepare", target, sha, archive], {
+      cwd: root,
+      sparse: true,
+    });
+    const manifest = await verifyReleasePayload(target, sha);
+    if (manifest.source_archive_sha256 !== archive) throw new Error("Prepared VPS payload source archive changed");
+    return manifest;
+  };
+}
 async function removeTemporary(path: string): Promise<void> {
   try {
     await rm(path);
@@ -49,7 +77,7 @@ export class ImmutableVpsReleaseStore {
   constructor(
     readonly root: string,
     private readonly _run: VpsCommand,
-    private readonly _preparePayload: VpsPayloadPreparation = prepareReleasePayload
+    private readonly _preparePayload: VpsPayloadPreparation = hostRuntime().kind === "bun" ? prepareReleasePayload : bindBunVpsPayload(root)
   ) {}
   absolute(path: string): string {
     return `${this.root}/${path}`;

@@ -54,6 +54,16 @@ const syntheticPin = (overrides: Partial<OpenAiSpecPin> = {}): OpenAiSpecPin => 
   ...overrides,
 });
 
+const REPOSITORY_API = "https://api.github.com/repos/openai/openai-openapi";
+const officialHistory = (status = "ahead", requests: string[] = [], branch = "main") => {
+  return (location: string): Promise<unknown> => {
+    requests.push(location);
+    if (location === REPOSITORY_API) return Promise.resolve({ default_branch: branch });
+    assert.match(location, new RegExp(`^${REPOSITORY_API}/compare/[0-9a-f]{40}\\.\\.\\.${encodeURIComponent(branch)}$`));
+    return Promise.resolve({ status });
+  };
+};
+
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -145,7 +155,9 @@ test("re-pinning records the new revision and then gates the runtime against it"
   let written: OpenAiSpecPin | null = null;
   const read: string[] = [];
   const errors: string[] = [];
+  const historyRequests: string[] = [];
   const exitCode = await runSpecDriftCheck(["--repin", COMMIT], {
+    readGitHub: officialHistory("ahead", historyRequests, "official/spec"),
     readSpec: (location) => {
       read.push(location);
       return Promise.resolve(SYNTHETIC_SPEC);
@@ -159,8 +171,217 @@ test("re-pinning records the new revision and then gates the runtime against it"
   });
   assert.deepEqual(read, [pinnedSpecSource(COMMIT)]);
   assert.deepEqual(written, syntheticPin());
+  assert.deepEqual(historyRequests, [REPOSITORY_API, `${REPOSITORY_API}/compare/${COMMIT}...official%2Fspec`]);
   // The synthetic surfaces differ from the runtime allowlists, so the gate reports drift after re-pinning.
   assert.equal(exitCode, 1);
   assert.match(errors.join("\n"), /extra locally: /);
   assert.equal(await runSpecDriftCheck(["--repin", "not-a-commit"], { log: () => undefined, error: () => undefined }), 2);
+});
+
+const quiet = { log: () => undefined, error: () => undefined };
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+};
+
+test("CI verifies the pin against its commit-addressed official source, not only against the repository copy", async () => {
+  const workflow = await Bun.file(new URL("../.github/workflows/deno-deploy.yml", import.meta.url)).text();
+  const driftRuns = workflow
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("run:") && line.includes("spec:drift"))
+    .map((line) => line.slice("run:".length).trim());
+  assert.deepEqual(driftRuns, ["bun --no-env-file --no-install run spec:drift --verify-source"]);
+});
+
+test("fetching the pinned source retries a transient failure, then verifies what it received", async () => {
+  const attempts: string[] = [];
+  const delays: number[] = [];
+  globalThis.fetch = Object.assign(
+    (input: RequestInfo | URL): Promise<Response> => {
+      attempts.push(requestUrl(input));
+      if (attempts.length === 1) return Promise.reject(new TypeError("fetch failed: connection reset"));
+      if (attempts.length === 2) return Promise.resolve(new Response("busy", { status: 503, statusText: "Service Unavailable" }));
+      return Promise.resolve(new Response(SYNTHETIC_SPEC, { status: 200 }));
+    },
+    { preconnect: originalFetch.preconnect }
+  );
+  const errors: string[] = [];
+  const exitCode = await runSpecDriftCheck(["--verify-source"], {
+    readGitHub: officialHistory(),
+    sleep: (milliseconds) => {
+      delays.push(milliseconds);
+      return Promise.resolve();
+    },
+    log: () => undefined,
+    error: (line) => errors.push(line),
+  });
+  const pin = await readOpenAiSpecPin();
+  assert.deepEqual(attempts, [pin.source, pin.source, pin.source]);
+  assert.equal(delays.length, 2);
+  // The synthetic document is not the pinned revision, so the third, successful fetch is refused on its digest.
+  assert.equal(exitCode, 1);
+  assert.match(errors.join("\n"), /digest mismatch/);
+});
+
+test("fetching the pinned source gives up after bounded attempts and does not retry a permanent refusal", async () => {
+  let attempts = 0;
+  globalThis.fetch = Object.assign(
+    (): Promise<Response> => {
+      attempts += 1;
+      return Promise.reject(new TypeError("fetch failed: network unreachable"));
+    },
+    { preconnect: originalFetch.preconnect }
+  );
+  const sleep = (): Promise<void> => Promise.resolve();
+  await assert.rejects(runSpecDriftCheck(["--verify-source"], { ...quiet, sleep, readGitHub: officialHistory() }), /network unreachable/);
+  assert.equal(attempts, 3);
+
+  attempts = 0;
+  globalThis.fetch = Object.assign(
+    (): Promise<Response> => {
+      attempts += 1;
+      return Promise.resolve(new Response("missing", { status: 404, statusText: "Not Found" }));
+    },
+    { preconnect: originalFetch.preconnect }
+  );
+  await assert.rejects(runSpecDriftCheck(["--verify-source"], { ...quiet, sleep, readGitHub: officialHistory() }), /404 Not Found/);
+  assert.equal(attempts, 1);
+});
+
+test("repin and verify-source refuse fork-only, newer or malformed ancestry before reading or writing a spec", async () => {
+  forbidNetwork();
+  for (const args of [["--repin", COMMIT], ["--verify-source"]]) {
+    for (const status of ["diverged", "behind", "unknown", "", undefined]) {
+      let sourceReads = 0;
+      let writes = 0;
+      await assert.rejects(
+        runSpecDriftCheck(args, {
+          ...quiet,
+          readGitHub: (location) => Promise.resolve(location === REPOSITORY_API ? { default_branch: "main" } : { status }),
+          readSpec: () => {
+            sourceReads += 1;
+            return Promise.resolve(SYNTHETIC_SPEC);
+          },
+          writePin: () => {
+            writes += 1;
+            return Promise.resolve();
+          },
+        }),
+        /not contained in openai\/openai-openapi's default branch/
+      );
+      assert.equal(sourceReads, 0, `${args[0]} must refuse ${String(status)} before fetching fork-network bytes`);
+      assert.equal(writes, 0, "a rejected ancestry check must never rewrite the pin");
+    }
+  }
+});
+
+test("repin accepts a commit identical to the official default branch and fails closed on unavailable metadata", async () => {
+  forbidNetwork();
+  let writes = 0;
+  const exitCode = await runSpecDriftCheck(["--repin", COMMIT], {
+    ...quiet,
+    readGitHub: officialHistory("identical"),
+    readSpec: () => Promise.resolve(SYNTHETIC_SPEC),
+    writePin: () => {
+      writes += 1;
+      return Promise.resolve();
+    },
+  });
+  assert.equal(writes, 1);
+  assert.equal(exitCode, 1, "the synthetic source still differs from the runtime surface");
+  for (const metadata of [null, {}, { default_branch: "" }, { default_branch: 42 }]) {
+    await assert.rejects(runSpecDriftCheck(["--repin", COMMIT], { ...quiet, readGitHub: () => Promise.resolve(metadata) }), /official default branch/);
+  }
+  await assert.rejects(
+    runSpecDriftCheck(["--repin", COMMIT], { ...quiet, readGitHub: () => Promise.reject(new Error("GitHub metadata unavailable")) }),
+    /GitHub metadata unavailable/
+  );
+});
+
+test("official ancestry requests use bounded retries and never repin after a permanent API refusal", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = Object.assign(
+    (input: RequestInfo | URL): Promise<Response> => {
+      const url = requestUrl(input);
+      requests.push(url);
+      if (requests.length === 1) return Promise.resolve(new Response("busy", { status: 503 }));
+      if (url === REPOSITORY_API) return Promise.resolve(Response.json({ default_branch: "main" }));
+      return Promise.resolve(new Response("missing", { status: 404 }));
+    },
+    { preconnect: originalFetch.preconnect }
+  );
+  const delays: number[] = [];
+  let writes = 0;
+  await assert.rejects(
+    runSpecDriftCheck(["--repin", COMMIT], {
+      ...quiet,
+      sleep: (milliseconds) => {
+        delays.push(milliseconds);
+        return Promise.resolve();
+      },
+      writePin: () => {
+        writes += 1;
+        return Promise.resolve();
+      },
+    }),
+    /404/
+  );
+  assert.deepEqual(requests, [REPOSITORY_API, REPOSITORY_API, `${REPOSITORY_API}/compare/${COMMIT}...main`]);
+  assert.deepEqual(delays, [5000]);
+  assert.equal(writes, 0);
+});
+
+test("a malformed invocation is a usage error, never a silent fall back to the offline gate", async () => {
+  forbidNetwork();
+  const invocations: readonly (readonly string[])[] = [
+    ["verify-source"],
+    ["--spec"],
+    ["--spec="],
+    ["--spec", "--verify-source"],
+    ["--repin"],
+    ["--verify-source=yes"],
+    ["--verify-source", "--verify-source"],
+    ["--spec", "a.yaml", "--spec", "b.yaml"],
+    ["--spec", "copy.yaml", "--verify-source"],
+    ["--unknown"],
+  ];
+  for (const args of invocations) {
+    const errors: string[] = [];
+    const read: string[] = [];
+    const exitCode = await runSpecDriftCheck(args, {
+      readSpec: (location) => {
+        read.push(location);
+        return Promise.resolve(SYNTHETIC_SPEC);
+      },
+      log: () => undefined,
+      error: (line) => errors.push(line),
+    });
+    assert.equal(exitCode, 2, `${JSON.stringify(args)} must be a usage error`);
+    assert.ok(errors.length > 0, `${JSON.stringify(args)} must say what is wrong`);
+    assert.deepEqual(read, [], `${JSON.stringify(args)} must not read a specification`);
+  }
+});
+
+test("re-pinning reads only the commit's own source, so a local file cannot be recorded under the official URL", async () => {
+  forbidNetwork();
+  let written: OpenAiSpecPin | null = null;
+  const read: string[] = [];
+  const errors: string[] = [];
+  const exitCode = await runSpecDriftCheck(["--repin", COMMIT, "--spec", "local-edit.yaml"], {
+    readSpec: (location) => {
+      read.push(location);
+      return Promise.resolve(SYNTHETIC_SPEC);
+    },
+    writePin: (pin) => {
+      written = pin;
+      return Promise.resolve();
+    },
+    log: () => undefined,
+    error: (line) => errors.push(line),
+  });
+  assert.equal(exitCode, 2);
+  assert.deepEqual(read, []);
+  assert.equal(written, null);
+  assert.match(errors.join("\n"), /--repin/);
 });

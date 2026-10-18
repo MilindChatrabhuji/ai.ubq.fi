@@ -7,6 +7,7 @@ import { resolvePaidRoutingState } from "../src/paid-fallback/health.ts";
 import {
   DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
   DEEPSEEK_WATERFALL_DISPLAY_NAME,
+  DEEPSEEK_WATERFALL_LEGACY_MODEL_ID,
   DEEPSEEK_WATERFALL_MODEL_ID,
   DEEPSEEK_WATERFALL_ORDER,
   DEEPSEEK_WATERFALL_PAID_MODEL_ID,
@@ -20,6 +21,7 @@ import {
   isDeepSeekWaterfallReasoningLevel,
   isDeepSeekWaterfallRetryStatus,
 } from "../src/deepseek/waterfall.ts";
+import { DEEPSEEK_FLASH_FALLBACK_ALIASES, resolveDeepSeekFlashAliases } from "../src/deepseek/flash-aliases.ts";
 import type { UsageContext } from "../src/openai-telemetry.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 
@@ -45,10 +47,43 @@ const request = (): Request => new Request("http://127.0.0.1:7999/v1/responses",
 
 const record = (model: string): Record<string, unknown> => ({ model, input: [{ type: "message", role: "user", content: "hi" }] });
 
-test("waterfall: the synthetic id normalizes and resolves to the cost-first economy order", () => {
+test("waterfall: the synthetic id is versionless and uses provider-owned latest aliases", () => {
+  assert.equal(isDeepSeekWaterfallModel("  Ubiquity/DeepSeek-Flash "), true);
   assert.equal(isDeepSeekWaterfallModel("  Ubiquity/DeepSeek-V4.1-Flash "), true);
   assert.equal(isDeepSeekWaterfallModel("deepseek-flash"), false);
+  assert.equal(DEEPSEEK_WATERFALL_MODEL_ID, "ubiquity/deepseek-flash");
+  assert.equal(DEEPSEEK_WATERFALL_LEGACY_MODEL_ID, "ubiquity/deepseek-v4.1-flash");
   assert.deepEqual(DEEPSEEK_WATERFALL_ORDER, ["lithos", "deepseek", "openrouter", "surplus", "openlux"]);
+  assert.deepEqual(DEEPSEEK_WATERFALL_PROVIDER_MODEL, DEEPSEEK_FLASH_FALLBACK_ALIASES.models);
+  assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.deepseek, "deepseek-flash");
+  assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.openrouter, "~deepseek/deepseek-flash-latest");
+  assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.lithos, "deepseek-ai/DeepSeek-V4.1-Flash");
+  assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.surplus, "deepseek-v4.1-flash");
+  assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.openlux, "deepseek-v4.1-flash");
+});
+
+test("waterfall: aliases resolve the newest provider base without dropping any provider", () => {
+  const resolved = resolveDeepSeekFlashAliases({
+    lithos: [{ id: "deepseek-ai/DeepSeek-V4.1-Flash-0910" }, { id: "deepseek-ai/DeepSeek-V4.1-Flash" }],
+    openrouter: [{ id: "deepseek/deepseek-v4.1-flash" }, { id: "~deepseek/deepseek-flash-latest" }],
+    surplus: [{ id: "deepseek-v4.1-flash" }, { id: "deepseek-v4.1-flash-1017" }],
+    openlux: [{ id: "deepseek-v4.1-flash" }],
+  });
+  assert.deepEqual(resolved.models, {
+    lithos: "deepseek-ai/DeepSeek-V4.1-Flash",
+    deepseek: "deepseek-flash",
+    openrouter: "~deepseek/deepseek-flash-latest",
+    surplus: "deepseek-v4.1-flash",
+    openlux: "deepseek-v4.1-flash",
+  });
+
+  const newer = resolveDeepSeekFlashAliases({
+    surplus: [{ id: "deepseek-v4.1-flash" }, { id: "deepseek-v4.2-flash" }, { id: "deepseek-v4.2-flash-1101" }],
+  });
+  assert.equal(newer.models.surplus, "deepseek-v4.2-flash", "a new provider base alias is picked up without a gateway pin");
+  assert.equal(newer.models.lithos, DEEPSEEK_FLASH_FALLBACK_ALIASES.models.lithos, "an unavailable catalogue keeps the fallback alias");
+
+  assert.deepEqual(resolveDeepSeekFlashAliases().models, DEEPSEEK_FLASH_FALLBACK_ALIASES.models);
 });
 
 test("waterfall: the plan keeps order and drops switched-off or uncredentialed hops", () => {
@@ -334,6 +369,8 @@ test("waterfall: Surplus refusal and OpenLux completion keep separate paid ledge
   assert.ok(policy);
   const admitted = await reserveApiKeyUsageV3(policy, requestId, "responses", { kv: kvStub });
   assert.ok(admitted.ok);
+  const savedDirectKeys = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "LITHOSAI_API_KEY"].map((name) => [name, process.env[name]] as const);
+  for (const [name] of savedDirectKeys) Reflect.deleteProperty(process.env, name);
   try {
     await withDiscoveryKeys("fixture-openlux-key", async () => {
       process.env.SURPLUS_API_KEY = "fixture-surplus-key";
@@ -407,6 +444,10 @@ test("waterfall: Surplus refusal and OpenLux completion keep separate paid ledge
     });
   } finally {
     await admitted.reservation.release();
+    for (const [name, value] of savedDirectKeys) {
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
+      else process.env[name] = value;
+    }
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
     kvStore.delete(keyRecordKey);
@@ -612,6 +653,8 @@ test("waterfall: the verified OpenLux hop dispatches through paid admission and 
   const keyRecordKey = keyToString(["ubq_ai", "api_keys", "id", keyId]);
   const keyRecord = kvStore.get(keyRecordKey) as Record<string, unknown>;
   kvStore.set(keyRecordKey, { ...keyRecord, paid_fallback_max_exposure_microcredits: { [DEEPSEEK_WATERFALL_PAID_MODEL_ID]: 250_000 } });
+  const savedDirectKeys = ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "LITHOSAI_API_KEY"].map((name) => [name, process.env[name]] as const);
+  for (const [name] of savedDirectKeys) Reflect.deleteProperty(process.env, name);
   try {
     await withDiscoveryKeys("fixture-openlux-key", () =>
       withProviderSelection(["ubiquity"], () =>
@@ -671,6 +714,10 @@ test("waterfall: the verified OpenLux hop dispatches through paid admission and 
       )
     );
   } finally {
+    for (const [name, value] of savedDirectKeys) {
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
+      else process.env[name] = value;
+    }
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
     kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
