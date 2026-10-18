@@ -1,0 +1,404 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { connect } from "node:net";
+import { lookup } from "node:dns/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { testNetworkArgv } from "../../scripts/test-network.ts";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const expectedSha = process.argv[2] === "--fixture-child" ? process.argv[3] : process.argv[2];
+assert(expectedSha && /^[a-f0-9]{40}$/.test(expectedSha), "Pass the exact compiled application's full source SHA.");
+assert.equal(Bun.version, "1.4.0");
+const require = createRequire(import.meta.url);
+const workerd: unknown = require("workerd");
+assert(isObject(workerd) && typeof workerd.default === "string", "The prepared native workerd binary is required.");
+const workerdBinary = workerd.default;
+const workerdPackage: unknown = JSON.parse(await readFile(join(root, "node_modules/workerd/package.json"), "utf8"));
+assert(isObject(workerdPackage) && workerdPackage.version === "1.20261012.1", "The locked workerd version is required.");
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function outer(): Promise<void> {
+  const parent = join(root, ".data/rust-runtime-conformance");
+  await mkdir(parent, { recursive: true });
+  const workspace = await mkdtemp(join(parent, "run-"));
+  const control = await lookup(new URL("https://developers.cloudflare.com").hostname, { family: 4 });
+  await reachableControl(control.address, 443);
+  const command = testNetworkArgv([
+    process.execPath,
+    "--no-env-file",
+    "--no-install",
+    fileURLToPath(import.meta.url),
+    "--fixture-child",
+    expectedSha,
+    workspace,
+    control.address,
+    "443",
+  ]);
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: workspace, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
+  if (process.env.HOME) env.HOME = process.env.HOME;
+  const child = Bun.spawn(command, { cwd: root, env, stdout: "pipe", stderr: "pipe" });
+  const stop = (): void => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  const timeout = setTimeout(stop, 90_000);
+  try {
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    await Promise.all([writeFile(join(workspace, "stdout.log"), stdout), writeFile(join(workspace, "stderr.log"), stderr)]);
+    assert.equal(code, 0, `Actual workerd conformance failed; evidence: ${workspace}`);
+    await reachableControl(control.address, 443);
+    const receipt: unknown = JSON.parse(stdout.trim());
+    assert(isObject(receipt) && Array.isArray(receipt.cases) && receipt.cases.length >= 16, "A nonzero complete case floor is required.");
+    await writeFile(join(workspace, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
+    console.log(JSON.stringify({ evidence: workspace, ...receipt }));
+  } finally {
+    clearTimeout(timeout);
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+    stop();
+  }
+}
+
+async function reachableControl(host: string, port: number): Promise<void> {
+  await new Promise<void>((resolveProbe, rejectProbe) => {
+    const socket = connect({ host, port });
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      rejectProbe(new Error("The outside-boundary TCP control is unavailable."));
+    }, 3000);
+    socket.once("connect", () => {
+      clearTimeout(timeout);
+      socket.destroy();
+      resolveProbe();
+    });
+    socket.once("error", (error: Error) => {
+      clearTimeout(timeout);
+      rejectProbe(error);
+    });
+  });
+}
+
+async function deniedEgress(host: string, port: number): Promise<void> {
+  await new Promise<void>((resolveProbe, rejectProbe) => {
+    const socket = connect({ host, port });
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      rejectProbe(new Error("An egress timeout does not prove OS denial."));
+    }, 3000);
+    socket.once("connect", () => {
+      clearTimeout(timeout);
+      socket.destroy();
+      rejectProbe(new Error("The fixture OS boundary allowed external TCP."));
+    });
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      clearTimeout(timeout);
+      const denied = ["EPERM", "EACCES", "ENETUNREACH", "EHOSTUNREACH"];
+      // Seatbelt reports a refused connect on this Bun/Darwin build. The same
+      // endpoint must accept native TCP both before and after the isolated run.
+      if (process.platform === "darwin") denied.push("ECONNREFUSED");
+      if (denied.includes(error.code ?? "")) resolveProbe();
+      else rejectProbe(error);
+    });
+  });
+}
+
+async function fixtureConfig(workspace: string): Promise<string> {
+  const path = join(workspace, "runtime.capnp");
+  const quoted = (value: string): string => JSON.stringify(value);
+  await mkdir(join(workspace, "state"), { recursive: true });
+  const config = `using Workerd = import ${quoted(join(root, "node_modules/workerd/workerd.capnp"))};
+const config :Workerd.Config = (
+  services = [
+    (name = "internet", network = (allow = [])),
+    (name = "state", disk = (path = ${quoted(join(workspace, "state"))}, writable = true)),
+    (name = "gateway", worker = (
+      modules = [(name = "index.js", esModule = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"))})],
+      compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
+      globalOutbound = "driver",
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret")],
+      durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
+      durableObjectStorage = (localDisk = "state")
+    )),
+    (name = "driver", worker = (
+      modules = [(name = "driver.mjs", esModule = embed ${quoted(join(root, "tools/cloudflare/fixtures/runtime-driver.mjs"))})],
+      compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
+      bindings = [(name = "GATEWAY", service = "gateway"), (name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority", serviceName = "gateway")), (name = "CONTROL", durableObjectNamespace = (className = "FixtureControl"))],
+      durableObjectNamespaces = [(className = "FixtureControl", uniqueKey = "uos-rust-runtime-control-v1", enableSql = true)],
+      durableObjectStorage = (localDisk = "state")
+    ))
+  ],
+  sockets = [(name = "main", http = (), service = "driver")]
+);`;
+  await writeFile(path, config);
+  return path;
+}
+
+type Running = { origin: string; stop: () => Promise<void> };
+async function start(config: string, workspace: string): Promise<Running> {
+  const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 503 }) });
+  const port = reservation.port;
+  await reservation.stop(true);
+  const runId = Date.now();
+  const output = Bun.file(join(workspace, `workerd-${runId}.stdout.log`));
+  const errors = Bun.file(join(workspace, `workerd-${runId}.stderr.log`));
+  const child = Bun.spawn([workerdBinary, "serve", config, "--experimental", "--import-path", "/", "--socket-addr", `main=127.0.0.1:${port}`], {
+    cwd: workspace,
+    stdout: output,
+    stderr: errors,
+  });
+  const origin = `http://127.0.0.1:${port}`;
+  const stop = async (): Promise<void> => {
+    if (child.exitCode !== null) return;
+    child.kill("SIGTERM");
+    const timeout = setTimeout(() => {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }, 3000);
+    try {
+      await child.exited;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  try {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error("workerd exited during startup.");
+      try {
+        const ready = await fetch(`${origin}/public/health`);
+        if (ready.status === 200) return { origin, stop };
+      } catch {
+        /* process startup */
+      }
+      await Bun.sleep(20);
+    }
+    throw new Error("workerd did not become ready within ten seconds.");
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+}
+
+function tuple(...parts: string[]): string {
+  return "tuple-v1:" + parts.map((part) => "02" + Buffer.from(part).toString("hex").replaceAll("00", "00ff") + "00").join("");
+}
+async function objectBody(response: Response): Promise<Record<string, unknown>> {
+  const body: unknown = await response.json();
+  assert(isObject(body));
+  return body;
+}
+
+async function assertUpstreamCancelled(events: () => Promise<unknown[]>): Promise<void> {
+  const deadline = Date.now() + 2000;
+  let cancelled: boolean;
+  do {
+    cancelled = (await events()).some((event: unknown) => isObject(event) && event.kind === "upstream_cancelled");
+    if (!cancelled) await Bun.sleep(10);
+  } while (!cancelled && Date.now() < deadline);
+  assert(cancelled, "Caller abort must reach the actual controlled upstream.");
+}
+
+async function inner(): Promise<void> {
+  const workspace = process.argv[4];
+  assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
+  const controlHost = process.argv[5];
+  const controlPort = Number(process.argv[6]);
+  assert(controlHost && Number.isInteger(controlPort) && controlPort > 0 && controlPort < 65536);
+  await deniedEgress(controlHost, controlPort);
+  const cases = ["os_external_tcp_denied"];
+  const config = await fixtureConfig(workspace);
+  let running = await start(config, workspace);
+  const url = (path: string): string => `${running.origin}/public${path}`;
+  const post = (path: string, body: unknown, token = "fixture-access", signal?: AbortSignal): Promise<Response> =>
+    fetch(url(path), { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body), signal });
+  const rpc = async (body: unknown): Promise<Record<string, unknown>> => {
+    const response = await fetch(`${running.origin}/store`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    assert.equal(response.status, 200);
+    return objectBody(response);
+  };
+  const read = async (key: string): Promise<Record<string, unknown> | null> => {
+    const value = (await rpc({ operation: "read", key })).record;
+    assert(value === null || isObject(value));
+    return value;
+  };
+  const lifecycle = async (id: string): Promise<Record<string, unknown>> => {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const row = await read(tuple("uos_ai", "authority", "v1", "request_lifecycle", id));
+      if (row && isObject(row.value) && row.value.settled === true) return row.value;
+      await Bun.sleep(10);
+    }
+    throw new Error(`Lifecycle ${id} did not settle; evidence: ${workspace}`);
+  };
+  const events = async (): Promise<unknown[]> => {
+    const value: unknown = await (await fetch(`${running.origin}/control`)).json();
+    assert(Array.isArray(value));
+    return value;
+  };
+  try {
+    const health = await fetch(url("/health"));
+    const identity = await objectBody(health);
+    assert(isObject(identity.release));
+    assert.equal(identity.release.git_sha, expectedSha);
+    assert.equal(health.headers.get("x-uos-git-sha"), expectedSha);
+    cases.push("exact_rust_source_identity");
+    assert.equal((await fetch(url("/v1/models"))).status, 401);
+    assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:unauthorized" }, "bad-token")).status, 401);
+    assert.equal((await events()).length, 0);
+    cases.push("unauthorized_requests_never_dispatch");
+    const ordinary = await objectBody(await fetch(url("/v1/models"), { headers: { authorization: "Bearer fixture-access" } }));
+    assert.equal(ordinary.object, "list");
+    assert(Array.isArray(ordinary.data) && ordinary.data.some((row: unknown) => isObject(row) && row.id === "deepseek-flash"));
+    assert(!("models" in ordinary));
+    cases.push("authenticated_official_models_contract");
+    const native = await objectBody(await fetch(url("/v1/models?client_version=0.163.0"), { headers: { authorization: "Bearer fixture-access" } }));
+    assert(Array.isArray(native.models) && native.models.some((row: unknown) => isObject(row) && row.slug === "deepseek-flash"));
+    cases.push("authenticated_exact_version_native_models_contract");
+    for (const query of ["client_version=bad", "client_version=0.163.0&client_version=0.163.0"]) {
+      assert.equal((await fetch(url(`/v1/models?${query}`), { headers: { authorization: "Bearer fixture-access" } })).status, 400);
+    }
+    cases.push("invalid_and_duplicate_client_versions_refused");
+    const response = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:json", stream: false });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-provider-request-id"), "provider-fixture-id");
+    assert.equal(response.headers.get("x-request-id"), null);
+    const requestId = response.headers.get("x-uos-request-id");
+    assert(requestId);
+    const body = await objectBody(response);
+    assert.equal(body.status, "completed");
+    assert(JSON.stringify(body.output).includes("fixture answer"));
+    cases.push("actual_responses_json_translation_and_correlation");
+    const settled = await lifecycle(requestId);
+    assert(isObject(settled.terminal_intent));
+    assert.equal(settled.terminal_intent.semantic_terminal, "response.completed");
+    assert.equal(settled.terminal_intent.delivery, "unobserved");
+    assert.equal(settled.transport_started, true);
+    cases.push("durable_terminal_and_unobserved_delivery_remain_separate");
+    const chat = await post("/v1/chat/completions", { model: "deepseek-flash", messages: [{ role: "user", content: "fixture:chat" }], stream: false });
+    assert.equal(chat.status, 200);
+    assert((await chat.text()).includes("fixture answer"));
+    cases.push("actual_chat_json_passthrough");
+    const streamed = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:stream", stream: true });
+    assert.equal(streamed.status, 200);
+    assert(streamed.body);
+    const reader = streamed.body.getReader();
+    const first = await reader.read();
+    const firstText = new TextDecoder().decode(first.value);
+    assert(firstText.length > 0 && !firstText.includes("response.completed"));
+    let text = firstText;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      text += new TextDecoder().decode(chunk.value);
+    }
+    assert(text.includes("response.completed") && text.includes("fixture "));
+    const streamedId = streamed.headers.get("x-uos-request-id");
+    assert(streamedId);
+    assert.equal((await lifecycle(streamedId)).settled, true);
+    cases.push("progressive_responses_sse_and_durable_settlement");
+    const chatStream = await post("/v1/chat/completions", {
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "fixture:chatstream" }],
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    assert.equal(chatStream.status, 200);
+    const chatText = await chatStream.text();
+    assert(chatText.includes("data: [DONE]") && chatText.includes("fixture "));
+    cases.push("actual_chat_sse");
+    const cerebras = await post("/v1/chat/completions", { model: "gpt-oss-120b", messages: [{ role: "user", content: "fixture:cerebras" }], stream: true });
+    assert.equal(cerebras.status, 200);
+    assert((await cerebras.text()).includes("data: [DONE]"));
+    const recorded = await events();
+    assert(recorded.some((row: unknown) => isObject(row) && row.hostname === "api.cerebras.ai" && isObject(row.body) && row.body.stream === false));
+    cases.push("cerebras_stream_request_uses_buffered_upstream");
+    const malformed = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:invalid", accidental_gateway_field: true });
+    assert.equal(malformed.status, 400);
+    cases.push("official_schema_unknown_fields_refused");
+    const truncated = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:truncate", stream: true });
+    let truncatedText = "";
+    try {
+      truncatedText = await truncated.text();
+    } catch {
+      /* Reader failure remains an explicit failed body. */
+    }
+    assert(!truncatedText.includes("response.completed"));
+    assert(truncatedText.includes("response.failed"));
+    cases.push("truncated_upstream_never_becomes_completed");
+    const created = await post(
+      "/admin/api-keys",
+      { name: "runtime quota fixture", usage_limit_requests: 2, window_ms: 604800000, paid_fallback_enabled: false },
+      "fixture-admin"
+    );
+    assert.equal(created.status, 200);
+    const key = await objectBody(created);
+    assert(typeof key.token === "string");
+    for (let index = 0; index < 2; index++) {
+      const response = await post("/v1/responses", { model: "deepseek-flash", input: `fixture:key-${index}`, stream: index === 1 }, key.token);
+      assert.equal(response.status, 200);
+      await response.text();
+    }
+    const before = (await events()).length;
+    assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:blocked" }, key.token)).status, 429);
+    assert.equal((await events()).length, before);
+    cases.push("real_admin_key_creation_and_exact_dispatch_quota");
+    await running.stop();
+    running = await start(config, workspace);
+    assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:still-blocked" }, key.token)).status, 429);
+    assert.equal((await events()).length, before);
+    cases.push("actual_sqlite_restart_preserves_key_and_quota");
+    const cancellation = new AbortController();
+    const cancelled = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:abort", stream: true }, "fixture-access", cancellation.signal);
+    assert(cancelled.body);
+    const cancelReader = cancelled.body.getReader();
+    await cancelReader.read();
+    cancellation.abort();
+    try {
+      await cancelReader.read();
+    } catch {
+      /* The real caller cancelled its HTTP body. */
+    }
+    const cancelId = cancelled.headers.get("x-uos-request-id");
+    assert(cancelId);
+    const cancelState = await lifecycle(cancelId);
+    assert(isObject(cancelState.terminal_intent));
+    assert.equal(cancelState.terminal_intent.delivery, "interrupted");
+    assert.equal(cancelState.terminal_intent.reader_termination, "cancelled");
+    assert.equal(cancelState.terminal_intent.body, "interrupted");
+    assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
+    await assertUpstreamCancelled(events);
+    cases.push("actual_caller_abort_retains_non_successful_transport_state");
+    console.log(
+      JSON.stringify({
+        sourceSha: expectedSha,
+        wasmSha256: createHash("sha256")
+          .update(await readFile(join(root, "rust/crates/gateway-worker/build/index_bg.wasm")))
+          .digest("hex"),
+        workerd: "1.20261012.1",
+        platform: process.platform,
+        harnessSha256: createHash("sha256")
+          .update(await readFile(fileURLToPath(import.meta.url)))
+          .digest("hex"),
+        fixtureSha256: createHash("sha256")
+          .update(await readFile(join(root, "tools/cloudflare/fixtures/runtime-driver.mjs")))
+          .digest("hex"),
+        workerdSha256: createHash("sha256")
+          .update(await readFile(workerdBinary))
+          .digest("hex"),
+        cases,
+      })
+    );
+  } finally {
+    await writeFile(join(workspace, "progress.json"), JSON.stringify({ cases }, null, 2) + "\n");
+    await running.stop();
+  }
+}
+
+if (process.argv[2] === "--fixture-child") await inner();
+else await outer();
