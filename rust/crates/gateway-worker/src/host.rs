@@ -54,6 +54,7 @@ pub struct PlatformHost {
     pub cancellation: Rc<Cancellation>,
     pub store: crate::authority::RemoteAuthorityStore,
     pub env: Env,
+    pub native: crate::native_host::NativeBindings,
 }
 
 #[derive(Clone, Copy)]

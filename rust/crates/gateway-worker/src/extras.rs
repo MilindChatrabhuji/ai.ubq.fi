@@ -18,7 +18,9 @@ use gateway_core::{
     GatewayError,
     identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
 };
-use gateway_extras_runtime::{ExtrasRequest, ExtrasRoute, ExtrasRuntime, KernelDisposition};
+use gateway_extras_runtime::{
+    ExtrasRequest, ExtrasRoute, ExtrasRuntime, ImageKind, KernelDisposition,
+};
 use gateway_providers::ClientSurface;
 use gateway_routing_runtime::{ExtrasFamily, RoutingInput, RoutingSession};
 use serde_json::Value;
@@ -30,6 +32,10 @@ pub fn route(path: &str, method: Method) -> Result<Option<ExtrasRoute>, GatewayE
         "/uos/embeddings" => Some((Method::Post, ExtrasRoute::Embeddings)),
         "/uos/embedding-jobs" => Some((Method::Post, ExtrasRoute::JobCreate)),
         "/v1/systemone" => Some((Method::Post, ExtrasRoute::SystemOne)),
+        "/v1/images/generations" => {
+            Some((Method::Post, ExtrasRoute::Images(ImageKind::Generations)))
+        }
+        "/v1/images/edits" => Some((Method::Post, ExtrasRoute::Images(ImageKind::Edits))),
         _ => path
             .strip_prefix("/uos/embedding-jobs/")
             .map(|id| (Method::Get, ExtrasRoute::JobGet(id.into()))),
@@ -56,12 +62,35 @@ pub async fn run(
     request_id: RequestId,
 ) -> Result<Response, GatewayError> {
     let RequestResources { context, permit } = resources;
+    let image = matches!(route, ExtrasRoute::Images(_));
+    let edit = route == ExtrasRoute::Images(ImageKind::Edits);
+    let multipart = image
+        && request
+            .headers()
+            .get("content-type")
+            .map_err(|_| invalid())?
+            .is_some_and(|value| {
+                value
+                    .to_ascii_lowercase()
+                    .starts_with("multipart/form-data")
+            });
+    if multipart && !edit {
+        return Err(GatewayError::new(
+            400,
+            "Image generation requests must use a JSON object body.",
+            Some("invalid_request_error"),
+        ));
+    }
     let bytes = if matches!(route, ExtrasRoute::JobGet(_)) {
         Vec::new()
     } else {
         body::request_bytes(
             &mut request,
-            if route == ExtrasRoute::SystemOne {
+            if multipart {
+                crate::multipart::MULTIPART_BYTES
+            } else if edit {
+                crate::multipart::IMAGE_JSON_BYTES
+            } else if route == ExtrasRoute::SystemOne {
                 body::SYSTEM_ONE_BODY_MAX_BYTES
             } else {
                 body::INFERENCE_JSON_MAX_BYTES
@@ -69,11 +98,18 @@ pub async fn run(
         )
         .await?
     };
-    let raw = if matches!(route, ExtrasRoute::JobGet(_)) {
-        Value::Null
+    let (raw, multipart) = if multipart {
+        let (raw, files) = crate::multipart::parse(&request, &bytes).await?;
+        (raw, Some(files))
+    } else if matches!(route, ExtrasRoute::JobGet(_)) {
+        (Value::Null, None)
+    } else if edit {
+        (crate::multipart::image_json(&bytes)?, None)
     } else {
-        gateway_schema::request::parse_json_body(&bytes)?
+        (gateway_schema::request::parse_json_body(&bytes)?, None)
     };
+    let raw_body_bytes = bytes.len();
+    drop(bytes);
     let original = RequestContext {
         request_id,
         principal: PrincipalId(crate::lifecycle::principal_id(principal)),
@@ -89,8 +125,21 @@ pub async fn run(
         ExtrasRoute::JobCreate => ExtrasFamily::EmbeddingJobCreate,
         ExtrasRoute::JobGet(_) => ExtrasFamily::EmbeddingJobPoll,
         ExtrasRoute::SystemOne => ExtrasFamily::SystemOne,
-        ExtrasRoute::Images(_) => return Err(invalid()),
+        ExtrasRoute::Images(ImageKind::Generations) => ExtrasFamily::ImageGenerations,
+        ExtrasRoute::Images(ImageKind::Edits) => ExtrasFamily::ImageEdits,
     };
+    let default_model = catalog
+        .runtime
+        .as_ref()
+        .and_then(|value| value.get("default_model"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            catalog
+                .input
+                .codex()
+                .and_then(|snapshot| snapshot.default_model())
+        });
     let session = RoutingSession::begin_extras(
         RoutingInput {
             context: original.clone(),
@@ -115,14 +164,20 @@ pub async fn run(
     )
     .await
     .map_err(|error| *error.error)?;
-    let host = Host::new(platform.clone(), session.admission_handle()).await?;
+    let host = Host::new(
+        platform.clone(),
+        session.admission_handle(),
+        image,
+        default_model,
+    )
+    .await?;
     let runtime = Rc::new(ExtrasRuntime::new(store, host));
     let result = runtime
         .handle(ExtrasRequest {
             route,
             body: raw,
-            multipart: None,
-            raw_body_bytes: bytes.len(),
+            multipart,
+            raw_body_bytes,
             idempotency_key: request
                 .headers()
                 .get("idempotency-key")
@@ -151,7 +206,13 @@ pub async fn run(
     let (kernel, reason) = match result.kernel {
         KernelDisposition::Completed => (KernelTerminal::Committed, "extras_source_completed"),
         KernelDisposition::Incomplete(reason) => (KernelTerminal::Released, reason),
-        KernelDisposition::FromAggregate => return Err(invalid()),
+        KernelDisposition::FromAggregate
+            if result.semantic_terminal
+                == Some(gateway_core::lifecycle::SemanticTerminal::Completed) =>
+        {
+            (KernelTerminal::Committed, "images_source_completed")
+        }
+        KernelDisposition::FromAggregate => (KernelTerminal::Released, "images_source_incomplete"),
     };
     let observation = ObservationHandle::default();
     if let Some(terminal) = result.semantic_terminal {
