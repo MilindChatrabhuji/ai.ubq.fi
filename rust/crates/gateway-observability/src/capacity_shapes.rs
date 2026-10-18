@@ -38,7 +38,7 @@ pub fn codex_label(slot: u8, email: Option<&str>) -> String {
         .unwrap_or_else(|| format!("Codex account {slot}"))
 }
 pub fn parse_window(value: &Value, upstream: bool) -> Option<Value> {
-    if !value.is_object() {
+    if !store::is_record(value) {
         return None;
     }
     if !upstream
@@ -71,7 +71,7 @@ pub fn parse_window(value: &Value, upstream: bool) -> Option<Value> {
     Some(json!({"limit_window_seconds":seconds,"used_percent":used,"reset_at_ms":reset}))
 }
 pub fn parse_codex_usage(value: &Value) -> Option<Value> {
-    let limits = value.get("rate_limit").filter(|v| v.is_object())?;
+    let limits = value.get("rate_limit").filter(|v| store::is_record(v))?;
     let additional:Vec<Value>=value["additional_rate_limits"].as_array().into_iter().flatten().filter_map(|v|{
         let name=v["limit_name"].as_str().map(store::trim).filter(|s|!s.is_empty())?;
         let p=parse_window(&v["rate_limit"]["primary_window"],true);let s=parse_window(&v["rate_limit"]["secondary_window"],true);if p.is_none()&&s.is_none(){return None}
@@ -82,7 +82,7 @@ pub fn parse_codex_usage(value: &Value) -> Option<Value> {
     )
 }
 pub fn parse_codex_overage(value: &Value) -> Option<Value> {
-    let credits = value.get("credits").filter(|v| v.is_object())?;
+    let credits = value.get("credits").filter(|v| store::is_record(v))?;
     let balance = credits["balance"].as_str();
     let reached = credits["overage_limit_reached"].as_bool();
     if balance.is_none() && reached.is_none() {
@@ -114,7 +114,9 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
     }
     let slot = store::safe_i64(&value["slot"]).filter(|n| *n == 1 || *n == 2)? as u8;
     let state = source_state(&value["state"])?;
-    if !nullable(value.get("source_observed_at_ms"), timestamp) || !value["windows"].is_object() {
+    if !nullable(value.get("source_observed_at_ms"), timestamp)
+        || !store::is_record(&value["windows"])
+    {
         return None;
     }
     let at = if value.get("snapshot_at_ms").is_none() {
@@ -148,7 +150,7 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
         return None;
     }
     let additional:Vec<Value>=value["additional_rate_limits"].as_array().into_iter().flatten().filter_map(|v|{
-        let name=v["limit_name"].as_str().map(store::trim).filter(|s|!s.is_empty())?;if !v["windows"].is_object()||!nullable(v.get("metered_feature"),Value::is_string){return None}
+        let name=v["limit_name"].as_str().map(store::trim).filter(|s|!s.is_empty())?;if !store::is_record(&v["windows"])||!nullable(v.get("metered_feature"),Value::is_string){return None}
         Some(json!({"limit_name":name,"metered_feature":v["metered_feature"].as_str().map(store::trim).filter(|s|!s.is_empty()),"windows":{"primary":parse_window(&v["windows"]["primary"],false),"secondary":parse_window(&v["windows"]["secondary"],false)}}))
     }).collect();
     Some(
@@ -157,7 +159,7 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
 }
 pub fn read_metered(value: &Value, at: i64) -> Option<Value> {
     if value["source"] != "metered"
-        || !value["wallet"].is_object()
+        || !store::is_record(&value["wallet"])
         || !nullable(value.get("source_observed_at_ms"), timestamp)
     {
         return None;

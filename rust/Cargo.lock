@@ -977,6 +977,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-claude-runtime",
  "gateway-core",
  "gateway-schema",
  "rusqlite",
@@ -1012,7 +1013,9 @@ dependencies = [
 name = "gateway-observability"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "base64 0.22.1",
+ "flate2",
  "futures-util",
  "gateway-admin-data",
  "gateway-admin-runtime",
@@ -1020,10 +1023,12 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-schema",
+ "hkdf",
  "hmac 0.12.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "zeroize",
 ]
 
 [[package]]
