@@ -849,7 +849,7 @@ const PROVIDER_ROSTER = [
  * with the DOM, admin transport, warnings, and badge stubbed.
  */
 const providerPicker = (selection: string[], visibleIds: string[], savedIds?: string[]) => {
-  const requests: Array<{ provider_ids: string[] }> = [];
+  const requests: { provider_ids: string[] }[] = [];
   const toasts: string[] = [];
   const between = (start: string, end: string) => {
     const from = sourceText.indexOf(start);
@@ -870,11 +870,11 @@ const providerPicker = (selection: string[], visibleIds: string[], savedIds?: st
     getAdminToken: () => "test-token",
     hasAdminCredential: () => true,
     apiUrl: (path: string) => path,
-    fetch: async (url: string, options: { body: string }) => {
+    fetch: (url: string, options: { body: string }) => {
       assert.equal(url, "/admin/providers/selection");
       const body = JSON.parse(options.body) as { provider_ids: string[] };
       requests.push(body);
-      return { ok: true, json: async () => ({ provider_ids: savedIds ?? body.provider_ids }) };
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ provider_ids: savedIds ?? body.provider_ids }) });
     },
     toast: {
       success: (message: string) => toasts.push(message),
@@ -991,7 +991,7 @@ test("Uncheck all removes missing Codex ids along with configured subscriptions"
 
 test("provider save toasts count saved tiers, not subscription or missing ids", async () => {
   const removed = `codex:${"a".repeat(64)}`;
-  const cases: Array<{ ids: string[]; savedIds?: string[]; message: string }> = [
+  const cases: { ids: string[]; savedIds?: string[]; message: string }[] = [
     { ids: ["sub-a", "sub-b", "surplus"], message: "2 providers active" },
     { ids: ["sub-a"], message: "1 provider active" },
     { ids: [removed, "surplus"], message: "1 provider active" },

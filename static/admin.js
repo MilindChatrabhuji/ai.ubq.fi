@@ -9745,10 +9745,10 @@ const providerSubscriptionSelected = (subscriptionId) =>
   providerSelection.has("codex") || providerSelection.has(subscriptionId);
 
 /** A tier is active when its own id is checked, or when any of its subscriptions is. */
-const isProviderChecked = (providerId) =>
+const isProviderChecked = (providerId, selection = providerSelection) =>
   providerId === "codex"
-    ? providerSelection.has("codex") || providerCodexSelection().selected > 0
-    : providerSelection.has(providerId);
+    ? selection.has("codex") || providerSubscriptions().some((subscription) => selection.has(subscription.id))
+    : selection.has(providerId);
 
 const providerCodexSelection = () => {
   const subscriptions = providerSubscriptions();
@@ -10134,7 +10134,7 @@ const updateProvidersStatus = () => {
   else if (providerSelectionSaveError) setProvidersSelectionBadge("bad", providerSelectionSaveError);
   else if (unsaved) setProvidersSelectionBadge("warning", "Unsaved changes");
   else if (providerSelectionLoadedAt) {
-    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id)).length;
+    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
     setProvidersSelectionBadge("ok", filterActive ? `${formatNumber(activeTiers)} active` : "No filter");
   } else setProvidersSelectionBadge("unknown", "Not loaded");
 
@@ -10308,7 +10308,7 @@ const saveProviderSelection = async () => {
     const savedIds = Array.isArray(payload?.provider_ids) ? payload.provider_ids : providersSelectedIds();
     providersSavedSelection = providersSelectionFromIds(savedIds);
     providerSelection = new Set(providersSavedSelection);
-    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id)).length;
+    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
     providerSelectionLoadedAt = Date.now();
     renderProvidersPicker();
     toast.success(
