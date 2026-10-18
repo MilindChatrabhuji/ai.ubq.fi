@@ -36,6 +36,7 @@ export type MeteredQuotaRunwayView = Readonly<{
   observed_at_ms: number | null;
   cycle_started_at_ms: number | null;
   last_credit_at_ms: number | null;
+  last_inferred_credit_quota: number | null;
   latest_refill_amount_credits: number | null;
   latest_refill_completed_at_ms: number | null;
 }>;
@@ -61,6 +62,7 @@ export const meteredQuotaRunwayView = (snapshot: MeteredQuotaSnapshot | null): M
       observed_at_ms: null,
       cycle_started_at_ms: null,
       last_credit_at_ms: null,
+      last_inferred_credit_quota: null,
       latest_refill_amount_credits: null,
       latest_refill_completed_at_ms: null,
     };
@@ -86,6 +88,7 @@ export const meteredQuotaRunwayView = (snapshot: MeteredQuotaSnapshot | null): M
     observed_at_ms: state.observed_at_ms,
     cycle_started_at_ms: tokenUsage ? null : state.cycle_started_at_ms,
     last_credit_at_ms: tokenUsage ? null : state.last_credit_at_ms,
+    last_inferred_credit_quota: tokenUsage ? null : state.last_inferred_credit_quota,
     latest_refill_amount_credits: state.latest_refill_amount_credits,
     latest_refill_completed_at_ms: state.latest_refill_completed_at_ms,
   };
@@ -236,7 +239,6 @@ type RefillProjection = Readonly<{
 
 type RefillEvent = Readonly<{
   atMs: number;
-  amountQuota: number | null;
 }>;
 
 const nonNegativeFinite = (value: number | null | undefined): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
@@ -249,10 +251,9 @@ const median = (values: readonly number[]): number | null => {
 };
 
 /**
- * Positive balance changes are the only refill signal retained in hourly
- * history. The latest refill observation supplies the authoritative amount
- * and event time when available; history supplies the repeated event times
- * needed to estimate a cadence.
+ * Positive balance changes locate possible refill events, but their net
+ * amounts omit intervening debits. Only current credit observations supply
+ * amounts; retained history supplies the event times needed for cadence.
  */
 const refillEventsFromHistory = (samples: readonly MeteredQuotaBalanceSample[], nowMs: number): RefillEvent[] => {
   const ordered = samples
@@ -265,8 +266,7 @@ const refillEventsFromHistory = (samples: readonly MeteredQuotaBalanceSample[], 
       const balanceIncrease = sample.balance_quota - previous.balance_quota;
       const baselineIncrease =
         nonNegativeFinite(sample.baseline_quota) && nonNegativeFinite(previous.baseline_quota) ? sample.baseline_quota - previous.baseline_quota : 0;
-      const amountQuota = Math.max(balanceIncrease, baselineIncrease);
-      if (amountQuota > 0) events.push({ atMs: sample.observed_at_ms, amountQuota });
+      if (Math.max(balanceIncrease, baselineIncrease) > 0) events.push({ atMs: sample.observed_at_ms });
     }
     previous = sample;
   }
@@ -277,14 +277,12 @@ const mergeObservedRefillEvent = (events: RefillEvent[], observedRefillAtMs: num
   // The history sample containing a refill can be a little later than the
   // provider's completion timestamp. Replace that sample event rather than
   // treating one refill as two closely-spaced refills.
-  let eventAmountQuota: number | null = null;
   for (let index = events.length - 1; index >= 0; index -= 1) {
     if (Math.abs((events[index]?.atMs ?? 0) - observedRefillAtMs) <= HOUR_MS) {
-      eventAmountQuota = events[index]?.amountQuota ?? eventAmountQuota;
       events.splice(index, 1);
     }
   }
-  events.push({ atMs: observedRefillAtMs, amountQuota: eventAmountQuota });
+  events.push({ atMs: observedRefillAtMs });
 };
 
 const refillEvents = (quota: MeteredQuotaRunwayView, history: readonly MeteredQuotaBalanceSample[] | null, nowMs: number): RefillEvent[] => {
@@ -311,17 +309,21 @@ type RefillAmount = Readonly<{
   amountCredits: number | null;
 }>;
 
-const refillAmount = (quota: MeteredQuotaRunwayView, events: readonly RefillEvent[]): RefillAmount => {
+const refillAmount = (quota: MeteredQuotaRunwayView): RefillAmount => {
+  const inferredIsLatest =
+    quota.confidence === "inferred_adjustment" &&
+    (quota.latest_refill_completed_at_ms === null || (quota.last_credit_at_ms !== null && quota.last_credit_at_ms > quota.latest_refill_completed_at_ms));
   const observedAmountQuota =
     positiveFinite(quota.latest_refill_amount_credits) && positiveFinite(quota.quota_per_credit)
       ? quota.latest_refill_amount_credits * quota.quota_per_credit
       : null;
   const amountFromObservation = positiveFinite(observedAmountQuota) ? observedAmountQuota : null;
-  const inferredAmountQuota = median(events.map((event) => event.amountQuota).filter((amount): amount is number => positiveFinite(amount)));
-  const amountQuota = amountFromObservation ?? inferredAmountQuota;
-  const amountCreditsFromObservation = positiveFinite(quota.latest_refill_amount_credits) ? quota.latest_refill_amount_credits : null;
-  const amountCreditsFromHistory = amountQuota !== null && positiveFinite(quota.quota_per_credit) ? amountQuota / quota.quota_per_credit : null;
-  return { amountQuota, amountCredits: amountCreditsFromObservation ?? amountCreditsFromHistory };
+  // A later ordinary refresh clears this amount; it must not revive older
+  // provider metadata or substitute a net history delta for the lost credit.
+  const inferredAmountQuota = positiveFinite(quota.last_inferred_credit_quota) ? quota.last_inferred_credit_quota : null;
+  const amountQuota = inferredIsLatest ? inferredAmountQuota : amountFromObservation;
+  const amountCredits = amountQuota !== null && positiveFinite(quota.quota_per_credit) ? amountQuota / quota.quota_per_credit : null;
+  return { amountQuota, amountCredits };
 };
 
 type RefillCadence = Readonly<{
@@ -356,18 +358,22 @@ const refillProjection = (
   history: readonly MeteredQuotaBalanceSample[] | null,
   nowMs: number
 ): RefillProjection => {
-  const events = refillEvents(quota, history, nowMs);
-  const { amountQuota, amountCredits } = refillAmount(quota, events);
-  const { cadenceMs, rateQuotaPerHour } = refillCadence(events, amountQuota);
-  const unknown: RefillProjection = {
+  const empty: RefillProjection = {
     status: "unknown",
     timeRemainingMs: null,
     exhaustedAtMs: null,
-    amountCredits,
-    cadenceMs,
-    rateQuotaPerHour,
+    amountCredits: null,
+    cadenceMs: null,
+    rateQuotaPerHour: null,
     nextRefillAtMs: null,
   };
+  // Finite token inventory has no wallet refill cycle, even when older
+  // wallet samples remain in the same account's retained history.
+  if (quota.balance_quota === null) return empty;
+  const events = refillEvents(quota, history, nowMs);
+  const { amountQuota, amountCredits } = refillAmount(quota);
+  const { cadenceMs, rateQuotaPerHour } = refillCadence(events, amountQuota);
+  const unknown: RefillProjection = { ...empty, amountCredits, cadenceMs, rateQuotaPerHour };
   if (balanceQuota === null || !positiveFinite(burnQuotaPerHour)) return unknown;
   const noRefillTimeRemainingMs = Math.trunc((balanceQuota / burnQuotaPerHour) * HOUR_MS);
   const noRefill: RefillProjection = {
@@ -376,6 +382,7 @@ const refillProjection = (
     timeRemainingMs: noRefillTimeRemainingMs,
     exhaustedAtMs: Math.trunc(nowMs + noRefillTimeRemainingMs),
   };
+  if (events.length > 0 && amountQuota === null) return unknown;
   if (cadenceMs === null || amountQuota === null || !positiveFinite(rateQuotaPerHour)) {
     return history === null ? unknown : noRefill;
   }
