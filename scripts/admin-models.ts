@@ -42,7 +42,10 @@ const withLoopbackNoProxy = async <T>(url: URL, action: () => Promise<T>): Promi
   }
 };
 
-const redactToken = (message: string, token: string): string => (token ? message.replaceAll(token, REDACTED_TOKEN) : message);
+const redactToken = (message: string, token: string): string => {
+  if (!token) return message;
+  return message.replaceAll(token, REDACTED_TOKEN);
+};
 
 /**
  * Parses BASE_URL once and classifies that parsed hostname by the server's own loopback rule (`isLoopbackHostname`),

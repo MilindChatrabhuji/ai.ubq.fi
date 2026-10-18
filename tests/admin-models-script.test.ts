@@ -95,9 +95,7 @@ test("request errors redact a valid admin token", async () => {
   const errors: string[] = [];
   const result = await runAdminModels([], {
     env: { BASE_URL: "https://ai.ubq.fi", DENO_DEPLOY_TOKEN: token },
-    fetcher: async () => {
-      throw new Error(`Header 'Authorization' has invalid value: 'Bearer ${token}'`);
-    },
+    fetcher: () => Promise.reject(new Error(`Header 'Authorization' has invalid value: 'Bearer ${token}'`)),
     log: () => undefined,
     error: (message) => errors.push(message),
   });
@@ -115,9 +113,9 @@ test("loopback requests add their hostname to NO_PROXY while fetching", async ()
     let noProxy: string | undefined;
     const result = await runAdminModels([], {
       env: { BASE_URL: "http://LOCALHOST:8000" },
-      fetcher: async () => {
+      fetcher: () => {
         noProxy = process.env.NO_PROXY;
-        return Response.json({ ok: true, data: { models: [] } });
+        return Promise.resolve(Response.json({ ok: true, data: { models: [] } }));
       },
       log: () => undefined,
       error: () => undefined,
