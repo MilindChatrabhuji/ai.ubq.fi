@@ -295,7 +295,10 @@ const deepSeekOfficialCodexModels = (): Record<string, unknown>[] => {
 const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
   const configured = deepSeekOfficialCodexModels();
   if (!configured.length) return [...models];
-  const modelId = (model: Record<string, unknown>): string => getString(model.slug)?.trim() || getString(model.id)?.trim() || "";
+  const modelId = (model: Record<string, unknown>): string => {
+    const slug = getString(model.slug)?.trim();
+    return slug ? slug : (getString(model.id)?.trim() ?? "");
+  };
   const configuredById = new Map(configured.map((model) => [modelId(model), model]));
   const present = new Set(models.map(modelId));
   const merged = models.map((model) => configuredById.get(modelId(model)) ?? model);

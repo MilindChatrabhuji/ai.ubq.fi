@@ -21,13 +21,14 @@ test("official DeepSeek rows replace a paid discovery duplicate", () => {
     const models = withDeepSeekOfficialModels([paidRow]);
     const pro = models.find((model) => model.slug === "deepseek-v4-pro");
 
+    assert.ok(pro);
     assert.equal(models.filter((model) => model.slug === "deepseek-v4-pro").length, 1);
-    assert.equal(pro?.owned_by, "deepseek");
+    assert.equal(pro.owned_by, "deepseek");
     assert.deepEqual(
-      (pro?.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
+      (pro.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
       ["none", "low", "high", "max"]
     );
-    assert.equal(pro?.default_reasoning_level, "high");
+    assert.equal(pro.default_reasoning_level, "high");
   } finally {
     if (previousKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = previousKey;
