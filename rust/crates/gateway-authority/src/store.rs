@@ -90,10 +90,10 @@ pub(crate) struct Transaction<'a, S, I> {
 }
 
 impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
-    pub async fn read<T: DeserializeOwned>(
+    async fn cached_record(
         &mut self,
         key: &RecordKey,
-    ) -> Result<Option<T>, GatewayError> {
+    ) -> Result<Option<&StoredRecord>, GatewayError> {
         if !self.reads.contains_key(&key.0) {
             let record = self.store.read(key).await?;
             if let Some(value) = &record {
@@ -109,11 +109,37 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         if raw.is_some_and(|row| row.expires_at_ms.is_some_and(|expiry| expiry <= self.now)) {
             return Ok(None);
         }
-        raw.map(|row| {
-            serde_json::from_value(row.json_value()?.clone())
-                .map_err(|_| invalid("Malformed authority record."))
-        })
-        .transpose()
+        Ok(raw)
+    }
+
+    pub async fn read<T: DeserializeOwned>(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<T>, GatewayError> {
+        self.cached_record(key)
+            .await?
+            .map(|row| {
+                serde_json::from_value(row.json_value()?.clone())
+                    .map_err(|_| invalid("Malformed authority record."))
+            })
+            .transpose()
+    }
+
+    pub async fn read_claude_quota(
+        &mut self,
+        account_id: &str,
+        cohort_id: &str,
+    ) -> Result<Option<serde_json::Value>, GatewayError> {
+        let key = crate::keys::claude_quota(account_id, cohort_id);
+        self.cached_record(&key)
+            .await?
+            .map(|row| match row.value_encoding {
+                gateway_core::value::ValueEncoding::ProfileV2 => Ok(
+                    crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
+                ),
+                _ => row.json_value().cloned(),
+            })
+            .transpose()
     }
 
     pub fn revision(&self, key: &RecordKey) -> Option<String> {
