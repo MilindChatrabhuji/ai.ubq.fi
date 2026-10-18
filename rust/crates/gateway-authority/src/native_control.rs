@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 mod facts;
 mod receiver;
 mod rows;
+pub mod wire;
 pub use receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
 
 pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
