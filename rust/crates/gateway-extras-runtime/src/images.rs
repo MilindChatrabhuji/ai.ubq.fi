@@ -1,6 +1,6 @@
 use std::{cell::Cell,rc::Rc};
 use futures_util::future::join_all;
-use gateway_core::{GatewayError,lifecycle::SemanticTerminal};
+use gateway_core::GatewayError;
 use gateway_providers::extras;
 use serde_json::{Value,json};
 use crate::{store::*,types::*};

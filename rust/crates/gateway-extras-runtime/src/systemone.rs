@@ -4,7 +4,7 @@ use gateway_providers::extras;
 use serde_json::{Value,json};
 use crate::{store::*,types::*};
 fn health(status:Option<u16>,kind:HealthKind)->HealthObservation {HealthObservation{provider:ExtrasProvider::SystemOne,kind,upstream_status:status}}
-fn observed(status:u16)->HealthObservation {health(Some(status),match status{401|403=>HealthKind::AuthInvalid,402|429=>HealthKind::QuotaExhausted,500..=>HealthKind::UpstreamError,400..=>HealthKind::Reachable,_=>HealthKind::Success})}
+fn observed(status:u16)->HealthObservation {health(Some(status),match status{401|403=>HealthKind::AuthInvalid,402|429=>HealthKind::QuotaExhausted,500.. =>HealthKind::UpstreamError,400.. =>HealthKind::Reachable,_=>HealthKind::Success})}
 pub(crate) async fn systemone<S:QueryStore,H:ExtrasHost>(store:&S,host:&H,request:&ExtrasRequest<'_>)->Result<ExtrasResponse,GatewayError> {
  if request.raw_body_bytes>262_144{return Ok(ExtrasResponse::error(GatewayError::new(400,"Invalid JSON body",Some("invalid_request_error"))))}
  // Validation precedes provider control/credential checks in the source handler.

@@ -1,5 +1,5 @@
 use chrono::{DateTime,Utc,SecondsFormat};
-use gateway_core::{GatewayError,query::{QueryRequest,QuerySelector,QueryStore},state::{RecordKey,RecordMutation,StoredRecord},tuple_key::{DecodedKeyPart,TupleKey}};
+use gateway_core::{GatewayError,query::{QueryRequest,QuerySelector,QueryStore},state::{RecordKey,RecordMutation},tuple_key::{DecodedKeyPart,TupleKey}};
 use serde::{Deserialize,Serialize};
 use serde_json::{Value,json};
 use crate::{store::*,types::ExtrasHost};
