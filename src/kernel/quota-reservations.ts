@@ -3,11 +3,9 @@ import type { Kv, KvEntry, KvEntryMaybe } from "#kv";
 
 import {
   decideKernelQuotaScope,
-  kernelReservationRetentionMs,
   kernelReservationKey,
   kernelReservationWindowPrefix,
   normalizeKernelQuotaReservationRowV2,
-  kernelReservationMatchesRequest,
   requireKernelReservationRow,
   kernelReservationPrecondition,
   decideKernelQuotaTerminalIntent,
@@ -602,8 +600,6 @@ export {
   kernelQuotaUnavailable,
   kernelReservationContext,
   kernelReservationKey,
-  kernelReservationMatchesRequest,
-  kernelReservationRetentionMs,
   readKernelQuotaPolicyState,
   reclaimExpiredKernelReservationUnlocked,
   withKernelQuotaLock,

@@ -27,7 +27,6 @@ export {
   API_KEY_USAGE_PROVIDERS,
   API_KEY_USAGE_V3_RESERVATION_LEASE_MS,
   API_KEY_USAGE_V3_RETENTION_MS,
-  currentApiKeyUsageWindow,
   normalizeApiKeyUsageRequestV3,
   normalizeApiKeyUsageWindowV3,
 } from "./authority/native-api-key.ts";

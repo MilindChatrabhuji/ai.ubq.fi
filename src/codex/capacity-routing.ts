@@ -31,7 +31,6 @@ import {
 } from "../authority/native-codex-capacity.ts";
 export {
   neutralSlot,
-  rotateCredentialForSameAccount,
   parseFinitePercent,
   quotaHeadroomFor,
   capacityState,

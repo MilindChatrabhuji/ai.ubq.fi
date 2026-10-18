@@ -16,7 +16,6 @@ import {
 } from "./routing-state.ts";
 import type { CodexRoutingAccount, CodexRouteSelection } from "../authority/native-codex-contracts.ts";
 import * as decisions from "../authority/native-codex-evaluation.ts";
-export { routingStateChangedByNormalization } from "../authority/native-codex-evaluation.ts";
 type CodexRoutingSlotIdentity = decisions.CodexRoutingSlotIdentity;
 type CodexRoutingAccountEvaluation = Omit<decisions.CodexRoutingAccountEvaluation, "account" | "routedAccount" | "blockedAccount"> &
   Readonly<{
