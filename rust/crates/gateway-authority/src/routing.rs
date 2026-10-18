@@ -511,13 +511,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 if view.active.as_ref().is_none_or(|active| {
                     active.binding != next.binding || active.generation != next.generation
                 }) {
-                    if view.active.as_ref().is_none_or(|old| {
-                        old.binding != next.binding
-                            || old.generation != next.generation
-                            || old.transition_reason != next.transition_reason
-                    }) {
-                        tx.put(&keys::active(), &next, None)?;
-                    }
+                    tx.put(&keys::active(), &next, None)?;
                 }
                 RouteSelection::Eligible(AdmittedAccount {
                     binding,

@@ -2,9 +2,9 @@
 use crate::capacity_rules::merge_capacity;
 use crate::paid_control::PaidControlOwner;
 use crate::routing::{
-    CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityStore,
-    CapacityWindows, SubscriptionPool, apply_capacity_observation, parse_capacity_observation,
-    parse_capacity_store, parse_routing_state,
+    CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityWindows,
+    SubscriptionPool, apply_capacity_observation, parse_capacity_observation, parse_capacity_store,
+    parse_routing_state,
 };
 use crate::store::Transaction;
 use crate::{Authority, TokenSource, invalid, keys, text, unavailable};

@@ -1018,6 +1018,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-schema",
  "hmac 0.12.1",
  "serde",
  "serde_json",
