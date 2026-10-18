@@ -810,6 +810,8 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-providers",
+ "gateway-publication",
  "serde",
  "serde_json",
  "url",
