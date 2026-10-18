@@ -105,7 +105,7 @@ impl SourceJson {
         Ok(items)
     }
     pub fn into_bytes(self) -> Vec<u8> {
-        String::from(self.0).into_bytes()
+        self.as_bytes().to_vec()
     }
     pub fn deserialize<T: DeserializeOwned>(&self) -> Result<T, GatewayError> {
         serde_json::from_str(self.as_str()).map_err(|_| invalid())
