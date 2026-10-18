@@ -23,7 +23,7 @@ export const exists = async (path: string): Promise<boolean> => {
 export type DenoFileInfo = Readonly<{ isFile: boolean; isSymlink: boolean; mode: number | null; uid: number | null; dev: number; ino: number | null }>;
 type DenoLockFile = Readonly<{ stat(): Promise<DenoFileInfo>; tryLockSync(exclusive: boolean): boolean; unlockSync(): void; close(): void }>;
 export type DenoLockHost = Readonly<{
-  open(path: string, options: Readonly<{ write: true; create: true; mode: number }>): Promise<DenoLockFile>;
+  open(path: string, options: Readonly<{ write: true }>): Promise<DenoLockFile>;
   lstat(path: string): Promise<DenoFileInfo>;
   uid(): number | null;
 }>;

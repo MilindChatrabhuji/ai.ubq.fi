@@ -1,3 +1,4 @@
+import { closeSync, constants, openSync } from "node:fs";
 import { hostRuntime, type DenoLockHost } from "./io.ts";
 
 type ReleaseDeployLock = () => void;
@@ -5,11 +6,19 @@ type BunDeployLockModule = Readonly<{ acquireBunDeployLock: (path: string) => Pr
 const LOCK_WAIT_MS = 240_000;
 
 /**
- * Deno.open has no O_NOFOLLOW, so the opened inode must still be the physical, non-link path entry.
+ * Open the lock with O_NOFOLLOW first, then give Deno a descriptor alias, never the mutable lock path.
+ * The POSIX bridge host must permit opening /dev/fd aliases; missing OS or Deno access fails closed.
  * FsFile.tryLockSync(true) is the same non-blocking exclusive flock the Bun host takes.
  */
 export const acquireDenoDeployLock = async (deno: DenoLockHost, path: string, waitMs = LOCK_WAIT_MS): Promise<ReleaseDeployLock> => {
-  const file = await deno.open(path, { write: true, create: true, mode: 0o600 });
+  if (!constants.O_NOFOLLOW) throw new Error("Deployment requires no-follow file opens");
+  const descriptor = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  let file: Awaited<ReturnType<DenoLockHost["open"]>>;
+  try {
+    file = await deno.open(`/dev/fd/${descriptor}`, { write: true });
+  } finally {
+    closeSync(descriptor);
+  }
   try {
     const info = await file.stat();
     const entry = await deno.lstat(path);
