@@ -60,6 +60,7 @@ impl PrivateCapture {
                     .map_err(|_| invalid("Source profile row cannot be encoded"))?;
                 let decoded = normalize_source_import_line_with_host(&text, host)?
                     .ok_or_else(|| invalid("Empty source row"))?;
+                validate_complete_binary_views(&entry.value)?;
                 if !keys.insert(decoded.key.0.clone()) {
                     return Err(invalid("Duplicate logical source key"));
                 }
@@ -94,4 +95,28 @@ impl PrivateCapture {
             })
             .collect()
     }
+}
+
+fn validate_complete_binary_views(input: &SourceJson) -> Result<(), GatewayError> {
+    let fields = input.object_entries()?;
+    let get = |name: &str| fields.iter().rev().find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16())).map(|(_, value)| value);
+    let kind = get("type").ok_or_else(|| invalid("Capture profile type is missing"))?.deserialize::<String>()?;
+    let empty=SourceJson::parse("null")?;
+    let value=get("value").unwrap_or(&empty);
+    match kind.as_str() {
+        "ArrayBuffer" | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray" | "Int16Array" | "Uint16Array" | "Int32Array" | "Uint32Array" | "Float32Array" | "Float64Array" | "BigInt64Array" | "BigUint64Array" => {
+            let length = get("byteLength").ok_or_else(|| invalid("Full capture binary view requires explicit byteLength"))?.deserialize::<f64>()?;
+            let gateway_core::value::PortableValue::Binary { bytes, .. } = gateway_admin_data::profile::from_source_profile(input)? else { return Err(invalid("Capture binary value is malformed")); };
+            if length != bytes.len() as f64 { return Err(invalid("Source profile omitted a partial binary view's offset; full capture cannot preserve it")); }
+        }
+        "Array" | "Set" => for child in value.array_items()? { validate_complete_binary_views(&child)?; },
+        "Map" => for pair in value.array_items()? { for child in pair.array_items()?.iter().take(2) { validate_complete_binary_views(child)?; } },
+        "object" if value.as_str().trim().starts_with('{') => {
+            let fields:std::collections::BTreeMap<_,_> = value.object_entries()?.into_iter().collect();
+            for child in fields.values() { validate_complete_binary_views(child)?; }
+        }
+        "object" if value.as_str().trim().starts_with('[') => for child in value.array_items()? { validate_complete_binary_views(&child)?; },
+        _ => {}
+    }
+    Ok(())
 }

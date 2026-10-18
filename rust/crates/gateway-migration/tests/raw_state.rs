@@ -74,7 +74,7 @@ fn raw_source_values_restart_then_export_the_latest_state_without_surrogate_loss
             .object_entries()
             .unwrap()
             .into_iter()
-            .find(|(key, _)| key == &JsString16::from_str("value"))
+            .find(|(key, _)| key == &JsString16::from_utf8("value"))
             .unwrap()
             .1
             .deserialize()
@@ -164,4 +164,13 @@ fn key_textencoder_fold_is_explicit_and_value_units_never_fold() {
         raw(json!({"type":"string","value":"\u{fffd}"}))
     );
     assert_eq!(output.entries[0].value, input.entries[0].value);
+}
+
+#[test]
+fn full_capture_refuses_a_partial_binary_view_before_writing() {
+    let value=SourceJson::parse(r#"{"type":"Array","value":[{"type":"Uint8Array","value":"AAECAw","byteLength":2}]}"#).unwrap();
+    let input=capture(vec![entry("partial-view",value)]);
+    let directory=Directory::new();let store=SqliteStore::open(&directory.file("partial-view.sqlite3"));
+    assert!(prepare(&input,&CanonicalDates).is_err());
+    assert!(run(store.read(&key(json!(["default","partial-view"])))).unwrap().is_none());
 }

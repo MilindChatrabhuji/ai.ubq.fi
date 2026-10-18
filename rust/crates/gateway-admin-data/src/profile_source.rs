@@ -47,11 +47,11 @@ fn object(values: Vec<(JsString16, SourceJson)>) -> Result<SourceJson, GatewayEr
 }
 fn tag(kind: &str, value: Option<SourceJson>) -> Result<SourceJson, GatewayError> {
     let mut fields = vec![(
-        JsString16::from_str("type"),
+        JsString16::from_utf8("type"),
         SourceJson::from_serializable(kind)?,
     )];
     if let Some(value) = value {
-        fields.push((JsString16::from_str("value"), value));
+        fields.push((JsString16::from_utf8("value"), value));
     }
     object(fields)
 }
@@ -118,12 +118,12 @@ fn raw_json(value: &SourceJson) -> Result<PortableValue, GatewayError> {
 }
 fn js_text(value: Option<&SourceJson>) -> Result<JsString16, GatewayError> {
     let Some(value) = value else {
-        return Ok(JsString16::from_str("undefined"));
+        return Ok(JsString16::from_utf8("undefined"));
     };
     let raw = value.as_str().trim();
     match raw.as_bytes().first() {
         Some(b'"') => text(value),
-        Some(b'{') => Ok(JsString16::from_str("[object Object]")),
+        Some(b'{') => Ok(JsString16::from_utf8("[object Object]")),
         Some(b'[') => {
             let mut units = Vec::new();
             for (at, item) in value.array_items()?.iter().enumerate() {
@@ -139,9 +139,9 @@ fn js_text(value: Option<&SourceJson>) -> Result<JsString16, GatewayError> {
         _ => {
             let value = raw_json(value)?;
             if let Some(number) = value.number_value() {
-                return Ok(JsString16::from_str(ryu_js::Buffer::new().format(number)));
+                return Ok(JsString16::from_utf8(ryu_js::Buffer::new().format(number)));
             }
-            Ok(JsString16::from_str(raw))
+            Ok(JsString16::from_utf8(raw))
         }
     }
 }
@@ -185,7 +185,7 @@ fn truthy(value: &SourceJson) -> Result<bool, GatewayError> {
 }
 fn same(a: &PortableValue, b: &PortableValue) -> bool {
     let string = |value: &PortableValue| match value {
-        PortableValue::String(value) => Some(JsString16::from_str(value)),
+        PortableValue::String(value) => Some(JsString16::from_utf8(value)),
         PortableValue::StringUtf16(value) => Some(value.clone()),
         _ => None,
     };
@@ -198,7 +198,7 @@ fn entries(value: &SourceJson) -> Result<Fields, GatewayError> {
             .array_items()?
             .into_iter()
             .enumerate()
-            .map(|(i, v)| (JsString16::from_str(&i.to_string()), v))
+            .map(|(i, v)| (JsString16::from_utf8(&i.to_string()), v))
             .collect()),
         Some(b'"') => text(value)?
             .as_units()
@@ -206,7 +206,7 @@ fn entries(value: &SourceJson) -> Result<Fields, GatewayError> {
             .enumerate()
             .map(|(i, v)| {
                 Ok((
-                    JsString16::from_str(&i.to_string()),
+                    JsString16::from_utf8(&i.to_string()),
                     JsString16::from_units(vec![*v]).to_source_json()?,
                 ))
             })
@@ -446,7 +446,7 @@ pub fn to_source_profile(value: &PortableValue) -> Result<SourceJson, GatewayErr
             object(
                 values
                     .iter()
-                    .map(|(key, value)| Ok((JsString16::from_str(key), to_source_profile(value)?)))
+                    .map(|(key, value)| Ok((JsString16::from_utf8(key), to_source_profile(value)?)))
                     .collect::<Result<_, GatewayError>>()?,
             )?,
         ),
@@ -484,17 +484,17 @@ pub fn to_source_profile(value: &PortableValue) -> Result<SourceJson, GatewayErr
             cause,
         } => {
             let mut detail = vec![(
-                JsString16::from_str("message"),
+                JsString16::from_utf8("message"),
                 SourceJson::from_serializable(message)?,
             )];
             if let Some(stack) = stack {
                 detail.push((
-                    JsString16::from_str("stack"),
+                    JsString16::from_utf8("stack"),
                     SourceJson::from_serializable(stack)?,
                 ));
             }
             if let Some(cause) = cause {
-                detail.push((JsString16::from_str("cause"), to_source_profile(cause)?));
+                detail.push((JsString16::from_utf8("cause"), to_source_profile(cause)?));
             }
             return tag(kind, Some(object(detail)?));
         }
@@ -504,12 +504,12 @@ pub fn to_source_profile(value: &PortableValue) -> Result<SourceJson, GatewayErr
             stack,
             cause,
         } => {
-            let mut detail = vec![(JsString16::from_str("message"), message.to_source_json()?)];
+            let mut detail = vec![(JsString16::from_utf8("message"), message.to_source_json()?)];
             if let Some(stack) = stack {
-                detail.push((JsString16::from_str("stack"), stack.to_source_json()?));
+                detail.push((JsString16::from_utf8("stack"), stack.to_source_json()?));
             }
             if let Some(cause) = cause {
-                detail.push((JsString16::from_str("cause"), to_source_profile(cause)?));
+                detail.push((JsString16::from_utf8("cause"), to_source_profile(cause)?));
             }
             return tag(kind, Some(object(detail)?));
         }
