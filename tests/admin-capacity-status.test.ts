@@ -1042,215 +1042,366 @@ test("provider save toasts count saved tiers, not subscription or missing ids", 
   }
 });
 
-const shippedSlice = (start: string, end: string): string => {
-  const from = adminScript.indexOf(start);
-  const to = adminScript.indexOf(end, from);
-  assert.ok(from >= 0 && to > from, `${start} must stay discoverable in static/admin.js`);
-  return adminScript.slice(from, to);
-};
-
-const sorted = (ids: Iterable<string>): string[] => [...ids].sort((left, right) => left.localeCompare(right));
-type SaveResponse = { ok: boolean; status: number; json: () => Promise<unknown> };
-type Provider = { id: string; subscriptions?: { id: string }[] };
-
-class FakeCheckbox {
-  type = "checkbox";
-  checked: boolean;
-  dataset: Record<string, string>;
-  constructor(id: string, checked: boolean, subscription: boolean) {
-    this.dataset = subscription ? { providerSubscriptionToggle: id } : { providerToggle: id };
-    this.checked = checked;
+class ApiKeyElement {
+  dataset: Record<string, string> = {};
+  attributes = new Map<string, string>();
+  style = { setProperty: (name: string, value: unknown) => this.attributes.set(name, String(value)) };
+  children: ApiKeyElement[] = [];
+  parentElement: ApiKeyElement | null = null;
+  listeners = new Map<string, (() => void)[]>();
+  value = "";
+  type = "";
+  id = "";
+  hidden = false;
+  checked = false;
+  disabled = false;
+  private _content = "";
+  constructor(
+    readonly tagName: string,
+    readonly owner: { activeElement: ApiKeyElement | null },
+    readonly root = false
+  ) {}
+  get isConnected(): boolean {
+    return this.root || (this.parentElement?.isConnected ?? false);
+  }
+  get textContent(): string {
+    return this._content + this.children.map((child) => child.textContent).join("");
+  }
+  set textContent(value: string) {
+    for (const child of [...this.children]) child.remove();
+    this._content = value;
+  }
+  all(predicate: (element: ApiKeyElement) => boolean): ApiKeyElement[] {
+    return this.children.flatMap((child) => [...(predicate(child) ? [child] : []), ...child.all(predicate)]);
+  }
+  remove() {
+    if (this.owner.activeElement === this || this.all((child) => child === this.owner.activeElement).length) this.owner.activeElement = null;
+    if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+    this.parentElement = null;
+  }
+  append(...children: ApiKeyElement[]) {
+    for (const child of children) {
+      child.remove();
+      child.parentElement = this;
+      this.children.push(child);
+    }
+  }
+  appendChild(child: ApiKeyElement) {
+    this.append(child);
+  }
+  setAttribute(name: string, value: string) {
+    this.attributes.set(name, value);
+  }
+  addEventListener(event: string, listener: () => void) {
+    this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
+  }
+  fire(event: string) {
+    for (const listener of this.listeners.get(event) ?? []) listener();
+  }
+  focus() {
+    this.owner.activeElement = this;
   }
 }
 
-type Harness = {
-  save: () => Promise<void>;
-  unsaved: () => boolean;
-  seed: (saved: readonly string[], staged: readonly string[]) => void;
-  state: () => { saved: Iterable<string>; staged: Iterable<string>; saving: boolean };
+type ApiKeyFixtureRecord = ReturnType<typeof fixtureApiKey>;
+const fixtureApiKey = (id: string, overrides: Record<string, unknown> = {}) => ({
+  id,
+  name: id,
+  created_at_ms: 1,
+  expires_at_ms: -1,
+  revoked_at_ms: null as number | null,
+  usage_limit_requests: 25,
+  usage_requests: 0,
+  usage_reset_at_ms: 60_000,
+  window_ms: 60_000,
+  paid_fallback_enabled: false,
+  paid_fallback_limit_credits: 0,
+  ...overrides,
+});
+const settleKeyInteractions = async () => {
+  for (let i = 0; i < 12; i++) await Promise.resolve();
 };
-
-/** Runs the shipped selection state, helpers, save handler and checkbox listener; only I/O and rendering are faked. */
-const loadHarness = (roster: Provider[] = [{ id: "a" }, { id: "b" }, { id: "c" }]) => {
-  const requests: unknown[] = [];
-  const successes: string[] = [];
-  let respond: ((response: SaveResponse) => void) | null = null;
-  let changeListener: ((event: { target: FakeCheckbox }) => void) | null = null;
-  const context = {
-    HTMLInputElement: FakeCheckbox,
-    apiUrl: (path: string) => path,
-    applyProvidersSelection: () => {},
-    console,
-    fetch: (_url: string, init: { body: string }) => {
-      requests.push(JSON.parse(init.body));
-      return new Promise<SaveResponse>((resolve) => {
-        respond = resolve;
-      });
-    },
-    formatNumber: (value: number) => String(value),
-    getAdminToken: () => "admin-token",
-    hasAdminCredential: () => true,
-    providerRoster: roster,
-    providersList: {
-      addEventListener: (type: string, listener: (event: { target: FakeCheckbox }) => void) => {
-        if (type === "change") changeListener = listener;
-      },
-    },
-    providersOnlyActiveInput: { checked: false },
-    renderProvidersPicker: () => {},
-    setProvidersSelectionBadge: () => {},
-    toast: { error: () => {}, success: (message: string) => successes.push(message) },
-    updateProvidersStatus: () => {},
+const apiKeyFixture = (records: ApiKeyFixtureRecord[], initialView = "all") => {
+  let now = 1_800_000_000_000;
+  let nextTimer = 0;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  const document = { activeElement: null as ApiKeyElement | null, createElement: (tag: string) => new ApiKeyElement(tag, document) };
+  const list = new ApiKeyElement("div", document, true);
+  const badge = document.createElement("span");
+  const summary = document.createElement("span");
+  const requests: { path: string; method: string; body: Record<string, unknown>; resolve: (data: Record<string, unknown>) => void }[] = [];
+  const confirmations: string[] = [];
+  const notices: { message: string; description: string }[] = [];
+  let confirmed = false;
+  const serverKeys = records.map((key) => ({ ...key }));
+  const setBadge = (element: ApiKeyElement, state: string, text: string) => {
+    element.dataset.state = state;
+    element.textContent = text;
   };
+  const responseForKey = (body: Record<string, unknown>, method: string, path: string, data: Record<string, unknown>) => {
+    const key = serverKeys.find((key) => key.id === body.id);
+    if (key) Object.assign(key, method === "PATCH" ? body : { revoked_at_ms: path.endsWith("/unrevoke") ? null : now }, data);
+    return Response.json(data);
+  };
+  const context = {
+    document,
+    keysList: list,
+    initialKeys: records.map((key) => ({ ...key })),
+    currentKeyView: initialView,
+    Date: class extends Date {
+      static override now() {
+        return now;
+      }
+    },
+    setTimeout: (run: () => void, delay: number) => {
+      const id = ++nextTimer;
+      timers.set(id, { at: now + delay, run });
+      return id;
+    },
+    clearTimeout: (id: number) => timers.delete(id),
+    confirm: (message: string) => {
+      confirmations.push(message);
+      return confirmed;
+    },
+    fetch: (path: string, options: RequestInit = {}) => {
+      if (!options.method) return Promise.resolve(Response.json({ data: serverKeys.map((key) => ({ ...key })) }));
+      assert.equal(typeof options.body, "string");
+      if (typeof options.body !== "string") throw new Error("Expected a JSON request body");
+      const body = JSON.parse(options.body) as Record<string, unknown>;
+      return new Promise<Response>((resolve) =>
+        requests.push({
+          path,
+          method: options.method ?? "GET",
+          body,
+          resolve: (data) => {
+            resolve(responseForKey(body, options.method ?? "GET", path, data));
+          },
+        })
+      );
+    },
+    apiUrl: (path: string) => `https://fixture.invalid${path}`,
+    getAdminToken: () => "fixture-token",
+    hasAdminCredential: () => true,
+    setBadge,
+    setKeysBadge: (state: string, text: string) => {
+      setBadge(badge, state, text);
+    },
+    setAuthBadge: () => undefined,
+    tokenInput: document.createElement("input"),
+    accessApiKeys: summary,
+    setAccessValue: (el: ApiKeyElement, text: string) => {
+      el.textContent = text;
+    },
+    clearKeysListLoading: () => undefined,
+    setKeysListLoading: () => undefined,
+    setKeyListMessage: (text: string) => {
+      list.textContent = "";
+      const message = document.createElement("p");
+      message.dataset.empty = "keys";
+      message.textContent = text;
+      list.appendChild(message);
+    },
+    ensureKeyChangesLoaded: () => Promise.resolve(),
+    applyIconButton: (button: ApiKeyElement, _icon: string, label: string) => {
+      button.setAttribute("aria-label", label);
+    },
+    buildApiKeyRequestLogsPanel: () => ({ panel: document.createElement("details") }),
+    hydrateApiKeyRequestLogs: () => Promise.resolve(),
+    DEFAULT_API_KEY_WINDOW_MS: 60_000,
+    DEFAULT_FINITE_USAGE_LIMIT: 50,
+    DEFAULT_FINITE_PAID_FALLBACK_LIMIT: 1,
+    MICROCREDITS_PER_CREDIT: 1_000_000,
+    formatDate: String,
+    formatExpires: String,
+    formatNumber: String,
+    formatLimitValue: String,
+    formatWindowShort: String,
+    formatWindowMs: String,
+    formatCredits: String,
+    formatPaidFallbackLimit: String,
+    formatMicrocreditsAsCredits: String,
+    formatPlural: (count: number, label: string) => `${count} ${label}${count === 1 ? "" : "s"}`,
+    normalizeFiniteNumber: (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null),
+    toast: {
+      info: (message: string, options: { description: string }) => notices.push({ message, ...options }),
+      error: () => undefined,
+      success: () => undefined,
+    },
+  };
+  const section = (start: string, end: string) => {
+    const from = adminScript.indexOf(start);
+    const to = adminScript.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `${start} production section is present`);
+    return adminScript.slice(from, to);
+  };
+  // Execute the shipped renderer, autosave, status scheduler and network actions; only external ports and decorative presenters are faked.
   runInNewContext(
     [
-      shippedSlice("let providerSelection = new Set();", "const setProvidersSelectionBadge"),
-      shippedSlice("const providerRosterEntry", "const buildProviderTierFilterChip"),
-      shippedSlice("const providersSubscriptionsFor", "const providersTierCounts"),
-      shippedSlice("const saveProviderSelection = async () => {", "const discardProviderChanges"),
-      shippedSlice("const setProviderChecked", 'providersCheckAllBtn.addEventListener("click"'),
-      "globalThis.harness = {",
-      "  save: saveProviderSelection,",
-      "  unsaved: providersHasUnsavedChanges,",
-      "  seed: (saved, staged) => {",
-      "    providersSavedSelection = providersSelectionFromIds(saved);",
-      "    providerSelection = new Set(staged);",
-      "    providerSelectionLoadedAt = 1;",
-      "  },",
-      "  state: () => ({ saved: providersSavedSelection, staged: providerSelection, saving: providerSelectionSaving }),",
-      "};",
+      section("const debounce =", "const mustGet ="),
+      section("let allKeys =", "let providersLoading ="),
+      section("const isExpiredAt =", "const numberFormatter ="),
+      section("const pad2 =", "const ICON_PATHS ="),
+      section("const parseFiniteUsageLimit =", "/** A finite value worth restoring"),
+      section("const parseKernelWindowValue =", "const parseKernelExpiresValue ="),
+      section("const appendKeyInfo =", "const normalizeKernelPubKeyAppId ="),
+      section("const updateAccessApiKeysSummary =", "const updateAccessGithubSummary ="),
+      section("const buildUnlimitedToggle =", "const renderPasskeyUsers ="),
+      section("const refreshKeys =", "const ensureKeysLoaded ="),
+      section("const updateKeyRevocationState =", "const formatModelLabel ="),
+      "allKeys = initialKeys; keysLoadedAt = 1; globalThis.render = (view) => { currentKeyView = view; renderKeys(allKeys, view); }; render(currentKeyView);",
     ].join("\n"),
     context
   );
-  const harness = (context as typeof context & { harness: Harness }).harness;
-  const toggle = (id: string, checked: boolean, subscription = false) => {
-    assert.ok(changeListener, "the Providers list change listener must be registered");
-    changeListener({ target: new FakeCheckbox(id, checked, subscription) });
+  const render = (context as typeof context & { render: (view: string) => void }).render;
+  return {
+    list,
+    document,
+    badge,
+    summary,
+    requests,
+    confirmations,
+    notices,
+    render,
+    confirm: (value: boolean) => {
+      confirmed = value;
+    },
+    rows: () => list.children.filter((row) => row.dataset.key === "row"),
+    advance: async (ms: number) => {
+      const until = now + ms;
+      for (;;) {
+        const next = [...timers]
+          .filter(([, timer]) => timer.at <= until)
+          .sort((a, b) => a[1].at - b[1].at)
+          .at(0);
+        if (!next) break;
+        now = next[1].at;
+        timers.delete(next[0]);
+        next[1].run();
+        await settleKeyInteractions();
+      }
+      now = until;
+      await settleKeyInteractions();
+    },
   };
-  const succeed = (body: unknown) => {
-    assert.ok(respond, "a provider selection save request must be pending");
-    respond({ ok: true, status: 200, json: () => Promise.resolve(body) });
-  };
-  return { harness, requests, successes, toggle, succeed };
+};
+const keyAction = (row: ApiKeyElement, label: string) => {
+  const button = row.all((element) => element.attributes.get("aria-label") === label).at(0);
+  assert.ok(button, `${label} is rendered`);
+  return button;
+};
+const keyNameInput = (row: ApiKeyElement) => {
+  const input = row.all((element) => element.tagName === "input" && element.type === "text").at(0);
+  assert.ok(input);
+  return input;
 };
 
-test("a provider checked while a save is pending stays staged and unsaved", async () => {
-  const { harness, requests, successes, toggle, succeed } = loadHarness();
-  harness.seed([], ["a"]);
-  const saving = harness.save();
-  assert.equal(harness.state().saving, true);
-  toggle("b", true);
-  succeed({ provider_ids: ["a"] });
-  await saving;
-
-  assert.deepEqual(requests, [{ provider_ids: ["a"] }], "the later edit is not part of the pending save");
-  const state = harness.state();
-  assert.equal(state.saving, false);
-  assert.deepEqual(sorted(state.saved), ["a"]);
-  assert.deepEqual(sorted(state.staged), ["a", "b"]);
-  assert.equal(harness.unsaved(), true);
-  assert.deepEqual(successes, ["1 provider active"], "the toast counts saved, not staged providers");
+test("admin API-key editors retain staged and in-flight changes through another save and expiry", async () => {
+  const fixture = apiKeyFixture([fixtureApiKey("first"), fixtureApiKey("second"), fixtureApiKey("expiring", { expires_at_ms: 1_800_000_002_000 })]);
+  const first = fixture.rows().at(0);
+  const second = fixture.rows().at(1);
+  assert.ok(first && second);
+  for (const row of [first, second]) keyAction(row, "Edit API key").fire("click");
+  const firstInput = keyNameInput(first);
+  const secondInput = keyNameInput(second);
+  firstInput.value = "First edit";
+  firstInput.fire("input");
+  await fixture.advance(500);
+  secondInput.value = "Second edit";
+  secondInput.fire("input");
+  secondInput.focus();
+  await fixture.advance(500);
+  assert.equal(fixture.requests.length, 1);
+  fixture.requests[0]?.resolve({ name: "First edit" });
+  await settleKeyInteractions();
+  assert.equal(second.isConnected, true, "saving one key must not detach another key's pending editor");
+  assert.equal(fixture.document.activeElement, secondInput);
+  assert.equal(secondInput.value, "Second edit");
+  assert.equal(second.all((el) => el.dataset.keyEdit === "panel")[0]?.hidden, false);
+  await fixture.advance(500);
+  assert.equal(fixture.requests[1]?.body.name, "Second edit");
+  secondInput.value = "Newest edit";
+  secondInput.fire("input");
+  await fixture.advance(501);
+  assert.equal(second.isConnected, true, "another key expiring must preserve the in-flight editor");
+  assert.equal(fixture.document.activeElement, secondInput);
+  assert.equal(fixture.rows()[2]?.dataset.state, "expired");
+  assert.equal(fixture.summary.textContent, "2 active · 3 keys");
+  fixture.requests[1]?.resolve({ name: "Second edit" });
+  await settleKeyInteractions();
+  assert.equal(secondInput.value, "Newest edit");
+  await fixture.advance(1_000);
+  assert.equal(fixture.requests[2]?.body.name, "Newest edit", "the queued edit reaches the real PATCH handler");
+  fixture.requests[2]?.resolve({ name: "Newest edit" });
+  await settleKeyInteractions();
 });
 
-test("a provider unchecked during a no-filter save stays unchecked and unsaved", async () => {
-  const { harness, requests, successes, toggle, succeed } = loadHarness();
-  harness.seed(["a"], ["a", "b", "c"]);
-  const saving = harness.save();
-  toggle("b", false);
-  succeed({ provider_ids: [] });
-  await saving;
-
-  assert.deepEqual(requests, [{ provider_ids: [] }], "all checked providers serialize to the no-filter state");
-  const state = harness.state();
-  assert.deepEqual(sorted(state.saved), ["a", "b", "c"]);
-  assert.deepEqual(sorted(state.staged), ["a", "c"]);
-  assert.equal(harness.unsaved(), true);
-  assert.deepEqual(successes, ["Filter cleared"]);
+test("admin API-key expiry updates filters without detaching open editors", async () => {
+  const fixture = apiKeyFixture([fixtureApiKey("expired", { expires_at_ms: 1 }), fixtureApiKey("soon", { expires_at_ms: 1_800_000_000_100 })], "expired");
+  const row = fixture.rows()[0];
+  assert.ok(row);
+  keyAction(row, "Edit API key").fire("click");
+  const input = keyNameInput(row);
+  input.value = "Still editing";
+  input.fire("input");
+  input.focus();
+  await fixture.advance(101);
+  assert.equal(row.isConnected, true);
+  assert.equal(input.value, "Still editing");
+  assert.equal(fixture.document.activeElement, input);
+  assert.equal(fixture.rows().filter((candidate) => !candidate.hidden).length, 2, "a newly expired key appears in the Expired view");
+  const never = row.all((element) => element.type === "checkbox" && element.parentElement?.textContent === "Never expires")[0];
+  assert.ok(never);
+  never.checked = true;
+  never.fire("change");
+  await fixture.advance(1_000);
+  assert.equal(fixture.requests[0]?.body.expires_at_ms, -1);
+  fixture.requests[0]?.resolve({ name: "Still editing", expires_at_ms: -1 });
+  await settleKeyInteractions();
+  assert.equal(row.dataset.state, "active", "the saved expiry immediately changes the row's status and filter");
+  assert.equal(row.hidden, true);
+  assert.equal(row.isConnected, true);
+  assert.equal(fixture.summary.textContent, "1 active · 2 keys");
+  fixture.render("active");
+  assert.equal(fixture.rows().filter((candidate) => !candidate.hidden).length, 1);
 });
 
-test("a provider save response without provider_ids records only the submitted ids as saved", async () => {
-  const { harness, requests, toggle, succeed } = loadHarness();
-  harness.seed([], ["a"]);
-  const saving = harness.save();
-  toggle("b", true);
-  succeed({ ok: true });
-  await saving;
-
-  assert.deepEqual(requests, [{ provider_ids: ["a"] }]);
-  const state = harness.state();
-  assert.deepEqual(sorted(state.saved), ["a"], "an id that was never sent cannot be recorded as saved");
-  assert.deepEqual(sorted(state.staged), ["a", "b"]);
-  assert.equal(harness.unsaved(), true);
-});
-
-for (const checking of [false, true]) {
-  test(`a Codex subscription ${checking ? "checked" : "unchecked"} during a save preserves the umbrella transition`, async () => {
-    const { harness, requests, toggle, succeed } = loadHarness([{ id: "codex", subscriptions: [{ id: "codex:one" }, { id: "codex:two" }] }, { id: "paid" }]);
-    const submitted = checking ? ["codex:one"] : ["codex"];
-    harness.seed([], submitted);
-    const saving = harness.save();
-    toggle("codex:two", checking, true);
-    succeed({ provider_ids: submitted });
-    await saving;
-
-    assert.deepEqual(requests, [{ provider_ids: submitted }]);
-    const state = harness.state();
-    assert.deepEqual(sorted(state.saved), submitted);
-    assert.deepEqual(sorted(state.staged), checking ? ["codex"] : ["codex:one"]);
-    assert.equal(harness.unsaved(), true);
-  });
-}
-
-test("a provider save without later edits adopts the server's canonical selection and is clean", async () => {
-  const { harness, requests, succeed } = loadHarness();
-  harness.seed([], ["a", " b "]);
-  const saving = harness.save();
-  succeed({ provider_ids: ["a", "b"] });
-  await saving;
-
-  assert.deepEqual(requests, [{ provider_ids: ["a", " b "] }]);
-  const state = harness.state();
-  assert.deepEqual(sorted(state.saved), ["a", "b"]);
-  assert.deepEqual(sorted(state.staged), ["a", "b"]);
-  assert.equal(harness.unsaved(), false);
-});
-
-test("provider pending-save toasts count saved tiers once while later edits stay staged", async () => {
-  const { harness, successes, toggle, succeed } = loadHarness([
-    { id: "codex", subscriptions: [{ id: "codex:one" }, { id: "codex:two" }, { id: "codex:three" }] },
-    { id: "paid" },
-  ]);
-  harness.seed([], ["codex:one", "codex:two"]);
-  const saving = harness.save();
-  toggle("paid", true);
-  succeed({ provider_ids: ["codex:one", "codex:two"] });
-  await saving;
-  assert.deepEqual(successes, ["1 provider active"], "two saved subscriptions form one tier, and the later paid edit is unsaved");
-  assert.deepEqual(sorted(harness.state().staged), ["codex:one", "codex:two", "paid"]);
-  assert.equal(harness.unsaved(), true);
-});
-
-test("unchecking Codex during a pending provider save removes missing subscriptions and preserves a valid next save", async () => {
-  const removed = `codex:${"a".repeat(64)}`;
-  const { harness, requests, successes, toggle, succeed } = loadHarness([
-    { id: "codex", subscriptions: [{ id: "codex:one" }, { id: "codex:two" }] },
-    { id: "surplus" },
-  ]);
-  harness.seed([], [removed, "codex:one", "surplus"]);
-  const saving = harness.save();
-  toggle("codex", false);
-  succeed({ provider_ids: [removed, "codex:one", "surplus"] });
-  await saving;
-
-  assert.deepEqual(sorted(harness.state().saved), sorted([removed, "codex:one", "surplus"]));
-  assert.deepEqual(sorted(harness.state().staged), ["surplus"], "the later tier-off edit covers configured and missing subscriptions");
-  assert.equal(harness.unsaved(), true);
-  assert.deepEqual(successes, ["2 providers active"], "the completed request reports its saved tiers before the later edit");
-
-  const nextSave = harness.save();
-  assert.deepEqual(requests.at(-1), { provider_ids: ["surplus"] }, "the next valid save cannot reintroduce the retired Codex id");
-  succeed({ provider_ids: ["surplus"] });
-  await nextSave;
-  assert.equal(harness.unsaved(), false);
-  assert.deepEqual(successes, ["2 providers active", "1 provider active"]);
+test("admin API-key actions execute confirmation, revoke and expired unrevoke", async () => {
+  for (const [name, expires] of [
+    ["Named key", -1],
+    ["", 1],
+  ] as const) {
+    const fixture = apiKeyFixture([fixtureApiKey("key-id", { name, expires_at_ms: expires })]);
+    const row = fixture.rows()[0];
+    assert.ok(row);
+    assert.equal(row.dataset.state, expires === -1 ? "active" : "expired");
+    const revoke = keyAction(row, "Revoke API key");
+    revoke.fire("click");
+    await settleKeyInteractions();
+    assert.deepEqual(fixture.confirmations, [`Revoke API key "${name || "key-id"}"?`]);
+    assert.equal(fixture.requests.length, 0, "cancelled confirmation sends no request");
+    fixture.confirm(true);
+    revoke.fire("click");
+    await settleKeyInteractions();
+    assert.equal(fixture.requests[0]?.path, "https://fixture.invalid/admin/api-keys/revoke");
+    assert.equal(fixture.requests[0]?.method, "POST");
+    assert.deepEqual(fixture.requests[0]?.body, { id: "key-id" });
+    fixture.requests[0]?.resolve({ revoked_at_ms: 1_800_000_000_000 });
+    await settleKeyInteractions();
+    const revoked = fixture.rows()[0];
+    assert.ok(revoked);
+    assert.equal(revoked.dataset.state, "revoked");
+    assert.equal(revoked.all((element) => element.attributes.get("aria-label") === "Revoke API key").length, 0);
+    keyAction(revoked, "Delete API key");
+    keyAction(revoked, "Unrevoke API key").fire("click");
+    await settleKeyInteractions();
+    assert.equal(fixture.requests[1]?.path, "https://fixture.invalid/admin/api-keys/unrevoke");
+    fixture.requests[1]?.resolve({ revoked_at_ms: null });
+    await settleKeyInteractions();
+    assert.equal(fixture.rows()[0]?.dataset.state, expires === -1 ? "active" : "expired");
+    if (expires !== -1) {
+      assert.match(fixture.notices[0]?.description ?? "", /remains expired/);
+      assert.equal(fixture.badge.dataset.state, "warning");
+      assert.match(fixture.badge.textContent, /remains expired/);
+    }
+  }
 });
