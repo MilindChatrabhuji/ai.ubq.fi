@@ -8,6 +8,8 @@ import { configureAdminAuthForListener, configureMacLocalAdminAuthBypassForListe
 import { MAX_REMOTE_CAPACITY_OBSERVATIONS } from "../src/provider/capacity-analytics.ts";
 import { createFetchMock } from "./helpers/fetch-mock.ts";
 
+const acknowledgedAt = (state: CapacityPushState): number | null => state.acknowledgedSampledAtMs;
+
 const jsonResponse = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 const capacityPayload = (label: string, usedPercent: number, sampledAtMs: number) => ({
@@ -24,7 +26,11 @@ const capacityPayload = (label: string, usedPercent: number, sampledAtMs: number
 
 const BUCKET_MS = 15 * 60_000;
 const sample = (index: number) => ({ bucket_start_at_ms: index * BUCKET_MS, sampled_at_ms: index * BUCKET_MS + 1_000, sources: [] });
-const localWithHistory = (history: readonly unknown[]) => ({ ...capacityPayload("local", 7, 1_000), history });
+// Existing push fixtures represent finalized buckets unless a poll supplies its live snapshot time.
+const localWithHistory = (history: readonly unknown[], snapshotAtMs = (MAX_REMOTE_CAPACITY_OBSERVATIONS + 10) * BUCKET_MS) => ({
+  ...capacityPayload("local", 7, snapshotAtMs),
+  history,
+});
 const REMOTE_PAYLOAD = capacityPayload("remote", 0, 2_000);
 
 const requestUrl = (input: RequestInfo | URL): string => {
@@ -71,10 +77,16 @@ const macDeps = (overrides: Partial<ChartSourceProxyDeps>): ChartSourceProxyDeps
 const CAPACITY_URL = "http://localhost:7999/admin/providers/capacity";
 
 /** One Analytics poll from the Mac, waiting for its background push to settle. */
-const poll = async (history: readonly unknown[], state: CapacityPushState, calls: RecordedCall[], respond?: Responder): Promise<Response> => {
+const poll = async (
+  history: readonly unknown[],
+  state: CapacityPushState,
+  calls: RecordedCall[],
+  respond?: Responder,
+  snapshotAtMs?: number
+): Promise<Response> => {
   const response = await proxyAdminChartSource(
     new Request(CAPACITY_URL),
-    jsonResponse(localWithHistory(history)),
+    jsonResponse(localWithHistory(history, snapshotAtMs)),
     macDeps({ pushState: state, fetch: recordingFetch(calls, respond) })
   );
   await state.inFlight;
@@ -192,7 +204,7 @@ test("a failed or unacknowledged push is retried with the same samples", async (
   assert.deepEqual(pushedSamples(calls), [[sample(1).sampled_at_ms], [sample(1).sampled_at_ms], [sample(1).sampled_at_ms]]);
 });
 
-test("a batch the VPS refuses as invalid is skipped instead of blocking later samples", async () => {
+test("a single sample the VPS refuses is skipped instead of blocking later samples", async () => {
   for (const status of [400, 413]) {
     const state = freshPushState();
     const calls: RecordedCall[] = [];
@@ -208,6 +220,99 @@ test("a batch the VPS refuses as invalid is skipped instead of blocking later sa
     await poll([sample(1), sample(2)], state, calls, respond);
     assert.deepEqual(pushedSamples(calls), [[sample(1).sampled_at_ms], [sample(2).sampled_at_ms]], `status ${status}`);
   }
+});
+
+test("an open bucket sends only immutable transition points until it closes", async () => {
+  const state = freshPushState();
+  const calls: RecordedCall[] = [];
+  const closed = sample(1);
+  const live = sample(2);
+  const transition = { ...live, sampled_at_ms: live.sampled_at_ms + 30_000 };
+  const latest = { ...live, sampled_at_ms: live.sampled_at_ms + 60_000 };
+  await poll([closed, live], state, calls, undefined, live.sampled_at_ms);
+  await poll([closed, transition], state, calls, undefined, transition.sampled_at_ms);
+  await poll([closed, transition, latest], state, calls, undefined, latest.sampled_at_ms);
+  const final = { ...latest, sampled_at_ms: latest.sampled_at_ms + 30_000 };
+  await poll([closed, transition, final], state, calls, undefined, final.sampled_at_ms);
+  await poll([closed, transition, final], state, calls, undefined, live.bucket_start_at_ms + BUCKET_MS);
+  assert.deepEqual(pushedSamples(calls), [[closed.sampled_at_ms], [transition.sampled_at_ms], [final.sampled_at_ms]]);
+});
+
+test("a refused catch-up batch isolates only the bad row and delivers every valid row", async () => {
+  const history = Array.from({ length: MAX_REMOTE_CAPACITY_OBSERVATIONS }, (_, index) => sample(index));
+  for (const status of [400, 413]) {
+    for (const badIndex of [0, 250, history.length - 1]) {
+      const state = freshPushState();
+      const calls: RecordedCall[] = [];
+      const stored: number[] = [];
+      const badSample = sample(badIndex).sampled_at_ms;
+      const respond: Responder = (call) => {
+        if (call.method === "POST") {
+          const batch = (call.body as { history: { sampled_at_ms: number }[] }).history;
+          if (batch.some((point) => point.sampled_at_ms === badSample)) return Promise.resolve(jsonResponse({}, status));
+          stored.push(...batch.map((point) => point.sampled_at_ms));
+        }
+        return acknowledgePush(call);
+      };
+      const acknowledgedLastSample = (): boolean => (acknowledgedAt(state) ?? -1) >= (history.at(-1)?.sampled_at_ms ?? 0);
+      for (let attempt = 0; attempt < 12 && !acknowledgedLastSample(); attempt += 1) {
+        await poll(history, state, calls, respond);
+      }
+      assert.deepEqual(
+        stored,
+        history.filter((_, index) => index !== badIndex).map((point) => point.sampled_at_ms),
+        `status ${status}, bad row ${badIndex}`
+      );
+      assert.equal(state.acknowledgedSampledAtMs, history.at(-1)?.sampled_at_ms);
+      assert.ok(pushedSamples(calls).some((batch) => batch.length === 1 && batch[0] === badSample));
+    }
+  }
+});
+
+test("timeouts halve later catch-up batches without acknowledging or losing samples", async () => {
+  const state = freshPushState();
+  const calls: RecordedCall[] = [];
+  const history = Array.from({ length: MAX_REMOTE_CAPACITY_OBSERVATIONS + 5 }, (_, index) => sample(index));
+  const stored: number[] = [];
+  const respond: Responder = (call) => {
+    if (call.method === "POST") {
+      const batch = (call.body as { history: { sampled_at_ms: number }[] }).history;
+      if (batch.length > 64) return Promise.reject(new DOMException("Slow upload", "TimeoutError"));
+      stored.push(...batch.map((point) => point.sampled_at_ms));
+    }
+    return acknowledgePush(call);
+  };
+  for (const batchSize of [256, 128, 64]) {
+    await poll(history, state, calls, respond);
+    assert.equal(state.acknowledgedSampledAtMs, null);
+    assert.equal(state.batchSize, batchSize);
+  }
+  for (let attempt = 0; attempt < 10; attempt += 1) await poll(history, state, calls, respond);
+  assert.deepEqual(
+    stored,
+    history.map((point) => point.sampled_at_ms)
+  );
+  assert.deepEqual(
+    pushedSamples(calls).map((batch) => batch.length),
+    [512, 256, 128, ...Array<number>(8).fill(64), 5]
+  );
+  assert.equal(state.batchSize, 64);
+  assert.equal(state.inFlight, null);
+});
+
+test("a timeout at the one-row floor keeps that row pending until acknowledged", async () => {
+  const state = freshPushState();
+  const calls: RecordedCall[] = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await poll([sample(1)], state, calls, (call) =>
+      call.method === "POST" ? Promise.reject(new DOMException("Slow upload", "TimeoutError")) : acknowledgePush(call)
+    );
+    assert.equal(state.acknowledgedSampledAtMs, null);
+    assert.equal(state.batchSize, 1);
+  }
+  await poll([sample(1)], state, calls);
+  assert.deepEqual(pushedSamples(calls), Array<number[]>(3).fill([sample(1).sampled_at_ms]));
+  assert.equal(state.acknowledgedSampledAtMs, sample(1).sampled_at_ms);
 });
 
 test("a long history is pushed oldest first, one ingest batch per poll", async () => {

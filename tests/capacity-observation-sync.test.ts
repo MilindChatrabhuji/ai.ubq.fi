@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import type { Kv, KvKey } from "#kv";
 import { handleCapacityObservationIngest } from "../src/admin/capacity-observation-sync.ts";
+import { type CapacityPushState, proxyAdminChartSource } from "../src/admin/chart-source-proxy.ts";
+import { createFetchMock } from "./helpers/fetch-mock.ts";
 import {
   PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
   PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
@@ -19,6 +21,8 @@ import {
   type RemoteCapacityObservation,
   storeRemoteCapacityObservations,
 } from "../src/provider/capacity-analytics.ts";
+
+const acknowledgedAt = (state: CapacityPushState): number | null => state.acknowledgedSampledAtMs;
 
 const COHORT_A = "a".repeat(64);
 const COHORT_B = "b".repeat(64);
@@ -148,6 +152,82 @@ const ingest = (kv: Kv, body: unknown, nowMs: number): Promise<Response> =>
     }),
     { kv, now: () => nowMs }
   );
+
+/** Exercise the companion's real selection/recovery and the VPS's real validation/storage together. */
+const syncMacHistory = async (kv: Kv, history: readonly ProviderCapacityHistoryPoint[], nowMs: number, pushState: CapacityPushState): Promise<void> => {
+  await proxyAdminChartSource(new Request("http://localhost:7999/admin/providers/capacity"), new Response(JSON.stringify({ snapshot_at_ms: nowMs, history })), {
+    token: "test-token",
+    hostId: "mac",
+    isLoopbackAdmin: () => true,
+    isMacCompanionService: () => true,
+    pushState,
+    fetch: createFetchMock((input, init) =>
+      init?.method === "POST"
+        ? handleCapacityObservationIngest(new Request(input, init), { kv, now: () => nowMs })
+        : Promise.resolve(new Response(JSON.stringify({ history: [] })))
+    ),
+  });
+  await pushState.inFlight;
+};
+
+test("240 companion polls store one finalized point per bucket, including after a restart", async () => {
+  const { kv, rows, stats } = createFakeKv();
+  const state: CapacityPushState = { acknowledgedSampledAtMs: null, inFlight: null };
+  const local = new Map<number, ProviderCapacityHistoryPoint>();
+  for (let poll = 0; poll < 240; poll += 1) {
+    const nowMs = bucket(1) + poll * 30_000 + 1_000;
+    const bucketStart = Math.floor(nowMs / BUCKET_MS) * BUCKET_MS;
+    local.set(bucketStart, historyPoint(bucketStart, nowMs, 7));
+    await syncMacHistory(kv, [...local.values()], nowMs, state);
+  }
+  assert.equal(local.size, 8);
+  assert.equal(rows.size, 7); // The eighth bucket is still open.
+  await syncMacHistory(kv, [...local.values()], bucket(9), state);
+  assert.equal(rows.size, 8);
+  assert.equal(stats.commits, 8);
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(9))).map(({ point }) => point),
+    [...local.values()]
+  );
+  await syncMacHistory(kv, [...local.values()], bucket(9), { acknowledgedSampledAtMs: null, inFlight: null });
+  assert.equal(rows.size, 8);
+});
+
+test("open-bucket transitions survive without retaining intermediate companion refreshes", async () => {
+  const { kv, rows } = createFakeKv();
+  const state: CapacityPushState = { acknowledgedSampledAtMs: null, inFlight: null };
+  const exhausted = historyPoint(bucket(1), bucket(1) + 1_000, 99); // Slot two is at 100% usage.
+  const refilled = historyPoint(bucket(1), bucket(1) + 30_000, 5);
+  await syncMacHistory(kv, [exhausted, refilled], refilled.sampled_at_ms, state);
+  assert.equal(rows.size, 1);
+  const latest = historyPoint(bucket(1), bucket(1) + 60_000, 6);
+  await syncMacHistory(kv, [exhausted, latest], latest.sampled_at_ms, state);
+  assert.equal(rows.size, 1);
+  await syncMacHistory(kv, [exhausted, latest], bucket(2), state);
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(2))).map(({ point }) => point),
+    [exhausted, latest]
+  );
+});
+
+test("one row refused by the real ingest does not drop its 511 valid neighbours", async () => {
+  const { kv } = createFakeKv();
+  const state: CapacityPushState = { acknowledgedSampledAtMs: null, inFlight: null };
+  const history = Array.from({ length: MAX_REMOTE_CAPACITY_OBSERVATIONS }, (_, index) => historyPoint(bucket(index), bucket(index) + 1_000, 7));
+  const badIndex = 250;
+  const bad = history[badIndex];
+  assert.ok(bad);
+  history[badIndex] = { ...bad, bucket_start_at_ms: bad.bucket_start_at_ms + 1 }; // Unaligned: ingest rejects the whole attempted batch.
+  const acknowledgedLastSample = (): boolean => (acknowledgedAt(state) ?? -1) >= (history.at(-1)?.sampled_at_ms ?? 0);
+  for (let poll = 0; poll < 12 && !acknowledgedLastSample(); poll += 1) {
+    await syncMacHistory(kv, history, bucket(520), state);
+  }
+  assert.deepEqual(
+    (await readRemoteCapacityObservations(kv, bucket(520))).map(({ point }) => point),
+    history.filter((_, index) => index !== badIndex)
+  );
+  assert.equal(state.acknowledgedSampledAtMs, history.at(-1)?.sampled_at_ms);
+});
 
 test("remote capacity host ids stay bounded lowercase labels", () => {
   assert.equal(isRemoteCapacityHostId("mac"), true);

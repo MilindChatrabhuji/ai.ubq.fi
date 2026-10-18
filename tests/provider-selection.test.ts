@@ -2,12 +2,13 @@ import type { AtomicCheck, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKe
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
+import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin/index.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
 import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek/index.ts";
 import { DEEPSEEK_WATERFALL_MODEL_ID, deepSeekWaterfallCatalogEnabled } from "../src/deepseek/waterfall.ts";
 import { handleHealthProviders } from "../src/health.ts";
-import { LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
+import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
 import { readOpenRouterApiKey } from "../src/provider/openrouter.ts";
 import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/models/codex-models-whitelist.ts";
 import { resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } from "../src/models/openrouter-models.ts";
@@ -15,6 +16,7 @@ import handler from "../src/handler/index.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { buildModelCatalogSnapshot, handleModels } from "../src/models/catalog.ts";
 import { RECORD_PROVIDER_IDS } from "../src/provider/health.ts";
+import { handleResponses } from "../src/responses-handler.ts";
 import {
   GATEWAY_PROVIDER_ID,
   GATEWAY_PROVIDER_PRESENTATION,
@@ -633,6 +635,42 @@ test("/v1/models hides the models of a switched-off provider", async () => {
     if (previousOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = previousOpenRouterKey;
     resetRuntimeConfigCacheForTest();
+  }
+});
+
+test("a switched-off Lithos provider leaves an explicit Responses id to availability checks", async () => {
+  const previousLithosKey = process.env.LITHOSAI_API_KEY;
+  const originalFetch = globalThis.fetch;
+  let lithosUpstreamCalls = 0;
+  process.env.LITHOSAI_API_KEY = "lith_sk_fixture";
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === LITHOS_CHAT_COMPLETIONS_URL) lithosUpstreamCalls += 1;
+    return Promise.resolve(Response.json({}));
+  });
+  const kv = new SelectionKv();
+  seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
+  try {
+    await withKv(kv, async () => {
+      kv.seedSelection(["codex"]);
+      const response = await handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Kimi makes the Lithos ownership explicit for this provider-selection case.
+          body: JSON.stringify({ model: LITHOS_MODEL_IDS[4], input: "hi", stream: false }),
+        })
+      );
+      // Availability may probe ordinary model discovery; direct Lithos dispatch must not occur.
+      assert.equal(lithosUpstreamCalls, 0);
+      assert.equal(response.status, 404);
+      assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "model_not_found");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetRuntimeConfigCacheForTest();
+    if (previousLithosKey === undefined) delete process.env.LITHOSAI_API_KEY;
+    else process.env.LITHOSAI_API_KEY = previousLithosKey;
   }
 });
 
