@@ -52,9 +52,9 @@ pub fn prepare_systemone(
     raw: &Value,
     options: &PrepareOptions,
 ) -> Result<PreparedRequest, GatewayError> {
-    let object = raw
-        .as_object()
-        .ok_or_else(|| GatewayError::new(400, "Invalid JSON body", Some("invalid_request_error")))?;
+    let object = raw.as_object().ok_or_else(|| {
+        GatewayError::new(400, "Invalid JSON body", Some("invalid_request_error"))
+    })?;
     if let Some(key) = object
         .keys()
         .find(|k| !["state", "questions", "model"].contains(&k.as_str()))
@@ -101,7 +101,9 @@ pub fn prepare_systemone(
     let model = raw
         .get("model")
         .map_or(Some("~typesafe/jev-latest"), Value::as_str)
-        .ok_or_else(|| GatewayError::new(400, "model must be a string", Some("invalid_request_error")))?;
+        .ok_or_else(|| {
+            GatewayError::new(400, "model must be a string", Some("invalid_request_error"))
+        })?;
     let base = model.strip_prefix('~').unwrap_or(model);
     let suffix = base.strip_prefix("typesafe/").unwrap_or("");
     if model.len() > 80
@@ -115,7 +117,11 @@ pub fn prepare_systemone(
             .next()
             .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
     {
-        return Err(GatewayError::new(400, "model must be a typesafe model id", Some("invalid_request_error")));
+        return Err(GatewayError::new(
+            400,
+            "model must be a typesafe model id",
+            Some("invalid_request_error"),
+        ));
     }
     let upstream = if model.starts_with('~') {
         model.to_owned()
@@ -167,82 +173,168 @@ pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, Gat
         GatewayError::new(400, "Invalid JSON body", Some("invalid_request_error"))
     })?;
     for key in object.keys() {
-        if !["dimensions", "encoding_format", "input", "input_type", "model", "truncation"]
-            .contains(&key.as_str()) && (key != "user" || job)
+        if ![
+            "dimensions",
+            "encoding_format",
+            "input",
+            "input_type",
+            "model",
+            "truncation",
+        ]
+        .contains(&key.as_str())
+            && (key != "user" || job)
         {
-            return Err(GatewayError::new(400,
-                format!("Unrecognized request argument supplied: {key}"), Some("invalid_request_error")));
+            return Err(GatewayError::new(
+                400,
+                format!("Unrecognized request argument supplied: {key}"),
+                Some("invalid_request_error"),
+            ));
         }
     }
-    let model = raw.get("model").and_then(Value::as_str).filter(|s| !s.trim_matches(js_whitespace).is_empty())
+    let model = raw
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim_matches(js_whitespace).is_empty())
         .ok_or_else(|| invalid("model is required and must be a non-empty string", "model"))?;
     if model != "voyage-4-large" {
-        return Err(GatewayError::new(400, format!("Unsupported embedding model: {model}"),
-            Some("model_not_found")).with_param(Some("model")));
+        return Err(GatewayError::new(
+            400,
+            format!("Unsupported embedding model: {model}"),
+            Some("model_not_found"),
+        )
+        .with_param(Some("model")));
     }
     let dimensions = match raw.get("dimensions") {
         None => 1024,
         Some(value) => {
-            let value = value.as_f64().filter(|v| v.is_finite() && v.fract() == 0.0)
+            let value = value
+                .as_f64()
+                .filter(|v| v.is_finite() && v.fract() == 0.0)
                 .ok_or_else(|| invalid("dimensions must be an integer", "dimensions"))?;
             if ![256.0, 512.0, 1024.0, 2048.0].contains(&value) {
-                return Err(invalid("dimensions must be one of: 256, 512, 1024, 2048", "dimensions"));
+                return Err(invalid(
+                    "dimensions must be one of: 256, 512, 1024, 2048",
+                    "dimensions",
+                ));
             }
             value as u64
         }
     };
     let encoding = match raw.get("encoding_format") {
         None => "float",
-        Some(value) => value.as_str().ok_or_else(|| invalid("encoding_format must be a string", "encoding_format"))?,
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| invalid("encoding_format must be a string", "encoding_format"))?,
     };
     if !["float", "base64"].contains(&encoding) {
-        return Err(invalid("encoding_format must be one of: \"float\", \"base64\"", "encoding_format"));
+        return Err(invalid(
+            "encoding_format must be one of: \"float\", \"base64\"",
+            "encoding_format",
+        ));
     }
     if job && encoding != "float" {
-        return Err(invalid("encoding_format must be \"float\" for embeddings jobs", "encoding_format"));
+        return Err(invalid(
+            "encoding_format must be \"float\" for embeddings jobs",
+            "encoding_format",
+        ));
     }
     let input_type = match raw.get("input_type") {
-        None if job => return Err(invalid("input_type is required and must be one of: \"query\", \"document\"", "input_type")),
+        None if job => {
+            return Err(invalid(
+                "input_type is required and must be one of: \"query\", \"document\"",
+                "input_type",
+            ));
+        }
         None => "document",
-        Some(value) => value.as_str().filter(|v| ["query", "document"].contains(v))
-            .ok_or_else(|| invalid("input_type must be one of: \"query\", \"document\"", "input_type"))?,
+        Some(value) => value
+            .as_str()
+            .filter(|v| ["query", "document"].contains(v))
+            .ok_or_else(|| {
+                invalid(
+                    "input_type must be one of: \"query\", \"document\"",
+                    "input_type",
+                )
+            })?,
     };
-    let truncation = raw.get("truncation").map_or(Some(true), Value::as_bool)
+    let truncation = raw
+        .get("truncation")
+        .map_or(Some(true), Value::as_bool)
         .ok_or_else(|| invalid("truncation must be a boolean", "truncation"))?;
-    if raw.get("user").is_some_and(|v| !v.is_null() && !v.is_string()) {
+    if raw
+        .get("user")
+        .is_some_and(|v| !v.is_null() && !v.is_string())
+    {
         return Err(invalid("user must be a string", "user"));
     }
     let input_error = || invalid("input must be a string or an array of strings", "input");
     let inputs = if let Some(input) = raw["input"].as_str() {
         vec![input.to_owned()]
     } else {
-        raw["input"].as_array().ok_or_else(input_error)?.iter()
+        raw["input"]
+            .as_array()
+            .ok_or_else(input_error)?
+            .iter()
             .map(|v| v.as_str().map(str::to_owned).ok_or_else(input_error))
             .collect::<Result<Vec<_>, _>>()?
     };
     if inputs.is_empty() {
-        return Err(invalid("input must be a non-empty string or a non-empty array", "input"));
+        return Err(invalid(
+            "input must be a non-empty string or a non-empty array",
+            "input",
+        ));
     }
     if inputs.len() > 128 {
-        return Err(invalid(format!("Too many inputs: {} (max 128)", inputs.len()), "input"));
+        return Err(invalid(
+            format!("Too many inputs: {} (max 128)", inputs.len()),
+            "input",
+        ));
     }
     let mut total = 0;
     for input in &inputs {
         let len = input.encode_utf16().count();
         if len > 20_000 {
-            return Err(invalid(format!("Input too large: {len} chars (max 20000)"), "input"));
+            return Err(invalid(
+                format!("Input too large: {len} chars (max 20000)"),
+                "input",
+            ));
         }
         total += len;
         if total > 100_000 {
-            return Err(invalid(format!("Request too large: {total} chars total (max 100000)"), "input"));
+            return Err(invalid(
+                format!("Request too large: {total} chars total (max 100000)"),
+                "input",
+            ));
         }
         if input.len().div_ceil(4) > 10_000 {
-            return Err(invalid(format!("Input too large for embeddings provider: ~{} tokens (max 10000).", input.len().div_ceil(4)), "input"));
+            return Err(invalid(
+                format!(
+                    "Input too large for embeddings provider: ~{} tokens (max 10000).",
+                    input.len().div_ceil(4)
+                ),
+                "input",
+            ));
         }
     }
-    let cache_profile_key = json!(["voyage-profile-v2", model, input_type, dimensions, "float", encoding, truncation]).to_string();
-    Ok(EmbeddingsProfile { model: model.into(), inputs, input_type: input_type.into(), dimensions,
-        encoding_format: encoding.into(), truncation, cache_profile_key, total_chars: total })
+    let cache_profile_key = json!([
+        "voyage-profile-v2",
+        model,
+        input_type,
+        dimensions,
+        "float",
+        encoding,
+        truncation
+    ])
+    .to_string();
+    Ok(EmbeddingsProfile {
+        model: model.into(),
+        inputs,
+        input_type: input_type.into(),
+        dimensions,
+        encoding_format: encoding.into(),
+        truncation,
+        cache_profile_key,
+        total_chars: total,
+    })
 }
 pub fn prepare_embeddings(
     raw: &Value,
@@ -372,7 +464,10 @@ fn prepare_image_inner(
             };
         if !valid {
             return Err(image_invalid(
-                format!("Unsupported image {} field: {key}.", if edit { "edits" } else { "generations" }),
+                format!(
+                    "Unsupported image {} field: {key}.",
+                    if edit { "edits" } else { "generations" }
+                ),
                 key,
             ));
         }
@@ -412,10 +507,10 @@ fn prepare_image_inner(
             "prompt",
         ));
     }
-    if body
-        .get("model")
-        .is_some_and(|v| v.as_str().is_none_or(|s| s.trim_matches(js_whitespace).is_empty()))
-    {
+    if body.get("model").is_some_and(|v| {
+        v.as_str()
+            .is_none_or(|s| s.trim_matches(js_whitespace).is_empty())
+    }) {
         return Err(image_invalid("model must be a non-empty string.", "model"));
     }
     if body.get("user").is_some_and(|v| !v.is_string()) {
@@ -427,19 +522,19 @@ fn prepare_image_inner(
         .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= 10.0)
         .map(|n| n as u64)
         .ok_or_else(|| image_invalid("n must be an integer from 1 to 10.", "n"))?;
-    if body
-        .get("output_compression")
-        .is_some_and(|v| !v.as_f64().is_some_and(|n| n.fract() == 0.0 && (0.0..=100.0).contains(&n)))
-    {
+    if body.get("output_compression").is_some_and(|v| {
+        !v.as_f64()
+            .is_some_and(|n| n.fract() == 0.0 && (0.0..=100.0).contains(&n))
+    }) {
         return Err(image_invalid(
             "output_compression must be an integer from 0 to 100.",
             "output_compression",
         ));
     }
-    if body
-        .get("size")
-        .is_some_and(|v| v.as_str().is_none_or(|s| s.trim_matches(js_whitespace).is_empty()))
-    {
+    if body.get("size").is_some_and(|v| {
+        v.as_str()
+            .is_none_or(|s| s.trim_matches(js_whitespace).is_empty())
+    }) {
         return Err(image_invalid("size must be a non-empty string.", "size"));
     }
     for (key, allowed) in [
@@ -455,7 +550,10 @@ fn prepare_image_inner(
         {
             return Err(image_invalid(
                 match key {
-                    "quality" => format!("quality must be low, medium, high, or auto{}.", if edit { " for image edits" } else { "" }),
+                    "quality" => format!(
+                        "quality must be low, medium, high, or auto{}.",
+                        if edit { " for image edits" } else { "" }
+                    ),
                     "background" => "background must be transparent, opaque, or auto.".into(),
                     "output_format" => "output_format must be png, jpeg, or webp.".into(),
                     "moderation" => "moderation must be low or auto.".into(),
@@ -538,8 +636,11 @@ fn prepare_image_inner(
     let input_bytes = image_input_bytes(&body);
     if input_bytes > 50 * 1024 * 1024 / count as usize {
         return Err(image_invalid(
-            if multipart { "n and multipart image inputs exceed the 50 MiB request work limit." }
-            else { "n and inline image inputs exceed the 50 MiB request work limit." },
+            if multipart {
+                "n and multipart image inputs exceed the 50 MiB request work limit."
+            } else {
+                "n and inline image inputs exceed the 50 MiB request work limit."
+            },
             "n",
         ));
     }
@@ -570,23 +671,47 @@ fn image_invalid(message: impl Into<String>, param: &str) -> GatewayError {
 }
 
 pub fn normalize_image_reference(value: &Value, mask: bool) -> Result<Value, GatewayError> {
-    let failure = || image_invalid(if mask {
-        "mask.image_url must be a supported base64 PNG data URL; remote URLs and file_id are unsupported by this gateway."
-    } else {
-        "Each image must contain one image_url with a fully qualified HTTP(S) URL or supported base64 data URL; file_id is unsupported by this gateway."
-    }, if mask { "mask" } else { "images" });
-    let object = value.as_object().filter(|o| o.keys().all(|k| k == "image_url")).ok_or_else(failure)?;
-    let original = object.get("image_url").and_then(Value::as_str)
-        .filter(|s| s.encode_utf16().count() <= 20_971_520).ok_or_else(failure)?;
+    let failure = || {
+        image_invalid(
+            if mask {
+                "mask.image_url must be a supported base64 PNG data URL; remote URLs and file_id are unsupported by this gateway."
+            } else {
+                "Each image must contain one image_url with a fully qualified HTTP(S) URL or supported base64 data URL; file_id is unsupported by this gateway."
+            },
+            if mask { "mask" } else { "images" },
+        )
+    };
+    let object = value
+        .as_object()
+        .filter(|o| o.keys().all(|k| k == "image_url"))
+        .ok_or_else(failure)?;
+    let original = object
+        .get("image_url")
+        .and_then(Value::as_str)
+        .filter(|s| s.encode_utf16().count() <= 20_971_520)
+        .ok_or_else(failure)?;
     let url = original.trim_matches(js_whitespace);
-    if url.is_empty() { return Err(failure()); }
-    if url.get(..5).is_some_and(|v| v.eq_ignore_ascii_case("data:")) {
+    if url.is_empty() {
+        return Err(failure());
+    }
+    if url
+        .get(..5)
+        .is_some_and(|v| v.eq_ignore_ascii_case("data:"))
+    {
         let (media, encoded) = url[5..].split_once(';').ok_or_else(failure)?;
-        if media.contains(',') || !encoded.get(..7).is_some_and(|s| s.eq_ignore_ascii_case("base64,")) {
+        if media.contains(',')
+            || !encoded
+                .get(..7)
+                .is_some_and(|s| s.eq_ignore_ascii_case("base64,"))
+        {
             return Err(failure());
         }
         let payload = &encoded[7..];
-        let media = match media.trim_matches(js_whitespace).to_ascii_lowercase().as_str() {
+        let media = match media
+            .trim_matches(js_whitespace)
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "image/png" | "image/x-png" => "image/png",
             "image/jpeg" | "image/jpg" => "image/jpeg",
             "image/webp" => "image/webp",
@@ -594,16 +719,25 @@ pub fn normalize_image_reference(value: &Value, mask: bool) -> Result<Value, Gat
         };
         let content = payload.trim_end_matches('=');
         let padding = payload.len() - content.len();
-        if payload.is_empty() || payload.len() % 4 != 0 || padding > 2
-            || !content.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/'))
-        { return Err(failure()); }
+        if payload.is_empty()
+            || payload.len() % 4 != 0
+            || padding > 2
+            || !content
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/'))
+        {
+            return Err(failure());
+        }
         let bytes = payload.len() / 4 * 3 - padding;
         if bytes == 0 || bytes >= 50 * 1024 * 1024 || (mask && media != "image/png") {
             return Err(failure());
         }
         Ok(json!({"image_url":format!("data:{media};base64,{payload}")}))
     } else if !mask {
-        if !["http://", "https://"].iter().any(|scheme| url.get(..scheme.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))) {
+        if !["http://", "https://"].iter().any(|scheme| {
+            url.get(..scheme.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+        }) {
             return Err(failure());
         }
         let parsed = url::Url::parse(url).map_err(|_| failure())?;
@@ -611,7 +745,9 @@ pub fn normalize_image_reference(value: &Value, mask: bool) -> Result<Value, Gat
             return Err(failure());
         }
         Ok(json!({"image_url":url}))
-    } else { Err(failure()) }
+    } else {
+        Err(failure())
+    }
 }
 pub fn extract_images(payload: &Value) -> Vec<Value> {
     payload["output"]
