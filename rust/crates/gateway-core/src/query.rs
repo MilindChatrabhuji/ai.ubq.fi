@@ -197,10 +197,10 @@ impl ValidatedQuery {
         {
             return Ok(false);
         }
-        if let Some(previous) = &self.resume_after {
-            if (!self.reverse && key <= *previous) || (self.reverse && key >= *previous) {
-                return Ok(false);
-            }
+        if let Some(previous) = &self.resume_after
+            && ((!self.reverse && key <= *previous) || (self.reverse && key >= *previous))
+        {
+            return Ok(false);
         }
         Ok(true)
     }
