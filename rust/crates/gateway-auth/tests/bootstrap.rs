@@ -56,12 +56,14 @@ fn source_bootstrap_extracts_public_key_blocks_and_preserves_source_escape_rules
     )]);
     let config = AuthConfig::from_source_values(&values, false);
     assert_eq!(config.kernel_public_keys_pem, [first, second]);
-    let escaped = BTreeMap::from([(
-        "UOS_AI_KERNEL_PUBLIC_KEY".into(),
-        "unframed\\\\nvalue".into(),
-    )]);
-    assert_eq!(
-        AuthConfig::from_source_values(&escaped, false).kernel_public_keys_pem,
-        ["unframed\\nvalue"]
-    );
+    for (input, expected) in [
+        ("unframed\\nvalue", "unframed\nvalue"),
+        ("unframed\\\\nvalue", "unframed\\\nvalue"),
+    ] {
+        let escaped = BTreeMap::from([("UOS_AI_KERNEL_PUBLIC_KEY".into(), input.into())]);
+        assert_eq!(
+            AuthConfig::from_source_values(&escaped, false).kernel_public_keys_pem,
+            [expected]
+        );
+    }
 }

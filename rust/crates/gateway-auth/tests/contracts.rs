@@ -142,6 +142,43 @@ fn insert<T: serde::Serialize>(store: &Store, key: RecordKey, value: &T) {
 }
 
 #[test]
+fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit() {
+    run(async {
+        use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
+        let store = Store::default();
+        let key = codex_source_pool_key();
+        let value = json!({"accounts":[{"account_id":"fixture","access_token":"fixture-access","refresh_token":"fixture-refresh","updated_at_ms":1}],"updated_at_ms":2});
+        store.rows.borrow_mut().insert(
+            key.0.clone(),
+            StoredRecord::json("exact-current-generation", value.clone(), Some(100)),
+        );
+        let snapshot = read_codex_source_pool(&store, 99).await.unwrap().unwrap();
+        assert_eq!(snapshot.revision, "exact-current-generation");
+        assert_eq!(snapshot.pool.accounts[0].account_id, "fixture");
+        assert!(read_codex_source_pool(&store, 100).await.unwrap().is_none());
+        store.rows.borrow_mut().insert(
+            key.0,
+            StoredRecord::profile(
+                "typed-profile",
+                gateway_core::value::PortableValue::from_json(&value),
+                None,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            read_codex_source_pool(&store, 99)
+                .await
+                .unwrap_err()
+                .envelope
+                .error
+                .code
+                .as_deref(),
+            Some("incompatible_value_encoding")
+        );
+    });
+}
+
+#[test]
 fn exact_candidate_rp_and_relay_trust() {
     let mut config = AuthConfig::default();
     let req = request("https://uos-ai-rust-candidate.ubq.workers.dev/api/auth/login/start");

@@ -29,9 +29,8 @@ fn kernel_pems(raw: Option<&str>) -> Vec<String> {
     let Some(raw) = nonempty(raw) else {
         return Vec::new();
     };
-    // Match src/kernel/attestation.ts exactly: two literal backslashes + n become one.
-    // Do not silently repair that source behavior as part of runtime migration.
-    let normalized = raw.replace("\\\\n", "\\n");
+    // Source-golden UTF-16 vectors: [92,110] -> [10], and [92,92,110] -> [92,10].
+    let normalized = raw.replace("\\n", "\n");
     let begin = "-----BEGIN PUBLIC KEY-----";
     let end = "-----END PUBLIC KEY-----";
     let mut blocks = Vec::new();
