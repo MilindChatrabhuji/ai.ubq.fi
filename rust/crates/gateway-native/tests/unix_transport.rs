@@ -299,7 +299,12 @@ fn healthy_unix_close_retains_the_bounded_peer_handshake_grace() {
             while let Ok(message) = socket.read() {
                 if message.is_close() {
                     thread::sleep(Duration::from_millis(75));
-                    acknowledged = socket.flush().is_ok();
+                    // The pinned server reports ConnectionClosed only after
+                    // writing its queued close acknowledgement successfully.
+                    acknowledged = matches!(
+                        socket.flush(),
+                        Ok(()) | Err(tungstenite::Error::ConnectionClosed)
+                    );
                     break;
                 }
                 let Message::Text(text) = message else {
