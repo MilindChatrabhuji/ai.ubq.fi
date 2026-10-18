@@ -1,5 +1,14 @@
 [workspace]
-members = ["crates/gateway-core", "crates/gateway-schema", "crates/gateway-providers", "crates/gateway-worker"]
+members = [
+  "crates/gateway-core",
+  "crates/gateway-schema",
+  "crates/gateway-providers",
+  "crates/gateway-authority",
+  "crates/gateway-auth",
+  "crates/gateway-admin",
+  "crates/gateway-native",
+  "crates/gateway-worker",
+]
 resolver = "3"
 
 [workspace.package]
@@ -16,6 +25,10 @@ wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
+gateway-authority = { path = "crates/gateway-authority" }
+gateway-auth = { path = "crates/gateway-auth" }
+gateway-admin = { path = "crates/gateway-admin" }
+gateway-native = { path = "crates/gateway-native" }
 
 [profile.release]
 lto = true
