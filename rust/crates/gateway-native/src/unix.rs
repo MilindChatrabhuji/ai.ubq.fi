@@ -3,6 +3,7 @@ use std::{
     cell::RefCell,
     collections::BTreeMap,
     fs,
+    io::{self, Read, Write},
     net::Shutdown,
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
@@ -11,6 +12,7 @@ use std::{
 
 use gateway_core::GatewayError;
 use serde_json::{Value, json};
+use socket2::{Domain, SockAddr, Socket as OsSocket, Type};
 use tungstenite::{
     Message, WebSocket,
     client::{IntoClientRequest, client_with_config},
@@ -23,20 +25,74 @@ use crate::{
     supervisor::{RENEWAL_FRAME_LIMIT, SUPERVISOR_FRAME_LIMIT},
 };
 
+struct DeadlineStream {
+    stream: UnixStream,
+    deadline: Instant,
+}
+impl DeadlineStream {
+    fn remaining(&self) -> io::Result<Duration> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Native transport deadline elapsed",
+            ))
+        } else {
+            Ok(remaining)
+        }
+    }
+}
+impl Read for DeadlineStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream.read(buffer)
+    }
+}
+impl Write for DeadlineStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.write(buffer)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.flush()
+    }
+}
+
 struct Socket {
-    socket: WebSocket<UnixStream>,
+    socket: WebSocket<DeadlineStream>,
     serial: u64,
     call_timeout: Duration,
+    overall_deadline: Option<Instant>,
 }
 impl Socket {
     fn open(path: &Path, max_payload: usize, call_timeout: Duration) -> Result<Self, GatewayError> {
-        let stream = UnixStream::connect(path).map_err(|_| owner_unavailable())?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
+        Self::open_until(path, max_payload, call_timeout, None)
+    }
+    fn open_until(
+        path: &Path,
+        max_payload: usize,
+        call_timeout: Duration,
+        overall_deadline: Option<Instant>,
+    ) -> Result<Self, GatewayError> {
+        let handshake_deadline = overall_deadline
+            .map_or(Instant::now() + Duration::from_secs(3), |deadline| {
+                deadline.min(Instant::now() + Duration::from_secs(3))
+            });
+        let remaining = handshake_deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(owner_unavailable)?;
+        let socket =
+            OsSocket::new(Domain::UNIX, Type::STREAM, None).map_err(|_| owner_unavailable())?;
+        let address = SockAddr::unix(path).map_err(|_| owner_unavailable())?;
+        socket
+            .connect_timeout(&address, remaining)
             .map_err(|_| owner_unavailable())?;
-        stream
-            .set_write_timeout(Some(Duration::from_secs(3)))
-            .map_err(|_| owner_unavailable())?;
+        let stream = DeadlineStream {
+            stream: socket.into(),
+            deadline: handshake_deadline,
+        };
         let mut request = "ws://localhost/"
             .into_client_request()
             .map_err(|_| owner_unavailable())?;
@@ -54,6 +110,7 @@ impl Socket {
             socket,
             serial: 0,
             call_timeout,
+            overall_deadline,
         })
     }
     fn notify_initialized(&mut self) -> Result<(), GatewayError> {
@@ -66,15 +123,11 @@ impl Socket {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, GatewayError> {
         self.serial = self.serial.checked_add(1).ok_or_else(owner_unavailable)?;
         let id = self.serial;
-        let deadline = Instant::now() + self.call_timeout;
-        self.socket
-            .get_mut()
-            .set_read_timeout(Some(self.call_timeout))
-            .map_err(|_| owner_unavailable())?;
-        self.socket
-            .get_mut()
-            .set_write_timeout(Some(self.call_timeout))
-            .map_err(|_| owner_unavailable())?;
+        let call_deadline = Instant::now() + self.call_timeout;
+        let deadline = self
+            .overall_deadline
+            .map_or(call_deadline, |overall| overall.min(call_deadline));
+        self.socket.get_mut().deadline = deadline;
         self.socket
             .send(Message::Text(
                 json!({"id":id,"method":method,"params":params})
@@ -87,10 +140,6 @@ impl Socket {
             if remaining.is_zero() {
                 return Err(owner_unavailable());
             }
-            self.socket
-                .get_mut()
-                .set_read_timeout(Some(remaining))
-                .map_err(|_| owner_unavailable())?;
             let message = self.socket.read().map_err(|_| owner_unavailable())?;
             let text = match message {
                 Message::Text(text) => text.to_string(),
@@ -118,17 +167,19 @@ impl Socket {
     }
     fn close(&mut self) {
         let grace = Duration::from_millis(250);
-        let _ = self.socket.get_mut().set_read_timeout(Some(grace));
-        let _ = self.socket.get_mut().set_write_timeout(Some(grace));
+        let close_deadline = Instant::now() + grace;
+        self.socket.get_mut().deadline = self
+            .overall_deadline
+            .map_or(close_deadline, |overall| overall.min(close_deadline));
         let _ = self.socket.close(None);
         let _ = self.socket.flush();
         let _ = self.socket.read();
-        let _ = self.socket.get_mut().shutdown(Shutdown::Both);
+        let _ = self.socket.get_mut().stream.shutdown(Shutdown::Both);
     }
 }
 impl Drop for Socket {
     fn drop(&mut self) {
-        let _ = self.socket.get_mut().shutdown(Shutdown::Both);
+        let _ = self.socket.get_mut().stream.shutdown(Shutdown::Both);
     }
 }
 
@@ -245,10 +296,21 @@ pub struct UnixSupervisor {
 impl UnixSupervisor {
     /// Path comes only from the trusted native source registry, never a public request.
     pub fn configured_socket(path: &Path) -> Result<Self, GatewayError> {
+        Self::configured(path, None)
+    }
+    pub fn configured_socket_until(path: &Path, deadline: Instant) -> Result<Self, GatewayError> {
+        Self::configured(path, Some(deadline))
+    }
+    fn configured(path: &Path, deadline: Option<Instant>) -> Result<Self, GatewayError> {
         if !path.is_absolute() {
             return Err(owner_unavailable());
         }
-        let mut socket = Socket::open(path, SUPERVISOR_FRAME_LIMIT, Duration::from_secs(4))?;
+        let mut socket = Socket::open_until(
+            path,
+            SUPERVISOR_FRAME_LIMIT,
+            Duration::from_secs(4),
+            deadline,
+        )?;
         socket.call(SupervisorMethod::Initialize.as_str(),json!({"clientInfo":{"name":"uos_supervisor","version":"1"},"capabilities":{"experimentalApi":true}}))?;
         socket.notify_initialized()?;
         Ok(Self { socket })
