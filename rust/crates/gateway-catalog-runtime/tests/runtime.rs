@@ -21,16 +21,11 @@ use std::{
     collections::{BTreeMap, VecDeque},
     future::{Future, poll_fn},
     rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
-struct Noop;
-impl Wake for Noop {
-    fn wake(self: Arc<Self>) {}
-}
 fn run<T>(future: impl Future<Output = T>) -> T {
-    let waker = Waker::from(Arc::new(Noop));
-    let mut cx = Context::from_waker(&waker);
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
     let mut future = std::pin::pin!(future);
     loop {
         if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
@@ -874,8 +869,8 @@ fn overlapping_forced_provider_refreshes_keep_the_newer_publication() {
     host.queue(Outcome::json(json!({"data":[{"id":"newer"}]})));
     let mut first =
         std::pin::pin!(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true));
-    let waker = Waker::from(Arc::new(Noop));
-    let mut cx = Context::from_waker(&waker);
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
     assert!(first.as_mut().poll(&mut cx).is_pending());
     let second = run(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true))
         .unwrap()
