@@ -15,6 +15,18 @@ pub fn pool() -> RecordKey {
         Text("codex_pool"),
     ])
 }
+pub fn claude_accounts() -> RecordKey {
+    key(&[Text("uos_ai"), Text("claude_code_accounts"), Text("v1")])
+}
+pub fn claude_quota(account: &str, cohort: &str) -> RecordKey {
+    key(&[
+        Text("uos_ai"),
+        Text("claude_code_quota"),
+        Text("v1"),
+        Text(account),
+        Text(cohort),
+    ])
+}
 pub fn active() -> RecordKey {
     key(&[Text("uos_ai"), Text("codex_active_account"), Text("v1")])
 }
@@ -165,6 +177,35 @@ pub fn paid_routing() -> RecordKey {
         Text("authority"),
         Text("v1"),
         Text("paid_routing"),
+    ])
+}
+pub fn paid_control_owner() -> RecordKey {
+    key(&[
+        Text("uos_ai"),
+        Text("authority"),
+        Text("v1"),
+        Text("paid_control_owner"),
+    ])
+}
+pub fn paid_control_config() -> RecordKey {
+    key(&[
+        Text("uos_ai"),
+        Text("authority"),
+        Text("v1"),
+        Text("paid_control_config"),
+    ])
+}
+pub fn paid_control_observation(provider: gateway_core::provider::PaidProvider) -> RecordKey {
+    let provider = match provider {
+        gateway_core::provider::PaidProvider::Surplus => "surplus",
+        gateway_core::provider::PaidProvider::Metered => "openlux",
+    };
+    key(&[
+        Text("uos_ai"),
+        Text("authority"),
+        Text("v1"),
+        Text("paid_control_observation"),
+        Text(provider),
     ])
 }
 pub fn paid_window(id: &str, reset: i64) -> RecordKey {

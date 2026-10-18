@@ -1,0 +1,1370 @@
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/Cargo.toml b/rust/vendor/webauthn-rs-core-0.6.1-dev/Cargo.toml
+index f6355a286..0b185da11 100644
+--- a/rust/vendor/webauthn-rs-core-0.6.1-dev/Cargo.toml
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/Cargo.toml
+@@ -123,3 +123,26 @@ features = [
+     "std",
+     "fmt",
+ ]
++
++# UOS source-compatibility primitives; versions match the gateway graph.
++[dependencies.ed25519-dalek]
++version = "=2.2.0"
++default-features = false
++features = ["std"]
++
++[dependencies.rsa]
++version = "=0.9.10"
++features = ["sha1", "sha2"]
++
++[dependencies.sha1]
++version = "=0.10.7"
++features = ["oid"]
++
++[dependencies.sha2]
++version = "=0.10.9"
++features = ["oid"]
++
++[dependencies.p521]
++version = "=0.13.3"
++default-features = false
++features = ["ecdsa"]
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Apple_WebAuthn_Root_CA.pem b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Apple_WebAuthn_Root_CA.pem
+new file mode 100644
+index 000000000..59c042120
+--- /dev/null
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Apple_WebAuthn_Root_CA.pem
+@@ -0,0 +1,14 @@
++-----BEGIN CERTIFICATE-----
++MIICEjCCAZmgAwIBAgIQaB0BbHo84wIlpQGUKEdXcTAKBggqhkjOPQQDAzBLMR8w
++HQYDVQQDDBZBcHBsZSBXZWJBdXRobiBSb290IENBMRMwEQYDVQQKDApBcHBsZSBJ
++bmMuMRMwEQYDVQQIDApDYWxpZm9ybmlhMB4XDTIwMDMxODE4MjEzMloXDTQ1MDMx
++NTAwMDAwMFowSzEfMB0GA1UEAwwWQXBwbGUgV2ViQXV0aG4gUm9vdCBDQTETMBEG
++A1UECgwKQXBwbGUgSW5jLjETMBEGA1UECAwKQ2FsaWZvcm5pYTB2MBAGByqGSM49
++AgEGBSuBBAAiA2IABCJCQ2pTVhzjl4Wo6IhHtMSAzO2cv+H9DQKev3//fG59G11k
++xu9eI0/7o6V5uShBpe1u6l6mS19S1FEh6yGljnZAJ+2GNP1mi/YK2kSXIuTHjxA/
++pcoRf7XkOtO4o1qlcaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUJtdk
++2cV4wlpn0afeaxLQG2PxxtcwDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMDA2cA
++MGQCMFrZ+9DsJ1PW9hfNdBywZDsWDbWFp28it1d/5w2RPkRX3Bbn/UbDTNLx7Jr3
++jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
++1bWeT0vT
++-----END CERTIFICATE-----
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/GlobalSign_Root_CA.pem b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/GlobalSign_Root_CA.pem
+new file mode 100644
+index 000000000..f4ce4ca43
+--- /dev/null
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/GlobalSign_Root_CA.pem
+@@ -0,0 +1,21 @@
++-----BEGIN CERTIFICATE-----
++MIIDdTCCAl2gAwIBAgILBAAAAAABFUtaw5QwDQYJKoZIhvcNAQEFBQAwVzELMAkG
++A1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExEDAOBgNVBAsTB1Jv
++b3QgQ0ExGzAZBgNVBAMTEkdsb2JhbFNpZ24gUm9vdCBDQTAeFw05ODA5MDExMjAw
++MDBaFw0yODAxMjgxMjAwMDBaMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9i
++YWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9iYWxT
++aWduIFJvb3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDaDuaZ
++jc6j40+Kfvvxi4Mla+pIH/EqsLmVEQS98GPR4mdmzxzdzxtIK+6NiY6arymAZavp
++xy0Sy6scTHAHoT0KMM0VjU/43dSMUBUc71DuxC73/OlS8pF94G3VNTCOXkNz8kHp
++1Wrjsok6Vjk4bwY8iGlbKk3Fp1S4bInMm/k8yuX9ifUSPJJ4ltbcdG6TRGHRjcdG
++snUOhugZitVtbNV4FpWi6cgKOOvyJBNPc1STE4U6G7weNLWLBYy5d4ux2x8gkasJ
++U26Qzns3dLlwR5EiUWMWea6xrkEmCMgZK9FGqkjWZCrXgzT/LCrBbBlDSgeF59N8
++9iFo7+ryUp9/k5DPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8E
++BTADAQH/MB0GA1UdDgQWBBRge2YaRQ2XyolQL30EzTSo//z9SzANBgkqhkiG9w0B
++AQUFAAOCAQEA1nPnfE920I2/7LqivjTFKDK1fPxsnCwrvQmeU79rXqoRSLblCKOz
++yj1hTdNGCbM+w6DjY1Ub8rrvrTnhQ7k4o+YviiY776BQVvnGCv04zcQLcFGUl5gE
++38NflNUVyRRBnMRddWQVDf9VMOyGj/8N7yy5Y0b2qvzfvGn9LhJIZJrglfCm7ymP
++AbEVtQwdpf5pLGkkeB6zpxxxYu7KyJesF12KwvhHhm4qxFYxldBniYUr+WymXUad
++DKqC5JlR3XC321Y9YeRq4VzW9v493kHMB65jUr9TU/Qr6cf9tveCX4XSQRjbgbME
++HMUfpIBvFSDJ3gyICh3WZlXi/EjJKSZp4A==
++-----END CERTIFICATE-----
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_1.pem b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_1.pem
+new file mode 100644
+index 000000000..ed54812a7
+--- /dev/null
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_1.pem
+@@ -0,0 +1,31 @@
++-----BEGIN CERTIFICATE-----
++MIIFYDCCA0igAwIBAgIJAOj6GWMU0voYMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNV
++BAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTYwNTI2MTYyODUyWhcNMjYwNTI0MTYy
++ODUyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0B
++AQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdS
++Sxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7
++tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggj
++nar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGq
++C4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQ
++oVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+O
++JtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/Eg
++sTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRi
++igHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+M
++RPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9E
++aDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5Um
++AGMCAwEAAaOBpjCBozAdBgNVHQ4EFgQUNmHhAHyIBQlRi0RsR/8aTMnqTxIwHwYD
++VR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAO
++BgNVHQ8BAf8EBAMCAYYwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cHM6Ly9hbmRyb2lk
++Lmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wDQYJKoZIhvcNAQELBQAD
++ggIBACDIw41L3KlXG0aMiS//cqrG+EShHUGo8HNsw30W1kJtjn6UBwRM6jnmiwfB
++Pb8VA91chb2vssAtX2zbTvqBJ9+LBPGCdw/E53Rbf86qhxKaiAHOjpvAy5Y3m00m
++qC0w/Zwvju1twb4vhLaJ5NkUJYsUS7rmJKHHBnETLi8GFqiEsqTWpG/6ibYCv7rY
++DBJDcR9W62BW9jfIoBQcxUCUJouMPH25lLNcDc1ssqvC2v7iUgI9LeoM1sNovqPm
++QUiG9rHli1vXxzCyaMTjwftkJLkf6724DFhuKug2jITV0QkXvaJWF4nUaHOTNA4u
++JU9WDvZLI1j83A+/xnAJUucIv/zGJ1AMH2boHqF8CY16LpsYgBt6tKxxWH00XcyD
++CdW2KlBCeqbQPcsFmWyWugxdcekhYsAWyoSf818NUsZdBWBaR/OukXrNLfkQ79Iy
++ZohZbvabO/X+MVT3rriAoKc8oE2Uws6DF+60PV7/WIPjNvXySdqspImSN78mflxD
++qwLqRBYkA3I75qppLGG9rp7UCdRjxMl8ZDBld+7yvHVgt1cVzJx9xnyGCC23Uaic
++MDSXYrB4I4WHXPGjxhZuCuPBLTdOLU8YRvMYdEvYebWHMpvwGCF6bAx3JBpIeOQ1
++wDB5y0USicV3YgYGmi+NZfhA4URSh77Yd6uuJOJENRaNVTzk
++-----END CERTIFICATE-----
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_2.pem b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_2.pem
+new file mode 100644
+index 000000000..84267f38c
+--- /dev/null
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_2.pem
+@@ -0,0 +1,30 @@
++-----BEGIN CERTIFICATE-----
++MIIFHDCCAwSgAwIBAgIJANUP8luj8tazMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNV
++BAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTkxMTIyMjAzNzU4WhcNMzQxMTE4MjAz
++NzU4WjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0B
++AQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdS
++Sxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7
++tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggj
++nar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGq
++C4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQ
++oVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+O
++JtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/Eg
++sTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRi
++igHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+M
++RPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9E
++aDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5Um
++AGMCAwEAAaNjMGEwHQYDVR0OBBYEFDZh4QB8iAUJUYtEbEf/GkzJ6k8SMB8GA1Ud
++IwQYMBaAFDZh4QB8iAUJUYtEbEf/GkzJ6k8SMA8GA1UdEwEB/wQFMAMBAf8wDgYD
++VR0PAQH/BAQDAgIEMA0GCSqGSIb3DQEBCwUAA4ICAQBOMaBc8oumXb2voc7XCWnu
++XKhBBK3e2KMGz39t7lA3XXRe2ZLLAkLM5y3J7tURkf5a1SutfdOyXAmeE6SRo83U
++h6WszodmMkxK5GM4JGrnt4pBisu5igXEydaW7qq2CdC6DOGjG+mEkN8/TA6p3cno
++L/sPyz6evdjLlSeJ8rFBH6xWyIZCbrcpYEJzXaUOEaxxXxgYz5/cTiVKN2M1G2ok
++QBUIYSY6bjEL4aUN5cfo7ogP3UvliEo3Eo0YgwuzR2v0KR6C1cZqZJSTnghIC/vA
++D32KdNQ+c3N+vl2OTsUVMC1GiWkngNx1OO1+kXW+YTnnTUOtOIswUP/Vqd5SYgAI
++mMAfY8U9/iIgkQj6T2W6FsScy94IN9fFhE1UtzmLoBIuUFsVXJMTz+Jucth+IqoW
++Fua9v1R93/k98p41pjtFX+H8DslVgfP097vju4KDlqN64xV1grw3ZLl4CiOe/A91
++oeLm2UHOq6wn3esB4r2EIQKb6jTVGu5sYCcdWpXr0AUVqcABPdgL+H7qJguBw09o
++jm6xNIrw2OocrDKsudk/okr/AwqEyPKw9WnMlQgLIKw1rODG2NvU9oR3GVGdMkUB
++ZutL8VuFkERQGt6vQ2OCw0sV47VMkuYbacK/xyZFiRcrPJPb41zgbQj9XAEyLKCH
++ex0SdDrx+tWUDqG8At2JHA==
++-----END CERTIFICATE-----
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_3.pem b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_3.pem
+new file mode 100644
+index 000000000..2cbfa5a04
+--- /dev/null
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_3.pem
+@@ -0,0 +1,31 @@
++
++-----BEGIN CERTIFICATE-----
++MIIFHDCCAwSgAwIBAgIJAMNrfES5rhgxMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNV
++BAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMjExMTE3MjMxMDQyWhcNMzYxMTEzMjMx
++MDQyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0B
++AQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdS
++Sxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7
++tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggj
++nar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGq
++C4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQ
++oVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+O
++JtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/Eg
++sTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRi
++igHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+M
++RPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9E
++aDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5Um
++AGMCAwEAAaNjMGEwHQYDVR0OBBYEFDZh4QB8iAUJUYtEbEf/GkzJ6k8SMB8GA1Ud
++IwQYMBaAFDZh4QB8iAUJUYtEbEf/GkzJ6k8SMA8GA1UdEwEB/wQFMAMBAf8wDgYD
++VR0PAQH/BAQDAgIEMA0GCSqGSIb3DQEBCwUAA4ICAQBTNNZe5cuf8oiq+jV0itTG
++zWVhSTjOBEk2FQvh11J3o3lna0o7rd8RFHnN00q4hi6TapFhh4qaw/iG6Xg+xOan
++63niLWIC5GOPFgPeYXM9+nBb3zZzC8ABypYuCusWCmt6Tn3+Pjbz3MTVhRGXuT/T
++QH4KGFY4PhvzAyXwdjTOCXID+aHud4RLcSySr0Fq/L+R8TWalvM1wJJPhyRjqRCJ
++erGtfBagiALzvhnmY7U1qFcS0NCnKjoO7oFedKdWlZz0YAfu3aGCJd4KHT0MsGiL
++Zez9WP81xYSrKMNEsDK+zK5fVzw6jA7cxmpXcARTnmAuGUeI7VVDhDzKeVOctf3a
++0qQLwC+d0+xrETZ4r2fRGNw2YEs2W8Qj6oDcfPvq9JySe7pJ6wcHnl5EZ0lwc4xH
++7Y4Dx9RA1JlfooLMw3tOdJZH0enxPXaydfAD3YifeZpFaUzicHeLzVJLt9dvGB0b
++HQLE4+EqKFgOZv2EoP686DQqbVS1u+9k0p2xbMA105TBIk7npraa8VM0fnrRKi7w
++lZKwdH+aNAyhbXRW9xsnODJ+g8eF452zvbiKKngEKirK5LGieoXBX7tZ9D1GNBH2
++Ob3bKOwwIWdEFle/YF/h6zWgdeoaNGDqVBrLr2+0DtWoiB1aDEjLWl9FmyIUyUm7
++mD/vFDkzF+wm7cyWpQpCVQ==
++-----END CERTIFICATE-----
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_4.pem b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_4.pem
+new file mode 100644
+index 000000000..b85d6408d
+--- /dev/null
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/source-roots/Google_Hardware_Attestation_Root_4.pem
+@@ -0,0 +1,31 @@
++
++-----BEGIN CERTIFICATE-----
++MIIFHDCCAwSgAwIBAgIJAPHBcqaZ6vUdMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNV
++BAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMjIwMzIwMTgwNzQ4WhcNNDIwMzE1MTgw
++NzQ4WjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0B
++AQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdS
++Sxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7
++tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggj
++nar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGq
++C4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQ
++oVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+O
++JtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/Eg
++sTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRi
++igHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+M
++RPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9E
++aDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5Um
++AGMCAwEAAaNjMGEwHQYDVR0OBBYEFDZh4QB8iAUJUYtEbEf/GkzJ6k8SMB8GA1Ud
++IwQYMBaAFDZh4QB8iAUJUYtEbEf/GkzJ6k8SMA8GA1UdEwEB/wQFMAMBAf8wDgYD
++VR0PAQH/BAQDAgIEMA0GCSqGSIb3DQEBCwUAA4ICAQB8cMqTllHc8U+qCrOlg3H7
++174lmaCsbo/bJ0C17JEgMLb4kvrqsXZs01U3mB/qABg/1t5Pd5AORHARs1hhqGIC
++W/nKMav574f9rZN4PC2ZlufGXb7sIdJpGiO9ctRhiLuYuly10JccUZGEHpHSYM2G
++tkgYbZba6lsCPYAAP83cyDV+1aOkTf1RCp/lM0PKvmxYN10RYsK631jrleGdcdkx
++oSK//mSQbgcWnmAEZrzHoF1/0gso1HZgIn0YLzVhLSA/iXCX4QT2h3J5z3znluKG
++1nv8NQdxei2DIIhASWfu804CA96cQKTTlaae2fweqXjdN1/v2nqOhngNyz1361mF
++mr4XmaKH/ItTwOe72NI9ZcwS1lVaCvsIkTDCEXdm9rCNPAY10iTunIHFXRh+7KPz
++lHGewCq/8TOohBRn0/NNfh7uRslOSZ/xKbN9tMBtw37Z8d2vvnXq/YWdsm1+JLVw
++n6yYD/yacNJBlwpddla8eaVMjsF6nBnIgQOf9zKSe06nSTqvgwUHosgOECZJZ1Eu
++zbH4yswbt02tKtKEFhx+v+OTge/06V+jGsqTWLsfrOCNLuA8H++z+pUENmpqnnHo
++vaI47gC+TNpkgYGkkBT6B/m/U01BuOBBTzhIlMEZq9qkDWuM2cA5kW5V3FJUcfHn
++w1IdYIg2Wxg7yHcQZemFQg==
++-----END CERTIFICATE-----
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
+index 8e5d9efa7..f4c87d8d6 100644
+--- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
+@@ -44,6 +44,7 @@ pub struct FidoGenCeAaguid;
+ pub(crate) struct AppleAnonymousNonce;
+ 
+ pub(crate) struct AndroidKeyAttestationExtensionData;
++pub(crate) struct SourceAndroidKeyAttestationExtensionData;
+ 
+ impl AttestationX509Extension for FidoGenCeAaguid {
+     // If cert contains an extension with OID 1 3 6 1 4 1 45724 1 1 4 (id-fido-gen-ce-aaguid)
+@@ -166,6 +167,12 @@ pub(crate) mod android_key_attestation {
+ 
+     impl Data {
+         pub fn parse(i: &[u8]) -> der_parser::error::BerResult<'_, (Vec<u8>, AttestationMetadata)> {
++            Self::parse_inner(i, true)
++        }
++        pub fn parse_source(i: &[u8]) -> der_parser::error::BerResult<'_, (Vec<u8>, AttestationMetadata)> {
++            Self::parse_inner(i, false)
++        }
++        fn parse_inner(i: &[u8], strict: bool) -> der_parser::error::BerResult<'_, (Vec<u8>, AttestationMetadata)> {
+             use der_parser::{der::*, error::BerError};
+             parse_der_container(|i: &[u8], hdr: Header| {
+                 if hdr.tag() != Tag::Sequence {
+@@ -191,12 +198,14 @@ pub(crate) mod android_key_attestation {
+                 let attest_enforcement = match attest_sec_level {
+                     0 => EnforcementType::Software,
+                     1 => EnforcementType::Tee,
++                    _ if !strict => EnforcementType::Tee,
+                     _ => return Err(der_parser::error::BerError::InvalidTag)?,
+                 };
+ 
+                 let km_enforcement = match km_sec_level {
+                     0 => EnforcementType::Software,
+                     1 => EnforcementType::Tee,
++                    _ if !strict => EnforcementType::Tee,
+                     _ => return Err(der_parser::error::BerError::InvalidTag)?,
+                 };
+ 
+@@ -208,6 +217,7 @@ pub(crate) mod android_key_attestation {
+                     })?;
+                 }
+ 
++                if strict {
+                 // ensure key master values are set properly
+                 let software_set = match (software_enforced.origin, software_enforced.purpose) {
+                     (Some(origin), Some(purpose))
+@@ -246,6 +256,7 @@ pub(crate) mod android_key_attestation {
+                     })?;
+                 }
+ 
++                }
+                 let metadata = AttestationMetadata::AndroidKey {
+                     is_km_tee: km_enforcement == EnforcementType::Tee,
+                     is_attest_tee: attest_enforcement == EnforcementType::Tee,
+@@ -273,6 +284,22 @@ impl AttestationX509Extension for AndroidKeyAttestationExtensionData {
+     const VALIDATION_ERROR: WebauthnError = WebauthnError::AttestationCertificateNonceMismatch;
+ }
+ 
++impl AttestationX509Extension for SourceAndroidKeyAttestationExtensionData {
++    // If cert contains an extension with OID 1.3.6.1.4.1.11129.2.1.17 (android key attestation)
++    const OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.11129.2.1.17");
++
++    // verify that the value of this extension matches the aaguid in authenticatorData.
++    type Output = Vec<u8>;
++
++    fn parse(i: &[u8]) -> der_parser::error::BerResult<'_, (Self::Output, AttestationMetadata)> {
++        android_key_attestation::Data::parse_source(i)
++    }
++
++    const IS_REQUIRED: bool = true;
++
++    const VALIDATION_ERROR: WebauthnError = WebauthnError::AttestationCertificateNonceMismatch;
++}
++
+ impl AttestationX509Extension for AppleAnonymousNonce {
+     type Output = [u8; 32];
+ 
+@@ -692,7 +719,9 @@ pub(crate) fn verify_fidou2f_attestation(
+         .collect();
+ 
+     // Verify the sig using verificationData and certificate public key per [SEC1].
+-    let verified = verify_signature(cerificate_public_key, sig, &verification_data)?;
++    let mut certificate_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(cerificate_public_key)?, cerificate_public_key))?;
++    certificate_key.type_ = COSEAlgorithm::ES256;
++    let verified = certificate_key.verify_signature(sig, &verification_data)?;
+ 
+     if !verified {
+         error!("signature verification failed!");
+@@ -712,6 +741,23 @@ pub(crate) fn verify_tpm_attestation(
+     acd: &AttestedCredentialData,
+     att_obj: &AttestationObject<Registration>,
+     client_data_hash: &[u8],
++) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
++    verify_tpm_attestation_internal(acd, att_obj, client_data_hash, false)
++}
++
++pub(crate) fn verify_source_tpm_attestation(
++    acd: &AttestedCredentialData,
++    att_obj: &AttestationObject<Registration>,
++    client_data_hash: &[u8],
++) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
++    verify_tpm_attestation_internal(acd, att_obj, client_data_hash, true)
++}
++
++fn verify_tpm_attestation_internal(
++    acd: &AttestedCredentialData,
++    att_obj: &AttestationObject<Registration>,
++    client_data_hash: &[u8],
++    source_compatibility: bool,
+ ) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
+     debug!("begin verify_tpm_attest");
+ 
+@@ -827,9 +873,15 @@ pub(crate) fn verify_tpm_attestation(
+     ) {
+         (
+             COSEKeyType::RSA(cose_rsa),
+-            TpmuPublicParms::Rsa(_tpm_parms),
++            TpmuPublicParms::Rsa(tpm_parms),
+             TpmuPublicId::Rsa(tpm_modulus),
+         ) => {
++            if source_compatibility {
++                let mut exponent = [0u8; 4];
++                for (index, byte) in cose_rsa.e.iter().take(3).enumerate() { exponent[index] = *byte; }
++                let expected = if tpm_parms._exponent == 0 { 65537 } else { tpm_parms._exponent };
++                if u32::from_le_bytes(exponent) != expected { return Err(WebauthnError::AttestationTpmPubAreaMismatch); }
++            }
+             // Is it possible to check the exponent? I think it's not ... as the tpm_parms and the
+             // cose rse disagree in my test vectors.
+             // cose_rsa.e != tpm_parms.exponent ||
+@@ -921,6 +973,11 @@ pub(crate) fn verify_tpm_attestation(
+                     v.append(&mut r.to_vec());
+                     v
+                 }
++                TpmAlgId::Sha384 | TpmAlgId::Sha512 => {
++                    let (id, alg) = if matches!(pubarea.name_alg, TpmAlgId::Sha384) { (12, COSEAlgorithm::ES384) } else { (13, COSEAlgorithm::ES521) };
++                    let mut v = vec![0, id];
++                    v.extend(only_hash_from_type(alg, pubarea_bytes)?); v
++                }
+                 _ => return Err(WebauthnError::AttestationTpmPubAreaHashUnknown),
+             };
+             if hname != name {
+@@ -946,7 +1003,9 @@ pub(crate) fn verify_tpm_attestation(
+         TpmtSignature::RawSignature(dsig) => {
+             // Alg was pre-loaded into the x509 struct during parsing
+             // so we should just be able to verify
+-            verify_signature(aik_cert, &dsig, certinfo_bytes)?
++            let mut key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(aik_cert)?, aik_cert))?;
++            key.type_ = alg;
++            key.verify_signature(&dsig, certinfo_bytes)?
+         }
+     };
+ 
+@@ -958,7 +1017,8 @@ pub(crate) fn verify_tpm_attestation(
+ 
+     // Verify that aik_cert meets the requirements in § 8.3.1 TPM Attestation Statement Certificate
+     // Requirements.
+-    assert_tpm_attest_req(aik_cert)?;
++    if source_compatibility { assert_source_tpm_attest_req(aik_cert)?; }
++    else { assert_tpm_attest_req(aik_cert)?; }
+ 
+     // If aik_cert contains an extension with OID 1 3 6 1 4 1 45724 1 1 4 (id-fido-gen-ce-aaguid)
+     // verify that the value of this extension matches the aaguid in authenticatorData.
+@@ -1046,6 +1106,74 @@ pub(crate) fn assert_tpm_attest_req(x509: &x509::Certificate) -> Result<(), Weba
+     Ok(())
+ }
+ 
++pub(crate) fn assert_source_tpm_attest_req(x509: &x509::Certificate) -> Result<(), WebauthnError> {
++    let x509_cert = &x509.tbs_certificate;
++
++    // TPM attestation certificate MUST have the following fields/extensions:
++
++    // Version MUST be set to 3.
++    if x509_cert.version != x509::Version::V3 {
++        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
++    }
++
++    // Subject field MUST be set to empty.
++    if !x509_cert.subject.is_empty() {
++        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
++    }
++
++    // The Subject Alternative Name extension MUST be set as defined in [TPMv2-EK-Profile] section 3.2.9.
++    // https://www.trustedcomputinggroup.org/wp-content/uploads/Credential_Profile_EK_V2.0_R14_published.pdf
++
++    // From [TPMv2-EK-Profile]:
++    // In accordance with RFC 5280[11], this extension MUST be critical if
++    // subject is empty and SHOULD be non-critical if subject is non-empty.
++    //
++    // We've already returned if the subject is non-empty, so we can just
++    // check that the extension is critical.
++    //
++    // The issuer MUST include TPM manufacturer, TPM part number and TPM
++    // firmware version, using the directoryName form within the GeneralName
++    // structure.
++    let subject_alt_name = x509_cert
++        .get::<SubjectAltName>()
++        .map_err(|_| WebauthnError::AttestationCertificateRequirementsNotMet)?
++        .map(|(_, extn)| extn)
++        .ok_or(WebauthnError::AttestationCertificateRequirementsNotMet)?;
++
++    let tpm_san_data = TpmSanData::try_from(&subject_alt_name)?;
++    if !crate::source_compat::valid_tpm_manufacturer(tpm_san_data.manufacturer)
++        || tpm_san_data._model.is_empty() || tpm_san_data._version.is_empty() {
++        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
++    }
++
++    // The Extended Key Usage extension MUST contain the "joint-iso-itu-t(2) internationalorganizations(23) 133 tcg-kp(8) tcg-kp-AIKCertificate(3)" OID.
++    let extended_key_usage = x509_cert
++        .get::<ExtendedKeyUsage>()
++        .map_err(|_| WebauthnError::AttestationCertificateRequirementsNotMet)?
++        .map(|(_, extn)| extn)
++        .ok_or(WebauthnError::AttestationCertificateRequirementsNotMet)?;
++
++    if extended_key_usage.0.first() != Some(&OID_JOINT_ISO_ITU_T) {
++        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
++    }
++
++    // The Basic Constraints extension MUST have the CA component set to false.
++    let basic_constraints = x509_cert
++        .get::<BasicConstraints>()
++        .map_err(|_| WebauthnError::AttestationCertificateRequirementsNotMet)?
++        .map(|(_, extn)| extn);
++
++    if basic_constraints.is_some_and(|constraints| constraints.ca) {
++        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
++    }
++
++    // An Authority Information Access (AIA) extension with entry id-ad-ocsp and a CRL Distribution
++    // Point extension [RFC5280] are both OPTIONAL as the status of many attestation certificates is
++    // available through metadata services. See, for example, the FIDO Metadata Service [FIDOMetadataService].
++
++    Ok(())
++}
++
+ pub(crate) fn verify_apple_anonymous_attestation(
+     acd: &AttestedCredentialData,
+     att_obj: &AttestationObject<Registration>,
+@@ -1228,6 +1356,110 @@ pub(crate) fn verify_android_key_attestation(
+     Ok((ParsedAttestationData::Basic(arr_x509), meta))
+ }
+ 
++pub(crate) fn verify_source_android_key_attestation(
++    acd: &AttestedCredentialData,
++    att_obj: &AttestationObject<Registration>,
++    client_data_hash: &[u8],
++) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
++    let att_stmt = &att_obj.att_stmt;
++    let auth_data_bytes = &att_obj.auth_data_bytes;
++
++    // 1. Verify that attStmt is valid CBOR conforming to the syntax defined above and perform CBOR decoding on it to extract the contained fields.
++    let att_stmt_map =
++        cbor_try_map!(att_stmt).map_err(|_| WebauthnError::AttestationStatementMapInvalid)?;
++
++    let alg = {
++        let alg_value = att_stmt_map
++            .get(&serde_cbor_2::Value::Text("alg".to_string()))
++            .ok_or(WebauthnError::AttestationStatementAlgMissing)?;
++
++        cbor_try_i128!(alg_value)
++            .map_err(|_| WebauthnError::AttestationStatementAlgInvalid)
++            .and_then(|v| {
++                COSEAlgorithm::try_from(v).map_err(|_| WebauthnError::COSEKeyInvalidAlgorithm)
++            })?
++    };
++
++    let sig = {
++        let sig_value = att_stmt_map
++            .get(&serde_cbor_2::Value::Text("sig".to_string()))
++            .ok_or(WebauthnError::AttestationStatementSigMissing)?;
++
++        cbor_try_bytes!(sig_value).map_err(|_| WebauthnError::AttestationStatementSigMissing)?
++    };
++
++    let arr_x509 = {
++        let x5c_key = &serde_cbor_2::Value::Text("x5c".to_string());
++
++        let x5c_value = att_stmt_map
++            .get(x5c_key)
++            .ok_or(WebauthnError::AttestationStatementX5CMissing)?;
++
++        let x5c_array_ref = cbor_try_array!(x5c_value)
++            .map_err(|_| WebauthnError::AttestationStatementX5CInvalid)?;
++
++        let arr_x509: Result<Vec<_>, _> = x5c_array_ref
++            .iter()
++            .map(|values| {
++                cbor_try_bytes!(values)
++                    .map_err(|_| WebauthnError::AttestationStatementX5CInvalid)
++                    .and_then(|b| {
++                        x509::Certificate::from_der(b).map_err(|_| WebauthnError::X509DerInvalid)
++                    })
++            })
++            .collect();
++
++        arr_x509?
++    };
++
++    // Must have at least one cert
++    let attestn_cert = arr_x509
++        .first()
++        .ok_or(WebauthnError::AttestationStatementX5CInvalid)?;
++
++    // Concatenate authenticatorData and clientDataHash to form the data to verify.
++    let data_to_verify: Vec<u8> = auth_data_bytes
++        .iter()
++        .chain(client_data_hash.iter())
++        .copied()
++        .collect();
++
++    // 2. Verify that sig is a valid signature over the concatenation of authenticatorData and clientDataHash using the public key in the first certificate in x5c with the algorithm specified in alg.
++
++    // 3. Verify that the public key in the first certificate in x5c matches the credentialPublicKey in the attestedCredentialData in authenticatorData.
++    let credential_public_key = COSEKey::try_from(&acd.credential_pk)?;
++    let subject_public_key = COSEKey::try_from((credential_public_key.type_, attestn_cert))?;
++
++    if credential_public_key != subject_public_key {
++        return Err(WebauthnError::AttestationCredentialSubjectKeyMismatch);
++    }
++
++    // Source uses the explicit statement algorithm as the hash override.
++    let mut signing_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(attestn_cert)?, attestn_cert))?;
++    signing_key.type_ = alg;
++    if !signing_key.verify_signature(sig, &data_to_verify)? { return Err(WebauthnError::AttestationStatementSigInvalid); }
++
++    // 4. Verify that the attestationChallenge field in the attestation certificate extension data is identical to clientDataHash.
++    // The AuthorizationList.allApplications field is not present on either authorization list (softwareEnforced nor teeEnforced), since PublicKeyCredential MUST be scoped to the RP ID.
++    // For the following, use only the teeEnforced authorization list if the RP wants to accept only keys from a trusted execution environment, otherwise use the union of teeEnforced and softwareEnforced.
++
++    // let pem = attestn_cert.to_pem()?;
++    // dbg!(std::str::from_utf8(&pem).unwrap());
++
++    let meta = validate_extension::<SourceAndroidKeyAttestationExtensionData>(
++        attestn_cert,
++        &client_data_hash.to_vec(),
++    )?;
++
++    // arr_x509.iter().for_each(|c| {
++    //     let pem = c.to_pem().unwrap();
++    //     dbg!(std::str::from_utf8(&pem).unwrap());
++    // });
++
++    // 5. If successful, return implementation-specific values representing attestation type Anonymous CA and attestation trust path x5c.
++    Ok((ParsedAttestationData::Basic(arr_x509), meta))
++}
++
+ /// Verify the attestation chain
+ pub fn verify_attestation_ca_chain<'a>(
+     att_data: &'_ ParsedAttestationData,
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
+index 5d638f76e..df82efdba 100644
+--- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
+@@ -22,10 +22,10 @@ use crypto_glue::{
+         EcdsaP521PublicKey,
+         // EcdsaP521Signature, EcdsaP521VerifyingKey,
+     },
+-    rsa::{BigUint, RS256PublicKey, RS256Signature, RS256VerifyingKey},
++    rsa::{BigUint, RS256PublicKey},
+     s256,
+-    traits::{Digest, OwnedToRef, Verifier},
+-    x509::{self, Certificate, GeneralName, ObjectIdentifier, OtherName, SubjectAltName},
++    traits::{Digest, OwnedToRef, Verifier, hazmat::PrehashVerifier},
++    x509::{Certificate, GeneralName, ObjectIdentifier, OtherName, SubjectAltName},
+ };
+ 
+ /// Validate an x509 signature is valid for the supplied data
+@@ -34,13 +34,10 @@ pub fn verify_signature(
+     signature: &[u8],
+     verification_data: &[u8],
+ ) -> Result<bool, WebauthnError> {
+-    let valid = x509::x509_verify_signature(verification_data, signature, certificate)
+-        .inspect_err(|err| {
+-            error!(?err, "x509 Verification Error");
+-        })
+-        .is_ok();
+-
+-    Ok(valid)
++    let alg = crate::source_compat::statement_key_algorithm(certificate)?;
++    let mut key = COSEKey::try_from((alg, certificate))?;
++    key.type_ = crate::source_compat::certificate_signature_algorithm(certificate)?;
++    key.verify_signature(signature, verification_data)
+ }
+ 
+ pub(crate) struct TpmSanData<'a> {
+@@ -123,6 +120,18 @@ impl<'a> TryFrom<&'a SubjectAltName> for TpmSanData<'a> {
+                             builder
+                         }
+                     }
++                    GeneralName::DirectoryName(name) => {
++                        name.0.iter().flat_map(|rdn| rdn.0.iter()).try_fold(builder, |builder, attribute| {
++                            let attr_value = str::from_utf8(attribute.value.value())?;
++                            Ok::<_, std::str::Utf8Error>(if attribute.oid == TCG_AT_TPM_MANUFACTURER_RAW {
++                                builder.manufacturer(attr_value)
++                            } else if attribute.oid == TCG_AT_TPM_MODEL_RAW {
++                                builder.model(attr_value)
++                            } else if attribute.oid == TCG_AT_TPM_VERSION_RAW {
++                                builder.version(attr_value)
++                            } else { builder })
++                        })?
++                    }
+                     _ => builder,
+                 };
+                 Ok(next)
+@@ -134,21 +143,27 @@ impl<'a> TryFrom<&'a SubjectAltName> for TpmSanData<'a> {
+ 
+ pub(crate) fn only_hash_from_type(
+     alg: COSEAlgorithm,
+-    _input: &[u8],
++    input: &[u8],
+ ) -> Result<Vec<u8>, WebauthnError> {
++    use sha2::Digest;
+     match alg {
+-        COSEAlgorithm::INSECURE_RS1 => {
+-            // sha1
+-            warn!("INSECURE SHA1 USAGE DETECTED");
+-            Err(WebauthnError::CredentialInsecureCryptography)
+-        }
+-        c_alg => {
+-            debug!(?c_alg, "WebauthnError::COSEKeyInvalidType");
+-            Err(WebauthnError::COSEKeyInvalidType)
+-        }
++        COSEAlgorithm::ES256 | COSEAlgorithm::RS256 | COSEAlgorithm::PS256 => Ok(sha2::Sha256::digest(input).to_vec()),
++        COSEAlgorithm::ES384 | COSEAlgorithm::RS384 | COSEAlgorithm::PS384 => Ok(sha2::Sha384::digest(input).to_vec()),
++        COSEAlgorithm::ES521 | COSEAlgorithm::RS512 | COSEAlgorithm::PS512 => Ok(sha2::Sha512::digest(input).to_vec()),
++        COSEAlgorithm::INSECURE_RS1 => Ok(sha1::Sha1::digest(input).to_vec()),
++        _ => Err(WebauthnError::COSEKeyInvalidType),
+     }
+ }
+ 
++// RustCrypto requires a minimum input width. Leading zero extension of a
++// shorter digest preserves the ECDSA message integer; the verifier still owns
++// curve validation, scalar parsing and signature verification.
++fn prehash_for_curve(alg: COSEAlgorithm, data: &[u8], minimum: usize) -> Result<Vec<u8>, WebauthnError> {
++    let digest = only_hash_from_type(alg, data)?;
++    if digest.len() >= minimum { return Ok(digest); }
++    let mut padded = vec![0; minimum - digest.len()]; padded.extend(digest); Ok(padded)
++}
++
+ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+     type Error = WebauthnError;
+     fn try_from(d: &serde_cbor_2::Value) -> Result<COSEKey, Self::Error> {
+@@ -202,9 +217,7 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+         // match key_type {
+         // 1 => {} OctetKey
+         if key_type == (COSEKeyTypeId::EC_EC2 as i128)
+-            && (type_ == COSEAlgorithm::ES256
+-                || type_ == COSEAlgorithm::ES384
+-                || type_ == COSEAlgorithm::ES521)
++            && !matches!(type_, COSEAlgorithm::EDDSA | COSEAlgorithm::PinUvProtocol)
+         {
+             // This indicates this is an EC2 key consisting of crv, x, y, which are stored in
+             // crv (-1), x (-2) and y (-3)
+@@ -250,14 +263,15 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+             cose_key.validate()?;
+             // return it
+             Ok(cose_key)
+-        } else if key_type == (COSEKeyTypeId::EC_RSA as i128) && (type_ == COSEAlgorithm::RS256) {
++        } else if key_type == (COSEKeyTypeId::EC_RSA as i128)
++            && matches!(type_, COSEAlgorithm::RS256 | COSEAlgorithm::RS384 | COSEAlgorithm::RS512 | COSEAlgorithm::PS256 | COSEAlgorithm::PS384 | COSEAlgorithm::PS512 | COSEAlgorithm::INSECURE_RS1) {
+             // RSAKey
+ 
+             // -37 -> PS256
+             // -257 -> RS256 aka RSASSA-PKCS1-v1_5 with SHA-256
+ 
+-            // -1 -> n 256 bytes
+-            // -2 -> e 3 bytes
++            // -1 -> n, source-compatible variable-length modulus
++            // -2 -> e, source-compatible variable-length exponent
+ 
+             let n_value = m
+                 .get(&serde_cbor_2::Value::Integer(-1))
+@@ -269,13 +283,12 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+                 .ok_or(WebauthnError::COSEKeyInvalidCBORValue)?;
+             let e = cbor_try_bytes!(e_value)?;
+ 
+-            if n.len() != 256 || e.len() != 3 {
++            if n.is_empty() || e.is_empty() {
+                 return Err(WebauthnError::COSEKeyRSANEInvalid);
+             }
+ 
+-            // Set the n and e, we know they are proper sizes.
+-            let mut e_temp = [0; 3];
+-            e_temp.copy_from_slice(e.as_slice());
++            // Preserve parameters; the maintained RSA constructor validates them.
++            let e_temp = e.to_vec();
+ 
+             // Right, now build the struct.
+             let cose_key = COSEKey {
+@@ -345,6 +358,10 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+     }
+ }
+ 
++// The source bounds ceremony requests to 64 KiB. Keep safe RustCrypto
++// parameter validation while admitting source-valid RSA keys above 4096 bits.
++const MAX_SOURCE_RSA_BITS: usize = 65_536 * 8;
++
+ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
+     type Error = WebauthnError;
+ 
+@@ -417,21 +434,24 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
+                 }))
+             }
+ 
+-            COSEAlgorithm::RS256
+-            | COSEAlgorithm::RS384
+-            | COSEAlgorithm::RS512
+-            | COSEAlgorithm::PS256
+-            | COSEAlgorithm::PS384
+-            | COSEAlgorithm::PS512
+-            | COSEAlgorithm::EDDSA
+-            | COSEAlgorithm::PinUvProtocol
+-            | COSEAlgorithm::INSECURE_RS1 => {
+-                error!(
+-                    "unsupported X509 to COSE conversion for COSE algorithm type {:?}",
+-                    alg
+-                );
+-                Err(WebauthnError::COSEKeyInvalidType)
++            COSEAlgorithm::RS256 | COSEAlgorithm::RS384 | COSEAlgorithm::RS512
++            | COSEAlgorithm::PS256 | COSEAlgorithm::PS384 | COSEAlgorithm::PS512 | COSEAlgorithm::INSECURE_RS1 => {
++                use rsa::{pkcs1::der::Decode, traits::PublicKeyParts};
++                let raw = certificate.tbs_certificate.subject_public_key_info.subject_public_key.as_bytes().ok_or(WebauthnError::COSEKeyInvalidType)?;
++                let parsed = rsa::pkcs1::RsaPublicKey::from_der(raw).map_err(|_| WebauthnError::COSEKeyInvalidType)?;
++                let key = rsa::RsaPublicKey::new_with_max_size(
++                    BigUint::from_bytes_be(parsed.modulus.as_bytes()),
++                    BigUint::from_bytes_be(parsed.public_exponent.as_bytes()),
++                    MAX_SOURCE_RSA_BITS,
++                ).map_err(|_| WebauthnError::RsaParametersInvalid)?;
++                Ok(COSEKeyType::RSA(COSERSAKey { n: key.n().to_bytes_be(), e: key.e().to_bytes_be() }))
+             }
++            COSEAlgorithm::EDDSA => {
++                let raw = certificate.tbs_certificate.subject_public_key_info.subject_public_key.as_bytes().ok_or(WebauthnError::COSEKeyInvalidType)?;
++                if raw.len() != 32 { return Err(WebauthnError::COSEKeyInvalidType); }
++                Ok(COSEKeyType::EC_OKP(COSEOKPKey { curve: EDDSACurve::ED25519, x: raw.to_vec() }))
++            }
++            COSEAlgorithm::PinUvProtocol => Err(WebauthnError::COSEKeyInvalidType),
+         }?;
+ 
+         Ok(COSEKey { type_: alg, key })
+@@ -441,9 +461,9 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
+ enum COSEKeyPublic {
+     EcdsaP256(EcdsaP256PublicKey),
+     EcdsaP384(EcdsaP384PublicKey),
+-    EcdsaP521(EcdsaP521PublicKey),
++    EcdsaP521,
+     RsaS256(RS256PublicKey),
+-    // Ed25519(),
++    Ed25519(ed25519_dalek::VerifyingKey),
+     // Ed448(),
+ }
+ 
+@@ -487,7 +507,7 @@ impl COSEKey {
+                 }
+                 ECDSACurve::SECP521R1 => {
+                     ecdsa_p521::from_coords_raw(ec2k.x.as_ref(), ec2k.y.as_ref())
+-                        .map(COSEKeyPublic::EcdsaP521)
++                        .map(|_| COSEKeyPublic::EcdsaP521)
+                         .ok_or(WebauthnError::EcdsaPointInvalid)
+                 }
+             },
+@@ -495,29 +515,16 @@ impl COSEKey {
+                 let n = BigUint::from_bytes_be(&rsak.n);
+                 let e = BigUint::from_bytes_be(&rsak.e);
+ 
+-                RS256PublicKey::new(n, e)
++                RS256PublicKey::new_with_max_size(n, e, MAX_SOURCE_RSA_BITS)
+                     .map(COSEKeyPublic::RsaS256)
+                     .map_err(|_err| WebauthnError::RsaParametersInvalid)
+             }
+-            COSEKeyType::EC_OKP(_edk) => {
+-                // !!!
+-                // Today, RustCrypto doesn't directly support ed25519 or ed448. As a result
+-                // I'm opting to skip these.
+-                //
+-                // We don't actually *advertise* support for either of these directly in our
+-                // default algorithm offerings, so the impact of this should be minimal.
+-                /*
+-                match &edk.curve {
+-                    EDDSACurve::ED25519 => {
+-
+-                    }
+-                    EDDSACurve::ED448 => {
+-                    }
+-                }
+-
+-                let xref = edk.x.as_ref();
+-                */
+-                Err(WebauthnError::SshPublicKeyEDUnsupported)
++            COSEKeyType::EC_OKP(edk) => {
++                if edk.curve != EDDSACurve::ED25519 { return Err(WebauthnError::COSEKeyInvalidType); }
++                let raw: &[u8; 32] = edk.x.as_slice().try_into().map_err(|_| WebauthnError::COSEKeyInvalidType)?;
++                ed25519_dalek::VerifyingKey::from_bytes(raw)
++                    .map(COSEKeyPublic::Ed25519)
++                    .map_err(|_| WebauthnError::COSEKeyInvalidType)
+             }
+         }
+     }
+@@ -535,31 +542,44 @@ impl COSEKey {
+                 let signature = EcdsaP256Signature::from_der(signature)
+                     .map_err(|_err| WebauthnError::SignatureInvalid)?;
+                 let verifier = EcdsaP256VerifyingKey::from(&pub_key);
+-                Ok(verifier.verify(verification_data, &signature).is_ok())
++                Ok(verifier.verify_prehash(&prehash_for_curve(self.type_, verification_data, 16)?, &signature).is_ok())
+             }
+             COSEKeyPublic::EcdsaP384(pub_key) => {
+                 let signature = EcdsaP384Signature::from_der(signature)
+                     .map_err(|_err| WebauthnError::SignatureInvalid)?;
+                 let verifier = EcdsaP384VerifyingKey::from(&pub_key);
+-                Ok(verifier.verify(verification_data, &signature).is_ok())
++                Ok(verifier.verify_prehash(&prehash_for_curve(self.type_, verification_data, 24)?, &signature).is_ok())
+             }
+-            COSEKeyPublic::EcdsaP521(_pub_key) => {
+-                // Currently this is unsupported by p521 but will be available
+-                // in future. There really isn't *huge* reason to use p521 anyway,
+-                // so for now we disable this and move on.
+-                /*
+-                let signature = EcdsaP521Signature::from_der(signature)
+-                    .map_err(|_err| WebauthnError::SignatureInvalid)?;
+-                let verifier = EcdsaP521VerifyingKey::from(&pub_key);
+-                Ok(verifier.verify(verification_data, &signature).is_ok())
+-                */
+-                Ok(false)
++            COSEKeyPublic::EcdsaP521 => {
++                let raw = self.get_alg_key_ecc_x962_raw()?;
++                let verifier = p521::ecdsa::VerifyingKey::from_sec1_bytes(&raw).map_err(|_| WebauthnError::EcdsaPointInvalid)?;
++                let signature = p521::ecdsa::Signature::from_der(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
++                Ok(verifier.verify_prehash(&prehash_for_curve(self.type_, verification_data, 33)?, &signature).is_ok())
++            }
++            COSEKeyPublic::Ed25519(verifier) => {
++                let signature = ed25519_dalek::Signature::from_slice(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
++                Ok(verifier.verify_strict(verification_data, &signature).is_ok())
+             }
+             COSEKeyPublic::RsaS256(pub_key) => {
+-                let signature = RS256Signature::try_from(signature)
+-                    .map_err(|_err| WebauthnError::SignatureInvalid)?;
+-                let verifier = RS256VerifyingKey::new(pub_key);
+-                Ok(verifier.verify(verification_data, &signature).is_ok())
++                use rsa::{pkcs1v15, pss};
++                macro_rules! pkcs { ($hash:ty) => {{
++                    let sig = pkcs1v15::Signature::try_from(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
++                    Ok(pkcs1v15::VerifyingKey::<$hash>::new(pub_key).verify(verification_data, &sig).is_ok())
++                }}; }
++                macro_rules! pss { ($hash:ty) => {{
++                    let sig = pss::Signature::try_from(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
++                    Ok(pss::VerifyingKey::<$hash>::new(pub_key).verify(verification_data, &sig).is_ok())
++                }}; }
++                match self.type_ {
++                    COSEAlgorithm::RS256 => pkcs!(sha2::Sha256),
++                    COSEAlgorithm::RS384 => pkcs!(sha2::Sha384),
++                    COSEAlgorithm::RS512 => pkcs!(sha2::Sha512),
++                    COSEAlgorithm::INSECURE_RS1 => pkcs!(sha1::Sha1),
++                    COSEAlgorithm::PS256 => pss!(sha2::Sha256),
++                    COSEAlgorithm::PS384 => pss!(sha2::Sha384),
++                    COSEAlgorithm::PS512 => pss!(sha2::Sha512),
++                    _ => Err(WebauthnError::COSEKeyInvalidAlgorithm),
++                }
+             }
+         }
+     }
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/interface.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/interface.rs
+index bbfd07d54..647545167 100644
+--- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/interface.rs
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/interface.rs
+@@ -227,7 +227,7 @@ pub struct COSERSAKey {
+     #[serde_as(as = "PickFirst<(IfIsHumanReadable<Base64<UrlSafe, Unpadded>>, _)>")]
+     pub n: Vec<u8>,
+     /// An RSA exponent
+-    pub e: [u8; 3],
++    pub e: Vec<u8>,
+ }
+ 
+ /// The type of Key contained within a COSE value. You should never need
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/internals.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/internals.rs
+index a8b554348..30a6d20c7 100644
+--- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/internals.rs
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/internals.rs
+@@ -846,7 +846,7 @@ pub(crate) struct TpmsRsaParms {
+     _keybits: u16,
+     // u32
+     /// The Rsa Exponent
+-    _exponent: u32,
++    pub(crate) _exponent: u32,
+ }
+ 
+ fn tpmsrsaparms_parser(i: &[u8]) -> nom::IResult<&[u8], TpmsRsaParms> {
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/lib.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/lib.rs
+index 049733ca9..5f151ece5 100644
+--- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/lib.rs
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/lib.rs
+@@ -36,6 +36,8 @@ mod macros;
+ mod constants;
+ 
+ pub mod attestation;
++/// Source-compatible stateless attestation verification with explicit host time.
++pub mod source_compat;
+ pub mod crypto;
+ pub mod fake;
+ 
+diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs
+new file mode 100644
+index 000000000..367953a13
+--- /dev/null
++++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs
+@@ -0,0 +1,440 @@
++//! Stateless SimpleWebAuthn 13.2.2 attestation policy. Ceremony, current-role UV,
++//! original COSE bytes and persistence remain owned by the gateway adapter.
++//! Uses the maintained attestation/DER parsers and RustCrypto primitives; no
++//! caller-supplied verification decisions or synthetic credential history.
++use crate::{attestation::*, crypto::compute_sha256, error::WebauthnError, internals::*, proto::*};
++use base64::{
++    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
++    Engine,
++};
++use crypto_glue::{
++    traits::{DecodeDer, EncodeDer},
++    x509::{self, oiddb::rfc4519, Certificate, CrlDistributionPoints, GeneralName},
++};
++use serde_cbor_2::Value;
++use std::time::SystemTime;
++
++/// An untrusted CRL URL from a source-accepted certificate path.
++/// Source early-stop behavior does not guarantee a configured trust anchor.
++#[derive(Clone, Debug)]
++pub struct RevocationCheck {
++    /// First CRL distribution-point URI, exactly as in the signed certificate.
++    pub url: String,
++    serial: Vec<u8>,
++}
++impl RevocationCheck {
++    /// Mirrors source best effort parsing: a malformed CRL is not a revocation;
++    /// any successfully parsed entry matching this certificate is a revocation.
++    pub fn is_revoked(&self, der: &[u8]) -> bool {
++        x509_parser::parse_x509_crl(der)
++            .ok()
++            .is_some_and(|(_, crl)| {
++                crl.iter_revoked_certificates().any(|entry| {
++                    entry
++                        .raw_serial()
++                        .iter()
++                        .skip_while(|b| **b == 0)
++                        .eq(self.serial.iter().skip_while(|b| **b == 0))
++                })
++            })
++    }
++}
++fn failure() -> WebauthnError {
++    WebauthnError::AttestationStatementX5CInvalid
++}
++fn roots(pems: &[&str]) -> Result<Vec<Certificate>, WebauthnError> {
++    pems.iter()
++        .map(|pem| {
++            let body: String = pem
++                .lines()
++                .filter(|line| !line.starts_with("-----"))
++                .collect();
++            let der = STANDARD.decode(body).map_err(|_| failure())?;
++            Certificate::from_der(&der).map_err(|_| failure())
++        })
++        .collect()
++}
++fn certificates(value: &Value) -> Result<Vec<Certificate>, WebauthnError> {
++    let map = cbor_try_map!(value)?;
++    let value = map
++        .get(&Value::Text("x5c".into()))
++        .ok_or(WebauthnError::AttestationStatementX5CMissing)?;
++    cbor_try_array!(value)?
++        .iter()
++        .map(|value| Certificate::from_der(cbor_try_bytes!(value)?).map_err(|_| failure()))
++        .collect()
++}
++pub(crate) fn key_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, WebauthnError> {
++    let spki = &cert.tbs_certificate.subject_public_key_info;
++    let oid = spki.algorithm.oid.to_string();
++    match oid.as_str() {
++        "1.2.840.113549.1.1.1" | "1.2.840.113549.1.1.11" => Ok(COSEAlgorithm::RS256),
++        "1.3.101.112" => Ok(COSEAlgorithm::EDDSA),
++        "1.2.840.10045.2.1" => {
++            let curve = spki
++                .algorithm
++                .parameters
++                .as_ref()
++                .ok_or_else(failure)?
++                .decode_as::<x509::ObjectIdentifier>()
++                .map_err(|_| failure())?;
++            match curve.to_string().as_str() {
++                "1.2.840.10045.3.1.7" => Ok(COSEAlgorithm::ES256),
++                "1.3.132.0.34" => Ok(COSEAlgorithm::ES384),
++                "1.3.132.0.35" => Ok(COSEAlgorithm::ES521),
++                _ => Err(failure()),
++            }
++        }
++        _ => Err(failure()),
++    }
++}
++// Source statement-certificate conversion supports these key shapes only.
++// Chain verification and Apple credential-key equality retain key_algorithm.
++pub(crate) fn statement_key_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, WebauthnError> {
++    let algorithm = key_algorithm(cert)?;
++    match (cert.tbs_certificate.subject_public_key_info.algorithm.oid.to_string().as_str(), algorithm) {
++        ("1.2.840.10045.2.1", COSEAlgorithm::ES256 | COSEAlgorithm::ES384)
++        | ("1.2.840.113549.1.1.1", COSEAlgorithm::RS256) => Ok(algorithm),
++        _ => Err(WebauthnError::COSEKeyInvalidType),
++    }
++}
++fn cert_time(cert: &Certificate, now: SystemTime) -> Result<(), WebauthnError> {
++    let now = now
++        .duration_since(SystemTime::UNIX_EPOCH)
++        .map_err(|_| failure())?;
++    let valid = &cert.tbs_certificate.validity;
++    if valid.not_before.to_unix_duration() > now || valid.not_after.to_unix_duration() < now {
++        return Err(failure());
++    }
++    Ok(())
++}
++pub(crate) fn certificate_signature_algorithm(
++    cert: &Certificate,
++) -> Result<COSEAlgorithm, WebauthnError> {
++    algorithm_oid(&cert.tbs_certificate.signature.oid.to_string())
++}
++fn signature_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, WebauthnError> {
++    algorithm_oid(&cert.signature_algorithm.oid.to_string())
++}
++fn algorithm_oid(oid: &str) -> Result<COSEAlgorithm, WebauthnError> {
++    match oid {
++        "1.2.840.113549.1.1.5" => Ok(COSEAlgorithm::INSECURE_RS1),
++        "1.2.840.113549.1.1.11" => Ok(COSEAlgorithm::RS256),
++        "1.2.840.113549.1.1.12" => Ok(COSEAlgorithm::RS384),
++        "1.2.840.113549.1.1.13" => Ok(COSEAlgorithm::RS512),
++        "1.2.840.10045.4.3.2" => Ok(COSEAlgorithm::ES256),
++        "1.2.840.10045.4.3.3" => Ok(COSEAlgorithm::ES384),
++        "1.2.840.10045.4.3.4" => Ok(COSEAlgorithm::ES521),
++        "1.3.101.112" => Ok(COSEAlgorithm::EDDSA),
++        _ => Err(failure()),
++    }
++}
++fn signed_by(cert: &Certificate, issuer: &Certificate) -> Result<(), WebauthnError> {
++    let key = COSEKey::try_from((key_algorithm(issuer)?, issuer))?;
++    let mut key = key;
++    key.type_ = signature_algorithm(cert)?;
++    let message = cert.tbs_certificate.to_der().map_err(|_| failure())?;
++    let signature = cert.signature.as_bytes().ok_or_else(failure)?;
++    if !key.verify_signature(signature, &message)? {
++        return Err(failure());
++    }
++    Ok(())
++}
++fn revocation(cert: &Certificate) -> Result<Option<RevocationCheck>, WebauthnError> {
++    let Some((_, points)) = cert
++        .tbs_certificate
++        .get::<CrlDistributionPoints>()
++        .map_err(|_| failure())?
++    else {
++        return Ok(None);
++    };
++    let Some(point) = points.0.first() else {
++        return Ok(None);
++    };
++    let Some(x509::DistributionPointName::FullName(names)) = &point.distribution_point else {
++        return Ok(None);
++    };
++    let Some(GeneralName::UniformResourceIdentifier(uri)) = names.first() else {
++        return Ok(None);
++    };
++    Ok(Some(RevocationCheck {
++        url: uri.to_string(),
++        serial: cert.tbs_certificate.serial_number.as_bytes().to_vec(),
++    }))
++}
++fn trusted_chain(
++    chain: &[Certificate],
++    anchors: &[Certificate],
++    now: SystemTime,
++) -> Result<Vec<RevocationCheck>, WebauthnError> {
++    if chain.is_empty() || chain.len() > 32 || anchors.is_empty() {
++        return Err(failure());
++    }
++    for cert in chain {
++        cert_time(cert, now)?;
++    }
++    let mut accepted = None;
++    for anchor in anchors {
++        if cert_time(anchor, now).is_err() {
++            continue;
++        }
++        let mut path = chain.to_vec();
++        if path.last() != Some(anchor) {
++            path.push(anchor.clone());
++        }
++        let mut valid = true;
++        for pair in path.windows(2) {
++            if signed_by(&pair[0], &pair[1]).is_err() {
++                valid = false;
++                break;
++            }
++            if pair[1].tbs_certificate.subject == pair[1].tbs_certificate.issuer {
++                if signed_by(&pair[1], &pair[1]).is_err() {
++                    valid = false;
++                }
++                break;
++            }
++        }
++        if valid {
++            accepted = Some(anchor);
++            break;
++        }
++    }
++    let anchor = accepted.ok_or(WebauthnError::AttestationTrustFailure)?;
++    let mut checks = Vec::new();
++    for cert in chain.iter().chain(std::iter::once(anchor)) {
++        if let Some(check) = revocation(cert)? {
++            checks.push(check);
++        }
++    }
++    Ok(checks)
++}
++fn safetynet(
++    att: &AttestationObject<Registration>,
++    hash: &[u8; 32],
++    now: SystemTime,
++) -> Result<Vec<RevocationCheck>, WebauthnError> {
++    let map = cbor_try_map!(&att.att_stmt)?;
++    let ver = map
++        .get(&Value::Text("ver".into()))
++        .ok_or(WebauthnError::AttestationStatementVerMissing)?;
++    if cbor_try_string!(ver)?.is_empty() {
++        return Err(WebauthnError::AttestationStatementVerInvalid);
++    }
++    let jwt = cbor_try_bytes!(map
++        .get(&Value::Text("response".into()))
++        .ok_or(WebauthnError::AttestationStatementResponseMissing)?)?;
++    let jwt = std::str::from_utf8(jwt).map_err(|_| failure())?;
++    let parts: Vec<_> = jwt.split('.').collect();
++    if parts.len() != 3 {
++        return Err(failure());
++    }
++    let decode = |part: &str| URL_SAFE_NO_PAD.decode(part).map_err(|_| failure());
++    let header: serde_json::Value =
++        serde_json::from_slice(&decode(parts[0])?).map_err(|_| failure())?;
++    let payload: serde_json::Value =
++        serde_json::from_slice(&decode(parts[1])?).map_err(|_| failure())?;
++    let stamp = payload["timestampMs"].as_u64().ok_or_else(failure)?;
++    let now_ms = now
++        .duration_since(SystemTime::UNIX_EPOCH)
++        .map_err(|_| failure())?
++        .as_millis();
++    if u128::from(stamp) > now_ms
++        || u128::from(stamp) + 60_000 < now_ms
++        || payload["ctsProfileMatch"] != true
++    {
++        return Err(failure());
++    }
++    let mut nonce = att.auth_data_bytes.clone();
++    nonce.extend(hash);
++    if payload["nonce"].as_str() != Some(STANDARD.encode(compute_sha256(&nonce)).as_str()) {
++        return Err(failure());
++    }
++    let chain: Result<Vec<_>, _> = header["x5c"]
++        .as_array()
++        .ok_or_else(failure)?
++        .iter()
++        .map(|value| {
++            let der = STANDARD
++                .decode(value.as_str().ok_or_else(failure)?)
++                .map_err(|_| failure())?;
++            Certificate::from_der(&der).map_err(|_| failure())
++        })
++        .collect();
++    let chain = chain?;
++    let leaf = chain.first().ok_or_else(failure)?;
++    let cn = leaf
++        .tbs_certificate
++        .subject
++        .0
++        .iter()
++        .flat_map(|rdn| rdn.0.iter())
++        .find(|entry| entry.oid == rfc4519::CN)
++        .ok_or_else(failure)?;
++    if cn.value.value() != b"attest.android.com" {
++        return Err(failure());
++    }
++    let checks = trusted_chain(
++        &chain,
++        &roots(&[include_str!("../source-roots/GlobalSign_Root_CA.pem")])?,
++        now,
++    )?;
++    // Source derives the signature algorithm from the certificate key, not the untrusted JWT alg header.
++    let mut key = COSEKey::try_from((statement_key_algorithm(leaf)?, leaf))?;
++    key.type_ = certificate_signature_algorithm(leaf)?;
++    if !key.verify_signature(
++        &decode(parts[2])?,
++        format!("{}.{}", parts[0], parts[1]).as_bytes(),
++    )? {
++        return Err(WebauthnError::AttestationStatementSigInvalid);
++    }
++    Ok(checks)
++}
++
++/// Verify the actual attestation statement after the caller has checked the
++/// challenge, exact origin, RP hash, flags and source algorithm policy. The
++/// current time must be the real validated host clock. Returned CRL checks are
++/// raw-data reads only; the caller invokes `is_revoked` on fetched DER bytes.
++pub fn verify_attestation_at_time(
++    encoded: &[u8],
++    hash: &[u8; 32],
++    now: SystemTime,
++) -> Result<Vec<RevocationCheck>, WebauthnError> {
++    let att = AttestationObject::<Registration>::try_from(encoded)?;
++    let acd = att
++        .auth_data
++        .acd
++        .as_ref()
++        .ok_or(WebauthnError::MissingAttestationCredentialData)?;
++    COSEKey::try_from(&acd.credential_pk)?;
++    match att.fmt.as_str() {
++        "none" => {
++            if !cbor_try_map!(&att.att_stmt)?.is_empty() {
++                return Err(WebauthnError::AttestationStatementMapInvalid);
++            }
++            Ok(vec![])
++        }
++        "packed" => {
++            let statement = cbor_try_map!(&att.att_stmt)?;
++            if statement.contains_key(&Value::Text("x5c".into())) {
++                verify_packed_attestation(acd, &att, hash)?;
++                let chain = certificates(&att.att_stmt)?;
++                cert_time(chain.first().ok_or_else(failure)?, now)?;
++            } else {
++                let alg = cbor_try_i128!(statement
++                    .get(&Value::Text("alg".into()))
++                    .ok_or(WebauthnError::AttestationStatementAlgMissing)?)?;
++                let mut key = COSEKey::try_from(&acd.credential_pk)?;
++                key.type_ = COSEAlgorithm::try_from(alg)
++                    .map_err(|_| WebauthnError::COSEKeyInvalidAlgorithm)?;
++                let signature = cbor_try_bytes!(statement
++                    .get(&Value::Text("sig".into()))
++                    .ok_or(WebauthnError::AttestationStatementSigMissing)?)?;
++                let mut signed = att.auth_data_bytes.clone();
++                signed.extend(hash);
++                if !key.verify_signature(signature, &signed)? {
++                    return Err(WebauthnError::AttestationStatementSigInvalid);
++                }
++            }
++            Ok(vec![])
++        }
++        "fido-u2f" => {
++            verify_fidou2f_attestation(acd, &att, hash)?;
++            Ok(vec![])
++        }
++        "tpm" => {
++            verify_source_tpm_attestation(acd, &att, hash)?;
++            cert_time(
++                certificates(&att.att_stmt)?.first().ok_or_else(failure)?,
++                now,
++            )?;
++            Ok(vec![])
++        }
++        "apple" => {
++            verify_apple_anonymous_attestation(acd, &att, hash)?;
++            trusted_chain(
++                &certificates(&att.att_stmt)?,
++                &roots(&[include_str!("../source-roots/Apple_WebAuthn_Root_CA.pem")])?,
++                now,
++            )
++        }
++        "android-key" => {
++            verify_source_android_key_attestation(acd, &att, hash)?;
++            let chain = certificates(&att.att_stmt)?;
++            let root_pems = [
++                include_str!("../source-roots/Google_Hardware_Attestation_Root_1.pem"),
++                include_str!("../source-roots/Google_Hardware_Attestation_Root_2.pem"),
++                include_str!("../source-roots/Google_Hardware_Attestation_Root_3.pem"),
++                include_str!("../source-roots/Google_Hardware_Attestation_Root_4.pem"),
++            ];
++            let root = chain.last().ok_or_else(failure)?;
++            let encoded = STANDARD.encode(root.to_der().map_err(|_| failure())?);
++            let lines = encoded
++                .as_bytes()
++                .chunks(64)
++                .map(|line| std::str::from_utf8(line).map_err(|_| failure()))
++                .collect::<Result<Vec<_>, _>>()?
++                .join("\n");
++            let root_pem =
++                format!("-----BEGIN CERTIFICATE-----\n{lines}\n-----END CERTIFICATE-----\n");
++            if !root_pems.contains(&root_pem.as_str()) {
++                return Err(WebauthnError::AttestationTrustFailure);
++            }
++            trusted_chain(&chain, std::slice::from_ref(root), now)
++        }
++        "android-safetynet" => safetynet(&att, hash, now),
++        _ => Err(WebauthnError::AttestationNotSupported),
++    }
++}
++
++/// Parse and validate a complete COSE public key with the maintained key importer.
++pub fn validate_public_key(encoded: &[u8]) -> Result<(), WebauthnError> {
++    let key: Value = serde_cbor_2::from_slice(encoded).map_err(WebauthnError::ParseCBORFailure)?;
++    COSEKey::try_from(&key).map(|_| ())
++}
++/// Verify a DER ECDSA or native RSA/Ed25519 signature with maintained primitives.
++pub fn verify_public_key_signature(
++    encoded: &[u8],
++    signature: &[u8],
++    data: &[u8],
++) -> Result<bool, WebauthnError> {
++    let key: Value = serde_cbor_2::from_slice(encoded).map_err(WebauthnError::ParseCBORFailure)?;
++    COSEKey::try_from(&key)?.verify_signature(signature, data)
++}
++
++// Exact pinned source manufacturer catalog, including FIDO conformance devices.
++pub(crate) fn valid_tpm_manufacturer(value: &str) -> bool {
++    matches!(value,
++        "id:414D4400"
++        | "id:414E5400"
++        | "id:41544D4C"
++        | "id:4252434D"
++        | "id:4353434F"
++        | "id:464C5953"
++        | "id:524F4343"
++        | "id:474F4F47"
++        | "id:48504900"
++        | "id:48504500"
++        | "id:48495349"
++        | "id:49424d00"
++        | "id:49424D00"
++        | "id:49465800"
++        | "id:494E5443"
++        | "id:4C454E00"
++        | "id:4D534654"
++        | "id:4E534D20"
++        | "id:4E545A00"
++        | "id:4E534700"
++        | "id:4E544300"
++        | "id:51434F4D"
++        | "id:534D534E"
++        | "id:53454345"
++        | "id:534E5300"
++        | "id:534D5343"
++        | "id:53544D20"
++        | "id:54584E00"
++        | "id:57454300"
++        | "id:5345414C"
++        | "id:FFFFF1D0"
++    )
++}
