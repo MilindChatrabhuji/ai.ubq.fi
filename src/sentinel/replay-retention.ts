@@ -107,7 +107,8 @@ export const admitSentinelReplayStatusMetadata = async (
   for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt += 1) {
     // The sweep counts every in-scope row, so until it has finished no row may
     // also be counted by its own admission, or the same row is charged twice.
-    if ((await bootstrapBeforeMutation(kv, budgetBytes, input.now_ms)) === null) return false;
+    // Never wait for the background owner fill on this client-visible failure path.
+    if ((await bootstrapBeforeMutation(kv, budgetBytes, input.now_ms, 0)) === null) return false;
     await pruneCaptureOwnedStatusMetadata(kv, input.now_ms, 1, bytes, 1, budgetBytes);
     // The bound tracks the LIVE row set, so replacing the row already stored at
     // this key adds one record and the byte difference, never a second full
@@ -869,7 +870,8 @@ export const reserveSentinelReplayCapacity = async (
     }
     const ledger = withBudget(state.ledger, budgetBytes);
     if (!ledger.bootstrap_complete) {
-      const bootstrapped = await runBootstrapBatch(kv, ledger, state.versionstamp, budgetBytes, input.now_ms);
+      // VPS failure capture may be awaited before responding: start the owner fill without waiting.
+      const bootstrapped = await runBootstrapBatch(kv, ledger, state.versionstamp, budgetBytes, input.now_ms, 0);
       if (!bootstrapped.bootstrap_complete) {
         await recordSkipReason(kv, SENTINEL_REPLAY_ACCOUNTING_REASON, input.now_ms, budgetBytes);
         return { ok: false, reason: SENTINEL_REPLAY_ACCOUNTING_REASON };
