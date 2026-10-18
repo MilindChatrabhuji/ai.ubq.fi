@@ -363,3 +363,19 @@ fn raw_source_pool_corruption_is_not_repaired_by_producer_capture() {
     assert_eq!(store.inner.row(&codex_source_pool_key()).unwrap(), before);
     assert_ne!(before.value, source);
 }
+
+#[test]
+fn fetch_binding_exposes_only_original_fixed_roster_identity() {
+    let (_, authority) = setup();
+    let fence = run(authority.begin_codex_capacity_observation(&[reference()])).unwrap();
+    let binding = fence.fetch_bindings().next().unwrap();
+    let identity = source_account("a", false).identity();
+    assert_eq!(binding.source_slot(), 1);
+    assert_eq!(binding.account_id(), "a");
+    assert_eq!(binding.credential_version(), &identity.credential_version);
+    assert_eq!(
+        binding.native_generation_hash(),
+        identity.native_generation_hash
+    );
+    assert!(binding.native_owner().is_none());
+}
