@@ -1,7 +1,7 @@
 //! Fixed native owner-effect injection. The shared authority implementation
 //! owns action preparation, current-fact checks, claims and reconciliation.
-use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{future::Future, time::Instant};
 
 use gateway_auth::{
     GatewayError,
@@ -63,4 +63,13 @@ pub trait NativeOwnerRenewalHandler: Send + Sync {
         raw_body: &[u8],
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError>;
+}
+
+/// Constructor-owned bridge to the original durable action. The start hook
+/// must atomically commit possible-effect intent and refuse replay/unknown.
+/// None of these methods can be supplied by deserializing request fields.
+pub trait NativeRenewalGuard {
+    fn now_ms(&self) -> Result<i64, GatewayError>;
+    fn ensure_current(&self) -> impl Future<Output = Result<(), GatewayError>>;
+    fn start_refresh(&self) -> impl Future<Output = Result<(), GatewayError>>;
 }
