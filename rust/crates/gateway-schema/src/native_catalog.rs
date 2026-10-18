@@ -120,16 +120,25 @@ fn append_native(rows: &mut Vec<Value>, entries: impl IntoIterator<Item = Value>
     }
 }
 fn native_id(row: &Value) -> &str {
-    row.get("slug").and_then(Value::as_str).map(crate::util::js_trim)
+    row.get("slug")
+        .and_then(Value::as_str)
+        .map(crate::util::js_trim)
         .filter(|id| !id.is_empty())
-        .or_else(|| row.get("id").and_then(Value::as_str).map(crate::util::js_trim))
+        .or_else(|| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .map(crate::util::js_trim)
+        })
         .unwrap_or("")
 }
 fn merge_configured_native(rows: &mut Vec<Value>, input: &CatalogInput, provider: &str) {
     let configured = configured_native_records(input, provider);
     if provider == "deepseek" {
         for row in rows.iter_mut() {
-            if let Some(replacement) = configured.iter().find(|entry| native_id(entry) == native_id(row)) {
+            if let Some(replacement) = configured
+                .iter()
+                .find(|entry| native_id(entry) == native_id(row))
+            {
                 *row = replacement.clone();
             }
         }
