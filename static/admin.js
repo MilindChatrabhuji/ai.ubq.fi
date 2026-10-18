@@ -9745,10 +9745,10 @@ const providerSubscriptionSelected = (subscriptionId) =>
   providerSelection.has("codex") || providerSelection.has(subscriptionId);
 
 /** A tier is active when its own id is checked, or when any of its subscriptions is. */
-const isProviderChecked = (providerId) =>
+const isProviderChecked = (providerId, selection = providerSelection) =>
   providerId === "codex"
-    ? providerSelection.has("codex") || providerCodexSelection().selected > 0
-    : providerSelection.has(providerId);
+    ? selection.has("codex") || providerSubscriptions().some((subscription) => selection.has(subscription.id))
+    : selection.has(providerId);
 
 const providerCodexSelection = () => {
   const subscriptions = providerSubscriptions();
@@ -10307,6 +10307,7 @@ const saveProviderSelection = async () => {
     providerSelectionSaveError = "";
     const savedIds = Array.isArray(payload?.provider_ids) ? payload.provider_ids : submittedIds;
     providersSavedSelection = providersSelectionFromIds(savedIds);
+    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
     // Replay later checkbox edits on the saved set, not on the serialized ids:
     // all checked providers serialize to [], and Codex subscriptions share an umbrella.
     const nextSelection = new Set(providersSavedSelection);
@@ -10320,7 +10321,9 @@ const saveProviderSelection = async () => {
     providerSelectionLoadedAt = Date.now();
     renderProvidersPicker();
     toast.success(
-      savedIds.length === 0 ? "Filter cleared" : `${formatNumber(providersSavedSelection.size)} providers active`,
+      savedIds.length === 0
+        ? "Filter cleared"
+        : `${formatNumber(activeTiers)} provider${activeTiers === 1 ? "" : "s"} active`,
       {
         description:
           savedIds.length === 0
