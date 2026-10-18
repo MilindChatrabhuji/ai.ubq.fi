@@ -41,6 +41,7 @@ fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
 }
 
 impl RoutingHost for Host {
+    type ClaudeHead = ();
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
     }
@@ -221,14 +222,25 @@ impl RoutingHost for Host {
             "The source Claude account selector capability is not yet integrated.",
         ))
     }
-    async fn record_claude_refusal(
+    async fn observe_claude_response(
         &self,
         _fence: &CredentialFence,
         _model: &str,
-        _failure: &AttemptFailure,
-    ) -> Result<bool, GatewayError> {
-        Err(unavailable(
-            "The source Claude refusal observer is not yet integrated.",
+        _response: gateway_routing_runtime::ResponseHead,
+    ) -> Result<Self::ClaudeHead, GatewayError> {
+        Err(GatewayError::unavailable(
+            "The Claude response observer is not configured.",
+            "claude_response_unavailable",
+        ))
+    }
+    async fn finish_claude_response(
+        &self,
+        _head: Self::ClaudeHead,
+        _evidence: gateway_core::claude::ClaudeErrorEvidence,
+    ) -> Result<gateway_routing_runtime::ClaudeOutcome, GatewayError> {
+        Err(GatewayError::unavailable(
+            "The Claude response finalizer is not configured.",
+            "claude_response_unavailable",
         ))
     }
     async fn recover_codex(

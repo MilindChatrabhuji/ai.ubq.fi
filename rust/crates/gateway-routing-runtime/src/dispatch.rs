@@ -21,7 +21,7 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
-    async fn observed_attempt(
+    pub(crate) async fn observed_attempt(
         &self,
         attempt: &PreparedAttempt,
     ) -> Result<(Journal, AttemptRecord), GatewayError> {
@@ -429,13 +429,10 @@ impl<
         } else if matches!(record.fence, CredentialFence::Claude { .. })
             && failure.origin == FailureOrigin::Provider
         {
-            if self
-                .host
-                .record_claude_refusal(&record.fence, &record.model, &failure)
-                .await?
-            {
-                decision = RefusalDecision::Continue;
-            }
+            return Err(journal::unavailable(
+                "Claude refusals require the consumed actual response-head capability.",
+            )
+            .into());
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
             if gateway_providers::policy::paid_should_advance(
                 failure.status,

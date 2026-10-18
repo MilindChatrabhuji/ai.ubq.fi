@@ -22,7 +22,7 @@ use gateway_schema::{
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     future::Future,
     sync::{
         Arc, Mutex,
@@ -328,6 +328,11 @@ pub struct Host {
     pub store: Store,
     pub cancelled: Arc<AtomicBool>,
     pub cancel_wait_after_ms: Option<i64>,
+    pub claude: Option<PublishedCredential>,
+    pub claude_outcomes: Arc<Mutex<VecDeque<ClaudeOutcome>>>,
+    pub claude_heads: Arc<AtomicU64>,
+    pub consumed_heads: Arc<Mutex<BTreeSet<u64>>>,
+    pub claude_evidence: Arc<Mutex<Vec<Option<Vec<u16>>>>>,
 }
 impl Host {
     pub fn new(store: &Store) -> Self {
@@ -335,10 +340,16 @@ impl Host {
             store: store.clone(),
             cancelled: Arc::new(AtomicBool::new(false)),
             cancel_wait_after_ms: None,
+            claude: None,
+            claude_outcomes: Arc::new(Mutex::new(VecDeque::new())),
+            claude_heads: Arc::new(AtomicU64::new(0)),
+            consumed_heads: Arc::new(Mutex::new(BTreeSet::new())),
+            claude_evidence: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
 impl RoutingHost for Host {
+    type ClaudeHead = u64;
     fn cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
@@ -446,18 +457,41 @@ impl RoutingHost for Host {
         _model: &str,
         _raw: &Value,
     ) -> Result<ClaudeSelection, GatewayError> {
-        Ok(ClaudeSelection::NotApplicable)
+        Ok(self
+            .claude
+            .as_ref()
+            .map(|value| ClaudeSelection::Eligible(Box::new(value.clone())))
+            .unwrap_or(ClaudeSelection::NotApplicable))
     }
-    async fn record_claude_refusal(
+    async fn observe_claude_response(
         &self,
         _fence: &CredentialFence,
         _model: &str,
-        _failure: &AttemptFailure,
-    ) -> Result<bool, GatewayError> {
-        Err(GatewayError::unavailable(
-            "fixture does not supply Claude proof",
-            "fixture_capability_unavailable",
-        ))
+        _response: ResponseHead,
+    ) -> Result<Self::ClaudeHead, GatewayError> {
+        Ok(self.claude_heads.fetch_add(1, Ordering::SeqCst))
+    }
+    async fn finish_claude_response(
+        &self,
+        head: Self::ClaudeHead,
+        evidence: gateway_core::claude::ClaudeErrorEvidence,
+    ) -> Result<ClaudeOutcome, GatewayError> {
+        if !self.consumed_heads.lock().unwrap().insert(head) {
+            return Err(GatewayError::unavailable(
+                "Duplicate fixture head",
+                "fixture_head_replayed",
+            ));
+        }
+        self.claude_evidence
+            .lock()
+            .unwrap()
+            .push(evidence.prefix().map(<[u16]>::to_vec));
+        Ok(self
+            .claude_outcomes
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(ClaudeOutcome::Preserve))
     }
     async fn recover_codex(
         &self,

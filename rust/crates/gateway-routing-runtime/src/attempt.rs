@@ -74,6 +74,21 @@ impl<
                             self.cursor(row.cursor + 1).await?;
                             continue;
                         }
+                        ClaudeSelection::Refused {
+                            status,
+                            headers,
+                            body,
+                        } => {
+                            return Err(RoutingError {
+                                error: Box::new(GatewayError::new(
+                                    status,
+                                    "Claude subscription request was refused.",
+                                    Some("claude_code_refused"),
+                                )),
+                                headers,
+                                source_body: Some(body),
+                            });
+                        }
                         ClaudeSelection::Unavailable => {
                             self.change(|j| {
                                 j.claude_unavailable = true;
@@ -199,6 +214,10 @@ if !proof.full_cohort_unavailable(){return Err(journal::unavailable("Subscriptio
                 paid: paid.clone(),
                 phase: Phase::Prepared,
                 transport_started: false,
+                response_nonce: None,
+                response_count: 0,
+                workspace_nonce: None,
+                workspace_continuations: 0,
                 known_not_started: false,
                 observation: None,
                 provider_request_id: None,

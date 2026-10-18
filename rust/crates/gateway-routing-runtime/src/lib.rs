@@ -5,6 +5,7 @@ mod dispatch;
 pub mod extras;
 mod journal;
 pub mod policy;
+mod response_head;
 mod session;
 mod settlement;
 pub mod types;
