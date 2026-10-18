@@ -93,6 +93,7 @@ pub struct UpstreamResponse {
 }
 #[derive(Clone, Debug)]
 pub struct DispatchFailure {
+    pub origin: DispatchFailureOrigin,
     pub error: Box<GatewayError>,
     pub headers: Headers,
     /// Quota failure is independent of upstream rejection or transport failure.
@@ -102,15 +103,34 @@ pub struct DispatchFailure {
     pub before_transport: bool,
     pub raw_error_body: Option<Vec<u8>>,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DispatchFailureOrigin {
+    Gateway,
+    Transport,
+    Upstream,
+}
 impl DispatchFailure {
     pub fn transport(error: GatewayError) -> Self {
         Self {
+            origin: DispatchFailureOrigin::Transport,
             error: Box::new(error),
             headers: Headers::new(),
             quota_refusal: false,
             upstream_status: None,
             retry_after_ms: None,
             before_transport: false,
+            raw_error_body: None,
+        }
+    }
+    pub fn gateway(error: GatewayError, before_transport: bool) -> Self {
+        Self {
+            origin: DispatchFailureOrigin::Gateway,
+            error: Box::new(error),
+            headers: Headers::new(),
+            quota_refusal: false,
+            upstream_status: None,
+            retry_after_ms: None,
+            before_transport,
             raw_error_body: None,
         }
     }

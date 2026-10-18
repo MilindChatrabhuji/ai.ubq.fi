@@ -26,7 +26,7 @@ impl ExtrasFamily {
     fn provider(self) -> UpstreamProvider {
         match self {
             Self::ImageGenerations | Self::ImageEdits => UpstreamProvider::ChatgptCodex,
-            Self::SystemOne => UpstreamProvider::Cerebras,
+            Self::SystemOne => UpstreamProvider::Openrouter,
             _ => UpstreamProvider::Voyage,
         }
     }
@@ -523,12 +523,6 @@ impl<
         let _guard = self.lock.lock().await;
         if self.host.cancelled() {
             return Err(self.host.cancellation_error().into());
-        }
-        if child.family == ExtrasFamily::EmbeddingJobPoll {
-            return Err(journal::unavailable(
-                "Embedding job reads have no upstream dispatch capability.",
-            )
-            .into());
         }
         let (_, row) = journal::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
