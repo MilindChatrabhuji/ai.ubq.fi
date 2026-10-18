@@ -58,7 +58,7 @@ export type DeepSeekWaterfallFallbackReason =
 export type RecordedFallbackReason = InferenceFallbackReason | DeepSeekWaterfallFallbackReason;
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
-export type ActiveTransitionReason = "quota_exhausted" | "credential_invalid" | "account_removed_or_replaced" | "model_unavailable" | null;
+export type ActiveTransitionReason = "quota_exhausted" | "credential_invalid" | "account_removed_or_replaced" | "model_unavailable" | "manual_reset" | null;
 
 export type ResponseTelemetry = Readonly<{
   provider: string;
