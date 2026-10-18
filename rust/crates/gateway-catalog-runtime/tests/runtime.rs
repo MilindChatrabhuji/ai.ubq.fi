@@ -273,7 +273,12 @@ impl CatalogHost for Host {
     }
     async fn observe(&self, observation: CatalogObservation) -> Result<(), GatewayError> {
         self.observations.borrow_mut().push(observation);
-        if self.fail_observation.get() { return Err(GatewayError::unavailable("Optional sink unavailable", "catalog_observation_unavailable")); }
+        if self.fail_observation.get() {
+            return Err(GatewayError::unavailable(
+                "Optional sink unavailable",
+                "catalog_observation_unavailable",
+            ));
+        }
         Ok(())
     }
     async fn refresh_codex(&self, expected: &CodexAccount) -> Result<CodexAccount, GatewayError> {
@@ -946,9 +951,20 @@ fn claude_pages_share_the_original_deadline_and_codex_has_no_invented_timeout() 
 
 #[test]
 fn optional_health_persistence_failure_does_not_fail_a_valid_catalog() {
-    let store=Store::new();let host=Host::new(&store);let runtime=CatalogRuntime::new();host.fail_observation.set(true);
-    let mut response=CatalogFetchResponse::json(200,catalog("served").to_string());response.provider_request_id=Some(" request-correlation ".into());response.access_token_expired=Some(false);response.observed_at_ms=Some(store.now.get());
-    host.queue(Outcome{response:Ok(response),ticks:0,callback:None});
-    let response=run(runtime.versioned_models(&store,&host,"0.163.0",None)).unwrap();assert_eq!(ids(&response),["served"]);
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.fail_observation.set(true);
+    let mut response = CatalogFetchResponse::json(200, catalog("served").to_string());
+    response.provider_request_id = Some(" request-correlation ".into());
+    response.access_token_expired = Some(false);
+    response.observed_at_ms = Some(store.now.get());
+    host.queue(Outcome {
+        response: Ok(response),
+        ticks: 0,
+        callback: None,
+    });
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    assert_eq!(ids(&response), ["served"]);
     assert!(host.observations.borrow().iter().any(|event|matches!(event,CatalogObservation::CodexResponse{provider_request_id:Some(id),access_token_expired:Some(false),observed_at_ms:Some(_),..} if id=="request-correlation")));
 }
