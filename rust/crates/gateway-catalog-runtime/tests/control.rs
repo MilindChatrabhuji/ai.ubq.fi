@@ -1093,6 +1093,13 @@ mod native_configuration {
                 },
             );
             host.queue(surplus("new-owned-model"));
+            // Surplus discovery is public and shares its TTL cache across key changes.
+            // A configuration rotation changes spend custody; an explicit metadata refresh
+            // is the source operation that replaces a still-fresh public model snapshot.
+            runtime
+                .publish_paid_observation(&store, &host, PaidProvider::Surplus, true)
+                .await
+                .unwrap();
             runtime.publish_paid_routing(&store, &host).await.unwrap();
             assert!(
                 !store
