@@ -27,7 +27,7 @@ Public `SupervisorBrief` dispatches the dedicated `RuntimeCapabilities::supervis
 
 Native follow responses pass the shared `NativeRpcResponse::validate_for` contract against the original finite request. The runtime preserves `AuthResponse.stream`, rejects a successful JSON-only follow response and rejects a descriptor for another source, thread or cursor. These tests establish descriptor fidelity only; actual SSE stream acceptance remains with the real native/Worker fixture.
 
-Every unbound method of `RuntimeCapabilities` returns 503 `admin_capability_unavailable`. Capability arguments have finite named operations; none accepts an arbitrary URL, command, SQL query, filesystem path or Bun gateway endpoint. Some source documents and the capacity-rollup query remain structured input to their named owner; this crate does not claim their domain validation is implemented. `NativeRequest::SupervisorBrief` and `CodexRequest::RunCacheExperiment` can spend provider credits only when an authorized real host binds them; no such call occurs in this module's checks.
+Every unbound method of `RuntimeCapabilities` returns 503 `admin_capability_unavailable`. Capability arguments have finite named operations; none accepts an arbitrary URL, command, SQL query, filesystem path or Bun gateway endpoint. Some source documents and the capacity-rollup query remain structured input to their named owner; this crate does not claim their domain validation is implemented. Only the final `RuntimeCapabilities::supervisor_brief` composition and `CodexRequest::RunCacheExperiment` can spend provider credits only when an authorized real host binds them; no such call occurs in this module's checks.
 
 ## Common Claude roster API
 

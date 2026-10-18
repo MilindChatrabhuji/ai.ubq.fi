@@ -1276,19 +1276,48 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
 
 #[test]
 fn public_supervisor_brief_uses_final_operation_and_never_leaks_native_context() {
-    struct Brief { raw_context: bool }
+    struct Brief {
+        raw_context: bool,
+    }
     impl RuntimeCapabilities for Brief {
-        async fn supervisor_brief(&self,target:SupervisorBriefTarget,context:Context)->Result<AuthResponse,GatewayError>{
-            let body=if self.raw_context{json!({"sourceId":target.source_id,"threadId":target.thread_id,"turns":[{"text":"private recorded context"}]})}else{
+        async fn supervisor_brief(
+            &self,
+            target: SupervisorBriefTarget,
+            context: Context,
+        ) -> Result<AuthResponse, GatewayError> {
+            let body = if self.raw_context {
+                json!({"sourceId":target.source_id,"threadId":target.thread_id,"turns":[{"text":"private recorded context"}]})
+            } else {
                 json!({"sourceId":target.source_id,"threadId":target.thread_id,"machine":"fixture machine","about":"No recorded transcript was available for this session.","status":"Current runtime state is active.","model":null,"effort":null,"state":"active","sampledAtMs":context.now_ms,"generatedAtMs":context.now_ms,"transcript":{"turns":0,"bytes":0,"truncated":false,"redactions":0,"available":false}})
-            };Ok(AuthResponse::json(200,body))
+            };
+            Ok(AuthResponse::json(200, body))
         }
     }
-    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();
-    for raw_context in [false,true]{
-        let capability=Brief{raw_context};let service=AdminRuntime{store:&store,host:&host,capabilities:&capability,config:&config};
-        let response=run(service.execute(AdminOperation::SupervisorBrief,input(json!({"source":"trusted-source","id":"thread"}))));
-        if raw_context{assert_eq!(response.unwrap_err().envelope.error.code.as_deref(),Some("supervisor_brief_invalid_response"));}
-        else{let response=response.unwrap();assert_eq!(response.status,200);assert_eq!(response.body["model"],Value::Null);assert!(response.body.get("turns").is_none());}
+    let store = Store::default();
+    let host = Host::default();
+    let config = RuntimeConfig::default();
+    for raw_context in [false, true] {
+        let capability = Brief { raw_context };
+        let service = AdminRuntime {
+            store: &store,
+            host: &host,
+            capabilities: &capability,
+            config: &config,
+        };
+        let response = run(service.execute(
+            AdminOperation::SupervisorBrief,
+            input(json!({"source":"trusted-source","id":"thread"})),
+        ));
+        if raw_context {
+            assert_eq!(
+                response.unwrap_err().envelope.error.code.as_deref(),
+                Some("supervisor_brief_invalid_response")
+            );
+        } else {
+            let response = response.unwrap();
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body["model"], Value::Null);
+            assert!(response.body.get("turns").is_none());
+        }
     }
 }
