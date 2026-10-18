@@ -111,7 +111,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 }
                 if let Some(raw) = body.get("model") {
                     model = parse::text(Some(raw))
-                        .filter(|s| !s.chars().any(char::is_whitespace))
+                        .filter(|s| !s.chars().any(gateway_schema::util::js_whitespace))
                         .ok_or_else(|| invalid("model must be a non-empty string"))?;
                 }
                 if model.is_empty() {

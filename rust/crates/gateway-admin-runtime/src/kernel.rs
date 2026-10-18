@@ -25,13 +25,13 @@ pub(crate) fn default_window_key() -> RecordKey {
 }
 fn part(value: Option<&Value>) -> Option<String> {
     parse::text(value).filter(|s| {
-        s.encode_utf16().count() <= 100 && !s.chars().any(char::is_whitespace) && !s.contains('/')
+        s.encode_utf16().count() <= 100 && !s.chars().any(gateway_schema::util::js_whitespace) && !s.contains('/')
     })
 }
 fn scope(value: Option<&Value>) -> bool {
     value
         .and_then(Value::as_str)
-        .is_some_and(|s| s.trim().eq_ignore_ascii_case("org"))
+        .is_some_and(|s| s.trim_matches(gateway_schema::util::js_whitespace).eq_ignore_ascii_case("org"))
 }
 fn target(value: &Value) -> Result<(String, Option<String>), GatewayError> {
     let owner = part(value.get("owner")).ok_or_else(|| invalid("owner is required"))?;
@@ -502,7 +502,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     }
     async fn kernel_get(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
         let org = parse::first(&input.query, "scope")
-            .is_some_and(|s| s.trim().eq_ignore_ascii_case("org"));
+            .is_some_and(|s| s.trim_matches(gateway_schema::util::js_whitespace).eq_ignore_ascii_case("org"));
         let include = parse::truth(parse::first(&input.query, "include_usage"));
         let inventory = parse::truth(parse::first(&input.query, "inventory"));
         let list = parse::truth(parse::first(&input.query, "list"));
@@ -617,12 +617,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let Some(raw) = store::read(self.store, &key, now).await? else {
             return Ok(Value::Null);
         };
-        let mut row = json!({"owner":raw.get("owner").and_then(Value::as_str).map(str::trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
+        let mut row = json!({"owner":raw.get("owner").and_then(Value::as_str).map(gateway_schema::util::js_trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
         if let Some(repo) = repo {
             row["repo"] = json!(
                 raw.get("repo")
                     .and_then(Value::as_str)
-                    .map(str::trim)
+                    .map(gateway_schema::util::js_trim)
                     .filter(|s| !s.is_empty())
                     .unwrap_or(repo)
             );
@@ -671,7 +671,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 for day in days {
                     if let Some(label) = day.get("day").and_then(Value::as_str) {
                         counts.insert(
-                            label.trim().to_owned(),
+                            label.trim_matches(gateway_schema::util::js_whitespace).to_owned(),
                             day.get("request_count")
                                 .and_then(Value::as_f64)
                                 .map(|n| (n.trunc() as i64).max(0))

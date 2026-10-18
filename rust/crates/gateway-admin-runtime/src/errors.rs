@@ -65,13 +65,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     pub(crate) async fn errors(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
         let limit = match parse::first(&input.query, "limit") {
             None => 100,
-            Some(s) => s
-                .trim()
-                .parse::<f64>()
-                .ok()
-                .filter(|n| n.is_finite() && n.fract() == 0.0 && (1.0..=500.0).contains(n))
-                .map(|n| n as usize)
-                .ok_or_else(|| invalid("limit must be an integer from 1 to 500"))?,
+            Some(s) => {
+                let n=gateway_admin_data::profile::js_number(&Value::String(s.into()));
+                if !n.is_finite() || n.fract()!=0.0 || !(1.0..=500.0).contains(&n) { return Err(invalid("limit must be an integer from 1 to 500")) }
+                n as usize
+            }
         };
         let mut data = Vec::new();
         let mut buckets = BTreeMap::<i64, u64>::new();

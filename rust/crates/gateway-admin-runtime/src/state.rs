@@ -34,7 +34,7 @@ fn provider_id(id: &str) -> bool {
     PROVIDER_IDS.contains(&id) || subscription(id)
 }
 fn normalize_ids(ids: &[String]) -> Vec<String> {
-    let set: BTreeSet<_> = ids.iter().map(|s| s.trim()).collect();
+    let set: BTreeSet<_> = ids.iter().map(|s| s.trim_matches(gateway_schema::util::js_whitespace)).collect();
     let mut result: Vec<String> = PROVIDER_IDS
         .into_iter()
         .filter(|s| set.contains(s))
@@ -74,11 +74,11 @@ fn principal_ids(value: &Value) -> Result<Vec<String>, GatewayError> {
         let id = value
             .as_str()
             .filter(|s| {
-                !s.trim().is_empty()
+                !s.trim_matches(gateway_schema::util::js_whitespace).is_empty()
                     && s.encode_utf16().count() <= 256
                     && !s
                         .chars()
-                        .any(|c| c.is_whitespace() || c == ',' || (c as u32) < 32 || c == '\x7f')
+                        .any(|c| gateway_schema::util::js_whitespace(c) || c == ',' || (c as u32) < 32 || c == '\x7f')
             })
             .ok_or_else(|| invalid("allowed_key_ids must be an explicit array of principal IDs"))?;
         ids.insert(id.to_owned());
@@ -126,7 +126,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 .ok()
                 .flatten()
                 .and_then(|v| {
-                    let scenario = v.get("scenario")?.as_str()?.trim();
+                    let scenario = v.get("scenario")?.as_str()?.trim_matches(gateway_schema::util::js_whitespace);
                     let updated = v.get("updated_at_ms")?.as_i64().filter(|n| *n > 0)?;
                     if !SCENARIOS.contains(&scenario) {
                         return None;
@@ -152,24 +152,14 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 .body
                 .get("scenario")
                 .and_then(Value::as_str)
-                .map(str::trim)
+                .map(gateway_schema::util::js_trim)
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| invalid("scenario is required"))?;
             let duration = match input.body.get("duration_ms") {
                 None => 900000,
-                Some(Value::Null) => 0,
-                Some(Value::Bool(v)) => i64::from(*v),
-                Some(Value::String(s)) if s.trim().is_empty() => 0,
                 Some(value) => {
-                    let n = if let Some(s) = value.as_str() {
-                        s.trim().parse::<f64>().ok()
-                    } else {
-                        value.as_f64()
-                    }
-                    .ok_or_else(|| invalid("duration_ms must be between 0 and 3600000"))?;
-                    if !n.is_finite() || n.fract() != 0.0 || !(0.0..=3600000.0).contains(&n) {
-                        return Err(invalid("duration_ms must be between 0 and 3600000"));
-                    }
+                    let n=gateway_admin_data::profile::js_number(value);
+                    if !n.is_finite() || n.fract()!=0.0 || !(0.0..=3600000.0).contains(&n) { return Err(invalid("duration_ms must be between 0 and 3600000")) }
                     n as i64
                 }
             };
@@ -235,7 +225,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             .iter()
             .map(|v| {
                 v.as_str()
-                    .map(|s| s.trim().to_owned())
+                    .map(|s| s.trim_matches(gateway_schema::util::js_whitespace).to_owned())
                     .ok_or_else(|| invalid("provider_ids must contain only strings"))
             })
             .collect::<Result<_, _>>()?;

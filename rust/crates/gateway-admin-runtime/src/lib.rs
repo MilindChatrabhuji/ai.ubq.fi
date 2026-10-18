@@ -174,7 +174,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         "admin_raw_body_unavailable",
                     )
                 })?;
-                if !body.trim().is_empty() {
+                if !body.trim_matches(gateway_schema::util::js_whitespace).is_empty() {
                     return Err(invalid(
                         "Prompt-cache scope experiment does not accept request fields",
                     ));
@@ -323,7 +323,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .filter(|n| [7, 30, 90].contains(n))
                     .unwrap_or(30);
                 let balance = parse::first(&input.query, "balance_window_days")
-                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .and_then(|s| s.trim_matches(gateway_schema::util::js_whitespace).parse::<f64>().ok())
                     .filter(|n| [7.0, 30.0, 90.0, 365.0].contains(n))
                     .unwrap_or(7.0) as u32;
                 self.capabilities
@@ -349,7 +349,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 let id = input
                     .parameter
                     .as_deref()
-                    .map(str::trim)
+                    .map(gateway_schema::util::js_trim)
                     .filter(|s| !s.is_empty() && s.encode_utf16().count() <= 200)
                     .ok_or_else(|| invalid("Invalid API key id"))?;
                 if store::read(
@@ -382,11 +382,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     (
                         parse::first(&input.query, "source")
                             .unwrap_or("")
-                            .trim()
+                            .trim_matches(gateway_schema::util::js_whitespace)
                             .to_owned(),
                         parse::first(&input.query, "id")
                             .unwrap_or("")
-                            .trim()
+                            .trim_matches(gateway_schema::util::js_whitespace)
                             .to_owned(),
                     )
                 } else {
@@ -416,7 +416,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 let request = if operation == SupervisorOutput {
                     let cursor: String = parse::first(&input.query, "cursor")
                         .unwrap_or("")
-                        .trim()
+                        .trim_matches(gateway_schema::util::js_whitespace)
                         .chars()
                         .take(240)
                         .collect();
@@ -460,7 +460,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
 }
 
 fn parse_int_prefix(value: Option<&str>) -> Option<i64> {
-    let value = value?.trim_start();
+    let value = value?.trim_start_matches(gateway_schema::util::js_whitespace);
     let end = value
         .char_indices()
         .take_while(|(i, c)| c.is_ascii_digit() || *i == 0 && (*c == '-' || *c == '+'))

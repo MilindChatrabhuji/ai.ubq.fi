@@ -9,6 +9,7 @@ publish.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-admin = { path = "../gateway-admin" }
+gateway-admin-data = { path = "../gateway-admin-data" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-schema = { path = "../gateway-schema" }
 serde.workspace = true

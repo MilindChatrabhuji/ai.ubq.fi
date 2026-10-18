@@ -1175,3 +1175,13 @@ fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() {
         else{assert_eq!(result.unwrap_err().envelope.error.code.as_deref(),Some("native_protocol_invalid"));}
     }
 }
+
+#[test]
+fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);
+    let response=run(service.execute(AdminOperation::DebugSet,input(json!({"scenario":"\u{feff}codex_429\u{feff}","duration_ms":["16"]})))).unwrap();assert_eq!(response.body["routing"]["expires_at_ms"],1000016);
+    let response=run(service.execute(AdminOperation::ClaudeAccessSet,input(json!({"allowed_key_ids":["\u{0085}key\u{0085}"]})))).unwrap();assert_eq!(response.body["data"]["allowed_key_ids"],json!(["\u{0085}key\u{0085}"]));
+    let mut request=input(Value::Null);request.query.insert("after_ms".into(),vec![" \u{feff}0x10\u{feff} ".into()]);request.query.insert("before_ms".into(),vec!["0x20".into()]);request.query.insert("limit".into(),vec!["0b1".into()]);
+    assert_eq!(gateway_admin_runtime::parse::capture(&request,false).unwrap(),CaptureRequest::Interval{after_ms:16,before_ms:32,cursor:None});
+    request.query.insert("after_ms".into(),vec!["\u{0085}16\u{0085}".into()]);assert_eq!(gateway_admin_runtime::parse::capture(&request,false).unwrap_err().status,400);
+}

@@ -14,22 +14,20 @@ pub fn first<'a>(query: &'a BTreeMap<String, Vec<String>>, name: &str) -> Option
 pub fn text(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
-        .map(str::trim)
+        .map(gateway_schema::util::js_trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
 }
 pub fn integer(value: &Value) -> Option<i64> {
-    let n = if let Some(s) = value.as_str() {
-        s.trim().parse::<f64>().ok()?
-    } else {
-        value.as_f64()?
-    };
+    if !value.is_number() && !value.is_string() { return None }
+    let n = gateway_admin_data::profile::js_number(value);
     (n.is_finite() && n.abs() <= MAX_SAFE_INTEGER as f64).then_some(n.trunc() as i64)
 }
+
 pub fn limit(value: &Value) -> Option<i64> {
     if value
         .as_str()
-        .is_some_and(|s| s.trim().eq_ignore_ascii_case("unlimited"))
+        .is_some_and(|s| s.trim_matches(gateway_schema::util::js_whitespace).eq_ignore_ascii_case("unlimited"))
     {
         return Some(-1);
     }
@@ -39,10 +37,10 @@ pub fn positive(value: &Value) -> Option<i64> {
     integer(value).filter(|v| *v > 0)
 }
 pub fn truth(value: Option<&str>) -> bool {
-    value.is_some_and(|s| ["1", "true", "yes", "on"].contains(&s.trim().to_lowercase().as_str()))
+    value.is_some_and(|s| ["1", "true", "yes", "on"].contains(&s.trim_matches(gateway_schema::util::js_whitespace).to_lowercase().as_str()))
 }
 fn boolean(value: Option<&str>) -> Option<bool> {
-    let s = value?.trim().to_lowercase();
+    let s = value?.trim_matches(gateway_schema::util::js_whitespace).to_lowercase();
     if ["1", "true", "yes", "on"].contains(&s.as_str()) {
         Some(true)
     } else if ["0", "false", "no", "off"].contains(&s.as_str()) {
@@ -58,11 +56,11 @@ pub fn bounded_positive(value: Option<&str>, default: u32, max: u32) -> Result<u
     let Some(value) = value else {
         return Ok(default);
     };
-    if !digits(value.trim()) {
+    if !digits(value.trim_matches(gateway_schema::util::js_whitespace)) {
         return Err(invalid("limit must be a positive integer"));
     }
     let value = value
-        .trim()
+        .trim_matches(gateway_schema::util::js_whitespace)
         .parse::<u64>()
         .ok()
         .filter(|v| *v > 0 && *v <= MAX_SAFE_INTEGER as u64)
@@ -132,10 +130,10 @@ pub fn capture(input: &AdminInput, incidents: bool) -> Result<CaptureRequest, Ga
         });
     }
     let incident = first(q, "incident_id")
-        .map(str::trim)
+        .map(gateway_schema::util::js_trim)
         .filter(|s| !s.is_empty());
     let request = first(q, "request_id")
-        .map(str::trim)
+        .map(gateway_schema::util::js_trim)
         .filter(|s| !s.is_empty());
     if let Some(request) = request {
         if incident.is_some()
@@ -152,20 +150,10 @@ pub fn capture(input: &AdminInput, incidents: bool) -> Result<CaptureRequest, Ga
         });
     }
     let number = |name, fallback| {
-        first(q, name)
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                s.parse::<f64>()
-                    .ok()
-                    .filter(|n| {
-                        n.is_finite()
-                            && n.fract() == 0.0
-                            && *n >= 0.0
-                            && *n <= MAX_SAFE_INTEGER as f64
-                    })
-                    .map(|n| n as i64)
-            })
-            .unwrap_or(Some(fallback))
+        first(q,name).filter(|s|!s.is_empty()).map(|s| {
+            let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));
+            (n.is_finite() && n.fract()==0.0 && n>=0.0 && n<=MAX_SAFE_INTEGER as f64).then_some(n as i64)
+        }).unwrap_or(Some(fallback))
     };
     let after = number("after_ms", 0).ok_or_else(|| invalid("Invalid replay interval"))?;
     let before = number("before_ms", -1).ok_or_else(|| invalid("Invalid replay interval"))?;
@@ -205,7 +193,7 @@ pub fn migration(input: &AdminInput) -> Result<MigrationImport, GatewayError> {
         ));
     }
     let q = &input.query;
-    let profile = match first(q, "profile").unwrap_or("").trim() {
+    let profile = match first(q, "profile").unwrap_or("").trim_matches(gateway_schema::util::js_whitespace) {
         "" | "prod" => MigrationProfile::Prod,
         "local" => MigrationProfile::Local,
         _ => return Err(invalid("profile must be local or prod")),
@@ -230,7 +218,7 @@ pub fn claude(body: &Value) -> Result<ClaudeSubmission, GatewayError> {
         .get("credential")
         .and_then(Value::as_str)
         .or_else(|| body.get("api_key").and_then(Value::as_str))
-        .map(str::trim);
+        .map(gateway_schema::util::js_trim);
     if credential.is_some_and(|s| s.is_empty()) {
         return Err(invalid("credential must not be blank"));
     }
@@ -245,7 +233,7 @@ pub fn claude(body: &Value) -> Result<ClaudeSubmission, GatewayError> {
     let label = body
         .get("label")
         .and_then(Value::as_str)
-        .map(str::trim)
+        .map(gateway_schema::util::js_trim)
         .map(str::to_owned);
     if label
         .as_ref()
@@ -258,9 +246,9 @@ pub fn claude(body: &Value) -> Result<ClaudeSubmission, GatewayError> {
         Some(Value::Null) => Some(None),
         Some(Value::String(s)) if s.is_empty() => Some(None),
         Some(Value::String(s))
-            if s.trim().starts_with("wrkspc_") && s.trim().encode_utf16().count() <= 256 =>
+            if s.trim_matches(gateway_schema::util::js_whitespace).starts_with("wrkspc_") && s.trim_matches(gateway_schema::util::js_whitespace).encode_utf16().count() <= 256 =>
         {
-            Some(Some(s.trim().into()))
+            Some(Some(s.trim_matches(gateway_schema::util::js_whitespace).into()))
         }
         _ => return Err(invalid("workspace_id must be a wrkspc_ workspace id")),
     };
@@ -309,7 +297,7 @@ pub fn prompt_groups(input: &AdminInput) -> Result<Vec<String>, GatewayError> {
     let groups: Vec<String> = first(&input.query, "group_by")
         .unwrap_or("key_presence")
         .split(',')
-        .map(|s| s.trim().into())
+        .map(|s| s.trim_matches(gateway_schema::util::js_whitespace).into())
         .collect();
     let allowed = [
         "provider",

@@ -80,7 +80,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             let id = ["slug", "id", "model", "name"]
                 .into_iter()
                 .find_map(|field| model.get(field).and_then(Value::as_str))
-                .map(str::trim)
+                .map(gateway_schema::util::js_trim)
                 .filter(|s| !s.is_empty());
             let Some(id) = id else { continue };
             if !seen.insert(id.to_owned()) {
