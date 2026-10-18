@@ -45,10 +45,11 @@ fn existing_request_ledger_retries_preserves_creation_retention_and_restarts() {
     ))
     .unwrap();
     let logs = run(r.request_logs("key", 20)).unwrap();
-    assert_eq!(logs[0]["id"], "request");
-    assert_eq!(logs[0]["provider"], "surplus");
-    assert_eq!(logs[0]["status_code"], 599);
-    assert_eq!(logs[0]["input_tokens"], 12);
+    let record: Value = logs[0].deserialize().unwrap();
+    assert_eq!(record["id"], "request");
+    assert_eq!(record["provider"], "surplus");
+    assert_eq!(record["status_code"].as_f64(), Some(599.0));
+    assert_eq!(record["input_tokens"].as_f64(), Some(12.0));
     assert_eq!(
         memory.rows.borrow().values().next().unwrap().expires_at_ms,
         Some(500 + REQUEST_RETENTION_MS)
