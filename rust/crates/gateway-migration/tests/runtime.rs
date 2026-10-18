@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
-use gateway_admin_data::profile::{from_profile, to_profile};
+use gateway_admin_data::profile::{from_source_profile as from_profile, to_source_profile as to_profile};
+use gateway_core::source_json::SourceJson;
 use gateway_auth::{crypto::sha256_base64url, store::key};
 use gateway_core::value::PortableValue;
 use gateway_core::{
@@ -13,6 +14,7 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 use support::*;
 
+fn raw(value:Value)->SourceJson {SourceJson::from_serializable(&value).unwrap()}
 const SOURCE: &str = "6d4d4790a7c06514b92938ff677dbfd52764461d";
 fn source(parts: Value, value: Value, revision: &str, expires: Option<i64>) -> SourceEntry {
     SourceEntry {
@@ -224,7 +226,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse() {
     let request = exported
         .entries
         .iter()
-        .find(|e| e.key.last() == Some(&json!({"type":"string","value":"new-request"})))
+        .find(|e| e.key.last() == Some(&raw(json!({"type":"string","value":"new-request"}))))
         .unwrap();
     let value = from_profile(&request.value)
         .unwrap()
@@ -267,7 +269,7 @@ fn adoption_conflict_never_partially_writes_and_keeps_foreign_state() {
         "foreign-owner"
     );
     assert!(
-        run(store.read(&key(json!(["uos_ai", "migration", "v2", "manifest"]))))
+        run(store.read(&key(json!(["uos_ai", "migration", "v3", "manifest"]))))
             .unwrap()
             .is_none()
     );
@@ -318,7 +320,7 @@ fn typed_values_revision_expiry_and_deleted_rows_survive_inverse() {
 #[test]
 fn wrong_indexes_unknown_state_and_duplicates_refuse_before_writes() {
     let (mut input, _) = fixture();
-    input.entries[2].value["value"]["reserved_requests"] = json!({"type":"number","value":2});
+    let mut bad:Value=input.entries[2].value.deserialize().unwrap();bad["value"]["reserved_requests"]=json!({"type":"number","value":2});input.entries[2].value=raw(bad);
     assert!(prepare(&input, &CanonicalDates).is_err());
     let (mut input, _) = fixture();
     input.entries.push(input.entries[0].clone());
@@ -433,7 +435,7 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
         .entries
         .iter()
         .find(|e| {
-            e.key.last() == Some(&json!({"type":"string","value":"pending-attempt"}))
+            e.key.last() == Some(&raw(json!({"type":"string","value":"pending-attempt"})))
                 && from_profile(&e.value)
                     .unwrap()
                     .to_json_lossless()
@@ -662,7 +664,7 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision() 
         admin_input(Value::Null),
     ))
     .unwrap();
-    assert_eq!(response.body["routing"]["scenario"], "codex_429");
+    assert_eq!(response.body.as_json().unwrap()["routing"]["scenario"], "codex_429");
     run(runtime.execute(
         gateway_admin::AdminOperation::DebugSet,
         admin_input(json!({"scenario":"normal","duration_ms":0})),
@@ -922,7 +924,7 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
     let window = inverse
         .entries
         .iter()
-        .find(|e| e.key.get(3) == Some(&json!({"type":"string","value":"org_window"})))
+        .find(|e| e.key.get(3) == Some(&raw(json!({"type":"string","value":"org_window"}))))
         .unwrap();
     let value = from_profile(&window.value)
         .unwrap()
@@ -950,8 +952,8 @@ fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts() {
             json!({"type":"bigint","value":"-123456789012345678901234567890"}),
             json!({"type":"Uint8Array","value":"AAH_AA","byteLength":4}),
             json!({"type":"number","value":"-0"}),
-        ],
-        value: json!({"type":"string","value":"typed tuple payload"}),
+        ].into_iter().map(raw).collect(),
+        value: raw(json!({"type":"string","value":"typed tuple payload"})),
         versionstamp: "typed-key-source".into(),
         expires_at_ms: Some(9000),
     };
@@ -985,7 +987,7 @@ fn a_profile_row_without_explicit_expiry_is_not_a_full_capture() {
         .as_object_mut()
         .unwrap()
         .remove("expires_at_ms");
-    assert!(serde_json::from_value::<PrivateCapture>(json).is_err());
+    assert!(serde_json::from_str::<PrivateCapture>(&serde_json::to_string(&json).unwrap()).is_err());
 }
 
 #[test]
@@ -1035,7 +1037,7 @@ fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it(
     assert!(replay.record.expires_at_ms.is_none());
     assert!(
         !bundle.source.entries.iter().any(
-            |e| e.key.get(1) == Some(&json!({"type":"string","value":"native_nonce_registry"}))
+            |e| e.key.get(1) == Some(&raw(json!({"type":"string","value":"native_nonce_registry"})))
         )
     );
     // No restore API consumes these rows. Current transport ownership/replay must be reconciled externally.
@@ -1110,7 +1112,7 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() {
     .unwrap();
     let page = run(store.query(QueryRequest {
         selector: QuerySelector::Prefix {
-            prefix: key(json!(["uos_ai", "migration", "v2", "row"])),
+            prefix: key(json!(["uos_ai", "migration", "v3", "row"])),
             start: None,
             end: None,
         },

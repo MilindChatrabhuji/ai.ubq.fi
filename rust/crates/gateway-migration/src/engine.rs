@@ -30,13 +30,13 @@ pub struct AdoptionReceipt {
     pub atomic_committed: bool,
 }
 pub(crate) fn manifest_key() -> RecordKey {
-    key(json!(["uos_ai", "migration", "v2", "manifest"]))
+    key(json!(["uos_ai", "migration", "v3", "manifest"]))
 }
 pub(crate) fn mapping_key(id: &str, source: &str) -> RecordKey {
     key(json!([
         "uos_ai",
         "migration",
-        "v2",
+        "v3",
         "row",
         id,
         gateway_auth::crypto::sha256_hex(source.as_bytes())
@@ -130,12 +130,12 @@ pub fn prepare(
         // Identity values already live once at the source key. Do not duplicate historical
         // provider/refresh/session secrets in rollback metadata.
         if row.mapping.transform == Transform::Identity {
-            row.mapping.source.value = Value::Null;
+            row.mapping.source.value = SourceJson::parse("null")?;
             row.mapping.source.key.clear();
         }
     }
     let manifest = Manifest {
-        v: 2,
+        v: 3,
         capture_id: capture_id.clone(),
         source_git_sha: capture.source_git_sha.clone(),
         captured_at_ms: capture.captured_at_ms,

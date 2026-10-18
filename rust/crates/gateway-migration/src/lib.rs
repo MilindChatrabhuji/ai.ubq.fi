@@ -21,6 +21,7 @@ use gateway_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use gateway_core::source_json::SourceJson;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +38,7 @@ pub enum Transform {
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Mapping {
+    #[serde(with = "source_storage")]
     source: SourceEntry,
     // Only non-secret transformed source rows need an original value sidecar.
     transform: Transform,
@@ -93,4 +95,18 @@ fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
             DecodedKeyPart::Number(value)=>Ok(serde_json::json!({"type":"number","value":if value.is_nan(){"NaN"}else if value.is_sign_negative(){"-Infinity"}else{"Infinity"}})),
         })
         .collect()
+}
+
+// Private metadata stores source JSON as an explicit raw document string. It never
+// treats a surrogate as scalar text or reinterprets a source object as codec tags.
+mod source_storage {
+    use super::*;
+    pub fn serialize<S: serde::Serializer>(entry: &SourceEntry, serializer: S) -> Result<S::Ok,S::Error> {
+        let raw=serde_json::to_string(entry).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&raw)
+    }
+    pub fn deserialize<'de,D:serde::Deserializer<'de>>(deserializer:D)->Result<SourceEntry,D::Error>{
+        let raw=String::deserialize(deserializer)?;
+        serde_json::from_str(&raw).map_err(serde::de::Error::custom)
+    }
 }

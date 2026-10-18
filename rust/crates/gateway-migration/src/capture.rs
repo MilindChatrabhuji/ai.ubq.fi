@@ -1,5 +1,5 @@
 use crate::*;
-use gateway_admin_data::profile::{SourceDateHost, normalize_import_line_with_host};
+use gateway_admin_data::profile::{SourceDateHost, normalize_source_import_line_with_host};
 use std::collections::BTreeSet;
 
 /// Private logical capture, distinct from ordinary NDJSON which omits KV expiry.
@@ -15,8 +15,8 @@ pub struct PrivateCapture {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceEntry {
-    pub key: Vec<Value>,
-    pub value: Value,
+    pub key: Vec<SourceJson>,
+    pub value: SourceJson,
     pub versionstamp: String,
     /// Explicit absolute source expiry; never reconstructed as now + TTL.
     #[serde(deserialize_with = "required_expiry")]
@@ -58,7 +58,7 @@ impl PrivateCapture {
                 }
                 let text = serde_json::to_string(entry)
                     .map_err(|_| invalid("Source profile row cannot be encoded"))?;
-                let decoded = normalize_import_line_with_host(&text, host)?
+                let decoded = normalize_source_import_line_with_host(&text, host)?
                     .ok_or_else(|| invalid("Empty source row"))?;
                 if !keys.insert(decoded.key.0.clone()) {
                     return Err(invalid("Duplicate logical source key"));
@@ -72,8 +72,10 @@ impl PrivateCapture {
                 }
                 let record = if let Some(value) = decoded.value.to_json_lossless() {
                     StoredRecord::json(&entry.versionstamp, value, entry.expires_at_ms)
-                } else {
+                } else if decoded.value.validate_for_storage().is_ok() {
                     StoredRecord::profile(&entry.versionstamp, decoded.value, entry.expires_at_ms)?
+                } else {
+                    StoredRecord::profile_v2(&entry.versionstamp, decoded.value, entry.expires_at_ms)?
                 };
                 Ok(Row {
                     key: decoded.key,

@@ -1,6 +1,6 @@
 use crate::engine::{Manifest, manifest_key, mapping_key};
 use crate::*;
-use gateway_admin_data::profile::{encode_base64, to_profile};
+use gateway_admin_data::profile::{encode_base64, to_source_profile as to_profile};
 use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     tuple_key::DecodedKeyPart,
@@ -9,24 +9,19 @@ use gateway_core::{
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-fn source_profile_key(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
-    TupleKey::from_record_key(key)?
-        .decoded_parts()?
-        .into_iter()
-        .map(|p| match p {
-            DecodedKeyPart::String(s) => String::from_utf8(s)
-                .map(|v| json!({"type":"string","value":v}))
-                .map_err(|_| unavailable("New non-UTF8 source key needs exact typed encoding")),
-            DecodedKeyPart::Number(n) => to_profile(&PortableValue::number(n)),
-            DecodedKeyPart::Boolean(v) => Ok(json!({"type":"boolean","value":v})),
-            DecodedKeyPart::Bytes(v) => Ok(json!({"type":"Uint8Array","value":encode_base64(&v)})),
-            DecodedKeyPart::BigInt {
-                negative,
-                magnitude,
-            } => Ok(json!({"type":"bigint","value":decimal_key(negative,&magnitude)})),
-        })
-        .collect()
+fn source_profile_key(key: &RecordKey) -> Result<Vec<SourceJson>, GatewayError> {
+    TupleKey::from_record_key(key)?.decoded_parts()?.into_iter().map(|part| match part {
+        DecodedKeyPart::String(bytes) => {
+            let text=String::from_utf8(bytes).map_err(|_|unavailable("New non-UTF8 source key needs exact typed encoding"))?;
+            to_profile(&PortableValue::String(text))
+        }
+        DecodedKeyPart::Number(number)=>to_profile(&PortableValue::number(number)),
+        DecodedKeyPart::Boolean(value)=>to_profile(&PortableValue::Boolean(value)),
+        DecodedKeyPart::Bytes(bytes)=>SourceJson::from_serializable(&json!({"type":"Uint8Array","value":encode_base64(&bytes)})),
+        DecodedKeyPart::BigInt{negative,magnitude}=>to_profile(&PortableValue::BigInt(decimal_key(negative,&magnitude))),
+    }).collect()
 }
+
 pub(crate) fn decimal_key(negative: bool, magnitude: &[u8]) -> String {
     let mut digits = vec![0_u32];
     for byte in magnitude {
@@ -88,7 +83,7 @@ fn inverse_value(
     }
     let current = record.json_value()?;
     let original = source
-        .map(|s| gateway_admin_data::profile::from_profile(&s.value))
+        .map(|s| gateway_admin_data::profile::from_source_profile(&s.value))
         .transpose()?
         .and_then(|v| v.to_json_lossless())
         .unwrap_or(json!({}));
@@ -196,7 +191,7 @@ async fn export_internal<S: QueryStore>(
         .await?
         .ok_or_else(|| invalid("No adopted capture manifest"))?;
     let manifest: Manifest = decode(manifest.json_value()?)?;
-    if manifest.v != 2 || now_ms < manifest.captured_at_ms {
+    if manifest.v != 3 || now_ms < manifest.captured_at_ms {
         return Err(invalid("Inverse capture clock/version invalid"));
     }
     let mut all = BTreeMap::new();
@@ -233,7 +228,7 @@ async fn export_internal<S: QueryStore>(
     let mapping_prefix = key(json!([
         "uos_ai",
         "migration",
-        "v2",
+        "v3",
         "row",
         manifest.capture_id
     ]));
