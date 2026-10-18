@@ -27,13 +27,18 @@ pub enum DispatchAttempt {
 pub struct DispatchFailure {
     pub error: GatewayError,
     pub attempt: DispatchAttempt,
+    pub origin: DispatchOrigin,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DispatchOrigin { Gateway, Transport }
 
 impl From<GatewayError> for DispatchFailure {
     fn from(error: GatewayError) -> Self {
         Self {
             error,
             attempt: DispatchAttempt::NotStarted,
+            origin: DispatchOrigin::Gateway,
         }
     }
 }
@@ -216,6 +221,7 @@ where
                 super::platform_error("The upstream transport failed.", "upstream_transport_error")
             },
             attempt: DispatchAttempt::Started,
+            origin: DispatchOrigin::Transport,
         })
 }
 

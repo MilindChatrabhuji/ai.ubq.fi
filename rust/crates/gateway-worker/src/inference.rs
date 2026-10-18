@@ -44,134 +44,81 @@ async fn dispatch_attempts(
     session: Rc<Session>,
     cancellation: &crate::transport::outbound::Cancellation,
 ) -> Result<(Response, PreparedAttempt), gateway_routing_runtime::RoutingError> {
+    let mut pending: Option<(gateway_routing_runtime::WorkspaceContinuation, Vec<u8>)> = None;
     loop {
-        let attempt = match session.next_attempt().await? {
-            Some(attempt) => attempt,
-            None => {
-                return Err(GatewayError::unavailable(
-                    "No eligible provider remains for this request.",
-                    "provider_routing_unavailable",
-                ).into());
-            }
+        let (attempt, continuation, retained_wire) = if let Some((continuation, wire)) = pending.take() {
+            (continuation.attempt().clone(), Some(continuation), Some(wire))
+        } else {
+            let attempt = session.next_attempt().await?.ok_or_else(|| GatewayError::unavailable("No eligible provider remains for this request.", "provider_routing_unavailable"))?;
+            (attempt, None, None)
         };
+        let continuing = continuation.is_some();
         let target = PinnedDestination::new(&attempt.request.url)?;
-        let wire = serde_json::to_vec(&attempt.request.body)
-            .map_err(|_| invalid("Request could not be encoded."))?;
-        let result = send_http(
-            &target,
-            Method::Post,
-            &attempt.request.headers,
-            &wire,
-            cancellation,
-            || async {
-                session
-                    .before_dispatch(&attempt)
-                    .await
-                    .map_err(|error| *error.error)
-            },
-        )
-        .await;
-        let mut response = match result {
-            Ok(response) => {
-                session
-                    .transport_started(&attempt)
-                    .await?;
-                response
+        let wire = match retained_wire { Some(wire) => wire, None => serde_json::to_vec(&attempt.request.body).map_err(|_| invalid("Request could not be encoded."))? };
+        let gate_session = session.clone();
+        let gate_attempt = attempt.clone();
+        let result = send_http(&target, Method::Post, &attempt.request.headers, &wire, cancellation, || async move {
+            if let Some(continuation) = continuation {
+                gate_session.before_workspace_dispatch(continuation).await.map_err(|error| *error.error)
+            } else {
+                gate_session.before_dispatch(&gate_attempt).await.map_err(|error| *error.error)
             }
+        }).await;
+        let mut response = match result {
+            Ok(response) => response,
             Err(failure) => {
-                let decision = session
-                    .refusal(
-                        &attempt,
-                        AttemptFailure {
-                            origin: if cancellation.signal().aborted()
-                                && !cancellation.client_aborted()
-                            {
-                                FailureOrigin::GatewayDeadline
-                            } else {
-                                FailureOrigin::Transport
-                            },
-                            status: None,
-                            headers: Default::default(),
-                            body: Vec::new(),
-                            body_complete: false,
-                            failure: if cancellation.client_aborted() {
-                                gateway_providers::policy::HopFailure::Cancelled
-                            } else if cancellation.signal().aborted() {
-                                gateway_providers::policy::HopFailure::Deadline
-                            } else {
-                                gateway_providers::policy::HopFailure::Transport
-                            },
-                            transport: if failure.attempt == DispatchAttempt::Started {
-                                TransportState::Started
-                            } else {
-                                TransportState::NotStarted
-                            },
-                            semantic_committed: false,
-                            cancelled: cancellation.signal().aborted(),
-                        },
-                    )
-                    .await?;
-                if decision == RefusalDecision::Continue {
-                    continue;
-                }
+                let decision = session.refusal(&attempt, AttemptFailure {
+                    origin: if failure.origin == crate::transport::outbound::DispatchOrigin::Gateway { FailureOrigin::Gateway }
+                        else if cancellation.signal().aborted() && !cancellation.client_aborted() { FailureOrigin::GatewayDeadline }
+                        else { FailureOrigin::Transport },
+                    status: None, headers: Default::default(), body: Vec::new(), body_complete: false,
+                    failure: if cancellation.client_aborted() { gateway_providers::policy::HopFailure::Cancelled }
+                        else if cancellation.signal().aborted() { gateway_providers::policy::HopFailure::Deadline }
+                        else { gateway_providers::policy::HopFailure::Transport },
+                    transport: if continuing || failure.attempt == DispatchAttempt::Started { TransportState::Started } else { TransportState::NotStarted },
+                    semantic_committed: false, cancelled: cancellation.signal().aborted(),
+                }).await?;
+                if decision == RefusalDecision::Continue { continue; }
                 return Err(failure.error.into());
             }
         };
-        if response.status_code() < 400 {
+        // Capture the real header time before any ledger, observer or clone await.
+        let observed_at_ms = now_ms()?;
+        let status = response.status_code();
+        let headers = response.headers().entries().collect::<gateway_providers::Headers>();
+        if !continuing { session.transport_started(&attempt).await?; }
+        let observed = session.observe_response(&attempt, gateway_routing_runtime::ResponseHead {
+            status, headers: headers.clone(), provider_request_id: correlation(attempt.request.provider, &headers).map(str::to_owned), observed_at_ms,
+        }).await?;
+        if status < 400 {
+            session.resolve_response(&attempt, observed, gateway_core::claude::ClaudeErrorEvidence::from_prefix(None, false)?, None).await?;
             return Ok((response, attempt));
         }
-        let status = response.status_code();
-        let headers = response
-            .headers()
-            .entries()
-            .collect::<gateway_providers::Headers>();
-        // Provider origin is fixed at header receipt, before a clone/body await.
-        let capture = match (attempt.request.decode.provider, status) {
-            (UpstreamProvider::ChatgptCodex, 400) => {
-                body::refusal_probe(&mut response, cancellation, 250).await
-            }
-            (UpstreamProvider::ChatgptCodex, 429)
-            | (UpstreamProvider::Metered, 403)
-            | (UpstreamProvider::Surplus, 402) => {
-                body::refusal_probe(&mut response, cancellation, body::REFUSAL_PROBE_TIMEOUT_MS)
-                    .await
-            }
-            // Claude's owner supplies a separate complete-prefix capture
-            // contract; it is not a generic bounded quota-body probe.
-            _ => body::ResponseCapture::default(),
+        let (capture, evidence) = if attempt.request.provider == UpstreamProvider::ClaudeCode {
+            let captured = crate::transport::claude_body::capture(&mut response, cancellation).await;
+            (body::ResponseCapture::default(), gateway_core::claude::ClaudeErrorEvidence::from_prefix(captured.prefix, captured.complete)?)
+        } else {
+            let capture = match (attempt.request.provider, status) {
+                (UpstreamProvider::ChatgptCodex,400) => body::refusal_probe(&mut response,cancellation,250).await,
+                (UpstreamProvider::ChatgptCodex,429)|(UpstreamProvider::Metered,403)|(UpstreamProvider::Surplus,402) => body::refusal_probe(&mut response,cancellation,body::REFUSAL_PROBE_TIMEOUT_MS).await,
+                _ => body::ResponseCapture::default(),
+            };
+            (capture, gateway_core::claude::ClaudeErrorEvidence::from_prefix(None,false)?)
         };
-        let decision = session
-            .refusal(
-                &attempt,
-                AttemptFailure {
-                    origin: FailureOrigin::Provider,
-                    status: Some(status),
-                    headers: headers.clone(),
-                    body: capture.bytes,
-                    body_complete: capture.complete,
-                    failure: gateway_providers::policy::HopFailure::Status(status),
-                    transport: TransportState::Started,
-                    semantic_committed: false,
-                    cancelled: cancellation.signal().aborted(),
-                },
-            )
-            .await;
-        let decision = match decision {
-            Ok(decision) => decision,
-            Err(error) => {
+        let decision = session.resolve_response(&attempt, observed, evidence, Some(AttemptFailure {
+            origin: FailureOrigin::Provider, status: Some(status), headers, body: capture.bytes, body_complete: capture.complete,
+            failure: gateway_providers::policy::HopFailure::Status(status), transport: TransportState::Started,
+            semantic_committed: false, cancelled: cancellation.signal().aborted(),
+        })).await;
+        match decision {
+            Ok(gateway_routing_runtime::ResponseDecision::Return) => return Ok((response,attempt)),
+            Ok(gateway_routing_runtime::ResponseDecision::Continue) => { body::discard_response(&mut response); }
+            Ok(gateway_routing_runtime::ResponseDecision::WorkspaceContinuation(continuation)) => {
                 body::discard_response(&mut response);
-                return Err(error);
+                pending = Some((*continuation,wire));
             }
-        };
-        if decision == RefusalDecision::Continue {
-            body::discard_response(&mut response);
-            continue;
+            Err(error) => { body::discard_response(&mut response); return Err(error); }
         }
-        if decision == RefusalDecision::Abort {
-            body::discard_response(&mut response);
-            return Err(gateway_admission::cancellation_error().into());
-        }
-        return Ok((response, attempt));
     }
 }
 

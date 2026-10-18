@@ -230,6 +230,7 @@ pub enum TransportState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FailureOrigin {
     Provider,
+    Gateway,
     Transport,
     GatewayDeadline,
 }

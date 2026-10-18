@@ -339,7 +339,8 @@ impl<
                 },
             );
         }
-        if failure.origin == FailureOrigin::GatewayDeadline
+        if failure.origin == FailureOrigin::Gateway
+            || failure.origin == FailureOrigin::GatewayDeadline
             || (failure.origin != FailureOrigin::Provider
                 && failure.failure == HopFailure::Deadline)
         {
