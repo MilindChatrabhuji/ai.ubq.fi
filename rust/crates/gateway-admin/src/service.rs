@@ -26,6 +26,9 @@ impl<'a,S:QueryStore,H:AuthHost,A:AdminHost> AdminService<'a,S,H,A>{
             AdminOperation::PasskeyUsersList=>crate::reads::passkey_users(self.store,self.host.now_ms()).await?,
             AdminOperation::ApiKeysList=>crate::reads::api_keys(self.store,self.host.now_ms()).await?,
             AdminOperation::ApiKeyChanges=>crate::reads::key_changes(self.store,&query,self.host.now_ms()).await?,
+            AdminOperation::KernelPublicKeysGet=>crate::kernel_keys::list(self.store,self.host.now_ms()).await?,
+            AdminOperation::KernelPublicKeysCreate=>crate::kernel_keys::create(self.store,self.host,&body).await?,
+            AdminOperation::KernelPublicKeysDelete=>crate::kernel_keys::delete(self.store,self.host,&query).await?,
             AdminOperation::PasskeyUsersUpdate=>{
                 let id=body.get("id").and_then(Value::as_str).map(str::trim).filter(|s|!s.is_empty()).ok_or_else(||invalid("id is required"))?;
                 let is_admin=body.get("is_admin").and_then(Value::as_bool).ok_or_else(||invalid("is_admin must be a boolean"))?;
