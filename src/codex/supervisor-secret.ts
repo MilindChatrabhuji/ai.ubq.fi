@@ -108,13 +108,13 @@ const SCALAR_START = new Set(["[", "{", ",", ":"]);
 
 const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
 
-/** Python, C and SQL string prefixes, such as `b'…'`, `rb'…'`, `u8'…'` and `N'…'`. */
-const STRING_PREFIX = /^(?:[bfrtulnex]|br|rb|fr|rf|tr|rt|u8)$/i;
+/** Python/C/SQL prefixes plus Perl, Ruby and Elixir forms such as `q'…'`, `%q'…'` and `~s'…'`. */
+const STRING_PREFIX = /^(?:[bfrtulnexqs]|br|rb|fr|rf|tr|rt|u8|qq)$/i;
 
 /**
  * Whether an apostrophe opens a string: always, unless it follows a word
  * character. There it never does in JSON, JavaScript or YAML, and in Python,
- * C or SQL only after a string prefix. Prose and comments write one inside a
+ * C, SQL, Perl, Ruby or Elixir only after a string prefix. Prose and comments write one inside a
  * word (`it's`, `don't`, `users'`), and reading it as a string would carry
  * the value on to the end of the text.
  */
@@ -252,15 +252,17 @@ const parameterCommas = (text: string): ReadonlySet<number> => {
   const commas = new Set<number>();
   if (!text.includes("=>")) return commas;
   const brackets: string[] = [];
-  for (let index = 0; index < text.length; index += 1) {
+  let index = 0;
+  while (index < text.length) {
     const character = text[index];
     if ("\"'`".includes(character)) {
-      index = quotedEnd(text, index) - 1;
+      index = quotedEnd(text, index);
       continue;
     }
     if ("([{".includes(character)) brackets.push(character);
     else if (")]}".includes(character)) brackets.pop();
     else if (character === "," && brackets.at(-1) === "(") commas.add(index);
+    index += 1;
   }
   return commas;
 };

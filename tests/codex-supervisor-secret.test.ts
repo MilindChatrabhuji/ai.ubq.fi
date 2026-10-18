@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import { redactSupervisorSecretParts, redactSupervisorSecrets } from "../src/codex/supervisor-secret.ts";
 
 test("backtick quoting adds a reading without narrowing the original bracket scan", () => {
-  for (const [prefix, expected] of [["tokens: [", "[redacted]"], ['{"api_keys": [', '{"[redacted]'], ["api_key: {a: ", "[redacted]"]]) {
+  for (const [prefix, expected] of [
+    ["tokens: [", "[redacted]"],
+    ['{"api_keys": [', '{"[redacted]'],
+    ["api_key: {a: ", "[redacted]"],
+  ]) {
     assert.equal(redactSupervisorSecrets(`${prefix}\`A 'B \\'C \`D ]E `).text, expected, prefix);
   }
   assert.equal(redactSupervisorSecrets('tokens = [`a]`, "zqalpha"] done').text, "[redacted] done");
@@ -28,6 +32,20 @@ test("credential-named arrow parameters do not redact their callbacks", () => {
   ]) {
     assert.equal(redactSupervisorSecrets(text).text.includes("zqsecretvalue"), false, text);
   }
+});
+
+test("Perl, Ruby and Elixir string prefixes keep bracket characters inside their credential strings", () => {
+  for (const prefix of ["q", "qq", "%q", "%Q", "~s", "~S"]) {
+    const text = `api_keys: [${prefix}'zq]alpha', 'zqbravo'] done`;
+    assert.equal(redactSupervisorSecrets(text).text, "[redacted] done", prefix);
+    const parts = [`api_keys: [${prefix}'zq]alpha',`, " 'zqbravo'] done"];
+    assert.equal(
+      redactSupervisorSecretParts(parts).some((part) => part.text.includes("zq")),
+      false,
+      prefix
+    );
+  }
+  assert.equal(redactSupervisorSecrets("api_keys: [it's, 'zqsecretvalue'] done").text, "[redacted] done");
 });
 
 test("quoted credential keys redact bare values without consuming adjacent fields", () => {
@@ -60,7 +78,11 @@ test("closed credential values are redacted across records before their keys are
   for (const parts of cases) {
     const redacted = redactSupervisorSecretParts(parts);
     assert.equal(redacted.length, parts.length);
-    assert.equal(redacted.some((part) => part.text.includes("zq")), false, JSON.stringify(parts));
+    assert.equal(
+      redacted.some((part) => part.text.includes("zq")),
+      false,
+      JSON.stringify(parts)
+    );
     assert.ok(redacted.at(-1)?.text.endsWith(" done"), JSON.stringify(redacted));
   }
 });
@@ -79,7 +101,10 @@ test("unclosed cross-record readings cannot consume later records", () => {
 test("cross-record bracket readings stay linear with many unclosed outer credentials", () => {
   const started = performance.now();
   const redacted = redactSupervisorSecretParts(["tokens: [".repeat(25_000) + "zqsecretvalue", "] done"]);
-  assert.equal(redacted.some((part) => part.text.includes("zq")), false);
+  assert.equal(
+    redacted.some((part) => part.text.includes("zq")),
+    false
+  );
   assert.ok(redacted[1].text.endsWith(" done"));
   assert.ok(performance.now() - started < 2_000);
 });
