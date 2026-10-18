@@ -24,9 +24,15 @@ pub struct AuthRequest {
 
 impl std::fmt::Debug for AuthRequest {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("AuthRequest")
+        formatter
+            .debug_struct("AuthRequest")
             .field("method", &self.method)
-            .field("path", &url::Url::parse(&self.url).ok().map(|url| url.path().to_owned()))
+            .field(
+                "path",
+                &url::Url::parse(&self.url)
+                    .ok()
+                    .map(|url| url.path().to_owned()),
+            )
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("body_bytes", &self.body.len())
             .finish()

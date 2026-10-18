@@ -126,8 +126,14 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
             }
             operation => {
                 let parameter = if operation == AdminOperation::ApiKeyPaidFallbacks {
-                    route.parameter.as_deref().map(decode_parameter).transpose()?
-                } else { route.parameter };
+                    route
+                        .parameter
+                        .as_deref()
+                        .map(decode_parameter)
+                        .transpose()?
+                } else {
+                    route.parameter
+                };
                 self.capabilities
                     .execute(
                         operation,
@@ -148,13 +154,25 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
 }
 
 fn decode_parameter(value: &str) -> Result<String, GatewayError> {
-    let bytes = value.as_bytes(); let mut decoded = Vec::new(); let mut index = 0;
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::new();
+    let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
-            let first = bytes.get(index + 1).and_then(|b| (*b as char).to_digit(16)).ok_or_else(|| invalid("Invalid API key id"))?;
-            let second = bytes.get(index + 2).and_then(|b| (*b as char).to_digit(16)).ok_or_else(|| invalid("Invalid API key id"))?;
-            decoded.push((first * 16 + second) as u8); index += 3;
-        } else { decoded.push(bytes[index]); index += 1; }
+            let first = bytes
+                .get(index + 1)
+                .and_then(|b| (*b as char).to_digit(16))
+                .ok_or_else(|| invalid("Invalid API key id"))?;
+            let second = bytes
+                .get(index + 2)
+                .and_then(|b| (*b as char).to_digit(16))
+                .ok_or_else(|| invalid("Invalid API key id"))?;
+            decoded.push((first * 16 + second) as u8);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
     }
     String::from_utf8(decoded).map_err(|_| invalid("Invalid API key id"))
 }

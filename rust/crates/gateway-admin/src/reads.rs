@@ -64,12 +64,13 @@ pub async fn passkey_users<S: QueryStore>(
     let rows = prefix_rows(store, store::key(json!(["uos_ai", "auth", "users"])), now).await?;
     let mut users = Vec::new();
     for row in rows {
-        let user: PasskeyUser = serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
-            GatewayError::unavailable("Passkey user state is corrupt", "auth_state_corrupt")
-        })?;
+        let user: PasskeyUser =
+            serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
+                GatewayError::unavailable("Passkey user state is corrupt", "auth_state_corrupt")
+            })?;
         users.push(user);
     }
-    users.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
+    users.sort_by_key(|user| std::cmp::Reverse(user.updated_at_ms));
     Ok(AuthResponse::json(
         200,
         json!({"object":"list","data":users.iter().map(user_wire).collect::<Vec<_>>()}),
@@ -98,8 +99,8 @@ pub async fn effective_key_record<S: QueryStore>(
         None => 0,
         Some(row) => {
             row.validate_version()?;
-            let usage: gateway_authority::quota::ApiUsageWindow = serde_json::from_value(row.json_value()?.clone())
-                .map_err(|_| {
+            let usage: gateway_authority::quota::ApiUsageWindow =
+                serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                     GatewayError::unavailable(
                         "API key quota ledger is corrupt",
                         "api_key_policy_invalid",
@@ -164,12 +165,13 @@ pub async fn api_keys<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
     let rows = prefix_rows(store, store::key(json!(["ubq_ai", "api_keys", "id"])), now).await?;
     let mut records = Vec::new();
     for row in rows {
-        let record: ApiKeyRecord = serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
-            GatewayError::unavailable("API key state is corrupt", "api_key_policy_invalid")
-        })?;
+        let record: ApiKeyRecord =
+            serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
+                GatewayError::unavailable("API key state is corrupt", "api_key_policy_invalid")
+            })?;
         records.push(record);
     }
-    records.sort_by(|left, right| right.created_at_ms.cmp(&left.created_at_ms));
+    records.sort_by_key(|record| std::cmp::Reverse(record.created_at_ms));
     let mut data = Vec::new();
     for record in records {
         data.push(effective_key_record(store, &record, now).await?);
@@ -193,11 +195,11 @@ pub async fn key_changes<S: QueryStore>(
             }
             value
                 .trim()
-                    .parse::<u64>()
+                .parse::<u64>()
                 .ok()
-                    .filter(|n| *n > 0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER as u64)
+                .filter(|n| *n > 0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER as u64)
                 .ok_or_else(|| invalid("limit must be a positive integer"))?
-                    .min(50) as u32
+                .min(50) as u32
         }
     };
     let cursor = query
@@ -225,9 +227,10 @@ pub async fn key_changes<S: QueryStore>(
         .await?;
     let mut events = Vec::new();
     for entry in page.entries {
-        let event: KeyChange = serde_json::from_value(entry.record.json_value()?.clone()).map_err(|_| {
-            GatewayError::unavailable("API key audit state is corrupt", "api_key_audit_invalid")
-        })?;
+        let event: KeyChange =
+            serde_json::from_value(entry.record.json_value()?.clone()).map_err(|_| {
+                GatewayError::unavailable("API key audit state is corrupt", "api_key_audit_invalid")
+            })?;
         if event.at_ms >= now - RETENTION_MS {
             events.push(event);
         }

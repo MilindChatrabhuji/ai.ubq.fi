@@ -7,7 +7,11 @@ use crate::{AuthConfig, crypto::Secret};
 fn tokens(raw: Option<&str>) -> Vec<Secret> {
     let mut result = Vec::new();
     for token in raw.unwrap_or_default().split([',', '\n']).map(str::trim) {
-        if !token.is_empty() && !result.iter().any(|existing: &Secret| existing.expose() == token) {
+        if !token.is_empty()
+            && !result
+                .iter()
+                .any(|existing: &Secret| existing.expose() == token)
+        {
             result.push(Secret::new(token.to_owned()));
         }
     }
@@ -15,11 +19,16 @@ fn tokens(raw: Option<&str>) -> Vec<Secret> {
 }
 
 fn nonempty(value: Option<&str>) -> Option<String> {
-    value.map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned)
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn kernel_pems(raw: Option<&str>) -> Vec<String> {
-    let Some(raw) = nonempty(raw) else { return Vec::new(); };
+    let Some(raw) = nonempty(raw) else {
+        return Vec::new();
+    };
     // Match src/kernel/attestation.ts exactly: two literal backslashes + n become one.
     // Do not silently repair that source behavior as part of runtime migration.
     let normalized = raw.replace("\\\\n", "\\n");
@@ -28,11 +37,20 @@ fn kernel_pems(raw: Option<&str>) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut remaining = normalized.as_str();
     while let Some(start) = remaining.find(begin) {
-        let Some(finish) = remaining[start..].find(end).map(|offset| start + offset + end.len()) else { break; };
+        let Some(finish) = remaining[start..]
+            .find(end)
+            .map(|offset| start + offset + end.len())
+        else {
+            break;
+        };
         blocks.push(remaining[start..finish].trim().to_owned());
         remaining = &remaining[finish..];
     }
-    if blocks.is_empty() { vec![normalized] } else { blocks }
+    if blocks.is_empty() {
+        vec![normalized]
+    } else {
+        blocks
+    }
 }
 
 impl AuthConfig {

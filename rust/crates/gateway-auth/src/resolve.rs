@@ -104,12 +104,19 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         }
         let mut verification_config = self.config.clone();
         let key_row = self.store.read(&kernel_public_keys_key()).await?;
-        let stored_keys: Option<Vec<Value>> = crate::store::decode(key_row.as_ref(), self.host.now_ms())?;
+        let stored_keys: Option<Vec<Value>> =
+            crate::store::decode(key_row.as_ref(), self.host.now_ms())?;
         if let Some(stored_keys) = stored_keys {
             for record in stored_keys {
                 if let Some(pem) = record.get("pem").and_then(Value::as_str)
-                    && !verification_config.kernel_public_keys_pem.iter().any(|key| key == pem) {
-                    verification_config.kernel_public_keys_pem.push(pem.to_owned());
+                    && !verification_config
+                        .kernel_public_keys_pem
+                        .iter()
+                        .any(|key| key == pem)
+                {
+                    verification_config
+                        .kernel_public_keys_pem
+                        .push(pem.to_owned());
                 }
             }
         }
@@ -209,23 +216,20 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 })?;
             verified = reply.success();
             if !verified
-                && let Some(org) = self.config.deno_org_slug.as_ref().filter(|s| !s.is_empty()) {
-                    let reply = self
-                        .host
-                        .fetch_auth(AuthUpstreamRequest::DenoConsole {
-                            token: secret.clone(),
-                            organization: org.clone(),
-                            app: app.clone(),
-                        })
-                        .await
-                        .map_err(|_| {
-                            GatewayError::new(
-                                502,
-                                "Failed to verify admin token",
-                                Some("bad_gateway"),
-                            )
-                        })?;
-                    verified = reply.success() && console_title_matches(&reply.body, app);
+                && let Some(org) = self.config.deno_org_slug.as_ref().filter(|s| !s.is_empty())
+            {
+                let reply = self
+                    .host
+                    .fetch_auth(AuthUpstreamRequest::DenoConsole {
+                        token: secret.clone(),
+                        organization: org.clone(),
+                        app: app.clone(),
+                    })
+                    .await
+                    .map_err(|_| {
+                        GatewayError::new(502, "Failed to verify admin token", Some("bad_gateway"))
+                    })?;
+                verified = reply.success() && console_title_matches(&reply.body, app);
             }
         }
         if !verified
@@ -234,18 +238,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 .deno_deployment_id
                 .as_ref()
                 .filter(|s| !s.is_empty())
-            {
-                verified = self
-                    .host
-                    .fetch_auth(AuthUpstreamRequest::DenoDeployment {
-                        token: secret,
-                        deployment: deployment.clone(),
-                    })
-                    .await
-                    .map_err(|_| {
-                        GatewayError::new(502, "Failed to verify admin token", Some("bad_gateway"))
-                    })?
-                    .success();
+        {
+            verified = self
+                .host
+                .fetch_auth(AuthUpstreamRequest::DenoDeployment {
+                    token: secret,
+                    deployment: deployment.clone(),
+                })
+                .await
+                .map_err(|_| {
+                    GatewayError::new(502, "Failed to verify admin token", Some("bad_gateway"))
+                })?
+                .success();
         }
         if !verified {
             return Err(unauthorized());
@@ -277,33 +281,35 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                     && let (Some(hash), Some(id)) = (
                         row.json_value()?.get("hash").and_then(Value::as_str),
                         row.json_value()?.get("id").and_then(Value::as_str),
-                    ) {
-                        let hash_row = self.store.read(&api_keys::hash_key(hash)).await?;
-                        if let Some(hash_row) = hash_row {
-                            hash_row.validate_version()?;
-                            let record = serde_json::from_value(hash_row.json_value()?.clone()).map_err(|_| {
+                    )
+                {
+                    let hash_row = self.store.read(&api_keys::hash_key(hash)).await?;
+                    if let Some(hash_row) = hash_row {
+                        hash_row.validate_version()?;
+                        let record = serde_json::from_value(hash_row.json_value()?.clone())
+                            .map_err(|_| {
                                 GatewayError::unavailable(
                                     "Local API key quota migration is incomplete",
                                     "server_error",
                                 )
                             })?;
-                            let policy = api_keys::policy_from_record(
-                                hash.to_owned(),
-                                record,
-                                self.host.now_ms(),
-                            )?;
-                            if id == "local-development" {
-                                return Ok(Self::principal(
-                                    token,
-                                    AuthMethod::KvApiKey {
-                                        key_id: id.to_owned(),
-                                        policy,
-                                    },
-                                    false,
-                                    false,
-                                ));
-                            }
+                        let policy = api_keys::policy_from_record(
+                            hash.to_owned(),
+                            record,
+                            self.host.now_ms(),
+                        )?;
+                        if id == "local-development" {
+                            return Ok(Self::principal(
+                                token,
+                                AuthMethod::KvApiKey {
+                                    key_id: id.to_owned(),
+                                    policy,
+                                },
+                                false,
+                                false,
+                            ));
                         }
+                    }
                 }
             }
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
@@ -384,17 +390,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                     && !Self::allowlisted(&self.config.admin_tokens, token)
                     && !Self::allowlisted(&self.config.auth_tokens, token)
                     && request.header("cookie").is_some()
-            }) {
-                match self.github(request, token).await {
-                    Ok(_) => return Err(unauthorized()),
-                    Err(error) if error.status == 401 => {
-                        session = self
-                            .passkeys()
-                            .session(&request.without_bearer(), None)
-                            .await?;
-                    }
-                    Err(error) => return Err(error),
+            })
+        {
+            match self.github(request, token).await {
+                Ok(_) => return Err(unauthorized()),
+                Err(error) if error.status == 401 => {
+                    session = self
+                        .passkeys()
+                        .session(&request.without_bearer(), None)
+                        .await?;
                 }
+                Err(error) => return Err(error),
+            }
         }
         if let Some(view) = session {
             if !view.user.is_admin {
@@ -447,8 +454,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             ("GET", "/uos/auth") => {
                 let mut auth = self.authenticate_client(request).await?;
                 if (local_bypass(request, self.config) || self.legacy_local(request))
-                    && let Ok(admin) = self.authenticate_admin(request).await {
-                        auth = admin;
+                    && let Ok(admin) = self.authenticate_admin(request).await
+                {
+                    auth = admin;
                 }
                 let method = self.method_wire(&auth.method).await?;
                 let token = auth.token.as_ref().map(Secret::expose);
