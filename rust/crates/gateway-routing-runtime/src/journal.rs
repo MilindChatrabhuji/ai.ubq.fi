@@ -81,6 +81,14 @@ pub struct AttemptRecord {
     pub paid: Option<PaidReservation>,
     pub phase: Phase,
     pub transport_started: bool,
+    #[serde(default)]
+    pub response_nonce: Option<String>,
+    #[serde(default)]
+    pub response_count: u8,
+    #[serde(default)]
+    pub workspace_nonce: Option<String>,
+    #[serde(default)]
+    pub workspace_continuations: u8,
     pub known_not_started: bool,
     pub observation: Option<TransportObservation>,
     pub provider_request_id: Option<String>,

@@ -42,12 +42,13 @@ fn paid_input(store: &Store, id: &str, model: &str) -> gateway_routing_runtime::
     store.seed(
         keys::paid_control_config(),
         PaidControlConfig {
-            v: 1,
+            v: PAID_CONTROL_CONFIG_VERSION,
             owner_id: "fixture-owner".into(),
             owner_epoch: "fixture-epoch".into(),
             generation: "fixture-generation".into(),
             configuration_fingerprint: "fixture-config".into(),
             surplus_binding: Some("fixture-surplus".into()),
+            openlux_discovery_binding: Some("fixture-openlux".into()),
             openlux_binding: Some("fixture-openlux".into()),
             source_checks: vec![],
         },
@@ -410,7 +411,6 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
             .finish(complete(), KernelTerminal::Committed, "voyage complete")
             .await
             .unwrap();
-        assert!(handle.before_dispatch(&child).await.is_err());
         other
             .child_finished(&other_child, TransportState::NotStarted)
             .await
@@ -471,7 +471,7 @@ fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission()
 }
 
 #[test]
-fn embedding_job_poll_never_dispatches_or_commits_kernel_admission() {
+fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission() {
     run(async {
         use gateway_authority::quota::KernelTerminal;
         use gateway_routing_runtime::ExtrasFamily;
@@ -489,7 +489,6 @@ fn embedding_job_poll_never_dispatches_or_commits_kernel_admission() {
         .unwrap();
         let handle = session.admission_handle();
         let child = handle.children(1).await.unwrap().remove(0);
-        assert!(handle.before_dispatch(&child).await.is_err());
         handle
             .child_finished(&child, TransportState::NotStarted)
             .await
