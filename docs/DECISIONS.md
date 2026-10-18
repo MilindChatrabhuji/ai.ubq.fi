@@ -575,8 +575,8 @@ therefore required a per-commit `danger-full-access` escalation.
 `~/bin/gpg-dsh` is to be installed from `ops/gpg-dsh.sh` and set as `gpg.program`. Merging a change to the helper
 changes no machine: the installed copy keeps its old behaviour until the owner installs the new one, so this entry
 describes the repository helper, not what `~/bin/gpg-dsh` runs today. The helper uses the real homedir when that is
-genuinely writable (a probe file can be created there). Otherwise it signs from a homedir seeded under
-`$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
+genuinely writable (a probe file can be created there). Otherwise it signs from a homedir seeded at
+`$TMPDIR/dsh-gnupg-<uid>/seed` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
 Interactive shells take the passthrough branch and are unaffected.
 
 To install it, compare it with the installed helper first, `diff ops/gpg-dsh.sh ~/bin/gpg-dsh`, then run
@@ -593,8 +593,19 @@ or changing its passphrase leaves `pubring.kbx` untouched, so the old private ke
 compares that manifest with the one recorded when the seed was built. Any difference, including a deleted, added, or
 re-protected private key, stops the seed's `gpg-agent`, discards the seed, and rebuilds it before gpg runs. The
 manifest is written only after a complete copy, so an interrupted rebuild is rebuilt on the next call. The seed and
-its `dsh-gnupg` parent must be real directories owned by the caller and are forced to mode 0700; anything else fails
-closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
+its `dsh-gnupg-<uid>` parent must be real directories owned by the caller and are forced to mode 0700; anything else
+fails closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
+
+Three rules were added on 2026-10-17 (#1141). A GnuPG configuration file in the seed (`gpg.conf` or a versioned
+`gpg.conf-<version>`, `gpg-agent.conf`, `scdaemon.conf`, `common.conf`, or any other top-level `*.conf` or `*.conf-*`)
+also stops the seed's agent and discards the seed: the helper never writes one, so it was planted from inside the
+sandbox, which can write `$TMPDIR`, and a planted `pinentry-program` would see the passphrase at the next agent start.
+The seed's parent is per user, `dsh-gnupg-<uid>`, rather than one `dsh-gnupg` shared by every user, and a seed left at
+the earlier `$TMPDIR/dsh-gnupg/<uid>` is discarded with its agent when this user owns that parent, together with the
+rebuild lock and any staging or set-aside copy an earlier helper left beside it (`<uid>.lock`, `<uid>.new.*`,
+`<uid>.old.*`). Each pass over the inputs hashes all of them with one digest process (a reused seed takes one pass, a
+rebuild a second one under the rebuild lock), because macOS `shasum` is a perl script and one process per file added a
+perl start per seeded file to every sandboxed commit.
 
 Rebuilds are serialized and published whole (added 2026-10-17, #1139). Before this, every call that found a stale
 manifest stopped the agent, removed the shared seed, and rebuilt it in place, with no lock. Calls started together after
@@ -620,10 +631,12 @@ Reversal risk: pointing `gpg.program` back at the real `gpg` restores the denial
 private key to a stable non-writable-root location such as `~/.local/share` looks persistent but is unwritable under the
 restricted policy and silently reintroduces the escalation. The seed is not trusted to disappear by itself: `$TMPDIR`
 is not cleared at boot for every caller, and an unset `TMPDIR` falls back to `/tmp`. The manifest check on every call
-is what keeps the seed from becoming a second long-lived key store. Going back to a `pubring.kbx`-only trigger lets a
-deleted or re-protected secret key keep signing from the seed. Rebuilding in place, or without the lock, brings back
-the failed concurrent signings after an input change and the window in which a deleted key survives in a seed stamped
-as current.
+is what keeps the seed from becoming a second long-lived key store. Going back to a shared `$TMPDIR/dsh-gnupg` parent
+breaks every other user once one user owns it under a shared `/tmp`, and lets that owner swap a user's seed for a
+symbolic link between the helper's checks; dropping the configuration check lets a planted `gpg-agent.conf` survive
+until the next key change. Going back to a `pubring.kbx`-only trigger lets a deleted or re-protected secret key keep
+signing from the seed. Rebuilding in place, or without the lock, brings back the failed concurrent signings after an
+input change and the window in which a deleted key survives in a seed stamped as current.
 
 ## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
 
@@ -1106,20 +1119,30 @@ Acceptance ran against the deployed releases, not the branch:
 > SHA and `vps-<full-git-sha>` in both its body and identity headers. That rule was already in `AGENTS.md` at
 > `2207a757fb6f8c362e18cbf890d59ee191d53e26`. Neither observation is recorded for this release:
 >
-> - The authenticated inference above went through the public `https://ai.ubq.fi` route. That does not show a direct
->   Mac-to-VPS authenticated inference request succeeding.
+> - None of the requests above is recorded as a direct Mac-to-VPS request. The truncation reproduction and the three
+>   normal completions were authenticated inference requests "on both hosts" whose route is not recorded; the one whose
+>   route is stated went through the public `https://ai.ubq.fi` route. None of them shows a direct Mac-to-VPS
+>   authenticated inference request succeeding.
 > - The identity table names each host's release and identity, but not where they were read. It does not record that the
 >   VPS `/health` returned `2207a757fb6f8c362e18cbf890d59ee191d53e26` and
 >   `vps-2207a757fb6f8c362e18cbf890d59ee191d53e26` in both its body and identity headers.
 >
 > The bullets above are kept as first written. They show the fix behaving as intended on both hosts; they do not show that
-> the release met the repository's acceptance rule. This note adds no new observation, and nothing in this repository
-> supplies the missing ones. Read the status line above as "deployed to both surfaces, acceptance unverified".
+> the release met the repository's acceptance rule. This note adds no new observation, and no recorded observation
+> supplies them. The entry does not say how the VPS release was deployed. Had it gone through `deno task deploy:vps`,
+> that run could not have succeeded unless the loopback `/health` returned the SHA and `vps-<sha>` in its body and in
+> the `x-uos-git-sha` and `x-uos-deployment-id` headers (`ops/deploy.ts:84-103` at `2207a757fb`), and the identity in
+> the table is the `deployment_id` that tool prints on success. So the `/health` half is unrecorded, not shown to be
+> unchecked; only the direct Mac-to-VPS inference half has nothing to support it (corrected 2026-10-17, #1141). Read
+> the status line above as "deployed to both surfaces, acceptance unverified".
 
 The retracted premise is now moot in one direction: the deployed G3 is narration-independent by construction - it fires
 only when a would-be completion carries no assistant text, no refusal and no tool call, so it cannot act on the
 retracted symptom. Worth revisiting before any future change: the changelog wording that described it as a "no tool
-call" guard, which reads as narration-targeted although the code does not test for that alone.
+call" guard, which reads as narration-targeted although the code does not test for that alone. (Checked 2026-10-17,
+#1141: the repository keeps no changelog for the gateway. The program's pull requests describe G3 by all three of its
+clauses (#367) or as the completion-validity check (#368, which merged the program). No record carrying that wording
+was found, so this entry is the only place the phrase appears.)
 
 Prior state, retained: the two then-running releases (`922c33392d` on the VPS, `4176e992f5` on the Mac) preceded every
 commit in the program, so at that time no production inference behaviour had changed.
@@ -1134,9 +1157,9 @@ commit in the program, so at that time no production inference behaviour had cha
 - **G3 (fail closed on a degenerate completion)** - **partially dependent in motivation only; every clause now stands
   independently.** Its stated trigger is a stream about to complete "with no tool call, no non-empty assistant text and
   no refusal". The no-tool-call clause was written for the narration symptom that has now been retracted. The
-  reasoning-only clause stands on its own: a completion whose only output is reasoning hands the client nothing, which
-  the Cerebras route already failed closed for independently of any narration claim. The no-tool-call clause is
-  nonetheless required on its own merits, whatever motivated it. G3's trigger is the negation of the shared
+  no-assistant-text clause stands on its own: it is what fails a reasoning-only completion, which hands the client
+  nothing and which the Cerebras route already failed closed for independently of any narration claim. The no-tool-call
+  clause is nonetheless required on its own merits, whatever motivated it. G3's trigger is the negation of the shared
   completion-validity predicate, `isAnswerBearingCompletion` in `src/upstream-wire.ts`, and the no-tool-call clause is
   that predicate's `toolCallCount > 0` term: a tool call counts as answer-bearing output. Today the stream relay
   (`src/provider/stream-relay.ts`) fails a completed terminal closed only when the predicate is false, so it accepts a
@@ -1145,26 +1168,30 @@ commit in the program, so at that time no production inference behaviour had cha
   `empty_upstream_completion`), the buffered DeepSeek and LithosAI Responses paths (`src/deepseek/handlers.ts`,
   `src/provider/lithos-handlers.ts`) and the Cerebras Responses check (`src/provider/cerebras-responses.ts`), the last
   three through `chatCompletionHasAnswerBearingOutput`. The retracted narration cases carried non-empty assistant text,
-  so they never depended on this clause.
+  so they never depended on this clause. The no-refusal clause rests on the same predicate: it is the predicate's
+  refusal term, so a non-empty refusal also counts as answer-bearing output, and removing that term would fail every
+  refusal-only completion closed on the same routes, although a refusal is the model's answer to the request.
 
 Reason for recording this: the correction below removes the motivation for one clause of one change, and a future reader
 deciding whether to deploy needs to know that the other two changes and every clause of the third stand without it: G1,
-G5 and G3's reasoning-only clause on evidence that survived the retraction, and G3's no-tool-call clause on the
-completion-validity predicate.
+G5 and G3's no-assistant-text clause on evidence that survived the retraction, and G3's no-tool-call and no-refusal
+clauses on the completion-validity predicate.
 
 Reversal risk: deploying on the belief that the narration symptom is real, or reverting the whole program because its
 original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
 
 **Post-deployment follow-up (updated 2026-10-16, #608).** This entry first ended with a pre-deployment next action: "if
 the program is to be deployed", re-derive G3's trigger from the surviving evidence alone. The program was deployed on
-2026-09-21, so that next action is historical. The G3 bullet above now carries the re-derivation, and it keeps every
-clause of the deployed trigger: the reasoning-only and empty-output clauses stand on the surviving evidence, and the
-no-tool-call clause rests on the completion-validity predicate, not on the unverified frequency claim. What remains
-after deployment:
+2026-09-21, so that next action is historical. The G3 bullet above now carries the re-derivation, and it keeps all three
+clauses of the deployed trigger: no tool call, no non-empty assistant text and no refusal. The no-assistant-text clause
+stands on the surviving evidence; the no-tool-call and no-refusal clauses rest on the completion-validity predicate, not
+on the unverified frequency claim (clauses named as the trigger states them, 2026-10-17, #1141). What remains after
+deployment:
 
-- Before any future change to G3, revise the changelog wording that calls it a "no tool call" guard (see above). Keep the
-  no-tool-call clause: G3 is the negation of the shared completion-validity predicate (`isAnswerBearingCompletion`), and
-  a tool call is valid output.
+- Before any future change to G3, describe it by its three clauses rather than as a "no tool call" guard; no changelog
+  or other record carrying that wording was found to revise (see above). Keep the no-tool-call and no-refusal clauses:
+  G3 is the negation of the shared completion-validity predicate (`isAnswerBearingCompletion`), and a tool call and a
+  refusal are each valid output.
 - Do not cite this entry as an accepted deployment under `AGENTS.md`. The missing acceptance observations were not
   recorded while `2207a757fb` ran, and both surfaces moved to `3661bcfd13` on 2026-09-22 (see "Buffered-terminal fix
   deployed to both surfaces" below).
@@ -1537,6 +1564,22 @@ production in either direction. The only rows on the new revision are this accep
 
 `sh scripts/verify.sh` reported `verify: OK` on the merged revision before deployment. Root checkout is clean on
 `development`, matching `origin/development`, with the task branches removed.
+
+> **Qualified on 2026-10-17 (#1141): acceptance of this release is only partly supported against `AGENTS.md`.**
+> `AGENTS.md` accepts a deployment only when a direct Mac-to-VPS authenticated inference request succeeds and `/health`
+> returns the full Git SHA and `vps-<full-git-sha>` in both its body and identity headers. That rule was already in
+> `AGENTS.md` at `3661bcfd13a9c1b9056fe5dc1786bb49b18ad594`. This entry records neither observation:
+>
+> - The `/health` half was checked by the deploy tool but not recorded. The VPS release went through
+>   `deno task deploy:vps`, which at `3661bcfd13` ran `ops/deploy.ts`. That run could not have succeeded unless the
+>   loopback `http://127.0.0.1:7999/health` returned HTTP 200 with the SHA and `vps-<sha>` in its body and in the
+>   `x-uos-git-sha` and `x-uos-deployment-id` headers (`ops/deploy.ts:84-103` at that revision). Its output is not
+>   recorded here.
+> - Nothing supports the direct Mac-to-VPS half. None of the requests above is recorded as a direct Mac-to-VPS request,
+>   and the entry does not state the route any of them took.
+>
+> The bullets above are kept as first written. Read "live on both surfaces" above as "deployed to both surfaces, with
+> the loopback `/health` identity checked by the deploy tool and direct Mac-to-VPS inference unverified".
 
 ## Client behaviour on a degenerate completion, and the terminal-truthfulness 502 surface - 2026-09-22
 
