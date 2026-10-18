@@ -1,0 +1,52 @@
+{
+  "native": [
+    {
+      "slug": "other",
+      "id": null,
+      "future": 1,
+      "efforts": null,
+      "default": null
+    },
+    {
+      "slug": "deepseek-v4-flash",
+      "id": null,
+      "future": null,
+      "efforts": ["none", "low", "high", "max"],
+      "default": "high"
+    },
+    {
+      "slug": "deepseek-flash",
+      "id": null,
+      "future": null,
+      "efforts": ["none", "low", "high", "max"],
+      "default": "high"
+    },
+    {
+      "slug": "deepseek-v4-pro",
+      "id": null,
+      "future": null,
+      "efforts": ["none", "low", "high", "max"],
+      "default": "high"
+    }
+  ],
+  "collision": {
+    "id": "deepseek-v4-flash",
+    "providers": [
+      {
+        "id": "surplus"
+      },
+      {
+        "id": "deepseek"
+      }
+    ],
+    "created": 123,
+    "context_window_tokens": 1000000,
+    "default_reasoning_effort": "high",
+    "max_context_window_tokens": 1000000,
+    "auto_compact_token_limit_tokens": 850000,
+    "effective_context_window_percent": 95,
+    "context_source": "provider_discovery",
+    "supported_reasoning_levels": ["none", "low", "high", "max"],
+    "reasoning_source": "provider_discovery"
+  }
+}

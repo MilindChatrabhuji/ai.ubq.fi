@@ -64,6 +64,7 @@ struct Socket {
     serial: u64,
     call_timeout: Duration,
     overall_deadline: Option<Instant>,
+    failed: bool,
 }
 impl Socket {
     fn open(path: &Path, max_payload: usize, call_timeout: Duration) -> Result<Self, GatewayError> {
@@ -112,6 +113,7 @@ impl Socket {
             serial: 0,
             call_timeout,
             overall_deadline,
+            failed: false,
         })
     }
     fn notify_initialized(&mut self) -> Result<(), GatewayError> {
@@ -122,6 +124,19 @@ impl Socket {
             .map_err(|_| owner_unavailable())
     }
     fn call(&mut self, method: &str, params: Value) -> Result<Value, GatewayError> {
+        if self.failed {
+            return Err(owner_unavailable());
+        }
+        let result = self.call_inner(method, params);
+        if result.is_err() {
+            // The pinned parser can retain a rejected frame header. Never read
+            // that connection again, including during close or a later RPC.
+            self.failed = true;
+            let _ = self.socket.get_mut().stream.shutdown(Shutdown::Both);
+        }
+        result
+    }
+    fn call_inner(&mut self, method: &str, params: Value) -> Result<Value, GatewayError> {
         self.serial = self.serial.checked_add(1).ok_or_else(owner_unavailable)?;
         let id = self.serial;
         let call_deadline = Instant::now() + self.call_timeout;
@@ -167,15 +182,27 @@ impl Socket {
         }
     }
     fn close(&mut self) {
+        if self.failed {
+            let _ = self.socket.get_mut().stream.shutdown(Shutdown::Both);
+            return;
+        }
         let grace = Duration::from_millis(250);
         let close_deadline = Instant::now() + grace;
         self.socket.get_mut().deadline = self
             .overall_deadline
             .map_or(close_deadline, |overall| overall.min(close_deadline));
-        let _ = self.socket.close(None);
-        let _ = self.socket.flush();
-        let _ = self.socket.read();
+        if self.socket.close(None).is_ok() && self.socket.flush().is_ok() {
+            // Healthy connections retain the source's bounded close grace.
+            // Stop at the first error: a rejected header must not be read twice.
+            while Instant::now() < self.socket.get_ref().deadline {
+                match self.socket.read() {
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        }
         let _ = self.socket.get_mut().stream.shutdown(Shutdown::Both);
+        self.failed = true;
     }
 }
 impl Drop for Socket {

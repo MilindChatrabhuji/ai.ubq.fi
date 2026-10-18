@@ -6,6 +6,7 @@ mod claude_chat_stream;
 pub mod extras;
 pub mod finalize;
 pub mod lithos;
+pub mod paid_lookup;
 pub mod policy;
 pub mod replay;
 pub mod request;

@@ -14,5 +14,9 @@ serde.workspace = true
 serde_json.workspace = true
 url = "=2.5.8"
 
+[dev-dependencies]
+gateway-publication = { path = "../gateway-publication" }
+gateway-providers = { path = "../gateway-providers" }
+
 [lints]
 workspace = true

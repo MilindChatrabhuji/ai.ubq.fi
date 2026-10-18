@@ -1,3 +1,4 @@
+use gateway_auth::native_credentials::{NativeCredentials, NativeOwnerId};
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
     read_codex_source_pool,
@@ -24,39 +25,28 @@ use gateway_core::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
-use gateway_native::control_publication::*;
-use gateway_native::{
-    NativeCredentials, NativeOwnerId, NativeOwnerTransport, RenewalStep,
-    access_publication::{PreparedAccessPublication, RegisteredAccessOwner},
+use gateway_publication::access_publication::{
+    AccessCredentialSource, PreparedAccessPublication, RegisteredAccessOwner,
 };
+use gateway_publication::control_publication::*;
+use gateway_publication::transport::{
+    NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
+    PublicationResponse,
+};
+use gateway_publication::{PreparedPublicationCommand, PublicationDisposition};
 use serde_json::{Value, json};
 
 struct AccessRead(NativeCredentials);
-impl NativeOwnerTransport for AccessRead {
-    async fn read_credentials(
+impl AccessCredentialSource for AccessRead {
+    async fn read_current_access(
         &self,
         owner: &NativeOwnerId,
     ) -> Result<NativeCredentials, GatewayError> {
         assert_eq!(owner.0, "registered-owner");
         Ok(self.0.clone())
     }
-    async fn request(&self, _: &NativeOwnerId, _: RenewalStep) -> Result<Value, GatewayError> {
-        panic!("Access publication must never invoke renewal")
-    }
-    async fn verify_initialized_home(
-        &self,
-        _: &NativeOwnerId,
-        _: &Value,
-    ) -> Result<(), GatewayError> {
-        panic!("Access publication must never connect a daemon")
-    }
-    async fn initialized(&self, _: &NativeOwnerId) -> Result<(), GatewayError> {
-        panic!("Access publication must never initialize a daemon")
-    }
-    async fn close(&self, _: &NativeOwnerId) -> Result<(), GatewayError> {
-        panic!("Access publication must never open a daemon")
-    }
 }
+
 fn access(expiry: i64, user: &str) -> NativeCredentials {
     let token=format!("e30.{}.fixture",base64url(json!({"exp":expiry,"https://api.openai.com/auth":{"chatgpt_user_id":user,"chatgpt_account_id":"workspace"}}).to_string().as_bytes()));
     NativeCredentials {
@@ -216,6 +206,7 @@ fn inputs(secret: &str) -> ConfiguredPaidInputs {
     ConfiguredPaidInputs::new(
         Some(Secret::new(secret.into())),
         Some(Secret::new("fixture-openlux-key".into())),
+        Some(Secret::new("fixture-openlux-key".into())),
         json!({"overage_enabled":true}),
     )
     .unwrap()
@@ -265,6 +256,11 @@ fn real_authenticated_constructor_publishes_only_derived_fixed_control_facts() {
             configured.openlux_binding,
             inputs.binding(PaidProvider::Metered)
         );
+        assert_eq!(configured.v, 2);
+        assert_eq!(
+            configured.openlux_discovery_binding,
+            inputs.discovery_binding(PaidProvider::Metered)
+        );
         assert_eq!(configured.source_checks.len(), 1);
         assert_eq!(configured.source_checks[0].key, runtime_config_key().0);
         assert_eq!(configured.source_checks[0].expected_revision, None);
@@ -273,6 +269,228 @@ fn real_authenticated_constructor_publishes_only_derived_fixed_control_facts() {
         assert!(!persisted.contains("fixture-surplus-key"));
         assert!(!persisted.contains("fixture-openlux-key"));
         assert_eq!(rows.len(), 2);
+    });
+}
+
+#[test]
+fn explicit_discovery_and_spend_roles_have_independent_configuration_fingerprints() {
+    run(async {
+        let store = Memory::default();
+        let identity = make_identity(NativeCapability::ConfigurationPublish);
+        bootstrap(&store, &identity, now()).await;
+        let mut configurations = Vec::new();
+        for (discovery, spend) in [
+            (Some("fixture-discovery-a"), Some("fixture-spend-a")),
+            (Some("fixture-discovery-b"), Some("fixture-spend-a")),
+            (Some("fixture-discovery-a"), Some("fixture-spend-b")),
+            (None, Some("fixture-spend-a")),
+            (Some("fixture-discovery-a"), None),
+        ] {
+            let inputs = ConfiguredPaidInputs::new(
+                None,
+                discovery.map(|key| Secret::new(key.into())),
+                spend.map(|key| Secret::new(key.into())),
+                json!({"overage_enabled":true}),
+            )
+            .unwrap();
+            let prepared =
+                PreparedConfigurationPublication::capture(&store, &identity, &inputs, "g1", now())
+                    .await
+                    .unwrap();
+            let config = prepared.configuration().clone();
+            assert_eq!(
+                config.openlux_discovery_binding,
+                inputs.discovery_binding(PaidProvider::Metered)
+            );
+            assert_eq!(
+                config.openlux_binding,
+                inputs.binding(PaidProvider::Metered)
+            );
+            configurations.push(config);
+        }
+        assert_eq!(
+            configurations[0].openlux_binding,
+            configurations[1].openlux_binding
+        );
+        assert_eq!(
+            configurations[0].openlux_discovery_binding,
+            configurations[2].openlux_discovery_binding
+        );
+        assert_ne!(
+            configurations[0].openlux_discovery_binding,
+            configurations[1].openlux_discovery_binding
+        );
+        assert_ne!(
+            configurations[0].openlux_binding,
+            configurations[2].openlux_binding
+        );
+        for config in &configurations[1..] {
+            assert_ne!(
+                configurations[0].configuration_fingerprint,
+                config.configuration_fingerprint
+            );
+        }
+        assert!(configurations[3].openlux_discovery_binding.is_none());
+        assert!(configurations[3].openlux_binding.is_some());
+        assert!(configurations[4].openlux_discovery_binding.is_some());
+        assert!(configurations[4].openlux_binding.is_none());
+        assert_eq!(
+            configurations[0].openlux_binding,
+            Some(configured_paid_binding(
+                PaidProvider::Metered,
+                &Secret::new("fixture-spend-a".into())
+            ))
+        );
+        let same = inputs("fixture-surplus-key");
+        assert_eq!(
+            same.binding(PaidProvider::Metered),
+            same.discovery_binding(PaidProvider::Metered)
+        );
+        for (discovery, spend) in [(Some(" "), Some("valid")), (Some("valid"), Some(""))] {
+            assert!(
+                ConfiguredPaidInputs::new(
+                    None,
+                    discovery.map(|key| Secret::new(key.into())),
+                    spend.map(|key| Secret::new(key.into())),
+                    json!({})
+                )
+                .is_err()
+            );
+        }
+        let encoded = serde_json::to_string(&configurations).unwrap();
+        for secret in [
+            "fixture-discovery-a",
+            "fixture-discovery-b",
+            "fixture-spend-a",
+            "fixture-spend-b",
+        ] {
+            assert!(!encoded.contains(secret));
+        }
+        let mut legacy = configurations[0].clone();
+        legacy.v = 1;
+        assert!(
+            PreparedPublicationCommand::configuration_from_expected(
+                legacy.clone(),
+                "owner-r1".into(),
+                None,
+                "config-r1".into()
+            )
+            .is_err()
+        );
+        set(
+            &store,
+            keys::paid_control_config(),
+            "legacy-config",
+            serde_json::to_value(&legacy).unwrap(),
+        );
+        assert!(
+            PreparedConfigurationPublication::capture(&store, &identity, &same, "g2", now())
+                .await
+                .is_err()
+        );
+        let mut missing = serde_json::to_value(&configurations[0]).unwrap();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("openlux_discovery_binding");
+        set(&store, keys::paid_control_config(), "missing-role", missing);
+        assert!(
+            PreparedConfigurationPublication::capture(&store, &identity, &same, "g2", now())
+                .await
+                .is_err()
+        );
+    });
+}
+
+#[test]
+fn discovery_only_change_invalidates_observations_and_old_authenticated_commands() {
+    run(async {
+        let store = Memory::default();
+        let identity = publication_identity();
+        bootstrap(&store, &identity, now()).await;
+        let initial = inputs("fixture-surplus-key");
+        let prepared =
+            PreparedConfigurationPublication::capture(&store, &identity, &initial, "g1", now())
+                .await
+                .unwrap();
+        let original = prepared.configuration().clone();
+        let signed = proof(&identity, prepared.statement(), now()).await;
+        prepared
+            .publish(&store, &signed, now(), "cfg1")
+            .await
+            .unwrap();
+        set(
+            &store,
+            keys::paid_control_observation(PaidProvider::Metered),
+            "old-observation",
+            json!({"obsolete":true}),
+        );
+        let next = ConfiguredPaidInputs::new(
+            Some(Secret::new("fixture-surplus-key".into())),
+            Some(Secret::new("fixture-next-discovery".into())),
+            Some(Secret::new("fixture-openlux-key".into())),
+            json!({"overage_enabled":true}),
+        )
+        .unwrap();
+        let old_command =
+            PreparedConfigurationPublication::capture(&store, &identity, &initial, "g2", now())
+                .await
+                .unwrap()
+                .command("cfg2")
+                .unwrap();
+        let prepared =
+            PreparedConfigurationPublication::capture(&store, &identity, &next, "g2", now())
+                .await
+                .unwrap();
+        assert_eq!(
+            prepared.configuration().openlux_binding,
+            original.openlux_binding
+        );
+        assert_ne!(
+            prepared.configuration().openlux_discovery_binding,
+            original.openlux_discovery_binding
+        );
+        let receiver =
+            PublicationReceiver::configured(identity.clone(), next, vec![], now).unwrap();
+        let carrier = LocalCarrier {
+            receiver: &receiver,
+            store: &store,
+            lose_response: std::cell::Cell::new(false),
+            tamper_response: false,
+        };
+        let sender = NativePublicationSender::configured(&identity, &carrier);
+        assert_eq!(
+            sender
+                .send(&old_command, [21; 32], now())
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        assert!(
+            store
+                .read(&keys::paid_control_observation(PaidProvider::Metered))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        sender
+            .send(&prepared.command("cfg2").unwrap(), [22; 32], now())
+            .await
+            .unwrap();
+        assert!(
+            store
+                .read(&keys::paid_control_observation(PaidProvider::Metered))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let current = store
+            .read(&keys::paid_control_config())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.revision, "cfg2");
     });
 }
 
@@ -692,4 +910,194 @@ fn access_publication_refuses_stale_source_wrong_home_and_workspace_identity() {
             "raw-r1"
         );
     });
+}
+
+fn now() -> i64 {
+    1_792_339_000_000
+}
+fn publication_identity() -> NativeTransportIdentity {
+    NativeTransportIdentity::new(
+        "fixture-key".into(),
+        "fixture-owner".into(),
+        "fixture-epoch".into(),
+        [11; 32],
+        BTreeSet::from([
+            NativeCapability::ConfigurationPublish,
+            NativeCapability::AccessPublish,
+        ]),
+    )
+    .unwrap()
+}
+struct LocalCarrier<'a> {
+    receiver: &'a PublicationReceiver,
+    store: &'a Memory,
+    lose_response: std::cell::Cell<bool>,
+    tamper_response: bool,
+}
+impl PublicationCarrier for LocalCarrier<'_> {
+    async fn send(&self, request: PublicationRequest) -> Result<PublicationResponse, GatewayError> {
+        let mut response = self.receiver.handle(self.store, request).await;
+        if self.lose_response.replace(false) {
+            return Err(GatewayError::unavailable(
+                "Fixture lost committed response",
+                "native_publication_outcome_unknown",
+            ));
+        }
+        if self.tamper_response {
+            response.raw_body.push(b' ');
+        }
+        Ok(response)
+    }
+}
+#[test]
+fn signed_sender_receiver_configuration_receipt_and_lost_response_retry() {
+    run(async {
+        let store = Memory::default();
+        let identity = publication_identity();
+        bootstrap(&store, &identity, now()).await;
+        let inputs = inputs("fixture-paid-key");
+        let prepared =
+            PreparedConfigurationPublication::capture(&store, &identity, &inputs, "g1", now())
+                .await
+                .unwrap();
+        let command = prepared.command("config-r1").unwrap();
+        let receiver =
+            PublicationReceiver::configured(identity.clone(), inputs, vec![], now).unwrap();
+        let carrier = LocalCarrier {
+            receiver: &receiver,
+            store: &store,
+            lose_response: std::cell::Cell::new(true),
+            tamper_response: false,
+        };
+        let sender = NativePublicationSender::configured(&identity, &carrier);
+        assert_eq!(
+            sender
+                .send(&command, [1; 32], now())
+                .await
+                .unwrap_err()
+                .envelope
+                .error
+                .code
+                .as_deref(),
+            Some("native_publication_outcome_unknown")
+        );
+        assert_eq!(
+            store
+                .read(&keys::paid_control_config())
+                .await
+                .unwrap()
+                .unwrap()
+                .revision,
+            "config-r1"
+        );
+        let receipt = sender.send(&command, [2; 32], now()).await.unwrap();
+        assert_eq!(receipt.disposition, PublicationDisposition::AlreadyCurrent);
+        assert_eq!(receipt.configuration_revision.as_deref(), Some("config-r1"));
+        assert_eq!(
+            store
+                .read(&keys::paid_control_config())
+                .await
+                .unwrap()
+                .unwrap()
+                .revision,
+            "config-r1"
+        );
+        let replay = sender.send(&command, [2; 32], now()).await.unwrap_err();
+        assert_eq!(
+            replay.envelope.error.code.as_deref(),
+            Some("native_publication_response_unverified")
+        );
+        let bad_carrier = LocalCarrier {
+            receiver: &receiver,
+            store: &store,
+            lose_response: std::cell::Cell::new(false),
+            tamper_response: true,
+        };
+        let sender = NativePublicationSender::configured(&identity, &bad_carrier);
+        assert_eq!(
+            sender
+                .send(&command, [3; 32], now())
+                .await
+                .unwrap_err()
+                .envelope
+                .error
+                .code
+                .as_deref(),
+            Some("native_publication_response_unverified")
+        );
+    });
+}
+
+#[test]
+fn signed_access_transport_retry_preserves_source_pool_and_other_account() {
+    run(async {
+        let store = Memory::default();
+        let identity = publication_identity();
+        bootstrap(&store, &identity, now()).await;
+        let old = access(1_792_341_000, "user");
+        seed_access(&store, &old);
+        let original = read_codex_source_pool(&store, now())
+            .await
+            .unwrap()
+            .unwrap();
+        let next = AccessRead(access(1_792_342_000, "user"));
+        let registered = RegisteredAccessOwner::configured(
+            NativeOwnerId("registered-owner".into()),
+            "/tmp/uos-native-fixture".into(),
+        )
+        .unwrap();
+        let prepared = PreparedAccessPublication::capture(
+            &store,
+            &next,
+            &identity,
+            &registered,
+            now(),
+            "raw-r2",
+        )
+        .await
+        .unwrap();
+        let command = prepared.command().unwrap();
+        let receiver = PublicationReceiver::configured(
+            identity.clone(),
+            inputs("fixture-paid-key"),
+            vec![registered],
+            now,
+        )
+        .unwrap();
+        let carrier = LocalCarrier {
+            receiver: &receiver,
+            store: &store,
+            lose_response: std::cell::Cell::new(true),
+            tamper_response: false,
+        };
+        let sender = NativePublicationSender::configured(&identity, &carrier);
+        assert!(sender.send(&command, [4; 32], now()).await.is_err());
+        let receipt = sender.send(&command, [5; 32], now()).await.unwrap();
+        assert_eq!(receipt.disposition, PublicationDisposition::AlreadyCurrent);
+        assert_eq!(receipt.source_revision.as_deref(), Some("raw-r2"));
+        assert_eq!(receipt.pool_versionstamp, receipt.source_revision);
+        let current = read_codex_source_pool(&store, now())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.pool.accounts[1], original.pool.accounts[1]);
+        assert_eq!(current.revision, "raw-r2");
+    });
+}
+
+#[test]
+fn native_publication_headers_preserve_duplicate_and_missing_auth_rejection() {
+    use gateway_publication::transport::OwnedNativeAuthHeaders;
+    assert!(OwnedNativeAuthHeaders::from_pairs(Vec::new()).is_err());
+    let values = vec![
+        ("x-uos-native-version".into(), "1".into()),
+        ("x-uos-native-key-id".into(), "fixture-key".into()),
+        ("x-uos-native-time-ms".into(), now().to_string()),
+        ("x-uos-native-nonce".into(), base64url(&[1; 32])),
+        ("x-uos-native-mac".into(), base64url(&[2; 32])),
+    ];
+    assert!(OwnedNativeAuthHeaders::from_pairs(values.clone()).is_ok());
+    let mut duplicated = values;
+    duplicated.push(("X-UOS-NATIVE-MAC".into(), base64url(&[3; 32])));
+    assert!(OwnedNativeAuthHeaders::from_pairs(duplicated).is_err());
 }

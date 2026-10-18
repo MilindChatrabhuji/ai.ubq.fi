@@ -103,13 +103,13 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut view = read_view(&mut tx).await?;
             let slot_index = candidate.binding.slot as usize;
             let slot = &mut view.state.slots[slot_index];
-            slot.quota_blocks
-                .remove(class_name(candidate.proof.quota_class));
+            slot.remove_quota_class(candidate.proof.quota_class);
             slot.generation = next_generation(slot.generation)?;
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
-                generation: slot.generation,
-                quota_class: candidate.proof.quota_class,
+                generation: slot.generation as i64,
+                circuit: crate::routing::ProbeCircuit::Quota,
+                quota_class: Some(candidate.proof.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
@@ -204,8 +204,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             slot.generation = next_generation(slot.generation)?;
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
-                generation: slot.generation,
-                quota_class: candidate.proof.quota_class,
+                generation: slot.generation as i64,
+                circuit: crate::routing::ProbeCircuit::Quota,
+                quota_class: Some(candidate.proof.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;

@@ -119,6 +119,32 @@ fn append_native(rows: &mut Vec<Value>, entries: impl IntoIterator<Item = Value>
         }
     }
 }
+fn native_id(row: &Value) -> &str {
+    row.get("slug")
+        .and_then(Value::as_str)
+        .map(crate::util::js_trim)
+        .filter(|id| !id.is_empty())
+        .or_else(|| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .map(crate::util::js_trim)
+        })
+        .unwrap_or("")
+}
+fn merge_configured_native(rows: &mut Vec<Value>, input: &CatalogInput, provider: &str) {
+    let configured = configured_native_records(input, provider);
+    if provider == "deepseek" {
+        for row in rows.iter_mut() {
+            if let Some(replacement) = configured
+                .iter()
+                .find(|entry| native_id(entry) == native_id(row))
+            {
+                *row = replacement.clone();
+            }
+        }
+    }
+    append_native(rows, configured);
+}
 fn unique_paid(input: &CatalogInput) -> Vec<Value> {
     let mut rows = Vec::new();
     for provider in ["openlux", "surplus"] {
@@ -160,7 +186,7 @@ pub fn native_catalog(stored: Option<&Value>, input: &CatalogInput) -> Value {
             .map(claude_native_record),
     );
     for provider in ["deepseek", "ubiquity", "lithos", "cerebras"] {
-        append_native(&mut rows, configured_native_records(input, provider));
+        merge_configured_native(&mut rows, input, provider);
     }
     append_native(&mut rows, openrouter_native(input));
     envelope["models"] = json!(filter_whitelist(rows, input.whitelist.as_ref(), true));
@@ -178,7 +204,7 @@ pub fn native_catalog_fallback(input: &CatalogInput) -> Option<Value> {
     );
     append_native(&mut rows, paid.iter().map(|r| paid_native_record(r, input)));
     for provider in ["deepseek", "ubiquity", "lithos", "cerebras"] {
-        append_native(&mut rows, configured_native_records(input, provider));
+        merge_configured_native(&mut rows, input, provider);
     }
     append_native(&mut rows, openrouter_native(input));
     if rows.is_empty() {

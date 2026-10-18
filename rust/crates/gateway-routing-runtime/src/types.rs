@@ -131,7 +131,7 @@ pub enum RefreshOutcome {
 pub trait RoutingHost {
     fn cancelled(&self) -> bool;
     fn cancellation_error(&self) -> GatewayError;
-    fn wait(&self, milliseconds: i64) -> impl Future<Output = Result<(), GatewayError>>;
+    fn wait(&self, milliseconds: i64) -> impl Future<Output = WaitOutcome>;
     fn credential(
         &self,
         input: CredentialRequest,
@@ -174,8 +174,21 @@ pub enum TransportState {
     NotStarted,
     Started,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FailureOrigin {
+    Provider,
+    Transport,
+    GatewayDeadline,
+}
+#[derive(Clone, Debug)]
+pub struct WaitOutcome {
+    pub elapsed_ms: i64,
+    pub result: Result<(), GatewayError>,
+}
 #[derive(Clone, Debug)]
 pub struct AttemptFailure {
+    /// Captured before awaiting the bounded refusal body; never inferred from status alone.
+    pub origin: FailureOrigin,
     pub status: Option<u16>,
     pub headers: Headers,
     pub body: Vec<u8>,

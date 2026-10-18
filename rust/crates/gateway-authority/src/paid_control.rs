@@ -40,14 +40,27 @@ pub struct PaidControlOwner {
     pub key_fingerprint: String,
 }
 
+pub const PAID_CONTROL_CONFIG_VERSION: u32 = 2;
+
+fn required_nullable_binding<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PaidControlConfig {
     pub v: u32,
     pub owner_id: String,
     pub owner_epoch: String,
     pub generation: String,
     pub configuration_fingerprint: String,
+    #[serde(deserialize_with = "required_nullable_binding")]
     pub surplus_binding: Option<String>,
+    #[serde(deserialize_with = "required_nullable_binding")]
+    pub openlux_discovery_binding: Option<String>,
+    #[serde(deserialize_with = "required_nullable_binding")]
     pub openlux_binding: Option<String>,
     pub source_checks: Vec<PaidSourceCheck>,
 }
@@ -280,7 +293,7 @@ async fn current_projection<S: AuthorityStore, I: TokenSource>(
         .read(&keys::paid_control_config())
         .await?
         .ok_or_else(|| control_error("Authenticated paid configuration is not published."))?;
-    if config.v != 1
+    if config.v != PAID_CONTROL_CONFIG_VERSION
         || config.owner_id != owner.owner_id
         || config.owner_epoch != owner.owner_epoch
         || tx.revision(&keys::paid_control_config()).as_deref()
@@ -290,9 +303,13 @@ async fn current_projection<S: AuthorityStore, I: TokenSource>(
     }
     text(&config.generation)?;
     text(&config.configuration_fingerprint)?;
-    for binding in [&config.surplus_binding, &config.openlux_binding]
-        .into_iter()
-        .flatten()
+    for binding in [
+        &config.surplus_binding,
+        &config.openlux_discovery_binding,
+        &config.openlux_binding,
+    ]
+    .into_iter()
+    .flatten()
     {
         text(binding)?;
     }
@@ -306,7 +323,7 @@ async fn current_projection<S: AuthorityStore, I: TokenSource>(
         ),
         (
             PaidProvider::Metered,
-            &config.openlux_binding,
+            &config.openlux_discovery_binding,
             &provenance.openlux_observation_revision,
         ),
     ] {
