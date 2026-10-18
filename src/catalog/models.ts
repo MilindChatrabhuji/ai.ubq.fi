@@ -297,7 +297,8 @@ const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]):
   if (!configured.length) return [...models];
   const modelId = (model: Record<string, unknown>): string => {
     const slug = getString(model.slug)?.trim();
-    return slug ? slug : (getString(model.id)?.trim() ?? "");
+    if (slug) return slug;
+    return getString(model.id)?.trim() ?? "";
   };
   const configuredById = new Map(configured.map((model) => [modelId(model), model]));
   const present = new Set(models.map(modelId));
