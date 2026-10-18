@@ -100,14 +100,31 @@ impl Binding {
         if !gateway_providers::anthropic::is_claude(model) {
             return Ok(ClaudeSelection::NotApplicable);
         }
-        let selection = gateway_catalog_runtime::state::read_json(&self.store, &gateway_catalog_runtime::state::selection_key()).await?
-            .as_ref().and_then(|row| ProviderSelection::normalize(&row.value));
+        let selection = gateway_catalog_runtime::state::read_json(
+            &self.store,
+            &gateway_catalog_runtime::state::selection_key(),
+        )
+        .await?
+        .as_ref()
+        .and_then(|row| ProviderSelection::normalize(&row.value));
         if !ProviderSelection::enabled(selection.as_ref(), "claude_code") {
             return Ok(ClaudeSelection::NotApplicable);
         }
-        let allowed_key_ids = crate::admin_host::config(&self.host.platform.env).claude_allowed_key_ids;
-        let access = gateway_admin_runtime::claude_access::load_policy(&self.store, &self.host.platform, &allowed_key_ids, &crate::admin_host::compare_labels).await?;
-        if !access.policy.allowed_key_ids.iter().any(|allowed| allowed == key_id) {
+        let allowed_key_ids =
+            crate::admin_host::config(&self.host.platform.env).claude_allowed_key_ids;
+        let access = gateway_admin_runtime::claude_access::load_policy(
+            &self.store,
+            &self.host.platform,
+            &allowed_key_ids,
+            &crate::admin_host::compare_labels,
+        )
+        .await?;
+        if !access
+            .policy
+            .allowed_key_ids
+            .iter()
+            .any(|allowed| allowed == key_id)
+        {
             return Ok(ClaudeSelection::NotApplicable);
         }
         let principal_id = crate::lifecycle::principal_id(principal);
@@ -127,7 +144,8 @@ impl Binding {
             }
             None => {
                 let config = PoolConfig {
-                    bootstrap: platform::bootstrap_for_source(&self.store, &self.host.platform).await?,
+                    bootstrap: platform::bootstrap_for_source(&self.store, &self.host.platform)
+                        .await?,
                     allowed_key_ids,
                     generation: generation(),
                     replay_scope: principal_id.clone(),
