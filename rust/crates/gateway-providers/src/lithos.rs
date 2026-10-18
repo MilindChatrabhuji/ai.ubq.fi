@@ -80,9 +80,10 @@ pub fn rate_limit_wait(
     let mut latest: Option<RateLimitWait> = None;
     for source in ["x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"] {
         if let Some(wait_ms) = duration(header(headers, source))
- && latest.as_ref().is_none_or(|w| wait_ms > w.wait_ms) {
-                latest = Some(RateLimitWait { wait_ms, source });
-            }
+            && latest.as_ref().is_none_or(|w| wait_ms > w.wait_ms)
+        {
+            latest = Some(RateLimitWait { wait_ms, source });
+        }
     }
     latest
 }

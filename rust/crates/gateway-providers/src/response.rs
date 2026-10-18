@@ -132,10 +132,10 @@ pub fn chat_completion_to_responses(
         .enumerate()
     {
         let message = &choice["message"];
-        if (let Some(reason) = message["reasoning_content"]
+        if let Some(reason) = message["reasoning_content"]
             .as_str()
             .or_else(|| message["reasoning"].as_str())
-            .filter(|s| !s.is_empty()))
+            .filter(|s| !s.is_empty())
  && plan.reasoning_summary.as_deref() != Some("none") {
                 output.push(json!({"id":format!("rs_{}_{choice_index}",plan.response_id),"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":reason}]}));
             }

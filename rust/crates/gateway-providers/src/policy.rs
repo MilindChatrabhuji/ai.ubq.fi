@@ -200,10 +200,11 @@ pub fn lithos_ladder(model: &str) -> Vec<String> {
 impl LithosWindows {
     pub fn refuse(&mut self, rung: &str, now: i64, wait_ms: i64) {
         if wait_ms > 0
- && let Some(deadline) = now.checked_add(wait_ms) {
-                let row = self.deadlines.entry(rung.into()).or_insert(deadline);
-                *row = (*row).max(deadline);
-            }
+            && let Some(deadline) = now.checked_add(wait_ms)
+        {
+            let row = self.deadlines.entry(rung.into()).or_insert(deadline);
+            *row = (*row).max(deadline);
+        }
     }
     pub fn select(&self, model: &str, now: i64) -> String {
         std::iter::once(model.to_owned())
@@ -387,9 +388,10 @@ pub fn validate_flash_effort(raw: &Value) -> Result<(), gateway_core::GatewayErr
                 .filter(|s| !s.trim().is_empty())
         });
     if let Some(effort) = effort
- && !["low", "high", "max"].contains(&effort.trim()) {
-            return Err(gateway_core::GatewayError::new(400,format!("The model 'ubiquity/deepseek-flash' supports reasoning efforts low, high, max; '{effort}' is not supported."),Some("unsupported_reasoning_effort")).with_param(Some("reasoning.effort")));
-        }
+        && !["low", "high", "max"].contains(&effort.trim())
+    {
+        return Err(gateway_core::GatewayError::new(400,format!("The model 'ubiquity/deepseek-flash' supports reasoning efforts low, high, max; '{effort}' is not supported."),Some("unsupported_reasoning_effort")).with_param(Some("reasoning.effort")));
+    }
     Ok(())
 }
 pub fn deepseek_plan(configured: &[DeepseekHop], ubiquity_enabled: bool) -> Vec<DeepseekHop> {

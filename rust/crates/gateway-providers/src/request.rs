@@ -170,10 +170,11 @@ pub fn chat_request_to_responses(raw: &Value) -> Result<Value, GatewayError> {
     for message in messages {
         let role = message["role"].as_str().unwrap_or("user");
         if (role == "system" || role == "developer")
- && let Some(text) = message["content"].as_str() {
-                instructions.push(text.to_owned());
-                continue;
-            }
+            && let Some(text) = message["content"].as_str()
+        {
+            instructions.push(text.to_owned());
+            continue;
+        }
         if role == "tool" {
             if let Some(call) = message["tool_call_id"].as_str() {
                 input.push(json!({"type":"function_call_output","call_id":call,"output":message["content"]}));
@@ -530,17 +531,18 @@ pub fn prepare_request(
                 } else {
                     url = "https://api.openlux.ai/v1/responses".into();
                     if model == "gpt-5.6-sol"
- && let Some(effort) = body["reasoning"]["effort"].as_str() {
-                            let suffix = match effort {
-                                "none" | "minimal" => "low",
-                                "ultra" => "max",
-                                other => other,
-                            };
-                            if ["low", "medium", "high", "xhigh", "max"].contains(&suffix) {
-                                body["model"] = json!(format!("{model}-{suffix}"));
-                                body.as_object_mut().expect("object").remove("reasoning");
-                            }
+                        && let Some(effort) = body["reasoning"]["effort"].as_str()
+                    {
+                        let suffix = match effort {
+                            "none" | "minimal" => "low",
+                            "ultra" => "max",
+                            other => other,
+                        };
+                        if ["low", "medium", "high", "xhigh", "max"].contains(&suffix) {
+                            body["model"] = json!(format!("{model}-{suffix}"));
+                            body.as_object_mut().expect("object").remove("reasoning");
                         }
+                    }
                     if crate::anthropic::is_claude(&model) {
                         warnings.push("openlux_claude_native_prompt_cache_unavailable".into());
                     }
@@ -819,7 +821,7 @@ fn strip_codex_transport_fields(body: &mut Value, warnings: &mut Vec<String>) {
                     removed = strip(value) || removed;
                 }
                 removed
-            },
+            }
             Value::Object(o) => {
                 let mut removed = o.remove("prompt_cache_breakpoint").is_some();
                 for key in ["content", "output"] {

@@ -361,9 +361,10 @@ pub fn project_responses(
         body["stream_options"] = json!({"include_usage":true});
     }
     if profile == ChatProfile::Cerebras
- && let Some(key) = raw.get("prompt_cache_key") {
-            body["prompt_cache_key"] = key.clone();
-        }
+        && let Some(key) = raw.get("prompt_cache_key")
+    {
+        body["prompt_cache_key"] = key.clone();
+    }
     if !tools.is_empty() {
         if raw["tool_choice"] != "none" {
             let system = messages
