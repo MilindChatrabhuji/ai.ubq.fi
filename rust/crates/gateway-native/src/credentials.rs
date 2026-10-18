@@ -165,10 +165,9 @@ pub fn verify_generation(
     if previous.account_id != next.account_id {
         return Err(owner_conflict());
     }
-    if let Some(user) = previous.external_user_id.as_ref() {
-        if next.external_user_id.as_ref() != Some(user) {
+    if let Some(user) = previous.external_user_id.as_ref()
+        && next.external_user_id.as_ref() != Some(user) {
             return Err(owner_conflict());
-        }
     }
     if next.external_user_id.is_some() {
         let identity = jwt_payload(previous.access_token.expose())

@@ -13,22 +13,14 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
     future::Future,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
 
 fn run<F: Future>(future: F) -> F::Output {
-    struct Noop;
-    impl Wake for Noop {
-        fn wake(self: Arc<Self>) {}
-    }
-    let waker = Waker::from(Arc::new(Noop));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
     loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
-            return value;
-        }
+        if let Poll::Ready(value) = future.as_mut().poll(&mut context) { return value; }
         std::thread::yield_now();
     }
 }

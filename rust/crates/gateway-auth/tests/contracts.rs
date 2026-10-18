@@ -2,8 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     future::Future,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
 
 use gateway_auth::{
@@ -17,17 +16,10 @@ use gateway_core::state::*;
 use serde_json::json;
 
 fn run<F: Future>(future: F) -> F::Output {
-    struct Noop;
-    impl Wake for Noop {
-        fn wake(self: Arc<Self>) {}
-    }
-    let waker = Waker::from(Arc::new(Noop));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
     loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
-            return value;
-        }
+        if let Poll::Ready(value) = future.as_mut().poll(&mut context) { return value; }
         std::thread::yield_now();
     }
 }

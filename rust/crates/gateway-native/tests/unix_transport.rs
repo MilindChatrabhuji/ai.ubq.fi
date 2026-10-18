@@ -1,12 +1,19 @@
 #![cfg(unix)]
 
-use std::{fs,future::Future,os::unix::net::UnixListener,path::PathBuf,sync::{Arc,Mutex,atomic::{AtomicU64,Ordering}},task::{Context,Poll,Wake,Waker},thread,time::Duration};
+use std::{fs,future::Future,os::unix::net::UnixListener,path::PathBuf,sync::{Arc,Mutex,atomic::{AtomicU64,Ordering}},task::{Context,Poll,Waker},thread,time::Duration};
 use gateway_auth::crypto::base64url;
 use gateway_native::{*,unix::{NativeOwnerLocation,UnixOwnerTransport,UnixSupervisor}};
 use serde_json::{Value,json};
 use tungstenite::{Message,accept_hdr,handshake::server::{Request,Response}};
 
-fn run<F:Future>(future:F)->F::Output{struct Noop;impl Wake for Noop{fn wake(self:Arc<Self>){}}let waker=Waker::from(Arc::new(Noop));let mut context=Context::from_waker(&waker);let mut future=std::pin::pin!(future);loop{if let Poll::Ready(value)=future.as_mut().poll(&mut context){return value;}thread::yield_now();}}
+fn run<F: Future>(future: F) -> F::Output {
+    let mut context = Context::from_waker(Waker::noop());
+    let mut future = std::pin::pin!(future);
+    loop {
+        if let Poll::Ready(value) = future.as_mut().poll(&mut context) { return value; }
+        std::thread::yield_now();
+    }
+}
 
 struct FixtureHome(PathBuf);
 impl FixtureHome{

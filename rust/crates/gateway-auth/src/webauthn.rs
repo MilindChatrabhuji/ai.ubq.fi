@@ -32,6 +32,24 @@ pub enum SignatureAlgorithm {
     RsaPssSha512,
 }
 impl SignatureAlgorithm {
+    pub fn import_algorithm(self) -> Value {
+        match self {
+            Self::Es256 => json!({"name":"ECDSA","namedCurve":"P-256"}),
+            Self::Es384 => json!({"name":"ECDSA","namedCurve":"P-384"}),
+            Self::Es512 => json!({"name":"ECDSA","namedCurve":"P-521"}),
+            Self::Ed25519 => json!({"name":"Ed25519"}),
+            Self::RsaPssSha256 | Self::RsaPssSha384 | Self::RsaPssSha512 => json!({"name":"RSA-PSS","hash":{"name":self.hash_name()}}),
+            _ => json!({"name":"RSASSA-PKCS1-v1_5","hash":{"name":self.hash_name()}}),
+        }
+    }
+    pub fn verify_algorithm(self) -> Value {
+        match self {
+            Self::Es256 | Self::Es384 | Self::Es512 => json!({"name":"ECDSA","hash":{"name":self.hash_name()}}),
+            Self::Ed25519 => json!({"name":"Ed25519"}),
+            Self::RsaPssSha256 | Self::RsaPssSha384 | Self::RsaPssSha512 => json!({"name":"RSA-PSS","saltLength":self.pss_salt_length()}),
+            _ => json!({"name":"RSASSA-PKCS1-v1_5"}),
+        }
+    }
     pub fn cose_id(self) -> i64 {
         match self {
             Self::Es256 => -7,
