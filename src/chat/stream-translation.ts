@@ -75,18 +75,33 @@ export const chatOutputTextPartKey = (event: Record<string, unknown>): string =>
 type ReconciledChatContent = Readonly<{ outputText: string; refusal: string }>;
 
 /**
- * True when an identity-less completed part only repeats content this stream has
- * already delivered. Compatible upstreams repeat the complete message content in
- * their terminal payload, and one that omits the message id there -- Surplus
- * drops `id` inside `response.completed` -- cannot address the per-part entry its
- * own deltas wrote, so the repeat would otherwise look like new content.
- * Comparing it against everything emitted so far keeps the message delivered
- * once; a longer or conflicting payload still takes the ordinary path.
+ * Resolves the previously emitted text or refusal content correlated with this
+ * part's output and content position. Compatible upstreams repeat the complete
+ * message content in their terminal payload, and one that omits the message id
+ * there (such as Surplus inside `response.completed`) cannot address the per-part
+ * entry its own deltas wrote under `item:<id>:<content_index>`. Correlating by
+ * output/content position matches the corresponding part while isolating distinct
+ * output items or content parts from each other.
  */
-const completedPartRepeatsEmittedContent = (emittedParts: ReadonlyMap<string, string>, completed: string): boolean => {
-  if (!completed) return false;
-  const emitted = [...emittedParts.values()].join("");
-  return emitted === completed || emitted.startsWith(completed);
+const emittedContentForPart = (emittedParts: ReadonlyMap<string, string>, event: Record<string, unknown>): string => {
+  const contentIndex = chatOutputTextPartIndexText(event.content_index ?? 0);
+  const outputIndexText = chatOutputTextPartIndexText(event.output_index ?? 0);
+  const positionKey = `output:${outputIndexText}:${contentIndex}`;
+  const direct = emittedParts.get(positionKey);
+  if (direct !== undefined) return direct;
+
+  const outputIndex =
+    typeof event.output_index === "number" && Number.isInteger(event.output_index) && event.output_index >= 0
+      ? event.output_index
+      : typeof event.output_index === "string" && /^\d+$/.test(event.output_index)
+      ? parseInt(event.output_index, 10)
+      : 0;
+
+  const itemKeys = [...emittedParts.keys()].filter((k) => k.startsWith("item:") && k.endsWith(`:${contentIndex}`));
+  if (outputIndex < itemKeys.length) {
+    return emittedParts.get(itemKeys[outputIndex]) ?? "";
+  }
+  return "";
 };
 
 export const reconcileChatContentPart = (
@@ -107,10 +122,7 @@ export const reconcileChatContentPart = (
     if (completedText === null) {
       return malformedFunctionCallStream("Upstream completed content part is missing string output text.");
     }
-    if (!identified && !outputTextParts.has(key) && completedPartRepeatsEmittedContent(outputTextParts, completedText)) {
-      return { outputText: "", refusal: "" };
-    }
-    const emittedText = outputTextParts.get(key) ?? "";
+    const emittedText = outputTextParts.get(key) ?? (!identified ? emittedContentForPart(outputTextParts, event) : "");
     const suffix = reconcileCompletedOutputText(emittedText, completedText);
     outputTextParts.set(key, `${emittedText}${suffix}`);
     return { outputText: suffix, refusal: "" };
@@ -120,10 +132,7 @@ export const reconcileChatContentPart = (
     if (completedRefusal === null) {
       return malformedFunctionCallStream("Upstream completed content part is missing string refusal text.");
     }
-    if (!identified && !refusalParts.has(key) && completedPartRepeatsEmittedContent(refusalParts, completedRefusal)) {
-      return { outputText: "", refusal: "" };
-    }
-    const emittedRefusal = refusalParts.get(key) ?? "";
+    const emittedRefusal = refusalParts.get(key) ?? (!identified ? emittedContentForPart(refusalParts, event) : "");
     const suffix = reconcileCompletedRefusal(emittedRefusal, completedRefusal);
     refusalParts.set(key, `${emittedRefusal}${suffix}`);
     return { outputText: "", refusal: suffix };

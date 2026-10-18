@@ -1378,6 +1378,56 @@ test("openai: a terminal response with no id and no deltas is still delivered", 
   assert.equal(payload.choices?.[0]?.message?.content, messageText);
 });
 
+test("openai: distinct id-less terminal parts with equal text and different output_index are preserved", async () => {
+  const messagePart = "ha";
+  const chatRequest = (stream: boolean): Request =>
+    new Request("https://ai.ubq.fi/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: TERRA_TEST_MODEL, messages: [{ role: "user", content: "ping" }], stream }),
+    });
+
+  const frames = [
+    `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_distinct", created_at: 1_780_000_000 } })}\n\n`,
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        id: "resp_distinct",
+        model: TERRA_TEST_MODEL,
+        output: [
+          { type: "message", role: "assistant", content: [{ type: "output_text", text: messagePart }] },
+          { type: "message", role: "assistant", content: [{ type: "output_text", text: messagePart }] },
+        ],
+        usage: { input_tokens: 2, output_tokens: 2, total_tokens: 4 },
+      },
+    })}\n\n`,
+  ];
+
+  const streamed = await withFetchMock(
+    () => sseResponse(frames),
+    () => handleChatCompletions(chatRequest(true))
+  );
+  assert.equal(streamed.status, 200);
+  const streamedText = (await streamed.text())
+    .split("\n\n")
+    .filter((frame) => frame.startsWith("data: ") && frame !== "data: [DONE]")
+    .map((frame) => {
+      const chunk = JSON.parse(frame.slice(6)) as { choices?: { delta?: { content?: unknown } }[] };
+      const content = chunk.choices?.[0]?.delta?.content;
+      return typeof content === "string" ? content : "";
+    })
+    .join("");
+  assert.equal(streamedText, "haha");
+
+  const buffered = await withFetchMock(
+    () => sseResponse(frames),
+    () => handleChatCompletions(chatRequest(false))
+  );
+  assert.equal(buffered.status, 200);
+  const payload = (await buffered.json()) as { choices?: { message?: { content?: unknown } }[] };
+  assert.equal(payload.choices?.[0]?.message?.content, "haha");
+});
+
 test("openai: prompt-cache sessions are stable within and isolated across authenticated principals", async () => {
   const identities: Record<string, string | null>[] = [];
   const responseStatuses = await withFetchMock(
