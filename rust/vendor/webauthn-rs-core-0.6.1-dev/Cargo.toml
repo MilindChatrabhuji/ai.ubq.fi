@@ -123,3 +123,26 @@ features = [
     "std",
     "fmt",
 ]
+
+# UOS source-compatibility primitives; versions match the gateway graph.
+[dependencies.ed25519-dalek]
+version = "=2.2.0"
+default-features = false
+features = ["std"]
+
+[dependencies.rsa]
+version = "=0.9.10"
+features = ["sha1", "sha2"]
+
+[dependencies.sha1]
+version = "=0.10.7"
+features = ["oid"]
+
+[dependencies.sha2]
+version = "=0.10.9"
+features = ["oid"]
+
+[dependencies.p521]
+version = "=0.13.3"
+default-features = false
+features = ["ecdsa"]

@@ -153,7 +153,7 @@ fn counter_replay_and_malformed_algorithm_or_key_are_refused() {
                 .iter_mut()
                 .find(|(key, _)| *key == integer(3))
                 .unwrap()
-                .1 = integer(-257);
+                .1 = integer(-8);
         }
         assert!(parse_cose_key(&cbor(&cose)).is_err());
         assert!(parse_cose_key(&[0xa1, 1, 2]).is_err());
@@ -191,7 +191,7 @@ fn registration(format: &str) -> RegistrationVerification {
 #[test]
 fn none_registration_validates_real_key_and_retains_exact_cose() {
     run(async {
-        let verified = verify_registration(&RealP256, registration("none"))
+        let verified = verify_registration(&RealP256, registration("none"), 1_792_336_000_000)
             .await
             .unwrap();
         assert_eq!(verified.public_key, public_key());
@@ -199,12 +199,16 @@ fn none_registration_validates_real_key_and_retains_exact_cose() {
         assert_eq!(verified.transports, vec!["internal"]);
         let mut wrong = registration("none");
         wrong.rp_id = "other.example".into();
-        assert!(verify_registration(&RealP256, wrong).await.is_err());
+        assert!(
+            verify_registration(&RealP256, wrong, 1_792_336_000_000)
+                .await
+                .is_err()
+        );
     });
 }
 
 #[test]
-fn unfinished_attestation_capability_fails_closed_instead_of_accepting_signature() {
+fn malformed_attestations_fail_closed_after_maintained_verification() {
     run(async {
         for format in [
             "packed",
@@ -214,17 +218,13 @@ fn unfinished_attestation_capability_fails_closed_instead_of_accepting_signature
             "android-safetynet",
             "apple",
         ] {
-            let error = verify_registration(&RealP256, registration(format))
+            let error = verify_registration(&RealP256, registration(format), 1_792_336_000_000)
                 .await
                 .unwrap_err();
-            assert_eq!(error.status, 503);
-            assert_eq!(
-                error.envelope.error.code.as_deref(),
-                Some("passkey_attestation_verifier_unavailable")
-            );
+            assert_eq!(error.status, 400, "{format}");
         }
         assert_eq!(
-            verify_registration(&RealP256, registration("invented"))
+            verify_registration(&RealP256, registration("invented"), 1_792_336_000_000)
                 .await
                 .unwrap_err()
                 .status,
