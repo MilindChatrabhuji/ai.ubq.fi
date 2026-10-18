@@ -13,7 +13,7 @@ const ALIASES = new Map([
   ["#http", "src/runtime/http.ts"],
   ["#kv", "src/storage/kv.ts"],
 ]);
-const UNTRACKED_ROOTS = ["src/", "scripts/", "tests/", "ops/", "benchmarks/", "tools/", "static/"];
+const UNTRACKED_ROOTS = ["src/", "scripts/", "tests/", "ops/", "benchmarks/", "tools/", "static/", "rust/"];
 
 export type ChangeScope = Readonly<{
   paths: readonly string[];
@@ -39,6 +39,10 @@ export type CiScope = TestSelection &
     needsDarwinNative: boolean;
     needsDarwinTests: boolean;
     needsArtifact: boolean;
+    needsRustNative: boolean;
+    needsRustWasm: boolean;
+    needsRustBuild: boolean;
+    needsTypeScriptValidate: boolean;
   }>;
 
 const git = (args: readonly string[]): string | null => {
@@ -88,6 +92,11 @@ const changedPathsFromGit = (): string[] | null => {
 
 export const isDocumentationPath = (path: string): boolean => DOCUMENTATION_FILE.test(path);
 export const isTestPath = (path: string): boolean => TEST_FILE.test(path);
+/** Rust has its own compiler/test graph; never feed it to the Bun import scanner. */
+export const isRustPath = (path: string): boolean => path.startsWith("rust/") && !isDocumentationPath(path);
+export const isRustGatePath = (path: string): boolean => isRustPath(path) || /^scripts\/rust-verify(?:\.test)?\.ts$/.test(path);
+export const RUST_NATIVE_ONLY_PACKAGES = ["gateway-native"] as const;
+const WORKFLOW_CONTRACT_PATH = ".github/workflows/deno-deploy.yml";
 
 export const classifyChangedPaths = (paths: readonly string[]): ChangeScope => {
   const normalized = uniqueSorted(paths.map(normalizePath).filter(Boolean));
@@ -184,10 +193,12 @@ export const detectTestSelection = (): TestSelection => {
   if (scope.paths.length === 0) return { ...scope, affectedTests: [], runAll: true, reason: "no-changes" };
   if (scope.documentationOnly) return { ...scope, affectedTests: [], runAll: false, reason: "documentation-only" };
 
-  const changedCode = scope.paths.filter((path) => !isDocumentationPath(path));
+  const changedCode = scope.paths.filter((path) => !isDocumentationPath(path) && !isRustPath(path) && path !== WORKFLOW_CONTRACT_PATH);
   const candidates = candidateTestFiles(scope.paths);
   const dependencyScoped = changedCode.every((path) => SOURCE_FILE.test(path) || isTestPath(path));
-  const affectedTests = dependencyScoped ? selectAffectedTestFiles(changedCode, candidates) : candidates;
+  // The workflow is a readFile dependency of this contract test, not a TS import.
+  const workflowTests = scope.paths.includes(WORKFLOW_CONTRACT_PATH) ? ["scripts/test-scope.test.ts"] : [];
+  const affectedTests = uniqueSorted([...(dependencyScoped ? selectAffectedTestFiles(changedCode, candidates) : candidates), ...workflowTests]);
   if (affectedTests.length === 0) return { ...scope, affectedTests, runAll: false, reason: "no-dependent-tests" };
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
@@ -204,6 +215,12 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
       (environment.GITHUB_BASE_REF === "queue-canary" ||
         (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));
   const docsOnly = selection.reason === "documentation-only";
+  const rustSelected = !docsOnly && selection.paths.some(isRustGatePath);
+  const needsRustNative = completeCheckSet || selection.runAll || rustSelected;
+  const rustPaths = selection.paths.filter(isRustGatePath);
+  const nativeOnly = rustPaths.length > 0 && rustPaths.every((path) => RUST_NATIVE_ONLY_PACKAGES.some((name) => path.startsWith(`rust/crates/${name}/`)));
+  const needsRustWasm = needsRustNative && (completeCheckSet || selection.runAll || !nativeOnly);
+  const hasTypeScriptWork = selection.paths.some((path) => !isDocumentationPath(path) && !isRustPath(path));
   const needsNativeKv =
     selection.runAll ||
     selection.paths.some((path) => NATIVE_PATH.test(path)) ||
@@ -216,12 +233,16 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
     docsOnly,
     needsDocs: completeCheckSet || docsOnly,
     needsValidate: completeCheckSet || !docsOnly,
+    needsTypeScriptValidate: completeCheckSet || (!docsOnly && (selection.runAll || hasTypeScriptWork)),
     needsNativeKv,
     needsNativeBuild: needsNativeKv || needsArtifact,
     needsMacContainment: completeCheckSet || (!docsOnly && (selection.runAll || selection.paths.some((path) => MAC_PATH.test(path)))),
     needsDarwinNative: completeCheckSet || needsDarwinTests,
     needsDarwinTests,
     needsArtifact,
+    needsRustNative,
+    needsRustWasm,
+    needsRustBuild: needsRustWasm,
   };
 };
 
@@ -256,6 +277,9 @@ export const formatScopeMessage = (selection: TestSelection, command: string): s
     "  - Run `git diff --check`.",
     "  - Do not run unrelated tests, lint, Knip, native builds, or deployment suites.",
     "Override only for an explicitly requested test run: TEST_SCOPE_FORCE=1",
+    ...(selection.paths.some(isRustGatePath)
+      ? ["Rust checks are separate: bun --no-env-file --no-install scripts/rust-verify.ts", "This Bun test selection is not Rust verification."]
+      : []),
     "Exit code: 0",
   ].join("\n");
 };

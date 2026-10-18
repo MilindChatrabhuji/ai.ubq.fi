@@ -50,8 +50,13 @@ pub struct RevisionCheck {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RecordMutation {
-    Put { key: RecordKey, record: StoredRecord },
-    Delete { key: RecordKey },
+    Put {
+        key: RecordKey,
+        record: StoredRecord,
+    },
+    Delete {
+        key: RecordKey,
+    },
 }
 
 /// Checks and mutations commit together; retained histories need not fit in a hot-state blob.
@@ -66,7 +71,10 @@ pub struct AtomicTransition {
 /// Reads are strong. All records participating in one transition share the same authority.
 /// Retention belongs to each record's source contract; missing expiry never implies eviction.
 pub trait AuthorityStore {
-    fn read(&self, key: &RecordKey) -> impl Future<Output = Result<Option<StoredRecord>, GatewayError>>;
+    fn read(
+        &self,
+        key: &RecordKey,
+    ) -> impl Future<Output = Result<Option<StoredRecord>, GatewayError>>;
 
     fn commit(
         &self,
