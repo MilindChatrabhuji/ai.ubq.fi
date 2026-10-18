@@ -245,6 +245,28 @@ test("deepseek responses: preserves namespace for a colliding tool choice and ca
   });
 });
 
+test("deepseek responses: resolves a bare top-level choice after a namespace-first collision", () => {
+  const body = toDeepSeekResponsesChatBody(
+    {
+      input: "hi",
+      reasoning: { effort: "none" },
+      tool_choice: { type: "function", name: "now" },
+      tools: [
+        { type: "namespace", name: "clock", tools: [{ type: "function", name: "now" }] },
+        { type: "function", name: "now" },
+      ],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(body.ok, true);
+  assert.deepEqual(
+    (body.value.body.tools as { function: { name: string } }[]).map((tool) => tool.function.name),
+    ["now", "now_2"]
+  );
+  assert.deepEqual(body.value.body.tool_choice, { type: "function", function: { name: "now_2" } });
+});
+
 test("deepseek responses: a namespaced tool call returns its namespace to the client", () => {
   const body = toDeepSeekResponsesChatBody(
     {

@@ -649,7 +649,12 @@ const chatToolName = (name: string, namespace: string | null, toolNames: Readonl
   // Preserve the compatibility form's existing reverse lookup when it already
   // supplies a flattened Chat name. A namespace-aware choice below is the
   // forward lookup from the original Responses identity to that Chat name.
-  if (namespace === null) return originalToolName(name, toolNames);
+  if (namespace === null) {
+    for (const [chatName, original] of toolNames) {
+      if (original.name === name && original.namespace === null) return chatName;
+    }
+    return originalToolName(name, toolNames);
+  }
   // A namespace-aware choice must be resolved from the original identity so
   // a colliding namespaced function gets its synthesized Chat name.
   for (const [chatName, original] of toolNames) {
