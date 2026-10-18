@@ -46,7 +46,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         if p.len() != 4
             || p[3] != record.policy.id
             || record.policy.usage_quota_version != 3
-            || !gateway_admin_data::migration::audit::keys::valid_key_policy(&v, true)
+            || !gateway_admin_data::migration::audit::valid_key_policy(&v, true)
         {
             return Err(invalid(
                 "API key ID policy is malformed or requires legacy migration",
@@ -54,8 +54,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         }
     } else if starts(p, &["ubq_ai", "api_keys", "hash"]) {
         let _: gateway_auth::api_keys::ApiKeyHashRecord = decode(&v)?;
-        if p.len() != 4 || !gateway_admin_data::migration::audit::keys::valid_key_policy(&v, false)
-        {
+        if p.len() != 4 || !gateway_admin_data::migration::audit::valid_key_policy(&v, false) {
             return Err(invalid("API key hash policy is malformed"));
         }
     } else if starts(p, &["uos_ai", "api_key_usage", "v3", "window"]) {
@@ -175,11 +174,9 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     } else if starts(p, &["uos_ai", "codex_active_account"]) {
         let _: gateway_core::identity::ActiveSelection = decode(&v)?;
     } else if starts(p, &["uos_ai", "codex_account_routing"]) {
-        row.record.value = crate::routing::forward_routing(&v)?;
-        row.mapping.transform = Transform::Routing;
+        gateway_authority::routing::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {
-        row.record.value = crate::routing::forward_capacity(&v)?;
-        row.mapping.transform = Transform::Capacity;
+        gateway_authority::routing::parse_capacity_store(&v)?;
     } else if starts(p, &["uos_ai", "claude_code_accounts"]) {
         gateway_admin_runtime::claude::parse_roster(&v)?;
     } else if starts(p, &["uos_ai", "auth", "users"]) {
