@@ -133,7 +133,11 @@ pub fn merge_rollup(previous: Option<&Value>, point: &Value) -> Value {
     }
     json!({"v":1,"bucket_start_at_ms":bucket,"sample_count":previous.and_then(|p|p["sample_count"].as_u64()).unwrap_or(0)+1,"first_sampled_at_ms":previous.and_then(|p|p["first_sampled_at_ms"].as_i64()).map(|p|p.min(at)).unwrap_or(at),"last_sampled_at_ms":previous.and_then(|p|p["last_sampled_at_ms"].as_i64()).map(|p|p.max(at)).unwrap_or(at),"slots":slots})
 }
-pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)],compare:impl Fn(&str,&str)->Result<std::cmp::Ordering,gateway_core::GatewayError>) -> Result<Vec<Value>,gateway_core::GatewayError> {
+pub fn merge_remote_history(
+    local: &[Value],
+    remote: &[(String, Value)],
+    compare: impl Fn(&str, &str) -> Result<std::cmp::Ordering, gateway_core::GatewayError>,
+) -> Result<Vec<Value>, gateway_core::GatewayError> {
     let mut ordered = local.to_vec();
     ordered.sort_by_key(|p| {
         (
@@ -173,7 +177,8 @@ pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)],compare:
         if !available || configured == 0 {
             continue;
         }
-        let i = ordered.partition_point(|p| crate::store::safe_i64(&p["sampled_at_ms"]).unwrap_or(0) < sample);
+        let i = ordered
+            .partition_point(|p| crate::store::safe_i64(&p["sampled_at_ms"]).unwrap_or(0) < sample);
         let matches = |p: &Value| {
             [1, 2].into_iter().all(|slot| {
                 let identity = |p: &Value| {
@@ -204,7 +209,18 @@ pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)],compare:
             .insert(sample, point.clone());
     }
     for hosts in gaps.into_values() {
-        let mut hosts:Vec<_>=hosts.into_iter().collect();let mut error=None;hosts.sort_by(|(a,_),(b,_)|match compare(a,b){Ok(order)=>order,Err(e)=>{error=Some(e);std::cmp::Ordering::Equal}});if let Some(error)=error{return Err(error)}
+        let mut hosts: Vec<_> = hosts.into_iter().collect();
+        let mut error = None;
+        hosts.sort_by(|(a, _), (b, _)| match compare(a, b) {
+            Ok(order) => order,
+            Err(e) => {
+                error = Some(e);
+                std::cmp::Ordering::Equal
+            }
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
         if let Some((_, points)) = hosts.into_iter().next() {
             ordered.extend(points.into_values())
         }

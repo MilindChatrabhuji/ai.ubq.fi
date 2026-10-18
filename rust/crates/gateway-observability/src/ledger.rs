@@ -42,8 +42,25 @@ pub fn normalize_request_record(
         return None;
     }
     let get = |name| input.get(name);
-    let provider = input["provider"].as_str().filter(|p|matches!(*p,"cerebras"|"deepseek"|"lithos"|"openrouter"|"voyage"|"surplus"|"metered")).unwrap_or("chatgpt_codex");
-    let billing=input["billing_status"].as_str().filter(|p|matches!(*p,"pending"|"reconciled"|"not_billed"|"unresolved")).unwrap_or("not_applicable");
+    let provider = input["provider"]
+        .as_str()
+        .filter(|p| {
+            matches!(
+                *p,
+                "cerebras"
+                    | "deepseek"
+                    | "lithos"
+                    | "openrouter"
+                    | "voyage"
+                    | "surplus"
+                    | "metered"
+            )
+        })
+        .unwrap_or("chatgpt_codex");
+    let billing = input["billing_status"]
+        .as_str()
+        .filter(|p| matches!(*p, "pending" | "reconciled" | "not_billed" | "unresolved"))
+        .unwrap_or("not_applicable");
     let nullable_text = |name| {
         let s = text(get(name), 120, "");
         if s.is_empty() { Value::Null } else { json!(s) }

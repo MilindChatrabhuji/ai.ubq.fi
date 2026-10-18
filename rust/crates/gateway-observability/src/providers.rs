@@ -1,8 +1,8 @@
 use crate::{
     Context, HealthProvider, HealthTarget, ObservabilityHost, ObservabilityRuntime,
+    completion::Completion,
     health::{aggregate_states, binding_current, unknown_health},
     host_types::*,
-    completion::Completion,
     store,
 };
 use gateway_auth::AuthResponse;
@@ -10,27 +10,57 @@ use gateway_core::{GatewayError, query::QueryStore};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 #[derive(Clone)]
-struct ActiveResponseData{status:u16,body:Value,identity:BuildIdentity}
-type ActiveResult=Result<ActiveResponseData,GatewayError>;
+struct ActiveResponseData {
+    status: u16,
+    body: Value,
+    identity: BuildIdentity,
+}
+type ActiveResult = Result<ActiveResponseData, GatewayError>;
 type ActiveReceipt = Completion<ActiveResult>;
 #[derive(Clone, Default)]
 pub(crate) struct ActiveHealth(Rc<RefCell<Option<ActiveReceipt>>>);
-struct ActiveCompletion {state:ActiveHealth,receipt:ActiveReceipt,finished:bool}
+struct ActiveCompletion {
+    state: ActiveHealth,
+    receipt: ActiveReceipt,
+    finished: bool,
+}
 impl ActiveCompletion {
-    fn complete(&self,result:ActiveResult){
-        {let mut current=self.state.0.borrow_mut();if current.as_ref().is_some_and(|c|c.same(&self.receipt)){current.take();}}
+    fn complete(&self, result: ActiveResult) {
+        {
+            let mut current = self.state.0.borrow_mut();
+            if current.as_ref().is_some_and(|c| c.same(&self.receipt)) {
+                current.take();
+            }
+        }
         self.receipt.finish(result);
     }
-    fn finish(mut self,result:ActiveResult)->ActiveResult{self.complete(result.clone());self.finished=true;result}
+    fn finish(mut self, result: ActiveResult) -> ActiveResult {
+        self.complete(result.clone());
+        self.finished = true;
+        result
+    }
 }
-impl Drop for ActiveCompletion {fn drop(&mut self){if !self.finished{self.complete(Err(GatewayError::unavailable("Active upstream health probe was interrupted.","active_upstream_health_interrupted")))}}}
+impl Drop for ActiveCompletion {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.complete(Err(GatewayError::unavailable(
+                "Active upstream health probe was interrupted.",
+                "active_upstream_health_interrupted",
+            )))
+        }
+    }
+}
 fn auth_view(meta: &CodexAuthMetadata, now: i64) -> Value {
     let expired = |time: Option<i64>| time.map(|t| t <= now);
     let refresh = |time: Option<i64>| time.map(|t| t - now < 120000);
     let accounts:Vec<Value>=meta.accounts.iter().map(|a|json!({"slot":a.slot,"updated_at_ms":a.updated_at_ms,"access_token_exp_ms":a.access_token_exp_ms,"refresh_sha256":a.refresh_sha256,"native_owner_codex_home":a.native_owner_codex_home,"access_token_expired":expired(a.access_token_exp_ms),"refresh_recommended":refresh(a.access_token_exp_ms)})).collect();
     json!({"source":meta.source,"updated_at_ms":meta.updated_at_ms,"access_token_exp_ms":meta.access_token_exp_ms,"account_count":accounts.len(),"access_token_expired":expired(meta.access_token_exp_ms),"refresh_recommended":refresh(meta.access_token_exp_ms),"accounts":accounts})
 }
-fn active_response(data:ActiveResponseData)->Result<AuthResponse,GatewayError>{let mut response=AuthResponse::json(data.status,data.body);identity_headers(&mut response,data.identity)?;Ok(response)}
+fn active_response(data: ActiveResponseData) -> Result<AuthResponse, GatewayError> {
+    let mut response = AuthResponse::json(data.status, data.body);
+    identity_headers(&mut response, data.identity)?;
+    Ok(response)
+}
 fn quota_view(snapshot: Option<&Value>) -> Value {
     let mut out = json!({"available":snapshot.is_some()});
     let fields = [
@@ -199,9 +229,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if let Some(pending) = pending {
             return pending.await.and_then(active_response);
         }
-        let receipt=Completion::new();
-        *self.active_health.0.borrow_mut()=Some(receipt.clone());
-        let completion=ActiveCompletion{state:self.active_health.clone(),receipt,finished:false};
+        let receipt = Completion::new();
+        *self.active_health.0.borrow_mut() = Some(receipt.clone());
+        let completion = ActiveCompletion {
+            state: self.active_health.clone(),
+            receipt,
+            finished: false,
+        };
         let response=async{
             let at=store::now(self.host.as_ref())?;let evidence=self.host.probe_upstream_health(at+3000).await?;
             if !matches!(evidence.codex.provider,ProbeProvider::ChatgptCodex)||evidence.metered_quota.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::MeteredQuota))||evidence.claude_subscription.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::ClaudeSubscription)){return Err(store::error("Active health probe identity mismatch"))}

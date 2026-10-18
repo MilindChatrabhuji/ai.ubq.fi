@@ -142,25 +142,36 @@ pub enum CapacityProbe {
     Http { status: u16, json: Option<Value> },
     Unreachable,
 }
-#[derive(Clone,Debug,Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ResetCreditDiagnostic {
-    pub status:String,
-    pub expires_at_ms:Option<i64>,
+    pub status: String,
+    pub expires_at_ms: Option<i64>,
 }
 /// The fixed experiment chooses its target; no request body may supply these fields.
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct CacheExperimentTarget {
-    pub provider:String,
-    pub model:String,
+    pub provider: String,
+    pub model: String,
 }
-#[derive(Clone,Debug,Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PaidRequestBackfill {
-    pub scanned:u32,pub processed:u32,pub rollups_written:u32,pub failed:u32,pub truncated:bool,
+    pub scanned: u32,
+    pub processed: u32,
+    pub rollups_written: u32,
+    pub failed: u32,
+    pub truncated: bool,
 }
-#[derive(Clone,Debug,Serialize)]
-pub struct PaidWindowBackfill {pub scanned:u32,pub rewritten:u32,pub truncated:bool}
-#[derive(Clone,Debug)]
-pub struct PaidBackfillReceipt {pub requests:PaidRequestBackfill,pub windows:PaidWindowBackfill}
+#[derive(Clone, Debug, Serialize)]
+pub struct PaidWindowBackfill {
+    pub scanned: u32,
+    pub rewritten: u32,
+    pub truncated: bool,
+}
+#[derive(Clone, Debug)]
+pub struct PaidBackfillReceipt {
+    pub requests: PaidRequestBackfill,
+    pub windows: PaidWindowBackfill,
+}
 /// Source ClaudeCodeAcceptedObservation, emitted only after its current-binding quota CAS.
 /// History/health subscribers never write quota or credential state from this event.
 #[derive(Clone, Debug, Deserialize, Serialize)]

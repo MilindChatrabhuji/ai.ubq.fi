@@ -83,9 +83,33 @@ fn source_paid_health_borrows_only_complete_bounded_exception_evidence() {
         Some(E::UpstreamError)
     );
     assert_eq!(credit.as_slice(), original);
-    assert_eq!(paid_health(P::Surplus,Some(402),br#"{"error":[],"code":"insufficient_credit"}"#,true),Some(E::UpstreamError));
-    assert_eq!(paid_health(P::Surplus,Some(402),br#"{"error":null,"code":"insufficient_credit"}"#,true),Some(E::QuotaExhausted));
-    assert_eq!(paid_health(P::Surplus,Some(402),br#"{"error":{},"code":"insufficient_credit"}"#,true),Some(E::UpstreamError));
+    assert_eq!(
+        paid_health(
+            P::Surplus,
+            Some(402),
+            br#"{"error":[],"code":"insufficient_credit"}"#,
+            true
+        ),
+        Some(E::UpstreamError)
+    );
+    assert_eq!(
+        paid_health(
+            P::Surplus,
+            Some(402),
+            br#"{"error":null,"code":"insufficient_credit"}"#,
+            true
+        ),
+        Some(E::QuotaExhausted)
+    );
+    assert_eq!(
+        paid_health(
+            P::Surplus,
+            Some(402),
+            br#"{"error":{},"code":"insufficient_credit"}"#,
+            true
+        ),
+        Some(E::UpstreamError)
+    );
 }
 #[test]
 fn request_ids_match_source_utf16_control_and_trim_bounds() {

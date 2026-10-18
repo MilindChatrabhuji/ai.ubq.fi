@@ -114,7 +114,9 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
     }
     let slot = store::safe_i64(&value["slot"]).filter(|n| *n == 1 || *n == 2)? as u8;
     let state = source_state(&value["state"])?;
-    if !nullable(value.get("source_observed_at_ms"), timestamp) || !store::is_record(&value["windows"]) {
+    if !nullable(value.get("source_observed_at_ms"), timestamp)
+        || !store::is_record(&value["windows"])
+    {
         return None;
     }
     let at = if value.get("snapshot_at_ms").is_none() {

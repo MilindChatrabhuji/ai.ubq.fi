@@ -35,16 +35,39 @@ struct WriterState {
 pub(crate) struct HealthWriter(Rc<RefCell<WriterState>>);
 
 struct HealthCompletion {
-    writer:HealthWriter,key:String,sequence:u64,tail:Completion<HealthWrite>,finished:bool,
+    writer: HealthWriter,
+    key: String,
+    sequence: u64,
+    tail: Completion<HealthWrite>,
+    finished: bool,
 }
 impl HealthCompletion {
-    fn complete(&self,result:HealthWrite){
-        {let mut state=self.writer.0.borrow_mut();if state.pending.get(&self.key).is_some_and(|p|p.sequence==self.sequence){state.pending.remove(&self.key);}}
+    fn complete(&self, result: HealthWrite) {
+        {
+            let mut state = self.writer.0.borrow_mut();
+            if state
+                .pending
+                .get(&self.key)
+                .is_some_and(|p| p.sequence == self.sequence)
+            {
+                state.pending.remove(&self.key);
+            }
+        }
         self.tail.finish(result);
     }
-    fn finish(mut self,result:HealthWrite)->HealthWrite{self.complete(result);self.finished=true;result}
+    fn finish(mut self, result: HealthWrite) -> HealthWrite {
+        self.complete(result);
+        self.finished = true;
+        result
+    }
 }
-impl Drop for HealthCompletion {fn drop(&mut self){if !self.finished{self.complete(HealthWrite::Unavailable)}}}
+impl Drop for HealthCompletion {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.complete(HealthWrite::Unavailable)
+        }
+    }
+}
 
 pub fn normalize_provider_request_id(value: Option<&str>) -> Option<String> {
     value
@@ -225,8 +248,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut observations = Vec::new();
         for record in RECORDS {
             if let Some(row) = self.store.read(&health_key(target, record)).await?
-                && let Some(v) = store::value(Some(&row), at_ms)?.and_then(parse_observation) {
-                    observations.push(v)
+                && let Some(v) = store::value(Some(&row), at_ms)?.and_then(parse_observation)
+            {
+                observations.push(v)
             }
         }
         if target.provider == HealthProvider::ClaudeCode
@@ -259,32 +283,44 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let previous = { self.health.0.borrow().pending.get(&queue_key).cloned() };
         if let Some(ref pending) = previous
             && pending.observation.event == event
-                && pending.observation.status == observation.status
-                && (pending.observation.provider_request_id.is_some()
-                    || observation.provider_request_id.is_none())
-            {
-                return match pending.tail.clone().await {
-                    HealthWrite::Stored|HealthWrite::Throttled|HealthWrite::Coalesced=>HealthWrite::Coalesced,
-                    outcome=>outcome,
-                };
+            && pending.observation.status == observation.status
+            && (pending.observation.provider_request_id.is_some()
+                || observation.provider_request_id.is_none())
+        {
+            return match pending.tail.clone().await {
+                HealthWrite::Stored | HealthWrite::Throttled | HealthWrite::Coalesced => {
+                    HealthWrite::Coalesced
+                }
+                outcome => outcome,
+            };
         }
         let sequence = {
             let mut state = self.health.0.borrow_mut();
             state.sequence = state.sequence.wrapping_add(1);
             state.sequence
         };
-        let tail=Completion::new();
-        let completion=HealthCompletion{writer:self.health.clone(),key:queue_key.clone(),sequence,tail:tail.clone(),finished:false};
+        let tail = Completion::new();
+        let completion = HealthCompletion {
+            writer: self.health.clone(),
+            key: queue_key.clone(),
+            sequence,
+            tail: tail.clone(),
+            finished: false,
+        };
         self.health.0.borrow_mut().pending.insert(
             queue_key,
             Pending {
-                observation:observation.clone(),
+                observation: observation.clone(),
                 tail: tail.clone(),
                 sequence,
             },
         );
-        if let Some(pending)=previous{pending.tail.await;}
-        let result=self.persist_health(&target,observation,&completion.key).await;
+        if let Some(pending) = previous {
+            pending.tail.await;
+        }
+        let result = self
+            .persist_health(&target, observation, &completion.key)
+            .await;
         completion.finish(result)
     }
     async fn persist_health(
