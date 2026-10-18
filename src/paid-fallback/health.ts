@@ -156,8 +156,8 @@ export const surplus402IndicatesQuotaExhaustion = async (response: Response, sig
     const payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     if (!isRecord(payload)) return false;
     const error = isRecord(payload.error) ? payload.error : payload;
-    const code = typeof error?.code === "string" ? error.code.trim().toLowerCase() : "";
-    const type = typeof error?.type === "string" ? error.type.trim().toLowerCase() : "";
+    const code = typeof error.code === "string" ? error.code.trim().toLowerCase() : "";
+    const type = typeof error.type === "string" ? error.type.trim().toLowerCase() : "";
     return code === "insufficient_credit" || type === "insufficient_credit";
   } catch {
     return false;
