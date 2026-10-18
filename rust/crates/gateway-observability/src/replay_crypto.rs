@@ -23,6 +23,16 @@ pub const CHUNK_BYTES: usize = 48 * 1024;
 const SALT: &[u8] = b"uos-sentinel-replay-v1";
 #[derive(Clone)]
 pub struct ReplayKey(Zeroizing<[u8; 32]>);
+/// One request's immutable bytes. It is never stored in isolate coordination state.
+pub struct ReplayBody(Zeroizing<Vec<u8>>);
+impl ReplayBody {
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
 pub struct FingerprintInput<'a> {
     pub method: &'a str,
     pub endpoint: &'a str,
