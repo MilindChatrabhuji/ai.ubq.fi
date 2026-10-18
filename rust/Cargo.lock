@@ -944,6 +944,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-observability"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures-util",
+ "gateway-admin-data",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "hmac 0.12.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "gateway-providers"
 version = "0.1.0"
 dependencies = [
