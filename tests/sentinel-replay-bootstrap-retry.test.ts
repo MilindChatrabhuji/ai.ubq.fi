@@ -733,7 +733,9 @@ test("bootstrap retry: a process that restarts every few calls still finishes th
 for (const consumer of ["reservation", "status"] as const) {
   test(`bootstrap retry: ${consumer} admission starts the owner fill without waiting, including concurrent refusals`, async () => {
     const kv = await openKv(":memory:");
-    const pausing = holdNextList(kv, isOwnerIndexSlice);
+    // Reservation reaping also lists accounting rows in pages of 64 before bootstrap starts.
+    // Hold the manifest slice so the pause can only belong to the background owner fill.
+    const pausing = holdNextList(kv, (prefix, options) => prefix.join("/") === SENTINEL_REPLAY_MANIFEST_PREFIX.join("/") && isOwnerIndexSlice(prefix, options));
     const handle = pausing.handle;
     let hold: ReturnType<typeof pausing.arm> | null = null;
     const request = async (): Promise<boolean> => {
@@ -772,6 +774,7 @@ for (const consumer of ["reservation", "status"] as const) {
       hold = pausing.arm();
       const first = request();
       await hold.reached;
+      assert.equal(await ledgerCursor(kv), "1|", "the held list belongs to the owner fill after its sweep id is durable");
       // Both the caller starting the fill and later callers must return before the maintenance wait expires.
       for (const pending of [first, request(), request()]) {
         const result = await Promise.race([pending, sleep(200).then(() => "waited" as const)]);
