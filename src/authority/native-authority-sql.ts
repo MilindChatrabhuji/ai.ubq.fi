@@ -7,6 +7,7 @@ import {
   type NativeTable,
   type NativeRead,
   type NativeCapability,
+  type NativeAttempt,
 } from "./native-authority-contracts.ts";
 
 const TABLES: readonly NativeTable[] = [
@@ -132,6 +133,9 @@ export class NativeAuthoritySql {
         _storage.sql.exec(`CREATE INDEX IF NOT EXISTS ${name}_parent ON ${name}(parent_key, row_key)`);
         _storage.sql.exec(`CREATE INDEX IF NOT EXISTS ${name}_expiry ON ${name}(expires_at_ms)`);
       }
+      _storage.sql.exec(
+        "CREATE INDEX IF NOT EXISTS uos_native_attempt_billing ON uos_native_attempt_lifetime(scope_key,json_extract(row_json,'$.billingRequestId'))"
+      );
       const found = _storage.sql.exec("SELECT * FROM uos_native_authority_meta WHERE id=1").toArray();
       if (found.length === 0) _storage.sql.exec("INSERT INTO uos_native_authority_meta VALUES(1,1,?,?,0,0)", namespace, epoch);
       this.assertEpoch();
@@ -242,6 +246,23 @@ export class NativeAuthoritySql {
     if (result === null) return null;
     if (typeof result !== "number" || !Number.isSafeInteger(result)) throw new NativeAuthorityError("pending_due_malformed", 503);
     return result;
+  }
+  paidAttempt(keyId: string, billingRequestId: string, now: number): NativeAttempt | null {
+    const rows = this._storage.sql
+      .exec(
+        "SELECT row_json FROM uos_native_attempt_lifetime WHERE scope_key=? AND json_extract(row_json,'$.billingRequestId')=? AND (expires_at_ms IS NULL OR expires_at_ms>?) LIMIT 2",
+        keyId,
+        billingRequestId,
+        now
+      )
+      .toArray();
+    if (rows.length > 1) throw new NativeAuthorityError("paid_attempt_identity_conflict", 503);
+    const encoded = rows.at(0)?.row_json;
+    if (encoded === undefined) return null;
+    if (typeof encoded !== "string") throw new NativeAuthorityError("paid_attempt_malformed", 503);
+    const row: unknown = JSON.parse(encoded);
+    if (!nativeObject(row) || typeof row.handle !== "string") throw new NativeAuthorityError("paid_attempt_malformed", 503);
+    return this.read("attempt_lifetime", [row.handle], now).value;
   }
   capability(id: string, now: number): NativeCapability {
     const cap = this.read("capability", [id], now).value;

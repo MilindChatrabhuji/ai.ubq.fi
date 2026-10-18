@@ -87,6 +87,7 @@ export class NativeAuthorityKernel {
   }
   reserve(cap: NativeCapability, handle: string, now: number): NativeReply {
     const request = this._api.request(cap, handle, now);
+    if (request.kernel) return { kind: "refused", detail: { kind: "refused", status: 503, message: "Kernel quota request already has a reservation" } };
     const repo = this._sql.read("kernel_policy", kernel.kernelRepoPolicyKey(cap.kernel.owner, cap.kernel.repo), now);
     const org = this._sql.read("kernel_policy", kernel.kernelOrgPolicyKey(cap.kernel.owner), now);
     const scope = kernel.decideKernelQuotaScope(

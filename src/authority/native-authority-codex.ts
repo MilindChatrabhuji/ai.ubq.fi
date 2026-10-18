@@ -1,3 +1,4 @@
+import { routingStateChangedByNormalization } from "./native-codex-evaluation.ts";
 import { activeSelectionForAccount, planCodexResetElection, selectCodex } from "./native-codex.ts";
 import * as mutation from "./native-codex-mutations.ts";
 import { normalizeRoutingState, probeLeaseMatchesCodexRoutingAccount, quotaClass, slotFor, slotMatchesCodexRoutingAccount } from "./native-codex-capacity.ts";
@@ -17,6 +18,7 @@ import {
   NativeAuthorityError,
   type NativeArguments,
   type NativeCapability,
+  type NativeCodexAuthorization,
   type NativeOwner,
   type NativePool,
   type NativeReply,
@@ -62,9 +64,14 @@ export class NativeAuthorityCodex {
     return owner;
   }
   /** Current owner metadata is distinct from native generation and source routing fingerprint. */
-  fence(cap: NativeCapability, handle: string, now: number): void {
+  authorization(cap: NativeCapability, handle: string, now: number): NativeCodexAuthorization {
+    const request = this._api.request(cap, handle, now);
+    if (!request.codex || !request.ownerFence) throw new NativeAuthorityError("codex_admission_missing");
+    return { account: request.codex, owner: request.ownerFence };
+  }
+  fence(cap: NativeCapability, handle: string, now: number, authorization?: NativeCodexAuthorization): void {
     const request = this._api.request(cap, handle, now),
-      account = request.codex;
+      account = authorization?.account ?? request.codex;
     if (account?.activeGeneration === undefined) throw new NativeAuthorityError("codex_admission_missing");
     const rows = this._rows(now),
       identity = rows.pool.value.identities.find((candidate) => candidate.slot === account.slot);
@@ -77,6 +84,7 @@ export class NativeAuthorityCodex {
     )
       throw new NativeAuthorityError("codex_dispatch_fence_stale");
     const slot = slotFor(rows.normalized, account);
+    if (mutation.admissionRefreshRoutingGeneration(rows.normalized, account) === null) throw new NativeAuthorityError("codex_credential_invalid");
     if (
       !slotMatchesCodexRoutingAccount(slot, account) ||
       slot.generation !== account.routingGeneration ||
@@ -84,7 +92,7 @@ export class NativeAuthorityCodex {
     )
       throw new NativeAuthorityError("codex_routing_fence_stale");
     const owner = this._owner(account, now),
-      prior = request.ownerFence;
+      prior = authorization?.owner ?? request.ownerFence;
     if (
       prior?.ownerId !== owner.ownerId ||
       prior.ownerEpoch !== owner.ownerEpoch ||
@@ -134,6 +142,7 @@ export class NativeAuthorityCodex {
     const request = this._api.request(cap, args.handle, now),
       account = request.codex;
     if (!account) throw new NativeAuthorityError("codex_admission_missing");
+    this._api.save({ ...request, providerObserved: true });
     const rows = this._rows(now),
       identity = rows.pool.value.identities.find((candidate) => candidate.slot === account.slot);
     if (identity?.accountIdHash !== account.accountIdHash || identity.credentialVersion !== account.credentialVersion) return { kind: "stale" };
@@ -194,9 +203,23 @@ export class NativeAuthorityCodex {
       identity?.accountIdHash !== account.accountIdHash
     )
       return { kind: "stale" };
-    const currentAccount = { ...account, credentialVersion: identity.credentialVersion };
+    const changed = account.credentialVersion !== identity.credentialVersion;
+    const slot = rows.normalized.slots.at(account.slot);
+    const lease = slot?.probe_lease;
+    const retained =
+      changed &&
+      account.probeGeneration !== null &&
+      account.probeToken !== null &&
+      lease?.token === account.probeToken &&
+      lease.circuit === (account.probeCircuit ?? "quota") &&
+      lease.generation === slot?.generation;
+    const resetProbe = changed ? { probeRequired: false, probeGeneration: null, probeToken: null, probeCircuit: null } : {};
+    const transferred = retained ? { probeGeneration: slot.generation, probeToken: lease.token, probeCircuit: lease.circuit } : {};
+    const currentAccount: CodexRoutingAccount = { ...account, ...resetProbe, ...transferred, credentialVersion: identity.credentialVersion };
     const generation = mutation.admissionRefreshRoutingGeneration(rows.routing.value === null ? null : rows.normalized, currentAccount);
     if (generation === null) return { kind: "stale" };
+    if (routingStateChangedByNormalization(rows.routing.value, rows.normalized))
+      this._sql.write("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, rows.normalized);
     const prepared = mutation.prepareCodexAdmissionRefresh(active, currentAccount, rows.pool.revision, generation);
     if (prepared.kind === "refresh") this._sql.write("codex_active", CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, { ...prepared.next, updated_at_ms: now });
     const owner = this._owner(currentAccount, now);
@@ -211,8 +234,9 @@ export class NativeAuthorityCodex {
     const request = this._api.request(cap, args.handle, now),
       proof = this._sql.read("codex_reset", [args.proofId], now).value;
     if (!proof?.verified) return { kind: "refused", detail: "reset_proof_unavailable" };
+    if (quotaClass(proof.account.requestedModel) !== quotaClass(request.model)) return { kind: "refused", detail: "reset_model_class_mismatch" };
     const rows = this._rows(now),
-      account = proof.account,
+      account = { ...proof.account, requestedModel: request.model },
       slot = rows.normalized.slots.at(account.slot);
     const selected = rows.pool.value.selectedAccountHashes,
       identity = rows.pool.value.identities.find((candidate) => candidate.slot === account.slot);
@@ -238,11 +262,11 @@ export class NativeAuthorityCodex {
         capacity: rows.capacity.value,
         poolIdentities: rows.pool.value.identities,
         selectedAccountHashes: selected,
-        accountPolicies: this._policies(rows.pool.value, account.requestedModel ?? request.model),
+        accountPolicies: this._policies(rows.pool.value, account.requestedModel),
         revisions: rows.revisions,
       },
       now,
-      account.requestedModel ?? request.model
+      account.requestedModel
     );
     if (cohort?.selection.kind !== "quota_blocked" || !cohort.selection.fullCohortExhausted) return { kind: "refused", detail: "cohort_not_quota_exhausted" };
     const active = parseCodexActiveAccountSelection(rows.active.value),

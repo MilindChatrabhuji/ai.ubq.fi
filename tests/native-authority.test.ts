@@ -776,3 +776,338 @@ test("native authority paid rollup collisions retain both requests and cannot ba
     f.db.close();
   }
 });
+
+const reviewPaid = async (f: ReturnType<typeof serviceFixture>, id: string) => {
+  const requestHandle = await clientReserve(f, id);
+  const reply = await f.client.call("reservePaidAttempt", { handle: requestHandle, hopId: "openlux-hop" });
+  expect(reply.kind).toBe("reserved");
+  return { requestHandle, attemptHandle: required(reply.attemptHandle) };
+};
+const reviewTrace = (f: ReturnType<typeof serviceFixture>, finding: string, time = now) => {
+  console.log(
+    JSON.stringify({
+      finding,
+      api: f.sql.page("api_window", time, "", 100),
+      kernel: f.sql.page("kernel_reservation", time, "", 100),
+      paid: f.sql.page("paid_request", time, "", 100),
+      attempts: f.sql.page("attempt_lifetime", time, "", 100),
+      pending: f.sql.page("paid_pending", time, "", 100),
+    })
+  );
+};
+const reviewRotate = (f: ReturnType<typeof serviceFixture>, credentialVersion: string) => {
+  const pool = required(f.sql.read("codex_pool", CODEX_AUTH_POOL_KV_KEY, now).value);
+  const owner = required(f.sql.read("codex_owner", ["a".repeat(64)], now).value);
+  f.sql.transaction(() => {
+    f.sql.write("codex_pool", CODEX_AUTH_POOL_KV_KEY, {
+      ...pool,
+      identities: pool.identities.map((identity) => (identity.slot === 0 ? { ...identity, credentialVersion } : identity)),
+    });
+    f.sql.write("codex_owner", ["a".repeat(64)], {
+      ...owner,
+      credentialVersion,
+      nativeGenerationHash: "generation-" + credentialVersion,
+      publicationRevision: "publication-" + credentialVersion,
+    });
+  });
+};
+const reviewResetProof = async (f: ReturnType<typeof serviceFixture>) => {
+  const response = {
+    status: 429,
+    headers: [] as [string, string][],
+    body: JSON.stringify({ error: { type: "usage_limit_reached", resets_at: (now + 3_600_000) / 1000 } }),
+  };
+  for (const id of ["proof-a", "proof-b"]) {
+    const handle = await clientReserve(f, id);
+    expect((await f.client.call("selectCodexAccount", { handle })).kind).toBe("eligible");
+    await f.client.call("recordCodexAttemptSignal", { handle, signal: "quota", response });
+  }
+  const handle = await clientReserve(f, "proof-blocked");
+  expect((await f.client.call("selectCodexAccount", { handle })).kind).toBe("quota_blocked");
+  const selection = required(f.sql.read("request_lifetime", [handle], now).value).selection;
+  if (selection?.kind !== "quota_blocked") throw new Error("native quota cohort missing");
+  const account = required(selection.blockedAccounts.at(0));
+  f.sql.transaction(() => {
+    f.sql.write("codex_reset", ["review-proof"], {
+      id: "review-proof",
+      account,
+      quotaResetAtMs: account.quotaResetAtMs,
+      routingGeneration: account.routingGeneration,
+      activeSnapshot: f.sql.read("codex_active", CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, now).value,
+      poolRevision: required(f.sql.read("codex_pool", CODEX_AUTH_POOL_KV_KEY, now).revision),
+      capacityRevision: f.sql.read("codex_capacity", ["uos_ai", "codex_capacity_routing", "v1", "observations"], now).revision,
+      verified: true,
+    });
+  });
+  return handle;
+};
+
+test("review F01 paid provider terminal forbids compensation without optional flags", async () => {
+  const f = serviceFixture();
+  try {
+    const attempt = await reviewPaid(f, "terminal-release");
+    expect((await f.client.call("recordPaidAttemptLifecycle", { attemptHandle: attempt.attemptHandle, patch: { terminal_state: "completed" } })).kind).toBe(
+      "updated"
+    );
+    const outcome = await Promise.allSettled([f.client.call("releasePaidBeforeFetch", { attemptHandle: attempt.attemptHandle })]);
+    reviewTrace(f, "F01");
+    expect(f.sql.page("paid_request", now, "", 100)[0].row.value).toMatchObject({ terminal_state: "completed", billing_state: "pending" });
+    expect(outcome[0].status).toBe("rejected");
+    expect(f.sql.page("paid_window", now, "", 100)[0].row.value?.reserved_microcredits).toBe(40);
+    await f.client.call("recordPaidAttemptLifecycle", { attemptHandle: attempt.attemptHandle, patch: { provider_request_id: "late-after-terminal" } });
+    const log = { request_id: "late-after-terminal", quota: 9, prompt_tokens: 1, completion_tokens: 1, model: "fixture", created_at: now / 1000 };
+    expect(await f.client.call("recordVerifiedPaidBilling", { attemptHandle: attempt.attemptHandle, log })).toMatchObject({ kind: "settled" });
+    expect(f.sql.page("paid_window", now, "", 100)[0].row.value).toMatchObject({ settled_microcredits: 9, reserved_microcredits: 0 });
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F02 nonpaid positive evidence and durable start fence API compensation", async () => {
+  for (const evidence of ["terminal", "delivery", "start", "provider"] as const) {
+    const f = serviceFixture();
+    try {
+      const handle = await clientReserve(f, "nonpaid-" + evidence);
+      const provider = evidence === "provider" ? "chatgpt_codex" : "lithos";
+      if (evidence === "provider") expect((await f.client.call("selectCodexAccount", { handle })).kind).toBe("eligible");
+      expect((await f.client.call("markApiDispatch", { handle, provider })).kind).toBe("dispatched");
+      if (evidence === "provider") await f.client.call("recordCodexAttemptSignal", { handle, signal: "success" });
+      if (evidence === "terminal") await f.client.call("recordSemanticTerminal", { handle, outcome: "completed" });
+      if (evidence === "delivery") await f.client.call("recordDeliveryObservation", { handle, observation: "delivered" });
+      if (evidence === "start") {
+        const rpc = new NativeAuthorityRpcServer(f.authority, cap.id);
+        expect(
+          await rpc.execute({ epoch: cap.epoch, operationId: "start", method: "recordTransportStarted", args: { handle, provider: "lithos" } })
+        ).toMatchObject({ result: { kind: "started" } });
+        const paid = await f.client.call("reservePaidAttempt", { handle, hopId: "openlux-hop" });
+        expect(paid.kind).toBe("reserved");
+        await f.client.call("recordPaidAttemptLifecycle", { attemptHandle: required(paid.attemptHandle), patch: { provider_request_id: "another-response" } });
+        expect(
+          await rpc.execute({ epoch: cap.epoch, operationId: "start-repeat", method: "recordTransportStarted", args: { handle, provider: "lithos" } })
+        ).toMatchObject({ result: { kind: "unchanged", detail: { provider: "lithos", attemptHandle: null } } });
+      }
+      const outcome = await Promise.allSettled([f.client.call("recordApiDispatchCancellation", { handle })]);
+      reviewTrace(f, "F02-" + evidence);
+      expect(f.sql.page("api_window", now, "", 100)[0].row.value?.committed_requests).toBe(1);
+      expect(outcome[0].status).toBe("rejected");
+    } finally {
+      f.db.close();
+    }
+  }
+});
+
+test("review F03 Codex dispatch requires an admitted subscription", async () => {
+  const f = serviceFixture();
+  try {
+    const handle = await clientReserve(f, "no-codex-admission");
+    const outcome = await Promise.allSettled([f.client.call("markApiDispatch", { handle, provider: "chatgpt_codex" })]);
+    reviewTrace(f, "F03");
+    expect(f.sql.page("api_window", now, "", 100)[0].row.value).toMatchObject({ committed_requests: 0, reserved_requests: 1 });
+    expect(outcome[0].status).toBe("rejected");
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F04 compensated API dispatch receipt cannot authorize dispatch again", async () => {
+  const f = serviceFixture();
+  try {
+    const handle = await clientReserve(f, "compensated");
+    expect((await f.client.call("markApiDispatch", { handle, provider: "lithos" }, "dispatch-receipt")).kind).toBe("dispatched");
+    expect((await f.client.call("recordApiDispatchCancellation", { handle })).kind).toBe("released");
+    const replay = await Promise.allSettled([f.client.call("markApiDispatch", { handle, provider: "lithos" }, "dispatch-receipt")]);
+    reviewTrace(f, "F04");
+    expect(f.sql.page("api_window", now, "", 100)[0].row.value?.committed_requests).toBe(0);
+    expect(f.sql.page("api_request", now, "", 100)[0].row.value?.state).toBe("released");
+    expect(replay[0].status).toBe("rejected");
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F05 refresh receipt validates its own immutable credential and owner fences", async () => {
+  const f = serviceFixture();
+  try {
+    const handle = await clientReserve(f, "own-refresh-receipt");
+    expect((await f.client.call("selectCodexAccount", { handle })).kind).toBe("eligible");
+    expect((await f.client.call("refreshCodexAdmission", { handle }, "refresh-C1")).kind).toBe("current");
+    reviewRotate(f, "e".repeat(64));
+    expect((await f.client.call("refreshCodexAdmission", { handle }, "refresh-C2")).kind).toBe("current");
+    const replay = await Promise.allSettled([f.client.call("refreshCodexAdmission", { handle }, "refresh-C1")]);
+    reviewTrace(f, "F05");
+    expect(required(f.sql.read("request_lifetime", [handle], now).value).codex?.credentialVersion).toBe("e".repeat(64));
+    expect(replay[0].status).toBe("rejected");
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F06 current invalid credential blocks dispatch and cached refresh without generation change", async () => {
+  const f = serviceFixture();
+  try {
+    const handle = await clientReserve(f, "current-invalid");
+    expect((await f.client.call("selectCodexAccount", { handle })).kind).toBe("eligible");
+    await f.client.call("refreshCodexAdmission", { handle }, "invalid-refresh");
+    const generation = required(f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now).value).slots[0].generation;
+    expect((await f.client.call("recordCodexAttemptSignal", { handle, signal: "credential_invalid" })).kind).toBe("recorded");
+    const outcomes = await Promise.allSettled([
+      f.client.call("markApiDispatch", { handle, provider: "chatgpt_codex" }),
+      f.client.call("refreshCodexAdmission", { handle }, "invalid-refresh"),
+    ]);
+    reviewTrace(f, "F06");
+    expect(required(f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now).value).slots[0].generation).toBe(generation);
+    expect(f.sql.page("api_window", now, "", 100)[0].row.value?.committed_requests).toBe(0);
+    expect(outcomes.every((outcome) => outcome.status === "rejected")).toBe(true);
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F07 restarted reconciler claims usable persisted attempt handles", async () => {
+  const f = serviceFixture();
+  try {
+    await reviewPaid(f, "claimable");
+    const restarted = new NativeAuthority(storage(f.db), f.options, () => now);
+    const client = new NativeAuthorityClient(new NativeAuthorityRpcServer(restarted, cap.id), cap.epoch);
+    const claim = await client.call("claimPaidReconciliation", { limit: 10 });
+    expect(claim.kind).toBe("claimed");
+    reviewTrace(f, "F07");
+    const item: unknown = Array.isArray(claim.detail) ? claim.detail[0] : null;
+    expect(item).toHaveProperty("attemptHandle");
+    if (item === null || typeof item !== "object" || !("attemptHandle" in item) || typeof item.attemptHandle !== "string")
+      throw new Error("claim handle absent");
+    expect((await client.call("deferPaidReconciliation", { attemptHandle: item.attemptHandle })).kind).toBe("write");
+    expect(f.sql.page("paid_pending", now, "", 100)[0].row.value?.next_reconciliation_at_ms).toBeGreaterThan(now);
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F08 same-account credential refresh adopts the transferred native probe lease", async () => {
+  const source = withPool();
+  const f = serviceFixture({ ...source, pool: { ...source.pool, identities: [source.pool.identities[0]], selectedAccountHashes: ["a".repeat(64)] } });
+  try {
+    const first = await clientReserve(f, "probe-block");
+    await f.client.call("selectCodexAccount", { handle: first });
+    await f.client.call("recordCodexAttemptSignal", {
+      handle: first,
+      signal: "quota",
+      response: { status: 429, headers: [], body: JSON.stringify({ error: { type: "usage_limit_reached", resets_at: (now + 1000) / 1000 } }) },
+    });
+    f.setTime(now + 1001);
+    const handle = await clientReserve(f, "owned-probe");
+    expect((await f.client.call("selectCodexAccount", { handle })).kind).toBe("eligible");
+    const before = required(required(f.sql.read("request_lifetime", [handle], now).value).codex);
+    expect(before.probeToken).toEqual(expect.any(String));
+    reviewRotate(f, "e".repeat(64));
+    expect((await f.client.call("refreshCodexAdmission", { handle })).kind).toBe("current");
+    const after = required(required(f.sql.read("request_lifetime", [handle], now).value).codex);
+    reviewTrace(f, "F08");
+    expect(after.probeToken).toBe(before.probeToken);
+    expect(after.probeGeneration).toBe(required(after.routingGeneration));
+    expect((await f.client.call("markApiDispatch", { handle, provider: "chatgpt_codex" })).kind).toBe("dispatched");
+    expect((await f.client.call("releaseCodexProbe", { handle })).kind).toBe("released");
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F09 reset proof cannot cross native quota classes but permits proven standard aliases", async () => {
+  const f = serviceFixture();
+  try {
+    await reviewResetProof(f);
+    const reserve = handle(await f.client.call("reserveApiUsage", { requestId: "reserve-model", route: "/v1/responses", model: "gpt-reserve", stream: false }));
+    const before = f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now);
+    const rejected = await f.client.call("electCodexResetProbe", { handle: reserve, proofId: "review-proof" });
+    reviewTrace(f, "F09");
+    expect(rejected.kind).toBe("refused");
+    expect(f.sql.read("codex_reset", ["review-proof"], now).value?.verified).toBe(true);
+    expect(f.sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now)).toEqual(before);
+    const alias = handle(
+      await f.client.call("reserveApiUsage", { requestId: "standard-alias", route: "/v1/responses", model: "another-standard", stream: false })
+    );
+    expect((await f.client.call("electCodexResetProbe", { handle: alias, proofId: "review-proof" })).kind).toBe("probe_elected");
+    expect(required(f.sql.read("request_lifetime", [alias], now).value).codex?.requestedModel).toBe("another-standard");
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F10 paid response usage is separate from first Codex API dispatch", async () => {
+  const f = serviceFixture();
+  try {
+    const handle = await clientReserve(f, "responding-paid");
+    await f.client.call("selectCodexAccount", { handle });
+    expect((await f.client.call("markApiDispatch", { handle, provider: "chatgpt_codex" })).kind).toBe("dispatched");
+    const admitted = await f.client.call("reservePaidAttempt", { handle, hopId: "openlux-hop" });
+    expect(admitted.kind).toBe("reserved");
+    const attemptHandle = required(admitted.attemptHandle);
+    expect((await f.client.call("markApiDispatch", { handle, provider: "metered" })).kind).toBe("already_dispatched");
+    await f.client.call("recordPaidAttemptLifecycle", { attemptHandle, patch: { provider_request_id: "paid-response", terminal_state: "completed" } });
+    await f.client.call("recordSemanticTerminal", { handle, outcome: "completed", usage: { input_tokens: 3, cached_input_tokens: null, output_tokens: 2 } });
+    const log = { request_id: "paid-response", quota: 7, prompt_tokens: 3, completion_tokens: 2, model: "fixture", created_at: now / 1000 };
+    expect((await f.client.call("recordVerifiedPaidBilling", { attemptHandle, log })).kind).toBe("settled");
+    reviewTrace(f, "F10");
+    const rollups = f.sql.page("paid_rollup", now, "", 100);
+    expect(rollups).toHaveLength(1);
+    expect(rollups[0].row.value).toMatchObject({ provider: "metered", request_count: 1, input_tokens: 3, output_tokens: 2 });
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F11 provider terminal expedites pending marker and versions reconciliation gate", async () => {
+  const f = serviceFixture();
+  try {
+    const attempt = await reviewPaid(f, "terminal-expedite");
+    expect((await f.client.call("deferPaidReconciliation", { attemptHandle: attempt.attemptHandle })).kind).toBe("write");
+    const gate = f.sql.read("paid_gate", nativePaid.paidFallbackReconciliationGateV3Key(), now).revision;
+    f.setTime(now + 1);
+    await f.client.call("recordPaidAttemptLifecycle", { attemptHandle: attempt.attemptHandle, patch: { terminal_state: "completed" } });
+    reviewTrace(f, "F11");
+    expect(f.sql.page("paid_pending", now + 1, "", 100)[0].row.value?.next_reconciliation_at_ms).toBe(now + 1);
+    expect(f.sql.read("paid_gate", nativePaid.paidFallbackReconciliationGateV3Key(), now + 1).revision).not.toBe(gate);
+    expect(await f.client.call("claimPaidReconciliation", { limit: 10 })).toMatchObject({
+      kind: "claimed",
+      detail: [{ attemptHandle: attempt.attemptHandle }],
+    });
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F12 window rollover cannot replace one request's original kernel binding", async () => {
+  const f = serviceFixture();
+  try {
+    const handle = await clientReserve(f, "kernel-lifetime");
+    expect((await f.client.call("reserveKernelUsage", { handle })).kind).toBe("reserved");
+    const original = required(f.sql.read("request_lifetime", [handle], now).value).kernel;
+    f.setTime(now + 3_600_001);
+    const replay = await f.client.call("reserveKernelUsage", { handle });
+    reviewTrace(f, "F12", now + 3_600_001);
+    expect(required(f.sql.read("request_lifetime", [handle], now).value).kernel).toEqual(original);
+    expect(f.sql.page("kernel_reservation", now + 3_600_001, "", 100)).toHaveLength(1);
+    expect(replay.kind).toBe("refused");
+    expect((await f.client.call("settleKernelUsage", { handle, terminalState: "committed", reason: "late original terminal" })).kind).toBe("settle");
+  } finally {
+    f.db.close();
+  }
+});
+
+test("review F13 retention-expired paid history cannot recreate a permanent logical attempt", async () => {
+  const f = serviceFixture();
+  try {
+    const attempt = await reviewPaid(f, "retention-tombstone");
+    const before = f.sql.page("paid_window", now, "", 100)[0].row.value;
+    const future = now + nativePaid.PAID_FALLBACK_REQUEST_LOG_RETENTION_MS + 1;
+    f.setTime(future);
+    const replay = await f.client.call("reservePaidAttempt", { handle: attempt.requestHandle, hopId: "openlux-hop" });
+    reviewTrace(f, "F13", future);
+    expect(replay.kind).toBe("blocked");
+    expect(f.sql.page("attempt_lifetime", future, "", 100)).toHaveLength(1);
+    expect(f.sql.page("paid_request", future, "", 100)).toHaveLength(0);
+    expect(f.sql.page("paid_window", future, "", 100)[0].row.value).toEqual(before);
+  } finally {
+    f.db.close();
+  }
+});

@@ -46,6 +46,7 @@ const response = shape({
 });
 const GUARDS: Readonly<Record<NativeMethod, Guard>> = {
   reserveApiUsage: shape({ requestId: text, route: text, model: text, stream: boolean, reasoning: optional(nullable(text)) }),
+  recordTransportStarted: shape({ ...handle, provider: oneOf(...API_KEY_USAGE_PROVIDERS), attemptHandle: optional(text) }),
   markApiDispatch: shape({ ...handle, provider: oneOf(...API_KEY_USAGE_PROVIDERS) }),
   releaseApiUndispatched: shape({ ...handle, reason: text }),
   recordApiDispatchCancellation: shape(handle),
@@ -101,12 +102,18 @@ const GUARDS: Readonly<Record<NativeMethod, Guard>> = {
   finishPaidReconciliation: shape({ lease: text }),
   foldPaidBackfillPage: shape(page),
   beginPaidKeyDeletion: shape({}),
-  recordSemanticTerminal: shape({ ...handle, outcome: oneOf("completed", "incomplete", "failed", "cancelled"), usage: optional(usage) }),
+  recordSemanticTerminal: shape({
+    ...handle,
+    attemptHandle: optional(text),
+    outcome: oneOf("completed", "incomplete", "failed", "cancelled"),
+    usage: optional(usage),
+  }),
   recordDeliveryObservation: shape({ ...handle, observation: oneOf("delivered", "interrupted", "unobserved") }),
   readRequestStatus: shape({ ...handle, ...page }),
 };
 export const NATIVE_METHOD_ROLES: Readonly<Record<NativeMethod, NativeRole>> = {
   reserveApiUsage: "inference",
+  recordTransportStarted: "transport",
   markApiDispatch: "transport",
   releaseApiUndispatched: "transport",
   recordApiDispatchCancellation: "transport",

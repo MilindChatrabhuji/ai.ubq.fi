@@ -65,17 +65,6 @@ export class NativeAuthorityPaid {
       return null;
     return { ...source, value: source.value };
   }
-  private _existing(requestHandle: string, hopId: string, now: number): string {
-    let after = "";
-    for (;;) {
-      const page = this._sql.page("attempt_lifetime", now, after, 100, { parent: requestHandle });
-      const existing = page.find((candidate) => candidate.row.value?.hopId === hopId)?.row.value;
-      if (existing) return existing.handle;
-      if (page.length < 100) break;
-      after = page[page.length - 1].encoded;
-    }
-    throw new NativeAuthorityError("paid_attempt_lifetime_missing", 503);
-  }
   private _fallbackCurrent(request: NativeRequest, now: number): boolean {
     if (!request.codexProof) return false;
     const proof = request.codexProof;
@@ -104,18 +93,29 @@ export class NativeAuthorityPaid {
     const selection = decision?.selection;
     return (selection?.kind === "quota_blocked" || selection?.kind === "credentials_invalid") && selection.fullCohortUnavailable === true;
   }
+  private _fallbackAllowed(request: NativeRequest, now: number): boolean {
+    const selection = request.selection;
+    return (
+      (selection?.kind === "quota_blocked" || selection?.kind === "credentials_invalid") &&
+      selection.fullCohortUnavailable === true &&
+      this._fallbackCurrent(request, now)
+    );
+  }
+  private _prior(request: NativeRequest, hopId: string, billingId: string, now: number) {
+    const prior = this._sql.paidAttempt(request.keyId, billingId, now);
+    let blocked: NativeReply | null = null;
+    if (prior && (prior.requestHandle !== request.handle || prior.hopId !== hopId)) blocked = { kind: "blocked", detail: "attempt_identity_conflict" };
+    else if (prior && !this._request(prior, now).value) blocked = { kind: "blocked", detail: "attempt_retention_expired" };
+    return { prior, blocked };
+  }
+  private _requireAttempt(prior: NativeAttempt | null): NativeAttempt {
+    if (!prior) throw new NativeAuthorityError("paid_attempt_lifetime_missing", 503);
+    return prior;
+  }
   reserve(cap: NativeCapability, args: NativeArguments["reservePaidAttempt"], now: number): NativeReply {
     const request = this._api.request(cap, args.handle, now),
       hop = this._hop(args.hopId);
-    if (
-      hop.authorization === "codex_unavailable" &&
-      !(
-        request.selection &&
-        (request.selection.kind === "quota_blocked" || request.selection.kind === "credentials_invalid") &&
-        request.selection.fullCohortUnavailable === true &&
-        this._fallbackCurrent(request, now)
-      )
-    )
+    if (hop.authorization === "codex_unavailable" && !this._fallbackAllowed(request, now))
       return { kind: "blocked", detail: "subscriptions_not_authoritatively_unavailable" };
     const source = this._policy(cap, now);
     if (!source) return { kind: "blocked", detail: "invalid_policy" };
@@ -124,6 +124,8 @@ export class NativeAuthorityPaid {
     if (!policy.paid.eligibleModels.includes(request.model) && !(unlimited && policy.paid.allowUnrosteredUnlimited))
       return { kind: "skip", detail: "model_not_priced" };
     const billingRequestId = `${request.requestId}:${hop.billingSuffix}`;
+    const { prior, blocked } = this._prior(request, hop.id, billingRequestId, now);
+    if (blocked) return blocked;
     const reset = currentApiKeyUsageWindow(policy.api.usage_reset_at_ms, policy.api.window_ms, request.createdAtMs).reset;
     const input = {
       keyId: cap.keyId,
@@ -162,7 +164,7 @@ export class NativeAuthorityPaid {
     }
     if (plan.kind === "blocked") return { kind: plan.kind, detail: plan.reason };
     if (plan.kind === "reserved") {
-      return { kind: "reserved", attemptHandle: this._existing(request.handle, hop.id, now), detail: plan.reservation };
+      return { kind: "reserved", attemptHandle: this._requireAttempt(prior).handle, detail: plan.reservation };
     }
     this._writeRequest(requestKey, plan.request, now + plan.requestExpireIn);
     this._sql.write("paid_pending", paid.paidFallbackPendingV3Key(cap.keyId, billingRequestId), plan.pending, null, {
@@ -184,6 +186,30 @@ export class NativeAuthorityPaid {
     });
     return { kind: "reserved", attemptHandle: handle, detail: plan.reservation };
   }
+  private _expedite(attempt: NativeAttempt, now: number): void {
+    const key = paid.paidFallbackPendingV3Key(attempt.keyId, attempt.billingRequestId);
+    const pending = this._sql.read("paid_pending", key, now).value;
+    if (!pending) return;
+    const markerNeedsExpedite = pending.next_reconciliation_at_ms > now;
+    if (!markerNeedsExpedite && !paid.paidFallbackReconciliationGateNeedsArm(this._gate(now), now)) return;
+    if (markerNeedsExpedite) this._sql.write("paid_pending", key, { ...pending, next_reconciliation_at_ms: now }, null, { scope: attempt.keyId, due: now });
+    this._arm(now);
+  }
+  response(cap: NativeCapability, attemptHandle: string, now: number) {
+    const attempt = this.attempt(cap, attemptHandle, now);
+    return { attempt, provider: this._hop(attempt.hopId).ledgerProvider };
+  }
+  start(cap: NativeCapability, args: NativeArguments["recordTransportStarted"], now: number): void {
+    if (!args.attemptHandle) {
+      if (args.provider === "metered" || args.provider === "surplus") throw new NativeAuthorityError("paid_transport_attempt_required", 403);
+      return;
+    }
+    const { attempt, provider } = this.response(cap, args.attemptHandle, now);
+    if (attempt.requestHandle !== args.handle || provider !== args.provider) throw new NativeAuthorityError("transport_attempt_mismatch", 403);
+    const row = this._request(attempt, now).value;
+    if (row?.billing_state !== "pending" || row.terminal_state !== "pending") throw new NativeAuthorityError("paid_attempt_not_dispatchable");
+    this.lifecycle(cap, { attemptHandle: attempt.handle, patch: {}, fetchStarted: true }, now);
+  }
   lifecycle(cap: NativeCapability, args: NativeArguments["recordPaidAttemptLifecycle"], now: number): NativeReply {
     const attempt = this.attempt(cap, args.attemptHandle, now),
       hop = this._hop(attempt.hopId),
@@ -203,7 +229,14 @@ export class NativeAuthorityPaid {
       const original = this._api.request(cap, attempt.requestHandle, now);
       if (original.dispatch) this._api.save({ ...original, dispatch: { ...original.dispatch, fetchStarted: true } });
     }
-    return { kind: plan ? "updated" : "unchanged", detail: plan?.request ?? entry.value };
+    const observed = plan?.request ?? entry.value;
+    if (observed.terminal_state !== "pending") this._expedite(attempt, now);
+    if (observed.provider_request_id !== null || observed.terminal_state !== "pending" || args.fetchStarted) {
+      const original = this._api.request(cap, attempt.requestHandle, now);
+      if (original.semantic === null)
+        this._api.save({ ...original, providerObserved: true, responding: { provider: hop.ledgerProvider, attemptHandle: attempt.handle } });
+    }
+    return { kind: plan ? "updated" : "unchanged", detail: observed };
   }
   private _applyRelease(attempt: NativeAttempt, plan: Omit<NativePaidReleasePlan, "checks">, now: number): void {
     this._writeRequest(paid.paidFallbackRequestV3Key(attempt.keyId, attempt.billingRequestId), plan.request, now + plan.requestExpireIn);
@@ -216,7 +249,17 @@ export class NativeAuthorityPaid {
   }
   release(cap: NativeCapability, handle: string, now: number): NativeReply {
     const attempt = this.attempt(cap, handle, now);
-    if (attempt.fetchStarted) throw new NativeAuthorityError("paid_fetch_may_have_started");
+    const original = this._api.request(cap, attempt.requestHandle, now);
+    const current = this._request(attempt, now).value;
+    const stillBillable = current?.billing_state === "pending" || current?.billing_state === "unresolved";
+    if (
+      stillBillable &&
+      (attempt.fetchStarted ||
+        current.terminal_state !== "pending" ||
+        original.semantic !== null ||
+        (original.delivery !== null && original.delivery !== "unobserved"))
+    )
+      throw new NativeAuthorityError("paid_fetch_may_have_started");
     const plan = paid.planPaidFallbackReleaseV3(
       {
         request: this._request(attempt, now),
@@ -301,6 +344,24 @@ export class NativeAuthorityPaid {
     this._sql.write("cursor", [id], { id, capabilityId: cap.id, family, after, parent: cap.keyId, lease });
     return id;
   }
+  private _dueAttempt(cap: NativeCapability, billingId: string, now: number) {
+    const request = this._sql.read("paid_request", paid.paidFallbackRequestV3Key(cap.keyId, billingId), now).value;
+    if (!request || request.billing_state === "settled" || request.billing_state === "not_billed") {
+      this._sql.delete("paid_pending", paid.paidFallbackPendingV3Key(cap.keyId, billingId));
+      this._arm(now);
+      return null;
+    }
+    const attempt = this._sql.paidAttempt(cap.keyId, billingId, now);
+    if (!attempt) throw new NativeAuthorityError("paid_attempt_lifetime_missing", 503);
+    this.attempt(cap, attempt.handle, now);
+    return {
+      attemptHandle: attempt.handle,
+      requestHandle: attempt.requestHandle,
+      requestId: billingId,
+      provider: request.provider,
+      providerRequestId: request.provider_request_id,
+    };
+  }
   claim(cap: NativeCapability, args: NativeArguments["claimPaidReconciliation"], now: number): NativeReply {
     const leaseKey = paid.paidFallbackReconciliationLeaseV3Key(cap.keyId),
       prior = this._sql.read("paid_lease", leaseKey, now).value;
@@ -315,11 +376,8 @@ export class NativeAuthorityPaid {
       if (item.row.value && item.row.value.next_reconciliation_at_ms <= now) {
         const billingId = item.key.at(-1);
         if (typeof billingId !== "string") throw new NativeAuthorityError("paid_pending_key_malformed", 503);
-        const request = this._sql.read("paid_request", paid.paidFallbackRequestV3Key(cap.keyId, billingId), now).value;
-        if (!request || request.billing_state === "settled" || request.billing_state === "not_billed") {
-          this._sql.delete("paid_pending", item.key);
-          this._arm(now);
-        } else due.push({ requestId: billingId, provider: request.provider, providerRequestId: request.provider_request_id });
+        const entry = this._dueAttempt(cap, billingId, now);
+        if (entry) due.push(entry);
       }
     }
     return {
