@@ -298,11 +298,9 @@ const refillEvents = (quota: MeteredQuotaRunwayView, history: readonly MeteredQu
     positiveFinite(quota.latest_refill_amount_credits) ||
     quota.confidence === "refill_observed" ||
     quota.confidence === "inferred_adjustment";
-  const observedRefillTimes = [
-    cycleStartIsRefill ? quota.cycle_started_at_ms : null,
-    inferredCreditAtMs,
-    quota.latest_refill_completed_at_ms,
-  ].filter((atMs): atMs is number => nonNegativeFinite(atMs) && atMs <= nowMs);
+  const observedRefillTimes = [cycleStartIsRefill ? quota.cycle_started_at_ms : null, inferredCreditAtMs, quota.latest_refill_completed_at_ms].filter(
+    (atMs): atMs is number => nonNegativeFinite(atMs) && atMs <= nowMs
+  );
   for (const observedRefillAtMs of observedRefillTimes) mergeObservedRefillEvent(events, observedRefillAtMs);
   events.sort((left, right) => left.atMs - right.atMs);
   return events;
@@ -411,8 +409,7 @@ const refillProjection = (
 
   const balanceAfterFirstRefill = balanceAtNextRefill + amountQuota;
   const cycleLossQuota = cycleBurnQuota - amountQuota;
-  const cyclesUntilExhaustion =
-    balanceAfterFirstRefill < cycleBurnQuota ? 0 : Math.floor((balanceAfterFirstRefill - cycleBurnQuota) / cycleLossQuota) + 1;
+  const cyclesUntilExhaustion = balanceAfterFirstRefill < cycleBurnQuota ? 0 : Math.floor((balanceAfterFirstRefill - cycleBurnQuota) / cycleLossQuota) + 1;
   const balanceBeforeExhaustion = balanceAfterFirstRefill - cyclesUntilExhaustion * cycleLossQuota;
   const exhaustedAtMs = Math.trunc(nextRefillAtMs + cyclesUntilExhaustion * cadenceMs + (balanceBeforeExhaustion / burnQuotaPerHour) * HOUR_MS);
   const timeRemainingMs = Math.max(0, exhaustedAtMs - nowMs);
