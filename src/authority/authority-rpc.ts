@@ -18,21 +18,91 @@ export type AuthorityReply<TValue = Result> = { value: TValue } | { error: { cod
 export type AuthorityRpc = {
   invoke<TCommand extends AuthorityCommand>(command: TCommand): Promise<AuthorityReply<Awaited<ReturnType<AuthorityOperations[TCommand["operation"]]>>>>;
 };
-const ARGUMENT_COUNTS: Readonly<Record<Operation, readonly number[]>> = {
-  admit: [1],
-  reserveAttempt: [3],
-  beginDispatch: [3],
-  selection: [1],
-  reselectSubscription: [2],
-  confirmDispatched: [2],
-  releaseBeforeDispatch: [2],
-  observeProof: [3],
-  observeTerminal: [3, 4],
-  observeDelivery: [2],
-  observeUsage: [3],
-  resetEligible: [2],
-  settle: [1],
-  cancelUndispatched: [1],
+type Guard = (value: unknown) => boolean;
+const text: Guard = (value) => typeof value === "string";
+const providerRequestId: Guard = (value) => typeof value === "string" && value.trim().length > 0;
+const integer: Guard = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const boolean: Guard = (value) => typeof value === "boolean";
+const oneOf =
+  (...values: unknown[]): Guard =>
+  (value) =>
+    values.includes(value);
+const nullable =
+  (guard: Guard): Guard =>
+  (value) =>
+    value === null || guard(value);
+const array =
+  (guard: Guard): Guard =>
+  (value) =>
+    Array.isArray(value) && value.every(guard);
+const fields =
+  (shape: Readonly<Record<string, Guard>>): Guard =>
+  (value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return (
+      Object.keys(record).length === Object.keys(shape).length &&
+      Object.entries(shape).every(([key, guard]) => Object.hasOwn(record, key) && guard(record[key]))
+    );
+  };
+const tuple =
+  (...guards: Guard[]): Guard =>
+  (value) =>
+    Array.isArray(value) && value.length === guards.length && guards.every((guard, index) => guard(value[index]));
+const scope = fields({ namespace: text, epoch: integer });
+const handle = fields({ scope, requestId: text, fence: integer });
+const proof = fields({
+  kind: oneOf("quota_exhausted", "credential_invalid", "transient"),
+  model: text,
+  fingerprint: text,
+  observedAtMs: integer,
+  validUntilMs: integer,
+});
+const account = fields({
+  accountId: text,
+  fingerprint: text,
+  credentialGeneration: integer,
+  routingGeneration: integer,
+  resetGeneration: integer,
+  overageVersion: integer,
+  overageEnabled: boolean,
+  enabled: boolean,
+  models: array(text),
+  proof: nullable(proof),
+});
+const attempt = fields({ attemptId: text, provider: oneOf("codex", "surplus", "openlux"), maximumExposureMicrocredits: integer, account: nullable(account) });
+const terminal = fields({
+  outcome: oneOf("completed", "incomplete", "failed", "cancelled"),
+  providerRequestId: nullable(text),
+  spendMicrocredits: nullable(integer),
+  fallback: oneOf(null, "quota_exhausted", "capacity_exhausted"),
+});
+const ARGUMENTS: Readonly<Record<Operation, Guard>> = {
+  admit: tuple(
+    fields({
+      scope,
+      requestId: text,
+      principalId: text,
+      policyVersion: integer,
+      digest: text,
+      route: oneOf("/v1/responses", "/v1/chat/completions"),
+      model: text,
+      nowMs: integer,
+    })
+  ),
+  reserveAttempt: tuple(handle, attempt, integer),
+  beginDispatch: tuple(handle, text, integer),
+  selection: tuple(handle),
+  reselectSubscription: tuple(handle, integer),
+  confirmDispatched: tuple(handle, text),
+  releaseBeforeDispatch: tuple(handle, text),
+  observeProof: tuple(handle, text, proof),
+  observeTerminal: (value) => tuple(handle, text, terminal)(value) || tuple(handle, text, terminal, (flag) => flag === undefined || boolean(flag))(value),
+  observeDelivery: tuple(handle, oneOf("delivered", "interrupted", "unobserved")),
+  observeUsage: tuple(handle, text, fields({ providerRequestId, spendMicrocredits: integer })),
+  resetEligible: tuple(handle, integer),
+  settle: tuple(handle),
+  cancelUndispatched: tuple(handle),
 };
 const isCommand = (value: unknown): value is AuthorityCommand => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -40,9 +110,9 @@ const isCommand = (value: unknown): value is AuthorityCommand => {
   return (
     Object.keys(command).length === 2 &&
     typeof command.operation === "string" &&
-    Object.hasOwn(ARGUMENT_COUNTS, command.operation) &&
-    Array.isArray(command.arguments) &&
-    ARGUMENT_COUNTS[command.operation as Operation].includes(command.arguments.length)
+    Object.hasOwn(ARGUMENTS, command.operation) &&
+    Object.hasOwn(command, "arguments") &&
+    ARGUMENTS[command.operation as Operation](command.arguments)
   );
 };
 

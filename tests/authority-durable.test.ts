@@ -238,3 +238,156 @@ test("data-plane RPC cannot read or replace state and preserves structured quota
     database.close();
   }
 });
+
+test("RPC refuses uncorrelated or invalid usage identifiers without clearing unknown paid exposure", async () => {
+  for (const providerRequestId of [null, "", " ", 0, {}]) {
+    const database = new Database(":memory:");
+    try {
+      const store = new DurableAuthorityStore(storage(database), initial(true), maximumBytes);
+      const server = new AuthorityRpcServer(new PortableAuthority(store, scope), maximumBytes);
+      const authority = new AuthorityRpcClient(server);
+      const handle = await authority.admit(input("uncorrelated"));
+      await authority.reserveAttempt(handle, { attemptId: "paid", provider: "surplus", account: null, maximumExposureMicrocredits: 40 }, 100);
+      await authority.beginDispatch(handle, "paid", 100);
+      await authority.confirmDispatched(handle, "paid");
+      await authority.observeTerminal(handle, "paid", { outcome: "completed", providerRequestId: null, spendMicrocredits: null, fallback: null });
+      const command = JSON.parse(JSON.stringify({ operation: "observeUsage", arguments: [handle, "paid", { providerRequestId, spendMicrocredits: 0 }] }));
+      const reply = await server.invoke(command);
+      const saved = (await store.read()).state;
+      assert.deepEqual(
+        {
+          reply,
+          reserved: saved.windows[JSON.stringify(["p", 10_000])].paidReservedMicrocredits,
+          billingSettled: saved.admissions.uncorrelated.attempts.paid.billingSettled,
+        },
+        { reply: { error: { code: "invalid_authority_operation", status: 400 } }, reserved: 40, billingSettled: false }
+      );
+    } finally {
+      database.close();
+    }
+  }
+});
+
+test("RPC validates every operation's complete payload before any authority mutation", async () => {
+  const database = new Database(":memory:");
+  try {
+    const store = new DurableAuthorityStore(storage(database), initial(), maximumBytes);
+    const server = new AuthorityRpcServer(new PortableAuthority(store, scope), maximumBytes);
+    const handle = await client(store).admit(input("shape"));
+    const badHandle = { ...handle, fence: -1 };
+    const commands = [
+      { operation: "admit", arguments: [{ ...input("bad"), requestId: null }] },
+      { operation: "admit", arguments: [{ ...input("bad"), nowMs: 0.5 }] },
+      { operation: "admit", arguments: [{ ...input("bad"), route: "/arbitrary" }] },
+      { operation: "reserveAttempt", arguments: [handle, { attemptId: "a", provider: "arbitrary", account: null, maximumExposureMicrocredits: 0 }, 100] },
+      { operation: "reserveAttempt", arguments: [handle, { attemptId: "a", provider: "codex", account: null, maximumExposureMicrocredits: -1 }, 100] },
+      { operation: "beginDispatch", arguments: [handle, "a", "100"] },
+      { operation: "selection", arguments: [badHandle] },
+      { operation: "reselectSubscription", arguments: [handle, Number.MAX_SAFE_INTEGER + 1] },
+      { operation: "confirmDispatched", arguments: [badHandle, "a"] },
+      { operation: "releaseBeforeDispatch", arguments: [handle, null] },
+      { operation: "observeProof", arguments: [handle, "a", { kind: "unknown", model: "fixture", fingerprint: "fp", observedAtMs: 1, validUntilMs: 2 }] },
+      { operation: "observeTerminal", arguments: [handle, "a", { outcome: "completed", providerRequestId: null, spendMicrocredits: 0.5, fallback: null }] },
+      {
+        operation: "observeTerminal",
+        arguments: [handle, "a", { outcome: "completed", providerRequestId: null, spendMicrocredits: 0, fallback: null }, "true"],
+      },
+      { operation: "observeDelivery", arguments: [handle, "assumed_delivered"] },
+      { operation: "observeUsage", arguments: [handle, "a", { providerRequestId: "id", spendMicrocredits: -1 }] },
+      { operation: "resetEligible", arguments: [handle, -1] },
+      { operation: "settle", arguments: [badHandle] },
+      { operation: "cancelUndispatched", arguments: [badHandle] },
+      { operation: "admit", arguments: [{ ...input("bad"), forgedQuota: 999 }] },
+    ];
+    const before = await store.read();
+    for (const value of commands) {
+      const command = JSON.parse(JSON.stringify(value));
+      expect(await server.invoke(command)).toEqual({ error: { code: "invalid_authority_operation", status: 400 } });
+      expect(await store.read()).toEqual(before);
+    }
+  } finally {
+    database.close();
+  }
+});
+
+test("restore and CAS reject negative, fractional and unsafe persisted accounting fields without reseeding", async () => {
+  const database = new Database(":memory:");
+  try {
+    const store = new DurableAuthorityStore(storage(database), initial(true), maximumBytes);
+    const authority = client(store);
+    const handle = await authority.admit(input("corrupt"));
+    const before = await store.read();
+    const candidates = [
+      (state: AuthorityState, value: number) => {
+        state.sequence = value;
+      },
+      (state: AuthorityState, value: number) => {
+        state.accounts[0] = { ...state.accounts[0], credentialGeneration: value };
+      },
+      (state: AuthorityState, value: number) => {
+        state.policies.p = { ...state.policies.p, paidLimitMicrocredits: value };
+      },
+      (state: AuthorityState, value: number) => {
+        state.admissions.corrupt.handle = { ...handle, fence: value };
+      },
+      ...["reserved", "dispatched", "kernelReserved", "kernelCompleted", "active", "paidReservedMicrocredits", "paidSettledMicrocredits"].map(
+        (field) => (state: AuthorityState, value: number) => {
+          Object.assign(state.windows[JSON.stringify(["p", 10_000])], { [field]: value });
+        }
+      ),
+    ];
+    for (const mutate of candidates) {
+      for (const value of [-100, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+        const corrupted = structuredClone(before.state);
+        mutate(corrupted, value);
+        await assert.rejects(async () => await store.compareAndSwap(before.revision, corrupted), /invalid_authority_state/);
+        expect(await store.read()).toEqual(before);
+        const encoded = JSON.stringify(corrupted);
+        database.query("UPDATE uos_authority_atom SET state_json = ?").run(encoded);
+        assert.throws(() => new DurableAuthorityStore(storage(database), initial(true), maximumBytes), /invalid_authority_state/);
+        await assert.rejects(async () => await store.read(), /invalid_authority_state/);
+        expect(database.query<{ state_json: string }, []>("SELECT state_json FROM uos_authority_atom").get()?.state_json).toBe(encoded);
+        database.query("UPDATE uos_authority_atom SET state_json = ?").run(JSON.stringify(before.state));
+      }
+    }
+  } finally {
+    database.close();
+  }
+});
+
+test("validated RPC preserves legitimate proof, reselection, release and optional terminal arguments", async () => {
+  const database = new Database(":memory:");
+  try {
+    const seed = initial();
+    seed.accounts.push({ ...seed.accounts[0], accountId: "b", fingerprint: "b-fp" });
+    const store = new DurableAuthorityStore(storage(database), seed, maximumBytes);
+    const server = new AuthorityRpcServer(new PortableAuthority(store, scope), maximumBytes);
+    const authority = new AuthorityRpcClient(server);
+    const handle = await authority.admit(input("valid-operations"));
+    await authority.reserveAttempt(
+      handle,
+      { attemptId: "a", provider: "codex", account: (await authority.selection(handle)).account, maximumExposureMicrocredits: 0 },
+      100
+    );
+    expect(await authority.beginDispatch(handle, "a", 100)).toBe(true);
+    await authority.confirmDispatched(handle, "a");
+    await authority.observeProof(handle, "a", { kind: "quota_exhausted", model: "fixture", fingerprint: "fp", observedAtMs: 100, validUntilMs: 1_000 });
+    await authority.observeTerminal(handle, "a", { outcome: "failed", providerRequestId: null, spendMicrocredits: 0, fallback: "quota_exhausted" }, false);
+    expect(await authority.resetEligible(handle, 100)).toBe(false);
+    const selected = await authority.reselectSubscription(handle, 100);
+    expect(selected?.accountId).toBe("b");
+    await authority.reserveAttempt(handle, { attemptId: "released", provider: "codex", account: selected, maximumExposureMicrocredits: 0 }, 100);
+    await authority.releaseBeforeDispatch(handle, "released");
+    await authority.reserveAttempt(handle, { attemptId: "b", provider: "codex", account: selected, maximumExposureMicrocredits: 0 }, 100);
+    await authority.beginDispatch(handle, "b", 100);
+    await authority.confirmDispatched(handle, "b");
+    const evidence = { outcome: "completed" as const, providerRequestId: "b", spendMicrocredits: 0, fallback: null };
+    expect(await server.invoke({ operation: "observeTerminal", arguments: [handle, "b", evidence] })).toEqual({ value: undefined });
+    expect(await server.invoke({ operation: "observeTerminal", arguments: [handle, "b", evidence, undefined] })).toEqual({ value: undefined });
+    await authority.observeDelivery(handle, "unobserved");
+    expect(await authority.settle(handle)).toBe("settled");
+    expect((await store.read()).state.windows[JSON.stringify(["p", 10_000])]).toMatchObject({ dispatched: 1, kernelCompleted: 1, active: 0 });
+  } finally {
+    database.close();
+  }
+});

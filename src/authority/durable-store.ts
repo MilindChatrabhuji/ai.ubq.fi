@@ -8,7 +8,7 @@ export type AuthoritySqlStorage = Readonly<{
 type Guard = (value: unknown) => boolean;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const text: Guard = (value) => typeof value === "string";
-const number: Guard = (value) => typeof value === "number" && Number.isFinite(value);
+const number: Guard = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const boolean: Guard = (value) => typeof value === "boolean";
 const oneOf =
   (...values: unknown[]): Guard =>
