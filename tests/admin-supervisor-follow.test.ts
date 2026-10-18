@@ -531,21 +531,14 @@ test("an update to an evicted follow entry cannot displace newer output", async 
     harness.resolveRead("thread-a", followEntriesFrame(initialEntries));
     await flush();
     const retainedKeys = Array.from({ length: 200 }, (_, index) => `entry:${index + 1}`);
-    assert.deepEqual(
-      harness.followLog.children.map((entry) => entry.dataset.followKey),
-      retainedKeys,
-      "the initial trim removes only the oldest entry",
-    );
+    assert.deepEqual(harness.followLog.children.map((entry) => entry.dataset.followKey), retainedKeys, "the initial trim removes only the oldest entry");
 
-    harness.resolveRead(
-      "thread-a",
-      followEntriesFrame([{ key: "entry:0", kind: "message", text: "updated entry 0", revision: "2" }]),
-    );
+    harness.resolveRead("thread-a", followEntriesFrame([{ key: "entry:0", kind: "message", text: "updated entry 0", revision: "2" }]));
     await flush();
     assert.deepEqual(
       harness.followLog.children.map((entry) => entry.dataset.followKey),
       retainedKeys,
-      "a revision of the evicted entry must not append after newer output or evict it",
+      "a revision of the evicted entry must not append after newer output or evict it"
     );
   } finally {
     harness.restore();
