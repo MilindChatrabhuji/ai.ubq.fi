@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -108,14 +109,15 @@ test("the runner loop gives each live file its own relay parent and cleans it be
 test("the runner loop removes the live relay parent when running a file throws", async () => {
   const groups = validatedGroups(groupsFor("e2e", []), { BASE_URL: "http://127.0.0.1:8123" }, () => []);
   let parent = "";
-  await expect(
-    runGroups(groups, async (_path, selected) => {
+  await assert.rejects(
+    runGroups(groups, (_path, selected) => {
       parent = selected.policy.relayParent ?? "";
       expect(basename(parent).startsWith("uos-live-run-")).toBe(true);
       expect(existsSync(parent)).toBe(true);
-      throw new Error("fixture run failed");
-    })
-  ).rejects.toThrow("fixture run failed");
+      return Promise.reject(new Error("fixture run failed"));
+    }),
+    /fixture run failed/
+  );
   expect(parent).not.toBe("");
   expect(existsSync(parent)).toBe(false);
 });
