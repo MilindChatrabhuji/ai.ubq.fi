@@ -9,6 +9,7 @@ use gateway_authority::{Authority, TokenSource};
 use gateway_authority::quota::ApiKeyPolicy;
 use gateway_authority::routing::{AdmittedAccount, PoolAccount, QuotaBlock, QuotaBlockSource, RouteSelection, SubscriptionPool};
 use gateway_core::GatewayError;
+use gateway_core::tuple_key::TupleKey;
 use gateway_core::identity::{ApiKeyId, CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash};
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey, RecordMutation, StoredRecord};
@@ -41,8 +42,10 @@ impl MemoryStore{
 
 impl AuthorityStore for MemoryStore{
     fn read(&self,key:&RecordKey)->impl Future<Output=Result<Option<StoredRecord>,GatewayError>>{
+        let key_valid=TupleKey::from_record_key(key).and_then(|key|key.validate_stored_key());
         let row=self.rows.lock().unwrap().get(&key.0).cloned();let now=self.now.load(Ordering::SeqCst);
         async move{
+            key_valid?;
             if let Some(row)=&row{row.validate_version()?;}
             Ok(row.filter(|row|row.expires_at_ms.is_none_or(|expiry|expiry>now)))
         }
@@ -54,6 +57,7 @@ impl AuthorityStore for MemoryStore{
             if let Some((key,value))=self.race.lock().unwrap().take(){rows.insert(key.0,StoredRecord{schema_version:PORTABLE_STATE_VERSION,revision:format!("race-{}",self.sequence.fetch_add(1,Ordering::SeqCst)),value,expires_at_ms:None});}
             let checked:BTreeSet<_>=transition.checks.iter().map(|check|check.key.0.clone()).collect();let mut mutated=BTreeSet::new();
             for check in &transition.checks{
+                TupleKey::from_record_key(&check.key)?.validate_stored_key()?;
                 let actual=rows.get(&check.key.0).filter(|row|row.expires_at_ms.is_none_or(|expiry|expiry>now)).map(|row|row.revision.clone());
                 if actual!=check.expected_revision{return Ok(CommitOutcome::Conflict);}
             }
