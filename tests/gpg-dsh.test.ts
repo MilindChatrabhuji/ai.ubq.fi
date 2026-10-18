@@ -196,6 +196,85 @@ test("a seed path that is a symbolic link fails closed before gpg runs", async (
   });
 });
 
+// The seed's siblings in its parent: the rebuild lock and any staging or set-aside copies.
+const siblings = async (fixture: Fixture): Promise<string[]> =>
+  (await readdir(join(fixture.tmp, "dsh-gnupg"))).filter((name) => name !== String(UID)).sort((left, right) => left.localeCompare(right));
+
+test("concurrent calls right after an input change all sign from one complete rebuild", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    const rounds = 4;
+    for (let round = 1; round <= rounds; round += 1) {
+      await writeFile(join(fixture.gnupg, "private-keys-v1.d", "AAAA.key"), `secret-a-round-${round}`);
+      await writeFile(join(fixture.gnupg, `extra-${round}.gpg`), `extra-${round}`, { mode: 0o600 });
+      const results = await Promise.all(Array.from({ length: 12 }, () => fixture.run("sandboxed")));
+      for (const result of results) {
+        assert.equal(result.code, 0, `round ${round}: ${result.stderr}`);
+        assert.deepEqual(lines(result.stdout, "GNUPGHOME="), [fixture.seed]);
+        assert.deepEqual(lines(result.stdout, "key="), [`AAAA.key:secret-a-round-${round}`, "BBBB.key:secret-b"], `round ${round}`);
+      }
+      assert.equal(await readFile(join(fixture.seed, `extra-${round}.gpg`), "utf8"), `extra-${round}`);
+      assert.deepEqual(await siblings(fixture), [], `round ${round}: no lock, staging, or set-aside seed is left behind`);
+    }
+    assert.equal((await gpgconfCalls(fixture)).length, rounds, "each input change rebuilds the seed, and stops its agent, exactly once");
+    const stdout = await signed(fixture);
+    assert.deepEqual(lines(stdout, "key="), [`AAAA.key:secret-a-round-${rounds}`, "BBBB.key:secret-b"]);
+    assert.equal((await gpgconfCalls(fixture)).length, rounds, "the final seed's recorded manifest matches the inputs");
+  });
+}, 60_000);
+
+test("a call that finds the rebuild lock held waits for it instead of rebuilding alongside", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await writeFile(join(fixture.gnupg, "private-keys-v1.d", "CCCC.key"), "secret-c", { mode: 0o600 });
+    const lock = `${fixture.seed}.lock`;
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), `${process.pid} ${Math.floor(Date.now() / 1000)}\n`);
+    let settled = false;
+    const pending = fixture.run("sandboxed").finally(() => {
+      settled = true;
+    });
+    await Bun.sleep(1500);
+    assert.equal(settled, false, "the call waits while a live holder has the lock");
+    assert.deepEqual(await gpgconfCalls(fixture), [], "the waiting call has not touched the seed");
+    await rm(lock, { recursive: true });
+    const result = await pending;
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(lines(result.stdout, "key="), ["AAAA.key:secret-a-old-passphrase", "BBBB.key:secret-b", "CCCC.key:secret-c"]);
+    assert.deepEqual(await siblings(fixture), []);
+  });
+}, 60_000);
+
+test("a lock left by a killed holder and its half-built seed are discarded, then the seed is rebuilt", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const lock = `${fixture.seed}.lock`;
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), `999999 ${Math.floor(Date.now() / 1000) - 3600}\n`);
+    const leftover = `${fixture.seed}.new.AbC123`;
+    await mkdir(join(leftover, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
+    await writeFile(join(leftover, "private-keys-v1.d", "BBBB.key"), "secret-b");
+    const stdout = await signed(fixture);
+    assert.deepEqual(lines(stdout, "key="), ["AAAA.key:secret-a-old-passphrase"]);
+    assert.deepEqual(await siblings(fixture), [], "the stale lock and the leftover copy of the deleted key are gone");
+    assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
+  });
+});
+
+test("a leftover staging copy is discarded even when the seed is current", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    const leftover = `${fixture.seed}.old.XyZ789`;
+    await mkdir(join(leftover, "seed", "private-keys-v1.d"), { recursive: true, mode: 0o700 });
+    await writeFile(join(leftover, "seed", "private-keys-v1.d", "DDDD.key"), "deleted-secret");
+    await signed(fixture);
+    assert.deepEqual(await siblings(fixture), []);
+    assert.equal(await readFile(join(fixture.seed, "random_seed"), "utf8"), "xx", "a current seed is reused, not rebuilt");
+    assert.deepEqual(await gpgconfCalls(fixture), []);
+  });
+});
+
 test("the sandboxed-signing decision records the helper and its private-key invalidation", async () => {
   const decisions = await readFile(DECISIONS, "utf8");
   const entry = decisions.split(/^## /m).find((section) => section.startsWith("Sandboxed commits sign through a GNUPGHOME inside writable roots"));
@@ -203,4 +282,17 @@ test("the sandboxed-signing decision records the helper and its private-key inva
   assert.match(entry, /`ops\/gpg-dsh\.sh`/);
   assert.match(entry, /deleted,\s+added,\s+or\s+re-protected\s+private\s+key/);
   assert.doesNotMatch(entry, /re-seeding\s+when\s+`pubring\.kbx`\s+changes/);
+});
+
+test("the sandboxed-signing decision records serialized rebuilds and a compare-first install", async () => {
+  const decisions = await readFile(DECISIONS, "utf8");
+  const entry = decisions.split(/^## /m).find((section) => section.startsWith("Sandboxed commits sign through a GNUPGHOME inside writable roots"));
+  assert.ok(entry, "the sandboxed-signing decision entry exists");
+  assert.match(entry, /Rebuilds\s+are\s+serialized/);
+  assert.match(entry, /#1139/);
+  assert.doesNotMatch(entry, /`~\/bin\/gpg-dsh`\s+is\s+installed\s+from/, "merging the helper installs nothing");
+  assert.match(entry, /diff\s+ops\/gpg-dsh\.sh\s+~\/bin\/gpg-dsh/);
+  for (const unseeded of ["gpg.conf", "gpg-agent.conf", "public-keys.d"]) assert.ok(entry.includes(`\`${unseeded}\``), `the entry names unseeded ${unseeded}`);
+  const header = (await readFile(HELPER, "utf8")).split("\n").slice(0, 6).join("\n");
+  assert.match(header, /diff ops\/gpg-dsh\.sh ~\/bin\/gpg-dsh/, "the helper's install note says to compare first");
 });
