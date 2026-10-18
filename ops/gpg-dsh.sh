@@ -157,7 +157,7 @@ legacy_base=$tmp_root/dsh-gnupg
 legacy_seed=$legacy_base/$uid
 has_legacy_seed() {
   owned_dir "$legacy_base" || return 1
-  for path in "$legacy_seed" "$legacy_seed".new.* "$legacy_seed".old.*; do
+  for path in "$legacy_seed" "$legacy_seed".lock "$legacy_seed".lock.break "$legacy_seed".new.* "$legacy_seed".old.*; do
     if owned_dir "$path"; then return 0; fi
   done
   return 1
@@ -166,7 +166,7 @@ has_legacy_seed() {
 discard_legacy_seed() {
   has_legacy_seed || return 0
   gpgconf --homedir "$legacy_seed" --kill gpg-agent >/dev/null 2>&1 || :
-  for path in "$legacy_seed" "$legacy_seed".new.* "$legacy_seed".old.*; do
+  for path in "$legacy_seed" "$legacy_seed".lock "$legacy_seed".lock.break "$legacy_seed".new.* "$legacy_seed".old.*; do
     if owned_dir "$path"; then
       rm -rf "$path" || die "cannot discard the legacy seed copy $path"
     fi
@@ -189,8 +189,8 @@ private_dir "$base"
 [ -L "$seed" ] && die "$seed is a symbolic link"
 
 # Rebuilds are serialized by $lock, a directory only one call can create. Its owner file records the
-# holder's pid and start time. A lock held for $stale_lock_seconds was left by a killed or hung holder
-# (a rebuild copies a few files), so a waiter breaks it; a waiter gives up after $lock_wait_seconds.
+# holder's pid and start time. A lock held for $stale_lock_seconds with no live owner is recoverable.
+# A live slow or hung holder retains ownership; a waiter gives up after $lock_wait_seconds.
 lock=$seed.lock
 stale_lock_seconds=15
 lock_wait_seconds=60
@@ -211,6 +211,7 @@ take_lock() {
       [ -L "$lock" ] && die "$lock is a symbolic link"
       owner=$(cat "$lock/owner" 2>/dev/null) || owner=
       now=$(date +%s) || die "cannot read the clock"
+      owner_pid=${owner%% *}
       started=${owner#* }
       case $owner in
         *' '*) ;;
@@ -227,7 +228,12 @@ take_lock() {
       held=$((now - started))
       # A future timestamp is clock skew, not evidence that a live lock is stale. Re-read under the
       # gate before deleting; no other breaker, acquisition, or release can replace it here.
-      if [ "$held" -ge "$stale_lock_seconds" ]; then
+      owner_alive=false
+      case $owner_pid in
+        '' | 0 | *[!0-9]*) ;;
+        *) if kill -0 "$owner_pid" 2>/dev/null; then owner_alive=true; fi ;;
+      esac
+      if [ "$held" -ge "$stale_lock_seconds" ] && [ "$owner_alive" = false ]; then
         if [ "$(cat "$lock/owner" 2>/dev/null)" = "$owner" ]; then
           printf 'gpg-dsh: breaking the stale rebuild lock %s (owner: %s)\n' "$lock" "${owner:-none}" >&2
           # A failed removal is retried by the wait loop, not a fatal failure for this signing.
@@ -262,7 +268,8 @@ discard_leftovers() {
   done
 }
 
-# The manifest recorded in the seed, or nothing when there is no complete seed of this user's.
+# The manifest recorded in the seed, or nothing when there is no complete seed of this user's or the
+# seed holds a GnuPG configuration file.
 read_recorded() {
   recorded=
   if [ -d "$seed" ] && [ ! -L "$seed" ] && [ -O "$seed" ] && [ -f "$stamp" ] && [ ! -L "$stamp" ] && ! seed_has_config; then

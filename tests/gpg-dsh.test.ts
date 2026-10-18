@@ -318,7 +318,10 @@ for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]])
         }
         assert.equal((await gpgconfCalls(fixture)).length, round, "one agent stop per recovery");
         assert.deepEqual(await siblings(fixture), [], "no locks or leftover private keys");
-        assert.deepEqual((await readdir(fixture.seed)).filter((name) => /\.(new|old)\./.test(name)), []);
+        assert.deepEqual(
+          (await readdir(fixture.seed)).filter((name) => /\.(new|old)\./.test(name)),
+          []
+        );
       }
       await signed(fixture);
       assert.equal((await gpgconfCalls(fixture)).length, rounds, "the published manifest is current");
@@ -386,6 +389,35 @@ exec ${hostCommand("cat")} "$@"
       assert.equal(result.code, 0, result.stderr);
       assert.doesNotMatch(result.stderr, /breaking the stale/);
     }
+  });
+});
+
+test("an old lock with a live owner is retained until its holder releases it", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const lock = `${fixture.seed}.lock`;
+    const owner = `${process.pid} 1\n`;
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner"), owner);
+    await executable(join(fixture.bin, "date"), "#!/bin/sh\nprintf '1000\\n'\n");
+    let settled = false;
+    const pending = fixture.run("sandboxed").finally(() => {
+      settled = true;
+    });
+    try {
+      await Bun.sleep(300);
+      assert.equal(settled, false, "age alone does not retire a live holder");
+      assert.equal(await readFile(join(lock, "owner"), "utf8"), owner);
+      assert.deepEqual(await gpgconfCalls(fixture), []);
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+      const result = await pending;
+      assert.equal(result.code, 0, result.stderr);
+      assert.doesNotMatch(result.stderr, /breaking the stale/);
+    }
+    assert.deepEqual(await siblings(fixture), []);
+    assert.equal((await gpgconfCalls(fixture)).length, 1);
   });
 });
 
@@ -588,7 +620,7 @@ test("a seed left in the shared dsh-gnupg layout is discarded with its agent", a
     const legacySeed = join(legacyParent, String(UID));
     await mkdir(join(legacySeed, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
     await writeFile(join(legacySeed, "private-keys-v1.d", "OLD.key"), "secret-deleted-key", { mode: 0o600 });
-    for (const suffix of [".new.AbC123", ".old.AbC123/seed"]) {
+    for (const suffix of [".lock", ".lock.break", ".new.AbC123", ".old.AbC123/seed"]) {
       await mkdir(join(`${legacySeed}${suffix}`, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
       await writeFile(join(`${legacySeed}${suffix}`, "private-keys-v1.d", "OLD.key"), "secret-deleted-key");
     }

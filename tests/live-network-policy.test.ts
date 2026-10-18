@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { groupsFor, testNetworkPolicy } from "../scripts/test-runner.ts";
-import { liveDestination, liveNetworkPlan, testNetworkArgv } from "../scripts/test-network.ts";
+import { groupsFor, testNetworkPolicy, validatedGroups, withLiveRelayParent } from "../scripts/test-runner.ts";
+import { LIVE_E2E_DEFAULT_BASE_URL, liveDestination, liveNetworkPlan, systemTool, testNetworkArgv, type TestNetworkPolicy } from "../scripts/test-network.ts";
 
 const linuxTest = process.platform === "linux" ? test : test.skip;
 const FIXTURE_TOKEN = "fixture-live-client";
@@ -46,9 +47,31 @@ test("only the explicitly selected e2e segment selects the live policy", () => {
   expect(groupsFor("files", ["tests/live-default-model.e2e.ts"]).map((group) => group.network)).toEqual([undefined]);
   const [e2e] = groupsFor("e2e", []);
   expect(e2e.network).toBe("live");
-  expect(testNetworkPolicy(e2e, {})).toEqual({ live: { hostname: "ai.ubq.fi", port: 443 } });
+  // The runner approves the same default origin the e2e file falls back to: one shared constant.
+  expect(LIVE_E2E_DEFAULT_BASE_URL).toBe("https://ai.ubq.fi");
+  expect(testNetworkPolicy(e2e, {})).toEqual({ live: liveDestination(LIVE_E2E_DEFAULT_BASE_URL) });
   expect(testNetworkPolicy(e2e, { BASE_URL: "  " })).toEqual({ live: { hostname: "ai.ubq.fi", port: 443 } });
   expect(testNetworkPolicy(e2e, { BASE_URL: " http://127.0.0.1:8123/ " })).toEqual({ live: { hostname: "127.0.0.1", port: 8123 } });
+});
+
+test("the runner builds every group's network boundary before the native build", () => {
+  const [e2e] = groupsFor("e2e", []);
+  const built: { command: readonly string[]; policy: TestNetworkPolicy }[] = [];
+  const missingMount = (command: readonly string[], policy: TestNetworkPolicy = {}): string[] => {
+    built.push({ command, policy });
+    throw new Error("Local-only test transport requires system mount");
+  };
+  // A system tool the live plan needs is resolved while validating, not first in runFile.
+  expect(() => validatedGroups([e2e], { BASE_URL: "http://gateway.fixture.test:8123" }, missingMount)).toThrow("requires system mount");
+  expect(built).toEqual([{ command: [process.execPath], policy: { live: { hostname: "gateway.fixture.test", port: 8123 } } }]);
+  const resolved: TestNetworkPolicy[] = [];
+  const [validated] = validatedGroups([e2e], { BASE_URL: "http://127.0.0.1:8123" }, (_command, policy = {}) => {
+    resolved.push(policy);
+    return [];
+  });
+  expect(resolved).toEqual([{ live: { hostname: "127.0.0.1", port: 8123 } }]);
+  expect(validated.policy).toEqual({ live: { hostname: "127.0.0.1", port: 8123 } });
+  expect(validated.files.map((file) => file.label)).toEqual(["tests/live-default-model.e2e.ts"]);
 });
 
 linuxTest("live argv keeps the deterministic namespace and only adds the scoped relay and forwarder", () => {
@@ -66,6 +89,44 @@ linuxTest("live argv keeps the deterministic namespace and only adds the scoped 
   const forwarder = JSON.parse(relay.command.at(-1) ?? "") as Record<string, unknown>;
   expect(forwarder).toEqual({ platform: "linux", port: 8123, listen: "127.0.0.1", command: child });
 });
+
+linuxTest(
+  "a SIGKILLed live relay leaves no directory behind once the runner settles its file",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "uos-live-kill-"));
+    try {
+      await mkdir(join(root, "home"));
+      let leaked: string[] = [];
+      await withLiveRelayParent(
+        { live: liveDestination("http://127.0.0.1:9") },
+        async (policy) => {
+          const parent = policy.relayParent ?? "";
+          expect(parent.startsWith(join(root, "uos-live-run-"))).toBe(true);
+          const child = Bun.spawn(testNetworkArgv([process.execPath, "-e", "await new Promise(() => {});"], policy), {
+            detached: true,
+            env: { PATH: "/usr/bin:/bin", HOME: join(root, "home"), TMPDIR: root, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          const relayReady = (): boolean => readdirSync(parent).some((name) => name.startsWith("uos-live-") && existsSync(join(parent, name, "relay.sock")));
+          for (let attempt = 0; attempt < 500 && !relayReady(); attempt += 1) await Bun.sleep(10);
+          expect(relayReady()).toBe(true);
+          // A timeout escalation, CI cancellation or the OOM killer: no finally block in the relay runs.
+          process.kill(-child.pid, "SIGKILL");
+          await child.exited;
+          leaked = readdirSync(parent);
+        },
+        root
+      );
+      // The SIGKILLed relay could not remove its directory; the runner-owned parent took it away.
+      expect(leaked.filter((name) => name.startsWith("uos-live-"))).toHaveLength(1);
+      expect(await readdir(root)).toEqual(["home"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  30_000
+);
 
 linuxTest("live timeout settles the private process tree and removes the relay directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "uos-live-timeout-"));
@@ -94,9 +155,20 @@ linuxTest("live timeout settles the private process tree and removes the relay d
 
 const probeSource = String.raw`
 import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 const config = JSON.parse(process.argv.at(-1));
 assert.equal(process.env.UOS_TEST_LIVE_RELAY, undefined);
+if (config.resolver) {
+  // A hostname destination resolves from the private hosts file alone: no nsswitch source or
+  // resolver daemon (nscd, systemd-resolved) can answer first with the public address.
+  if (config.resolver.nsswitch) {
+    const lines = readFileSync("/etc/nsswitch.conf", "utf8").split("\n").filter((line) => line.trim() !== "");
+    assert.deepEqual(lines.filter((line) => /^\s*hosts\s*:/.test(line)), ["hosts: files"]);
+    for (const line of config.resolver.nsswitch) assert.ok(lines.includes(line), "kept " + line);
+  }
+  for (const daemon of config.resolver.daemons) assert.deepEqual(existsSync(daemon) ? readdirSync(daemon) : [], [], daemon);
+}
 for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) assert.equal(process.env[name], undefined);
 const reach = async (url) => {
   try { return await (await fetch(url, { signal: AbortSignal.timeout(1000) })).text(); }
@@ -126,8 +198,8 @@ console.log(JSON.stringify({ reachable: config.reachable, denied: config.denied.
 
 const parentSource = String.raw`
 import assert from "node:assert/strict";
-import { createServer } from "node:net";
-import { writeFileSync } from "node:fs";
+import { connect, createServer } from "node:net";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const config = JSON.parse(process.argv.at(-1));
 const { liveDestination, testNetworkArgv } = await import(config.module);
@@ -136,11 +208,27 @@ const setup = (argv) => {
   assert.equal(result.exitCode, 0, result.stderr.toString());
 };
 // These addresses and names exist only inside this task-owned private parent namespace.
-setup(["/usr/bin/ip", "address", "add", "192.0.2.10/32", "dev", "lo"]);
-setup(["/usr/bin/ip", "address", "add", "192.0.2.11/32", "dev", "lo"]);
+setup([config.ip, "address", "add", "192.0.2.10/32", "dev", "lo"]);
+setup([config.ip, "address", "add", "192.0.2.11/32", "dev", "lo"]);
 const hosts = join(config.root, "parent-hosts");
 writeFileSync(hosts, "127.0.0.1 localhost\n192.0.2.10 gateway.fixture.test\n192.0.2.11 other.fixture.test\n");
-setup(["/usr/bin/mount", "--bind", hosts, "/etc/hosts"]);
+setup([config.mount, "--bind", hosts, "/etc/hosts"]);
+// A host whose resolver consults a daemon before /etc/hosts: Arch's nsswitch order, a running nscd,
+// and systemd-resolved, all reachable over Unix sockets from any network namespace.
+setup([config.mount, "-t", "tmpfs", "tmpfs", "/run"]);
+const daemons = ["/run/nscd", "/run/systemd/resolve"];
+for (const daemon of daemons) {
+  mkdirSync(daemon, { recursive: true });
+  writeFileSync(join(daemon, "socket"), "");
+}
+const keptNsswitch = ["passwd: files", "group: files"];
+let nsswitch = null;
+if (existsSync("/etc/nsswitch.conf")) {
+  const parentNsswitch = join(config.root, "parent-nsswitch.conf");
+  writeFileSync(parentNsswitch, [keptNsswitch[0], "hosts: mymachines resolve [!UNAVAIL=return] files myhostname dns", keptNsswitch[1], ""].join("\n"));
+  setup([config.mount, "--bind", parentNsswitch, "/etc/nsswitch.conf"]);
+  nsswitch = keptNsswitch;
+}
 
 // Non-billable gateway fixture with the endpoints the live default-model e2e file uses.
 const gatewayResponse = (request) => {
@@ -181,12 +269,42 @@ const scenarios = [
 ];
 for (const scenario of scenarios) {
   const before = { ...hits };
-  const probe = { target: scenario.target, reachable: scenario.live, expected: scenario.server, denied, unix: join(config.root, "parent.sock") };
+  const resolver = scenario.name === "hostname" ? { nsswitch, daemons } : null;
+  const probe = { target: scenario.target, reachable: scenario.live, expected: scenario.server, denied, unix: join(config.root, "parent.sock"), resolver };
   const result = await run([process.execPath, config.probe, JSON.stringify(probe)], scenario.live ? { live: liveDestination(scenario.target) } : {});
   assert.equal(result.stderr, "", scenario.name);
   assert.equal(result.code, 0, scenario.name + ": " + result.stdout);
   for (const name of Object.keys(hits)) assert.equal(hits[name] - before[name], scenario.live && name === scenario.server ? 2 : 0, scenario.name + " reached " + name);
   proof.push({ name: scenario.name, ...JSON.parse(result.stdout) });
+}
+// A same-user process outside the live namespace finds the relay socket under TMPDIR but cannot
+// use it: the relay serves only the forwarder that holds its per-run key.
+{
+  const before = { ...hits };
+  const release = join(config.root, "release-relay");
+  const waitForRelease = "const path = process.argv.at(-1); while (!(await Bun.file(path).exists())) await Bun.sleep(10);";
+  const waiting = run([process.execPath, "-e", waitForRelease, release], { live: liveDestination(url("192.0.2.10", "gateway")) });
+  let socket = null;
+  for (let attempt = 0; attempt < 500 && socket === null; attempt += 1) {
+    const directory = readdirSync(config.root).find((name) => name.startsWith("uos-live-") && existsSync(join(config.root, name, "relay.sock")));
+    if (directory === undefined) await Bun.sleep(10);
+    else socket = join(config.root, directory, "relay.sock");
+  }
+  assert.ok(socket, "relay socket");
+  const answer = await new Promise((resolve) => {
+    const stray = connect({ path: socket });
+    let value = "";
+    stray.on("data", (chunk) => (value += chunk));
+    stray.once("error", () => resolve(value));
+    stray.once("close", () => resolve(value));
+    stray.write("GET / HTTP/1.1\r\nHost: gateway.fixture.test\r\nConnection: close\r\n\r\n");
+  });
+  writeFileSync(release, "");
+  const result = await waiting;
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.equal(answer, "", "a stray relay client got an answer");
+  for (const name of Object.keys(hits)) assert.equal(hits[name] - before[name], 0, "a stray relay client reached " + name);
+  proof.push({ name: "stray-relay-client", refused: true });
 }
 // The actual live e2e file reaches only its selected non-billable fixture gateway.
 for (const live of [true, false]) {
@@ -220,6 +338,8 @@ linuxTest(
         token: FIXTURE_TOKEN,
         e2e: new URL("./live-default-model.e2e.ts", import.meta.url).pathname,
         module: new URL("../scripts/test-network.ts", import.meta.url).href,
+        ip: systemTool("ip"),
+        mount: systemTool("mount"),
       };
       const run = Bun.spawn(testNetworkArgv([process.execPath, parent, JSON.stringify(config)]), {
         env: { PATH: "/usr/bin:/bin", HOME: join(root, "home"), TMPDIR: root, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
@@ -237,6 +357,7 @@ linuxTest(
         "hostname",
         "deterministic-host-loopback",
         "deterministic-hostname",
+        "stray-relay-client",
         "live-e2e",
         "deterministic-e2e",
       ]);
