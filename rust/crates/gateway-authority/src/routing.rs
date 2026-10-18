@@ -297,7 +297,7 @@ fn evaluate(
         debug_assert_eq!(available, 0.0);
         if !view
             .overage
-            .get(&row.account_id_hash.0)
+            .get(&view.pool.accounts[slot].account_id_hash.0)
             .copied()
             .unwrap_or(false)
             && let Some(reset) = observation
@@ -312,6 +312,8 @@ fn evaluate(
             return result;
         }
         result.probe = true;
+        result.eligible = true;
+        return result;
     }
     if row.probe_lease.as_ref().is_some_and(|lease| {
         lease.expires_at_ms > now

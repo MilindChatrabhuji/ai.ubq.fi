@@ -315,8 +315,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .map(parse_capacity_store)
                 .transpose()?
                 .unwrap_or_default();
-            let current_time = self.fresh_time(fence.observed_at_ms)?;
-            let merged = merge_capacity(&current, &observations, current_time);
+            self.fresh_time(fence.observed_at_ms)?;
+            let merged = merge_capacity(&current, &observations, fence.observed_at_ms);
             tx.put(&keys::capacity(), &merged, None)?;
             let revision = tx
                 .post_checks()
