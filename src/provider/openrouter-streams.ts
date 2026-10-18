@@ -359,11 +359,9 @@ export const streamOpenRouterResponses = (
       recordResponsesTerminal(event, usageContext);
       if (event.terminal) {
         recordStreamTerminal(usageContext);
-        const providerFault =
-          event.type === "error" ||
-          event.type === "response.failed" ||
-          (event.type === "response.incomplete" && responseIncompleteFailureKind(event) !== null);
-        if (providerFault) {
+        const explicitProviderFault = event.type === "error" || event.type === "response.failed";
+        const incompleteProviderFault = event.type === "response.incomplete" && responseIncompleteFailureKind(event) !== null;
+        if (explicitProviderFault || incompleteProviderFault) {
           void recordOpenRouterProviderHealth("upstream_error", 200, Date.now, providerRequestId);
         } else if (event.type === "response.completed" || event.type === "response.incomplete") {
           recordOpenRouterResponseHealth(200, providerRequestId);

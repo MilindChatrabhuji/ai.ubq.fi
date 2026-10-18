@@ -591,18 +591,17 @@ test("openrouter responses records a failed terminal as upstream provider health
     setKvForTest(kv as unknown as Kv);
     resetProviderHealthThrottleForTest();
     try {
+      const failedEvent = {
+        type: "response.failed",
+        response: { id: "resp_1", status: "failed" },
+      };
       const response = await handleOpenRouterResponses(
         new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
         { model: "vendor/beta", input: "hi", stream: true },
         "vendor/beta",
         streamUsageContext(createResponseTelemetryState()),
         {
-          fetchResponses: () =>
-            Promise.resolve(
-              sseResponse([
-                `event: response.failed\ndata: ${JSON.stringify({ type: "response.failed", response: { id: "resp_1", status: "failed" } })}\n\n`,
-              ])
-            ),
+          fetchResponses: () => Promise.resolve(sseResponse([`event: response.failed\ndata: ${JSON.stringify(failedEvent)}\n\n`])),
         }
       );
       assert.equal(response.status, 200);
@@ -630,21 +629,17 @@ test("openrouter responses records a provider-fault incomplete terminal as upstr
     setKvForTest(kv as unknown as Kv);
     resetProviderHealthThrottleForTest();
     try {
+      const incompleteEvent = {
+        type: "response.incomplete",
+        response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: "provider_overloaded" } },
+      };
       const response = await handleOpenRouterResponses(
         new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
         { model: "vendor/beta", input: "hi", stream: true },
         "vendor/beta",
         streamUsageContext(createResponseTelemetryState()),
         {
-          fetchResponses: () =>
-            Promise.resolve(
-              sseResponse([
-                `event: response.incomplete\ndata: ${JSON.stringify({
-                  type: "response.incomplete",
-                  response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: "provider_overloaded" } },
-                })}\n\n`,
-              ])
-            ),
+          fetchResponses: () => Promise.resolve(sseResponse([`event: response.incomplete\ndata: ${JSON.stringify(incompleteEvent)}\n\n`])),
         }
       );
       assert.equal(response.status, 200);
