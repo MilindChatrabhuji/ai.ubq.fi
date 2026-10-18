@@ -2,7 +2,9 @@ use gateway_core::{GatewayError, state::RevisionCheck};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 
-pub use gateway_admin_runtime::capabilities::{AnalyticsRequest, CaptureRequest, CodexRequest, Context, ErrorDiagnostics, ProviderRequest};
+pub use gateway_admin_runtime::capabilities::{
+    AnalyticsRequest, CaptureRequest, CodexRequest, Context, ErrorDiagnostics, ProviderRequest,
+};
 
 /// Observational identities only. No credential or caller-selected URL is carried.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,29 +16,68 @@ pub struct HealthTarget {
 }
 impl HealthTarget {
     pub fn default_identity(provider: HealthProvider) -> Self {
-        Self { provider, identity: "default".into(), source_checks: Vec::new() }
+        Self {
+            provider,
+            identity: "default".into(),
+            source_checks: Vec::new(),
+        }
     }
     pub fn codex(account_id: impl Into<String>) -> Self {
-        Self { provider: HealthProvider::Codex, identity: account_id.into(), source_checks: Vec::new() }
+        Self {
+            provider: HealthProvider::Codex,
+            identity: account_id.into(),
+            source_checks: Vec::new(),
+        }
     }
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HealthProvider { Cerebras, ClaudeCode, Codex, Deepseek, Lithos, Metered, Openrouter, Surplus, Ubiquity }
+pub enum HealthProvider {
+    Cerebras,
+    ClaudeCode,
+    Codex,
+    Deepseek,
+    Lithos,
+    Metered,
+    Openrouter,
+    Surplus,
+    Ubiquity,
+}
 impl HealthProvider {
     pub fn id(self) -> &'static str {
         match self {
-            Self::Cerebras=>"cerebras",Self::ClaudeCode=>"claude_code",Self::Codex=>"codex",Self::Deepseek=>"deepseek",Self::Lithos=>"lithos",Self::Metered=>"metered",Self::Openrouter=>"openrouter",Self::Surplus=>"surplus",Self::Ubiquity=>"ubiquity",
+            Self::Cerebras => "cerebras",
+            Self::ClaudeCode => "claude_code",
+            Self::Codex => "codex",
+            Self::Deepseek => "deepseek",
+            Self::Lithos => "lithos",
+            Self::Metered => "metered",
+            Self::Openrouter => "openrouter",
+            Self::Surplus => "surplus",
+            Self::Ubiquity => "ubiquity",
         }
     }
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HealthEvent { Success, Reachable, AuthInvalid, QuotaExhausted, UpstreamError, RefreshSuccess, RefreshFailed }
+pub enum HealthEvent {
+    Success,
+    Reachable,
+    AuthInvalid,
+    QuotaExhausted,
+    UpstreamError,
+    RefreshSuccess,
+    RefreshFailed,
+}
 impl HealthEvent {
     pub fn record(self) -> &'static str {
         match self {
-            Self::Success=>"success",Self::Reachable=>"reachable",Self::AuthInvalid=>"auth_invalid",Self::QuotaExhausted=>"quota_exhausted",Self::UpstreamError=>"upstream_error",Self::RefreshSuccess|Self::RefreshFailed=>"refresh",
+            Self::Success => "success",
+            Self::Reachable => "reachable",
+            Self::AuthInvalid => "auth_invalid",
+            Self::QuotaExhausted => "quota_exhausted",
+            Self::UpstreamError => "upstream_error",
+            Self::RefreshSuccess | Self::RefreshFailed => "refresh",
         }
     }
 }
@@ -50,21 +91,62 @@ pub struct HealthObservation {
     pub provider_request_id: Option<String>,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HealthWrite { Stored, Throttled, Coalesced, Unavailable, BindingChanged }
+pub enum HealthWrite {
+    Stored,
+    Throttled,
+    Coalesced,
+    Unavailable,
+    BindingChanged,
+}
 
 /// The fixed host owns real clock/wait/RNG. Pure storage algorithms never call a provider.
 pub trait ObservabilityHost {
     fn now_ms(&self) -> i64;
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError>;
-    fn wait_ms(&self, milliseconds: u32) -> impl Future<Output=Result<(), GatewayError>>;
-    fn build_identity(&self)->Result<crate::host_types::BuildIdentity,GatewayError>{Err(crate::store::missing("immutable_build_identity"))}
-    fn provider_inventory(&self,_context:&Context)->impl Future<Output=Result<crate::host_types::ProviderInventory,GatewayError>>{async{Err(crate::store::missing("provider_inventory"))}}
+    fn wait_ms(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;
+    fn build_identity(&self) -> Result<crate::host_types::BuildIdentity, GatewayError> {
+        Err(crate::store::missing("immutable_build_identity"))
+    }
+    fn provider_inventory(
+        &self,
+        _context: &Context,
+    ) -> impl Future<Output = Result<crate::host_types::ProviderInventory, GatewayError>> {
+        async { Err(crate::store::missing("provider_inventory")) }
+    }
     /// Only the source fixed Codex models, monitoring quota and Claude models GETs.
     /// Implementations enforce this one absolute 3-second deadline and cancel late bodies.
-    fn probe_upstream_health(&self,_deadline_ms:i64)->impl Future<Output=Result<crate::host_types::UpstreamHealthEvidence,GatewayError>>{async{Err(crate::store::missing("active_upstream_health"))}}
-    fn codex_capacity_accounts(&self)->impl Future<Output=Result<Vec<crate::host_types::CapacityAccountRef>,GatewayError>>{async{Err(crate::store::missing("codex_capacity_accounts"))}}
-    fn probe_codex_capacity(&self,_account:&crate::host_types::CapacityAccountRef,_deadline_ms:i64)->impl Future<Output=Result<crate::host_types::CapacityProbe,GatewayError>>{async{Err(crate::store::missing("codex_capacity_probe"))}}
-    fn metered_quota_snapshot(&self,_force_refresh:bool,_deadline_ms:i64)->impl Future<Output=Result<Option<serde_json::Value>,GatewayError>>{async{Err(crate::store::missing("metered_quota_snapshot"))}}
+    fn probe_upstream_health(
+        &self,
+        _deadline_ms: i64,
+    ) -> impl Future<Output = Result<crate::host_types::UpstreamHealthEvidence, GatewayError>> {
+        async { Err(crate::store::missing("active_upstream_health")) }
+    }
+    fn codex_capacity_accounts(
+        &self,
+    ) -> impl Future<Output = Result<Vec<crate::host_types::CapacityAccountRef>, GatewayError>>
+    {
+        async { Err(crate::store::missing("codex_capacity_accounts")) }
+    }
+    fn probe_codex_capacity(
+        &self,
+        _account: &crate::host_types::CapacityAccountRef,
+        _deadline_ms: i64,
+    ) -> impl Future<Output = Result<crate::host_types::CapacityProbe, GatewayError>> {
+        async { Err(crate::store::missing("codex_capacity_probe")) }
+    }
+    fn metered_quota_snapshot(
+        &self,
+        _force_refresh: bool,
+        _deadline_ms: i64,
+    ) -> impl Future<Output = Result<Option<serde_json::Value>, GatewayError>> {
+        async { Err(crate::store::missing("metered_quota_snapshot")) }
+    }
     /// Calls the existing authority's current-binding observation writer; never another ledger.
-    fn accept_capacity_observations(&self,_observations:&[crate::host_types::CapacityRoutingObservation],_at_ms:i64)->impl Future<Output=Result<(),GatewayError>>{async{Err(crate::store::missing("capacity_authority_observation"))}}
+    fn accept_capacity_observations(
+        &self,
+        _observations: &[crate::host_types::CapacityRoutingObservation],
+        _at_ms: i64,
+    ) -> impl Future<Output = Result<(), GatewayError>> {
+        async { Err(crate::store::missing("capacity_authority_observation")) }
+    }
 }
