@@ -13,6 +13,8 @@ pub mod authority;
 mod catalog;
 mod catalog_host;
 mod cors;
+mod extras;
+mod extras_host;
 mod host;
 mod inference;
 mod lifecycle;

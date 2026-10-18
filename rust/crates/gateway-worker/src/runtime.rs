@@ -161,6 +161,30 @@ pub async fn route(
         )
         .await;
     }
+    if let Some(route) = crate::extras::route(&path, request.method())? {
+        let principal = principal.ok_or_else(gateway_auth::unauthorized)?;
+        let permit = crate::admission::acquire(
+            &principal,
+            &request_id.0,
+            route.label(),
+            host.cancellation.clone(),
+        )
+        .await?;
+        let catalog = CatalogState::load(&store, &env, &host, context.clone()).await?;
+        let mut response = crate::extras::run(
+            request,
+            route,
+            inference::RequestResources { context, permit },
+            &principal,
+            store,
+            catalog,
+            &host,
+            request_id,
+        )
+        .await?;
+        decorate_api_policy(&mut response, &principal)?;
+        return Ok(response);
+    }
     if ["/v1/responses", "/v1/chat/completions"].contains(&path.as_str()) {
         if request.method() != Method::Post {
             return Err(GatewayError::new(

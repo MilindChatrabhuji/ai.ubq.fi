@@ -23,6 +23,7 @@ gateway-admission.workspace = true
 gateway-catalog-runtime.workspace = true
 gateway-admin-runtime.workspace = true
 gateway-routing-runtime.workspace = true
+gateway-extras-runtime.workspace = true
 gateway-publication.workspace = true
 gateway-observability.workspace = true
 serde.workspace = true

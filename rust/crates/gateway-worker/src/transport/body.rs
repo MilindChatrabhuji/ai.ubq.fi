@@ -139,6 +139,9 @@ pub async fn response_bytes(
     max_bytes: usize,
     signal: &AbortSignal,
 ) -> Result<Vec<u8>, GatewayError> {
+    if matches!(response.body(), ResponseBody::Empty) {
+        return Ok(Vec::new());
+    }
     let mut source = response.stream().map_err(|_| {
         super::platform_error(
             "The upstream body is unavailable.",
