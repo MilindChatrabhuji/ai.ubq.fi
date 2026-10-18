@@ -135,11 +135,7 @@ export const normalizeKernelQuotaReservationRowV2 = (
     !(value.release_reason === null || typeof value.release_reason === "string")
   )
     return null;
-  if (
-    value.window_reset_at_ms <= value.window_created_at_ms ||
-    value.lease_expires_at_ms <= value.reserved_at_ms
-  )
-    return null;
+  if (value.window_reset_at_ms <= value.window_created_at_ms || value.lease_expires_at_ms <= value.reserved_at_ms) return null;
   if (
     (value.state === "reserved" && (value.committed_at_ms !== null || value.released_at_ms !== null || value.release_reason !== null)) ||
     (value.state === "committed" &&
