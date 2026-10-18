@@ -16,6 +16,13 @@ pub enum KeyPart {
     Number(f64),
     Boolean(bool),
 }
+impl KeyPart {
+    /// Only source key inputs use the pinned TextEncoder USVString conversion.
+    /// Logical values retain their original units through JsString16/ProfileV2.
+    pub fn source_string_utf16(units: &[u16]) -> Self {
+        Self::String(String::from_utf16_lossy(units))
+    }
+}
 
 /// Validated decoded source parts. String bytes are intentionally not coerced
 /// to UTF-8: the source raw validator also accepts arbitrary string payloads.
