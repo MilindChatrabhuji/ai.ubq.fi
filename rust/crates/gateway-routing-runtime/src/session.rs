@@ -7,7 +7,7 @@ use gateway_schema::reasoning::{ModelReasoning,effort_for_codex};
 use serde_json::{Value,json};
 use crate::{journal::{self,Journal},policy::{self,RoutePlan},types::*};
 
-pub struct RoutingSession<S,I,C,H>{pub(crate) store:S,pub(crate) tokens:I,pub(crate) clock:C,pub(crate) host:H,pub(crate) input:RoutingInput,pub(crate) plan:RoutePlan,pub(crate) lithos:RefCell<LithosWindows>,pub(crate) waits:RefCell<WaitBudget>}
+pub struct RoutingSession<S,I,C,H>{pub(crate) store:S,pub(crate) tokens:I,pub(crate) clock:C,pub(crate) host:H,pub(crate) input:RoutingInput,pub(crate) plan:RoutePlan,pub(crate) lithos:RefCell<LithosWindows>,pub(crate) waits:RefCell<WaitBudget>,conversation_id:String}
 impl<S:QueryStore+Clone,I:TokenSource+Clone,C:AuthorityClock+Clone+'static,H:RoutingHost> RoutingSession<S,I,C,H>{
     pub(crate) fn authority(&self)->Authority<S,I>{Authority::with_clock(self.store.clone(),self.tokens.clone(),self.clock.clone())}
     pub(crate) fn now(&self)->Result<i64,GatewayError>{let now=self.clock.now_ms()?;if now<self.input.context.started_at_ms||now>9_007_199_254_740_991{return Err(journal::unavailable("The routing clock moved backwards or overflowed."));}Ok(now)}
@@ -35,7 +35,7 @@ impl<S:QueryStore+Clone,I:TokenSource+Clone,C:AuthorityClock+Clone+'static,H:Rou
             if let Some(kernel)=&row.kernel{authority.settle_kernel(kernel,KernelTerminal::Released,"routing_admission_failed",clock.now_ms()?).await?;}
             journal::change(&store,&tokens,&input.context.request_id.0,clock.now_ms()?,&[],|j|{j.finished=true;Ok(())}).await?;return Err(error.into());
         }
-        Ok(Self{store,tokens,clock,host,input,plan,lithos:RefCell::new(LithosWindows::default()),waits:RefCell::new(WaitBudget{waits:0,waited_ms:0,streamed})})
+        let conversation_id=tokens.next_token()?;Ok(Self{store,tokens,clock,host,input,plan,lithos:RefCell::new(LithosWindows::default()),waits:RefCell::new(WaitBudget{waits:0,waited_ms:0,streamed}),conversation_id})
     }
     pub(crate) async fn change<F:Fn(&mut Journal)->Result<(),GatewayError>>(&self,update:F)->Result<Journal,GatewayError>{journal::change(&self.store,&self.tokens,self.id(),self.now()?,&[],update).await}
     pub(crate) async fn cursor(&self,value:usize)->Result<(),GatewayError>{self.change(|j|{settlement::ensure_active(j)?;j.cursor=value;j.active=None;Ok(())}).await?;Ok(())}
@@ -46,7 +46,7 @@ impl<S:QueryStore+Clone,I:TokenSource+Clone,C:AuthorityClock+Clone+'static,H:Rou
         self.host.ensure_credential_current(&publication.fence,&self.input.principal,model).await?;Ok(publication)
     }
     pub(crate) fn prepare(&self,provider:UpstreamProvider,model:&str,publication:&PublishedCredential,nonce:&str)->Result<gateway_providers::PreparedRequest,GatewayError>{
-        let mut options=publication.options.clone();options.auth=publication.material.clone();options.client_version=self.input.client_version.clone();options.native_session_id=self.input.native_session_id.clone();options.response_id=format!("resp_{}",nonce.replace('-',""));options.conversation_id=Some(self.tokens.next_token()?);options.created_at=self.now()?/1000;options.allowed_models=policy::provider_ids(&self.input,provider);
+        let mut options=publication.options.clone();options.auth=publication.material.clone();options.client_version=self.input.client_version.clone();options.native_session_id=self.input.native_session_id.clone();options.response_id=format!("resp_{}",nonce.replace('-',""));options.conversation_id=Some(self.conversation_id.clone());options.created_at=self.now()?/1000;options.allowed_models=policy::provider_ids(&self.input,provider);
         let mut raw=self.input.raw.clone();raw["model"]=json!(model);
         if provider==UpstreamProvider::ChatgptCodex{
             let meta=ModelReasoning::from_record(self.input.catalog.codex().and_then(|s|s.find(model)));
