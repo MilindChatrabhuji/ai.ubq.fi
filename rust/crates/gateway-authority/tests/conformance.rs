@@ -1,7 +1,7 @@
 mod claude_cases;
-mod support;
 mod paid_control_cases;
 mod source_model_cases;
+mod support;
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
@@ -33,7 +33,6 @@ fn seed_policy(store: &MemoryStore) {
 fn paid_setup(store: &MemoryStore) {
     seed_policy(store);
     paid_control_cases::seed_controls(store);
-
 }
 fn paid_request(attempt: &str, provider: PaidProvider) -> PaidRequest {
     PaidRequest {
@@ -49,18 +48,32 @@ fn paid_request(attempt: &str, provider: PaidProvider) -> PaidRequest {
         created_at_ms: NOW,
     }
 }
-async fn reserve_paid(authority:&TestAuthority,input:&PaidRequest,authorization:&PaidAuthorization,now:i64)->Result<PaidAdmission,gateway_core::GatewayError> {
+async fn reserve_paid(
+    authority: &TestAuthority,
+    input: &PaidRequest,
+    authorization: &PaidAuthorization,
+    now: i64,
+) -> Result<PaidAdmission, gateway_core::GatewayError> {
     authority.store().clock(now);
-    let context=paid_control_cases::context(input);
-    let receipt=authority.authorize_paid_route(input,&context,now).await?;
-    authority.reserve_paid(input,authorization,&receipt,now).await
+    let context = paid_control_cases::context(input);
+    let receipt = authority.authorize_paid_route(input, &context, now).await?;
+    authority
+        .reserve_paid(input, authorization, &receipt, now)
+        .await
 }
 
 fn paid_reservation(
     authority: &TestAuthority,
     input: &PaidRequest,
 ) -> gateway_authority::paid::PaidReservation {
-    match run(reserve_paid(&authority,input, &PaidAuthorization::DirectPaidModel, NOW)).unwrap() {
+    match run(reserve_paid(
+        &authority,
+        input,
+        &PaidAuthorization::DirectPaidModel,
+        NOW,
+    ))
+    .unwrap()
+    {
         PaidAdmission::Reserved(reservation) => reservation,
         _ => panic!("expected fresh reservation"),
     }
@@ -84,7 +97,7 @@ fn serial_identity_survives_headroom_reorder_and_same_account_refresh() {
     assert_eq!(first.active_generation, second.active_generation);
     assert_eq!(second.binding.slot, 1);
     reordered.accounts[1].credential_version =
-        source_account("a",true).identity().credential_version;
+        source_account("a", true).identity().credential_version;
     reordered.pool_versionstamp = PoolVersionstamp("pool-refreshed".to_owned());
     seed_pool(&store, &reordered);
     let refreshed = admitted(&authority);
@@ -113,7 +126,8 @@ fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
     let mut input = paid_request("mixed-paid", PaidProvider::Surplus);
     input.model = "gpt-test".to_owned();
     assert!(
-        run(reserve_paid(&authority,
+        run(reserve_paid(
+            &authority,
             &input,
             &PaidAuthorization::SubscriptionUnavailable(proof.clone()),
             NOW
@@ -123,7 +137,8 @@ fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
     store.clock(NOW + 60_001);
     input.attempt_id = PaidAttemptId("expired-proof".to_owned());
     assert!(
-        run(reserve_paid(&authority,
+        run(reserve_paid(
+            &authority,
             &input,
             &PaidAuthorization::SubscriptionUnavailable(proof),
             NOW + 60_001
@@ -413,7 +428,8 @@ fn paid_disable_racing_admission_prevents_exposure_and_transient_failures_retain
     disabled.paid_fallback_enabled = false;
     store.race(keys::api_policy("key-a"), &disabled);
     assert!(
-        run(reserve_paid(&authority,
+        run(reserve_paid(
+            &authority,
             &paid_request("disabled", PaidProvider::Surplus),
             &PaidAuthorization::DirectPaidModel,
             NOW
@@ -612,7 +628,10 @@ fn overage_off_is_a_hard_gate_and_enabled_probe_blocks_other_requests() {
             .unwrap()
             .is_none()
     );
-    store.seed(keys::overage(&admin_hash("a").0), &serde_json::json!({"allow":true}));
+    store.seed(
+        keys::overage(&admin_hash("a").0),
+        &serde_json::json!({"allow":true}),
+    );
     let RouteSelection::QuotaBlocked { proof, .. } =
         run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap()
     else {
@@ -828,7 +847,7 @@ fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
     let mut lookalike = serde_json::to_value(pool()).unwrap();
     lookalike["type"] = serde_json::json!("binary");
     lookalike["value"] = serde_json::json!([1, 2, 3]);
-    seed_pool(&json_store,&pool());
+    seed_pool(&json_store, &pool());
     json_store.seed(keys::pool(), &lookalike);
     assert_eq!(
         admitted(&authority(&json_store)).binding.account_id_hash.0,

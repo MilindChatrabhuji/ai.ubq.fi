@@ -15,8 +15,8 @@ mod reset_recovery;
 mod reset_types;
 pub mod routing;
 mod routing_types;
-mod store;
 mod source_models;
+mod store;
 
 pub use store::{Authority, AuthorityClock, TokenSource};
 

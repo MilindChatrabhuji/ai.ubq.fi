@@ -190,7 +190,7 @@ pub(crate) struct RoutingView {
     pub active: Option<ActiveSelection>,
     models: ModelAvailability,
     models_source: serde_json::Value,
-    source_ids: BTreeMap<String,String>,
+    source_ids: BTreeMap<String, String>,
     capacity: CapacityStore,
     pub(crate) overage: BTreeMap<String, bool>,
 }
@@ -213,7 +213,7 @@ pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
         generation(active.generation)?;
     }
     let capacity = tx.read(&keys::capacity()).await?.unwrap_or_default();
-    let source_models = crate::source_models::load(tx,&pool).await?;
+    let source_models = crate::source_models::load(tx, &pool).await?;
     let mut overage = BTreeMap::new();
     for account in &pool.accounts {
         let setting: Option<serde_json::Value> = tx
@@ -732,9 +732,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if !view.matches(admission) {
                 return Ok(false);
             }
-            let id=view.source_ids.get(&admission.binding.account_id_hash.0)
-                .ok_or_else(||invalid("Current source account mapping is missing."))?;
-            let models=crate::source_models::learn(&view.models_source,id,&admission.requested_model,now)?;
+            let id = view
+                .source_ids
+                .get(&admission.binding.account_id_hash.0)
+                .ok_or_else(|| invalid("Current source account mapping is missing."))?;
+            let models = crate::source_models::learn(
+                &view.models_source,
+                id,
+                &admission.requested_model,
+                now,
+            )?;
             tx.put(&keys::models(), &models, None)?;
             if tx.commit().await? {
                 return Ok(true);
