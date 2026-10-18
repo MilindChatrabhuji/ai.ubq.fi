@@ -568,7 +568,7 @@ therefore required a per-commit `danger-full-access` escalation.
 changes no machine: the installed copy keeps its old behaviour until the owner installs the new one, so this entry
 describes the repository helper, not what `~/bin/gpg-dsh` runs today. The helper uses the real homedir when that is
 genuinely writable (a probe file can be created there). Otherwise it signs from a homedir seeded under
-`$TMPDIR/dsh-gnupg/<uid>` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
+`$TMPDIR/dsh-gnupg-<uid>/seed` from `~/.gnupg`: the `*.kbx` and `*.gpg` files plus every file in `private-keys-v1.d`.
 Interactive shells take the passthrough branch and are unaffected.
 
 To install it, compare it with the installed helper first, `diff ops/gpg-dsh.sh ~/bin/gpg-dsh`, then run
@@ -585,8 +585,20 @@ or changing its passphrase leaves `pubring.kbx` untouched, so the old private ke
 compares that manifest with the one recorded when the seed was built. Any difference, including a deleted, added, or
 re-protected private key, stops the seed's `gpg-agent`, discards the seed, and rebuilds it before gpg runs. The
 manifest is written only after a complete copy, so an interrupted rebuild is rebuilt on the next call. The seed and
-its `dsh-gnupg` parent must be real directories owned by the caller and are forced to mode 0700; anything else fails
-closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
+its `dsh-gnupg-<uid>` parent must be real directories owned by the caller and are forced to mode 0700; anything else
+fails closed before gpg runs. `tests/gpg-dsh.test.ts` covers each trigger.
+
+The #1141 helper changes from #1159 are combined with staged rebuilds (2026-10-18, #1168). A GnuPG configuration
+file in the seed (`gpg.conf` or a versioned `gpg.conf-<version>`, `gpg-agent.conf`, `scdaemon.conf`, `common.conf`, or any
+other top-level `*.conf` or `*.conf-*`, including dangling symlinks) invalidates the recorded manifest and stops the
+seed's agent before replacing the seed. The helper never writes configuration files, so one was planted from inside
+the sandbox; a planted `pinentry-program` could capture the passphrase at the next agent start. The seed's parent is
+per user, even when `TMPDIR` is unset and `/tmp` is shared. Under the new rebuild lock, the helper also stops the agent
+and removes this user's earlier `$TMPDIR/dsh-gnupg/<uid>` seed and leftover staging/set-aside copies, but only when
+this user owns the real legacy parent and copies. Do not run an older installed helper concurrently during migration.
+Each manifest uses one digest process for all inputs: macOS `shasum` is a perl script, so one process per file added a
+perl start per seeded file to every sandboxed commit. A mismatch is re-hashed under the lock before copying, and all
+copies still go into the private stage, never into a published seed.
 
 Rebuilds are serialized and published whole (added 2026-10-17, #1139). Before this, every call that found a stale
 manifest stopped the agent, removed the shared seed, and rebuilt it in place, with no lock. Calls started together after
@@ -598,10 +610,17 @@ call (a mismatch, a missing seed, or a leftover copy beside it) waits for `<seed
 inputs, so a burst of calls after one change rebuilds once and the others reuse that seed. The holder copies the inputs
 into a private sibling (`<seed>.new.XXXXXX`) and records the manifest there. It then stops the seed's `gpg-agent`,
 renames the old seed aside (`<seed>.old.XXXXXX`), renames the new one into place, and only then removes the old one. No
-call writes into a seed that another call has published, and no call sees a partly copied seed. Leftover siblings from
-a killed rebuild are removed under the lock. A lock held for 15 seconds is treated as left by a killed holder and
-broken, and a waiter gives up (exit 2) after 60 seconds. A signing that is already running from the seed when an input
-changes can still fail, because the rebuild removes the old seed once the new one is in place.
+call writes into a seed that another call has published, and no call sees a partly copied seed. Leftover copies from
+a killed rebuild are removed under the lock, including any nested `*.new.*` or `*.old.*` copies. The post-publication
+check removes unexpected copies and fails closed if portable `mv` nested a stage rather than renaming it. A lock held
+for 15 seconds is treated as left by a killed or hung holder and broken. Breakers serialize on `<seed>.lock.break`
+and re-check the owner under that gate before deleting; lock creation/owner writes and release use the same gate so
+neither a blank-owner observation nor delayed cleanup can delete a fresh lock. The owner is read before sampling the
+clock, and a future start time is treated as live, not stale (2026-10-18, #1168). Failed stale-lock removals return to
+waiting rather than aborting the signing, and a waiter gives up (exit 2) after 60 seconds. A SIGKILL while holding
+the short-lived breaker gate can leave it behind: callers time out fail-closed, and the owner must confirm no helper
+is running before removing that gate. A signing that is already running from the seed when an input changes can
+still fail, because the rebuild removes the old seed once the new one is in place.
 
 Reason: the sandbox exposes no configuration hook for adding writable roots — `writableRoots` takes only the policy and
 hard-codes the three roots — so the only durable fix inside the existing policy is to put the signing homedir where the
@@ -615,7 +634,8 @@ is not cleared at boot for every caller, and an unset `TMPDIR` falls back to `/t
 is what keeps the seed from becoming a second long-lived key store. Going back to a `pubring.kbx`-only trigger lets a
 deleted or re-protected secret key keep signing from the seed. Rebuilding in place, or without the lock, brings back
 the failed concurrent signings after an input change and the window in which a deleted key survives in a seed stamped
-as current.
+as current. Dropping the planted-configuration check restores the pinentry-capture risk, and returning to a shared
+`dsh-gnupg` parent breaks other users under `/tmp` once one user owns it.
 
 ## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
 
