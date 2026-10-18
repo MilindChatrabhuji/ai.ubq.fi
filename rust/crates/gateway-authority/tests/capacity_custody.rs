@@ -379,3 +379,81 @@ fn fetch_binding_exposes_only_original_fixed_roster_identity() {
     );
     assert!(binding.native_owner().is_none());
 }
+
+#[test]
+fn capacity_materialization_keeps_stable_ambiguous_reset_lookup_only() {
+    let (store, authority) = setup();
+    run(authority.select_account(
+        "gpt-test",
+        gateway_core::provider::CodexQuotaClass::Standard,
+        NOW,
+    ))
+    .unwrap();
+    let mut state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
+    state.slots[0].retained_reset_at_ms = Some(NOW + 30_000);
+    state.slots[0].reset_identity_stable = true;
+    state.slots[0].reset_identity_ambiguous = true;
+    state.slots[0].generation = 3;
+    store.inner.seed(keys::routing(), &state);
+    let fence = run(authority.begin_codex_capacity_observation(&[reference()])).unwrap();
+    run(authority.record_codex_capacity_observations(&fence, &[sample(NOW, 100.0)])).unwrap();
+    store.inner.clock(NOW + 1000);
+    assert!(
+        run(authority.materialize_capacity_quota_blocks(
+            "gpt-test",
+            gateway_core::provider::CodexQuotaClass::Standard,
+            NOW + 1000
+        ))
+        .unwrap()
+    );
+    let state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
+    let block = state.slots[0]
+        .quota_block_for(gateway_core::provider::CodexQuotaClass::Standard)
+        .unwrap();
+    assert!(block.reset_ambiguous);
+    assert_eq!(block.reset_at_ms, Some(NOW + 30_000));
+    assert_eq!(block.blocked_until_ms, NOW + 60_000);
+    assert_eq!(block.observed_at_ms, Some(NOW + 1000));
+    assert!(state.slots[0].reset_identity_ambiguous);
+    assert_eq!(
+        parse_capacity_store(&store.inner.row(&keys::capacity()).unwrap().value)
+            .unwrap()
+            .updated_at_ms,
+        NOW
+    );
+}
+
+#[test]
+fn capacity_materialization_refuses_owned_probe_and_preserves_foreign_class_lease() {
+    use gateway_core::provider::CodexQuotaClass;
+    for class in [CodexQuotaClass::Standard, CodexQuotaClass::Spark] {
+        let (store, authority) = setup();
+        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap();
+        let mut state =
+            parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
+        let lease = ProbeLease {
+            token: "original-probe".into(),
+            generation: 2,
+            circuit: ProbeCircuit::Quota,
+            quota_class: Some(class),
+            expires_at_ms: NOW + 20_000,
+        };
+        state.slots[0].generation = 2;
+        state.slots[0].probe_lease = Some(lease.clone());
+        store.inner.seed(keys::routing(), &state);
+        let fence = run(authority.begin_codex_capacity_observation(&[reference()])).unwrap();
+        run(authority.record_codex_capacity_observations(&fence, &[sample(NOW, 100.0)])).unwrap();
+        assert_eq!(
+            run(authority.materialize_capacity_quota_blocks(
+                "gpt-test",
+                CodexQuotaClass::Standard,
+                NOW
+            ))
+            .unwrap(),
+            class == CodexQuotaClass::Spark
+        );
+        let state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
+        assert_eq!(state.slots[0].generation, 2);
+        assert_eq!(state.slots[0].probe_lease, Some(lease));
+    }
+}
