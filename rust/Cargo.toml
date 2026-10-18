@@ -6,6 +6,7 @@ members = [
   "crates/gateway-authority",
   "crates/gateway-auth",
   "crates/gateway-admin",
+  "crates/gateway-admin-data",
   "crates/gateway-native",
   "crates/gateway-worker",
 ]
@@ -28,6 +29,7 @@ gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
 gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }
+gateway-admin-data = { path = "crates/gateway-admin-data" }
 gateway-native = { path = "crates/gateway-native" }
 
 [profile.release]
