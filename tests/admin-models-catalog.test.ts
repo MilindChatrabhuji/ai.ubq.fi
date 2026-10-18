@@ -46,6 +46,12 @@ const WHITELIST_URL = "https://ai.ubq.fi/admin/models/whitelist";
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
 
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 /** Minimal Kv stand-in: the whitelist paths only read and write one key. */
 class WhitelistKv {
   readonly values = new Map<string, unknown>();
@@ -256,7 +262,7 @@ test("a paid-discovered DeepSeek id receives the later official route metadata",
   const paidModelId = "deepseek-v4-flash";
   const providerEnv = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "METERED_API_KEY", "OPENROUTER_API_KEY", "SURPLUS_API_KEY"] as const;
   const originalProviderEnv = providerEnv.map((name) => [name, process.env[name]] as const);
-  for (const name of providerEnv) delete process.env[name];
+  for (const name of providerEnv) Reflect.deleteProperty(process.env, name);
   process.env.SURPLUS_API_KEY = "fixture-surplus-key";
   process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
   resetSurplusModelsCacheForTest();
@@ -280,10 +286,10 @@ test("a paid-discovered DeepSeek id receives the later official route metadata",
         ),
     });
     globalThis.fetch = createFetchMock((input) => {
-      if (String(input).includes("surplusintelligence.ai/v1/models")) {
+      if (requestUrl(input).includes("surplusintelligence.ai/v1/models")) {
         return Promise.resolve(Response.json({ data: [{ id: paidModelId, created: 1_800_000_000, provider: "surplus" }] }));
       }
-      return Promise.reject(new Error(`Unexpected discovery request: ${String(input)}`));
+      return Promise.reject(new Error(`Unexpected discovery request: ${requestUrl(input)}`));
     });
     const row = (await buildModelCatalogSnapshot()).models.find((model) => model.id === paidModelId);
     assert.ok(row);
@@ -300,7 +306,7 @@ test("a paid-discovered DeepSeek id receives the later official route metadata",
     resetMeteredModelsCacheForTest();
     resetOpenRouterModelsCacheForTest();
     for (const [name, value] of originalProviderEnv) {
-      if (value === undefined) delete process.env[name];
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
       else process.env[name] = value;
     }
   }
