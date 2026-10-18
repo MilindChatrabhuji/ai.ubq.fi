@@ -1,6 +1,16 @@
 import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 // Kernel quota v2 policy write path, split out of src/kernel_quota_v2.ts.
 
+import {
+  kernelQuotaDefaultCutoverBlocks,
+  kernelQuotaPolicyResetRequested,
+  decideKernelQuotaPolicyDeletePrecondition,
+  resolveKernelPolicyTiming,
+  decideKernelPolicyWindowGuard,
+  makeKernelQuotaPolicy,
+  decideKernelQuotaPolicyWrite,
+  decideKernelQuotaPolicyDeleteWindow,
+} from "../authority/native-kernel.ts";
 import { getKv } from "../kv.ts";
 import { type KernelAuthLimitRecord, type KernelOrgLimitRecord } from "../types.ts";
 import {
@@ -12,20 +22,16 @@ import {
   type KernelQuotaScope,
   type KernelQuotaWindowV2,
   MAX_KV_RETRIES,
-  hasLiveKernelReservations,
+  KERNEL_QUOTA_CONSTANTS,
+  kernelQuotaRead,
   kernelOrgPolicyKey,
   kernelOrgWindowKey,
   kernelPolicyKeys,
   kernelRepoPart,
   loadDefaults,
-  newWindow,
-  normalizeExpiration,
-  normalizeUsageLimit,
-  normalizeWindow,
   orgRecord,
   policyFor,
   repoRecord,
-  windowForEffectivePolicy,
 } from "./quota-v2.ts";
 import { reclaimExpiredKernelReservationUnlocked, reconcileKernelQuotaWindowReservations, withKernelQuotaLock } from "./quota-reservations.ts";
 
@@ -52,15 +58,6 @@ type KernelQuotaPolicyWriteEntries = Readonly<{
 type KernelQuotaPolicyWriteAttempt =
   Readonly<{ outcome: "written"; record: KernelAuthLimitRecord | KernelOrgLimitRecord }> | Readonly<{ outcome: "retry" }> | Readonly<{ outcome: "abort" }>;
 
-/** Resolves the window and expiration this write applies, honouring explicit overrides. */
-const resolveKernelPolicyTiming = (
-  options: KernelQuotaPolicySetOptions,
-  current: KernelQuotaEffectivePolicy
-): Readonly<{ windowMs: number; expiresAtMs: number }> => ({
-  windowMs: options.windowMs === undefined ? current.windowMs : normalizeWindow(options.windowMs, current.windowMs),
-  expiresAtMs: options.expiresAtMs === undefined ? current.expiresAtMs : normalizeExpiration(options.expiresAtMs),
-});
-
 /**
  * A repo policy created on top of an inherited org policy must not orphan live org
  * reservations: reconcile the org aggregate and reclaim an expired lease first.
@@ -78,9 +75,9 @@ const reconcileKernelPolicyOrgInheritance = async (
   if (orgPolicyEntry === null || orgWindowEntry === null) return "proceed";
   policyFor(orgPolicyEntry, "org", owner, undefined, defaults);
   const inheritedOrgWindow = await reconcileKernelQuotaWindowReservations(kv, orgWindowEntry, "org", owner, undefined);
-  if (orgWindowEntry.value !== null && !inheritedOrgWindow) return "abort";
-  if (!hasLiveKernelReservations(inheritedOrgWindow, nowMs)) return "proceed";
-  const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, "org", owner, undefined, inheritedOrgWindow, nowMs);
+  const plan = decideKernelPolicyWindowGuard(inheritedOrgWindow, orgWindowEntry.value !== null, true, nowMs);
+  if (plan.kind !== "reclaim") return plan.kind;
+  const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, "org", owner, undefined, plan.window, nowMs);
   return reclaimed ? "retry" : "abort";
 };
 
@@ -94,9 +91,9 @@ const guardKernelPolicyWindowReset = async (
   nowMs: number,
   reset: boolean
 ): Promise<"proceed" | "retry" | "abort"> => {
-  if (!reset) return "proceed";
-  if (!hasLiveKernelReservations(currentWindow, nowMs)) return "proceed";
-  const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, currentWindow, nowMs);
+  const plan = decideKernelPolicyWindowGuard(currentWindow, false, reset, nowMs);
+  if (plan.kind !== "reclaim") return plan.kind;
+  const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, plan.window, nowMs);
   return reclaimed ? "retry" : "abort";
 };
 
@@ -136,30 +133,24 @@ const attemptSetKernelQuotaPolicy = async (
   ]);
   const entries: KernelQuotaPolicyWriteEntries = { defaults, policyEntry, windowEntry, orgPolicyEntry, orgWindowEntry, defaultCutoverEntry };
   const current = policyFor(policyEntry, scope, owner, repo, defaults);
-  if (current.source === "default" && defaultCutoverEntry.value !== null) return { outcome: "abort" };
-  const { windowMs, expiresAtMs } = resolveKernelPolicyTiming(options, current);
-  const policy: KernelQuotaPolicyV2 = {
-    v: 2,
-    scope,
-    owner,
-    ...(scope === "repo" ? { repo } : {}),
-    usage_limit_requests: normalizeUsageLimit(usageLimitRequests, current.limit),
-    window_ms: windowMs,
-    expires_at_ms: expiresAtMs,
-    created_at_ms: current.policy?.created_at_ms ?? nowMs,
-    updated_at_ms: nowMs,
-  };
+  if (kernelQuotaDefaultCutoverBlocks(current, kernelQuotaRead(defaultCutoverEntry))) return { outcome: "abort" };
+  const { windowMs, expiresAtMs } = resolveKernelPolicyTiming(options, current, KERNEL_QUOTA_CONSTANTS.noExpirationMs);
+  const policy = makeKernelQuotaPolicy(
+    { scope, owner, repo },
+    current,
+    usageLimitRequests,
+    { windowMs, expiresAtMs },
+    KERNEL_QUOTA_CONSTANTS.noUsageLimit,
+    nowMs
+  );
   const currentWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
   if (windowEntry.value !== null && !currentWindow) return { outcome: "abort" };
   const inheritance = await reconcileKernelPolicyOrgInheritance(kv, scope, owner, entries, nowMs);
   if (inheritance !== "proceed") return { outcome: inheritance };
-  const reset = options.resetUsage === true || current.windowMs !== windowMs;
+  const reset = kernelQuotaPolicyResetRequested(options, current.windowMs, windowMs);
   const resetGuard = await guardKernelPolicyWindowReset(kv, scope, owner, repo, currentWindow, nowMs, reset);
   if (resetGuard !== "proceed") return { outcome: resetGuard };
-  const baseWindow = reset
-    ? newWindow(scope, owner, repo, windowMs, nowMs)
-    : windowForEffectivePolicy(currentWindow, scope, owner, repo, windowMs, nowMs).window;
-  const window: KernelQuotaWindowV2 = reset ? baseWindow : { ...baseWindow, updated_at_ms: nowMs };
+  const { window } = decideKernelQuotaPolicyWrite({ scope, owner, repo }, policy, currentWindow, reset, nowMs);
   const committed = await kernelPolicyWriteAtomic(kv, scope, entries, current).set(keys.policyKey, policy).set(keys.windowKey, window).commit();
   if (!committed.ok) return { outcome: "retry" };
   const summary = { limit: policy.usage_limit_requests, windowMs, expiresAtMs };
@@ -230,19 +221,21 @@ const attemptDeleteKernelQuotaPolicy = async (
       consistency: "strong",
     }),
   ]);
-  if (policyEntry.value === null) return false;
-  if (defaultCutoverEntry.value !== null) return "conflict";
+  const precondition = decideKernelQuotaPolicyDeletePrecondition({
+    policy: kernelQuotaRead(policyEntry),
+    defaultCutover: kernelQuotaRead(defaultCutoverEntry),
+  });
+  if (precondition === "absent") return false;
+  if (precondition === "conflict") return "conflict";
   const current = policyFor(policyEntry, scope, owner, repo, defaults);
   const oldWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
-  if (windowEntry.value !== null && !oldWindow) return "abort";
-  if (hasLiveKernelReservations(oldWindow, nowMs)) {
-    const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, oldWindow, nowMs);
+  const guard = decideKernelPolicyWindowGuard(oldWindow, windowEntry.value !== null, true, nowMs);
+  if (guard.kind === "abort") return "abort";
+  if (guard.kind === "reclaim") {
+    const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, guard.window, nowMs);
     return reclaimed ? "retry" : "conflict";
   }
-  const nextWindow =
-    current.windowMs === defaults.windowMs
-      ? windowForEffectivePolicy(oldWindow, scope, owner, repo, defaults.windowMs, nowMs).window
-      : newWindow(scope, owner, repo, defaults.windowMs, nowMs);
+  const nextWindow = decideKernelQuotaPolicyDeleteWindow({ scope, owner, repo }, current, defaults, oldWindow, nowMs);
   const committed = await kv
     .atomic()
     .check(policyEntry)
