@@ -806,3 +806,31 @@ fn expired_paid_detail_clears_its_marker_without_refunding_retained_exposure() {
     assert!(run(authority.due_paid(later, 10)).unwrap().is_empty());
     assert_eq!(store.row(&window_key).unwrap(), before);
 }
+
+#[test]
+fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
+    use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
+    use gateway_core::value::PortableValue;
+
+    let store = MemoryStore::default();
+    let typed = StoredRecord::profile(
+        "typed-import",
+        PortableValue::from_json(&serde_json::to_value(pool()).unwrap()),
+        None,
+    ).unwrap();
+    run(store.commit(AtomicTransition {
+        checks: vec![RevisionCheck { key: keys::pool(), expected_revision: None }],
+        mutations: vec![RecordMutation::Put { key: keys::pool(), record: typed.clone() }],
+    })).unwrap();
+    let error = run(authority(&store).select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap_err();
+    assert_eq!(error.envelope.error.code.as_deref(), Some("incompatible_value_encoding"));
+    assert_eq!(store.row(&keys::pool()), Some(typed));
+    assert!(store.row(&keys::active()).is_none());
+
+    let json_store = MemoryStore::default();
+    let mut lookalike = serde_json::to_value(pool()).unwrap();
+    lookalike["type"] = serde_json::json!("binary");
+    lookalike["value"] = serde_json::json!([1, 2, 3]);
+    json_store.seed(keys::pool(), &lookalike);
+    assert_eq!(admitted(&authority(&json_store)).binding.account_id_hash.0, "route-a");
+}

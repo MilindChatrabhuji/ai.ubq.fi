@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey,
     RecordMutation, RevisionCheck, StoredRecord,
 };
 use serde::Serialize;
@@ -110,7 +110,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             return Ok(None);
         }
         raw.map(|row| {
-            serde_json::from_value(row.value.clone())
+            serde_json::from_value(row.json_value()?.clone())
                 .map_err(|_| invalid("Malformed authority record."))
         })
         .transpose()
@@ -176,13 +176,12 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         {
             return Err(invalid("Token source reused an existing revision."));
         }
-        let record = StoredRecord {
-            schema_version: PORTABLE_STATE_VERSION,
+        let record = StoredRecord::json(
             revision,
-            value: serde_json::to_value(value)
+            serde_json::to_value(value)
                 .map_err(|_| invalid("Authority serialization failed."))?,
-            expires_at_ms: expiry,
-        };
+            expiry,
+        );
         self.writes.insert(
             key.0.clone(),
             RecordMutation::Put {

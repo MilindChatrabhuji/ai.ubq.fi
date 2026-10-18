@@ -16,7 +16,7 @@ use gateway_core::identity::{
 };
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey,
     RecordMutation, StoredRecord,
 };
 use gateway_core::tuple_key::TupleKey;
@@ -51,12 +51,11 @@ impl MemoryStore {
     pub fn seed<T: Serialize>(&self, key: RecordKey, value: &T) {
         self.rows.lock().unwrap().insert(
             key.0,
-            StoredRecord {
-                schema_version: PORTABLE_STATE_VERSION,
-                revision: format!("seed-{}", self.sequence.fetch_add(1, Ordering::SeqCst)),
-                value: serde_json::to_value(value).unwrap(),
-                expires_at_ms: None,
-            },
+            StoredRecord::json(
+                format!("seed-{}", self.sequence.fetch_add(1, Ordering::SeqCst)),
+                serde_json::to_value(value).unwrap(),
+                None,
+            ),
         );
     }
     pub fn row(&self, key: &RecordKey) -> Option<StoredRecord> {
@@ -120,12 +119,11 @@ impl AuthorityStore for MemoryStore {
         if let Some((key, value)) = self.race.lock().unwrap().take() {
             rows.insert(
                 key.0,
-                StoredRecord {
-                    schema_version: PORTABLE_STATE_VERSION,
-                    revision: format!("race-{}", self.sequence.fetch_add(1, Ordering::SeqCst)),
+                StoredRecord::json(
+                    format!("race-{}", self.sequence.fetch_add(1, Ordering::SeqCst)),
                     value,
-                    expires_at_ms: None,
-                },
+                    None,
+                ),
             );
         }
         let checked: BTreeSet<_> = transition
