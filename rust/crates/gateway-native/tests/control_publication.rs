@@ -1,3 +1,7 @@
+use gateway_auth::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
+    read_codex_source_pool,
+};
 use gateway_auth::{
     GatewayError,
     crypto::{Secret, base64url},
@@ -8,10 +12,12 @@ use gateway_auth::{
     },
     store,
 };
+use gateway_authority::routing::{PoolAccount, SubscriptionPool};
 use gateway_authority::{
     keys,
     paid_control::{PaidControlConfig, PaidControlOwner},
 };
+use gateway_core::identity::PoolVersionstamp;
 use gateway_core::{
     provider::PaidProvider,
     state::{
@@ -19,7 +25,111 @@ use gateway_core::{
     },
 };
 use gateway_native::control_publication::*;
+use gateway_native::{
+    NativeCredentials, NativeOwnerId, NativeOwnerTransport, RenewalStep,
+    access_publication::{PreparedAccessPublication, RegisteredAccessOwner},
+};
 use serde_json::{Value, json};
+
+struct AccessRead(NativeCredentials);
+impl NativeOwnerTransport for AccessRead {
+    async fn read_credentials(
+        &self,
+        owner: &NativeOwnerId,
+    ) -> Result<NativeCredentials, GatewayError> {
+        assert_eq!(owner.0, "registered-owner");
+        Ok(self.0.clone())
+    }
+    async fn request(&self, _: &NativeOwnerId, _: RenewalStep) -> Result<Value, GatewayError> {
+        panic!("Access publication must never invoke renewal")
+    }
+    async fn verify_initialized_home(
+        &self,
+        _: &NativeOwnerId,
+        _: &Value,
+    ) -> Result<(), GatewayError> {
+        panic!("Access publication must never connect a daemon")
+    }
+    async fn initialized(&self, _: &NativeOwnerId) -> Result<(), GatewayError> {
+        panic!("Access publication must never initialize a daemon")
+    }
+    async fn close(&self, _: &NativeOwnerId) -> Result<(), GatewayError> {
+        panic!("Access publication must never open a daemon")
+    }
+}
+fn access(expiry: i64, user: &str) -> NativeCredentials {
+    let token=format!("e30.{}.fixture",base64url(json!({"exp":expiry,"https://api.openai.com/auth":{"chatgpt_user_id":user,"chatgpt_account_id":"workspace"}}).to_string().as_bytes()));
+    NativeCredentials {
+        account_id: "workspace".into(),
+        access_token: Secret::new(token),
+        refresh_token: Secret::new(String::new()),
+        email: None,
+        native_refreshed_at: Some(
+            if expiry == 1_792_341_000 {
+                "2026-10-18T17:00:00Z"
+            } else {
+                "2026-10-18T17:01:00Z"
+            }
+            .into(),
+        ),
+        external_user_id: Some(user.into()),
+    }
+}
+fn seed_access(store: &Memory, old: &NativeCredentials) {
+    let account = CodexSourceAccount {
+        account_id: old.account_id.clone(),
+        access_token: old.access_token.clone(),
+        refresh_token: old.refresh_token.clone(),
+        updated_at_ms: 1.0,
+        native_owner: Some(CodexNativeOwner {
+            codex_home: "/tmp/uos-native-fixture".into(),
+            generation_hash: old.generation_hash(),
+            native_refreshed_at: old.native_refreshed_at.clone(),
+            external_user_id: old.external_user_id.clone(),
+        }),
+    };
+    let other = CodexSourceAccount {
+        account_id: "other-workspace".into(),
+        access_token: Secret::new("fixture-other-access".into()),
+        refresh_token: Secret::new("fixture-other-refresh".into()),
+        updated_at_ms: 1.0,
+        native_owner: None,
+    };
+    let raw = CodexSourcePool {
+        accounts: vec![account, other],
+        updated_at_ms: 1.0,
+    };
+    let accounts = raw
+        .accounts
+        .iter()
+        .map(|a| {
+            let id = a.identity();
+            PoolAccount {
+                account_id_hash: id.routing_account_hash,
+                admin_account_hash: id.administrative_account_hash,
+                credential_version: id.credential_version,
+                enabled: true,
+            }
+        })
+        .collect();
+    let normalized = SubscriptionPool {
+        v: 1,
+        pool_versionstamp: PoolVersionstamp("raw-r1".into()),
+        accounts,
+    };
+    set(
+        store,
+        codex_source_pool_key(),
+        "raw-r1",
+        raw.private_source_value(),
+    );
+    set(
+        store,
+        keys::pool(),
+        "normalized-r1",
+        serde_json::to_value(normalized).unwrap(),
+    );
+}
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -397,5 +507,189 @@ fn missing_live_owner_never_bootstraps_as_a_side_effect() {
             .is_err()
         );
         assert!(store.0.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn access_only_read_publishes_raw_and_normalized_identity_atomically() {
+    run(async {
+        let store = Memory::default();
+        let now = 1_792_339_000_000;
+        bootstrap(
+            &store,
+            &make_identity(NativeCapability::ConfigurationPublish),
+            now,
+        )
+        .await;
+        let identity = make_identity(NativeCapability::AccessPublish);
+        let old = access(1_792_341_000, "user");
+        seed_access(&store, &old);
+        let original = read_codex_source_pool(&store, now).await.unwrap().unwrap();
+        let next = access(1_792_342_000, "user");
+        let registered = RegisteredAccessOwner::configured(
+            NativeOwnerId("registered-owner".into()),
+            "/tmp/uos-native-fixture".into(),
+        )
+        .unwrap();
+        let prepared = PreparedAccessPublication::capture(
+            &store,
+            &AccessRead(next.clone()),
+            &identity,
+            &registered,
+            now,
+            "raw-r2",
+        )
+        .await
+        .unwrap();
+        assert!(
+            !String::from_utf8_lossy(prepared.statement()).contains(next.access_token.expose())
+        );
+        let signed = proof(&identity, prepared.statement(), now).await;
+        let normalized = prepared.publish(&store, &signed, now).await.unwrap();
+        let source = read_codex_source_pool(&store, now).await.unwrap().unwrap();
+        assert_eq!(source.revision, "raw-r2");
+        assert_eq!(normalized.pool_versionstamp.0, source.revision);
+        assert_eq!(source.pool.accounts[0].access_token, next.access_token);
+        assert_eq!(source.pool.accounts[1], original.pool.accounts[1]);
+        assert_eq!(
+            normalized.accounts[0].credential_version,
+            source.pool.accounts[0].identity().credential_version
+        );
+        assert_eq!(
+            normalized.accounts[1].admin_account_hash,
+            source.pool.accounts[1]
+                .identity()
+                .administrative_account_hash
+        );
+    });
+}
+
+#[test]
+fn same_identity_access_read_preserves_existing_pool_revision() {
+    run(async {
+        let store = Memory::default();
+        let now = 1_792_339_000_000;
+        bootstrap(
+            &store,
+            &make_identity(NativeCapability::ConfigurationPublish),
+            now,
+        )
+        .await;
+        let identity = make_identity(NativeCapability::AccessPublish);
+        let old = access(1_792_341_000, "user");
+        seed_access(&store, &old);
+        let registered = RegisteredAccessOwner::configured(
+            NativeOwnerId("registered-owner".into()),
+            "/tmp/uos-native-fixture".into(),
+        )
+        .unwrap();
+        let prepared = PreparedAccessPublication::capture(
+            &store,
+            &AccessRead(old),
+            &identity,
+            &registered,
+            now,
+            "unused",
+        )
+        .await
+        .unwrap();
+        let signed = proof(&identity, prepared.statement(), now).await;
+        let pool = prepared.publish(&store, &signed, now).await.unwrap();
+        assert_eq!(pool.pool_versionstamp.0, "raw-r1");
+        assert_eq!(
+            store
+                .read(&codex_source_pool_key())
+                .await
+                .unwrap()
+                .unwrap()
+                .revision,
+            "raw-r1"
+        );
+        assert_eq!(
+            store.read(&keys::pool()).await.unwrap().unwrap().revision,
+            "normalized-r1"
+        );
+    });
+}
+
+#[test]
+fn access_publication_refuses_stale_source_wrong_home_and_workspace_identity() {
+    run(async {
+        let store = Memory::default();
+        let now = 1_792_339_000_000;
+        bootstrap(
+            &store,
+            &make_identity(NativeCapability::ConfigurationPublish),
+            now,
+        )
+        .await;
+        let identity = make_identity(NativeCapability::AccessPublish);
+        let old = access(1_792_341_000, "user");
+        seed_access(&store, &old);
+        let registered = RegisteredAccessOwner::configured(
+            NativeOwnerId("registered-owner".into()),
+            "/tmp/uos-native-fixture".into(),
+        )
+        .unwrap();
+        let next = AccessRead(access(1_792_342_000, "user"));
+        let prepared = PreparedAccessPublication::capture(
+            &store,
+            &next,
+            &identity,
+            &registered,
+            now,
+            "raw-r2",
+        )
+        .await
+        .unwrap();
+        let signed = proof(&identity, prepared.statement(), now).await;
+        let mut changed = store.read(&codex_source_pool_key()).await.unwrap().unwrap();
+        changed.revision = "raced-source".into();
+        set(
+            &store,
+            codex_source_pool_key(),
+            "raced-source",
+            changed.value,
+        );
+        assert_eq!(
+            prepared
+                .publish(&store, &signed, now)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        seed_access(&store, &old);
+        let wrong = RegisteredAccessOwner::configured(
+            NativeOwnerId("registered-owner".into()),
+            "/tmp/wrong-owner".into(),
+        )
+        .unwrap();
+        assert!(
+            PreparedAccessPublication::capture(&store, &next, &identity, &wrong, now, "unused")
+                .await
+                .is_err()
+        );
+        assert!(
+            PreparedAccessPublication::capture(
+                &store,
+                &AccessRead(access(1_792_342_000, "other-user")),
+                &identity,
+                &registered,
+                now,
+                "unused"
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            store
+                .read(&codex_source_pool_key())
+                .await
+                .unwrap()
+                .unwrap()
+                .revision,
+            "raw-r1"
+        );
     });
 }

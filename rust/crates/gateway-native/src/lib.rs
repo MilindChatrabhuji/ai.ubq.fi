@@ -1,6 +1,7 @@
 //! Narrow native capabilities. No shell, arbitrary URL/path or generic JSON-RPC ingress.
-pub mod credentials;
+pub mod access_publication;
 pub mod control_publication;
+pub mod credentials;
 pub mod redaction;
 pub mod supervisor;
 pub mod transport;
