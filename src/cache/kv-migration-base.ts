@@ -2,7 +2,7 @@
 
 import type { Kv, KvKey } from "#kv";
 import { API_KEY_USAGE_V3_REQUEST_PREFIX, API_KEY_USAGE_V3_RETENTION_MS, API_KEY_USAGE_V3_WINDOW_PREFIX } from "../api-key-policy.ts";
-import { API_KEY_REQUEST_LOG_RETENTION_MS } from "../analytics.ts";
+import { API_KEY_REQUEST_LOG_RETENTION_MS, LEGACY_API_KEY_REQUEST_LOG_PREFIX } from "../analytics.ts";
 import { type KvEntryJson, toKey, toValue } from "../kv-conversion/profile-json.ts";
 import { CODEX_RESET_USAGE_PREFIX } from "../codex/reset-settings.ts";
 import { EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS, EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS } from "../embeddings/ledger.ts";
@@ -264,6 +264,7 @@ type KvMigrationImportEntry = Readonly<{ key: KvKey; value: unknown; raw: KvEntr
 
 type MigrationExpireIn = number | null | "skip";
 
+/** @returns Remaining retention in milliseconds, or "skip" for invalid or expired anchors. */
 const boundedMigrationExpireIn = (anchorMs: unknown, retentionMs: number, nowMs: number): MigrationExpireIn => {
   if (typeof anchorMs !== "number" || !Number.isSafeInteger(anchorMs) || anchorMs < 0) return "skip";
   const expiresAtMs = anchorMs + retentionMs;
@@ -287,6 +288,7 @@ const apiKeyUsageV3RequestWindowResetAtMs = (key: KvKey): number | null => {
  * Profile NDJSON does not carry the source KV expiry metadata.  These rows are
  * nevertheless bounded state, so restore the same anchored retention instead
  * of turning an old source row into a permanent destination row.
+ * @returns A bounded TTL, null for durable rows, or "skip" for stale or invalid rows.
  */
 const migrationExpireIn = (key: KvKey, value: unknown, nowMs: number): MigrationExpireIn => {
   const record = isRecord(value) ? value : null;
@@ -299,7 +301,7 @@ const migrationExpireIn = (key: KvKey, value: unknown, nowMs: number): Migration
     // anchors both rows to that window rather than to admission time.
     return boundedMigrationExpireIn(apiKeyUsageV3RequestWindowResetAtMs(key), API_KEY_USAGE_V3_RETENTION_MS, nowMs);
   }
-  if (keyStartsWith(key, ["uos_ai", "paid_fallback", "ledger"])) {
+  if (keyStartsWith(key, LEGACY_API_KEY_REQUEST_LOG_PREFIX) || keyStartsWith(key, ["uos_ai", "paid_fallback", "ledger"])) {
     return boundedMigrationExpireIn(record?.created_at_ms, API_KEY_REQUEST_LOG_RETENTION_MS, nowMs);
   }
   if (keyStartsWith(key, ["uos_ai", "paid_fallback", "v3", "window"])) {
@@ -329,9 +331,7 @@ const migrationExpireIn = (key: KvKey, value: unknown, nowMs: number): Migration
   return null;
 };
 
-type KernelWindowIdentity =
-  | Readonly<{ scope: "repo"; owner: string; repo: string }>
-  | Readonly<{ scope: "org"; owner: string; repo: undefined }>;
+type KernelWindowIdentity = Readonly<{ scope: "repo"; owner: string; repo: string }> | Readonly<{ scope: "org"; owner: string; repo: undefined }>;
 
 const kernelWindowIdentity = (key: KvKey): KernelWindowIdentity | null => {
   if (keyStartsWith(key, KERNEL_REPO_WINDOW_V2_PREFIX) && key.length === KERNEL_REPO_WINDOW_V2_PREFIX.length + 2) {
@@ -345,6 +345,17 @@ const kernelWindowIdentity = (key: KvKey): KernelWindowIdentity | null => {
   }
   return null;
 };
+
+const isMatchingReservedKernelRequest = (
+  requestId: unknown,
+  reservation: ReturnType<typeof normalizeKernelQuotaReservationRowV2>,
+  windowCreatedAtMs: number
+): boolean =>
+  typeof requestId === "string" &&
+  reservation !== null &&
+  reservation.request_id === requestId &&
+  reservation.window_created_at_ms === windowCreatedAtMs &&
+  reservation.state === "reserved";
 
 /** Adds the reservation aggregate to an imported legacy window when it was absent. */
 const reconcileImportedKernelWindows = async (kv: Kv, windowKeys: ReadonlyMap<string, KvKey>, nowMs: number): Promise<void> => {
@@ -363,13 +374,7 @@ const reconcileImportedKernelWindows = async (kv: Kv, windowKeys: ReadonlyMap<st
     for await (const reservationEntry of kv.list({ prefix: reservationPrefix }, { consistency: "strong" })) {
       const requestId = reservationEntry.key.at(-1);
       const reservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, identity.scope, identity.owner, identity.repo);
-      if (
-        typeof requestId === "string" &&
-        reservation !== null &&
-        reservation.request_id === requestId &&
-        reservation.window_created_at_ms === window.created_at_ms &&
-        reservation.state === "reserved"
-      ) {
+      if (isMatchingReservedKernelRequest(requestId, reservation, window.created_at_ms)) {
         reservedRequests += 1;
       }
     }
@@ -425,21 +430,20 @@ export async function importKvMigrationLines(
       const entry = parseKvMigrationEntryLine(line);
       const decision = classifyKvMigrationKey(entry.key, options);
       byGroup.set(decision.group, (byGroup.get(decision.group) ?? 0) + 1);
-      if (decision.action === "skip") {
-        counters.skipped += 1;
-        continue;
-      }
-      if (decision.action === "optional") {
-        counters.optional += 1;
-        continue;
+      switch (decision.action) {
+        case "skip":
+          counters.skipped += 1;
+          continue;
+        case "optional":
+          counters.optional += 1;
+          continue;
+        default:
+          break;
       }
       const kernelWindow = kernelWindowIdentity(entry.key);
       const imported = await importKvMigrationEntry(kv, entry, options, migrationNowMs);
-      if (imported === "skipped") counters.skipped += 1;
-      else {
-        counters.imported += 1;
-      }
-      if (kernelWindow && migrationExpireIn(entry.key, entry.value, migrationNowMs) !== "skip") {
+      counters[imported] += 1;
+      if (imported === "imported" && kernelWindow) {
         importedKernelWindows.set(JSON.stringify(entry.key), entry.key);
       }
     } catch {

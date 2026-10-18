@@ -1,10 +1,11 @@
-import { test } from "bun:test";
-import { KvU64 } from "#kv";
+import { spyOn, test } from "bun:test";
+import { KvU64, openKv } from "#kv";
 import type { Kv, KvEntry, KvEntryMaybe, KvKey, KvListOptions, KvListSelector } from "#kv";
 import assert from "node:assert/strict";
 import { keyToJson } from "../src/kv-conversion/profile-json.ts";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
 import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/api-key-policy.ts";
+import { API_KEY_REQUEST_LOG_RETENTION_MS, legacyApiKeyRequestLogPrefix } from "../src/analytics.ts";
 import { codexResetUsageKey, readCodexResetUsage } from "../src/codex/reset-settings.ts";
 import {
   classifyKvMigrationKey,
@@ -206,11 +207,13 @@ test("KV migration restores bounded TTLs and skips expired usage rows", async ()
   assert.equal(fresh.imported, 1);
   assert.ok(importedTtl !== undefined && importedTtl > 0);
 
-  const expired = await importKvMigrationLines(
-    kv,
-    [entryLine(expiredKey, { window_reset_at_ms: now - API_KEY_USAGE_V3_RETENTION_MS - 1 })],
-    { profile: "prod", includeCache: false, includeLegacy: false, overwrite: true, dryRun: false }
-  );
+  const expired = await importKvMigrationLines(kv, [entryLine(expiredKey, { window_reset_at_ms: now - API_KEY_USAGE_V3_RETENTION_MS - 1 })], {
+    profile: "prod",
+    includeCache: false,
+    includeLegacy: false,
+    overwrite: true,
+    dryRun: false,
+  });
   assert.equal(expired.imported, 0);
   assert.equal(expired.skipped, 1);
   assert.equal(store.has(keyToString(expiredKey)), false);
@@ -232,6 +235,90 @@ test("KV migration anchors V3 request TTLs to their usage window", async () => {
 
   assert.equal(result.imported, 1);
   assert.ok(importedTtl !== undefined && importedTtl > API_KEY_USAGE_V3_RETENTION_MS);
+});
+
+test("KV migration anchors legacy request-log TTLs and skips stale or undated rows", async () => {
+  const kv = await openKv(":memory:");
+  const now = Date.now();
+  const clock = spyOn(Date, "now").mockReturnValue(now);
+  const writes = spyOn(kv, "set");
+  const createdAtMs = now - 60_000;
+  const freshKey = [...legacyApiKeyRequestLogPrefix("migration-legacy-log"), createdAtMs, "fresh"] as const;
+  const staleKey = [...legacyApiKeyRequestLogPrefix("migration-legacy-log"), now - API_KEY_REQUEST_LOG_RETENTION_MS - 1, "stale"] as const;
+  const undatedKey = [...legacyApiKeyRequestLogPrefix("migration-legacy-log"), now, "undated"] as const;
+  try {
+    const result = await importKvMigrationLines(
+      kv,
+      [
+        entryLine(freshKey, { created_at_ms: createdAtMs }),
+        entryLine(staleKey, { created_at_ms: now - API_KEY_REQUEST_LOG_RETENTION_MS - 1 }),
+        entryLine(undatedKey, {}),
+      ],
+      { profile: "prod", includeCache: false, includeLegacy: false, overwrite: true, dryRun: false }
+    );
+    assert.equal(writes.mock.calls[0]?.[2]?.expireIn, createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - now);
+    assert.equal(result.imported, 1);
+    assert.equal(result.skipped, 2);
+    assert.equal(result.errors, 0);
+    assert.deepEqual((await kv.get(freshKey)).value, { created_at_ms: createdAtMs });
+    assert.equal((await kv.get(staleKey)).value, null);
+    assert.equal((await kv.get(undatedKey)).value, null);
+  } finally {
+    writes.mockRestore();
+    clock.mockRestore();
+    kv.close();
+  }
+});
+
+test("KV migration preserves skipped Kernel windows and reconciles only newly imported windows", async () => {
+  const kv = await openKv(":memory:");
+  const now = Date.now();
+  const clock = spyOn(Date, "now").mockReturnValue(now);
+  try {
+    for (const scope of ["repo", "org"] as const) {
+      const owner = `migration-no-overwrite-${scope}`;
+      const windowKey =
+        scope === "repo" ? ["uos_ai", "kernel_quota", "v2", "repo_window", owner, "repo"] : ["uos_ai", "kernel_quota", "v2", "org_window", owner];
+      const existing = {
+        v: 2,
+        scope,
+        owner,
+        ...(scope === "repo" ? { repo: "repo" } : {}),
+        usage_requests: 7,
+        usage_reset_at_ms: now + 60_000,
+        applied_window_ms: 60_000,
+        created_at_ms: now,
+        updated_at_ms: now,
+      };
+      await kv.set(windowKey, existing, { expireIn: 120_000 });
+      const before = await kv.get(windowKey);
+      const result = await importKvMigrationLines(kv, [entryLine(windowKey, { ...existing, usage_requests: 0 })], {
+        profile: "prod",
+        includeCache: false,
+        includeLegacy: false,
+        overwrite: false,
+        dryRun: false,
+      });
+      assert.equal(result.skipped, 1);
+      assert.equal(result.imported, 0);
+      assert.equal(result.errors, 0);
+      assert.deepEqual(await kv.get(windowKey), before, `${scope} no-overwrite must preserve value, revision and expiry`);
+      await kv.delete(windowKey);
+      const imported = await importKvMigrationLines(kv, [entryLine(windowKey, existing)], {
+        profile: "prod",
+        includeCache: false,
+        includeLegacy: false,
+        overwrite: false,
+        dryRun: false,
+      });
+      assert.equal(imported.imported, 1);
+      assert.equal(imported.errors, 0);
+      assert.deepEqual((await kv.get(windowKey)).value, { ...existing, reserved_requests: 0 });
+    }
+  } finally {
+    clock.mockRestore();
+    kv.close();
+  }
 });
 
 test("KV migration reconciles an imported Kernel quota reservation aggregate", async () => {
