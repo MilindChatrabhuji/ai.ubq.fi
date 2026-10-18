@@ -1,0 +1,69 @@
+use std::cell::RefCell;
+use gateway_auth::AuthMethod;
+use gateway_authority::{Authority,AuthorityClock,TokenSource,paid::PaidAuthorization,routing::{AdmittedAccount,RouteSelection},quota::KernelTerminal};
+use gateway_core::{GatewayError,identity::ApiKeyId,query::QueryStore};
+use gateway_providers::{policy::{LithosWindows,WaitBudget},prepare_request,ClientSurface};
+use gateway_schema::reasoning::{ModelReasoning,effort_for_codex};
+use serde_json::{Value,json};
+use crate::{journal::{self,Journal},policy::{self,RoutePlan},types::*};
+
+pub struct RoutingSession<S,I,C,H>{pub(crate) store:S,pub(crate) tokens:I,pub(crate) clock:C,pub(crate) host:H,pub(crate) input:RoutingInput,pub(crate) plan:RoutePlan,pub(crate) lithos:RefCell<LithosWindows>,pub(crate) waits:RefCell<WaitBudget>}
+impl<S:QueryStore+Clone,I:TokenSource+Clone,C:AuthorityClock+Clone+'static,H:RoutingHost> RoutingSession<S,I,C,H>{
+    pub(crate) fn authority(&self)->Authority<S,I>{Authority::with_clock(self.store.clone(),self.tokens.clone(),self.clock.clone())}
+    pub(crate) fn now(&self)->Result<i64,GatewayError>{let now=self.clock.now_ms()?;if now<self.input.context.started_at_ms||now>9_007_199_254_740_991{return Err(journal::unavailable("The routing clock moved backwards or overflowed."));}Ok(now)}
+    pub(crate) fn id(&self)->&str{&self.input.context.request_id.0}
+    pub async fn begin(input:RoutingInput,store:S,host:H,clock:C,tokens:I)->RoutingResult<Self>{
+        if host.cancelled(){return Err(host.cancellation_error().into());}
+        let now=clock.now_ms()?;if input.context.started_at_ms<0||now<input.context.started_at_ms||now>9_007_199_254_740_991||input.context.request_id.0.trim().is_empty(){return Err(journal::unavailable("Invalid original request identity or clock.").into());}
+        let plan=policy::plan(&input,now)?;let streamed=input.raw["stream"]==true;
+        let mut row=Journal{v:1,context:input.context.clone(),input_digest:gateway_auth::crypto::sha256_hex(&serde_json::to_vec(&input.raw).map_err(|_|journal::unavailable("Request encoding failed."))?),api:None,kernel:None,cursor:0,attempts:vec![],active:None,model_sibling_retries:0,refreshed_versions:vec![],recovery_attempted:false,claude_unavailable:false,semantic_committed:false,terminal_intent:None,finished:false,recovering:false,lease_expires_at_ms:now.checked_add(gateway_authority::REQUEST_LEASE_MS).ok_or_else(||journal::unavailable("Lease overflow."))?,updated_at_ms:now};
+        journal::create(&store,&tokens,&row).await?;
+        let authority=Authority::with_clock(store.clone(),tokens.clone(),clock.clone());
+        let admission=async{
+            if let AuthMethod::KvApiKey{key_id,..}=&input.principal.method{
+                let id=ApiKeyId(key_id.clone());if input.context.key_id.as_ref()!=Some(&id){return Err(journal::unavailable("Principal and original key identity differ."));}
+                row.api=Some(authority.reserve_api_key_deferred(&id,&input.context.request_id,&input.context.route,clock.now_ms()?).await?);
+                journal::change(&store,&tokens,&input.context.request_id.0,clock.now_ms()?,&[],|j|{j.api=row.api.clone();Ok(())}).await?;
+            }
+            if let AuthMethod::GithubToken{owner,repo,..}=&input.principal.method{
+                row.kernel=Some(authority.reserve_kernel(owner,repo,&input.context.request_id,&input.context.route,clock.now_ms()?).await?);
+                journal::change(&store,&tokens,&input.context.request_id.0,clock.now_ms()?,&[],|j|{j.kernel=row.kernel.clone();Ok(())}).await?;
+            }Ok::<_,GatewayError>(())
+        }.await;
+        if let Err(error)=admission{
+            if let Some(api)=&row.api{authority.release_api_key(api,true,"routing_admission_failed",clock.now_ms()?).await?;}
+            if let Some(kernel)=&row.kernel{authority.settle_kernel(kernel,KernelTerminal::Released,"routing_admission_failed",clock.now_ms()?).await?;}
+            journal::change(&store,&tokens,&input.context.request_id.0,clock.now_ms()?,&[],|j|{j.finished=true;Ok(())}).await?;return Err(error.into());
+        }
+        Ok(Self{store,tokens,clock,host,input,plan,lithos:RefCell::new(LithosWindows::default()),waits:RefCell::new(WaitBudget{waits:0,waited_ms:0,streamed})})
+    }
+    pub(crate) async fn change<F:Fn(&mut Journal)->Result<(),GatewayError>>(&self,update:F)->Result<Journal,GatewayError>{journal::change(&self.store,&self.tokens,self.id(),self.now()?,&[],update).await}
+    pub(crate) async fn cursor(&self,value:usize)->Result<(),GatewayError>{self.change(|j|{settlement::ensure_active(j)?;j.cursor=value;j.active=None;Ok(())}).await?;Ok(())}
+    pub(crate) async fn credential(&self,provider:UpstreamProvider,model:&str,codex:Option<AdmittedAccount>)->Result<PublishedCredential,GatewayError>{
+        let publication=self.host.credential(CredentialRequest{provider,model:model.into(),codex:codex.clone()}).await?;
+        if publication.material.secret.trim().is_empty(){return Err(journal::unavailable("The selected provider credential is unavailable."));}
+        match (&codex,&publication.fence){(Some(expected),CredentialFence::Codex{admission,source_revision,native_generation,..})if expected==admission&&!source_revision.is_empty()&&!native_generation.is_empty()=>{},(None,CredentialFence::Direct{provider:observed})if provider==*observed=>{},_=>return Err(journal::unavailable("Credential publication does not match the admitted provider/account."))}
+        self.host.ensure_credential_current(&publication.fence,&self.input.principal,model).await?;Ok(publication)
+    }
+    pub(crate) fn prepare(&self,provider:UpstreamProvider,model:&str,publication:&PublishedCredential,nonce:&str)->Result<gateway_providers::PreparedRequest,GatewayError>{
+        let mut options=publication.options.clone();options.auth=publication.material.clone();options.client_version=self.input.client_version.clone();options.native_session_id=self.input.native_session_id.clone();options.response_id=format!("resp_{}",nonce.replace('-',""));options.conversation_id=Some(self.tokens.next_token()?);options.created_at=self.now()?/1000;options.allowed_models=policy::provider_ids(&self.input,provider);
+        let mut raw=self.input.raw.clone();raw["model"]=json!(model);
+        if provider==UpstreamProvider::ChatgptCodex{
+            let meta=ModelReasoning::from_record(self.input.catalog.codex().and_then(|s|s.find(model)));
+            let raw_effort=if self.input.surface==ClientSurface::Chat{raw.get("reasoning_effort")}else{raw.get("reasoning").and_then(|v|v.get("effort"))};
+            let effort=gateway_schema::reasoning::parse_effort(raw_effort,if self.input.surface==ClientSurface::Chat{"reasoning_effort"}else{"reasoning.effort"})?.or_else(||meta.default_level.clone()).unwrap_or_else(||"none".into());let effort=effort_for_codex(&effort,&meta);
+            if self.input.surface==ClientSurface::Chat{raw["reasoning_effort"]=json!(effort);}else{if raw.get("reasoning").is_none_or(Value::is_null){raw["reasoning"]=json!({});}raw["reasoning"]["effort"]=json!(effort);}
+        }
+        prepare_request(provider,self.input.surface,&raw,&options)
+    }
+    pub(crate) async fn paid_authorization(&self,row:&Journal)->Result<PaidAuthorization,GatewayError>{
+        if row.claude_unavailable{
+            return self.authority().prove_claude_unavailable(&self.plan.model,self.now()?).await?.map(PaidAuthorization::ClaudeSubscriptionUnavailable).ok_or_else(||journal::unavailable("Claude full-cohort proof is unavailable or stale."));
+        }
+        if self.plan.paid.codex_enabled&&!self.plan.paid.metered_only{
+            match self.authority().select_account(&self.plan.model,self.plan.quota_class,self.now()?).await?{
+                RouteSelection::QuotaBlocked{proof,..}|RouteSelection::CredentialsInvalid{proof}if proof.full_cohort_unavailable()=>Ok(PaidAuthorization::SubscriptionUnavailable(proof)),_=>Err(journal::unavailable("Current full subscription-pool proof is required before paid dispatch."))
+            }
+        }else{Ok(PaidAuthorization::DirectPaidModel)}
+    }
+}
