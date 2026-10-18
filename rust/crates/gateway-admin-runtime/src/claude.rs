@@ -549,12 +549,11 @@ pub async fn select_account<S: AuthorityStore, H: AuthHost>(
         if !roster.accounts.iter().any(|a| a.account_id == id) {
             return Ok(false);
         }
-        if let Some(expected) = expected {
-            if roster.active_account_id.as_deref() != Some(&expected.account_id)
-                || !roster.accounts.iter().any(|a| same_binding(a, expected))
-            {
-                return Ok(false);
-            }
+        if let Some(expected) = expected
+            && (roster.active_account_id.as_deref() != Some(&expected.account_id)
+                || !roster.accounts.iter().any(|a| same_binding(a, expected)))
+        {
+            return Ok(false);
         }
         if roster.active_account_id.as_deref() == Some(id) {
             return Ok(true);

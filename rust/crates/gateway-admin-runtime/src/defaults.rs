@@ -16,7 +16,7 @@ use gateway_core::{
     state::{RecordMutation, StoredRecord},
 };
 use gateway_schema::{
-    catalog_store::{codex_snapshot_key, runtime_config_key},
+    catalog_store::runtime_config_key,
     reasoning::ModelReasoning,
     runtime_config::{build_runtime_config, normalize_runtime_config},
     snapshot::ModelSnapshot,
@@ -117,17 +117,14 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 if model.is_empty() {
                     return Err(invalid("model must be a non-empty string"));
                 }
-                let snapshot: ModelSnapshot =
-                    store::read(self.store, &codex_snapshot_key(), input.now_ms)
-                        .await?
-                        .map(|v| {
-                            serde_json::from_value(v).map_err(|_| {
-                                store::corrupt("Stored Codex model snapshot is corrupt")
-                            })
-                        })
-                        .transpose()?
-                        .filter(|s: &ModelSnapshot| !s.models.is_empty())
-                        .ok_or_else(|| conflict("No Codex model snapshot stored"))?;
+                // Source loadCodexModelsSnapshot reads the compact runtime catalog. The
+                // optional full snapshot is required for paid exposure, not defaults edits.
+                let snapshot: ModelSnapshot = runtime.as_ref()
+                    .and_then(|value| value.get("codex_models"))
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok())
+                    .filter(|s: &ModelSnapshot| !s.models.is_empty())
+                    .ok_or_else(|| conflict("No Codex model snapshot stored"))?;
                 let record = snapshot
                     .models
                     .iter()
@@ -242,9 +239,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     if let Some(guard) = &guard {
                         self.release_cutover(&cutover_key, guard).await?;
                     }
-                    if let Err(error) = other {
-                        return Err(error);
-                    }
+                    other?;
                 }
             }
         }
