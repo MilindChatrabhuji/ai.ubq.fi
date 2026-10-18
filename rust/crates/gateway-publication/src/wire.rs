@@ -3,7 +3,7 @@ use gateway_auth::{
     GatewayError,
     native_credentials::{NativeCredentials, parse_native_document},
 };
-use gateway_authority::paid_control::PaidControlConfig;
+use gateway_authority::paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -136,7 +136,12 @@ impl WireCommand {
             return Err(invalid());
         }
         let (version, revision) = match &command {
-            Self::ConfigPublish(w) => (w.v, &w.publication_revision),
+            Self::ConfigPublish(w) => {
+                if w.config.v != PAID_CONTROL_CONFIG_VERSION {
+                    return Err(invalid());
+                }
+                (w.v, &w.publication_revision)
+            }
             Self::AccessPublish(w) => (w.v, &w.publication_revision),
         };
         if version != 1 || !valid_revision(revision) {

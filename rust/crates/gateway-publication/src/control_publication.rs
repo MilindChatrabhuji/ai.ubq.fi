@@ -7,7 +7,9 @@ use gateway_auth::{
 };
 use gateway_authority::{
     keys,
-    paid_control::{PaidControlConfig, PaidControlOwner, PaidSourceCheck},
+    paid_control::{
+        PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
+    },
 };
 use gateway_core::{
     GatewayError,
@@ -21,21 +23,26 @@ use serde_json::{Value, json};
 #[derive(Clone)]
 pub struct ConfiguredPaidInputs {
     surplus: Option<Secret>,
-    openlux: Option<Secret>,
+    openlux_discovery: Option<Secret>,
+    openlux_spend: Option<Secret>,
     immutable_configuration: Value,
 }
 
 impl ConfiguredPaidInputs {
     pub fn new(
         surplus: Option<Secret>,
-        openlux: Option<Secret>,
+        openlux_discovery: Option<Secret>,
+        openlux_spend: Option<Secret>,
         immutable_configuration: Value,
     ) -> Result<Self, GatewayError> {
         if !immutable_configuration.is_object()
             || surplus
                 .as_ref()
                 .is_some_and(|key| key.expose().trim().is_empty())
-            || openlux
+            || openlux_discovery
+                .as_ref()
+                .is_some_and(|key| key.expose().trim().is_empty())
+            || openlux_spend
                 .as_ref()
                 .is_some_and(|key| key.expose().trim().is_empty())
         {
@@ -46,22 +53,34 @@ impl ConfiguredPaidInputs {
         }
         Ok(Self {
             surplus,
-            openlux,
+            openlux_discovery,
+            openlux_spend,
             immutable_configuration,
         })
     }
-    /// This exact reference must also be used by the credential-owning catalog
-    /// host. It identifies actual constructor key bytes, not caller metadata.
+    /// Inference and billing use the actual constructor-supplied spend key.
+    /// Its fingerprint domain remains stable across the private schema change.
     pub fn binding(&self, provider: PaidProvider) -> Option<String> {
         let key = match provider {
             PaidProvider::Surplus => self.surplus.as_ref(),
-            PaidProvider::Metered => self.openlux.as_ref(),
+            PaidProvider::Metered => self.openlux_spend.as_ref(),
         };
         key.map(|key| configured_paid_binding(provider, key))
     }
+    /// Catalog discovery has its own explicit key, even when both roles use the
+    /// same bytes. Missing role inputs are never filled from another role.
+    pub fn discovery_binding(&self, provider: PaidProvider) -> Option<String> {
+        match provider {
+            PaidProvider::Surplus => self.binding(provider),
+            PaidProvider::Metered => self
+                .openlux_discovery
+                .as_ref()
+                .map(|key| configured_paid_binding(provider, key)),
+        }
+    }
     fn fingerprint(&self, runtime: Option<&StoredRecord>) -> Result<String, GatewayError> {
         let source = runtime.map(StoredRecord::json_value).transpose()?;
-        let value = json!({"v":1,"immutable":self.immutable_configuration,"runtime":source,"surplus":self.binding(PaidProvider::Surplus),"openlux":self.binding(PaidProvider::Metered)});
+        let value = json!({"v":PAID_CONTROL_CONFIG_VERSION,"immutable":self.immutable_configuration,"runtime":source,"surplus_binding":self.binding(PaidProvider::Surplus),"openlux_discovery_binding":self.discovery_binding(PaidProvider::Metered),"openlux_binding":self.binding(PaidProvider::Metered)});
         Ok(sha256_hex(&serde_json::to_vec(&value).map_err(|_| {
             unavailable(
                 "Configuration encoding failed",
@@ -217,6 +236,15 @@ impl PreparedConfigurationPublication {
         let config_key = keys::paid_control_config();
         let config_row = store.read(&config_key).await?;
         let old = store::decode::<PaidControlConfig>(config_row.as_ref(), now_ms)?;
+        if old
+            .as_ref()
+            .is_some_and(|config| config.v != PAID_CONTROL_CONFIG_VERSION)
+        {
+            return Err(unavailable(
+                "Stored configuration has an unsupported private schema",
+                "paid_control_configuration_invalid",
+            ));
+        }
         let runtime_key = runtime_config_key();
         let runtime_row = store.read(&runtime_key).await?;
         if let Some(row) = &runtime_row {
@@ -224,12 +252,13 @@ impl PreparedConfigurationPublication {
         }
         let runtime_check = store::check(&runtime_key, runtime_row.as_ref());
         let config = PaidControlConfig {
-            v: 1,
+            v: PAID_CONTROL_CONFIG_VERSION,
             owner_id: expected.owner_id.clone(),
             owner_epoch: expected.owner_epoch.clone(),
             generation: generation.into(),
             configuration_fingerprint: inputs.fingerprint(runtime_row.as_ref())?,
             surplus_binding: inputs.binding(PaidProvider::Surplus),
+            openlux_discovery_binding: inputs.discovery_binding(PaidProvider::Metered),
             openlux_binding: inputs.binding(PaidProvider::Metered),
             source_checks: vec![PaidSourceCheck::from(&runtime_check)],
         };
