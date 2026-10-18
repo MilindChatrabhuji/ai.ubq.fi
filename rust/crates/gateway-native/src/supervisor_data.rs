@@ -33,7 +33,9 @@ impl SupervisorSourceConfig {
         socket: PathBuf,
         codex_home: Option<PathBuf>,
     ) -> Result<Self, GatewayError> {
-        let name = name.trim_matches(crate::redaction::source_whitespace).to_owned();
+        let name = name
+            .trim_matches(crate::redaction::source_whitespace)
+            .to_owned();
         if name.is_empty()
             || name.encode_utf16().count() > 64
             || !socket.is_absolute()

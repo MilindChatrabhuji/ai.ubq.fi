@@ -247,7 +247,8 @@ fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() {
     assert!(context.rollout_tail_events > 0);
     let mut actual = serde_json::to_value(&context).unwrap();
     actual["rolloutPath"] = json!("/fixture/home/sessions/rollout-thread-a.jsonl");
-    let golden: Value = serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json")).unwrap();
+    let golden: Value =
+        serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json")).unwrap();
     assert_eq!(actual, golden["collection"]["expected"]);
     let wire = serde_json::to_string(&context).unwrap();
     assert!(!wire.contains("zqfirst") && !wire.contains("zqsecond") && !wire.contains("zqPRIVATE"));
@@ -322,9 +323,17 @@ fn failed_full_frame_degrades_to_recorded_summary_without_inventing_transcript()
     let fixture = Fixture::new();
     let path = fixture.root.join("source.sock");
     let _server = Server::start_with_full_failure(path.clone(), None, true);
-    let source = SupervisorSourceConfig::configured(SourceId::parse("fixture").unwrap(), "Fixture Machine".into(), path, None).unwrap();
+    let source = SupervisorSourceConfig::configured(
+        SourceId::parse("fixture").unwrap(),
+        "Fixture Machine".into(),
+        path,
+        None,
+    )
+    .unwrap();
     let data = SupervisorData::configured(vec![source]).unwrap();
-    let selected = data.select("fixture", "thread-a", 1_700_000_000_000).unwrap();
+    let selected = data
+        .select("fixture", "thread-a", 1_700_000_000_000)
+        .unwrap();
     let context = data.brief_context(&selected, 1_700_000_000_000).unwrap();
     assert_eq!(context.state.as_deref(), Some("active"));
     assert!(!context.transcript_available);
