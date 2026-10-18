@@ -115,6 +115,7 @@ fn health_requires_full_build_identity_and_matches_source_envelope() {
 fn unknown_state_version_fails_closed() {
     let record = StoredRecord {
         schema_version: 2,
+        value_encoding: gateway_core::value::ValueEncoding::Json,
         revision: "0".to_owned(),
         value: json!({}),
         expires_at_ms: None,
