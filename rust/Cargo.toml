@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gateway-core", "crates/gateway-worker"]
+members = ["crates/gateway-core", "crates/gateway-schema", "crates/gateway-providers", "crates/gateway-worker"]
 resolver = "3"
 
 [workspace.package]
@@ -14,6 +14,8 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
 wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
+gateway-schema = { path = "crates/gateway-schema" }
+gateway-providers = { path = "crates/gateway-providers" }
 
 [profile.release]
 lto = true
