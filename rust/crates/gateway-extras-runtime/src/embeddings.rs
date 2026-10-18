@@ -301,7 +301,9 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
                     .before_failure(store, host, ExtrasResponse::error(cancelled()))
                     .await);
             }
-            if let Some(record) = &lease.lease && !lease.dispatched {
+            if let Some(record) = &lease.lease
+                && !lease.dispatched
+            {
                 if !idempotency::mark_dispatched(store, host, record).await {
                     return Ok(idempotency::unavailable());
                 }

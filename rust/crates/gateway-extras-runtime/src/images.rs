@@ -40,7 +40,9 @@ fn headers(responses: &[&UpstreamResponse]) -> Headers {
         "RateLimit-Reset",
     ] {
         if let Some(first) = responses.first().and_then(|r| header(&r.headers, name))
-            && responses.iter().all(|r| header(&r.headers, name) == Some(first))
+            && responses
+                .iter()
+                .all(|r| header(&r.headers, name) == Some(first))
         {
             out.insert(name.into(), first.into());
         }

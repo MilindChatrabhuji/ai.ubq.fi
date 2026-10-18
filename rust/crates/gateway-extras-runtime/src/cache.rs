@@ -71,7 +71,9 @@ fn iso(at: f64) -> Result<String, GatewayError> {
         .to_rfc3339_opts(SecondsFormat::Millis, true))
 }
 fn timestamp(v: &Value) -> Option<f64> {
-    v.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(f64::trunc)
+    v.as_f64()
+        .filter(|n| n.is_finite() && *n >= 0.0)
+        .map(f64::trunc)
 }
 async fn write_entry<S: QueryStore, H: ExtrasHost>(
     store: &S,
@@ -283,7 +285,9 @@ pub(crate) async fn reserve_once<S: QueryStore, H: ExtrasHost>(
             tokens: 0.0,
         });
     if state.requests + 1.0 > RPM as f64 || state.tokens + tokens as f64 > TPM as f64 {
-        return Ok(Some((60_000.0 - (at as f64 - state.window_start_ms)).max(0.0) as u64));
+        return Ok(Some(
+            (60_000.0 - (at as f64 - state.window_start_ms)).max(0.0) as u64,
+        ));
     }
     state.requests += 1.0;
     state.tokens += tokens as f64;
