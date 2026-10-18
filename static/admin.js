@@ -299,6 +299,7 @@ let adminPrefetchPromise = null;
 let authWidgetAutoOpened = false;
 let allKeys = [];
 let keyExpiryTimer = 0;
+let refreshKeyRows = () => {};
 let keysLoading = false;
 let keysLoadedAt = 0;
 let providersLoading = false;
@@ -941,10 +942,13 @@ const scheduleKeyExpiryRefresh = () => {
       : next;
   }, Number.POSITIVE_INFINITY);
   if (!Number.isFinite(nextExpiry)) return;
-  keyExpiryTimer = globalThis.setTimeout(() => {
-    keyExpiryTimer = 0;
-    renderKeys(allKeys, currentKeyView);
-  }, Math.min(2_147_483_647, Math.max(0, nextExpiry - now + 1)));
+  keyExpiryTimer = globalThis.setTimeout(
+    () => {
+      keyExpiryTimer = 0;
+      refreshKeyRows();
+    },
+    Math.min(2_147_483_647, Math.max(0, nextExpiry - now + 1))
+  );
 };
 
 const numberFormatter = new Intl.NumberFormat();
@@ -6642,24 +6646,11 @@ const buildUnlimitedToggle = (id, controlId, labelText) => {
 const renderKeys = (keys, view = "all") => {
   clearKeysListLoading();
   keysList.textContent = "";
-  let filteredKeys = keys;
-  if (view === "active") {
-    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "active");
-  } else if (view === "expired") {
-    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "expired");
-  } else if (view === "revoked") {
-    filteredKeys = keys.filter((k) => getApiKeyStatus(k) === "revoked");
-  }
-  if (!filteredKeys.length) {
-    setKeyListMessage(view === "all" ? "No API keys yet." : `No ${view} API keys.`);
-    setKeysBadge("ok", view === "all" ? "No API keys" : `No ${view} API keys`);
-    updateAccessApiKeysSummary();
-    scheduleKeyExpiryRefresh();
-    return;
-  }
+  const statusRefreshers = [];
+  let emptyMessage = null;
 
-  filteredKeys.forEach((key, index) => {
-    const statusKind = getApiKeyStatus(key);
+  keys.forEach((key, index) => {
+    let statusKind = getApiKeyStatus(key);
     const keyLabel = key.name || key.id || "unnamed API key";
     const currentKeyLabel = () => key.name || key.id || keyLabel;
     const row = document.createElement("div");
@@ -7161,25 +7152,14 @@ const renderKeys = (keys, view = "all") => {
       status.dataset.state = nextStatusKind === "active" ? "ok" : nextStatusKind === "expired" ? "warning" : "bad";
       status.textContent =
         nextStatusKind === "revoked" ? "Revoked" : nextStatusKind === "expired" ? "Expired" : "Active";
-      renderKeyActions(nextStatusKind);
+      if (nextStatusKind !== statusKind) renderKeyActions(nextStatusKind);
+      statusKind = nextStatusKind;
       expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
       if (nextStatusKind === "expired") expiresInfo.item.dataset.state = "bad";
       else delete expiresInfo.item.dataset.state;
-      row.hidden = currentKeyView !== "all" && currentKeyView !== nextStatusKind;
-      scheduleKeyExpiryRefresh();
-      const visibleCount =
-        currentKeyView === "all"
-          ? allKeys.length
-          : allKeys.filter((candidate) => getApiKeyStatus(candidate) === currentKeyView).length;
-      setKeysBadge(
-        "ok",
-        visibleCount
-          ? `${formatPlural(visibleCount, "API key")}`
-          : currentKeyView === "all"
-            ? "No API keys"
-            : `No ${currentKeyView} API keys`
-      );
+      row.hidden = view !== "all" && view !== nextStatusKind;
     };
+    statusRefreshers.push(updateKeyStatus);
 
     const buildEditPayload = () => {
       const payload = { id: key.id };
@@ -7388,8 +7368,7 @@ const renderKeys = (keys, view = "all") => {
         } else {
           setEditBadge("ok", "Saved");
         }
-        if (inputsUnchanged && !expiresMismatch) renderKeys(allKeys, currentKeyView);
-        updateAccessApiKeysSummary();
+        refreshKeyRows();
       } catch {
         setEditBadge("bad", "Offline");
       } finally {
@@ -7520,9 +7499,26 @@ const renderKeys = (keys, view = "all") => {
     row.appendChild(main);
     keysList.appendChild(row);
   });
-  setKeysBadge("ok", `${formatPlural(filteredKeys.length, "API key")}`);
-  updateAccessApiKeysSummary();
-  scheduleKeyExpiryRefresh();
+  refreshKeyRows = () => {
+    statusRefreshers.forEach((refresh) => refresh());
+    const visibleCount = view === "all" ? keys.length : keys.filter((key) => getApiKeyStatus(key) === view).length;
+    if (visibleCount) {
+      emptyMessage?.remove();
+      emptyMessage = null;
+      setKeysBadge("ok", `${formatPlural(visibleCount, "API key")}`);
+    } else {
+      if (!emptyMessage) {
+        emptyMessage = document.createElement("p");
+        emptyMessage.dataset.empty = "keys";
+        emptyMessage.textContent = view === "all" ? "No API keys yet." : `No ${view} API keys.`;
+        keysList.appendChild(emptyMessage);
+      }
+      setKeysBadge("ok", view === "all" ? "No API keys" : `No ${view} API keys`);
+    }
+    updateAccessApiKeysSummary();
+    scheduleKeyExpiryRefresh();
+  };
+  refreshKeyRows();
 };
 
 const renderPasskeyUsers = (users) => {
