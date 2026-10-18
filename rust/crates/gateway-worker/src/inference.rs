@@ -8,8 +8,8 @@ use gateway_core::{
 };
 use gateway_providers::{ClientSurface, ProviderEvent, StreamDecoder, decode_response};
 use gateway_routing_runtime::{
-    AttemptFailure, AttemptUsage, PreparedAttempt, RefusalDecision, RoutingInput, RoutingSession,
-    TransportState,
+    AttemptFailure, AttemptUsage, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput,
+    RoutingSession, TransportState,
 };
 use gateway_schema::{
     content,
@@ -84,12 +84,21 @@ async fn dispatch_attempts(
                     .refusal(
                         &attempt,
                         AttemptFailure {
+                            origin: if cancellation.signal().aborted()
+                                && !cancellation.client_aborted()
+                            {
+                                FailureOrigin::GatewayDeadline
+                            } else {
+                                FailureOrigin::Transport
+                            },
                             status: None,
                             headers: Default::default(),
                             body: Vec::new(),
                             body_complete: false,
-                            failure: if cancellation.signal().aborted() {
+                            failure: if cancellation.client_aborted() {
                                 gateway_providers::policy::HopFailure::Cancelled
+                            } else if cancellation.signal().aborted() {
+                                gateway_providers::policy::HopFailure::Deadline
                             } else {
                                 gateway_providers::policy::HopFailure::Transport
                             },
@@ -128,6 +137,7 @@ async fn dispatch_attempts(
             .refusal(
                 &attempt,
                 AttemptFailure {
+                    origin: FailureOrigin::Provider,
                     status: Some(status),
                     headers: headers.clone(),
                     body: bytes.clone(),
@@ -362,6 +372,7 @@ pub async fn run(
                 .map_err(|_| invalid("Invalid upstream refusal header."))?;
         }
         provider_correlation(&mut response, provider, &headers)?;
+        apply_warnings(&mut response, &prepared.warnings)?;
         return Ok(response);
     }
     if client_stream && event_stream && status < 400 {
@@ -529,6 +540,7 @@ pub async fn run(
             )
             .map_err(|_| invalid("Invalid response header."))?;
         provider_correlation(&mut response, provider, &headers)?;
+        apply_warnings(&mut response, &prepared.warnings)?;
         return Ok(response);
     }
     let bytes = match body::response_bytes(
@@ -593,7 +605,33 @@ pub async fn run(
             .map_err(|_| invalid("Invalid response header."))?;
     }
     provider_correlation(&mut response, provider, &headers)?;
+    apply_warnings(&mut response, &prepared.warnings)?;
     Ok(response)
+}
+
+fn apply_warnings(response: &mut Response, warnings: &[String]) -> Result<(), GatewayError> {
+    if warnings.is_empty() {
+        return Ok(());
+    }
+    let mut values = response
+        .headers()
+        .get("x-uos-warning")
+        .map_err(|_| invalid("Invalid provider warning header."))?
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for warning in warnings {
+        if !values.contains(warning) {
+            values.push(warning.clone());
+        }
+    }
+    response
+        .headers_mut()
+        .set("x-uos-warning", &values.join(", "))
+        .map_err(|_| invalid("Invalid provider warning header."))
 }
 
 struct Relay {

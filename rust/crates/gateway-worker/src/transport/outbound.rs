@@ -71,6 +71,13 @@ impl Cancellation {
         Self::from_signal(self.controller.signal())
     }
 
+    /// Event-owned billing is independent of a caller's delivery cancellation.
+    pub fn background() -> Result<Self, GatewayError> {
+        let incoming =
+            worker::web_sys::AbortController::new().map_err(|_| configuration_error())?;
+        Self::from_signal(incoming.signal())
+    }
+
     fn from_signal(incoming: worker::web_sys::AbortSignal) -> Result<Self, GatewayError> {
         let controller =
             worker::web_sys::AbortController::new().map_err(|_| configuration_error())?;

@@ -45,19 +45,30 @@ pub fn secrets(env: &Env) -> BTreeMap<String, String> {
     crate::catalog::DIRECT_PROVIDERS
         .iter()
         .filter_map(|(provider, name)| {
-            setting(env, name)
-                .or_else(|| {
-                    (*provider == "openlux")
-                        .then(|| setting(env, "METERED_API_KEY"))
-                        .flatten()
-                })
-                .filter(|secret| !secret.trim().is_empty())
-                .map(|secret| ((*provider).to_owned(), secret))
+            if *provider == "openlux" {
+                setting(env, "OPENLUX_API_KEY").or_else(|| setting(env, "METERED_API_KEY"))
+            } else {
+                setting(env, name)
+            }
+            .filter(|secret| !secret.trim().is_empty())
+            .map(|secret| ((*provider).to_owned(), secret))
         })
         .collect()
 }
 
 fn binding(provider: &str, secret: &str) -> ProviderBinding {
+    if let Some(provider) = match provider {
+        "surplus" => Some(gateway_core::provider::PaidProvider::Surplus),
+        "openlux" => Some(gateway_core::provider::PaidProvider::Metered),
+        _ => None,
+    } {
+        return ProviderBinding {
+            identity: gateway_publication::configured_paid_binding(
+                provider,
+                &gateway_auth::crypto::Secret::new(secret.to_owned()),
+            ),
+        };
+    }
     // This private memo identity preserves source cache invalidation when a
     // configured key changes. It is never a Codex routing/credential fingerprint.
     ProviderBinding {

@@ -8,7 +8,11 @@ use gateway_authority::{
     paid::{PaidReservation, PaidUsage},
     routing::CohortProof,
 };
-use gateway_core::{GatewayError, provider::UpstreamProvider};
+use gateway_core::{
+    GatewayError,
+    provider::{PaidProvider, UpstreamProvider},
+    state::{AuthorityStore, RecordKey},
+};
 use gateway_providers::{AuthMaterial, PrepareOptions};
 use gateway_routing_runtime::{
     AttemptFailure, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
@@ -41,26 +45,27 @@ impl RoutingHost for Host {
         self.platform.cancellation.signal().aborted()
     }
     fn cancellation_error(&self) -> GatewayError {
-        gateway_admission::cancellation_error()
-    }
-    async fn wait(&self, milliseconds: i64) -> Result<(), GatewayError> {
-        let child = self.platform.cancellation.child()?;
-        let wait =
-            u64::try_from(milliseconds).map_err(|_| unavailable("Routing wait is invalid."))?;
-        let mut delay = std::pin::pin!(worker::Delay::from(std::time::Duration::from_millis(wait)));
-        std::future::poll_fn(|context| {
-            child.register_waker(context.waker());
-            if child.signal().aborted() {
-                std::task::Poll::Ready(())
-            } else {
-                std::future::Future::poll(delay.as_mut(), context)
-            }
-        })
-        .await;
-        if self.cancelled() {
-            return Err(self.cancellation_error());
+        if self.platform.cancellation.client_aborted() {
+            gateway_admission::cancellation_error()
+        } else {
+            GatewayError::new(
+                504,
+                "The gateway request deadline expired.",
+                Some("gateway_timeout"),
+            )
+            .with_type("server_error")
         }
-        Ok(())
+    }
+    async fn wait(&self, milliseconds: i64) -> gateway_routing_runtime::WaitOutcome {
+        let started = crate::admission::monotonic()
+            .expect("Routing requires the validated platform monotonic clock");
+        let result = self.wait_result(milliseconds).await;
+        let ended = crate::admission::monotonic()
+            .expect("Routing requires the validated platform monotonic clock");
+        let elapsed_ms = (ended.saturating_sub(started).as_secs_f64() * 1000.0)
+            .round()
+            .min(i64::MAX as f64) as i64;
+        gateway_routing_runtime::WaitOutcome { elapsed_ms, result }
     }
     async fn credential(
         &self,
@@ -76,6 +81,12 @@ impl RoutingHost for Host {
                     )
                 })?;
             return Ok(direct_credential(input.provider, &Secret::new(secret)));
+        }
+        if matches!(
+            input.provider,
+            UpstreamProvider::Surplus | UpstreamProvider::Metered
+        ) {
+            return self.paid_credential(input.provider).await;
         }
         if input.provider == UpstreamProvider::ChatgptCodex {
             let admission = input.codex.ok_or_else(|| {
@@ -160,6 +171,33 @@ impl RoutingHost for Host {
                 }
                 Ok(())
             }
+            CredentialFence::Paid {
+                provider,
+                owner_id,
+                owner_epoch,
+                configuration_generation,
+                credential_binding,
+            } => {
+                let current = self.paid_credential(*provider).await?;
+                match current.fence {
+                    CredentialFence::Paid {
+                        owner_id: actual_owner,
+                        owner_epoch: actual_epoch,
+                        configuration_generation: actual_generation,
+                        credential_binding: actual_binding,
+                        ..
+                    } if actual_owner == *owner_id
+                        && actual_epoch == *owner_epoch
+                        && actual_generation == *configuration_generation
+                        && actual_binding == *credential_binding =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err(unavailable(
+                        "Paid credential publication changed before dispatch.",
+                    )),
+                }
+            }
             _ => Err(unavailable(
                 "The selected credential owner is not configured.",
             )),
@@ -204,11 +242,115 @@ impl RoutingHost for Host {
     }
     async fn lookup_paid(
         &self,
-        _reservation: &PaidReservation,
+        reservation: &PaidReservation,
     ) -> Result<Option<PaidUsage>, GatewayError> {
-        Err(unavailable(
-            "The exact paid accounting lookup capability is not yet integrated.",
-        ))
+        crate::paid_lookup::lookup(&self.store, &self.env, reservation).await
+    }
+}
+
+impl Host {
+    async fn wait_result(&self, milliseconds: i64) -> Result<(), GatewayError> {
+        let child = self.platform.cancellation.child()?;
+        let wait =
+            u64::try_from(milliseconds).map_err(|_| unavailable("Routing wait is invalid."))?;
+        let mut delay = std::pin::pin!(worker::Delay::from(std::time::Duration::from_millis(wait)));
+        std::future::poll_fn(|context| {
+            child.register_waker(context.waker());
+            if child.signal().aborted() {
+                std::task::Poll::Ready(())
+            } else {
+                std::future::Future::poll(delay.as_mut(), context)
+            }
+        })
+        .await;
+        if self.cancelled() {
+            return Err(self.cancellation_error());
+        }
+        Ok(())
+    }
+
+    async fn paid_credential(
+        &self,
+        provider: UpstreamProvider,
+    ) -> Result<PublishedCredential, GatewayError> {
+        let paid = match provider {
+            UpstreamProvider::Surplus => PaidProvider::Surplus,
+            UpstreamProvider::Metered => PaidProvider::Metered,
+            _ => {
+                return Err(unavailable(
+                    "The requested credential is not a paid provider.",
+                ));
+            }
+        };
+        let secret = if paid == PaidProvider::Metered {
+            crate::host::setting(&self.env, "METERED_API_KEY")
+                .or_else(|| crate::host::setting(&self.env, "OPENLUX_API_KEY"))
+        } else {
+            crate::host::setting(&self.env, "SURPLUS_API_KEY")
+        }
+        .filter(|value| !gateway_schema::util::js_trim(value).is_empty())
+        .ok_or_else(|| unavailable("The paid provider credential is not configured."))?;
+        let owner = self
+            .store
+            .read(&gateway_authority::keys::paid_control_owner())
+            .await?
+            .ok_or_else(|| unavailable("The paid control owner is not configured."))?;
+        let configuration = self
+            .store
+            .read(&gateway_authority::keys::paid_control_config())
+            .await?
+            .ok_or_else(|| unavailable("The paid control configuration is not published."))?;
+        let owner: gateway_authority::paid_control::PaidControlOwner =
+            serde_json::from_value(owner.json_value()?.clone())
+                .map_err(|_| unavailable("The paid control owner is invalid."))?;
+        let configuration: gateway_authority::paid_control::PaidControlConfig =
+            serde_json::from_value(configuration.json_value()?.clone())
+                .map_err(|_| unavailable("The paid control configuration is invalid."))?;
+        let binding =
+            gateway_publication::configured_paid_binding(paid, &Secret::new(secret.clone()));
+        let expected = if paid == PaidProvider::Surplus {
+            configuration.surplus_binding.as_ref()
+        } else {
+            configuration.openlux_binding.as_ref()
+        };
+        if owner.v != 1
+            || configuration.v != 1
+            || owner.owner_id != configuration.owner_id
+            || owner.owner_epoch != configuration.owner_epoch
+            || expected != Some(&binding)
+        {
+            return Err(unavailable(
+                "The configured paid credential does not match its current owner publication.",
+            ));
+        }
+        for check in &configuration.source_checks {
+            if self
+                .store
+                .read(&RecordKey(check.key.clone()))
+                .await?
+                .as_ref()
+                .map(|record| &record.revision)
+                != check.expected_revision.as_ref()
+            {
+                return Err(unavailable(
+                    "The paid control configuration source changed.",
+                ));
+            }
+        }
+        Ok(PublishedCredential {
+            material: AuthMaterial {
+                secret,
+                ..Default::default()
+            },
+            fence: CredentialFence::Paid {
+                provider,
+                owner_id: owner.owner_id,
+                owner_epoch: owner.owner_epoch,
+                configuration_generation: configuration.generation,
+                credential_binding: binding,
+            },
+            options: PrepareOptions::default(),
+        })
     }
 }
 

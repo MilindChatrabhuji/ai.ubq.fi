@@ -20,7 +20,7 @@ use crate::transport::outbound::Cancellation;
 
 struct Clock;
 
-fn monotonic() -> Result<Duration, GatewayError> {
+pub fn monotonic() -> Result<Duration, GatewayError> {
     let unavailable = || {
         GatewayError::unavailable(
             "The admission clock is unavailable.",
