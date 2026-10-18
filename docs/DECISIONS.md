@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Real CI checks for Sentinel and merge groups - 2026-10-18
+
+Issue #1206 preserves real successful checks for Sentinel's delivery and base-failure attribution. Run the complete job set for merge groups, PRs targeting exactly `queue-canary`, Sentinel-authored PRs targeting exactly `development`, development pushes, and development PRs changing the CI workflow or selector itself. Use the PR author, not the actor who reruns a workflow. Ordinary owner PRs retain changed-path job selection.
+
+This selects jobs without broadening dependency-scoped test selection. Native KV and Darwin signing fixtures retain their original path predicates; admitted native, sandbox and artifact jobs still execute their real verification commands. Documentation wrappers may truthfully select zero tests. Never substitute successful placeholder checks or accept skipped checks as success. Development and merge-group runs retain their non-cancelling concurrency groups, and CI never deploys.
+
+Sentinel R81 attributes a red head check using the same check name on the exact base. Restoring successful base jobs provides that evidence for future runs; it does not prove identical test-file coverage across differently scoped runs or repair historical skipped evidence. Reversing this exception can strand otherwise eligible Sentinel repairs or queue entries without usable check evidence.
+
 ## VPS join lifecycle bounds and conservative orphan handling - 2026-10-18
 
 For issue #1165, keep PID 1 rows about `ai-ubq-fi.service` out of request counts, but retain completed exit/restart timestamps as lifecycle evidence. Once a fully covered window has an unmatched admission before such a marker, persist `unavailable` / `terminal_lost`, stop its forward scan and release its slice pin. A startup notice, a mere stopping/starting notice or unrelated manager output is not evidence that an admitted request was lost. With `Type=simple`, a `Started` row can follow a live admission from the new process, so it never establishes this cutoff. Matched requests remain countable. Checkpoint schema 3 includes lifecycle markers and terminal-lost state; older schemas fail closed rather than silently discarding that evidence. This does not impose a new maximum stream lifetime or activate the standalone release bridge.
