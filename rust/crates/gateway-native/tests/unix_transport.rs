@@ -283,3 +283,46 @@ fn oversized_frame_poisoning_refuses_reuse_and_close_without_a_second_read() {
         server.join().unwrap();
     });
 }
+
+#[test]
+fn healthy_unix_close_retains_the_bounded_peer_handshake_grace() {
+    run(async {
+        let home = FixtureHome::new();
+        let listener = UnixListener::bind(home.socket()).unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut socket = accept_hdr(stream, HeaderCheck).unwrap();
+            let mut acknowledged = false;
+            while let Ok(message) = socket.read() {
+                if message.is_close() {
+                    thread::sleep(Duration::from_millis(75));
+                    acknowledged = socket.flush().is_ok();
+                    break;
+                }
+                let Message::Text(text) = message else {
+                    continue;
+                };
+                let value: Value = serde_json::from_str(&text).unwrap();
+                if let Some(id) = value.get("id") {
+                    socket
+                        .send(Message::Text(
+                            json!({"id":id,"result":{"protocolVersion":1}})
+                                .to_string()
+                                .into(),
+                        ))
+                        .unwrap();
+                }
+            }
+            acknowledged
+        });
+        let mut client = UnixSupervisor::configured_socket(&home.socket()).unwrap();
+        client.close().await.unwrap();
+        assert!(
+            server.join().unwrap(),
+            "peer acknowledgement must reach the healthy client before shutdown"
+        );
+    });
+}
