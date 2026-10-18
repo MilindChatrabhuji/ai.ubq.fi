@@ -72,6 +72,7 @@ pub struct AuthResponse {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
     pub body: Value,
+    pub stream: Option<crate::native::AuthStream>,
 }
 
 impl AuthResponse {
@@ -83,7 +84,12 @@ impl AuthResponse {
                 ("content-type".into(), "application/json".into()),
             ]),
             body,
+            stream: None,
         }
+    }
+    pub fn with_stream(mut self, stream: crate::native::AuthStream) -> Self {
+        self.stream = Some(stream);
+        self
     }
     pub fn error(error: GatewayError) -> Self {
         Self::json(
