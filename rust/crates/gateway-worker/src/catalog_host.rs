@@ -201,6 +201,10 @@ impl CatalogHost for Host {
         let body_limit = request.max_body_bytes();
         let mut headers = BTreeMap::from([("Accept".into(), "application/json".into())]);
         let (url, manual_redirects) = match request {
+            CatalogFetch::AnonymousSurplus => (
+                "https://api.surplusintelligence.ai/v1/models".to_owned(),
+                true,
+            ),
             CatalogFetch::Codex {
                 account,
                 client_version,

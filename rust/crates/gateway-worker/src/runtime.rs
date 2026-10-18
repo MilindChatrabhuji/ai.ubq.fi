@@ -106,8 +106,7 @@ pub async fn route(
         ));
     }
     if path == "/uos/models/catalog" && request.method() == Method::Get {
-        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
-        return json_response(catalog::public_catalog(&state.input));
+        return auth_response(crate::catalog::public_response(&store, &env, &host, context.clone()).await?);
     }
     if path == "/health/providers" || path == "/health/upstream" {
         auth.authenticate_admin(&auth_request).await?;
