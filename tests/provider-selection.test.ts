@@ -652,7 +652,7 @@ test("a switched-off Lithos provider leaves an explicit Responses id to availabi
   seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
   try {
     await withKv(kv, async () => {
-      await storeProviderSelection(kv, ["codex"]);
+      kv.seedSelection(["codex"]);
       const response = await handleResponses(
         new Request("https://ai.ubq.fi/v1/responses", {
           method: "POST",
