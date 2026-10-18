@@ -55,6 +55,18 @@ pub async fn read_json<S: AuthorityStore>(
     }
     Ok(record)
 }
+/// Validate the stored full snapshot without normalizing its model records.
+/// Callers that need source Get semantics retain their original raw value/revision.
+pub fn parse_full_snapshot(value: &Value) -> Option<ModelSnapshot> {
+    serde_json::from_value::<ModelSnapshot>(value.clone())
+        .ok()
+        .filter(|snapshot| {
+            !snapshot.models.is_empty()
+                && snapshot.models.iter().all(Value::is_object)
+                && !snapshot.source.trim().is_empty()
+                && snapshot.updated_at_ms > 0
+        })
+}
 pub(crate) async fn load_exact_catalog<S: AuthorityStore>(
     store: &S,
     version: &str,
@@ -124,13 +136,7 @@ pub(crate) async fn load_state<S: QueryStore>(
         .and_then(|v| serde_json::from_value::<ModelSnapshot>(v.clone()).ok());
     let full_snapshot = read_json(store, &catalog_store::codex_snapshot_key())
         .await?
-        .and_then(|r| serde_json::from_value::<ModelSnapshot>(r.value).ok())
-        .filter(|s| {
-            !s.models.is_empty()
-                && s.models.iter().all(Value::is_object)
-                && !s.source.trim().is_empty()
-                && s.updated_at_ms > 0
-        });
+        .and_then(|r| parse_full_snapshot(&r.value));
     let selection = read_json(store, &selection_key())
         .await?
         .as_ref()
