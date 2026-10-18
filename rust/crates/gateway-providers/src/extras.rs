@@ -3,6 +3,12 @@ use crate::types::*;
 use gateway_core::{GatewayError, provider::UpstreamProvider};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+fn js_whitespace(c: char) -> bool {
+    matches!(c, '\u{0009}'..='\u{000d}' | ' ' | '\u{00a0}' | '\u{1680}'
+        | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}'
+        | '\u{205f}' | '\u{3000}' | '\u{feff}')
+}
 fn prepared(
     provider: UpstreamProvider,
     url: &str,
@@ -48,7 +54,7 @@ pub fn prepare_systemone(
 ) -> Result<PreparedRequest, GatewayError> {
     let object = raw
         .as_object()
-        .ok_or_else(|| invalid("Invalid JSON body", ""))?;
+        .ok_or_else(|| GatewayError::new(400, "Invalid JSON body", Some("invalid_request_error")))?;
     if let Some(key) = object
         .keys()
         .find(|k| !["state", "questions", "model"].contains(&k.as_str()))
@@ -81,7 +87,7 @@ pub fn prepare_systemone(
         ));
     }
     if questions.iter().any(|(name, q)| {
-        name.trim().is_empty()
+        name.trim_matches(js_whitespace).is_empty()
             || name.encode_utf16().count() > 120
             || !q.is_object()
             || !matches!(q["type"].as_str(), Some("noul" | "choice" | "score"))
@@ -95,7 +101,7 @@ pub fn prepare_systemone(
     let model = raw
         .get("model")
         .map_or(Some("~typesafe/jev-latest"), Value::as_str)
-        .ok_or_else(|| invalid("model must be a string", "model"))?;
+        .ok_or_else(|| GatewayError::new(400, "model must be a string", Some("invalid_request_error")))?;
     let base = model.strip_prefix('~').unwrap_or(model);
     let suffix = base.strip_prefix("typesafe/").unwrap_or("");
     if model.len() > 80
@@ -109,10 +115,7 @@ pub fn prepare_systemone(
             .next()
             .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
     {
-        return Err(invalid(
-            "model must be a TypeSafe System One model",
-            "model",
-        ));
+        return Err(GatewayError::new(400, "model must be a typesafe model id", Some("invalid_request_error")));
     }
     let upstream = if model.starts_with('~') {
         model.to_owned()
@@ -135,8 +138,7 @@ pub fn decode_systemone(value: &Value) -> Result<Value, GatewayError> {
             502,
             "System One upstream invalid response",
             Some("openrouter_upstream_invalid_response"),
-        )
-        .with_type("server_error"));
+        ));
     }
     Ok(value.clone())
 }
@@ -161,136 +163,86 @@ pub struct EmbeddingsProfile {
     pub total_chars: usize,
 }
 pub fn parse_embeddings(raw: &Value, job: bool) -> Result<EmbeddingsProfile, GatewayError> {
-    let object = raw
-        .as_object()
-        .ok_or_else(|| invalid("Invalid JSON body", ""))?;
+    let object = raw.as_object().ok_or_else(|| {
+        GatewayError::new(400, "Invalid JSON body", Some("invalid_request_error"))
+    })?;
     for key in object.keys() {
-        if ![
-            "dimensions",
-            "encoding_format",
-            "input",
-            "input_type",
-            "model",
-            "truncation",
-        ]
-        .contains(&key.as_str())
-            && (key != "user" || job)
+        if !["dimensions", "encoding_format", "input", "input_type", "model", "truncation"]
+            .contains(&key.as_str()) && (key != "user" || job)
         {
-            return Err(invalid(
-                format!("Unrecognized request argument supplied: {key}"),
-                key,
-            ));
+            return Err(GatewayError::new(400,
+                format!("Unrecognized request argument supplied: {key}"), Some("invalid_request_error")));
         }
     }
-    let model = raw
-        .get("model")
-        .map_or(Some("voyage-4-large"), Value::as_str)
-        .ok_or_else(|| invalid("model must be a string", "model"))?;
+    let model = raw.get("model").and_then(Value::as_str).filter(|s| !s.trim_matches(js_whitespace).is_empty())
+        .ok_or_else(|| invalid("model is required and must be a non-empty string", "model"))?;
     if model != "voyage-4-large" {
-        return Err(invalid("Unsupported embeddings model", "model"));
+        return Err(GatewayError::new(400, format!("Unsupported embedding model: {model}"),
+            Some("model_not_found")).with_param(Some("model")));
     }
-    let dimensions = raw
-        .get("dimensions")
-        .map_or(Some(1024), Value::as_u64)
-        .filter(|d| [256, 512, 1024, 2048].contains(d))
-        .ok_or_else(|| {
-            invalid(
-                "dimensions must be one of: 256, 512, 1024, 2048",
-                "dimensions",
-            )
-        })?;
-    let encoding = raw
-        .get("encoding_format")
-        .map_or(Some("float"), Value::as_str)
-        .filter(|v| ["float", "base64"].contains(v) && (!job || *v == "float"))
-        .ok_or_else(|| invalid("encoding_format must be float or base64", "encoding_format"))?;
-    let input_type = raw
-        .get("input_type")
-        .map(Value::as_str)
-        .unwrap_or(if job { None } else { Some("document") })
-        .filter(|v| *v == "query" || *v == "document")
-        .ok_or_else(|| {
-            invalid(
-                "input_type must be one of: \"query\", \"document\"",
-                "input_type",
-            )
-        })?;
-    let truncation = raw
-        .get("truncation")
-        .map_or(Some(true), Value::as_bool)
+    let dimensions = match raw.get("dimensions") {
+        None => 1024,
+        Some(value) => {
+            let value = value.as_f64().filter(|v| v.is_finite() && v.fract() == 0.0)
+                .ok_or_else(|| invalid("dimensions must be an integer", "dimensions"))?;
+            if ![256.0, 512.0, 1024.0, 2048.0].contains(&value) {
+                return Err(invalid("dimensions must be one of: 256, 512, 1024, 2048", "dimensions"));
+            }
+            value as u64
+        }
+    };
+    let encoding = match raw.get("encoding_format") {
+        None => "float",
+        Some(value) => value.as_str().ok_or_else(|| invalid("encoding_format must be a string", "encoding_format"))?,
+    };
+    if !["float", "base64"].contains(&encoding) {
+        return Err(invalid("encoding_format must be one of: \"float\", \"base64\"", "encoding_format"));
+    }
+    if job && encoding != "float" {
+        return Err(invalid("encoding_format must be \"float\" for embeddings jobs", "encoding_format"));
+    }
+    let input_type = match raw.get("input_type") {
+        None if job => return Err(invalid("input_type is required and must be one of: \"query\", \"document\"", "input_type")),
+        None => "document",
+        Some(value) => value.as_str().filter(|v| ["query", "document"].contains(v))
+            .ok_or_else(|| invalid("input_type must be one of: \"query\", \"document\"", "input_type"))?,
+    };
+    let truncation = raw.get("truncation").map_or(Some(true), Value::as_bool)
         .ok_or_else(|| invalid("truncation must be a boolean", "truncation"))?;
-    if raw
-        .get("user")
-        .is_some_and(|v| !v.is_null() && !v.is_string())
-    {
+    if raw.get("user").is_some_and(|v| !v.is_null() && !v.is_string()) {
         return Err(invalid("user must be a string", "user"));
     }
+    let input_error = || invalid("input must be a string or an array of strings", "input");
     let inputs = if let Some(input) = raw["input"].as_str() {
         vec![input.to_owned()]
     } else {
-        raw["input"]
-            .as_array()
-            .ok_or_else(|| invalid("input must be a string or an array of strings", "input"))?
-            .iter()
-            .map(|v| {
-                v.as_str().map(str::to_owned).ok_or_else(|| {
-                    invalid("input must be a string or an array of strings", "input")
-                })
-            })
+        raw["input"].as_array().ok_or_else(input_error)?.iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or_else(input_error))
             .collect::<Result<Vec<_>, _>>()?
     };
-    if inputs.is_empty() || inputs.len() > 128 {
-        return Err(invalid(
-            "input must contain between 1 and 128 strings",
-            "input",
-        ));
+    if inputs.is_empty() {
+        return Err(invalid("input must be a non-empty string or a non-empty array", "input"));
+    }
+    if inputs.len() > 128 {
+        return Err(invalid(format!("Too many inputs: {} (max 128)", inputs.len()), "input"));
     }
     let mut total = 0;
     for input in &inputs {
         let len = input.encode_utf16().count();
         if len > 20_000 {
-            return Err(invalid(
-                format!("Input too large: {len} chars (max 20000)"),
-                "input",
-            ));
-        }
-        if input.len().div_ceil(4) > 10_000 {
-            return Err(invalid(
-                format!(
-                    "Input too large for embeddings provider: ~{} tokens (max 10000).",
-                    input.len().div_ceil(4)
-                ),
-                "input",
-            ));
+            return Err(invalid(format!("Input too large: {len} chars (max 20000)"), "input"));
         }
         total += len;
         if total > 100_000 {
-            return Err(invalid(
-                format!("Request too large: {total} chars total (max 100000)"),
-                "input",
-            ));
+            return Err(invalid(format!("Request too large: {total} chars total (max 100000)"), "input"));
+        }
+        if input.len().div_ceil(4) > 10_000 {
+            return Err(invalid(format!("Input too large for embeddings provider: ~{} tokens (max 10000).", input.len().div_ceil(4)), "input"));
         }
     }
-    let cache_profile_key = json!([
-        "voyage-profile-v2",
-        model,
-        input_type,
-        dimensions,
-        "float",
-        encoding,
-        truncation
-    ])
-    .to_string();
-    Ok(EmbeddingsProfile {
-        model: model.into(),
-        inputs,
-        input_type: input_type.into(),
-        dimensions,
-        encoding_format: encoding.into(),
-        truncation,
-        cache_profile_key,
-        total_chars: total,
-    })
+    let cache_profile_key = json!(["voyage-profile-v2", model, input_type, dimensions, "float", encoding, truncation]).to_string();
+    Ok(EmbeddingsProfile { model: model.into(), inputs, input_type: input_type.into(), dimensions,
+        encoding_format: encoding.into(), truncation, cache_profile_key, total_chars: total })
 }
 pub fn prepare_embeddings(
     raw: &Value,
@@ -395,7 +347,36 @@ fn prepare_image_inner(
     let mut body = raw.clone();
     let object = body
         .as_object_mut()
-        .ok_or_else(|| invalid("Invalid JSON body", ""))?;
+        .ok_or_else(|| image_invalid("Image requests must use an object body.", ""))?;
+    for key in object.keys() {
+        let shared = [
+            "model",
+            "prompt",
+            "n",
+            "size",
+            "quality",
+            "background",
+            "output_format",
+            "output_compression",
+            "stream",
+            "partial_images",
+            "user",
+        ];
+        let valid = shared.contains(&key.as_str())
+            || if edit {
+                ["images", "mask", "input_fidelity"].contains(&key.as_str())
+                    || (!multipart && key == "moderation")
+                    || (multipart && key == "response_format")
+            } else {
+                ["moderation", "response_format", "style"].contains(&key.as_str())
+            };
+        if !valid {
+            return Err(image_invalid(
+                format!("Unsupported image {} field: {key}.", if edit { "edits" } else { "generations" }),
+                key,
+            ));
+        }
+    }
     for key in [
         "model",
         "n",
@@ -415,64 +396,52 @@ fn prepare_image_inner(
             object.remove(key);
         }
     }
-    for key in object.keys() {
-        let shared = [
-            "model",
-            "prompt",
-            "n",
-            "size",
-            "quality",
-            "background",
-            "output_format",
-            "output_compression",
-            "stream",
-            "partial_images",
-            "user",
-        ];
-        let valid = shared.contains(&key.as_str())
-            || if edit {
-                ["images", "mask", "input_fidelity", "moderation"].contains(&key.as_str())
-                    || (multipart && key == "response_format")
-            } else {
-                ["moderation", "response_format", "style"].contains(&key.as_str())
-            };
-        if !valid {
-            return Err(invalid(
-                format!("Unrecognized request argument supplied: {key}"),
-                key,
-            ));
-        }
-    }
     if body.get("style").is_some() {
-        return Err(invalid(
+        return Err(image_invalid(
             "style is not supported because this gateway uses the Responses image-generation tool.",
             "style",
         ));
     }
     let prompt = body["prompt"]
         .as_str()
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| invalid("Image requests must include a prompt.", "prompt"))?;
+        .filter(|s| !s.trim_matches(js_whitespace).is_empty())
+        .ok_or_else(|| image_invalid("Image requests must include a prompt.", "prompt"))?;
     if prompt.chars().count() > 32_000 {
-        return Err(invalid(
+        return Err(image_invalid(
             "prompt must contain no more than 32000 characters.",
             "prompt",
         ));
     }
     if body
         .get("model")
-        .is_some_and(|v| v.as_str().is_none_or(|s| s.trim().is_empty()))
+        .is_some_and(|v| v.as_str().is_none_or(|s| s.trim_matches(js_whitespace).is_empty()))
     {
-        return Err(invalid("model must be a non-empty string.", "model"));
+        return Err(image_invalid("model must be a non-empty string.", "model"));
     }
     if body.get("user").is_some_and(|v| !v.is_string()) {
-        return Err(invalid("user must be a string.", "user"));
+        return Err(image_invalid("user must be a string.", "user"));
     }
     let count = body
         .get("n")
-        .map_or(Some(1), Value::as_u64)
-        .filter(|n| *n >= 1 && *n <= 10)
-        .ok_or_else(|| invalid("n must be an integer from 1 to 10.", "n"))?;
+        .map_or(Some(1.0), Value::as_f64)
+        .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= 10.0)
+        .map(|n| n as u64)
+        .ok_or_else(|| image_invalid("n must be an integer from 1 to 10.", "n"))?;
+    if body
+        .get("output_compression")
+        .is_some_and(|v| !v.as_f64().is_some_and(|n| n.fract() == 0.0 && (0.0..=100.0).contains(&n)))
+    {
+        return Err(image_invalid(
+            "output_compression must be an integer from 0 to 100.",
+            "output_compression",
+        ));
+    }
+    if body
+        .get("size")
+        .is_some_and(|v| v.as_str().is_none_or(|s| s.trim_matches(js_whitespace).is_empty()))
+    {
+        return Err(image_invalid("size must be a non-empty string.", "size"));
+    }
     for (key, allowed) in [
         ("quality", ["low", "medium", "high", "auto"].as_slice()),
         ("background", ["transparent", "opaque", "auto"].as_slice()),
@@ -484,32 +453,23 @@ fn prepare_image_inner(
             .get(key)
             .is_some_and(|v| v.as_str().is_none_or(|v| !allowed.contains(&v)))
         {
-            return Err(invalid(
-                format!("{key} must be {}.", allowed.join(", ")),
+            return Err(image_invalid(
+                match key {
+                    "quality" => format!("quality must be low, medium, high, or auto{}.", if edit { " for image edits" } else { "" }),
+                    "background" => "background must be transparent, opaque, or auto.".into(),
+                    "output_format" => "output_format must be png, jpeg, or webp.".into(),
+                    "moderation" => "moderation must be low or auto.".into(),
+                    _ => "input_fidelity must be low or high.".into(),
+                },
                 key,
             ));
         }
     }
-    if body
-        .get("output_compression")
-        .is_some_and(|v| !v.as_u64().is_some_and(|n| n <= 100))
-    {
-        return Err(invalid(
-            "output_compression must be an integer from 0 to 100.",
-            "output_compression",
-        ));
-    }
-    if body
-        .get("size")
-        .is_some_and(|v| v.as_str().is_none_or(|s| s.trim().is_empty()))
-    {
-        return Err(invalid("size must be a non-empty string.", "size"));
-    }
     if body.get("stream").is_some_and(|v| !v.is_boolean()) {
-        return Err(invalid("stream must be a boolean.", "stream"));
+        return Err(image_invalid("stream must be a boolean.", "stream"));
     }
     if body["stream"] == true || body.get("partial_images").is_some() {
-        return Err(invalid(
+        return Err(image_invalid(
             "Streaming image responses are not supported by this gateway.",
             if body["stream"] == true {
                 "stream"
@@ -519,14 +479,14 @@ fn prepare_image_inner(
         ));
     }
     if body.get("response_format").is_some_and(|v| v != "b64_json") {
-        return Err(invalid(
+        return Err(image_invalid(
             "response_format must be b64_json.",
             "response_format",
         ));
     }
     let mut tool = json!({"type":"image_generation","action":if edit{"edit"}else{"generate"}});
     if let Some(model) = body["model"].as_str() {
-        tool["model"] = json!(model.trim());
+        tool["model"] = json!(model.trim_matches(js_whitespace));
     } else if edit {
         tool["model"] = json!("gpt-image-1.5");
     }
@@ -547,8 +507,8 @@ fn prepare_image_inner(
             .as_array()
             .filter(|i| !i.is_empty() && i.len() <= 16)
             .ok_or_else(|| {
-                invalid(
-                    "images must contain between 1 and 16 image references",
+                image_invalid(
+                    "images must contain from 1 to 16 image references.",
                     "images",
                 )
             })?;
@@ -577,9 +537,10 @@ fn prepare_image_inner(
     };
     let input_bytes = image_input_bytes(&body);
     if input_bytes > 50 * 1024 * 1024 / count as usize {
-        return Err(invalid(
-            "Image inputs exceed the 50 MiB fanout input limit",
-            "images",
+        return Err(image_invalid(
+            if multipart { "n and multipart image inputs exceed the 50 MiB request work limit." }
+            else { "n and inline image inputs exceed the 50 MiB request work limit." },
+            "n",
         ));
     }
     let mut responses = json!({"model":base_model,"input":input,"tools":[tool],"tool_choice":{"type":"image_generation"}});
@@ -603,46 +564,54 @@ fn prepare_image_inner(
         codex_only: true,
     })
 }
+fn image_invalid(message: impl Into<String>, param: &str) -> GatewayError {
+    GatewayError::new(400, message, Some("invalid_request_error"))
+        .with_param((!param.is_empty()).then_some(param))
+}
+
 pub fn normalize_image_reference(value: &Value, mask: bool) -> Result<Value, GatewayError> {
-    let object = value
-        .as_object()
-        .filter(|o| o.keys().all(|k| k == "image_url"))
-        .ok_or_else(|| invalid("Invalid image reference", "images"))?;
-    let url = object["image_url"]
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && s.len() <= 20_971_520)
-        .ok_or_else(|| invalid("Invalid image URL", "images"))?;
-    if let Some(data) = url.strip_prefix("data:") {
-        let (media, payload) = data
-            .split_once(";base64,")
-            .ok_or_else(|| invalid("Invalid image data URL", "images"))?;
-        let media = match media.to_lowercase().as_str() {
+    let failure = || image_invalid(if mask {
+        "mask.image_url must be a supported base64 PNG data URL; remote URLs and file_id are unsupported by this gateway."
+    } else {
+        "Each image must contain one image_url with a fully qualified HTTP(S) URL or supported base64 data URL; file_id is unsupported by this gateway."
+    }, if mask { "mask" } else { "images" });
+    let object = value.as_object().filter(|o| o.keys().all(|k| k == "image_url")).ok_or_else(failure)?;
+    let original = object.get("image_url").and_then(Value::as_str)
+        .filter(|s| s.encode_utf16().count() <= 20_971_520).ok_or_else(failure)?;
+    let url = original.trim_matches(js_whitespace);
+    if url.is_empty() { return Err(failure()); }
+    if url.get(..5).is_some_and(|v| v.eq_ignore_ascii_case("data:")) {
+        let (media, encoded) = url[5..].split_once(';').ok_or_else(failure)?;
+        if media.contains(',') || !encoded.get(..7).is_some_and(|s| s.eq_ignore_ascii_case("base64,")) {
+            return Err(failure());
+        }
+        let payload = &encoded[7..];
+        let media = match media.trim_matches(js_whitespace).to_ascii_lowercase().as_str() {
             "image/png" | "image/x-png" => "image/png",
             "image/jpeg" | "image/jpg" => "image/jpeg",
             "image/webp" => "image/webp",
-            _ => return Err(invalid("Unsupported image type", "images")),
+            _ => return Err(failure()),
         };
-        if payload.is_empty()
-            || payload.len() % 4 != 0
-            || !payload
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
-        {
-            return Err(invalid("Invalid image base64", "images"));
-        }
-        if mask && media != "image/png" {
-            return Err(invalid("mask must be a PNG image", "mask"));
+        let content = payload.trim_end_matches('=');
+        let padding = payload.len() - content.len();
+        if payload.is_empty() || payload.len() % 4 != 0 || padding > 2
+            || !content.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/'))
+        { return Err(failure()); }
+        let bytes = payload.len() / 4 * 3 - padding;
+        if bytes == 0 || bytes >= 50 * 1024 * 1024 || (mask && media != "image/png") {
+            return Err(failure());
         }
         Ok(json!({"image_url":format!("data:{media};base64,{payload}")}))
-    } else if !mask && (url.starts_with("https://") || url.starts_with("http://")) {
+    } else if !mask {
+        if !["http://", "https://"].iter().any(|scheme| url.get(..scheme.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))) {
+            return Err(failure());
+        }
+        let parsed = url::Url::parse(url).map_err(|_| failure())?;
+        if !["http", "https"].contains(&parsed.scheme()) || parsed.host_str().is_none() {
+            return Err(failure());
+        }
         Ok(json!({"image_url":url}))
-    } else {
-        Err(invalid(
-            "Invalid image reference",
-            if mask { "mask" } else { "images" },
-        ))
-    }
+    } else { Err(failure()) }
 }
 pub fn extract_images(payload: &Value) -> Vec<Value> {
     payload["output"]
@@ -681,7 +650,7 @@ pub fn multipart_image_references(
         total += file.bytes.len();
         if file.bytes.is_empty() || file.bytes.len() >= 50 * 1024 * 1024 || total > 50 * 1024 * 1024
         {
-            return Err(invalid(
+            return Err(image_invalid(
                 "Image files exceed the 50 MiB input limit",
                 "image",
             ));
@@ -691,10 +660,10 @@ pub fn multipart_image_references(
             .split(';')
             .next()
             .unwrap_or("")
-            .trim()
+            .trim_matches(js_whitespace)
             .to_lowercase();
         let declared = if declared.is_empty() || declared == "application/octet-stream" {
-            let filename = file.filename.trim().to_lowercase();
+            let filename = file.filename.trim_matches(js_whitespace).to_lowercase();
             if filename.ends_with(".png") {
                 "image/png".into()
             } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
@@ -711,25 +680,25 @@ pub fn multipart_image_references(
             .split(';')
             .next()
             .unwrap_or("")
-            .trim()
+            .trim_matches(js_whitespace)
             .to_lowercase()
             .as_str()
         {
             "image/png" | "image/x-png" => "image/png",
             "image/jpeg" | "image/jpg" => "image/jpeg",
             "image/webp" => "image/webp",
-            _ => return Err(invalid("Unsupported image media type", "image")),
+            _ => return Err(image_invalid("Unsupported image media type", "image")),
         };
         let reference =
             json!({"image_url":format!("data:{media};base64,{}",base64_encode(&file.bytes))});
         match file.name.as_str() {
             "image" | "image[]" => images.push(reference),
             "mask" if mask.is_none() && media == "image/png" => mask = Some(reference),
-            _ => return Err(invalid("Invalid multipart image field", "image")),
+            _ => return Err(image_invalid("Invalid multipart image field", "image")),
         }
     }
     if images.is_empty() || images.len() > 16 {
-        return Err(invalid(
+        return Err(image_invalid(
             "image must contain between 1 and 16 files",
             "image",
         ));
