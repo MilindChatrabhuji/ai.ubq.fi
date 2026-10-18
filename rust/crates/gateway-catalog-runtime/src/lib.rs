@@ -40,7 +40,8 @@ struct PendingGuard {
 impl Drop for PendingGuard {
     fn drop(&mut self) {
         if let Some(entry) = self.memo.borrow_mut().entries.get_mut(&self.provider)
-            && entry.shared_request == Some(self.request) {
+            && entry.shared_request == Some(self.request)
+        {
             entry.shared_request = None;
         }
     }
@@ -180,7 +181,8 @@ impl CatalogRuntime {
                 .ok_or_else(|| unavailable("Provider catalog request generation overflowed"))?;
             let request = memo.next_request;
             if (!force || provider == CatalogProvider::ClaudeCode)
-                && let Some(entry) = memo.entries.get_mut(&provider) {
+                && let Some(entry) = memo.entries.get_mut(&provider)
+            {
                 entry.shared_request = Some(request);
             }
             request
@@ -256,7 +258,9 @@ impl CatalogRuntime {
                 provider,
                 binding: binding.clone(),
                 after_id: cursor,
+                deadline_ms: (provider == CatalogProvider::ClaudeCode).then_some(started.saturating_add(8_000)),
             };
+            request.remaining_timeout_ms(host.now_ms())?;
             let max_bytes = request.max_body_bytes();
             let response = host.fetch(request).await?;
             if max_bytes.is_some_and(|limit| response.body.len() > limit)

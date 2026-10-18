@@ -55,10 +55,20 @@ pub async fn read_json<S: AuthorityStore>(
     }
     Ok(record)
 }
-pub(crate) async fn load_exact_catalog<S: AuthorityStore>(store: &S, version: &str, generation: &str, now: i64) -> Result<Option<gateway_schema::catalog_cache::LoadedCatalog>, GatewayError> {
+pub(crate) async fn load_exact_catalog<S: AuthorityStore>(
+    store: &S,
+    version: &str,
+    generation: &str,
+    now: i64,
+) -> Result<Option<gateway_schema::catalog_cache::LoadedCatalog>, GatewayError> {
     let loaded = catalog_store::load_catalog(store, version, generation, now).await?;
-    if loaded.as_ref().is_some_and(|c| c.metadata.client_version != version) {
-        return Err(unavailable("Stored Codex catalog belongs to another exact client version"));
+    if loaded
+        .as_ref()
+        .is_some_and(|c| c.metadata.client_version != version)
+    {
+        return Err(unavailable(
+            "Stored Codex catalog belongs to another exact client version",
+        ));
     }
     Ok(loaded)
 }

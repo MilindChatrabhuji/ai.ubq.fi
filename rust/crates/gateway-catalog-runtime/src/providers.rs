@@ -222,9 +222,16 @@ fn claude(raw: &Value) -> Option<Value> {
     let mut levels = Vec::new();
     if raw.pointer("/capabilities/effort/supported") == Some(&Value::Bool(true))
         && row.get("supports_adaptive_thinking") == Some(&Value::Bool(true))
-        && let Some(effort) = raw.pointer("/capabilities/effort").and_then(Value::as_object) {
+        && let Some(effort) = raw
+            .pointer("/capabilities/effort")
+            .and_then(Value::as_object)
+    {
         for (key, value) in effort {
-            if key != "supported" && key != "none" && !key.is_empty() && value.get("supported") == Some(&Value::Bool(true)) {
+            if key != "supported"
+                && key != "none"
+                && !key.is_empty()
+                && value.get("supported") == Some(&Value::Bool(true))
+            {
                 levels.push(key.clone());
             }
         }

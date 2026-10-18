@@ -127,7 +127,12 @@ impl AuthorityStore for Store {
 }
 impl QueryStore for Store {
     async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
-        if self.fail_query.get() { return Err(GatewayError::unavailable("Query unavailable", "test_query_unavailable")); }
+        if self.fail_query.get() {
+            return Err(GatewayError::unavailable(
+                "Query unavailable",
+                "test_query_unavailable",
+            ));
+        }
         let validated = request.validate()?;
         let mut rows = Vec::new();
         for (key, record) in self.rows.borrow().iter() {
@@ -838,29 +843,77 @@ fn logical_lease_expiry_between_chunk_and_metadata_publication_fails_closed() {
 
 #[test]
 fn wrong_version_metadata_never_serves_another_versions_rows() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new();
-    store.seed("0.162.0", store.now.get(), &catalog("other").to_string(), None);
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    store.seed(
+        "0.162.0",
+        store.now.get(),
+        &catalog("other").to_string(),
+        None,
+    );
     let other = store.live(&catalog_store::metadata_key("0.162.0")).unwrap();
-    store.put(catalog_store::metadata_key("0.163.0"), "corrupt", other.value);
-    assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err()); assert!(host.requests.borrow().is_empty());
+    store.put(
+        catalog_store::metadata_key("0.163.0"),
+        "corrupt",
+        other.value,
+    );
+    assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err());
+    assert!(host.requests.borrow().is_empty());
 }
 
 #[test]
 fn overlapping_forced_provider_refreshes_keep_the_newer_publication() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new(); host.provider(CatalogProvider::Openlux, "openlux-owner");
-    let mut slow = Outcome::json(json!({"data":[{"id":"older"}]})); slow.ticks = 1; host.queue(slow);
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.provider(CatalogProvider::Openlux, "openlux-owner");
+    let mut slow = Outcome::json(json!({"data":[{"id":"older"}]}));
+    slow.ticks = 1;
+    host.queue(slow);
     host.queue(Outcome::json(json!({"data":[{"id":"newer"}]})));
-    let mut first = std::pin::pin!(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true));
-    let waker = Waker::from(Arc::new(Noop)); let mut cx = Context::from_waker(&waker);
+    let mut first =
+        std::pin::pin!(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true));
+    let waker = Waker::from(Arc::new(Noop));
+    let mut cx = Context::from_waker(&waker);
     assert!(first.as_mut().poll(&mut cx).is_pending());
-    let second = run(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true)).unwrap().unwrap();
-    let first = run(first).unwrap().unwrap(); assert_eq!(second.models[0]["id"], "newer"); assert_eq!(first.models[0]["id"], "newer");
+    let second = run(runtime.refresh_provider(&store, &host, CatalogProvider::Openlux, true))
+        .unwrap()
+        .unwrap();
+    let first = run(first).unwrap().unwrap();
+    assert_eq!(second.models[0]["id"], "newer");
+    assert_eq!(first.models[0]["id"], "newer");
 }
 
 #[test]
 fn version_pruning_failure_is_observed_without_discarding_the_catalog_answer() {
-    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new(); store.fail_query.set(true);
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    store.fail_query.set(true);
     host.queue(Outcome::json(catalog("served")));
-    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap(); assert_eq!(ids(&response), ["served"]);
-    assert!(host.observations.borrow().iter().any(|event| matches!(event, CatalogObservation::MaintenanceFailure { operation: CatalogMaintenance::VersionPruning, .. })));
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    assert_eq!(ids(&response), ["served"]);
+    assert!(host.observations.borrow().iter().any(|event| matches!(
+        event,
+        CatalogObservation::MaintenanceFailure {
+            operation: CatalogMaintenance::VersionPruning,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn claude_pages_share_the_original_deadline_and_codex_has_no_invented_timeout() {
+    let store = Store::new(); let host = Host::new(&store); let runtime = CatalogRuntime::new(); host.provider(CatalogProvider::ClaudeCode, "claude-owner"); let start = store.now.get();
+    let shared = store.clone();
+    host.queue(Outcome { response: Ok(CatalogFetchResponse::json(200, json!({"data":[{"id":"claude-one"}],"has_more":true,"last_id":"one"}).to_string())), ticks: 0, callback: Some(Rc::new(move || shared.now.set(shared.now.get() + 7000))) });
+    host.queue(Outcome::json(json!({"data":[{"id":"claude-two"}],"has_more":false})));
+    let snapshot = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false)).unwrap().unwrap(); assert_eq!(snapshot.models.len(), 2);
+    let requests = host.requests.borrow();
+    for request in requests.iter() { assert!(matches!(request, CatalogFetch::Provider { deadline_ms: Some(deadline), .. } if *deadline == start + 8000)); }
+    assert_eq!(requests[1].remaining_timeout_ms(store.now.get()).unwrap(), Some(1000));
+    assert!(requests[1].remaining_timeout_ms(start + 8000).is_err());
+    let codex = CatalogFetch::Codex { account: host.published.borrow().codex_accounts[0].clone(), client_version: "0.163.0".into(), if_none_match: None };
+    assert_eq!(codex.remaining_timeout_ms(start).unwrap(), None); assert_eq!(codex.max_body_bytes(), None);
 }

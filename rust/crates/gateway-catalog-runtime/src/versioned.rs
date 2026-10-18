@@ -174,7 +174,9 @@ async fn fetch_codex<H: CatalogHost>(
         }
         if (200..300).contains(&response.status)
             && let Ok(parsed) = serde_json::from_str::<Value>(&response.body)
-            && parsed.is_object() && parsed.get("models").is_some_and(Value::is_array) {
+            && parsed.is_object()
+            && parsed.get("models").is_some_and(Value::is_array)
+        {
             catalogs.push((used.account_id, parsed));
             continue;
         }
@@ -392,7 +394,9 @@ pub(crate) async fn serve<S: QueryStore, H: CatalogHost>(
     };
     let now = host.now_ms();
     let cached = state::load_exact_catalog(store, &version, &generation, now).await?;
-    if let Some(cached) = &cached && cached.metadata.fresh(now) {
+    if let Some(cached) = &cached
+        && cached.metadata.fresh(now)
+    {
         return response(runtime, store, host, cached, conditional, CacheState::Hit).await;
     }
     let owner = host.unique_id();
@@ -451,7 +455,9 @@ pub(crate) async fn serve<S: QueryStore, H: CatalogHost>(
     .await;
     // A failed release never deletes a successor's lease; publication and response are already settled.
     let released = catalog_store::release_refresh_lease(store, &version, &owner).await;
-    if let Err(error) = released && result.is_err() {
+    if let Err(error) = released
+        && result.is_err()
+    {
         return Err(error);
     }
     result
@@ -605,10 +611,9 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
     if !state::generation_current(store, lease.generation).await? {
         return recover(runtime, store, host, lease, None, conditional, true).await;
     }
-    let catalog =
-        state::load_exact_catalog(store, lease.version, lease.generation, host.now_ms())
-            .await?
-            .ok_or_else(|| unavailable("Codex model catalog could not be read after caching"))?;
+    let catalog = state::load_exact_catalog(store, lease.version, lease.generation, host.now_ms())
+        .await?
+        .ok_or_else(|| unavailable("Codex model catalog could not be read after caching"))?;
     response(
         runtime,
         store,
