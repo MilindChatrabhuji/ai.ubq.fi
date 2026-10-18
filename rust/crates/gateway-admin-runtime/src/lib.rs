@@ -420,7 +420,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 {
                     return Err(invalid("Invalid thread id"));
                 }
-                let request = if operation == SupervisorOutput {
+                if operation == SupervisorBrief {
+                    return self.supervisor_brief_response(
+                        SupervisorBriefTarget { source_id, thread_id },
+                        context,
+                    ).await;
+                }
+                let request = {
                     let cursor: String = parse::first(&input.query, "cursor")
                         .unwrap_or("")
                         .trim_matches(gateway_schema::util::js_whitespace)
@@ -431,11 +437,6 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         source_id,
                         thread_id,
                         cursor: (!cursor.is_empty()).then_some(cursor),
-                    }
-                } else {
-                    NativeRequest::SupervisorBrief {
-                        source_id,
-                        thread_id,
                     }
                 };
                 self.native_response(request, context).await
@@ -477,6 +478,32 @@ fn parse_int_prefix(value: Option<&str>) -> Option<i64> {
 }
 
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
+    async fn supervisor_brief_response(
+        &self,
+        target: SupervisorBriefTarget,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        let response = self.capabilities.supervisor_brief(target.clone(), context).await?;
+        if response.status >= 400 && response.stream.is_none() { return Ok(response) }
+        let body = &response.body;
+        let fields = ["sourceId","threadId","machine","about","status","model","effort","state","sampledAtMs","generatedAtMs","transcript"];
+        let transcript_fields = ["turns","bytes","truncated","redactions","available"];
+        let nullable = |name| body.get(name).is_some_and(|v|v.is_null() || v.is_string());
+        let transcript = body.get("transcript");
+        let valid = response.status == 200 && response.stream.is_none()
+            && body.as_object().is_some_and(|v|v.keys().all(|key|fields.contains(&key.as_str())))
+            && body.get("sourceId").and_then(Value::as_str) == Some(&target.source_id)
+            && body.get("threadId").and_then(Value::as_str) == Some(&target.thread_id)
+            && ["machine","about","status"].into_iter().all(|name|body.get(name).and_then(Value::as_str).is_some_and(|s|!gateway_schema::util::js_trim(s).is_empty()))
+            && ["model","effort","state"].into_iter().all(nullable)
+            && ["sampledAtMs","generatedAtMs"].into_iter().all(|name|body.get(name).and_then(Value::as_i64).is_some_and(|n|n>=0 && n<=gateway_core::identity::MAX_SAFE_INTEGER))
+            && transcript.and_then(Value::as_object).is_some_and(|v|v.keys().all(|key|transcript_fields.contains(&key.as_str())))
+            && ["turns","bytes","redactions"].into_iter().all(|name|transcript.and_then(|v|v.get(name)).and_then(Value::as_u64).is_some())
+            && ["truncated","available"].into_iter().all(|name|transcript.and_then(|v|v.get(name)).is_some_and(Value::is_boolean))
+            && (transcript.and_then(|v|v.get("available")) != Some(&Value::Bool(false)) || body["model"].is_null() && body["effort"].is_null());
+        if !valid { return Err(GatewayError::unavailable("Supervisor brief capability did not return the final public source response", "supervisor_brief_invalid_response")) }
+        Ok(response)
+    }
     async fn native_response(
         &self,
         request: NativeRequest,

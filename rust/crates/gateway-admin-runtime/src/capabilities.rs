@@ -6,6 +6,12 @@ use std::{collections::BTreeMap, future::Future};
 
 pub use gateway_auth::native::NativeReadRequest as NativeRequest;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SupervisorBriefTarget {
+    pub source_id: String,
+    pub thread_id: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Context {
     pub request_id: String,
@@ -197,6 +203,15 @@ pub trait RuntimeCapabilities {
         _: Context,
     ) -> impl Future<Output = Result<AuthResponse, GatewayError>> {
         async { Err(unavailable("native_supervisor")) }
+    }
+    /// Compose the readonly native context with the fixed source Rust summarizer.
+    /// Return the final public brief; native context itself is never an admin response.
+    fn supervisor_brief(
+        &self,
+        _: SupervisorBriefTarget,
+        _: Context,
+    ) -> impl Future<Output = Result<AuthResponse, GatewayError>> {
+        async { Err(unavailable("supervisor_brief")) }
     }
     fn capture(
         &self,
