@@ -38,7 +38,10 @@ pub async fn route(
     }
     let store = RemoteAuthorityStore::from_env(&env)?;
     let cancellation = Rc::new(Cancellation::from_request(&request)?);
-    let host = PlatformHost { cancellation };
+    let host = PlatformHost {
+        cancellation,
+        store: store.clone(),
+    };
     let config = auth_config(&env);
     let mut auth_request = AuthRequest {
         method: request.method().to_string(),
@@ -150,9 +153,26 @@ pub async fn route(
             ));
         }
         let principal = principal.ok_or_else(gateway_auth::unauthorized)?;
+        let permit = crate::admission::acquire(
+            &principal,
+            &request_id.0,
+            if path == "/v1/responses" {
+                "responses"
+            } else {
+                "chat.completions"
+            },
+            host.cancellation.clone(),
+        )
+        .await?;
         let state = CatalogState::load(&store, &env, now_ms()?).await?;
         let mut response = inference::run(
-            request, context, &principal, store, state, &host, request_id,
+            request,
+            inference::RequestResources { context, permit },
+            &principal,
+            store,
+            state,
+            &host,
+            request_id,
         )
         .await?;
         decorate_api_policy(&mut response, &principal)?;

@@ -6,7 +6,7 @@ use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
 use gateway_auth::webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto};
 use gateway_auth::{AuthConfig, AuthHost, GatewayError};
 use gateway_authority::{AuthorityClock, TokenSource};
-use worker::{Env, Method, Response};
+use worker::{Env, Fetch, Method, Request, RequestInit, RequestRedirect, Response, Url};
 
 use crate::transport::{
     crypto,
@@ -44,6 +44,7 @@ pub fn auth_config(env: &Env) -> AuthConfig {
 
 pub struct PlatformHost {
     pub cancellation: Rc<Cancellation>,
+    pub store: crate::authority::RemoteAuthorityStore,
 }
 
 #[derive(Clone, Copy)]
@@ -62,14 +63,38 @@ impl AuthorityClock for PlatformClock {
 }
 
 impl WebAuthnCrypto for PlatformHost {
+    async fn fetch_certificate_revocation_list(&self, url: &str) -> Result<Vec<u8>, GatewayError> {
+        let unavailable = || {
+            GatewayError::unavailable(
+                "Certificate revocation transport is unavailable",
+                "passkey_crl_unavailable",
+            )
+        };
+        let target = Url::parse(url).map_err(|_| unavailable())?;
+        if !matches!(target.scheme(), "http" | "https") || target.host_str().is_none() {
+            return Err(unavailable());
+        }
+        // The source fetch supplies no credentials or privileged headers and
+        // follows ordinary redirects. Rust alone interprets untrusted CRL DER.
+        let mut init = RequestInit::new();
+        init.with_redirect(RequestRedirect::Follow);
+        let request = Request::new_with_init(target.as_str(), &init).map_err(|_| unavailable())?;
+        Fetch::Request(request)
+            .send_with_signal(&self.cancellation.signal())
+            .await
+            .map_err(|_| unavailable())?
+            .bytes()
+            .await
+            .map_err(|_| unavailable())
+    }
     async fn validate_key(&self, key: &CosePublicKey) -> Result<(), GatewayError> {
-        crypto::validate_verification_key(&key.jwk, &key.algorithm.import_algorithm()).await
+        crypto::validate_verification_key(&key.jwk, &key.import_algorithm()).await
     }
     async fn verify_signature(&self, input: SignatureInput) -> Result<bool, GatewayError> {
         crypto::verify_signature(
             &input.key.jwk,
-            &input.key.algorithm.import_algorithm(),
-            &input.key.algorithm.verify_algorithm(),
+            &input.key.import_algorithm(),
+            &input.key.verify_algorithm(),
             &input.signature,
             &input.data,
         )
@@ -108,15 +133,18 @@ impl AuthHost for PlatformHost {
     }
     async fn kernel_principal(
         &self,
-        _owner: &str,
-        _repo: &str,
+        owner: &str,
+        repo: &str,
         _state_id: &str,
-        _path: &str,
+        path: &str,
     ) -> Result<String, GatewayError> {
-        Err(GatewayError::unavailable(
-            "The source kernel principal operation is not integrated.",
-            "kernel_principal_unavailable",
-        ))
+        Ok(gateway_admin::kernel_auth::KernelAuthService {
+            store: &self.store,
+            host: self,
+        }
+        .resolve(owner, repo, path)
+        .await?
+        .limit_scope)
     }
 }
 

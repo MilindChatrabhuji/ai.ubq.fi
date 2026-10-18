@@ -3,6 +3,7 @@ use gateway_core::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, HealthResponse,
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response, Result, event};
 
+mod admission;
 mod agent_messages;
 mod assets;
 pub mod authority;
@@ -17,7 +18,16 @@ pub mod transport;
 pub use authority::GatewayAuthority;
 
 fn error_response(error: GatewayError) -> Result<Response> {
-    Ok(Response::from_json(&error.envelope)?.with_status(error.status))
+    let mut response = Response::from_json(&error.envelope)?.with_status(error.status);
+    if error.envelope.error.code.as_deref()
+        == Some(gateway_admission::LOCAL_INFERENCE_OVERLOAD_CODE)
+    {
+        response.headers_mut().set(
+            "Retry-After",
+            &gateway_admission::RETRY_AFTER_SECONDS.to_string(),
+        )?;
+    }
+    Ok(response)
 }
 
 #[event(fetch)]

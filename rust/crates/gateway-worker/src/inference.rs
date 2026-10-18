@@ -34,6 +34,11 @@ use crate::{
 type Usage = Rc<RefCell<Option<Value>>>;
 const ATTEMPT_DEADLINE_MS: i32 = 1_800_000;
 
+pub struct RequestResources {
+    pub context: Rc<Context>,
+    pub permit: Option<gateway_admission::Permit>,
+}
+
 fn direct_provider(model: &str) -> Option<(&'static str, UpstreamProvider)> {
     [
         ("deepseek", UpstreamProvider::Deepseek),
@@ -48,13 +53,14 @@ fn direct_provider(model: &str) -> Option<(&'static str, UpstreamProvider)> {
 
 pub async fn run(
     mut request: Request,
-    context: Rc<Context>,
+    resources: RequestResources,
     principal: &AuthPrincipal,
     store: RemoteAuthorityStore,
     catalog: CatalogState,
     host: &PlatformHost,
     request_id: RequestId,
 ) -> Result<Response, GatewayError> {
+    let RequestResources { context, permit } = resources;
     let responses = request.path() == "/v1/responses";
     let surface = if responses {
         ClientSurface::Responses
@@ -172,7 +178,7 @@ pub async fn run(
     });
     let observation = ObservationHandle::default();
     let usage = Rc::new(RefCell::new(None));
-    let finish = finish_hook(lifecycle.clone(), usage.clone());
+    let finish = finish_hook(lifecycle.clone(), usage.clone(), permit);
     if client_stream && event_stream && status < 400 {
         let source = upstream
             .stream()
@@ -458,7 +464,11 @@ fn observe_event(observation: &ObservationHandle, event: &ProviderEvent) {
     }
 }
 
-fn finish_hook(lifecycle: Rc<Lifecycle>, usage: Usage) -> FinishHook {
+fn finish_hook(
+    lifecycle: Rc<Lifecycle>,
+    usage: Usage,
+    permit: Option<gateway_admission::Permit>,
+) -> FinishHook {
     Box::new(move |observation| {
         Box::pin(async move {
             let usage = usage.borrow().clone();
@@ -468,6 +478,7 @@ fn finish_hook(lifecycle: Rc<Lifecycle>, usage: Usage) -> FinishHook {
                     error.envelope.error.message
                 );
             }
+            drop(permit);
         })
     })
 }
