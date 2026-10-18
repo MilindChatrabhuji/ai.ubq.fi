@@ -8,7 +8,8 @@
 // aliases below are cold-start fallbacks only.
 
 import { fetchMeteredModels, meteredModelsSnapshot, readMeteredApiKey } from "../provider/metered.ts";
-import { fetchLithosModels, LITHOS_MODEL_IDS, lithosModelsSnapshot, readLithosApiKey } from "../provider/lithos.ts";
+import { fetchLithosModels, lithosModelsSnapshot } from "../provider/lithos-models.ts";
+import { LITHOS_MODEL_IDS, readLithosApiKey } from "../provider/lithos.ts";
 import { fetchSurplusModels, readSurplusApiKey, surplusModelsSnapshot } from "../provider/surplus.ts";
 import { fetchOpenRouterModels, openRouterModelsSnapshot } from "../models/openrouter-models.ts";
 
