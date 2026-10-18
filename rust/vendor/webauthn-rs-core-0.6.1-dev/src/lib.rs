@@ -36,6 +36,8 @@ mod macros;
 mod constants;
 
 pub mod attestation;
+/// Source-compatible stateless attestation verification with explicit host time.
+pub mod source_compat;
 pub mod crypto;
 pub mod fake;
 

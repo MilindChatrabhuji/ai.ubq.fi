@@ -22,7 +22,7 @@ use crypto_glue::{
         EcdsaP521PublicKey,
         // EcdsaP521Signature, EcdsaP521VerifyingKey,
     },
-    rsa::{BigUint, RS256PublicKey, RS256Signature, RS256VerifyingKey},
+    rsa::{BigUint, RS256PublicKey},
     s256,
     traits::{Digest, OwnedToRef, Verifier},
     x509::{self, Certificate, GeneralName, ObjectIdentifier, OtherName, SubjectAltName},
@@ -34,13 +34,8 @@ pub fn verify_signature(
     signature: &[u8],
     verification_data: &[u8],
 ) -> Result<bool, WebauthnError> {
-    let valid = x509::x509_verify_signature(verification_data, signature, certificate)
-        .inspect_err(|err| {
-            error!(?err, "x509 Verification Error");
-        })
-        .is_ok();
-
-    Ok(valid)
+    let alg = crate::source_compat::key_algorithm(certificate)?;
+    COSEKey::try_from((alg, certificate))?.verify_signature(signature, verification_data)
 }
 
 pub(crate) struct TpmSanData<'a> {
@@ -134,18 +129,15 @@ impl<'a> TryFrom<&'a SubjectAltName> for TpmSanData<'a> {
 
 pub(crate) fn only_hash_from_type(
     alg: COSEAlgorithm,
-    _input: &[u8],
+    input: &[u8],
 ) -> Result<Vec<u8>, WebauthnError> {
+    use sha2::Digest;
     match alg {
-        COSEAlgorithm::INSECURE_RS1 => {
-            // sha1
-            warn!("INSECURE SHA1 USAGE DETECTED");
-            Err(WebauthnError::CredentialInsecureCryptography)
-        }
-        c_alg => {
-            debug!(?c_alg, "WebauthnError::COSEKeyInvalidType");
-            Err(WebauthnError::COSEKeyInvalidType)
-        }
+        COSEAlgorithm::ES256 | COSEAlgorithm::RS256 | COSEAlgorithm::PS256 => Ok(sha2::Sha256::digest(input).to_vec()),
+        COSEAlgorithm::ES384 | COSEAlgorithm::RS384 | COSEAlgorithm::PS384 => Ok(sha2::Sha384::digest(input).to_vec()),
+        COSEAlgorithm::ES521 | COSEAlgorithm::RS512 | COSEAlgorithm::PS512 => Ok(sha2::Sha512::digest(input).to_vec()),
+        COSEAlgorithm::INSECURE_RS1 => Ok(sha1::Sha1::digest(input).to_vec()),
+        _ => Err(WebauthnError::COSEKeyInvalidType),
     }
 }
 
@@ -250,7 +242,8 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
             cose_key.validate()?;
             // return it
             Ok(cose_key)
-        } else if key_type == (COSEKeyTypeId::EC_RSA as i128) && (type_ == COSEAlgorithm::RS256) {
+        } else if key_type == (COSEKeyTypeId::EC_RSA as i128)
+            && matches!(type_, COSEAlgorithm::RS256 | COSEAlgorithm::RS384 | COSEAlgorithm::RS512 | COSEAlgorithm::PS256 | COSEAlgorithm::PS384 | COSEAlgorithm::PS512 | COSEAlgorithm::INSECURE_RS1) {
             // RSAKey
 
             // -37 -> PS256
@@ -269,13 +262,12 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
                 .ok_or(WebauthnError::COSEKeyInvalidCBORValue)?;
             let e = cbor_try_bytes!(e_value)?;
 
-            if n.len() != 256 || e.len() != 3 {
+            if n.is_empty() || e.is_empty() {
                 return Err(WebauthnError::COSEKeyRSANEInvalid);
             }
 
             // Set the n and e, we know they are proper sizes.
-            let mut e_temp = [0; 3];
-            e_temp.copy_from_slice(e.as_slice());
+            let e_temp = e.to_vec();
 
             // Right, now build the struct.
             let cose_key = COSEKey {
@@ -417,21 +409,19 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
                 }))
             }
 
-            COSEAlgorithm::RS256
-            | COSEAlgorithm::RS384
-            | COSEAlgorithm::RS512
-            | COSEAlgorithm::PS256
-            | COSEAlgorithm::PS384
-            | COSEAlgorithm::PS512
-            | COSEAlgorithm::EDDSA
-            | COSEAlgorithm::PinUvProtocol
-            | COSEAlgorithm::INSECURE_RS1 => {
-                error!(
-                    "unsupported X509 to COSE conversion for COSE algorithm type {:?}",
-                    alg
-                );
-                Err(WebauthnError::COSEKeyInvalidType)
+            COSEAlgorithm::RS256 | COSEAlgorithm::RS384 | COSEAlgorithm::RS512
+            | COSEAlgorithm::PS256 | COSEAlgorithm::PS384 | COSEAlgorithm::PS512 | COSEAlgorithm::INSECURE_RS1 => {
+                use rsa::{pkcs1::DecodeRsaPublicKey, traits::PublicKeyParts};
+                let raw = certificate.tbs_certificate.subject_public_key_info.subject_public_key.as_bytes().ok_or(WebauthnError::COSEKeyInvalidType)?;
+                let key = rsa::RsaPublicKey::from_pkcs1_der(raw).map_err(|_| WebauthnError::COSEKeyInvalidType)?;
+                Ok(COSEKeyType::RSA(COSERSAKey { n: key.n().to_bytes_be(), e: key.e().to_bytes_be() }))
             }
+            COSEAlgorithm::EDDSA => {
+                let raw = certificate.tbs_certificate.subject_public_key_info.subject_public_key.as_bytes().ok_or(WebauthnError::COSEKeyInvalidType)?;
+                if raw.len() != 32 { return Err(WebauthnError::COSEKeyInvalidType); }
+                Ok(COSEKeyType::EC_OKP(COSEOKPKey { curve: EDDSACurve::ED25519, x: raw.to_vec() }))
+            }
+            COSEAlgorithm::PinUvProtocol => Err(WebauthnError::COSEKeyInvalidType),
         }?;
 
         Ok(COSEKey { type_: alg, key })
@@ -441,9 +431,9 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
 enum COSEKeyPublic {
     EcdsaP256(EcdsaP256PublicKey),
     EcdsaP384(EcdsaP384PublicKey),
-    EcdsaP521(EcdsaP521PublicKey),
+    EcdsaP521,
     RsaS256(RS256PublicKey),
-    // Ed25519(),
+    Ed25519(ed25519_dalek::VerifyingKey),
     // Ed448(),
 }
 
@@ -487,7 +477,7 @@ impl COSEKey {
                 }
                 ECDSACurve::SECP521R1 => {
                     ecdsa_p521::from_coords_raw(ec2k.x.as_ref(), ec2k.y.as_ref())
-                        .map(COSEKeyPublic::EcdsaP521)
+                        .map(|_| COSEKeyPublic::EcdsaP521)
                         .ok_or(WebauthnError::EcdsaPointInvalid)
                 }
             },
@@ -499,25 +489,12 @@ impl COSEKey {
                     .map(COSEKeyPublic::RsaS256)
                     .map_err(|_err| WebauthnError::RsaParametersInvalid)
             }
-            COSEKeyType::EC_OKP(_edk) => {
-                // !!!
-                // Today, RustCrypto doesn't directly support ed25519 or ed448. As a result
-                // I'm opting to skip these.
-                //
-                // We don't actually *advertise* support for either of these directly in our
-                // default algorithm offerings, so the impact of this should be minimal.
-                /*
-                match &edk.curve {
-                    EDDSACurve::ED25519 => {
-
-                    }
-                    EDDSACurve::ED448 => {
-                    }
-                }
-
-                let xref = edk.x.as_ref();
-                */
-                Err(WebauthnError::SshPublicKeyEDUnsupported)
+            COSEKeyType::EC_OKP(edk) => {
+                if edk.curve != EDDSACurve::ED25519 { return Err(WebauthnError::COSEKeyInvalidType); }
+                let raw: &[u8; 32] = edk.x.as_slice().try_into().map_err(|_| WebauthnError::COSEKeyInvalidType)?;
+                ed25519_dalek::VerifyingKey::from_bytes(raw)
+                    .map(COSEKeyPublic::Ed25519)
+                    .map_err(|_| WebauthnError::COSEKeyInvalidType)
             }
         }
     }
@@ -543,23 +520,36 @@ impl COSEKey {
                 let verifier = EcdsaP384VerifyingKey::from(&pub_key);
                 Ok(verifier.verify(verification_data, &signature).is_ok())
             }
-            COSEKeyPublic::EcdsaP521(_pub_key) => {
-                // Currently this is unsupported by p521 but will be available
-                // in future. There really isn't *huge* reason to use p521 anyway,
-                // so for now we disable this and move on.
-                /*
-                let signature = EcdsaP521Signature::from_der(signature)
-                    .map_err(|_err| WebauthnError::SignatureInvalid)?;
-                let verifier = EcdsaP521VerifyingKey::from(&pub_key);
+            COSEKeyPublic::EcdsaP521 => {
+                let raw = self.get_alg_key_ecc_x962_raw()?;
+                let verifier = p521::ecdsa::VerifyingKey::from_sec1_bytes(&raw).map_err(|_| WebauthnError::EcdsaPointInvalid)?;
+                let signature = p521::ecdsa::Signature::from_der(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
                 Ok(verifier.verify(verification_data, &signature).is_ok())
-                */
-                Ok(false)
+            }
+            COSEKeyPublic::Ed25519(verifier) => {
+                let signature = ed25519_dalek::Signature::from_slice(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
+                Ok(verifier.verify_strict(verification_data, &signature).is_ok())
             }
             COSEKeyPublic::RsaS256(pub_key) => {
-                let signature = RS256Signature::try_from(signature)
-                    .map_err(|_err| WebauthnError::SignatureInvalid)?;
-                let verifier = RS256VerifyingKey::new(pub_key);
-                Ok(verifier.verify(verification_data, &signature).is_ok())
+                use rsa::{pkcs1v15, pss};
+                macro_rules! pkcs { ($hash:ty) => {{
+                    let sig = pkcs1v15::Signature::try_from(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
+                    Ok(pkcs1v15::VerifyingKey::<$hash>::new(pub_key).verify(verification_data, &sig).is_ok())
+                }}; }
+                macro_rules! pss { ($hash:ty) => {{
+                    let sig = pss::Signature::try_from(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
+                    Ok(pss::VerifyingKey::<$hash>::new(pub_key).verify(verification_data, &sig).is_ok())
+                }}; }
+                match self.type_ {
+                    COSEAlgorithm::RS256 => pkcs!(sha2::Sha256),
+                    COSEAlgorithm::RS384 => pkcs!(sha2::Sha384),
+                    COSEAlgorithm::RS512 => pkcs!(sha2::Sha512),
+                    COSEAlgorithm::INSECURE_RS1 => pkcs!(sha1::Sha1),
+                    COSEAlgorithm::PS256 => pss!(sha2::Sha256),
+                    COSEAlgorithm::PS384 => pss!(sha2::Sha384),
+                    COSEAlgorithm::PS512 => pss!(sha2::Sha512),
+                    _ => Err(WebauthnError::COSEKeyInvalidAlgorithm),
+                }
             }
         }
     }

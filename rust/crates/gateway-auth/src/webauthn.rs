@@ -119,6 +119,11 @@ pub struct SignatureInput {
 }
 
 pub trait WebAuthnCrypto {
+    /// Raw DER from the signed certificate's first CRL URL. Source semantics
+    /// ignore unavailable/malformed CRLs; only Rust parsing decides revocation.
+    fn fetch_certificate_revocation_list(&self, _url: &str) -> impl Future<Output = Result<Vec<u8>, GatewayError>> {
+        async { Err(GatewayError::unavailable("CRL transport unavailable", "passkey_crl_unavailable")) }
+    }
     /// Real cryptographic key import validates curve points/RSA parameters; no Boolean-policy callback.
     fn validate_key(&self, key: &CosePublicKey) -> impl Future<Output = Result<(), GatewayError>>;
     /// ECDSA signatures are already fixed-width IEEE P1363, as required by WebCrypto.
@@ -386,8 +391,9 @@ pub async fn verify_assertion<C: WebAuthnCrypto>(
 pub async fn verify_registration<C: WebAuthnCrypto>(
     crypto: &C,
     input: RegistrationVerification,
+    now_ms: i64,
 ) -> Result<VerifiedRegistration, GatewayError> {
-    verify_client(
+    let client = verify_client(
         &input.response,
         &input.challenge,
         &input.origin,
@@ -395,11 +401,11 @@ pub async fn verify_registration<C: WebAuthnCrypto>(
     )?;
     let encoded = encoded_field(&input.response, "attestationObject")?;
     let attestation = cbor(&encoded)?;
-    let format = match text_field(&attestation, "fmt")? {
+    let _format = match text_field(&attestation, "fmt")? {
         Cbor::Text(value) => value.as_str(),
         _ => return Err(invalid("Invalid passkey attestation format")),
     };
-    let statement = text_field(&attestation, "attStmt")?;
+    let _statement = text_field(&attestation, "attStmt")?;
     let data = bytes(text_field(&attestation, "authData")?)?;
     let (flags, counter) =
         authenticator_header(data, &input.rp_id, input.require_user_verification)?;
@@ -431,20 +437,20 @@ pub async fn verify_registration<C: WebAuthnCrypto>(
     }
     consume_extensions(data, key_end, flags)?;
     crypto.validate_key(&parsed).await?;
-    match (format, statement) {
-        ("none", Cbor::Map(map)) if map.is_empty() => {}
-        ("none", _) => {
-            return Err(invalid(
-                "None attestation had unexpected attestation statement",
-            ));
+    if now_ms < 0 || now_ms > 9_007_199_254_740_991 {
+        return Err(GatewayError::unavailable("Host clock is invalid", "auth_clock_unavailable"));
+    }
+    let now = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(now_ms as u64))
+        .ok_or_else(|| GatewayError::unavailable("Host clock overflow", "auth_clock_unavailable"))?;
+    // The maintained verifier owns real attestation crypto; this adapter owns the
+    // source ceremony and stores exact original COSE bytes, without invented legacy metadata.
+    let revocations = webauthn_rs_core::source_compat::verify_attestation_at_time(&encoded, &Sha256::digest(client).into(), now)
+        .map_err(|error| invalid(&format!("Invalid passkey attestation: {error}")))?;
+    for check in revocations {
+        if let Ok(der) = crypto.fetch_certificate_revocation_list(&check.url).await
+            && check.is_revoked(&der) {
+            return Err(invalid("Revoked passkey attestation certificate"));
         }
-        ("packed" | "fido-u2f" | "tpm" | "android-key" | "android-safetynet" | "apple", _) => {
-            return Err(GatewayError::unavailable(
-                "Maintained attestation verifier compatibility is not yet installed",
-                "passkey_attestation_verifier_unavailable",
-            ));
-        }
-        _ => return Err(invalid("Unsupported passkey attestation format")),
     }
     let transports = input
         .response
