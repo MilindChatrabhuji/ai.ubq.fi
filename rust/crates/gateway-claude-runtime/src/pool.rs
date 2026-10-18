@@ -119,10 +119,7 @@ impl ClaudePoolSession {
                 .insert(active.account_id.clone());
             if quota::cooling_down(quota.as_ref(), now) {
                 let error = quota.as_ref().and_then(|q| q.last_error.as_ref());
-                let status = error
-                    .and_then(|e| e.status)
-                    .unwrap_or(429.0)
-                    .trunc();
+                let status = error.and_then(|e| e.status).unwrap_or(429.0).trunc();
                 if !(200.0..=599.0).contains(&status) {
                     return Ok(PoolSelection::InternalServerError);
                 }
