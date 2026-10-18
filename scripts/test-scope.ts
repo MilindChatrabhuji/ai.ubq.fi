@@ -146,14 +146,14 @@ export const selectAffectedTestFiles = (changedPaths: readonly string[], candida
 };
 
 export const testRequiresNativeKv = (testPath: string, root = ROOT): boolean => {
-  const required = new Set(["src/storage/kv.ts", "scripts/test-native-kv.ts"]);
+  const required = /^(?:src\/kv\.ts|src\/storage\/(?:kv|native-addon|native-kv)\.ts|scripts\/test-native-kv\.ts)$/;
   const visited = new Set<string>();
   const pending = [resolve(root, testPath)];
   while (pending.length > 0) {
     const file = pending.pop();
     if (!file || visited.has(file)) continue;
     visited.add(file);
-    if (required.has(normalizePath(relative(root, file)))) return true;
+    if (required.test(normalizePath(relative(root, file)))) return true;
     pending.push(...dependenciesOf(file, root));
   }
   return false;

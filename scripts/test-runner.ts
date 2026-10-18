@@ -47,6 +47,10 @@ const SENTINEL_FILES = [
   "sentinel-replay-deletion-budget",
 ];
 const PORTABLE_EXCLUDED = [
+  /tests\/gpg-dsh\.test\.ts$/,
+  /tests\/native-kv-scratch\.test\.ts$/,
+  /tests\/sentinel-.*\.test\.ts$/,
+  /tests\/sqlite-readonly\.test\.ts$/,
   /ops\/tests\/mac-native-auth-permissions\.test\.ts$/,
   /tests\/runtime-permissions(?:-probe)?\.test\.ts$/,
   /tests\/vps-deploy-guards\.test\.ts$/,
