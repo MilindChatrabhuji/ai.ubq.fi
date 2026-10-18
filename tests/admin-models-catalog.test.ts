@@ -260,14 +260,7 @@ test("the official DeepSeek ids are cataloged as their own provider category", a
 test("a paid-discovered DeepSeek id receives the later official route metadata", async () => {
   const originalFetch = globalThis.fetch;
   const paidModelId = "deepseek-v4-flash";
-  const providerEnv = [
-    "CEREBRAS_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "LITHOSAI_API_KEY",
-    "METERED_API_KEY",
-    "OPENROUTER_API_KEY",
-    "SURPLUS_API_KEY",
-  ] as const;
+  const providerEnv = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "METERED_API_KEY", "OPENROUTER_API_KEY", "SURPLUS_API_KEY"] as const;
   const originalProviderEnv = providerEnv.map((name) => [name, process.env[name]] as const);
   for (const name of providerEnv) Reflect.deleteProperty(process.env, name);
   process.env.SURPLUS_API_KEY = "fixture-surplus-key";
@@ -300,7 +293,10 @@ test("a paid-discovered DeepSeek id receives the later official route metadata",
     });
     const row = (await buildModelCatalogSnapshot()).models.find((model) => model.id === paidModelId);
     assert.ok(row);
-    assert.deepEqual(row.providers.map((provider) => provider.id), ["surplus", "deepseek"]);
+    assert.deepEqual(
+      row.providers.map((provider) => provider.id),
+      ["surplus", "deepseek"]
+    );
     assert.equal(row.context_window_tokens, 1_000_000);
     assert.equal(row.max_context_window_tokens, 1_000_000);
     assert.deepEqual(row.supported_reasoning_levels, ["none", "low", "high", "max"]);
