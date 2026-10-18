@@ -411,7 +411,8 @@ const refillProjection = (
 
   const balanceAfterFirstRefill = balanceAtNextRefill + amountQuota;
   const cycleLossQuota = cycleBurnQuota - amountQuota;
-  const cyclesUntilExhaustion = balanceAfterFirstRefill < cycleBurnQuota ? 0 : Math.floor((balanceAfterFirstRefill - cycleBurnQuota) / cycleLossQuota) + 1;
+  const cyclesUntilExhaustion =
+    balanceAfterFirstRefill < cycleBurnQuota ? 0 : Math.floor((balanceAfterFirstRefill - cycleBurnQuota) / cycleLossQuota) + 1;
   const balanceBeforeExhaustion = balanceAfterFirstRefill - cyclesUntilExhaustion * cycleLossQuota;
   const exhaustedAtMs = Math.trunc(nextRefillAtMs + cyclesUntilExhaustion * cadenceMs + (balanceBeforeExhaustion / burnQuotaPerHour) * HOUR_MS);
   const timeRemainingMs = Math.max(0, exhaustedAtMs - nowMs);
