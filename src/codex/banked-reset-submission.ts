@@ -239,7 +239,7 @@ const submissionPreflight = async (
   dependencies: CodexBankedResetDependencies,
   clock: () => number
 ): Promise<Readonly<{ kind: "ready"; nowMs: number }> | Readonly<{ kind: "outcome"; outcome: CodexBankedResetOutcome }>> => {
-  const initialPolicy = liveSubmissionPolicyReason(dependencies);
+  const initialPolicy = liveSubmissionPolicyReason(dependencies, candidate.authorization?.kind === "manual_admin");
   if (initialPolicy) return { kind: "outcome", outcome: outcome("pending", `new_submission_${initialPolicy}`, context, record) };
   const nowBeforeInventory = readClock(clock);
   if (nowBeforeInventory === null) return { kind: "outcome", outcome: outcome("pending", "invalid_clock", context, record) };
@@ -347,7 +347,7 @@ const prepareLiveSubmission = async (
 ): Promise<Readonly<{ kind: "prepared"; record: CodexResetRedemptionRecord }> | Readonly<{ kind: "outcome"; outcome: CodexBankedResetOutcome }>> => {
   // Re-read the kill switch after inventory and immediately before the fenced
   // side-effect boundary. A disable leaves `claimed` intact and makes no call.
-  const finalConfig = loadLiveSubmissionConfig(dependencies);
+  const finalConfig = loadLiveSubmissionConfig(dependencies, candidate.authorization?.kind === "manual_admin");
   if (finalConfig.config === null) return { kind: "outcome", outcome: outcome("pending", `new_submission_${finalConfig.reason}`, context, record) };
   if (candidate.signal?.aborted) {
     const rejected = await rejectOwned(kv, context, record, nowAfterInventory, "client_aborted_before_submission");
@@ -544,7 +544,7 @@ const renewAndRedeem = async (
   // kill switch after that durable transition. A disable visible at this
   // final pre-renewal check leaves the conservative `submitted` record
   // available for non-submitting recovery and makes no provider call.
-  const beforeRedeemPolicy = liveSubmissionPolicyReason(dependencies);
+  const beforeRedeemPolicy = liveSubmissionPolicyReason(dependencies, candidate.authorization?.kind === "manual_admin");
   if (beforeRedeemPolicy) return outcome("pending", `new_submission_${beforeRedeemPolicy}`, context, preparedRecord);
   if (candidate.signal?.aborted) {
     const nowMs = readClock(clock);
@@ -558,7 +558,7 @@ const renewAndRedeem = async (
   // synchronously after it returns so a disable that landed during that final
   // renewal cannot proceed to the provider call. `reloadConfig` is
   // deliberately synchronous; do not introduce an await after this point.
-  const afterRenewalPolicy = liveSubmissionPolicyReason(dependencies);
+  const afterRenewalPolicy = liveSubmissionPolicyReason(dependencies, candidate.authorization?.kind === "manual_admin");
   if (afterRenewalPolicy) {
     return outcome("pending", `new_submission_${afterRenewalPolicy}`, context, renewed.record);
   }
@@ -625,6 +625,7 @@ const settledRecordDisposition = (
 
 /** Policy gate for the very first claim of an observed quota window. */
 const resolveNewSubmissionAllowance = async (
+  candidate: CodexBankedResetCandidate,
   kv: Kv,
   context: ResetContext,
   dependencies: CodexBankedResetDependencies,
@@ -635,20 +636,20 @@ const resolveNewSubmissionAllowance = async (
   if (reconcileOnly) return { kind: "outcome", outcome: outcome("skipped", "no_existing_transaction", context) };
   let configForClaim: CodexBankedResetConfig;
   try {
-    if (!(await readBankedResetUsage(kv, context.account.accountIdHash)).allowed) {
+    if (candidate.authorization?.kind !== "manual_admin" && !(await readBankedResetUsage(kv, context.account.accountIdHash)).allowed) {
       return { kind: "outcome", outcome: outcome("skipped", "usage_disabled", context) };
     }
     configForClaim = dependencies.reloadConfig?.() ?? dependencies.config;
   } catch {
     return { kind: "outcome", outcome: outcome("skipped", "configuration_unavailable", context) };
   }
-  const reason = policyReason(configForClaim);
+  const reason = policyReason(configForClaim, candidate.authorization?.kind === "manual_admin");
   if (reason) return { kind: "outcome", outcome: outcome("skipped", reason, context) };
-  const providerReason = providerPolicyReason(configForClaim, dependencies.provider);
+  const providerReason = providerPolicyReason(configForClaim, dependencies.provider, candidate.authorization?.kind === "manual_admin");
   if (providerReason) return { kind: "outcome", outcome: outcome("skipped", providerReason, context) };
   emit(telemetry, "codex_reset_eligible", fields);
   metric(telemetry, "codex_reset_eligible_total", 1, fields);
-  if (configForClaim.mode === "shadow") {
+  if (configForClaim.mode === "shadow" && candidate.authorization?.kind !== "manual_admin") {
     emit(telemetry, "codex_reset_shadow_candidate", fields);
     metric(telemetry, "codex_reset_shadow_candidates_total", 1, fields);
     // Shadow mode deliberately makes no provider call, including inventory.
@@ -662,6 +663,7 @@ const resolveNewSubmissionAllowance = async (
  * `unknown` record is only ever reconciled, never re-submitted.
  */
 const resolveSubmissionAllowance = async (
+  candidate: CodexBankedResetCandidate,
   kv: Kv,
   context: ResetContext,
   existing: CodexResetRedemptionRecord | null,
@@ -670,10 +672,10 @@ const resolveSubmissionAllowance = async (
   telemetry: CodexBankedResetTelemetry,
   fields: CodexBankedResetTelemetryFields
 ): Promise<Readonly<{ kind: "allow"; allowNewSubmission: boolean }> | Readonly<{ kind: "outcome"; outcome: CodexBankedResetOutcome }>> => {
-  if (!existing) return await resolveNewSubmissionAllowance(kv, context, dependencies, reconcileOnly, telemetry, fields);
+  if (!existing) return await resolveNewSubmissionAllowance(candidate, kv, context, dependencies, reconcileOnly, telemetry, fields);
   if (existing.state !== "claimed") return { kind: "allow", allowNewSubmission: false };
   if (reconcileOnly) return { kind: "outcome", outcome: outcome("pending", "unsubmitted_transaction", context, existing) };
-  const reason = liveSubmissionPolicyReason(dependencies);
+  const reason = liveSubmissionPolicyReason(dependencies, candidate.authorization?.kind === "manual_admin");
   if (reason) return { kind: "outcome", outcome: outcome("pending", `new_submission_${reason}`, context, existing) };
   return { kind: "allow", allowNewSubmission: true };
 };
@@ -761,7 +763,7 @@ const attemptInternal = async (
   }
   const settled = settledRecordDisposition(telemetry, context, candidate, existing.record, fields);
   if (settled) return settled;
-  const allowance = await resolveSubmissionAllowance(kv, context, existing.record, dependencies, reconcileOnly, telemetry, fields);
+  const allowance = await resolveSubmissionAllowance(candidate, kv, context, existing.record, dependencies, reconcileOnly, telemetry, fields);
   if (allowance.kind === "outcome") return allowance.outcome;
 
   if (!providerSupportsLiveRedemption(dependencies.provider)) {

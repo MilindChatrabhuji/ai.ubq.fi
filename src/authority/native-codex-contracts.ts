@@ -32,7 +32,8 @@ export const ROUTING_CACHE_REVALIDATE_MS = 5_000;
 export type CodexQuotaBlockSource = "body_resets_at" | "header_retry_after";
 export type CodexProbeCircuit = "quota" | "upstream_timeout";
 export type CodexQuotaClass = "spark" | "gpt_oss_120b" | "reserve" | "standard" | "unknown";
-export type CodexActiveAccountTransitionReason = "quota_exhausted" | "credential_invalid" | "account_removed_or_replaced" | "model_unavailable";
+export type CodexActiveAccountTransitionReason =
+  "quota_exhausted" | "credential_invalid" | "account_removed_or_replaced" | "model_unavailable" | "manual_reset";
 
 /**
  * Durable active-account admission fence. Account identifiers stay hashed and
@@ -550,7 +551,14 @@ export const isVersionstamp = (value: unknown): value is string => typeof value 
 
 const parseActiveTransitionReason = (value: unknown): CodexActiveAccountTransitionReason | null | undefined => {
   if (value === null) return null;
-  if (value === "quota_exhausted" || value === "credential_invalid" || value === "account_removed_or_replaced" || value === "model_unavailable") return value;
+  if (
+    value === "quota_exhausted" ||
+    value === "credential_invalid" ||
+    value === "account_removed_or_replaced" ||
+    value === "model_unavailable" ||
+    value === "manual_reset"
+  )
+    return value;
   return undefined;
 };
 

@@ -2353,3 +2353,9 @@ body[data-page="admin"] [data-provider-subscription-name] {
     transition-property: background-color, border-color, color, opacity, box-shadow;
   }
 }
+
+body[data-page="admin"] [data-manual-reset-status] {
+  flex: 1 1 100%;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

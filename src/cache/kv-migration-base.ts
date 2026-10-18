@@ -160,6 +160,8 @@ const DURABLE_PREFIXES: { group: string; prefix: KvKey }[] = [
   { group: "codex_prompts", prefix: ["uos_ai", "codex_instructions"] },
   { group: "codex_prompts_chunks", prefix: ["uos_ai", "codex_instructions_chunk"] },
   { group: "codex_reset_usage", prefix: CODEX_RESET_USAGE_PREFIX },
+  { group: "codex_manual_reset", prefix: ["uos_ai", "codex_manual_reset", "v1"] },
+  { group: "codex_reset_redemption", prefix: ["uos_ai", "codex_reset_redemption"] },
   { group: "kernel_policy_queue", prefix: ["uos_ai", "kernel_policy_queue"] },
   { group: "migrations", prefix: ["uos_ai", "migrations"] },
   {

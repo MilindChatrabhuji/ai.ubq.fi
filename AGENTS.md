@@ -51,8 +51,8 @@
 - Route ordinary Codex inference through one durable global active subscription shared by every principal, key, and
   model: bootstrap the first eligible configured account, keep it despite headroom, idle time, restarts, old per-key
   affinities, reorder, or successful same-identity credential refresh, and move it only for authoritative
-  model-applicable quota or capacity exhaustion, a classified current-credential invalidity, or removal/replacement of
-  the account in the auth pool. Never restore a retired per-key affinity override or a capacity-balancing order, and
+  model-applicable quota or capacity exhaustion, a classified current-credential invalidity, removal/replacement of
+  the account in the auth pool, or the explicitly authenticated manual banked-reset promotion recorded in `docs/DECISIONS.md`. Never restore a retired per-key affinity override or a capacity-balancing order, and
   advance the provider waterfall only after fresh strong proof that every selected pool account has applicable quota or
   capacity exhaustion or invalid credentials matching its current credential fingerprint. Keep quota-only proof separate
   for reset eligibility and redemption; preserve the existing paid limits and provider selection.
