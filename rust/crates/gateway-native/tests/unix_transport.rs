@@ -223,3 +223,63 @@ fn actual_renewal_requires_a_persisted_generation_after_fixed_identity_handshake
         Some("codex_auth_refresh_failed")
     );
 }
+
+#[test]
+fn oversized_frame_poisoning_refuses_reuse_and_close_without_a_second_read() {
+    run(async {
+        let home = FixtureHome::new();
+        let listener = UnixListener::bind(home.socket()).unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut socket = accept_hdr(stream, HeaderCheck).unwrap();
+            while let Ok(message) = socket.read() {
+                let Message::Text(text) = message else {
+                    continue;
+                };
+                let value: Value = serde_json::from_str(&text).unwrap();
+                let Some(id) = value.get("id") else {
+                    continue;
+                };
+                if value["method"] == "initialize" {
+                    socket
+                        .send(Message::Text(
+                            json!({"id":id,"result":{"protocolVersion":1}})
+                                .to_string()
+                                .into(),
+                        ))
+                        .unwrap();
+                } else {
+                    assert_eq!(value["method"], "thread/turns/list");
+                    let _ =
+                        socket.send(Message::Text("x".repeat(SUPERVISOR_FRAME_LIMIT + 1).into()));
+                    break;
+                }
+            }
+        });
+        let mut client = UnixSupervisor::configured_socket(&home.socket()).unwrap();
+        assert!(
+            client
+                .call(
+                    SupervisorMethod::ThreadTurnsList,
+                    json!({"threadId":"known","itemsView":"full"})
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .call(SupervisorMethod::ThreadRead, json!({"threadId":"known"}))
+                .await
+                .is_err()
+        );
+        client.close().await.unwrap();
+        client.close().await.unwrap();
+        server.join().unwrap();
+    });
+}
