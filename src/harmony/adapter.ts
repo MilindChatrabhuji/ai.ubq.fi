@@ -118,8 +118,7 @@ const wireMessageRoles = (body: Record<string, unknown>): readonly string[] => {
   return projected.messages.map((message) => {
     if (!isRecord(message) || Array.isArray(message)) return "?";
     const role = message.role;
-    if (role === null || role === undefined) return "?";
-    return String(role);
+    return typeof role === "string" ? role : "?";
   });
 };
 

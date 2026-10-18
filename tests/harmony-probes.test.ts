@@ -155,7 +155,8 @@ test("native probe records the projected Cerebras message roles", async () => {
   const transport = createCerebrasTransport({
     apiKey: "test-key",
     fetcher: (_input, init) => {
-      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const rawBody = init?.body;
+      const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as Record<string, unknown>;
       if (Array.isArray(body.messages)) {
         wireRoles = body.messages.map((message) => (message as Record<string, unknown>).role);
       }
