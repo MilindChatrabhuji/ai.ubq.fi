@@ -824,6 +824,148 @@ struct PaidRaceStore<'a> {
     key_id: String,
     armed: Cell<bool>,
 }
+
+struct PaidFixtureClock;
+impl gateway_authority::AuthorityClock for PaidFixtureClock {
+    fn now_ms(&self) -> Result<i64, GatewayError> {
+        Ok(1_000_000)
+    }
+}
+
+async fn paid_fixture_owner_proof(
+    store: &Store,
+    host: &Host,
+    identity: &gateway_auth::native_auth::NativeTransportIdentity,
+    body: &[u8],
+) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
+    use gateway_auth::{
+        crypto::base64url, native::NATIVE_PUBLICATION_PATH, native_auth::*,
+        native_replay::StoreNonceAuthority,
+    };
+    let nonce = base64url(&host.random_bytes(32).unwrap());
+    let time = host.now_ms().to_string();
+    let mac = identity
+        .sign(NATIVE_PUBLICATION_PATH, host.now_ms(), &nonce, body)
+        .unwrap();
+    let nonces = StoreNonceAuthority::new(store);
+    NativeAuthenticator::new(identity, &nonces)
+        .authenticate(
+            NATIVE_PUBLICATION_PATH,
+            NativeAuthHeaders {
+                version: "1",
+                key_id: identity.key_id(),
+                time_ms: &time,
+                nonce: &nonce,
+                mac: &mac,
+            },
+            body,
+            host.now_ms(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
+    use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
+    use gateway_authority::{keys, paid::PaidRoutingPolicy, paid_control::*};
+    use gateway_core::provider::PaidProvider;
+    use gateway_publication::{
+        ConfiguredPaidInputs, PreparedConfigurationPublication,
+        control_publication::{bootstrap_fixture_owner, fixture_owner_statement},
+    };
+    // An explicit isolated owner signs the actual configuration publication;
+    // authorization below obtains the non-deserializable receipt from Authority.
+    let identity = NativeTransportIdentity::new(
+        "fixture-admin-race".into(),
+        "fixture-admin-race".into(),
+        "fixture-epoch".into(),
+        [17; 32],
+        std::collections::BTreeSet::from([NativeCapability::ConfigurationPublish]),
+    )
+    .unwrap();
+    let owner_body = fixture_owner_statement(&identity).unwrap();
+    let owner_proof = paid_fixture_owner_proof(store, host, &identity, &owner_body).await;
+    bootstrap_fixture_owner(store, &identity, &owner_proof, host.now_ms(), "race-owner")
+        .await
+        .unwrap();
+    let inputs = ConfiguredPaidInputs::new(
+        Some(Secret::new("fixture-surplus-key".into())),
+        None,
+        json!({}),
+    )
+    .unwrap();
+    let prepared = PreparedConfigurationPublication::capture(
+        store,
+        &identity,
+        &inputs,
+        "race-generation",
+        host.now_ms(),
+    )
+    .await
+    .unwrap();
+    let config_proof = paid_fixture_owner_proof(store, host, &identity, prepared.statement()).await;
+    let config = prepared
+        .publish(store, &config_proof, host.now_ms(), "race-config")
+        .await
+        .unwrap();
+    let observation = PaidProviderObservation {
+        v: 1,
+        provider: PaidProvider::Surplus,
+        owner_id: config.owner_id,
+        owner_epoch: config.owner_epoch,
+        configuration_generation: config.generation,
+        configuration_fingerprint: config.configuration_fingerprint,
+        credential_binding: inputs.binding(PaidProvider::Surplus).unwrap(),
+        observed_at_ms: host.now_ms(),
+        source_valid_until_ms: None,
+        stale: false,
+        models: vec![
+            json!({"id":"paid-model","supported_endpoint_types":["openai-response"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002}),
+        ],
+        source_checks: Vec::new(),
+    };
+    store.rows.borrow_mut().insert(
+        keys::paid_control_observation(PaidProvider::Surplus).0,
+        StoredRecord::json(
+            "race-observation",
+            serde_json::to_value(observation).unwrap(),
+            None,
+        ),
+    );
+    let mut source_checks = Vec::new();
+    for key in paid_projection_source_keys() {
+        source_checks.push(PaidSourceCheck {
+            expected_revision: store.read(&key).await.unwrap().map(|row| row.revision),
+            key: key.0,
+        });
+    }
+    let projection = PaidRoutingProjection {
+        policy: PaidRoutingPolicy {
+            v: 2,
+            codex_enabled: true,
+            codex_models: vec!["codex-only".into()],
+            models: BTreeMap::from([("paid-model".into(), vec![PaidProvider::Surplus])]),
+        },
+        provenance: PaidProjectionProvenance {
+            v: 1,
+            owner_revision: "race-owner".into(),
+            config_revision: "race-config".into(),
+            surplus_observation_revision: Some("race-observation".into()),
+            openlux_observation_revision: None,
+            observed_at_ms: host.now_ms(),
+            source_valid_until_ms: None,
+            source_checks,
+        },
+    };
+    store.rows.borrow_mut().insert(
+        keys::paid_routing().0,
+        StoredRecord::json(
+            "race-routing",
+            serde_json::to_value(projection).unwrap(),
+            None,
+        ),
+    );
+}
 impl AuthorityStore for PaidRaceStore<'_> {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         self.store.read(key).await
@@ -874,7 +1016,10 @@ impl AuthorityStore for PaidRaceStore<'_> {
 #[test]
 fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission() {
     run(async {
-        use gateway_authority::paid::{PaidAuthorization, PaidRequest, PaidRoutingPolicy};
+        use gateway_authority::{
+            paid::{PaidAuthorization, PaidRequest},
+            paid_control::PaidRequestContext,
+        };
         use gateway_core::{
             identity::{ApiKeyId, PaidAttemptId, RequestId},
             provider::PaidProvider,
@@ -898,23 +1043,14 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         .await
         .unwrap();
         let id = key.body["id"].as_str().unwrap().to_owned();
-        let routing = PaidRoutingPolicy {
-            v: 1,
-            codex_enabled: true,
-            codex_models: vec!["codex-only".into()],
-            models: BTreeMap::from([("paid-model".into(), vec![PaidProvider::Surplus])]),
-        };
-        store.rows.borrow_mut().insert(
-            gateway_authority::keys::paid_routing().0,
-            StoredRecord::json("routing", serde_json::to_value(routing).unwrap(), None),
-        );
+        prepare_paid_fixture_custody(&store, &host).await;
         let raced = PaidRaceStore {
             store: &store,
             host: &host,
             key_id: id.clone(),
             armed: Cell::new(true),
         };
-        let authority = gateway_authority::Authority::new(raced, &host);
+        let authority = gateway_authority::Authority::with_clock(raced, &host, PaidFixtureClock);
         let request = PaidRequest {
             key_id: ApiKeyId(id.clone()),
             request_id: RequestId("racing-request".into()),
@@ -927,9 +1063,34 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
             reasoning: None,
             created_at_ms: 1_000_000,
         };
+        let receipt = authority
+            .authorize_paid_route(
+                &request,
+                &PaidRequestContext {
+                    original_model: request.model.clone(),
+                    body: json!({"model":request.model,"stream":false}),
+                    surface: gateway_providers::ClientSurface::Responses,
+                    synthetic_hop: None,
+                },
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        assert!(
+            store
+                .read(&gateway_auth::api_keys::id_key(&id))
+                .await
+                .unwrap()
+                .is_some()
+        );
         assert!(
             authority
-                .reserve_paid(&request, &PaidAuthorization::DirectPaidModel, 1_000_000)
+                .reserve_paid(
+                    &request,
+                    &PaidAuthorization::DirectPaidModel,
+                    &receipt,
+                    1_000_000
+                )
                 .await
                 .is_err()
         );
