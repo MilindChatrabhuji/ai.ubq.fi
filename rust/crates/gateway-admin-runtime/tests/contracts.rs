@@ -1,0 +1,130 @@
+use gateway_admin::{AdminHost,AdminInput,AdminOperation};
+use gateway_admin_runtime::{AdminRuntime,RuntimeConfig,capabilities::*};
+use gateway_auth::{*,upstream::*,webauthn::*};
+use gateway_core::{GatewayError,query::*,state::*};
+use gateway_schema::{catalog_store::*,runtime_config::build_runtime_config,snapshot::ModelSnapshot};
+use serde_json::{Value,json};
+use std::{cell::{Cell,RefCell},collections::BTreeMap,future::Future,task::{Context as TaskContext,Poll,Waker}};
+
+fn run<F:Future>(future:F)->F::Output{let mut cx=TaskContext::from_waker(Waker::noop());let mut future=std::pin::pin!(future);loop{if let Poll::Ready(value)=future.as_mut().poll(&mut cx){return value}std::thread::yield_now();}}
+#[derive(Default)]struct Store{rows:RefCell<BTreeMap<String,StoredRecord>>,reads:Cell<usize>,conflicts:Cell<u32>}
+impl Store{
+    fn put(&self,parts:Value,value:Value){let key=gateway_auth::store::key(parts);self.rows.borrow_mut().insert(key.0,StoredRecord::json("fixture",value,None));}
+    fn get(&self,parts:Value)->Option<Value>{self.rows.borrow().get(&gateway_auth::store::key(parts).0).map(|r|r.value.clone())}
+}
+impl AuthorityStore for Store{
+    async fn read(&self,key:&RecordKey)->Result<Option<StoredRecord>,GatewayError>{self.reads.set(self.reads.get()+1);Ok(self.rows.borrow().get(&key.0).cloned())}
+    async fn commit(&self,tx:AtomicTransition)->Result<CommitOutcome,GatewayError>{
+        if self.conflicts.get()>0{self.conflicts.set(self.conflicts.get()-1);return Ok(CommitOutcome::Conflict)}
+        let mut rows=self.rows.borrow_mut();
+        for check in tx.checks{if rows.get(&check.key.0).map(|r|&r.revision)!=check.expected_revision.as_ref(){return Ok(CommitOutcome::Conflict)}}
+        for write in tx.mutations{match write{RecordMutation::Put{key,record}=>{rows.insert(key.0,record);},RecordMutation::Delete{key}=>{rows.remove(&key.0);}}}
+        Ok(CommitOutcome::Committed)
+    }
+}
+impl QueryStore for Store{
+    async fn query(&self,request:QueryRequest)->Result<QueryPage,GatewayError>{
+        let validated=request.validate()?;let mut entries=Vec::new();
+        for (key,record) in self.rows.borrow().iter(){let key=RecordKey(key.clone());if validated.accepts_record(&key,record)?{entries.push(QueryEntry{key,record:record.clone()})}}
+        entries.sort_by_key(|e|gateway_core::tuple_key::TupleKey::from_record_key(&e.key).unwrap());if request.reverse{entries.reverse()}
+        let more=entries.len()>request.limit as usize;entries.truncate(request.limit as usize);
+        let next_cursor=if more{Some(validated.cursor_after(&entries.last().unwrap().key)?)}else{None};Ok(QueryPage{entries,next_cursor})
+    }
+}
+struct Host{now:Cell<i64>,serial:Cell<u64>}
+impl Default for Host{fn default()->Self{Self{now:Cell::new(1_000_000),serial:Cell::new(0)}}}
+impl WebAuthnCrypto for Host{
+    async fn validate_key(&self,_:&CosePublicKey)->Result<(),GatewayError>{Err(GatewayError::unavailable("No cryptographic fixture","fixture_missing"))}
+    async fn verify_signature(&self,_:SignatureInput)->Result<bool,GatewayError>{Err(GatewayError::unavailable("No cryptographic fixture","fixture_missing"))}
+}
+impl AuthHost for Host{
+    fn now_ms(&self)->i64{self.now.get()}
+    fn random_bytes(&self,len:usize)->Result<Vec<u8>,GatewayError>{let n=self.serial.get()+1;self.serial.set(n);Ok((0..len).map(|i|(n+i as u64) as u8).collect())}
+    async fn fetch_auth(&self,_:AuthUpstreamRequest)->Result<AuthUpstreamResponse,GatewayError>{Err(GatewayError::unavailable("Network denied","fixture_network_denied"))}
+    async fn kernel_principal(&self,_:&str,_:&str,_:&str,_:&str)->Result<String,GatewayError>{Err(GatewayError::unavailable("No kernel fixture","fixture_missing"))}
+}
+struct Capabilities;
+impl RuntimeCapabilities for Capabilities{
+    async fn metered_diagnostics(&self)->Result<Value,GatewayError>{Ok(json!({"state":"unavailable"}))}
+    async fn provider_picker(&self,_:Context)->Result<Value,GatewayError>{Ok(json!({"providers":[{"id":"codex"}],"tiers":[]}))}
+    async fn error_diagnostics(&self,_:Context)->Result<ErrorDiagnostics,GatewayError>{Ok(ErrorDiagnostics{retention:json!({"state":"unavailable"}),log_files:json!({"scope":"host_text_logs","total_bytes":null})})}
+    async fn pricing(&self,_:&[String])->Result<PricingSnapshot,GatewayError>{Ok(PricingSnapshot{eligible_model_ids:vec!["gpt-source".into()],quota_per_credit:1000,model_quota_coefficients:BTreeMap::from([("gpt-source".into(),1.5)]),checked_at_ms:900000})}
+}
+fn input(body:Value)->AdminInput{AdminInput{parameter:None,query:BTreeMap::new(),body,actor:AuthPrincipal{token:None,method:AuthMethod::AdminAllowlist,is_admin:true,is_super_admin:false},request_id:"admin-fixture".into(),now_ms:1_000_000}}
+fn snapshot(context:bool)->ModelSnapshot{ModelSnapshot{models:vec![if context{json!({"slug":"gpt-source","context_window":10000,"default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})}else{json!({"slug":"gpt-source","default_reasoning_level":null,"supported_reasoning_levels":[null,"future-tier"]})}],source:"chatgpt_codex".into(),updated_at_ms:900000,client_version:None}}
+fn seed_catalog(store:&Store,context:bool){let snapshot=snapshot(context);store.rows.borrow_mut().insert(codex_snapshot_key().0,StoredRecord::json("catalog",serde_json::to_value(&snapshot).unwrap(),None));store.rows.borrow_mut().insert(runtime_config_key().0,StoredRecord::json("runtime",build_runtime_config(&snapshot,Some("gpt-source"),Some("medium"),900000).unwrap(),None));}
+fn runtime<'a>(store:&'a Store,host:&'a Host,config:&'a RuntimeConfig)->AdminRuntime<'a,Store,Host,Capabilities>{AdminRuntime{store,host,capabilities:&Capabilities,config}}
+
+#[test]fn authorization_precedes_state_reads_and_has_no_super_admin_tier(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);
+    let mut denied=input(json!({"scenario":"codex_429"}));denied.actor.is_admin=false;
+    assert_eq!(run(service.execute(AdminOperation::DebugSet,denied)).unwrap_err().status,401);assert_eq!(store.reads.get(),0);
+    assert_eq!(run(service.execute(AdminOperation::DebugSet,input(json!({"scenario":"codex_429"})))).unwrap().status,200);
+}
+#[test]fn debug_expiry_and_unknown_scenarios_follow_source(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);
+    let before=run(service.execute(AdminOperation::DebugSet,input(json!({"scenario":"codex_503","duration_ms":10})))).unwrap();assert_eq!(before.body["routing"]["expires_at_ms"],1000010);
+    host.now.set(1000020);let mut request=input(Value::Null);request.now_ms=1000020;
+    assert_eq!(run(service.execute(AdminOperation::DebugGet,request)).unwrap().body["routing"]["scenario"],"normal");
+    assert_eq!(run(service.execute(AdminOperation::DebugSet,input(json!({"scenario":"invented"})))).unwrap_err().status,400);
+}
+#[test]fn provider_selection_is_ordered_and_codex_absorbs_subscriptions(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);let id=format!("codex:{}","a".repeat(64));
+    let response=run(service.execute(AdminOperation::ProviderSelectionSet,input(json!({"provider_ids":["openlux",id,"codex","codex","surplus"]})))).unwrap();assert_eq!(response.body["provider_ids"],json!(["codex","surplus","openlux"]));
+    assert_eq!(run(service.execute(AdminOperation::ProviderSelectionSet,input(json!({"provider_ids":["new-provider"]})))).unwrap_err().status,400);
+    assert_eq!(store.get(json!(["uos_ai","provider_selection","v1"])).unwrap()["provider_ids"],json!(["codex","surplus","openlux"]));
+}
+#[test]fn claude_empty_access_is_authoritative_and_corruption_never_seeds(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig{claude_allowed_key_ids:vec!["owner-key".into()]};let service=runtime(&store,&host,&config);
+    run(service.execute(AdminOperation::ClaudeAccessSet,input(json!({"allowed_key_ids":[]})))).unwrap();assert_eq!(run(service.execute(AdminOperation::ClaudeAccessGet,input(Value::Null))).unwrap().body["data"]["allowed_key_ids"],json!([]));
+    store.put(json!(["uos_ai","claude_code_access","v1"]),json!({"v":2}));assert_eq!(run(service.execute(AdminOperation::ClaudeAccessGet,input(Value::Null))).unwrap_err().status,503);
+}
+#[test]fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();seed_catalog(&store,true);let service=runtime(&store,&host,&config);
+    let response=run(service.execute(AdminOperation::DefaultsSet,input(json!({"model":"gpt-source","reasoning_effort":"future-tier","kernel_policy_limit_requests":25})))).unwrap();assert_eq!(response.body["defaults"]["reasoning_effort"],"future-tier");
+    assert_eq!(store.get(json!(["uos_ai","authority","v1","kernel_defaults"])).unwrap()["usage_limit_requests"],25);
+    let prior=store.rows.borrow().clone();assert_eq!(run(service.execute(AdminOperation::DefaultsSet,input(json!({"model":"gpt-source","kernel_policy_window_ms":0})))).unwrap_err().status,400);assert_eq!(*store.rows.borrow(),prior);
+    assert_eq!(run(service.execute(AdminOperation::DefaultsSet,input(json!({"model":"gpt-source"})))).unwrap().body["defaults"]["reasoning_effort"],"none");
+}
+fn kernel_window(store:&Store,expiry:i64,intent:Value){
+    store.put(json!(["uos_ai","kernel_quota","v2","org_window","owner"]),json!({"v":2,"owner":"owner","repo":null,"usage_requests":0,"reserved_requests":1,"created_at_ms":800000,"usage_reset_at_ms":2000000,"applied_window_ms":604800000,"updated_at_ms":900000,"reservations":{"request":expiry}}));
+    store.put(json!(["uos_ai","kernel_quota","v2","org_reservation","owner",800000,"request"]),json!({"v":2,"owner":"owner","repo":null,"request_id":"request","route":"/v1/responses","window_created_at_ms":800000,"window_reset_at_ms":2000000,"reserved_at_ms":850000,"lease_expires_at_ms":expiry,"terminal_intent":intent,"state":null,"terminal_at_ms":null,"release_reason":null}));
+}
+#[test]fn default_window_cutover_blocks_active_reservations_and_releases_its_claim(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();kernel_window(&store,1500000,Value::Null);let service=runtime(&store,&host,&config);
+    assert_eq!(run(service.execute(AdminOperation::DefaultsSet,input(json!({"kernel_policy_window_ms":200000})))).unwrap_err().status,409);
+    assert!(store.get(json!(["uos_ai","kernel_quota","v2","default_window_cutover"])).is_none());assert!(store.get(json!(["default","kernel_policy_window_ms"])).is_none());
+}
+#[test]fn expired_kernel_terminal_intent_is_committed_before_default_cutover(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();kernel_window(&store,900000,json!("committed"));let service=runtime(&store,&host,&config);
+    run(service.execute(AdminOperation::DefaultsSet,input(json!({"kernel_policy_window_ms":200000})))).unwrap();let window=store.get(json!(["uos_ai","kernel_quota","v2","org_window","owner"])).unwrap();assert_eq!(window["usage_requests"],1);assert_eq!(window["reserved_requests"],0);
+}
+#[test]fn paid_policy_uses_full_context_exposure_and_never_compact_fallback(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);seed_catalog(&store,true);
+    let fields=run(service.paid_key_policy(&json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":2.25}))).unwrap();assert_eq!(fields.limit_microcredits,2250000);assert_eq!(fields.max_exposure_microcredits["gpt-source"],15000000);
+    seed_catalog(&store,false);assert_eq!(run(service.paid_key_policy(&json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":-1}))).unwrap_err().status,503);
+}
+#[test]fn deletion_refuses_pending_markers_and_returns_actual_guard_fences(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);store.put(json!(["ubq_ai","api_keys","id","key"]),json!({"revoked_at_ms":900000}));
+    store.put(json!(["uos_ai","paid_fallback","v3","pending","key","attempt"]),json!({"created_at_ms":900000}));
+    assert_eq!(run(service.prepare_key_deletion("key")).unwrap_err().status,409);assert!(store.get(json!(["uos_ai","paid_fallback","v3","deletion_guard","key"])).is_none());
+    store.rows.borrow_mut().remove(&gateway_auth::store::key(json!(["uos_ai","paid_fallback","v3","pending","key","attempt"])).0);
+    let fences=run(service.prepare_key_deletion("key")).unwrap();let guard=gateway_authority::keys::paid_deletion("key");assert!(fences.iter().any(|f|f.key==guard && f.expected_revision.is_some()));
+    let again=run(service.prepare_key_deletion("key")).unwrap();assert_eq!(again[0],fences[0]);
+}
+#[test]fn migration_and_replay_preserve_raw_source_modes(){
+    let mut request=input(json!("{\"v\":1}\n"));request.query.insert("profile".into(),vec!["local".into()]);let plan=gateway_admin_runtime::parse::migration(&request).unwrap();assert!(plan.dry_run && plan.include_legacy);
+    request.query.insert("write".into(),vec!["true".into()]);request.query.insert("dry_run".into(),vec!["true".into()]);assert_eq!(gateway_admin_runtime::parse::migration(&request).unwrap_err().status,400);
+    let mut request=input(Value::Null);request.query.insert("request_id".into(),vec!["request-1".into()]);request.query.insert("before_ms".into(),vec!["garbage".into()]);assert_eq!(gateway_admin_runtime::parse::capture(&request,false).unwrap(),CaptureRequest::Request{request_id:"request-1".into()});
+    request.query.insert("incident_id".into(),vec!["provider-12345678-1234-4123-8123-123456789abc".into()]);assert_eq!(gateway_admin_runtime::parse::capture(&request,false).unwrap_err().status,400);
+}
+#[test]fn missing_native_and_provider_bindings_cannot_return_success(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=AdminRuntime{store:&store,host:&host,capabilities:&UnboundCapabilities,config:&config};
+    for op in [AdminOperation::Providers,AdminOperation::ClaudeAuthGet,AdminOperation::ModelsRefresh,AdminOperation::SupervisorSessions]{assert_eq!(run(service.execute(op,input(Value::Null))).unwrap_err().status,503)}
+    let mut request=input(Value::Null);request.query.insert("source".into(),vec!["source".into()]);request.query.insert("id".into(),vec!["thread".into()]);assert_eq!(run(service.execute(AdminOperation::SupervisorOutput,request)).unwrap_err().envelope.error.code.as_deref(),Some("native_supervisor_stream_unavailable"));
+}
+#[test]fn errors_limit_does_not_truncate_five_xx_buckets(){
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);
+    for i in 0..205{store.put(json!(["uos_ai","admin_error_log","v1",900000+i,format!("req-{i}")]),json!({"version":1,"request_id":format!("req-{i}"),"route":"/v1/responses","status":502,"provider":"codex","model":null,"reasoning":null,"stream":true,"terminal_type":"error","failure_kind":"upstream","delivery_outcome":"unobserved","created_at_ms":900000+i,"latency_ms":100,"git_sha":null,"deno_revision":null}));}
+    let mut request=input(Value::Null);request.query.insert("limit".into(),vec!["1".into()]);let response=run(service.execute(AdminOperation::Errors,request)).unwrap();assert_eq!(response.body["data"].as_array().unwrap().len(),1);assert_eq!(response.body["five_xx_buckets"][0]["count"],205);
+}
