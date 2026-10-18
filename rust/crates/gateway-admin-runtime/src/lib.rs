@@ -528,7 +528,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             && ["sampledAtMs", "generatedAtMs"].into_iter().all(|name| {
                 body.get(name)
                     .and_then(Value::as_i64)
-                    .is_some_and(|n| n >= 0 && n <= gateway_core::identity::MAX_SAFE_INTEGER)
+                    .is_some_and(|n| (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&n))
             })
             && transcript.and_then(Value::as_object).is_some_and(|v| {
                 v.keys()
