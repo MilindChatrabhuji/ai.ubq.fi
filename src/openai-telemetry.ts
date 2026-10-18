@@ -569,7 +569,7 @@ const boundedResponseEventKind = (type: string): string => (CHAT_RESPONSE_EVENT_
 
 // An incomplete terminal is a recorded failure only when its reason names a
 // gateway, provider or transport fault; unrecognized reasons are ignored.
-const incompleteFailureKind = (event: ResponsesStreamEvent): string | null => {
+export const responseIncompleteFailureKind = (event: ResponsesStreamEvent): string | null => {
   const response = isRecord(event.value.response) ? event.value.response : null;
   if (!response) return null;
   const details = isRecord(response.incomplete_details) ? response.incomplete_details : null;
@@ -589,7 +589,7 @@ export const recordResponsesEventTelemetry = (context: UsageContext | undefined,
   if (!telemetry.upstreamEventKinds.includes(eventKind)) telemetry.upstreamEventKinds.push(eventKind);
   if (event.type === "response.created") telemetry.responseCreatedObserved = true;
   if (event.type === "response.incomplete") {
-    const failureKind = incompleteFailureKind(event);
+    const failureKind = responseIncompleteFailureKind(event);
     if (failureKind !== null) telemetry.failureKind = failureKind;
   }
   if (isSyntheticResponsesFailureEvent(event)) {

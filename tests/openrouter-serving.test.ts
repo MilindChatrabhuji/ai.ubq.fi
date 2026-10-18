@@ -609,6 +609,81 @@ test("openrouter responses relays native events and records the terminal", async
   });
 });
 
+test("openrouter responses records a failed terminal as upstream provider health error", async () => {
+  await withServedCatalogue(async () => {
+    // Drain optional health writes from the preceding fixture before replacing it.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const kv = new CountingKv();
+    setKvForTest(kv as unknown as Kv);
+    resetProviderHealthThrottleForTest();
+    try {
+      const failedEvent = {
+        type: "response.failed",
+        response: { id: "resp_1", status: "failed" },
+      };
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi", stream: true },
+        "vendor/beta",
+        streamUsageContext(createResponseTelemetryState()),
+        {
+          fetchResponses: () => Promise.resolve(sseResponse([`event: response.failed\ndata: ${JSON.stringify(failedEvent)}\n\n`])),
+        }
+      );
+      assert.equal(response.status, 200);
+      await response.text();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const health = await getOpenRouterProviderHealth();
+      assert.equal(health.last_event, "upstream_error");
+      assert.equal(health.last_status, 200);
+      assert.equal(health.state, "degraded");
+    } finally {
+      // Health is recorded without delaying the response; do not replace the
+      // fixture while the terminal observation is still draining.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      setKvForTest(null);
+      resetProviderHealthThrottleForTest();
+    }
+  });
+});
+
+test("openrouter responses records a provider-fault incomplete terminal as upstream provider health error", async () => {
+  await withServedCatalogue(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const kv = new CountingKv();
+    setKvForTest(kv as unknown as Kv);
+    resetProviderHealthThrottleForTest();
+    try {
+      const incompleteEvent = {
+        type: "response.incomplete",
+        response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: "provider_overloaded" } },
+      };
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi", stream: true },
+        "vendor/beta",
+        streamUsageContext(createResponseTelemetryState()),
+        {
+          fetchResponses: () => Promise.resolve(sseResponse([`event: response.incomplete\ndata: ${JSON.stringify(incompleteEvent)}\n\n`])),
+        }
+      );
+      assert.equal(response.status, 200);
+      await response.text();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      const health = await getOpenRouterProviderHealth();
+      assert.equal(health.last_event, "upstream_error");
+      assert.equal(health.last_status, 200);
+      assert.equal(health.state, "degraded");
+    } finally {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      setKvForTest(null);
+      resetProviderHealthThrottleForTest();
+    }
+  });
+});
+
 test("openrouter responses records a shared inactivity timeout as a deadline", async () => {
   const telemetry = createResponseTelemetryState();
   const failure = new ResponsesStreamError("inactive", { kind: "inactivity_timeout" });
