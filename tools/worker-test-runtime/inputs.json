@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "platform": "linux",
+  "arch": "arm64",
+  "node": {
+    "version": "24.21.0",
+    "directory": "node-v24.21.0-linux-arm64",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz",
+    "sha256": "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2"
+  },
+  "packages": [
+    {
+      "name": "miniflare",
+      "version": "5.20261012.1-beta",
+      "integrity": "sha512-8Canhy6g9+vAhqMc0o80YphqYIwpiA3aAp8aX+uDXU7J/qbUeoZzcII9c2V1P4uT/eHD4SB93qet1o1bRY3BuQ==",
+      "entry": "dist/src/index.js"
+    },
+    {
+      "name": "workerd",
+      "version": "1.20261012.1",
+      "integrity": "sha512-tEHoMPsMga0seVjxfsR8Pd3f8IRqYwkq++dTUKI5Gdgj6zuSDluYwisydq+dn90SsIACwBquJUQ1nBpcOqaWTA==",
+      "entry": "lib/main.js"
+    },
+    {
+      "name": "@cloudflare/workerd-linux-arm64",
+      "version": "1.20261012.1",
+      "integrity": "sha512-I0VMdcXk7ygG5vYDce0ePTBFdnBXC0i9WiBY5mWiv0iTinbfea6/rHqSQ7B1UMpjgrYVs9E0m4bZ9ufsk5GCFA==",
+      "entry": "bin/workerd",
+      "url": "https://registry.npmjs.org/@cloudflare/workerd-linux-arm64/-/workerd-linux-arm64-1.20261012.1.tgz"
+    },
+    {
+      "name": "esbuild",
+      "version": "0.28.2",
+      "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==",
+      "entry": "lib/main.js"
+    },
+    {
+      "name": "@esbuild/linux-arm64",
+      "version": "0.28.2",
+      "integrity": "sha512-pW4AC0P3it8c7do9MVM4p51FzHzdM/TZrerurgRcHJ2WTa1VQ1CIq18xncfpBJw4ojkiZZrKW2yIBWBP92j6Ug==",
+      "entry": "bin/esbuild",
+      "url": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.28.2.tgz"
+    }
+  ]
+}
