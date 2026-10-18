@@ -38,7 +38,7 @@ pub fn normalize_request_record(
     request_id: &str,
     created_at_ms: i64,
 ) -> Option<Value> {
-    if !input.is_object() {
+    if !store::is_record(input) {
         return None;
     }
     let get = |name| input.get(name);

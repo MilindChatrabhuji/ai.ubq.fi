@@ -67,7 +67,7 @@ pub fn health_key(target: &HealthTarget, record: &str) -> RecordKey {
     ]))
 }
 pub fn parse_observation(value: &Value) -> Option<HealthObservation> {
-    if !value.is_object()
+    if !store::is_record(value)
         || !value
             .get("status")
             .is_some_and(|v| v.is_null() || v.as_f64().is_some_and(f64::is_finite))
@@ -160,20 +160,20 @@ pub fn paid_health(
     let payload = if complete && body.len() <= 64 * 1024 {
         serde_json::from_slice::<Value>(body)
             .ok()
-            .filter(Value::is_object)
+            .filter(store::is_record)
     } else {
         None
     };
     let exhausted = payload.as_ref().is_some_and(|v| {
         if is_surplus {
-            let error = v.get("error").filter(|v| v.is_object()).unwrap_or(v);
+            let error = v.get("error").filter(|v| store::is_record(v)).unwrap_or(v);
             ["code", "type"].iter().any(|field| {
                 error[*field]
                     .as_str()
                     .is_some_and(|s| store::trim(s).eq_ignore_ascii_case("insufficient_credit"))
             })
         } else {
-            let error = v.get("error").filter(|v| v.is_object());
+            let error = v.get("error").filter(|v| store::is_record(v));
             error.is_some_and(|e| {
                 e["code"].as_str().is_some_and(|s| {
                     store::trim(s).eq_ignore_ascii_case("local:insufficient_quota")

@@ -10,6 +10,8 @@ use gateway_core::{
     tuple_key::{DecodedKeyPart, TupleKey},
 };
 use serde_json::Value;
+/// Source utils.isRecord deliberately includes arrays in the JSON domain.
+pub(crate) fn is_record(value:&Value)->bool{value.is_object()||value.is_array()}
 
 pub(crate) const DAY: i64 = 86_400_000;
 pub(crate) fn error(message: impl Into<String>) -> GatewayError {
