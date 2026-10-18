@@ -207,9 +207,12 @@ const { listPaidFallbackUsageRollups, mergePaidFallbackUsageRollup, paidFallback
 const {
   METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
   METERED_QUOTA_BALANCE_HISTORY_PREFIX,
+  METERED_QUOTA_STATE_KEY,
+  meterQuotaAccountFingerprint,
   normalizeMeteredQuotaBalanceWindowDays,
   readMeteredQuotaBalanceHistory,
   resampleMeteredQuotaBalanceHistory,
+  updateMeteredQuotaState,
 } = await import("../src/metered-quota.ts");
 const { groupPaidFallbackUsageRollups, meteredQuotaRunwayView, projectPaidFallbackRunway, summarizePaidFallbackUsage } =
   await import("../src/quota-projection.ts");
@@ -230,6 +233,8 @@ type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
 type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
 type PaidFallbackWindowV3 = import("../src/types.ts").PaidFallbackWindowV3;
 type MeteredQuotaSnapshot = import("../src/metered-quota.ts").MeteredQuotaSnapshot;
+type MeteredQuotaState = import("../src/metered-quota.ts").MeteredQuotaState;
+type MeteredQuotaBalanceSample = import("../src/metered-quota.ts").MeteredQuotaBalanceSample;
 type PaidFallbackLedgerDailyStats = import("../src/paid-fallback/ledger-stats.ts").PaidFallbackLedgerDailyStats;
 
 const keyId = "quota-projection-key";
@@ -898,6 +903,191 @@ test("token-usage and unlimited quota modes do not fabricate estimates", () => {
 function dayMs(): number {
   return 24 * 60 * 60 * 1_000;
 }
+
+const refillBalanceSample = (state: MeteredQuotaState): MeteredQuotaBalanceSample => ({
+  v: 1,
+  bucket_start_at_ms: Math.floor(state.observed_at_ms / HOUR_MS) * HOUR_MS,
+  observed_at_ms: state.observed_at_ms,
+  balance_quota: state.current_balance_quota,
+  baseline_quota: state.post_refill_baseline_quota,
+  quota_per_credit: state.quota_per_credit,
+  remaining_percent: null,
+});
+
+const refillSnapshot = (state: MeteredQuotaState): MeteredQuotaSnapshot => ({
+  state,
+  cache_state: "fresh",
+  balance_credits: state.total_available === undefined ? state.current_balance_quota / state.quota_per_credit : null,
+  baseline_credits: state.total_available === undefined ? state.post_refill_baseline_quota / state.quota_per_credit : null,
+  last_inferred_credit_credits: state.last_inferred_credit_quota / state.quota_per_credit,
+  remaining_percent: null,
+  used_percent: null,
+  unlimited_quota: state.unlimited_quota ?? false,
+  total_available: state.total_available ?? null,
+  total_granted: state.total_granted ?? null,
+  total_used: state.total_used ?? null,
+});
+
+const inferredRefillFixture = (retainedRefill = false) => {
+  const start = 1_800_000_000_000;
+  let previous: MeteredQuotaState | null = null;
+  const states = [
+    [0, 200, 0],
+    [8, 230, 10],
+    [16, 260, 20],
+  ].map(([hours, balance, used]) => {
+    previous = updateMeteredQuotaState(previous, {
+      balance_quota: balance,
+      used_quota: used,
+      quota_per_credit: 1,
+      observed_at_ms: start + hours * HOUR_MS,
+      latest_refill: hours === 0 && retainedRefill ? { id: "old-refill", amount_credits: 100, completed_at_ms: start } : null,
+    });
+    return previous;
+  });
+  return { state: states[2], history: states.map(refillBalanceSample), now: start + 16 * HOUR_MS };
+};
+
+const refillRollup = (now: number, quotaPerHour = 10): PaidFallbackUsageRollup => ({
+  v: 1,
+  bucket_start_at_ms: now - HOUR_MS,
+  model: "gpt-5.6-sol",
+  provider: "metered",
+  request_count: 168,
+  quota_sum: 168 * quotaPerHour,
+  input_tokens: 100,
+  cached_input_tokens: 0,
+  output_tokens: 10,
+  spend_microcredits: 0,
+  first_request_at_ms: now - HOUR_MS,
+  last_request_at_ms: now - 1,
+  updated_at_ms: now - 1,
+});
+
+const refillUsage = (now: number, quotaPerHour = 10) => summarizePaidFallbackUsage(groupPaidFallbackUsageRollups([refillRollup(now, quotaPerHour)]), now)[0];
+
+test("refill projection distinguishes sustainable, early depletion and scheduled exhaustion", () => {
+  const { state, history, now } = inferredRefillFixture();
+  const cases = [
+    { burn: 5, status: "sustainable", remaining: null },
+    { burn: 40, status: "exhausts_without_refill", remaining: 6.5 * HOUR_MS },
+    { burn: 10, status: "exhausts_with_refill", remaining: 46 * HOUR_MS },
+  ];
+  for (const scenario of cases) {
+    const estimate = projectPaidFallbackRunway(refillUsage(now, scenario.burn), meteredQuotaRunwayView(refillSnapshot(state)), now, history)[0];
+    assert.equal(estimate.refill_aware_status, scenario.status);
+    assert.equal(estimate.refill_aware_time_remaining_ms, scenario.remaining);
+    assert.equal(estimate.time_remaining_ms, (260 / scenario.burn) * HOUR_MS);
+  }
+});
+
+test("refill projection uses inferred credits rather than net balance growth", () => {
+  const { state, history, now } = inferredRefillFixture();
+  assert.equal(state.last_inferred_credit_quota, 40);
+  const estimate = projectPaidFallbackRunway(refillUsage(now), meteredQuotaRunwayView(refillSnapshot(state)), now, history)[0];
+  assert.equal(estimate.refill_amount_credits, 40);
+  assert.equal(estimate.refill_cadence_ms, 8 * HOUR_MS);
+  assert.equal(estimate.refill_rate_quota_per_hour, 5);
+  assert.equal(estimate.refill_aware_status, "exhausts_with_refill");
+  assert.equal(estimate.refill_aware_time_remaining_ms, 46 * HOUR_MS);
+  assert.equal(estimate.refill_aware_exhausted_at_ms, now + 46 * HOUR_MS);
+  assert.equal(estimate.time_remaining_ms, 26 * HOUR_MS);
+});
+
+test("refill projection prefers a newer inferred credit to retained refill metadata", () => {
+  const { state, history, now } = inferredRefillFixture(true);
+  assert.equal(state.latest_refill_amount_credits, 100);
+  assert.equal(state.last_inferred_credit_quota, 40);
+  const estimate = projectPaidFallbackRunway(refillUsage(now), meteredQuotaRunwayView(refillSnapshot(state)), now, history)[0];
+  assert.equal(estimate.refill_amount_credits, 40);
+  assert.equal(estimate.refill_rate_quota_per_hour, 5);
+  assert.equal(estimate.refill_aware_status, "exhausts_with_refill");
+  assert.equal(estimate.refill_aware_exhausted_at_ms, now + 46 * HOUR_MS);
+  assert.equal(estimate.time_remaining_ms, 26 * HOUR_MS);
+});
+
+test("refill projection does not apply retained wallet history to finite token inventory", () => {
+  const fixture = inferredRefillFixture();
+  const now = fixture.now + 8 * HOUR_MS;
+  const state = updateMeteredQuotaState(fixture.state, {
+    balance_quota: null,
+    used_quota: null,
+    quota_per_credit: null,
+    observed_at_ms: now,
+    latest_refill: null,
+    unlimited_quota: false,
+    total_available: 100,
+    total_granted: 100,
+    total_used: 0,
+  });
+  const estimate = projectPaidFallbackRunway(refillUsage(now), meteredQuotaRunwayView(refillSnapshot(state)), now, fixture.history)[0];
+  assert.equal(estimate.refill_aware_status, "unknown");
+  assert.equal(estimate.refill_amount_credits, null);
+  assert.equal(estimate.refill_cadence_ms, null);
+  assert.equal(estimate.refill_rate_quota_per_hour, null);
+  assert.equal(estimate.refill_aware_time_remaining_ms, null);
+  assert.equal(estimate.time_remaining_ms, 10 * HOUR_MS);
+});
+
+test("refill projection stays unknown when a later refresh no longer retains the inferred amount", () => {
+  const fixture = inferredRefillFixture(true);
+  const now = fixture.now + HOUR_MS;
+  const state = updateMeteredQuotaState(fixture.state, {
+    balance_quota: 250,
+    used_quota: 30,
+    quota_per_credit: 1,
+    observed_at_ms: now,
+    latest_refill: null,
+  });
+  assert.equal(state.last_inferred_credit_quota, 0);
+  const history = [...fixture.history, refillBalanceSample(state)];
+  const estimate = projectPaidFallbackRunway(refillUsage(now), meteredQuotaRunwayView(refillSnapshot(state)), now, history)[0];
+  assert.equal(estimate.refill_aware_status, "unknown");
+  assert.equal(estimate.refill_amount_credits, null);
+  assert.equal(estimate.refill_rate_quota_per_hour, null);
+  assert.equal(estimate.refill_aware_time_remaining_ms, null);
+  assert.equal(estimate.refill_aware_exhausted_at_ms, null);
+  assert.equal(estimate.time_remaining_ms, 25 * HOUR_MS);
+});
+
+test("admin quota projection returns the inferred-credit refill forecast", async () => {
+  await withMeteredEnv(async () => {
+    const { state, history, now } = inferredRefillFixture(true);
+    const originalNow = Date.now;
+    const originalFetch = globalThis.fetch;
+    Date.now = () => now;
+    globalThis.fetch = createFetchMock(() => Promise.reject(new Error("offline refill projection test")));
+    try {
+      seedKeyRecord();
+      await memoryKv.set(METERED_QUOTA_STATE_KEY, state);
+      const fingerprint = await meterQuotaAccountFingerprint({ apiKey: "test-metered-key" });
+      assert.ok(fingerprint);
+      for (const sample of history) {
+        await memoryKv.set([...METERED_QUOTA_BALANCE_HISTORY_PREFIX, fingerprint, sample.bucket_start_at_ms], sample);
+      }
+      const rollup = refillRollup(now);
+      await memoryKv.set(paidFallbackUsageRollupKey(rollup.bucket_start_at_ms, rollup.model, rollup.provider, 0), rollup);
+      const { handleAdminProvidersQuotaProjection } = await import("../src/admin/kernel.ts");
+      const response = await handleAdminProvidersQuotaProjection(new Request("https://ai.ubq.fi/admin/providers/quota-projection?window_days=7"));
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as {
+        quota: Record<string, unknown>;
+        models: { provider: string; estimates: import("../src/quota-projection.ts").PaidFallbackRunwayEstimate[] }[];
+      };
+      assert.equal(Object.hasOwn(payload.quota, "last_inferred_credit_quota"), false);
+      const estimate = payload.models.find((entry) => entry.provider === "metered")?.estimates[0];
+      assert.ok(estimate);
+      assert.equal(estimate.refill_amount_credits, 40);
+      assert.equal(estimate.refill_rate_quota_per_hour, 5);
+      assert.equal(estimate.refill_aware_status, "exhausts_with_refill");
+      assert.equal(estimate.refill_aware_exhausted_at_ms, now + 46 * HOUR_MS);
+      assert.equal(estimate.time_remaining_ms, 26 * HOUR_MS);
+    } finally {
+      Date.now = originalNow;
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
 
 const settledRequestRow = (requestId: string, createdAtMs: number): PaidFallbackRequestV3 => ({
   v: 3,

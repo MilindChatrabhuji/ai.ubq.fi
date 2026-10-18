@@ -500,7 +500,7 @@ const normalizeToolCalls = (rawToolCalls: unknown, choiceIndex: number): Normali
 };
 
 const choiceHasNoPayload = (content: unknown, toolCalls: readonly unknown[] | undefined, refusal: string): boolean =>
-  content === undefined && !toolCalls?.length && !refusal;
+  (content === undefined || content === null) && !toolCalls?.length && !refusal;
 
 /** Mirrors the upstream `content` field: absent content becomes explicit JSON `null` only when a tool call or refusal exists. */
 const choiceContent = (content: unknown, toolCalls: readonly unknown[] | undefined, refusal: string): unknown => {
