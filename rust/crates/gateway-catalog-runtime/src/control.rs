@@ -98,20 +98,32 @@ fn decode<T: DeserializeOwned>(record: &StoredRecord) -> Result<T, GatewayError>
     serde_json::from_value(record.json_value()?.clone())
         .map_err(|_| missing("Paid control record is malformed"))
 }
-async fn read_record<S: QueryStore>(store: &S, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+async fn read_record<S: QueryStore>(
+    store: &S,
+    key: &RecordKey,
+) -> Result<Option<StoredRecord>, GatewayError> {
     let record = state::read_json(store, key).await?;
     if let Some(record) = &record {
         text(&record.revision)?;
-        if let Some(until) = record.expires_at_ms { time(until)?; }
+        if let Some(until) = record.expires_at_ms {
+            time(until)?;
+        }
     }
     Ok(record)
 }
-async fn source_deadline<S: QueryStore>(store: &S, source: &Checks, now: i64) -> Result<Option<i64>, GatewayError> {
+async fn source_deadline<S: QueryStore>(
+    store: &S,
+    source: &Checks,
+    now: i64,
+) -> Result<Option<i64>, GatewayError> {
     let mut deadline = None;
     for fence in source.list() {
         let record = read_record(store, &fence.key).await?;
         if record.as_ref().map(|row| &row.revision) != fence.expected_revision.as_ref()
-            || record.as_ref().is_some_and(|row| expired(row, now)) { return Err(stale()); }
+            || record.as_ref().is_some_and(|row| expired(row, now))
+        {
+            return Err(stale());
+        }
         deadline = expiry([deadline, record.and_then(|row| row.expires_at_ms)].into_iter());
     }
     Ok(deadline)
@@ -126,7 +138,9 @@ fn expiry(values: impl Iterator<Item = Option<i64>>) -> Option<i64> {
 struct Checks(BTreeMap<String, Option<String>>);
 impl Checks {
     fn add(&mut self, fence: RevisionCheck) -> Result<(), GatewayError> {
-        TupleKey::from_record_key(&fence.key).and_then(|key|key.validate_stored_key()).map_err(|_|missing("Paid source custody key is not canonical"))?;
+        TupleKey::from_record_key(&fence.key)
+            .and_then(|key| key.validate_stored_key())
+            .map_err(|_| missing("Paid source custody key is not canonical"))?;
         if let Some(revision) = &fence.expected_revision {
             text(revision)?;
         }
@@ -368,7 +382,8 @@ impl CatalogRuntime {
         if now < started {
             return Err(stale());
         }
-        let source_until = expiry([source_until, source_deadline(store, &source, now).await?].into_iter());
+        let source_until =
+            expiry([source_until, source_deadline(store, &source, now).await?].into_iter());
         let mut checks = source.clone();
         for fence in base.list() {
             checks.add(fence)?;
@@ -515,7 +530,13 @@ impl CatalogRuntime {
                 row.as_ref().map(|r| r.revision.clone()),
             );
         }
-        source_valid_until = expiry([source_valid_until, source_deadline(store, &source, now).await?].into_iter());
+        source_valid_until = expiry(
+            [
+                source_valid_until,
+                source_deadline(store, &source, now).await?,
+            ]
+            .into_iter(),
+        );
         if source_valid_until.is_some_and(|until| until <= now) {
             return Err(stale());
         }
@@ -579,13 +600,29 @@ impl CatalogRuntime {
     }
 }
 fn routing_rows(models: Vec<Value>) -> Vec<Value> {
-    models.into_iter().map(|row| {
-        let mut result = serde_json::Map::new();
-        for key in ["id", "created", "supported_endpoint_types", "supports_tools", "supports_parallel_tool_calls", "input_price_per_token", "output_price_per_token", "cache_read_price_per_token", "cache_write_price_per_token", "max_output_tokens"] {
-            if let Some(value) = row.get(key) { result.insert(key.into(), value.clone()); }
-        }
-        Value::Object(result)
-    }).collect()
+    models
+        .into_iter()
+        .map(|row| {
+            let mut result = serde_json::Map::new();
+            for key in [
+                "id",
+                "created",
+                "supported_endpoint_types",
+                "supports_tools",
+                "supports_parallel_tool_calls",
+                "input_price_per_token",
+                "output_price_per_token",
+                "cache_read_price_per_token",
+                "cache_write_price_per_token",
+                "max_output_tokens",
+            ] {
+                if let Some(value) = row.get(key) {
+                    result.insert(key.into(), value.clone());
+                }
+            }
+            Value::Object(result)
+        })
+        .collect()
 }
 fn configured_binding(
     publication: &CredentialPublication,
