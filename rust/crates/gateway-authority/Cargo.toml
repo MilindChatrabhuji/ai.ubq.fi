@@ -7,6 +7,9 @@ publish.workspace = true
 
 [dependencies]
 gateway-core = { path = "../gateway-core" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-providers = { path = "../gateway-providers" }
+gateway-schema = { path = "../gateway-schema" }
 serde.workspace = true
 serde_json.workspace = true
 # Reuse the exact SHA-256 implementation already pinned in tools/native-kv/Cargo.lock.
