@@ -2,14 +2,14 @@
 
 Contract v1, source base `412166e856721c285ff22f3fe2255e5dbe83ac7a`: implement the existing terminal-inference process-resource controller as pure Rust for one shared Worker isolate. Owned paths are only `rust/crates/gateway-admission/**`; shared manifests, adapters, TypeScript, provider policy, durable authority, credentials and deployments are outside this module. No durable resource leases or second quota/accounting ledger are introduced.
 
-| Source | Preserved behavior |
-| --- | --- |
-| `src/inference-admission.ts` | Fixed 64 active, 128 globally waiting and 5,000 ms maximum wait; no per-principal active cap or per-route/key counter. |
-| `src/inference-admission.ts` waiting map and rotation | FIFO per exact principal; absent principals share one FIFO; principal turns rotate only on admission, and a refused head preserves its next waiter's turn. Empty groups disappear. |
-| `src/inference-admission.ts` grant and abort paths | Caller cancellation wins over timeout; release checks rounded elapsed time even when the host timer has not run; release is idempotent. |
-| `src/handler/admission.ts` | Exact eight resource-bearing terminal labels, including embeddings job polls; models and live are excluded. Local overload is 503 `local_inference_overload`, with null param and `Retry-After: 5`. |
-| `src/handler/terminal-route.ts` | Acquire after authentication and before quota reservations or dispatch; caller cancellation is 499 `request_cancelled`. Hold the single permit through body/delivery settlement. |
-| `rust/crates/gateway-authority` | Existing durable quota, request and paid-accounting transitions remain their separate authority; this crate stores no persistent records. |
+| Source                                                | Preserved behavior                                                                                                                                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/inference-admission.ts`                          | Fixed 64 active, 128 globally waiting and 5,000 ms maximum wait; no per-principal active cap or per-route/key counter.                                                                              |
+| `src/inference-admission.ts` waiting map and rotation | FIFO per exact principal; absent principals share one FIFO; principal turns rotate only on admission, and a refused head preserves its next waiter's turn. Empty groups disappear.                  |
+| `src/inference-admission.ts` grant and abort paths    | Caller cancellation wins over timeout; release checks rounded elapsed time even when the host timer has not run; release is idempotent.                                                             |
+| `src/handler/admission.ts`                            | Exact eight resource-bearing terminal labels, including embeddings job polls; models and live are excluded. Local overload is 503 `local_inference_overload`, with null param and `Retry-After: 5`. |
+| `src/handler/terminal-route.ts`                       | Acquire after authentication and before quota reservations or dispatch; caller cancellation is 499 `request_cancelled`. Hold the single permit through body/delivery settlement.                    |
+| `rust/crates/gateway-authority`                       | Existing durable quota, request and paid-accounting transitions remain their separate authority; this crate stores no persistent records.                                                           |
 
 `AdmissionController::new(Rc<dyn AdmissionClock>)` uses the fixed source defaults. `with_limits` is the deterministic construction seam. Clone the controller, not the permit, to share one isolate's count across every route and principal. `acquire(AdmissionRequest, &dyn AdmissionWait)` synchronously enqueues and returns an `Acquisition` future; output is `Admitted { permit, waited_ms }`, `LocalOverload { cause, waited_ms }`, `CallerAborted { waited_ms }` or `Bypassed`. Request ID and route are diagnostic permit context, never deduplication keys.
 
