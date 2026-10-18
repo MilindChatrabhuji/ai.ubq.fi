@@ -17,10 +17,20 @@ pub fn digest(token: &str) -> String {
 }
 
 pub fn index_key(session_digest: &str) -> Result<RecordKey, GatewayError> {
-    if session_digest.len() != 64 || !session_digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+    if session_digest.len() != 64
+        || !session_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         return Err(invalid());
     }
-    Ok(store::key(json!(["uos_ai", "auth", "session_revision_index", "v1", session_digest])))
+    Ok(store::key(json!([
+        "uos_ai",
+        "auth",
+        "session_revision_index",
+        "v1",
+        session_digest
+    ])))
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -54,8 +64,12 @@ pub fn record_for_session(
     session_revision: &str,
     source_expires_at_ms: Option<i64>,
 ) -> Result<StoredRecord, GatewayError> {
-    if session.token.is_empty() { return Err(invalid()); }
-    let expires_at_ms = source_expires_at_ms.map_or(session.expires_at_ms, |expiry| expiry.min(session.expires_at_ms));
+    if session.token.is_empty() {
+        return Err(invalid());
+    }
+    let expires_at_ms = source_expires_at_ms.map_or(session.expires_at_ms, |expiry| {
+        expiry.min(session.expires_at_ms)
+    });
     let fence = SessionRevisionFence {
         v: 1,
         session_digest: digest(&session.token),
@@ -65,7 +79,11 @@ pub fn record_for_session(
     };
     validate(&fence)?;
     let value = serde_json::to_value(fence).map_err(|_| invalid())?;
-    Ok(StoredRecord::json(session_revision, value, Some(expires_at_ms)))
+    Ok(StoredRecord::json(
+        session_revision,
+        value,
+        Some(expires_at_ms),
+    ))
 }
 
 /// Strong source facts at the supplied time, not an authentication capability.
@@ -76,15 +94,31 @@ pub async fn read_current<S: AuthorityStore>(
     session_digest: &str,
     now_ms: i64,
 ) -> Result<Option<SessionIndexSnapshot>, GatewayError> {
-    let Some(record) = store.read(&index_key(session_digest)?).await? else { return Ok(None); };
-    let fence: SessionRevisionFence = serde_json::from_value(record.json_value()?.clone()).map_err(|_| invalid())?;
+    let Some(record) = store.read(&index_key(session_digest)?).await? else {
+        return Ok(None);
+    };
+    let fence: SessionRevisionFence =
+        serde_json::from_value(record.json_value()?.clone()).map_err(|_| invalid())?;
     validate(&fence)?;
-    if fence.session_digest != session_digest || record.revision.trim().is_empty()
-        || record.revision != fence.session_revision || record.expires_at_ms != Some(fence.expires_at_ms) { return Err(invalid()); }
-    if fence.expires_at_ms <= now_ms { return Ok(None); }
-    Ok(Some(SessionIndexSnapshot { fence, revision: record.revision }))
+    if fence.session_digest != session_digest
+        || record.revision.trim().is_empty()
+        || record.revision != fence.session_revision
+        || record.expires_at_ms != Some(fence.expires_at_ms)
+    {
+        return Err(invalid());
+    }
+    if fence.expires_at_ms <= now_ms {
+        return Ok(None);
+    }
+    Ok(Some(SessionIndexSnapshot {
+        fence,
+        revision: record.revision,
+    }))
 }
 
 fn invalid() -> GatewayError {
-    GatewayError::unavailable("The current-session revision index is missing required metadata or is malformed.", "session_index_invalid")
+    GatewayError::unavailable(
+        "The current-session revision index is missing required metadata or is malformed.",
+        "session_index_invalid",
+    )
 }
