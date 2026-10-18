@@ -730,9 +730,14 @@ fn anonymous_surplus_is_public_data_without_an_inference_configuration() {
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
     host.queue(Outcome::json(json!({"data":[{"id":"public-model"}]})));
-    let snapshot = run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap().unwrap();
+    let snapshot = run(runtime.refresh_anonymous_surplus(&store, &host, false))
+        .unwrap()
+        .unwrap();
     assert!(!snapshot.configured);
-    assert!(matches!(host.requests.borrow()[0], CatalogFetch::AnonymousSurplus));
+    assert!(matches!(
+        host.requests.borrow()[0],
+        CatalogFetch::AnonymousSurplus
+    ));
     let publication = host.published.borrow().clone();
     let public = run(runtime.load_public_state(&store, &publication, store.now.get())).unwrap();
     assert_eq!(public.input.rows("surplus")[0]["id"], "public-model");
@@ -740,7 +745,11 @@ fn anonymous_surplus_is_public_data_without_an_inference_configuration() {
     let ordinary = run(runtime.load_state(&store, &publication, store.now.get())).unwrap();
     assert!(ordinary.input.rows("surplus").is_empty());
     assert!(!ordinary.refresh_due.contains(&CatalogProvider::Surplus));
-    assert!(run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, false)).unwrap().is_none());
+    assert!(
+        run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, false))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(host.requests.borrow().len(), 1);
 }
 #[test]
@@ -752,10 +761,18 @@ fn anonymous_surplus_uses_the_same_cache_across_credential_changes() {
     run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap();
     for credential in ["spend-one", "spend-two"] {
         host.provider(CatalogProvider::Surplus, credential);
-        let snapshot = run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, false)).unwrap().unwrap();
+        let snapshot =
+            run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, false))
+                .unwrap()
+                .unwrap();
         assert_eq!(snapshot.models[0]["id"], "cached-model");
         let publication = host.published.borrow().clone();
-        assert!(run(runtime.load_state(&store, &publication, store.now.get())).unwrap().input.configured("surplus"));
+        assert!(
+            run(runtime.load_state(&store, &publication, store.now.get()))
+                .unwrap()
+                .input
+                .configured("surplus")
+        );
     }
     assert_eq!(host.requests.borrow().len(), 1);
 }
@@ -771,7 +788,13 @@ fn explicit_anonymous_requests_do_not_coalesce_and_newer_results_win() {
     let mut first = std::pin::pin!(runtime.refresh_anonymous_surplus(&store, &host, false));
     let mut context = Context::from_waker(Waker::noop());
     assert!(first.as_mut().poll(&mut context).is_pending());
-    assert_eq!(run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap().unwrap().models[0]["id"], "new");
+    assert_eq!(
+        run(runtime.refresh_anonymous_surplus(&store, &host, false))
+            .unwrap()
+            .unwrap()
+            .models[0]["id"],
+        "new"
+    );
     assert_eq!(run(first).unwrap().unwrap().models[0]["id"], "new");
     assert_eq!(host.requests.borrow().len(), 2);
 }
@@ -783,12 +806,31 @@ fn anonymous_surplus_failure_retains_cache_and_honors_retry_and_cancellation() {
     host.queue(Outcome::json(json!({"data":[{"id":"retained"}]})));
     run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap();
     store.now.set(store.now.get() + 300_001);
-    host.queue(Outcome { response: Ok(CatalogFetchResponse::json(503, "")), ticks: 0, callback: None });
-    assert_eq!(run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap().unwrap().models[0]["id"], "retained");
+    host.queue(Outcome {
+        response: Ok(CatalogFetchResponse::json(503, "")),
+        ticks: 0,
+        callback: None,
+    });
+    assert_eq!(
+        run(runtime.refresh_anonymous_surplus(&store, &host, false))
+            .unwrap()
+            .unwrap()
+            .models[0]["id"],
+        "retained"
+    );
     run(runtime.refresh_anonymous_surplus(&store, &host, false)).unwrap();
     assert_eq!(host.requests.borrow().len(), 2);
-    host.queue(Outcome { response: Err(GatewayError::new(499, "Cancelled", Some("cancelled"))), ticks: 0, callback: None });
-    assert_eq!(run(runtime.refresh_anonymous_surplus(&store, &host, true)).unwrap_err().status, 499);
+    host.queue(Outcome {
+        response: Err(GatewayError::new(499, "Cancelled", Some("cancelled"))),
+        ticks: 0,
+        callback: None,
+    });
+    assert_eq!(
+        run(runtime.refresh_anonymous_surplus(&store, &host, true))
+            .unwrap_err()
+            .status,
+        499
+    );
 }
 #[test]
 fn public_openrouter_enrichment_does_not_require_routing_credentials() {

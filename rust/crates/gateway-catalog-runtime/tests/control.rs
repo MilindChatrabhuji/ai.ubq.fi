@@ -279,7 +279,12 @@ fn openlux_spend_identity_cannot_substitute_for_discovery_identity() {
     let store = Store::new();
     store.install(false, true);
     let host = Host::new(&store, false, true);
-    host.publication.borrow_mut().providers.get_mut(&CatalogProvider::Openlux).unwrap().identity = "openlux-credential".into();
+    host.publication
+        .borrow_mut()
+        .providers
+        .get_mut(&CatalogProvider::Openlux)
+        .unwrap()
+        .identity = "openlux-credential".into();
     assert!(run(CatalogRuntime::new().publish_paid_routing(&store, &host)).is_err());
     assert!(host.requests.borrow().is_empty());
     assert!(store.get(&keys::paid_routing()).is_none());
@@ -290,7 +295,11 @@ fn one_fact_legacy_configuration_is_rejected_before_discovery() {
     store.install(false, true);
     let mut record = store.get(&keys::paid_control_config()).unwrap();
     record.value["v"] = json!(1);
-    record.value.as_object_mut().unwrap().remove("openlux_discovery_binding");
+    record
+        .value
+        .as_object_mut()
+        .unwrap()
+        .remove("openlux_discovery_binding");
     store.put(keys::paid_control_config(), "legacy-config", record.value);
     let host = Host::new(&store, false, true);
     assert!(run(CatalogRuntime::new().publish_paid_routing(&store, &host)).is_err());
@@ -334,7 +343,13 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     assert_eq!(observation.models[0]["input_price_per_token"], 0.001);
     assert_eq!(observation.models[0]["supports_tools"], true);
     assert!(observation.source_checks.is_empty());
-    let openlux: PaidProviderObservation = serde_json::from_value(store.get(&keys::paid_control_observation(PaidProvider::Metered)).unwrap().value).unwrap();
+    let openlux: PaidProviderObservation = serde_json::from_value(
+        store
+            .get(&keys::paid_control_observation(PaidProvider::Metered))
+            .unwrap()
+            .value,
+    )
+    .unwrap();
     assert_eq!(openlux.credential_binding, "openlux-discovery-credential");
 }
 #[test]

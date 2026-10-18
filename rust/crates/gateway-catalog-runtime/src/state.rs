@@ -182,13 +182,16 @@ pub(crate) async fn load_state<S: QueryStore>(
         let configured = publication.providers.contains_key(&provider);
         let mut observation = observations.get(&provider).cloned().unwrap_or_default();
         observation.configured = configured;
-        if provider != CatalogProvider::Openrouter && !configured
+        if provider != CatalogProvider::Openrouter
+            && !configured
             && !(public && provider == CatalogProvider::Surplus)
         {
             observation = ProviderCatalog::default();
         }
         if provider.discovery()
-            && (configured || provider == CatalogProvider::Openrouter || public && provider == CatalogProvider::Surplus)
+            && (configured
+                || provider == CatalogProvider::Openrouter
+                || public && provider == CatalogProvider::Surplus)
             && observation
                 .updated_at_ms
                 .is_none_or(|at| now.saturating_sub(at) >= 300_000)

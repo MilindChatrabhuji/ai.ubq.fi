@@ -259,8 +259,8 @@ impl Controls {
             &config.openlux_discovery_binding,
             &config.openlux_binding,
         ]
-            .into_iter()
-            .flatten()
+        .into_iter()
+        .flatten()
         {
             text(binding)?;
         }
