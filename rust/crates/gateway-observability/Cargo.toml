@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-core = { path = "../gateway-core" }
+gateway-schema = { path = "../gateway-schema" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-admin-data = { path = "../gateway-admin-data" }
 gateway-admin-runtime = { path = "../gateway-admin-runtime" }

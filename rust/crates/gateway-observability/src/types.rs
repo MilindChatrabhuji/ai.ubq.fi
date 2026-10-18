@@ -102,6 +102,7 @@ pub enum HealthWrite {
 /// The fixed host owns real clock/wait/RNG. Pure storage algorithms never call a provider.
 pub trait ObservabilityHost {
     fn now_ms(&self) -> i64;
+    fn compare_labels(&self,_left:&str,_right:&str)->Result<std::cmp::Ordering,GatewayError>{Err(crate::store::missing("source_locale_compare"))}
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError>;
     fn wait_ms(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;
     fn build_identity(&self) -> Result<crate::host_types::BuildIdentity, GatewayError> {

@@ -177,8 +177,8 @@ fn concurrent_cold_bursts_coalesce_and_transitions_preserve_arrival_order() {
     let mut next = pin!(next);
     assert!(matches!(next.as_mut().poll(&mut cx), Poll::Pending));
     memory.pause.set(false);
-    assert_eq!(run(next), W::Stored);
     assert_eq!(run(first), W::Stored);
+    assert_eq!(run(next), W::Stored);
     assert_eq!(run(same), W::Coalesced);
     assert_eq!(memory.commits.get(), 2);
     assert_eq!(

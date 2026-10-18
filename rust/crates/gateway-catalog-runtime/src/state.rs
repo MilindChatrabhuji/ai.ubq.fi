@@ -75,7 +75,10 @@ pub fn parse_full_snapshot(value: &Value) -> Option<ModelSnapshot> {
         models: models.clone(),
         source: source.into(),
         updated_at_ms: updated as i64,
-        client_version: value.get("client_version").and_then(Value::as_str).map(str::to_owned),
+        client_version: value
+            .get("client_version")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 pub(crate) async fn load_exact_catalog<S: AuthorityStore>(
@@ -135,6 +138,7 @@ pub(crate) async fn load_state<S: QueryStore>(
     publication: &CredentialPublication,
     observations: BTreeMap<CatalogProvider, ProviderCatalog>,
     now: i64,
+    public: bool,
 ) -> Result<CatalogState, GatewayError> {
     publication.validate()?;
     let runtime = read_json(store, &catalog_store::runtime_config_key())
@@ -178,11 +182,16 @@ pub(crate) async fn load_state<S: QueryStore>(
         let configured = publication.providers.contains_key(&provider);
         let mut observation = observations.get(&provider).cloned().unwrap_or_default();
         observation.configured = configured;
-        if provider != CatalogProvider::Openrouter && !configured {
+        if provider != CatalogProvider::Openrouter
+            && !configured
+            && !(public && provider == CatalogProvider::Surplus)
+        {
             observation = ProviderCatalog::default();
         }
         if provider.discovery()
-            && (configured || provider == CatalogProvider::Openrouter)
+            && (configured
+                || provider == CatalogProvider::Openrouter
+                || public && provider == CatalogProvider::Surplus)
             && observation
                 .updated_at_ms
                 .is_none_or(|at| now.saturating_sub(at) >= 300_000)
