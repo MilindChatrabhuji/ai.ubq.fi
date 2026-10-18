@@ -40,6 +40,21 @@ pub async fn scan<S: QueryStore>(
     now: i64,
 ) -> Result<Vec<QueryEntry>, GatewayError> {
     let mut rows = Vec::new();
+    visit(store, prefix, reverse, now, |entry| {
+        rows.push(entry);
+        Ok(())
+    }).await?;
+    Ok(rows)
+}
+
+/// Consumers such as error history retain aggregates and the display limit, not every stored row.
+pub async fn visit<S: QueryStore, F: FnMut(QueryEntry) -> Result<(), GatewayError>>(
+    store: &S,
+    prefix: RecordKey,
+    reverse: bool,
+    now: i64,
+    mut visitor: F,
+) -> Result<(), GatewayError> {
     let mut cursor = None;
     let mut seen = BTreeSet::new();
     loop {
@@ -56,16 +71,19 @@ pub async fn scan<S: QueryStore>(
         };
         let validated = request.validate()?;
         let page = store.query(request).await?;
+        if page.entries.len() > validated.limit as usize {
+            return Err(corrupt("Admin query exceeded its bounded page limit"));
+        }
         for entry in page.entries {
             if !validated.accepts_record(&entry.key, &entry.record)? {
                 return Err(corrupt("Admin query returned a row outside its selector"));
             }
-            rows.push(entry);
+            visitor(entry)?;
         }
         match page.next_cursor {
             Some(next) if seen.insert(next.clone()) => cursor = Some(next),
             Some(_) => return Err(corrupt("Admin query repeated a continuation")),
-            None => return Ok(rows),
+            None => return Ok(()),
         }
     }
 }

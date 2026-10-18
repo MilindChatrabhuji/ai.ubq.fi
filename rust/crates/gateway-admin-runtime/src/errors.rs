@@ -75,30 +75,31 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         };
         let mut data = Vec::new();
         let mut buckets = BTreeMap::<i64, u64>::new();
-        for entry in store::scan(
+        store::visit(
             self.store,
             store::key(json!(["uos_ai", "admin_error_log", "v1"])),
             true,
             input.now_ms,
-        )
-        .await?
-        {
+            |entry| {
             let row = entry.record.json_value()?;
             if !valid(row) {
-                continue;
+                return Ok(());
             }
             if row["status"]
                 .as_f64()
                 .is_some_and(|s| (500.0..=599.0).contains(&s))
             {
                 let time = row["created_at_ms"].as_f64().expect("validated number");
-                let bucket = (time / 900000.0).floor() as i64 * 900000;
+                let bucket = ((time / 900000.0).floor() as i64).checked_mul(900000)
+                    .ok_or_else(|| store::corrupt("Error history timestamp cannot be represented"))?;
                 *buckets.entry(bucket).or_default() += 1;
             }
             if data.len() < limit && !suppress(row) {
                 data.push(row.clone())
             }
-        }
+            Ok(())
+            },
+        ).await?;
         let diagnostics = self
             .capabilities
             .error_diagnostics(Context {
