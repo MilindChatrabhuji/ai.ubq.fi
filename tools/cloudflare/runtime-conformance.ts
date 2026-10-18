@@ -403,6 +403,23 @@ async function refusalCases(
   cases.push("empty_provider_refusal_keeps_original_status");
 }
 
+async function observationCases(url: (path: string) => string, cases: string[]): Promise<void> {
+  const oversized = await fetch(url("/admin/providers/capacity/observations"), {
+    method: "POST",
+    headers: { authorization: "Bearer fixture-admin", "content-type": "application/json" },
+    body: " ".repeat(4 * 1024 * 1024) + "{}",
+  });
+  assert.equal(oversized.status, 413);
+  await oversized.arrayBuffer();
+  cases.push("capacity_observation_limit_uses_original_whitespace_bytes");
+  const promptAnalytics = await fetch(url("/admin/prompt-cache-analytics"), { headers: { authorization: "Bearer fixture-admin" } });
+  assert.equal(promptAnalytics.status, 200);
+  const analytics = await objectBody(promptAnalytics);
+  assert(Array.isArray(analytics.buckets));
+  assert.equal(analytics.bucket_ms, 900_000);
+  cases.push("authenticated_prompt_analytics_reads_actual_authority");
+}
+
 async function inner(): Promise<void> {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
@@ -484,6 +501,7 @@ async function inner(): Promise<void> {
     }
     cases.push("invalid_and_duplicate_client_versions_refused");
     await refusalCases(post, lifecycle, cases);
+    await observationCases(url, cases);
     const response = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:json", stream: false });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-provider-request-id"), "provider-fixture-id");

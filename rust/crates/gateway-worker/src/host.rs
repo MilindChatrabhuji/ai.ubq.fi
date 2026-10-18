@@ -33,6 +33,13 @@ pub fn setting(env: &Env, name: &str) -> Option<String> {
         .ok()
 }
 
+/// Source provider keys use nonEmptyString before choosing a fallback key.
+pub fn provider_secret(env: &Env, name: &str) -> Option<String> {
+    setting(env, name)
+        .map(|value| gateway_schema::util::js_trim(&value).to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 pub fn auth_config(env: &Env) -> AuthConfig {
     let values = AUTH_SETTINGS
         .iter()

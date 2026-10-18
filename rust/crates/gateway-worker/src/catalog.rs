@@ -24,6 +24,10 @@ thread_local! {
     static RUNTIME: CatalogRuntime = CatalogRuntime::new();
 }
 
+pub fn service() -> CatalogRuntime {
+    RUNTIME.with(Clone::clone)
+}
+
 pub struct CatalogState {
     pub input: CatalogInput,
     pub runtime: Option<Value>,
@@ -42,9 +46,10 @@ impl CatalogState {
             store: store.clone(),
             env: env.clone(),
             platform: platform.clone(),
+            context: context.clone(),
         };
         let publication = host.publication().await?;
-        let service = RUNTIME.with(Clone::clone);
+        let service = service();
         let state = service.load_state(store, &publication, now_ms()?).await?;
         for provider in state.refresh_due {
             let service = service.clone();

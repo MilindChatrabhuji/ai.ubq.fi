@@ -16,6 +16,7 @@ mod cors;
 mod host;
 mod inference;
 mod lifecycle;
+mod observability_host;
 mod paid_lookup;
 mod publication;
 mod routing_host;

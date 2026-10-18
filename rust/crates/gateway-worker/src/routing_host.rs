@@ -283,12 +283,11 @@ impl Host {
             }
         };
         let secret = if paid == PaidProvider::Metered {
-            crate::host::setting(&self.env, "METERED_API_KEY")
-                .or_else(|| crate::host::setting(&self.env, "OPENLUX_API_KEY"))
+            crate::host::provider_secret(&self.env, "METERED_API_KEY")
+                .or_else(|| crate::host::provider_secret(&self.env, "OPENLUX_API_KEY"))
         } else {
-            crate::host::setting(&self.env, "SURPLUS_API_KEY")
+            crate::host::provider_secret(&self.env, "SURPLUS_API_KEY")
         }
-        .filter(|value| !gateway_schema::util::js_trim(value).is_empty())
         .ok_or_else(|| unavailable("The paid provider credential is not configured."))?;
         let owner = self
             .store
@@ -314,7 +313,7 @@ impl Host {
             configuration.openlux_binding.as_ref()
         };
         if owner.v != 1
-            || configuration.v != 1
+            || configuration.v != gateway_authority::paid_control::PAID_CONTROL_CONFIG_VERSION
             || owner.owner_id != configuration.owner_id
             || owner.owner_epoch != configuration.owner_epoch
             || expected != Some(&binding)

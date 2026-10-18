@@ -135,7 +135,8 @@ async fn dispatch_attempts(
             (UpstreamProvider::ChatgptCodex, 429)
             | (UpstreamProvider::Metered, 403)
             | (UpstreamProvider::Surplus, 402) => {
-                body::refusal_probe(&mut response, cancellation, body::REFUSAL_PROBE_TIMEOUT_MS).await
+                body::refusal_probe(&mut response, cancellation, body::REFUSAL_PROBE_TIMEOUT_MS)
+                    .await
             }
             // Claude's owner supplies a separate complete-prefix capture
             // contract; it is not a generic bounded quota-body probe.
@@ -355,13 +356,12 @@ pub async fn run(
     if status >= 400 {
         let observation = ObservationHandle::default();
         let (builder, raw_body) = upstream.into_parts();
-        let source: std::pin::Pin<
-            Box<dyn futures_util::Stream<Item = worker::Result<Vec<u8>>>>,
-        > = match raw_body {
-            ResponseBody::Empty => Box::pin(futures_util::stream::empty()),
-            ResponseBody::Body(bytes) => Box::pin(futures_util::stream::iter([Ok(bytes)])),
-            ResponseBody::Stream(source) => Box::pin(worker::ByteStream::from(source)),
-        };
+        let source: std::pin::Pin<Box<dyn futures_util::Stream<Item = worker::Result<Vec<u8>>>>> =
+            match raw_body {
+                ResponseBody::Empty => Box::pin(futures_util::stream::empty()),
+                ResponseBody::Body(bytes) => Box::pin(futures_util::stream::iter([Ok(bytes)])),
+                ResponseBody::Stream(source) => Box::pin(worker::ByteStream::from(source)),
+            };
         let stream = ObservedStream::new(
             source,
             observation,
@@ -471,10 +471,7 @@ pub async fn run(
                             if state.observation.snapshot().semantic_terminal.is_some()
                                 && let Err(error) = state
                                     .lifecycle
-                                    .observe_terminal(
-                                        state.observation.snapshot(),
-                                        terminal_usage,
-                                    )
+                                    .observe_terminal(state.observation.snapshot(), terminal_usage)
                                     .await
                             {
                                 state.done = true;
@@ -504,10 +501,7 @@ pub async fn run(
                             let terminal_usage = state.usage.borrow().clone();
                             if let Err(error) = state
                                 .lifecycle
-                                .observe_terminal(
-                                    state.observation.snapshot(),
-                                    terminal_usage,
-                                )
+                                .observe_terminal(state.observation.snapshot(), terminal_usage)
                                 .await
                             {
                                 return Some((

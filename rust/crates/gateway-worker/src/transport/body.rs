@@ -28,7 +28,10 @@ pub async fn refusal_probe(
         return ResponseCapture::default();
     };
     if matches!(cloned.body(), ResponseBody::Empty) {
-        return ResponseCapture { bytes: Vec::new(), complete: true };
+        return ResponseCapture {
+            bytes: Vec::new(),
+            complete: true,
+        };
     }
     let Ok(child) = cancellation.child() else {
         return ResponseCapture::default();

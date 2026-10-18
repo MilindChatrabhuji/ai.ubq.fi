@@ -1,5 +1,5 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_catalog_runtime::{
@@ -14,7 +14,7 @@ use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect,
 
 use crate::{
     authority::RemoteAuthorityStore,
-    host::{PlatformHost, response_bytes, setting},
+    host::{PlatformHost, provider_secret, response_bytes, setting},
     storage::now_ms,
     transport::{
         outbound::{PinnedDestination, send_http},
@@ -27,6 +27,7 @@ pub struct Host {
     pub store: RemoteAuthorityStore,
     pub env: Env,
     pub platform: PlatformHost,
+    pub context: Rc<worker::Context>,
 }
 
 fn provider(id: &str) -> Option<CatalogProvider> {
@@ -46,11 +47,11 @@ pub fn secrets(env: &Env) -> BTreeMap<String, String> {
         .iter()
         .filter_map(|(provider, name)| {
             if *provider == "openlux" {
-                setting(env, "OPENLUX_API_KEY").or_else(|| setting(env, "METERED_API_KEY"))
+                provider_secret(env, "OPENLUX_API_KEY")
+                    .or_else(|| provider_secret(env, "METERED_API_KEY"))
             } else {
-                setting(env, name)
+                provider_secret(env, name)
             }
-            .filter(|secret| !secret.trim().is_empty())
             .map(|secret| ((*provider).to_owned(), secret))
         })
         .collect()
@@ -73,6 +74,44 @@ fn binding(provider: &str, secret: &str) -> ProviderBinding {
     // configured key changes. It is never a Codex routing/credential fingerprint.
     ProviderBinding {
         identity: gateway_auth::crypto::sha256_hex(format!("{provider}\0{secret}").as_bytes()),
+    }
+}
+
+impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
+    fn compare_model_ids(
+        &self,
+        left: &str,
+        right: &str,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        crate::admin_host::compare_labels(left, right)
+    }
+    fn warm_openrouter(&self) {
+        let service = crate::catalog::service();
+        let mut host = self.clone();
+        self.context.wait_until(async move {
+            let cancellation = match crate::transport::outbound::Cancellation::background() {
+                Ok(cancellation) => cancellation,
+                Err(error) => {
+                    worker::console_error!(
+                        "OpenRouter catalog warm remains unavailable: {}",
+                        error.envelope.error.message
+                    );
+                    return;
+                }
+            };
+            // The source warm has its own fixed discovery deadline and does
+            // not inherit the downstream caller's disconnect signal.
+            host.platform.cancellation = Rc::new(cancellation);
+            if let Err(error) = service
+                .refresh_provider(&host.store, &host, CatalogProvider::Openrouter, false)
+                .await
+            {
+                worker::console_error!(
+                    "OpenRouter catalog warm remains unavailable: {}",
+                    error.envelope.error.message
+                );
+            }
+        });
     }
 }
 

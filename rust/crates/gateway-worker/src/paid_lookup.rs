@@ -1,76 +1,27 @@
-//! Fixed OpenLux billing lookup; missing evidence remains unresolved spend.
-use std::collections::BTreeMap;
-
+//! Fixed OpenLux billing transport over the shared source-derived lookup plan.
 use gateway_authority::paid::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
 use gateway_core::{GatewayError, provider::PaidProvider, state::AuthorityStore};
-use gateway_schema::util::{js_trim, safe_integer};
+use gateway_providers::paid_lookup::{
+    LookupPlan, LookupStep, OVERALL_TIMEOUT_MS, TokenLog, plan_lookup,
+};
 use serde_json::Value;
-use worker::{Method, Url};
+use worker::Method;
 
 use crate::{
     authority::RemoteAuthorityStore,
-    host::setting,
+    host::provider_secret,
     storage::now_ms,
     transport::outbound::{Cancellation, PinnedDestination, send_http},
 };
 
-fn number(value: Option<&Value>) -> Option<i64> {
-    value.and_then(safe_integer).filter(|number| *number >= 0)
-}
-fn text(value: Option<&Value>) -> Option<&str> {
-    value
-        .and_then(Value::as_str)
-        .map(js_trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn usage(row: &Value, wanted: &str) -> Option<PaidUsage> {
-    let other = match row.get("other") {
-        Some(Value::String(value)) => serde_json::from_str::<Value>(value).ok(),
-        value => value.cloned(),
-    };
-    let id = text(row.get("request_id"))
-        .or_else(|| text(other.as_ref().and_then(|value| value.get("request_id"))))?;
-    if id != wanted {
-        return None;
+fn usage(row: TokenLog) -> PaidUsage {
+    PaidUsage {
+        provider_quota: row.quota,
+        input_tokens: row.prompt_tokens,
+        cached_input_tokens: row.cached_prompt_tokens,
+        output_tokens: row.completion_tokens,
+        correlation: PaidCorrelation::ProviderRequestId(row.request_id),
     }
-    let model = text(row.get("model_name"))?;
-    let quota = number(row.get("quota"))?;
-    let mut input = number(row.get("prompt_tokens"))?;
-    let output = number(row.get("completion_tokens"))?;
-    number(row.get("created_at"))?;
-    let mut cached = number(row.get("cached_prompt_tokens"));
-    if gateway_providers::anthropic::is_claude(model)
-        && other
-            .as_ref()
-            .and_then(|value| value.get("claude"))
-            .and_then(Value::as_bool)
-            == Some(true)
-    {
-        if let Some(read) = number(other.as_ref().and_then(|value| value.get("cache_tokens"))) {
-            let write = match other
-                .as_ref()
-                .and_then(|value| value.get("cache_creation_tokens"))
-            {
-                None => Some(0),
-                value => number(value),
-            };
-            if let Some(total) = write
-                .and_then(|write| input.checked_add(read)?.checked_add(write))
-                .filter(|value| *value <= gateway_core::identity::MAX_SAFE_INTEGER)
-            {
-                input = total;
-                cached = Some(read);
-            }
-        }
-    }
-    Some(PaidUsage {
-        provider_quota: quota as f64,
-        input_tokens: input,
-        cached_input_tokens: cached,
-        output_tokens: output,
-        correlation: PaidCorrelation::ProviderRequestId(id.to_owned()),
-    })
 }
 
 pub async fn lookup(
@@ -95,75 +46,51 @@ pub async fn lookup(
             "The billing lookup does not match its admitted attempt.",
         ));
     }
-    let Some(wanted) = attempt
-        .provider_request_id
-        .as_deref()
-        .map(js_trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    let LookupPlan::Openlux(mut plan) = plan_lookup(
+        reservation.provider,
+        attempt.provider_request_id.as_deref(),
+        reservation.created_at_ms,
+        now_ms()?,
+    )?
     else {
         return Ok(None);
     };
-    let key = setting(env, "METERED_API_KEY")
-        .or_else(|| setting(env, "OPENLUX_API_KEY"))
-        .filter(|value| !js_trim(value).is_empty())
+    let key = provider_secret(env, "METERED_API_KEY")
+        .or_else(|| provider_secret(env, "OPENLUX_API_KEY"))
         .ok_or_else(|| unavailable("The owned OpenLux billing credential is unavailable."))?;
     let cancellation = Cancellation::background()?;
-    let _deadline = cancellation.set_timeout_ms(10_000)?;
-    let start = reservation.created_at_ms.saturating_sub(60_000).max(0) / 1000;
-    let end = now_ms()?.saturating_add(60_000).max(0).saturating_add(999) / 1000;
-    for page in 1..=100 {
-        let mut url = Url::parse("https://api.openlux.ai/api/log/token")
-            .map_err(|_| unavailable("The fixed billing URL is invalid."))?;
-        url.query_pairs_mut()
-            .append_pair("key", &key)
-            .append_pair("page", &page.to_string())
-            .append_pair("page_size", "100")
-            .append_pair("start_timestamp", &start.to_string())
-            .append_pair("end_timestamp", &end.to_string());
-        let destination = PinnedDestination::new(url.as_str())?;
+    let timeout = i32::try_from(OVERALL_TIMEOUT_MS)
+        .map_err(|_| unavailable("The shared billing deadline is invalid."))?;
+    let _deadline = cancellation.set_timeout_ms(timeout)?;
+    while let Some(page) = plan.next_request(&key)? {
+        let destination = PinnedDestination::new(page.url())?;
         let mut response = send_http(
             &destination,
             Method::Get,
-            &BTreeMap::from([("Accept".into(), "application/json".into())]),
+            page.headers(),
             &[],
             &cancellation,
             || async { Ok(()) },
         )
         .await
         .map_err(|failure| failure.error)?;
-        if !(200..300).contains(&response.status_code()) {
-            return Err(unavailable(
-                "The billing log endpoint returned an unsuccessful response.",
-            ));
-        }
-        // The source helper has no additional body ceiling; its overall ten-second
-        // signal and real platform memory limits still apply through this read.
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| unavailable("The billing log response could not be read."))?;
-        let text = String::from_utf8_lossy(&bytes);
-        let envelope: Value = serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text))
-            .map_err(|_| unavailable("The billing log response is invalid JSON."))?;
-        if envelope.get("success").and_then(Value::as_bool) != Some(true) {
-            return Err(unavailable("The billing log response envelope is invalid."));
-        }
-        let data = envelope
-            .get("data")
-            .ok_or_else(|| unavailable("The billing log response is missing its data."))?;
-        let items = data
-            .as_array()
-            .or_else(|| data.get("items").and_then(Value::as_array))
-            .ok_or_else(|| unavailable("The billing log response items are invalid."))?;
-        for item in items {
-            if let Some(usage) = usage(item, &wanted) {
-                return Ok(Some(usage));
-            }
-        }
-        let total = number(data.get("total")).unwrap_or(items.len() as i64);
-        if page * 100 >= total || items.is_empty() {
-            break;
+        let status = response.status_code();
+        let body = if (200..300).contains(&status) {
+            // Source has no additional body ceiling. The same overall signal
+            // owns every fetch and complete body read across all pages.
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|_| unavailable("The billing log response could not be read."))?;
+            let text = String::from_utf8_lossy(&bytes);
+            serde_json::from_str::<Value>(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()
+        } else {
+            crate::transport::body::discard_response(&mut response);
+            None
+        };
+        match plan.accept_page(&page, status, body.as_ref())? {
+            LookupStep::Continue => {}
+            LookupStep::Complete(found) => return Ok(found.map(usage)),
         }
     }
     Ok(None)

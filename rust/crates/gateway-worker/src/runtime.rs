@@ -72,7 +72,15 @@ pub async fn route(
         if !matches!(request.method(), Method::Get | Method::Head) {
             auth_request.body = body::inference_bytes(&mut request).await?;
         }
-        let bindings = crate::admin_host::Capabilities;
+        // Retain a measured receipt from this exact raw request before the
+        // administrative service parses JSON into its finite operation DTO.
+        let bindings = crate::admin_host::Capabilities::new(
+            &request_id,
+            &auth_request.body,
+            store.clone(),
+            &host,
+            context.clone(),
+        );
         let runtime_config = crate::admin_host::config(&env);
         let capabilities = gateway_admin_runtime::AdminRuntime {
             store: &store,
@@ -206,7 +214,9 @@ pub fn auth_response(response: AuthResponse) -> Result<Response, GatewayError> {
             "native_stream_unavailable",
         ));
     }
-    let mut wire = json_response(response.body)?.with_status(response.status);
+    let mut wire = Response::from_bytes(response.body.to_bytes()?)
+        .map_err(|_| invalid_url())?
+        .with_status(response.status);
     for (name, value) in response.headers {
         wire.headers_mut()
             .set(&name, &value)
