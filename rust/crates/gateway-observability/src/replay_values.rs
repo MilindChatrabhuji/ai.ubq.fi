@@ -31,7 +31,7 @@ impl SourceObject {
         Ok(Self { entries })
     }
     pub(crate) fn get(&self, name: &str) -> Option<&SourceJson> {
-        let name = JsString16::from_str(name);
+        let name = JsString16::from_utf8(name);
         self.entries
             .iter()
             .find(|(key, _)| *key == name)
@@ -42,7 +42,7 @@ impl SourceObject {
         name: &str,
         value: &T,
     ) -> Result<(), GatewayError> {
-        let name = JsString16::from_str(name);
+        let name = JsString16::from_utf8(name);
         let value = SourceJson::from_serializable(value)?;
         if let Some((_, old)) = self.entries.iter_mut().find(|(key, _)| *key == name) {
             *old = value
