@@ -16,7 +16,11 @@ fn imported_source_rollup_preserves_quota_sum_and_refuses_retired_rust_field() {
     assert_eq!(output, source);
     assert!(output.get("provider_quota").is_none());
     let mut retired = source;
-    let quota = retired.as_object_mut().unwrap().remove("quota_sum").unwrap();
+    let quota = retired
+        .as_object_mut()
+        .unwrap()
+        .remove("quota_sum")
+        .unwrap();
     retired["provider_quota"] = quota;
     assert!(serde_json::from_value::<PaidRollup>(retired).is_err());
 }
