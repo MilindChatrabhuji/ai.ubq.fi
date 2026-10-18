@@ -7,18 +7,19 @@ use std::rc::Rc;
 use gateway_core::GatewayError;
 use gateway_core::identity::MAX_SAFE_INTEGER;
 use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
-use gateway_core::tuple_key::TupleKey;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
     RecordMutation, StoredRecord,
 };
+use gateway_core::tuple_key::TupleKey;
 use serde::Deserialize;
 use worker::{SqlStorage, SqlStorageValue, Storage};
 
 const MAX_REVISION_BYTES: usize = 4096;
 // The platform limits one SQL row to 2 MB; this is not a history retention limit.
 const MAX_SQL_ROW_BYTES: usize = 2_000_000;
-const RECORD_COLUMNS: &str = "record_key, sort_key, schema_version, revision, payload, expires_at_ms";
+const RECORD_COLUMNS: &str =
+    "record_key, sort_key, schema_version, revision, payload, expires_at_ms";
 // A page may end before its row limit, with a continuation, to bound wire memory.
 const QUERY_PAGE_BYTE_BUDGET: usize = 8 * 1024 * 1024;
 
@@ -39,8 +40,15 @@ struct FormatVersion {
 }
 
 enum PreparedMutation {
-    Put { key: String, sort_key: Vec<u8>, record: StoredRecord, payload: String },
-    Delete { key: String },
+    Put {
+        key: String,
+        sort_key: Vec<u8>,
+        record: StoredRecord,
+        payload: String,
+    },
+    Delete {
+        key: String,
+    },
 }
 
 impl SqliteAuthorityStore {
@@ -72,7 +80,10 @@ impl SqliteAuthorityStore {
             sql.exec("SELECT record_key, sort_key, schema_version, revision, payload, expires_at_ms FROM uos_authority_records LIMIT 0", None)?;
             Ok(())
         }).await.map_err(|_| unavailable("authority_storage_schema_unavailable"))?;
-        storage.sync().await.map_err(|_| unavailable("authority_storage_unavailable"))?;
+        storage
+            .sync()
+            .await
+            .map_err(|_| unavailable("authority_storage_unavailable"))?;
         Ok(Self { storage })
     }
 }
@@ -127,113 +138,230 @@ impl AuthorityStore for SqliteAuthorityStore {
             }
         }).await;
         if result.is_err() {
-            return Err(failure.borrow_mut().take().unwrap_or_else(|| unavailable("authority_storage_unavailable")));
+            return Err(failure
+                .borrow_mut()
+                .take()
+                .unwrap_or_else(|| unavailable("authority_storage_unavailable")));
         }
         if outcome.get() == CommitOutcome::Committed {
-            self.storage.sync().await.map_err(|_| unavailable("authority_storage_unavailable"))?;
+            self.storage
+                .sync()
+                .await
+                .map_err(|_| unavailable("authority_storage_unavailable"))?;
         }
         Ok(outcome.get())
     }
 }
 
-fn prepare_transition(transition: AtomicTransition) -> Result<(BTreeMap<String, Option<String>>, Vec<PreparedMutation>), GatewayError> {
+fn prepare_transition(
+    transition: AtomicTransition,
+) -> Result<(BTreeMap<String, Option<String>>, Vec<PreparedMutation>), GatewayError> {
     let mut checks = BTreeMap::new();
     for check in transition.checks {
         validate_key(&check.key)?;
-        if let Some(revision) = &check.expected_revision { validate_revision(revision)?; }
-        if checks.insert(check.key.0, check.expected_revision).is_some() {
-            return Err(invalid("An authority transition contains duplicate checks."));
+        if let Some(revision) = &check.expected_revision {
+            validate_revision(revision)?;
+        }
+        if checks
+            .insert(check.key.0, check.expected_revision)
+            .is_some()
+        {
+            return Err(invalid(
+                "An authority transition contains duplicate checks.",
+            ));
         }
     }
     let mut keys = BTreeSet::new();
     let mut prepared = Vec::with_capacity(transition.mutations.len());
     for mutation in transition.mutations {
-        let key = match &mutation { RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key };
+        let key = match &mutation {
+            RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
+        };
         validate_key(key)?;
         if !checks.contains_key(&key.0) || !keys.insert(key.0.clone()) {
-            return Err(invalid("Every authority mutation requires one unique checked key."));
+            return Err(invalid(
+                "Every authority mutation requires one unique checked key.",
+            ));
         }
         match mutation {
             RecordMutation::Put { key, record } => {
                 validate_record(&record)?;
                 let sort_key = TupleKey::from_record_key(&key)?.sort_bytes().to_vec();
-                let payload = serde_json::to_string(&record.value).map_err(|_| invalid("Authority data cannot be encoded."))?;
-                let bytes = key.0.len().checked_add(sort_key.len()).and_then(|size| size.checked_add(record.revision.len())).and_then(|size| size.checked_add(payload.len())).and_then(|size| size.checked_add(48));
+                let payload = serde_json::to_string(&record.value)
+                    .map_err(|_| invalid("Authority data cannot be encoded."))?;
+                let bytes = key
+                    .0
+                    .len()
+                    .checked_add(sort_key.len())
+                    .and_then(|size| size.checked_add(record.revision.len()))
+                    .and_then(|size| size.checked_add(payload.len()))
+                    .and_then(|size| size.checked_add(48));
                 if bytes.is_none_or(|size| size > MAX_SQL_ROW_BYTES) {
-                    return Err(invalid("Authority data exceeds the platform's SQL row limit."));
+                    return Err(invalid(
+                        "Authority data exceeds the platform's SQL row limit.",
+                    ));
                 }
-                prepared.push(PreparedMutation::Put { key: key.0, sort_key, record, payload });
+                prepared.push(PreparedMutation::Put {
+                    key: key.0,
+                    sort_key,
+                    record,
+                    payload,
+                });
             }
-            RecordMutation::Delete { key } => prepared.push(PreparedMutation::Delete { key: key.0 }),
+            RecordMutation::Delete { key } => {
+                prepared.push(PreparedMutation::Delete { key: key.0 })
+            }
         }
     }
     Ok((checks, prepared))
 }
 
-fn read_record(sql: &SqlStorage, key: &RecordKey, now: i64) -> Result<Option<StoredRecord>, GatewayError> {
+fn read_record(
+    sql: &SqlStorage,
+    key: &RecordKey,
+    now: i64,
+) -> Result<Option<StoredRecord>, GatewayError> {
     let query = format!("SELECT {RECORD_COLUMNS} FROM uos_authority_records WHERE record_key = ?");
-    let cursor = sql.exec(&query, Some(vec![SqlStorageValue::String(key.0.clone())])).map_err(|_| unavailable("authority_storage_unavailable"))?;
+    let cursor = sql
+        .exec(&query, Some(vec![SqlStorageValue::String(key.0.clone())]))
+        .map_err(|_| unavailable("authority_storage_unavailable"))?;
     let mut rows = cursor.raw();
-    let Some(row) = rows.next() else { return Ok(None); };
+    let Some(row) = rows.next() else {
+        return Ok(None);
+    };
     let (entry, _) = decode_row(&row.map_err(|_| invalid("Stored authority data is malformed."))?)?;
-    if entry.key != *key || rows.next().is_some() { return Err(invalid("Authority keys are not unique.")); }
+    if entry.key != *key || rows.next().is_some() {
+        return Err(invalid("Authority keys are not unique."));
+    }
     let record = entry.record;
     // Invalid or unsupported state remains an error even when its expiry is old.
     validate_record(&record)?;
-    Ok(if record.expires_at_ms.is_some_and(|expiry| expiry <= now) { None } else { Some(record) })
+    Ok(
+        if record.expires_at_ms.is_some_and(|expiry| expiry <= now) {
+            None
+        } else {
+            Some(record)
+        },
+    )
 }
 
 pub fn validate_key(key: &RecordKey) -> Result<(), GatewayError> {
     TupleKey::from_record_key(key)?.validate_stored_key()?;
-    if key.0.len() > MAX_SQL_ROW_BYTES { return Err(invalid("The authority key exceeds the platform's SQL row limit.")); }
+    if key.0.len() > MAX_SQL_ROW_BYTES {
+        return Err(invalid(
+            "The authority key exceeds the platform's SQL row limit.",
+        ));
+    }
     Ok(())
 }
 
 impl QueryStore for SqliteAuthorityStore {
     async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
         let query = request.validate()?;
-        let mut parameters = vec![SqlStorageValue::Blob(query.lower_inclusive.clone()), SqlStorageValue::Blob(query.upper_exclusive.clone()), SqlStorageValue::Integer(query.now_ms)];
+        let mut parameters = vec![
+            SqlStorageValue::Blob(query.lower_inclusive.clone()),
+            SqlStorageValue::Blob(query.upper_exclusive.clone()),
+            SqlStorageValue::Integer(query.now_ms),
+        ];
         let seek = if let Some(resume) = query.resume_key() {
             parameters.push(SqlStorageValue::Blob(resume.to_vec()));
-            if query.reverse { " AND sort_key < ?" } else { " AND sort_key > ?" }
-        } else { "" };
+            if query.reverse {
+                " AND sort_key < ?"
+            } else {
+                " AND sort_key > ?"
+            }
+        } else {
+            ""
+        };
         parameters.push(SqlStorageValue::Integer(i64::from(query.limit) + 1));
         let order = if query.reverse { "DESC" } else { "ASC" };
-        let sql = format!("SELECT {RECORD_COLUMNS} FROM uos_authority_records WHERE sort_key >= ? AND sort_key < ? AND (expires_at_ms IS NULL OR expires_at_ms > ?){seek} ORDER BY sort_key {order} LIMIT ?");
-        let cursor = self.storage.sql().exec(&sql, Some(parameters)).map_err(|_| unavailable("authority_storage_unavailable"))?;
+        let sql = format!(
+            "SELECT {RECORD_COLUMNS} FROM uos_authority_records WHERE sort_key >= ? AND sort_key < ? AND (expires_at_ms IS NULL OR expires_at_ms > ?){seek} ORDER BY sort_key {order} LIMIT ?"
+        );
+        let cursor = self
+            .storage
+            .sql()
+            .exec(&sql, Some(parameters))
+            .map_err(|_| unavailable("authority_storage_unavailable"))?;
         let mut entries = Vec::new();
         let mut bytes = 0_usize;
         let mut more = false;
         for row in cursor.raw() {
-            let (entry, encoded_bytes) = decode_row(&row.map_err(|_| invalid("Stored authority data is malformed."))?)?;
-            if !query.accepts_record(&entry.key, &entry.record)? { return Err(invalid("The authority SQL index does not match its tuple key.")); }
-            if entries.len() >= query.limit as usize || (!entries.is_empty() && bytes.saturating_add(encoded_bytes) > QUERY_PAGE_BYTE_BUDGET) { more = true; break; }
+            let (entry, encoded_bytes) =
+                decode_row(&row.map_err(|_| invalid("Stored authority data is malformed."))?)?;
+            if !query.accepts_record(&entry.key, &entry.record)? {
+                return Err(invalid(
+                    "The authority SQL index does not match its tuple key.",
+                ));
+            }
+            if entries.len() >= query.limit as usize
+                || (!entries.is_empty()
+                    && bytes.saturating_add(encoded_bytes) > QUERY_PAGE_BYTE_BUDGET)
+            {
+                more = true;
+                break;
+            }
             bytes = bytes.saturating_add(encoded_bytes);
             entries.push(entry);
         }
         let next_cursor = if more {
-            Some(query.cursor_after(&entries.last().ok_or_else(|| invalid("The authority query made no progress."))?.key)?)
-        } else { None };
-        Ok(QueryPage { entries, next_cursor })
+            Some(
+                query.cursor_after(
+                    &entries
+                        .last()
+                        .ok_or_else(|| invalid("The authority query made no progress."))?
+                        .key,
+                )?,
+            )
+        } else {
+            None
+        };
+        Ok(QueryPage {
+            entries,
+            next_cursor,
+        })
     }
 }
 
 fn decode_row(row: &[SqlStorageValue]) -> Result<(QueryEntry, usize), GatewayError> {
-    let [SqlStorageValue::String(key), SqlStorageValue::Blob(sort_key), SqlStorageValue::Integer(version), SqlStorageValue::String(revision), SqlStorageValue::String(payload), expiry] = row else {
+    let [
+        SqlStorageValue::String(key),
+        SqlStorageValue::Blob(sort_key),
+        SqlStorageValue::Integer(version),
+        SqlStorageValue::String(revision),
+        SqlStorageValue::String(payload),
+        expiry,
+    ] = row
+    else {
         return Err(invalid("Stored authority data has invalid SQL types."));
     };
     let key = RecordKey(key.clone());
     validate_key(&key)?;
-    if TupleKey::from_record_key(&key)?.sort_bytes() != sort_key { return Err(invalid("The authority SQL index does not match its tuple key.")); }
-    let expires_at_ms = match expiry { SqlStorageValue::Null => None, SqlStorageValue::Integer(value) => Some(*value), _ => return Err(invalid("Stored authority expiry is malformed.")) };
+    if TupleKey::from_record_key(&key)?.sort_bytes() != sort_key {
+        return Err(invalid(
+            "The authority SQL index does not match its tuple key.",
+        ));
+    }
+    let expires_at_ms = match expiry {
+        SqlStorageValue::Null => None,
+        SqlStorageValue::Integer(value) => Some(*value),
+        _ => return Err(invalid("Stored authority expiry is malformed.")),
+    };
     let record = StoredRecord {
-        schema_version: u32::try_from(*version).map_err(|_| invalid("Stored authority version is malformed."))?,
+        schema_version: u32::try_from(*version)
+            .map_err(|_| invalid("Stored authority version is malformed."))?,
         revision: revision.clone(),
-        value: serde_json::from_str(payload).map_err(|_| invalid("Stored authority data is malformed."))?,
+        value: serde_json::from_str(payload)
+            .map_err(|_| invalid("Stored authority data is malformed."))?,
         expires_at_ms,
     };
     validate_record(&record)?;
-    let encoded_bytes = key.0.len().saturating_add(revision.len()).saturating_add(payload.len()).saturating_add(128);
+    let encoded_bytes = key
+        .0
+        .len()
+        .saturating_add(revision.len())
+        .saturating_add(payload.len())
+        .saturating_add(128);
     Ok((QueryEntry { key, record }, encoded_bytes))
 }
 
@@ -247,7 +375,10 @@ fn validate_revision(revision: &str) -> Result<(), GatewayError> {
 fn validate_record(record: &StoredRecord) -> Result<(), GatewayError> {
     record.validate_version()?;
     validate_revision(&record.revision)?;
-    if record.expires_at_ms.is_some_and(|expiry| !(0..=MAX_SAFE_INTEGER).contains(&expiry)) {
+    if record
+        .expires_at_ms
+        .is_some_and(|expiry| !(0..=MAX_SAFE_INTEGER).contains(&expiry))
+    {
         return Err(invalid("The authority absolute expiry is invalid."));
     }
     Ok(())
@@ -261,6 +392,10 @@ pub fn now_ms() -> Result<i64, GatewayError> {
     Ok(now as i64)
 }
 
-fn invalid(message: &str) -> GatewayError { GatewayError::unavailable(message, "authority_state_invalid") }
+fn invalid(message: &str) -> GatewayError {
+    GatewayError::unavailable(message, "authority_state_invalid")
+}
 
-fn unavailable(code: &str) -> GatewayError { GatewayError::unavailable("The authority storage is unavailable.", code) }
+fn unavailable(code: &str) -> GatewayError {
+    GatewayError::unavailable("The authority storage is unavailable.", code)
+}

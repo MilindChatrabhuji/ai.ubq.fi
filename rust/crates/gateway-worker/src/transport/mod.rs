@@ -21,16 +21,33 @@ pub struct HeaderLimits {
     pub fields: usize,
 }
 
-pub fn bounded_headers(request: &Request, limits: HeaderLimits) -> Result<BTreeMap<String, String>, GatewayError> {
+pub fn bounded_headers(
+    request: &Request,
+    limits: HeaderLimits,
+) -> Result<BTreeMap<String, String>, GatewayError> {
     let mut headers = BTreeMap::new();
     let mut total = 0_usize;
     for (name, value) in request.headers().entries() {
-        total = total.checked_add(name.len()).and_then(|size| size.checked_add(value.len())).ok_or_else(headers_too_large)?;
-        if total > limits.total_bytes || value.len() > limits.value_bytes || headers.len() >= limits.fields {
+        total = total
+            .checked_add(name.len())
+            .and_then(|size| size.checked_add(value.len()))
+            .ok_or_else(headers_too_large)?;
+        if total > limits.total_bytes
+            || value.len() > limits.value_bytes
+            || headers.len() >= limits.fields
+        {
             return Err(headers_too_large());
         }
-        if matches!(name.as_str(), "authorization" | "x-api-key" | "x-ubiquity-kernel-token") && value.contains(',') {
-            return Err(GatewayError::new(400, "Ambiguous credential header.", Some("ambiguous_credential_header")));
+        if matches!(
+            name.as_str(),
+            "authorization" | "x-api-key" | "x-ubiquity-kernel-token"
+        ) && value.contains(',')
+        {
+            return Err(GatewayError::new(
+                400,
+                "Ambiguous credential header.",
+                Some("ambiguous_credential_header"),
+            ));
         }
         headers.insert(name.to_ascii_lowercase(), value);
     }
@@ -38,7 +55,11 @@ pub fn bounded_headers(request: &Request, limits: HeaderLimits) -> Result<BTreeM
 }
 
 fn headers_too_large() -> GatewayError {
-    GatewayError::new(431, "Request headers are too large.", Some("request_headers_too_large"))
+    GatewayError::new(
+        431,
+        "Request headers are too large.",
+        Some("request_headers_too_large"),
+    )
 }
 
 pub fn platform_error(message: &str, code: &str) -> GatewayError {

@@ -22,10 +22,7 @@ await copyFile(join(root, "cloudflare.config.ts"), join(isolated, "cloudflare.co
 
 // cf types has no source-directory option. A fresh task-owned cwd prevents
 // automatic cwd dotenv discovery without changing the real repository .env.
-const environment = { ...process.env };
-for (const name of Object.keys(environment)) {
-  if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH_JSON)/.test(name)) delete environment[name];
-}
+const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH_JSON)/.test(name)));
 if (environment.NODE_OPTIONS?.includes("--env-file")) throw new Error("Automatic Node dotenv loading is not permitted.");
 environment.XDG_CONFIG_HOME = join(isolated, "config");
 environment.XDG_CACHE_HOME = join(isolated, "cache");
