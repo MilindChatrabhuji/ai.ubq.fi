@@ -3,12 +3,12 @@ mod catalog;
 mod platform;
 
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost};
-use gateway_admin_runtime::{claude, claude_generation::StateGeneration};
+use gateway_admin_runtime::claude_generation::StateGeneration;
 use gateway_auth::{AuthMethod, AuthPrincipal};
 use gateway_claude_runtime::{
     ClaudePoolSession, OutcomeDecision, PoolConfig, PoolSelection, SelectedAccount, SelectionInput,
 };
-use gateway_core::{GatewayError, claude::ClaudeErrorEvidence, state::AuthorityStore};
+use gateway_core::{GatewayError, claude::ClaudeErrorEvidence};
 use gateway_routing_runtime::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PublishedCredential, ResponseHead,
 };
@@ -97,6 +97,36 @@ impl Binding {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);
         };
+        if !gateway_providers::anthropic::is_claude(model) {
+            return Ok(ClaudeSelection::NotApplicable);
+        }
+        let selection = gateway_catalog_runtime::state::read_json(
+            &self.store,
+            &gateway_catalog_runtime::state::selection_key(),
+        )
+        .await?
+        .as_ref()
+        .and_then(|row| ProviderSelection::normalize(&row.value));
+        if !ProviderSelection::enabled(selection.as_ref(), "claude_code") {
+            return Ok(ClaudeSelection::NotApplicable);
+        }
+        let allowed_key_ids =
+            crate::admin_host::config(&self.host.platform.env).claude_allowed_key_ids;
+        let access = gateway_admin_runtime::claude_access::load_policy(
+            &self.store,
+            &self.host.platform,
+            &allowed_key_ids,
+            &crate::admin_host::compare_labels,
+        )
+        .await?;
+        if !access
+            .policy
+            .allowed_key_ids
+            .iter()
+            .any(|allowed| allowed == key_id)
+        {
+            return Ok(ClaudeSelection::NotApplicable);
+        }
         let principal_id = crate::lifecycle::principal_id(principal);
         let existing = self.state.borrow().clone();
         let request = match existing {
@@ -114,35 +144,33 @@ impl Binding {
             }
             None => {
                 let config = PoolConfig {
-                    bootstrap: platform::bootstrap(&self.host.platform)?,
-                    allowed_key_ids: crate::admin_host::config(&self.host.platform.env)
-                        .claude_allowed_key_ids,
+                    bootstrap: platform::bootstrap_for_source(&self.store, &self.host.platform)
+                        .await?,
+                    allowed_key_ids,
                     generation: generation(),
                     replay_scope: principal_id.clone(),
                 };
                 let request = Rc::new(RequestState {
-                    principal: principal_id,
+                    principal: principal_id.clone(),
                     key_id: key_id.clone(),
                     model: model.into(),
                     raw: raw.clone(),
                     session: ClaudePoolSession::new(config),
                     selected: RefCell::default(),
                 });
-                *self.state.borrow_mut() = Some(request.clone());
-                request
+                // Bootstrap can await; another callback must not replace a session
+                // already established by this request while that read was pending.
+                let chosen = self.state.borrow_mut().get_or_insert(request).clone();
+                if chosen.principal != principal_id
+                    || chosen.key_id != *key_id
+                    || chosen.model != model
+                    || &chosen.raw != raw
+                {
+                    return Err(invalid("Concurrent Claude selection inputs changed."));
+                }
+                chosen
             }
         };
-        let selection = self
-            .store
-            .read(&gateway_catalog_runtime::state::selection_key())
-            .await?
-            .filter(|row| {
-                row.expires_at_ms
-                    .is_none_or(|until| until > gateway_auth::AuthHost::now_ms(&self.host.platform))
-            })
-            .map(|row| row.json_value().map(ProviderSelection::normalize))
-            .transpose()?
-            .flatten();
         match request
             .session
             .select(
