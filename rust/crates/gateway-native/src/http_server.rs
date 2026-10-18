@@ -2,6 +2,7 @@
 //! configuration ingress. Supervisor data remains readonly and source sampled.
 use crate::{
     nonce_sqlite::SqliteNonceStore,
+    owner_control::{NativeControlContext, NativeOwnerRenewalHandler},
     supervisor::{FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, follow_update},
     supervisor_data::SupervisorData,
     unix::UnixSupervisor,
@@ -11,6 +12,10 @@ use gateway_auth::{
     native::*,
     native_auth::{
         NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
+    },
+    native_control::{
+        NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlDisposition,
+        NativeControlEnvelope, NativeControlReason, NativeControlResponse,
     },
     native_replay::StoreNonceAuthority,
 };
@@ -30,6 +35,7 @@ pub struct NativeHttpService {
     identity: NativeTransportIdentity,
     nonces: SqliteNonceStore,
     data: SupervisorData,
+    renewal: Option<Arc<dyn NativeOwnerRenewalHandler>>,
 }
 impl NativeHttpService {
     pub fn configured(
@@ -41,7 +47,12 @@ impl NativeHttpService {
             identity,
             nonces,
             data,
+            renewal: None,
         }
+    }
+    pub fn with_owner_renewal(mut self, handler: impl NativeOwnerRenewalHandler + 'static) -> Self {
+        self.renewal = Some(Arc::new(handler));
+        self
     }
     pub fn serve(self, listener: TcpListener) -> Result<(), GatewayError> {
         let service = Arc::new(self);
@@ -85,7 +96,10 @@ impl NativeHttpService {
             .map_err(|_| unavailable())?;
         let request = read_request(stream)?;
         if request.method != "POST"
-            || !matches!(request.path.as_str(), NATIVE_RPC_PATH | NATIVE_FOLLOW_PATH)
+            || !matches!(
+                request.path.as_str(),
+                NATIVE_RPC_PATH | NATIVE_FOLLOW_PATH | NATIVE_CONTROL_PATH
+            )
         {
             return Err(GatewayError::new(
                 404,
@@ -120,7 +134,73 @@ impl NativeHttpService {
                 now_ms()?,
             ),
         )?;
-        proof.require(NativeCapability::SupervisorRead, now_ms()?)?;
+        if request.path == NATIVE_CONTROL_PATH {
+            proof.require_request(
+                NativeCapability::OwnerRenewal,
+                NATIVE_CONTROL_PATH,
+                &request.body,
+                now_ms()?,
+            )?;
+            let envelope = NativeControlEnvelope::parse(&request.body)?;
+            let disconnected = || disconnected(stream);
+            let context = NativeControlContext::admitted(
+                Instant::now() + Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64),
+                &disconnected,
+            );
+            context.check()?;
+            let result = self.renewal.as_ref().map_or_else(
+                || {
+                    Ok(NativeControlResponse {
+                        v: 1,
+                        operation_id: envelope.operation_id.clone(),
+                        disposition: NativeControlDisposition::Unavailable,
+                        publication_revision: None,
+                        reason: Some(NativeControlReason::OwnerUnavailable),
+                    })
+                },
+                |handler| handler.renew(&proof, &envelope, &request.body, &context),
+            );
+            let response = match result {
+                Ok(response) => response,
+                Err(error) => {
+                    // Never copy native/socket/provider text into a response.
+                    // An unclassified handler failure is unknown, even if the
+                    // caller disappeared before receiving a durable receipt.
+                    let conflict = error.status == 409;
+                    NativeControlResponse {
+                        v: 1,
+                        operation_id: envelope.operation_id.clone(),
+                        disposition: if conflict {
+                            NativeControlDisposition::Conflict
+                        } else {
+                            NativeControlDisposition::Unknown
+                        },
+                        publication_revision: None,
+                        reason: Some(if conflict {
+                            NativeControlReason::AuthorityChanged
+                        } else {
+                            NativeControlReason::OutcomeUnknown
+                        }),
+                    }
+                }
+            };
+            response.validate_for(&envelope)?;
+            let body = serde_json::to_vec(&response).map_err(|_| unavailable())?;
+            let mac = self.identity.sign_control_response(
+                one(NATIVE_NONCE_HEADER)?,
+                &request.body,
+                200,
+                &body,
+            )?;
+            stream.write_all(format!("HTTP/1.1 200 Native\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n{NATIVE_RESPONSE_MAC_HEADER}: {mac}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).map_err(|_|unavailable())?;
+            return stream.write_all(&body).map_err(|_| unavailable());
+        }
+        proof.require_request(
+            NativeCapability::SupervisorRead,
+            &request.path,
+            &request.body,
+            now_ms()?,
+        )?;
         if request.path == NATIVE_RPC_PATH {
             let envelope: NativeRpcEnvelope =
                 serde_json::from_slice(&request.body).map_err(|_| invalid())?;
@@ -345,12 +425,17 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
     if lengths.len() > 1 || encodings.len() > 1 || !lengths.is_empty() && !encodings.is_empty() {
         return Err(invalid());
     }
+    let max_body = if path == NATIVE_CONTROL_PATH {
+        NATIVE_CONTROL_MAX_BYTES
+    } else {
+        NATIVE_MAX_BODY_BYTES
+    };
     let body = if let Some(length) = lengths.first() {
         if length.1.is_empty() || !length.1.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(invalid());
         }
         let length = length.1.parse::<usize>().map_err(|_| invalid())?;
-        if length > NATIVE_MAX_BODY_BYTES {
+        if length > max_body {
             return Err(too_large());
         }
         while bytes.len() < header_end + length {
@@ -379,7 +464,7 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, GatewayError> {
                 }
             };
             let length = usize::try_from(length).map_err(|_| too_large())?;
-            if length > NATIVE_MAX_BODY_BYTES - output.len() {
+            if length > max_body - output.len() {
                 return Err(too_large());
             }
             offset += header;
@@ -476,3 +561,7 @@ fn forbidden() -> GatewayError {
         Some("native_auth_invalid"),
     )
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "owner_control_http_tests.rs"]
+mod owner_control_tests;

@@ -72,6 +72,7 @@ fn seed_access(store: &Memory, old: &NativeCredentials) {
         refresh_token: old.refresh_token.clone(),
         updated_at_ms: 1.0,
         native_owner: Some(CodexNativeOwner {
+            managed_source: None,
             codex_home: "/tmp/uos-native-fixture".into(),
             generation_hash: old.generation_hash(),
             native_refreshed_at: old.native_refreshed_at.clone(),

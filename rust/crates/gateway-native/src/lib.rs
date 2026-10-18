@@ -8,6 +8,7 @@ pub mod daemon_config;
 pub mod http_server;
 #[cfg(unix)]
 pub mod nonce_sqlite;
+pub mod owner_control;
 #[cfg(unix)]
 pub mod publication_http;
 pub mod redaction;

@@ -192,6 +192,7 @@ impl PreparedAccessPublication {
                     generation_hash: observed.generation_hash(),
                     native_refreshed_at: observed.native_refreshed_at.clone(),
                     external_user_id: observed.external_user_id.clone(),
+                    managed_source: None,
                 }),
             };
             raw.updated_at_ms = now_ms as f64;
