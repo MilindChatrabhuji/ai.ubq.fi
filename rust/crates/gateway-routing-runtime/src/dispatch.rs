@@ -317,9 +317,8 @@ impl<
                         Ok(())
                     })
                     .await?;
-                    if self.host.refresh_codex(&record.fence).await? == RefreshOutcome::Published {
-                        decision = RefusalDecision::Continue;
-                    } else if self
+                    let published = self.host.refresh_codex(&record.fence).await? == RefreshOutcome::Published;
+                    if published || self
                         .authority()
                         .mark_credential_invalid(admission, self.now()?)
                         .await?
@@ -350,6 +349,8 @@ impl<
                     })
                     .await?;
                     decision = RefusalDecision::Continue;
+                } else {
+                    return Err(GatewayError::new(404, format!("The model '{}' is not available for these subscriptions.", record.model), Some("model_not_found")).into());
                 }
             }
         } else if matches!(record.fence, CredentialFence::Claude { .. }) {
@@ -368,13 +369,14 @@ impl<
                 cursor += 1;
                 decision = RefusalDecision::Continue;
             }
-        } else if record.provider == UpstreamProvider::Lithos && failure.status == Some(429) {
-            if let Some(wait) = classify::retry_after_millis(&failure.headers, self.now()?) {
+        } else if record.provider == UpstreamProvider::Lithos && failure.status == Some(429)
+            && let Some(wait) = classify::retry_after_millis(&failure.headers, self.now()?) {
                 let allowed = self
                     .waits
                     .borrow_mut()
                     .claim(wait, self.input.retry_prohibited);
                 if allowed {
+                    self.renew().await?;
                     self.host.wait(wait).await?;
                     if self.host.cancelled() {
                         return Ok(RefusalDecision::Abort);
@@ -388,7 +390,6 @@ impl<
                         decision = RefusalDecision::Continue;
                     }
                 }
-            }
         }
         if decision == RefusalDecision::Continue {
             self.change(|j| {

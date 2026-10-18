@@ -1,6 +1,6 @@
 # Routing runtime contract
 
-Contract v1, source `7cc83d404adf4dda7e7e842b38b07548c2262dce`. This crate composes the existing domain authority and provider wire policy. It owns one API/kernel admission across all attempts; m10 owns the separate finite process permit. The Worker owns HTTP, body readers, SSE decoding and actual delivery observation. All inputs, store and host values are owned so a session can live in a static stream/finish future. No environment discovery, networking, credential refresh, second quota ledger, periodic scheduler or backend relay belongs here.
+Contract v2 incorporates controller paid-control custody v3 and source endpoint correction: source `7cc83d404adf4dda7e7e842b38b07548c2262dce`, accepted authority predecessor `f03697ec858832c8fc0b2a5ca607ac21d2143dec`. Initial v1 paid planning/authority evidence is stale for the v3 control scope. This crate composes the existing domain authority and provider wire policy. It owns one API/kernel admission across all attempts; m10 owns the separate finite process permit. The Worker owns HTTP, body readers, SSE decoding and actual delivery observation. All inputs, store and host values are owned so a session can live in a static stream/finish future. No environment discovery, networking, credential refresh, second quota ledger, periodic scheduler or backend relay belongs here.
 
 | Route family | Source behavior | Existing owner primitive |
 | --- | --- | --- |

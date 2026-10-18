@@ -32,13 +32,13 @@ pub struct RoutingInput {
 
 #[derive(Clone, Debug)]
 pub struct RoutingError {
-    pub error: GatewayError,
+    pub error: Box<GatewayError>,
     pub headers: Headers,
 }
 impl From<GatewayError> for RoutingError {
     fn from(error: GatewayError) -> Self {
         Self {
-            error,
+            error: Box::new(error),
             headers: BTreeMap::new(),
         }
     }
@@ -105,7 +105,7 @@ pub struct CredentialRequest {
 #[derive(Clone, Debug)]
 pub enum ClaudeSelection {
     NotApplicable,
-    Eligible(PublishedCredential),
+    Eligible(Box<PublishedCredential>),
     Unavailable,
 }
 #[derive(Clone, Debug)]
@@ -184,22 +184,12 @@ pub enum RefusalDecision {
     Return,
     Abort,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AttemptUsage {
     pub usage: Option<Value>,
     pub provider_request_id: Option<String>,
     pub paid: Option<PaidUsage>,
     pub status: Option<u16>,
-}
-impl Default for AttemptUsage {
-    fn default() -> Self {
-        Self {
-            usage: None,
-            provider_request_id: None,
-            paid: None,
-            status: None,
-        }
-    }
 }
 #[derive(Clone, Debug)]
 pub struct PreparedAttempt {
@@ -233,13 +223,15 @@ mod record_key {
     use gateway_core::{state::RecordKey, tuple_key::TupleKey};
     use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::Error as _};
     pub fn serialize<S: Serializer>(key: &RecordKey, serializer: S) -> Result<S::Ok, S::Error> {
-        TupleKey::from_record_key(key).and_then(|key| key.validate_stored_key())
+        TupleKey::from_record_key(key)
+            .and_then(|key| key.validate_stored_key())
             .map_err(|_| S::Error::custom("Invalid source tuple key"))?;
         serializer.serialize_str(&key.0)
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<RecordKey, D::Error> {
         let key = RecordKey(String::deserialize(decoder)?);
-        TupleKey::from_record_key(&key).and_then(|key| key.validate_stored_key())
+        TupleKey::from_record_key(&key)
+            .and_then(|key| key.validate_stored_key())
             .map_err(|_| D::Error::custom("Invalid source tuple key"))?;
         Ok(key)
     }

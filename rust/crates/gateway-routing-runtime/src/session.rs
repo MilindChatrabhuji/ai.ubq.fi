@@ -11,7 +11,9 @@ use gateway_authority::{
     quota::KernelTerminal,
     routing::{AdmittedAccount, RouteSelection},
 };
-use gateway_core::{GatewayError, identity::ApiKeyId, query::QueryStore, provider::UpstreamProvider};
+use gateway_core::{
+    GatewayError, identity::ApiKeyId, provider::UpstreamProvider, query::QueryStore,
+};
 use gateway_providers::{
     ClientSurface,
     policy::{LithosWindows, WaitBudget},

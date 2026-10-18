@@ -87,7 +87,7 @@ impl<
                             (
                                 UpstreamProvider::ClaudeCode,
                                 self.plan.model.clone(),
-                                credential,
+                                *credential,
                                 None,
                             )
                         }
@@ -96,7 +96,8 @@ impl<
                 RouteHop::Codex => {
                     match self.authority().select_account(&self.plan.model,self.plan.quota_class,self.now()?).await?{
                         RouteSelection::Eligible(mut account)=>{if account.probe_required{account=self.authority().claim_probe(&account,None,self.now()?).await?.ok_or_else(||journal::unavailable("The current account probe is leased."))?;}let credential=self.credential(UpstreamProvider::ChatgptCodex,&self.plan.model,Some(account)).await?;(UpstreamProvider::ChatgptCodex,self.plan.model.clone(),credential,None)},
-                        RouteSelection::QuotaBlocked{proof,..}=>{if proof.full_cohort_exhausted()&&!row.recovery_attempted{self.change(|j|{j.recovery_attempted=true;Ok(())}).await?;if matches!(self.host.recover_codex(&proof,&self.plan.model).await?,CodexRecovery::Reselect){continue;}}if !proof.full_cohort_unavailable(){return Err(journal::unavailable("Subscription pool is not authoritatively unavailable.").into());}self.cursor(row.cursor+1).await?;continue;},
+                        RouteSelection::QuotaBlocked{proof,..}=>{if proof.full_cohort_exhausted()&&!row.recovery_attempted{self.change(|j|{j.recovery_attempted=true;Ok(())}).await?;if matches!(self.host.recover_codex(&proof,&self.plan.model).await?,CodexRecovery::Reselect){continue;}}
+if !proof.full_cohort_unavailable(){return Err(journal::unavailable("Subscription pool is not authoritatively unavailable.").into());}self.cursor(row.cursor+1).await?;continue;},
                         RouteSelection::CredentialsInvalid{proof}=>{if !proof.full_cohort_unavailable(){return Err(journal::unavailable("Credential failure does not cover the current pool.").into());}self.cursor(row.cursor+1).await?;continue;},
                         RouteSelection::ModelUnavailable{model,detail}=>return Err(GatewayError::new(404,detail.unwrap_or_else(||format!("The model '{model}' is not available for these subscriptions.")),Some("model_not_found")).into()),
                         RouteSelection::RoutingUnavailable=>return Err(journal::unavailable("The current subscription routing state is unavailable.").into()),

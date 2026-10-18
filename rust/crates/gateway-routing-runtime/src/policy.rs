@@ -104,7 +104,7 @@ pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
         .is_some_and(|s| s.find(&model).is_some());
     let paid = policy::resolve_paid_route(&PaidRoutingInput {
         model: model.clone(),
-        endpoint_type: "openai-response".into(),
+        endpoint_type: endpoint(input.surface).into(),
         request_uses_tools: input
             .raw
             .get("tools")
@@ -249,3 +249,5 @@ pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
         paid,
     })
 }
+
+pub fn endpoint(surface: ClientSurface) -> &'static str { if surface == ClientSurface::Chat { "openai" } else { "openai-response" } }
