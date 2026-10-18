@@ -5,7 +5,8 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, type Stats } from
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createContext, runInContext, SourceTextModule, SyntheticModule } from "node:vm";
+import { pathToFileURL } from "node:url";
+import { createContext, SourceTextModule, SyntheticModule } from "node:vm";
 import { acquireDenoDeployLock } from "../deploy-lock.ts";
 import { acquireBunDeployLock } from "../deploy-lock-bun.ts";
 import { runOutput, spawnDeno, type DenoCommandHost, type DenoFileInfo, type DenoLockHost } from "../io.ts";
@@ -33,6 +34,19 @@ const resolveSpecifier = (from: string, specifier: string): string => {
   }
   return parts.join("/");
 };
+const bridgeEdges = (path: string, text: string, runtime: boolean) => {
+  const edges: { path: string; runtime: boolean }[] = [];
+  for (const match of text.matchAll(MODULE_SPECIFIER)) {
+    const specifier = match[1];
+    if (!specifier.startsWith("./") && !specifier.startsWith("../")) continue;
+    const target = resolveSpecifier(path, specifier);
+    const prefix = text.slice(text.lastIndexOf("\n", match.index) + 1, match.index);
+    const typeOnly = TYPE_ONLY_EDGES.has(`${path}:${target}`) && /^\s*import\s+type\b/.test(prefix);
+    // Preserve Sentinel's conservative bun: import gate even on erased edges; only global evaluation is exempt.
+    edges.push({ path: target, runtime: runtime && !typeOnly });
+  }
+  return edges;
+};
 const bridgeGraph = async (extraSource: Record<string, string> = {}): Promise<{ reached: string[]; bunOnly: string[]; bunGlobals: string[] }> => {
   const seen = new Set<string>(),
     evaluated = new Set<string>(),
@@ -49,15 +63,7 @@ const bridgeGraph = async (extraSource: Record<string, string> = {}): Promise<{ 
     // Only the existing spawn inside the host-selected Bun implementation is allowed. A second use fails.
     const checked = path === "ops/io.ts" ? text.replace(/(const spawnBun = [\s\S]*?const child = )Bun\.spawn\(/, "$1hostSpawn(") : text;
     if (runtime && BUN_GLOBAL.test(checked)) bunGlobals.add(path);
-    for (const match of text.matchAll(MODULE_SPECIFIER)) {
-      const specifier = match[1];
-      if (!specifier.startsWith("./") && !specifier.startsWith("../")) continue;
-      const target = resolveSpecifier(path, specifier);
-      const prefix = text.slice(text.lastIndexOf("\n", match.index) + 1, match.index);
-      const typeOnly = TYPE_ONLY_EDGES.has(`${path}:${target}`) && /^\s*import\s+type\b/.test(prefix);
-      // Preserve Sentinel's conservative bun: import gate even on erased edges; only global evaluation is exempt.
-      pending.push({ path: target, runtime: runtime && !typeOnly });
-    }
+    pending.push(...bridgeEdges(path, text, runtime));
   }
   const byName = (left: string, right: string) => left.localeCompare(right);
   return { reached: [...seen].toSorted(byName), bunOnly: [...bunOnly].toSorted(byName), bunGlobals: [...bunGlobals].toSorted(byName) };
@@ -287,12 +293,12 @@ test("VPS bridge host: the Deno command runner inherits or replaces the environm
 });
 
 // Bun's own global is non-configurable. Evaluate the real store and runner in a separate realm where it is absent.
-const denoStore = async (host: DenoCommandHost, runtime: Record<string, unknown>, payload: Record<string, unknown>) => {
+const denoStore = async (host: DenoCommandHost, runtime: Record<string, unknown>, payload: Record<string, unknown>, driverRoot: string) => {
   const context = createContext({ Deno: host, process, URL, TextEncoder, TextDecoder, Uint8Array, Error, TypeError, crypto, setTimeout, clearTimeout });
   const transpiler = new Bun.Transpiler({ loader: "ts" });
   const modules = new Map<string, Promise<SourceTextModule | SyntheticModule>>();
   const entry = new URL("../vps-release-store.ts", import.meta.url).href;
-  const overrides: Record<string, Record<string, unknown>> = {
+  const overrides: Partial<Record<string, Record<string, unknown>>> = {
     [new URL("../bun-runtime.ts", import.meta.url).href]: runtime,
     [new URL("../release-artifact.ts", import.meta.url).href]: payload,
   };
@@ -304,7 +310,7 @@ const denoStore = async (host: DenoCommandHost, runtime: Record<string, unknown>
       if (values)
         return new SyntheticModule(
           Object.keys(values),
-          function () {
+          function (this: SyntheticModule) {
             for (const [name, value] of Object.entries(values)) this.setExport(name, value);
           },
           { context, identifier }
@@ -314,7 +320,7 @@ const denoStore = async (host: DenoCommandHost, runtime: Record<string, unknown>
         context,
         identifier,
         initializeImportMeta: (meta) => {
-          meta.url = identifier;
+          meta.url = identifier === entry ? pathToFileURL(join(driverRoot, "ops/vps-release-store.ts")).href : identifier;
           meta.main = false;
         },
       });
@@ -325,12 +331,17 @@ const denoStore = async (host: DenoCommandHost, runtime: Record<string, unknown>
   const module = await load(entry);
   await module.link((specifier, parent) => load(specifier.startsWith("node:") ? specifier : new URL(specifier, parent.identifier).href));
   await module.evaluate();
-  assert.equal(runInContext("typeof Bun", context), "undefined");
+  assert.equal("Bun" in context, false);
   return module.namespace as typeof import("../vps-release-store.ts");
 };
 
 test("VPS bridge host: default and exported preparation run verified Bun with no calling Bun global", async () => {
   await withRoot(async (root) => {
+    const driverRoot = join(root, "driver"),
+      configuration = join(driverRoot, "ops/runtime-bunfig.toml"),
+      configBytes = await readFile(new URL("../runtime-bunfig.toml", import.meta.url));
+    await mkdir(join(driverRoot, "ops"), { recursive: true });
+    await writeFile(configuration, configBytes);
     const sha = "a".repeat(40),
       archive = await vpsTextDigest("archive");
     const artifact = runtimes.BUN_RUNTIMES.linux;
@@ -392,13 +403,15 @@ test("VPS bridge host: default and exported preparation run verified Bun with no
           assert.equal(revision, sha);
           return Promise.resolve(manifest);
         },
-      }
+      },
+      driverRoot
     );
     await mkdir(join(root, ".data/releases"), { recursive: true });
     const store = new ImmutableVpsReleaseStore(root, async (program, args) => {
       if (program === "git") await writeFile(args[2].slice("--output=".length), "archive");
       else {
-        const staging = args.at(-1)!;
+        const staging = args.at(-1);
+        assert.ok(staging);
         await mkdir(join(staging, "src"));
         await writeFile(join(staging, "package.json"), JSON.stringify({ packageManager: "bun@1.4.0" }));
       }
@@ -409,17 +422,22 @@ test("VPS bridge host: default and exported preparation run verified Bun with no
     assert.equal(calls.length, 1, "the store default selects the Deno-safe capability");
     const call = calls[0];
     assert.equal(call.program, runtimes.runtimePath(root, artifact));
-    assert.deepEqual(Array.from(call.options.args).slice(0, 4), [
+    assert.deepEqual(Array.from(call.options.args).slice(0, 5), [
+      `--config=${configuration}`,
       "--no-env-file",
       "--no-install",
-      new URL("../release-artifact.ts", import.meta.url).pathname,
+      join(driverRoot, "ops/release-artifact.ts"),
       "prepare",
     ]);
-    assert.ok(call.options.args[4].startsWith(`${root}/.data/releases/.staging-`));
-    assert.deepEqual(Array.from(call.options.args).slice(5), [sha, archive]);
+    assert.ok(call.options.args[5].startsWith(`${root}/.data/releases/.staging-`));
+    assert.deepEqual(Array.from(call.options.args).slice(6), [sha, archive]);
     assert.equal(call.options.cwd, root);
     assert.equal(call.options.clearEnv, true);
-    assert.deepEqual(Object.keys(call.options.env ?? {}).sort(), ["PATH", "TMPDIR"], "no host credentials are inherited");
+    assert.deepEqual(
+      Object.keys(call.options.env ?? {}).sort((left, right) => left.localeCompare(right)),
+      ["PATH", "TMPDIR"],
+      "no host credentials are inherited"
+    );
     assert.equal(verifiedBinaries, 1);
     assert.equal(verifiedPayloads, 1);
     const prepare = bindBunVpsPayload(root);
@@ -434,6 +452,15 @@ test("VPS bridge host: default and exported preparation run verified Bun with no
     code = 0;
     manifest = { ...manifest, source_archive_sha256: "f".repeat(64) };
     await assert.rejects(prepare(root, sha, archive), /source archive changed/);
+    const previousCalls = calls.length;
+    await writeFile(configuration, 'preload = ["./untrusted.ts"]\n');
+    await assert.rejects(prepare(root, sha, archive), /Pinned bridge Bun configuration/);
+    await rm(configuration);
+    await symlink(new URL("../runtime-bunfig.toml", import.meta.url).pathname, configuration);
+    await assert.rejects(prepare(root, sha, archive), /Pinned bridge Bun configuration/);
+    await rm(configuration);
+    await assert.rejects(prepare(root, sha, archive), { code: "ENOENT" });
+    assert.equal(calls.length, previousCalls, "corrupt, linked or missing configuration is refused before child execution");
   });
 });
 
