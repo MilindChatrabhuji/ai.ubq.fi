@@ -150,6 +150,7 @@ pub enum ClaudeOutcome {
 
 /// Minted only for a current actual transport header receipt; never client data.
 pub struct ObservedResponse<T> {
+    pub(crate) original_request_id: String,
     pub(crate) attempt_id: String,
     pub(crate) nonce: String,
     pub(crate) response: ResponseHead,

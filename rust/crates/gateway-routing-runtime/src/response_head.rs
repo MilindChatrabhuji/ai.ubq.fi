@@ -68,6 +68,7 @@ impl<
             None
         };
         Ok(ObservedResponse {
+            original_request_id: self.id().to_owned(),
             attempt_id: attempt.id.clone(),
             nonce,
             response,
@@ -83,7 +84,8 @@ impl<
         failure: Option<AttemptFailure>,
     ) -> RoutingResult<ResponseDecision> {
         let (_, record) = self.observed_attempt(attempt).await?;
-        if response.attempt_id != attempt.id
+        if response.original_request_id != self.id()
+            || response.attempt_id != attempt.id
             || record.phase != Phase::Started
             || record.response_nonce.as_ref() != Some(&response.nonce)
             || (response.response.status >= 400) != failure.is_some()
