@@ -44,6 +44,7 @@ pub struct FidoGenCeAaguid;
 pub(crate) struct AppleAnonymousNonce;
 
 pub(crate) struct AndroidKeyAttestationExtensionData;
+pub(crate) struct SourceAndroidKeyAttestationExtensionData;
 
 impl AttestationX509Extension for FidoGenCeAaguid {
     // If cert contains an extension with OID 1 3 6 1 4 1 45724 1 1 4 (id-fido-gen-ce-aaguid)
@@ -166,6 +167,12 @@ pub(crate) mod android_key_attestation {
 
     impl Data {
         pub fn parse(i: &[u8]) -> der_parser::error::BerResult<'_, (Vec<u8>, AttestationMetadata)> {
+            Self::parse_inner(i, true)
+        }
+        pub fn parse_source(i: &[u8]) -> der_parser::error::BerResult<'_, (Vec<u8>, AttestationMetadata)> {
+            Self::parse_inner(i, false)
+        }
+        fn parse_inner(i: &[u8], strict: bool) -> der_parser::error::BerResult<'_, (Vec<u8>, AttestationMetadata)> {
             use der_parser::{der::*, error::BerError};
             parse_der_container(|i: &[u8], hdr: Header| {
                 if hdr.tag() != Tag::Sequence {
@@ -191,12 +198,14 @@ pub(crate) mod android_key_attestation {
                 let attest_enforcement = match attest_sec_level {
                     0 => EnforcementType::Software,
                     1 => EnforcementType::Tee,
+                    _ if !strict => EnforcementType::Tee,
                     _ => return Err(der_parser::error::BerError::InvalidTag)?,
                 };
 
                 let km_enforcement = match km_sec_level {
                     0 => EnforcementType::Software,
                     1 => EnforcementType::Tee,
+                    _ if !strict => EnforcementType::Tee,
                     _ => return Err(der_parser::error::BerError::InvalidTag)?,
                 };
 
@@ -208,6 +217,7 @@ pub(crate) mod android_key_attestation {
                     })?;
                 }
 
+                if strict {
                 // ensure key master values are set properly
                 let software_set = match (software_enforced.origin, software_enforced.purpose) {
                     (Some(origin), Some(purpose))
@@ -246,6 +256,7 @@ pub(crate) mod android_key_attestation {
                     })?;
                 }
 
+                }
                 let metadata = AttestationMetadata::AndroidKey {
                     is_km_tee: km_enforcement == EnforcementType::Tee,
                     is_attest_tee: attest_enforcement == EnforcementType::Tee,
@@ -266,6 +277,22 @@ impl AttestationX509Extension for AndroidKeyAttestationExtensionData {
 
     fn parse(i: &[u8]) -> der_parser::error::BerResult<'_, (Self::Output, AttestationMetadata)> {
         android_key_attestation::Data::parse(i)
+    }
+
+    const IS_REQUIRED: bool = true;
+
+    const VALIDATION_ERROR: WebauthnError = WebauthnError::AttestationCertificateNonceMismatch;
+}
+
+impl AttestationX509Extension for SourceAndroidKeyAttestationExtensionData {
+    // If cert contains an extension with OID 1.3.6.1.4.1.11129.2.1.17 (android key attestation)
+    const OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.11129.2.1.17");
+
+    // verify that the value of this extension matches the aaguid in authenticatorData.
+    type Output = Vec<u8>;
+
+    fn parse(i: &[u8]) -> der_parser::error::BerResult<'_, (Self::Output, AttestationMetadata)> {
+        android_key_attestation::Data::parse_source(i)
     }
 
     const IS_REQUIRED: bool = true;
@@ -692,7 +719,9 @@ pub(crate) fn verify_fidou2f_attestation(
         .collect();
 
     // Verify the sig using verificationData and certificate public key per [SEC1].
-    let verified = verify_signature(cerificate_public_key, sig, &verification_data)?;
+    let mut certificate_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(cerificate_public_key)?, cerificate_public_key))?;
+    certificate_key.type_ = COSEAlgorithm::ES256;
+    let verified = certificate_key.verify_signature(sig, &verification_data)?;
 
     if !verified {
         error!("signature verification failed!");
@@ -712,6 +741,23 @@ pub(crate) fn verify_tpm_attestation(
     acd: &AttestedCredentialData,
     att_obj: &AttestationObject<Registration>,
     client_data_hash: &[u8],
+) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
+    verify_tpm_attestation_internal(acd, att_obj, client_data_hash, false)
+}
+
+pub(crate) fn verify_source_tpm_attestation(
+    acd: &AttestedCredentialData,
+    att_obj: &AttestationObject<Registration>,
+    client_data_hash: &[u8],
+) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
+    verify_tpm_attestation_internal(acd, att_obj, client_data_hash, true)
+}
+
+fn verify_tpm_attestation_internal(
+    acd: &AttestedCredentialData,
+    att_obj: &AttestationObject<Registration>,
+    client_data_hash: &[u8],
+    source_compatibility: bool,
 ) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
     debug!("begin verify_tpm_attest");
 
@@ -827,9 +873,15 @@ pub(crate) fn verify_tpm_attestation(
     ) {
         (
             COSEKeyType::RSA(cose_rsa),
-            TpmuPublicParms::Rsa(_tpm_parms),
+            TpmuPublicParms::Rsa(tpm_parms),
             TpmuPublicId::Rsa(tpm_modulus),
         ) => {
+            if source_compatibility {
+                let mut exponent = [0u8; 4];
+                for (index, byte) in cose_rsa.e.iter().take(3).enumerate() { exponent[index] = *byte; }
+                let expected = if tpm_parms._exponent == 0 { 65537 } else { tpm_parms._exponent };
+                if u32::from_le_bytes(exponent) != expected { return Err(WebauthnError::AttestationTpmPubAreaMismatch); }
+            }
             // Is it possible to check the exponent? I think it's not ... as the tpm_parms and the
             // cose rse disagree in my test vectors.
             // cose_rsa.e != tpm_parms.exponent ||
@@ -921,6 +973,11 @@ pub(crate) fn verify_tpm_attestation(
                     v.append(&mut r.to_vec());
                     v
                 }
+                TpmAlgId::Sha384 | TpmAlgId::Sha512 => {
+                    let (id, alg) = if matches!(pubarea.name_alg, TpmAlgId::Sha384) { (12, COSEAlgorithm::ES384) } else { (13, COSEAlgorithm::ES521) };
+                    let mut v = vec![0, id];
+                    v.extend(only_hash_from_type(alg, pubarea_bytes)?); v
+                }
                 _ => return Err(WebauthnError::AttestationTpmPubAreaHashUnknown),
             };
             if hname != name {
@@ -946,7 +1003,9 @@ pub(crate) fn verify_tpm_attestation(
         TpmtSignature::RawSignature(dsig) => {
             // Alg was pre-loaded into the x509 struct during parsing
             // so we should just be able to verify
-            verify_signature(aik_cert, &dsig, certinfo_bytes)?
+            let mut key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(aik_cert)?, aik_cert))?;
+            key.type_ = alg;
+            key.verify_signature(&dsig, certinfo_bytes)?
         }
     };
 
@@ -958,7 +1017,8 @@ pub(crate) fn verify_tpm_attestation(
 
     // Verify that aik_cert meets the requirements in § 8.3.1 TPM Attestation Statement Certificate
     // Requirements.
-    assert_tpm_attest_req(aik_cert)?;
+    if source_compatibility { assert_source_tpm_attest_req(aik_cert)?; }
+    else { assert_tpm_attest_req(aik_cert)?; }
 
     // If aik_cert contains an extension with OID 1 3 6 1 4 1 45724 1 1 4 (id-fido-gen-ce-aaguid)
     // verify that the value of this extension matches the aaguid in authenticatorData.
@@ -1036,6 +1096,74 @@ pub(crate) fn assert_tpm_attest_req(x509: &x509::Certificate) -> Result<(), Weba
         .ok_or(WebauthnError::AttestationCertificateRequirementsNotMet)?;
 
     if basic_constraints.ca {
+        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
+    }
+
+    // An Authority Information Access (AIA) extension with entry id-ad-ocsp and a CRL Distribution
+    // Point extension [RFC5280] are both OPTIONAL as the status of many attestation certificates is
+    // available through metadata services. See, for example, the FIDO Metadata Service [FIDOMetadataService].
+
+    Ok(())
+}
+
+pub(crate) fn assert_source_tpm_attest_req(x509: &x509::Certificate) -> Result<(), WebauthnError> {
+    let x509_cert = &x509.tbs_certificate;
+
+    // TPM attestation certificate MUST have the following fields/extensions:
+
+    // Version MUST be set to 3.
+    if x509_cert.version != x509::Version::V3 {
+        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
+    }
+
+    // Subject field MUST be set to empty.
+    if !x509_cert.subject.is_empty() {
+        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
+    }
+
+    // The Subject Alternative Name extension MUST be set as defined in [TPMv2-EK-Profile] section 3.2.9.
+    // https://www.trustedcomputinggroup.org/wp-content/uploads/Credential_Profile_EK_V2.0_R14_published.pdf
+
+    // From [TPMv2-EK-Profile]:
+    // In accordance with RFC 5280[11], this extension MUST be critical if
+    // subject is empty and SHOULD be non-critical if subject is non-empty.
+    //
+    // We've already returned if the subject is non-empty, so we can just
+    // check that the extension is critical.
+    //
+    // The issuer MUST include TPM manufacturer, TPM part number and TPM
+    // firmware version, using the directoryName form within the GeneralName
+    // structure.
+    let subject_alt_name = x509_cert
+        .get::<SubjectAltName>()
+        .map_err(|_| WebauthnError::AttestationCertificateRequirementsNotMet)?
+        .map(|(_, extn)| extn)
+        .ok_or(WebauthnError::AttestationCertificateRequirementsNotMet)?;
+
+    let tpm_san_data = TpmSanData::try_from(&subject_alt_name)?;
+    if !crate::source_compat::valid_tpm_manufacturer(tpm_san_data.manufacturer)
+        || tpm_san_data._model.is_empty() || tpm_san_data._version.is_empty() {
+        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
+    }
+
+    // The Extended Key Usage extension MUST contain the "joint-iso-itu-t(2) internationalorganizations(23) 133 tcg-kp(8) tcg-kp-AIKCertificate(3)" OID.
+    let extended_key_usage = x509_cert
+        .get::<ExtendedKeyUsage>()
+        .map_err(|_| WebauthnError::AttestationCertificateRequirementsNotMet)?
+        .map(|(_, extn)| extn)
+        .ok_or(WebauthnError::AttestationCertificateRequirementsNotMet)?;
+
+    if extended_key_usage.0.first() != Some(&OID_JOINT_ISO_ITU_T) {
+        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
+    }
+
+    // The Basic Constraints extension MUST have the CA component set to false.
+    let basic_constraints = x509_cert
+        .get::<BasicConstraints>()
+        .map_err(|_| WebauthnError::AttestationCertificateRequirementsNotMet)?
+        .map(|(_, extn)| extn);
+
+    if basic_constraints.is_some_and(|constraints| constraints.ca) {
         return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
     }
 
@@ -1215,6 +1343,110 @@ pub(crate) fn verify_android_key_attestation(
     // dbg!(std::str::from_utf8(&pem).unwrap());
 
     let meta = validate_extension::<AndroidKeyAttestationExtensionData>(
+        attestn_cert,
+        &client_data_hash.to_vec(),
+    )?;
+
+    // arr_x509.iter().for_each(|c| {
+    //     let pem = c.to_pem().unwrap();
+    //     dbg!(std::str::from_utf8(&pem).unwrap());
+    // });
+
+    // 5. If successful, return implementation-specific values representing attestation type Anonymous CA and attestation trust path x5c.
+    Ok((ParsedAttestationData::Basic(arr_x509), meta))
+}
+
+pub(crate) fn verify_source_android_key_attestation(
+    acd: &AttestedCredentialData,
+    att_obj: &AttestationObject<Registration>,
+    client_data_hash: &[u8],
+) -> Result<(ParsedAttestationData, AttestationMetadata), WebauthnError> {
+    let att_stmt = &att_obj.att_stmt;
+    let auth_data_bytes = &att_obj.auth_data_bytes;
+
+    // 1. Verify that attStmt is valid CBOR conforming to the syntax defined above and perform CBOR decoding on it to extract the contained fields.
+    let att_stmt_map =
+        cbor_try_map!(att_stmt).map_err(|_| WebauthnError::AttestationStatementMapInvalid)?;
+
+    let alg = {
+        let alg_value = att_stmt_map
+            .get(&serde_cbor_2::Value::Text("alg".to_string()))
+            .ok_or(WebauthnError::AttestationStatementAlgMissing)?;
+
+        cbor_try_i128!(alg_value)
+            .map_err(|_| WebauthnError::AttestationStatementAlgInvalid)
+            .and_then(|v| {
+                COSEAlgorithm::try_from(v).map_err(|_| WebauthnError::COSEKeyInvalidAlgorithm)
+            })?
+    };
+
+    let sig = {
+        let sig_value = att_stmt_map
+            .get(&serde_cbor_2::Value::Text("sig".to_string()))
+            .ok_or(WebauthnError::AttestationStatementSigMissing)?;
+
+        cbor_try_bytes!(sig_value).map_err(|_| WebauthnError::AttestationStatementSigMissing)?
+    };
+
+    let arr_x509 = {
+        let x5c_key = &serde_cbor_2::Value::Text("x5c".to_string());
+
+        let x5c_value = att_stmt_map
+            .get(x5c_key)
+            .ok_or(WebauthnError::AttestationStatementX5CMissing)?;
+
+        let x5c_array_ref = cbor_try_array!(x5c_value)
+            .map_err(|_| WebauthnError::AttestationStatementX5CInvalid)?;
+
+        let arr_x509: Result<Vec<_>, _> = x5c_array_ref
+            .iter()
+            .map(|values| {
+                cbor_try_bytes!(values)
+                    .map_err(|_| WebauthnError::AttestationStatementX5CInvalid)
+                    .and_then(|b| {
+                        x509::Certificate::from_der(b).map_err(|_| WebauthnError::X509DerInvalid)
+                    })
+            })
+            .collect();
+
+        arr_x509?
+    };
+
+    // Must have at least one cert
+    let attestn_cert = arr_x509
+        .first()
+        .ok_or(WebauthnError::AttestationStatementX5CInvalid)?;
+
+    // Concatenate authenticatorData and clientDataHash to form the data to verify.
+    let data_to_verify: Vec<u8> = auth_data_bytes
+        .iter()
+        .chain(client_data_hash.iter())
+        .copied()
+        .collect();
+
+    // 2. Verify that sig is a valid signature over the concatenation of authenticatorData and clientDataHash using the public key in the first certificate in x5c with the algorithm specified in alg.
+
+    // 3. Verify that the public key in the first certificate in x5c matches the credentialPublicKey in the attestedCredentialData in authenticatorData.
+    let credential_public_key = COSEKey::try_from(&acd.credential_pk)?;
+    let subject_public_key = COSEKey::try_from((credential_public_key.type_, attestn_cert))?;
+
+    if credential_public_key != subject_public_key {
+        return Err(WebauthnError::AttestationCredentialSubjectKeyMismatch);
+    }
+
+    // Source uses the explicit statement algorithm as the hash override.
+    let mut signing_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(attestn_cert)?, attestn_cert))?;
+    signing_key.type_ = alg;
+    if !signing_key.verify_signature(sig, &data_to_verify)? { return Err(WebauthnError::AttestationStatementSigInvalid); }
+
+    // 4. Verify that the attestationChallenge field in the attestation certificate extension data is identical to clientDataHash.
+    // The AuthorizationList.allApplications field is not present on either authorization list (softwareEnforced nor teeEnforced), since PublicKeyCredential MUST be scoped to the RP ID.
+    // For the following, use only the teeEnforced authorization list if the RP wants to accept only keys from a trusted execution environment, otherwise use the union of teeEnforced and softwareEnforced.
+
+    // let pem = attestn_cert.to_pem()?;
+    // dbg!(std::str::from_utf8(&pem).unwrap());
+
+    let meta = validate_extension::<SourceAndroidKeyAttestationExtensionData>(
         attestn_cert,
         &client_data_hash.to_vec(),
     )?;

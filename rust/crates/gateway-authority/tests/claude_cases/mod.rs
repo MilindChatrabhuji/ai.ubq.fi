@@ -72,11 +72,11 @@ fn claude_current_mixed_cohort_authorizes_once_without_exposing_secrets() {
     let input = paid_request("claude-paid", PaidProvider::Surplus);
     let authorization = PaidAuthorization::ClaudeSubscriptionUnavailable(proof);
     assert!(matches!(
-        run(authority.reserve_paid(&input, &authorization, NOW)).unwrap(),
+        run(reserve_paid(&authority, &input, &authorization, NOW)).unwrap(),
         PaidAdmission::Reserved(_)
     ));
     assert!(matches!(
-        run(authority.reserve_paid(&input, &authorization, NOW)).unwrap(),
+        run(reserve_paid(&authority, &input, &authorization, NOW)).unwrap(),
         PaidAdmission::Existing(_)
     ));
     let window: PaidWindow = serde_json::from_value(
@@ -237,7 +237,8 @@ fn claude_proof_fences_every_roster_and_quota_revision() {
         }
         let input = paid_request("claude-stale", PaidProvider::Surplus);
         assert!(
-            run(authority.reserve_paid(
+            run(reserve_paid(
+                &authority,
                 &input,
                 &PaidAuthorization::ClaudeSubscriptionUnavailable(proof),
                 NOW
@@ -275,7 +276,8 @@ fn claude_check_only_and_paid_cas_races_never_admit_stale_proof() {
         .unwrap();
     store.race(claude_key(&roster, 0), &empty);
     assert!(
-        run(authority.reserve_paid(
+        run(reserve_paid(
+            &authority,
             &paid_request("claude-race", PaidProvider::Surplus),
             &PaidAuthorization::ClaudeSubscriptionUnavailable(proof),
             NOW
@@ -307,7 +309,8 @@ fn claude_expiry_crossing_async_reads_never_reserves_paid_exposure() {
         .unwrap();
     store.jump_on_read(keys::paid_deletion("key-a"), NOW + 300_000);
     assert!(
-        run(authority.reserve_paid(
+        run(reserve_paid(
+            &authority,
             &paid_request("claude-expired", PaidProvider::Surplus),
             &PaidAuthorization::ClaudeSubscriptionUnavailable(proof),
             NOW
@@ -333,7 +336,8 @@ fn claude_model_scope_clock_and_current_paid_policy_remain_required() {
     let mut input = paid_request("claude-wrong-model", PaidProvider::Surplus);
     input.model = "gpt-test".to_owned();
     assert!(
-        run(authority.reserve_paid(
+        run(reserve_paid(
+            &authority,
             &input,
             &PaidAuthorization::ClaudeSubscriptionUnavailable(proof.clone()),
             NOW
@@ -344,7 +348,8 @@ fn claude_model_scope_clock_and_current_paid_policy_remain_required() {
     changed.paid_fallback_enabled = false;
     store.race(keys::api_policy("key-a"), &changed);
     assert!(
-        run(authority.reserve_paid(
+        run(reserve_paid(
+            &authority,
             &paid_request("claude-disabled", PaidProvider::Surplus),
             &PaidAuthorization::ClaudeSubscriptionUnavailable(proof),
             NOW
@@ -384,7 +389,8 @@ fn claude_json_integer_representations_and_codex_precedence_match_source() {
         .unwrap();
     let mut input = paid_request("claude-codex", PaidProvider::Surplus);
     input.model = "gpt-test".to_owned();
-    let error = run(authority.reserve_paid(
+    let error = run(reserve_paid(
+        &authority,
         &input,
         &PaidAuthorization::ClaudeSubscriptionUnavailable(proof),
         NOW,
@@ -408,14 +414,14 @@ fn claude_existing_pending_attempt_cannot_reuse_expired_authorization() {
     let authorization = PaidAuthorization::ClaudeSubscriptionUnavailable(proof);
     let input = paid_request("claude-existing", PaidProvider::Surplus);
     assert!(matches!(
-        run(authority.reserve_paid(&input, &authorization, NOW)).unwrap(),
+        run(reserve_paid(&authority, &input, &authorization, NOW)).unwrap(),
         PaidAdmission::Reserved(_)
     ));
     store.jump_on_read(
         keys::paid_attempt("key-a", "claude-existing"),
         NOW + 300_000,
     );
-    assert!(run(authority.reserve_paid(&input, &authorization, NOW)).is_err());
+    assert!(run(reserve_paid(&authority, &input, &authorization, NOW)).is_err());
     let window: PaidWindow = serde_json::from_value(
         store
             .row(&keys::paid_window("key-a", policy().usage_reset_at_ms))

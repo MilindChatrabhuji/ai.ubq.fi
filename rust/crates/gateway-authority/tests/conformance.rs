@@ -1,4 +1,6 @@
 mod claude_cases;
+mod paid_control_cases;
+mod source_model_cases;
 mod support;
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -12,7 +14,7 @@ use gateway_authority::reset::{
     AccountDayBudget, ResetCandidate, ResetClaim, ResetConfig, ResetCredit, ResetMode, ResetState,
     reset_invocation, utc_day,
 };
-use gateway_authority::routing::{AccountCatalog, ModelAvailability, RouteSelection};
+use gateway_authority::routing::RouteSelection;
 use gateway_authority::{DAY_MS, PAID_RETENTION_MS, QUOTA_RETENTION_MS, keys};
 use gateway_core::identity::{
     ApiKeyId, CredentialVersion, PaidAttemptId, PoolVersionstamp, RequestId,
@@ -30,24 +32,7 @@ fn seed_policy(store: &MemoryStore) {
 }
 fn paid_setup(store: &MemoryStore) {
     seed_policy(store);
-    store.seed(
-        keys::paid_routing(),
-        &PaidRoutingPolicy {
-            v: 1,
-            codex_enabled: true,
-            codex_models: vec!["gpt-test".to_owned()],
-            models: BTreeMap::from([
-                (
-                    "gpt-test".to_owned(),
-                    vec![PaidProvider::Surplus, PaidProvider::Metered],
-                ),
-                (
-                    "paid-model".to_owned(),
-                    vec![PaidProvider::Surplus, PaidProvider::Metered],
-                ),
-            ]),
-        },
-    );
+    paid_control_cases::seed_controls(store);
 }
 fn paid_request(attempt: &str, provider: PaidProvider) -> PaidRequest {
     PaidRequest {
@@ -63,11 +48,32 @@ fn paid_request(attempt: &str, provider: PaidProvider) -> PaidRequest {
         created_at_ms: NOW,
     }
 }
+async fn reserve_paid(
+    authority: &TestAuthority,
+    input: &PaidRequest,
+    authorization: &PaidAuthorization,
+    now: i64,
+) -> Result<PaidAdmission, gateway_core::GatewayError> {
+    authority.store().clock(now);
+    let context = paid_control_cases::context(input);
+    let receipt = authority.authorize_paid_route(input, &context, now).await?;
+    authority
+        .reserve_paid(input, authorization, &receipt, now)
+        .await
+}
+
 fn paid_reservation(
     authority: &TestAuthority,
     input: &PaidRequest,
 ) -> gateway_authority::paid::PaidReservation {
-    match run(authority.reserve_paid(input, &PaidAuthorization::DirectPaidModel, NOW)).unwrap() {
+    match run(reserve_paid(
+        &authority,
+        input,
+        &PaidAuthorization::DirectPaidModel,
+        NOW,
+    ))
+    .unwrap()
+    {
         PaidAdmission::Reserved(reservation) => reservation,
         _ => panic!("expected fresh reservation"),
     }
@@ -76,13 +82,13 @@ fn paid_reservation(
 #[test]
 fn serial_identity_survives_headroom_reorder_and_same_account_refresh() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let authority = authority(&store);
     let first = admitted(&authority);
     let mut reordered = pool();
     reordered.accounts.reverse();
     reordered.pool_versionstamp = PoolVersionstamp("pool-reordered".to_owned());
-    store.seed(keys::pool(), &reordered);
+    seed_pool(&store, &reordered);
     let second = admitted(&authority);
     assert_eq!(
         first.binding.account_id_hash,
@@ -91,9 +97,9 @@ fn serial_identity_survives_headroom_reorder_and_same_account_refresh() {
     assert_eq!(first.active_generation, second.active_generation);
     assert_eq!(second.binding.slot, 1);
     reordered.accounts[1].credential_version =
-        CredentialVersion("fresh-native-owner-fingerprint".to_owned());
+        source_account("a", true).identity().credential_version;
     reordered.pool_versionstamp = PoolVersionstamp("pool-refreshed".to_owned());
-    store.seed(keys::pool(), &reordered);
+    seed_pool(&store, &reordered);
     let refreshed = admitted(&authority);
     assert_eq!(refreshed.active_generation, first.active_generation);
     assert!(refreshed.binding.routing_generation > first.binding.routing_generation);
@@ -103,7 +109,7 @@ fn serial_identity_survives_headroom_reorder_and_same_account_refresh() {
 #[test]
 fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     paid_setup(&store);
     let authority = authority(&store);
     let first = admitted(&authority);
@@ -120,7 +126,8 @@ fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
     let mut input = paid_request("mixed-paid", PaidProvider::Surplus);
     input.model = "gpt-test".to_owned();
     assert!(
-        run(authority.reserve_paid(
+        run(reserve_paid(
+            &authority,
             &input,
             &PaidAuthorization::SubscriptionUnavailable(proof.clone()),
             NOW
@@ -130,7 +137,8 @@ fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
     store.clock(NOW + 60_001);
     input.attempt_id = PaidAttemptId("expired-proof".to_owned());
     assert!(
-        run(authority.reserve_paid(
+        run(reserve_paid(
+            &authority,
             &input,
             &PaidAuthorization::SubscriptionUnavailable(proof),
             NOW + 60_001
@@ -147,7 +155,7 @@ fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
 #[test]
 fn invalid_active_and_unknown_capacity_never_authorize_failover() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let authority = authority(&store);
     let first = admitted(&authority);
     assert!(!first.probe_required);
@@ -165,7 +173,7 @@ fn invalid_active_and_unknown_capacity_never_authorize_failover() {
 #[test]
 fn exact_model_entitlement_rotates_but_generic_model_errors_do_not() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let authority = authority(&store);
     let first = admitted(&authority);
     assert!(!run(authority.learn_model_unavailable(&first, "model unavailable", NOW)).unwrap());
@@ -173,30 +181,11 @@ fn exact_model_entitlement_rotates_but_generic_model_errors_do_not() {
         admitted(&authority).binding.account_id_hash,
         first.binding.account_id_hash
     );
-    store.seed(
-        keys::models(),
-        &ModelAvailability {
-            catalogs: BTreeMap::from([
-                (
-                    "route-a".to_owned(),
-                    AccountCatalog {
-                        client_version: "0.163.0".to_owned(),
-                        models: vec!["other".to_owned()],
-                    },
-                ),
-                (
-                    "route-b".to_owned(),
-                    AccountCatalog {
-                        client_version: "0.163.0".to_owned(),
-                        models: vec!["gpt-test".to_owned()],
-                    },
-                ),
-            ]),
-            unsupported: BTreeMap::new(),
-        },
-    );
+    store.seed(keys::models(),&serde_json::json!({"accounts":{
+        "a":{"slugs":["other"],"client_version":"0.163.0","updated_at_ms":NOW},
+        "b":{"slugs":["gpt-test"],"client_version":"0.163.0","updated_at_ms":NOW}},"unsupported":{}}));
     let replacement = admitted(&authority);
-    assert_eq!(replacement.binding.account_id_hash.0, "route-b");
+    assert_eq!(replacement.binding.account_id_hash.0, routing_hash("b").0);
     assert_eq!(replacement.active_generation, first.active_generation + 1);
 }
 
@@ -439,7 +428,8 @@ fn paid_disable_racing_admission_prevents_exposure_and_transient_failures_retain
     disabled.paid_fallback_enabled = false;
     store.race(keys::api_policy("key-a"), &disabled);
     assert!(
-        run(authority.reserve_paid(
+        run(reserve_paid(
+            &authority,
             &paid_request("disabled", PaidProvider::Surplus),
             &PaidAuthorization::DirectPaidModel,
             NOW
@@ -530,7 +520,7 @@ fn armed_reset(
 #[test]
 fn reset_unknown_is_lookup_only_after_owner_takeover_even_when_disabled() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let authority = authority(&store);
     let (candidate, claimed) = armed_reset(&store, &authority);
     store.clock(NOW + 12);
@@ -584,7 +574,7 @@ fn reset_unknown_is_lookup_only_after_owner_takeover_even_when_disabled() {
 #[test]
 fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let authority = authority(&store);
     let (candidate, claimed) = armed_reset(&store, &authority);
     let day = utc_day(NOW).unwrap();
@@ -605,7 +595,7 @@ fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() 
     );
     let mut changed = pool();
     changed.pool_versionstamp = PoolVersionstamp("changed".to_owned());
-    store.seed(keys::pool(), &changed);
+    seed_pool(&store, &changed);
     assert!(run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12)).is_err());
     assert_eq!(
         store
@@ -622,7 +612,7 @@ fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() 
 #[test]
 fn overage_off_is_a_hard_gate_and_enabled_probe_blocks_other_requests() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let authority = authority(&store);
     let first = admitted(&authority);
     run(authority.record_quota_block(&first, block(), NOW)).unwrap();
@@ -638,7 +628,10 @@ fn overage_off_is_a_hard_gate_and_enabled_probe_blocks_other_requests() {
             .unwrap()
             .is_none()
     );
-    store.seed(keys::overage("admin-a"), &serde_json::json!({"allow":true}));
+    store.seed(
+        keys::overage(&admin_hash("a").0),
+        &serde_json::json!({"allow":true}),
+    );
     let RouteSelection::QuotaBlocked { proof, .. } =
         run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap()
     else {
@@ -696,7 +689,7 @@ fn reset_identity_deduplicates_refresh_and_utc_days_and_expiry_remain_absolute()
 #[test]
 fn bad_stored_versions_are_not_replaced_with_empty_state() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let mut bad = store.row(&keys::pool()).unwrap();
     bad.schema_version = 99;
     run(store.commit(gateway_core::state::AtomicTransition {
@@ -716,7 +709,7 @@ fn bad_stored_versions_are_not_replaced_with_empty_state() {
 #[test]
 fn reset_deadline_crossing_during_async_fence_reads_consumes_no_daily_budget() {
     let store = MemoryStore::default();
-    store.seed(keys::pool(), &pool());
+    seed_pool(&store, &pool());
     let authority = authority(&store);
     let (candidate, claimed) = armed_reset(&store, &authority);
     let day = utc_day(NOW).unwrap();
@@ -854,9 +847,10 @@ fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
     let mut lookalike = serde_json::to_value(pool()).unwrap();
     lookalike["type"] = serde_json::json!("binary");
     lookalike["value"] = serde_json::json!([1, 2, 3]);
+    seed_pool(&json_store, &pool());
     json_store.seed(keys::pool(), &lookalike);
     assert_eq!(
         admitted(&authority(&json_store)).binding.account_id_hash.0,
-        "route-a"
+        routing_hash("a").0
     );
 }

@@ -1,0 +1,2369 @@
+{
+  "source_package": "@simplewebauthn/server13.2.2",
+  "source_time_policy": "Actual host Date.now; fixtures contain only public keys and completed signatures",
+  "cases": [
+    {
+      "kind": "registration",
+      "name": "-7/P-384/2048/65537/none",
+      "response": {
+        "id": "_JUTVTmVb_k4pToEz6c1Ug",
+        "rawId": "_JUTVTmVb_k4pToEz6c1Ug",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiWVp3a3ZvZW9Ed2h3WEcwVUhBSkRac3FyZjMxci03Yzg0dFZnS2l0TkJoVSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi0OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEPyVE1U5lW_5OKU6BM-nNVKlAQIDJiACIVgwwAXCng6y1FdNuTAqhKUUMDKVFEAPW_frSBFGbWur_VgTpKZ1jbDx0_8vZiKPDKo5IlgwkD5nbEfDPsi-y8R2SK3BFjUusUVV7OmLZhuVX_NcAClBjhOQ_g2D3B7rfD2TAmJH",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "YZwkvoeoDwhwXG0UHAJDZsqrf31r-7c84tVgKitNBhU",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927436,
+      "public_key": "pQECAyYgAiFYMMAFwp4OstRXTbkwKoSlFDAylRRAD1v360gRRm1rq_1YE6SmdY2w8dP_L2YijwyqOSJYMJA-Z2xHwz7IvsvEdkitwRY1LrFFVezpi2YblV_zXAApQY4TkP4Ng9we63w9kwJiRw",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-7/P-384/2048/65537/packed",
+      "response": {
+        "id": "_JUTVTmVb_k4pToEz6c1Ug",
+        "rawId": "_JUTVTmVb_k4pToEz6c1Ug",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiWVp3a3ZvZW9Ed2h3WEcwVUhBSkRac3FyZjMxci03Yzg0dFZnS2l0TkJoVSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZyZjc2lnWGcwZQIwY2yfewzn3YWQa_sHDqzVs9TaXI--5MQSgKXOzaQrVi1adVZfmt4zSdoqFvJnAxh5AjEAjFDmkLH5GGsx2MSr2DwB9oaeCxpiugI25u4HXK4phT8JVtKON790yYl9HvVZQcKXaGF1dGhEYXRhWLQ6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ_JUTVTmVb_k4pToEz6c1UqUBAgMmIAIhWDDABcKeDrLUV025MCqEpRQwMpUUQA9b9-tIEUZta6v9WBOkpnWNsPHT_y9mIo8MqjkiWDCQPmdsR8M-yL7LxHZIrcEWNS6xRVXs6YtmG5Vf81wAKUGOE5D-DYPcHut8PZMCYkc",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "YZwkvoeoDwhwXG0UHAJDZsqrf31r-7c84tVgKitNBhU",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927438,
+      "public_key": "pQECAyYgAiFYMMAFwp4OstRXTbkwKoSlFDAylRRAD1v360gRRm1rq_1YE6SmdY2w8dP_L2YijwyqOSJYMJA-Z2xHwz7IvsvEdkitwRY1LrFFVezpi2YblV_zXAApQY4TkP4Ng9we63w9kwJiRw",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-384/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "_JUTVTmVb_k4pToEz6c1Ug",
+        "rawId": "_JUTVTmVb_k4pToEz6c1Ug",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiWVp3a3ZvZW9Ed2h3WEcwVUhBSkRac3FyZjMxci03Yzg0dFZnS2l0TkJoVSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "MGUCMBLkZ3HM88x4I55Z7fbGUFmsxJEzpXt7qit-JD556awz7F3877qVjylg2RzBgyEhkwIxAJxHXesrPX_MH0cHxFOY-2xM0PGv3-wki9djcTdaQKjDePE7nDi4Lg_xInEMCPriTQ"
+        }
+      },
+      "challenge": "YZwkvoeoDwhwXG0UHAJDZsqrf31r-7c84tVgKitNBhU",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pQECAyYgAiFYMMAFwp4OstRXTbkwKoSlFDAylRRAD1v360gRRm1rq_1YE6SmdY2w8dP_L2YijwyqOSJYMJA-Z2xHwz7IvsvEdkitwRY1LrFFVezpi2YblV_zXAApQY4TkP4Ng9we63w9kwJiRw",
+      "credential_id": "_JUTVTmVb_k4pToEz6c1Ug",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-384/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "_JUTVTmVb_k4pToEz6c1Ug",
+        "rawId": "_JUTVTmVb_k4pToEz6c1Ug",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiWVp3a3ZvZW9Ed2h3WEcwVUhBSkRac3FyZjMxci03Yzg0dFZnS2l0TkJoVSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "MGQCMFgsBevWH5ctL1mt8Rp0O9YhJuFHUN1ARxyb-E-5ps0xcMeCbZh1HJIgb-Jko4Rp2wIwLNyQD65uquEnXkQZ0Kde1PTpIDwDnINzxIHmS0Qpw-GFm2dvoOopTbjFT58g9CSh"
+        }
+      },
+      "challenge": "YZwkvoeoDwhwXG0UHAJDZsqrf31r-7c84tVgKitNBhU",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgAiFYMMAFwp4OstRXTbkwKoSlFDAylRRAD1v360gRRm1rq_1YE6SmdY2w8dP_L2YijwyqOSJYMJA-Z2xHwz7IvsvEdkitwRY1LrFFVezpi2YblV_zXAApQY4TkP4Ng9we63w9kwJiRw",
+      "credential_id": "_JUTVTmVb_k4pToEz6c1Ug",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-384/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "_JUTVTmVb_k4pToEz6c1Ug",
+        "rawId": "_JUTVTmVb_k4pToEz6c1Ug",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiWVp3a3ZvZW9Ed2h3WEcwVUhBSkRac3FyZjMxci03Yzg0dFZnS2l0TkJoVSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MGYCMQDZoVnTlZ_OUOp155umgvPSbSiFDrurtIqUTMuBZ55j8E0lRTBGpqE5Ao0bgptqCLoCMQDvgAyw1sElDHTCzmfOFxlUD9q8Ll6OGX093ILMgRX1d7R85vrrkcjanzewwP-eGNs"
+        }
+      },
+      "challenge": "YZwkvoeoDwhwXG0UHAJDZsqrf31r-7c84tVgKitNBhU",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgAiFYMMAFwp4OstRXTbkwKoSlFDAylRRAD1v360gRRm1rq_1YE6SmdY2w8dP_L2YijwyqOSJYMJA-Z2xHwz7IvsvEdkitwRY1LrFFVezpi2YblV_zXAApQY4TkP4Ng9we63w9kwJiRw",
+      "credential_id": "_JUTVTmVb_k4pToEz6c1Ug",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-384/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "_JUTVTmVb_k4pToEz6c1Ug",
+        "rawId": "_JUTVTmVb_k4pToEz6c1Ug",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiWVp3a3ZvZW9Ed2h3WEcwVUhBSkRac3FyZjMxci03Yzg0dFZnS2l0TkJoVSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MGUCMQCCuEBofzCUeuGbyOxckQKHG4Ak3cDaTfHAihlMDvG96F6GeunckwW7muZhDWlKXLMCMC1tciFijeDc0U9ZJMCGmv2pS0qhH3C9gPqpk3jkvcuLOGeXgW_rmmBhtuvVym9msw"
+        }
+      },
+      "challenge": "YZwkvoeoDwhwXG0UHAJDZsqrf31r-7c84tVgKitNBhU",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgAiFYMMAFwp4OstRXTbkwKoSlFDAylRRAD1v360gRRm1rq_1YE6SmdY2w8dP_L2YijwyqOSJYMJA-Z2xHwz7IvsvEdkitwRY1LrFFVezpi2YblV_zXAApQY4TkP4Ng9we63w9kwJiRw",
+      "credential_id": "_JUTVTmVb_k4pToEz6c1Ug",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-258/P-256/2048/65537/none",
+      "response": {
+        "id": "iz1Kc8oHLUq2r49FqyYGsg",
+        "rawId": "iz1Kc8oHLUq2r49FqyYGsg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiMVN5a3BrRDRYWVZVTDZpSHRaeEhST3dwLUZoRGxZbWd4OFUyd3BucWdyNCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViWOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEIs9SnPKBy1Ktq-PRasmBrKlAQIDOQEBIAEhWCByxoQ-KEon6nEP4pOVGv5Z4UKwHaRh1qk-fMYE7geSyyJYIIBPGbTWpm0D4uRPcCgOfC0hQBowIZX2U9fdXI6p-Fuh",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "1SykpkD4XYVUL6iHtZxHROwp-FhDlYmgx8U2wpnqgr4",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927443,
+      "public_key": "pQECAzkBASABIVggcsaEPihKJ-pxD-KTlRr-WeFCsB2kYdapPnzGBO4HkssiWCCATxm01qZtA-LkT3AoDnwtIUAaMCGV9lPX3VyOqfhboQ",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-258/P-256/2048/65537/packed",
+      "response": {
+        "id": "iz1Kc8oHLUq2r49FqyYGsg",
+        "rawId": "iz1Kc8oHLUq2r49FqyYGsg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiMVN5a3BrRDRYWVZVTDZpSHRaeEhST3dwLUZoRGxZbWd4OFUyd3BucWdyNCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAWNzaWdYRjBEAiBqMD9FsVdZm5m0gboCsLl86nrkmzzyKhXc4mX0jFXwqQIgS19WdpkNVIjFRh6SPaPknKAxBDJQ8wByn5EWl9s0axFoYXV0aERhdGFYljoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCLPUpzygctSravj0WrJgaypQECAzkBASABIVggcsaEPihKJ-pxD-KTlRr-WeFCsB2kYdapPnzGBO4HkssiWCCATxm01qZtA-LkT3AoDnwtIUAaMCGV9lPX3VyOqfhboQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "1SykpkD4XYVUL6iHtZxHROwp-FhDlYmgx8U2wpnqgr4",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927443,
+      "public_key": "pQECAzkBASABIVggcsaEPihKJ-pxD-KTlRr-WeFCsB2kYdapPnzGBO4HkssiWCCATxm01qZtA-LkT3AoDnwtIUAaMCGV9lPX3VyOqfhboQ",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/P-256/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "iz1Kc8oHLUq2r49FqyYGsg",
+        "rawId": "iz1Kc8oHLUq2r49FqyYGsg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiMVN5a3BrRDRYWVZVTDZpSHRaeEhST3dwLUZoRGxZbWd4OFUyd3BucWdyNCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "MEYCIQDXCbAuUM1vhAi-CbTuvHZv7V76fre9feykTY685-tR_AIhAP1wAqPKfwFm1kWP8CMAGcd7tafFZwGnY8tubaDvh3eD"
+        }
+      },
+      "challenge": "1SykpkD4XYVUL6iHtZxHROwp-FhDlYmgx8U2wpnqgr4",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pQECAzkBASABIVggcsaEPihKJ-pxD-KTlRr-WeFCsB2kYdapPnzGBO4HkssiWCCATxm01qZtA-LkT3AoDnwtIUAaMCGV9lPX3VyOqfhboQ",
+      "credential_id": "iz1Kc8oHLUq2r49FqyYGsg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/P-256/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "iz1Kc8oHLUq2r49FqyYGsg",
+        "rawId": "iz1Kc8oHLUq2r49FqyYGsg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiMVN5a3BrRDRYWVZVTDZpSHRaeEhST3dwLUZoRGxZbWd4OFUyd3BucWdyNCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "MEQCIGx1_JQq9ckYcmEJ60AmSUEv4CLxeeKL4oLndjDnxoQyAiA_a2gVfcSheR0eyRI72G1wInPoBlejnfM_c88TpK6bhQ"
+        }
+      },
+      "challenge": "1SykpkD4XYVUL6iHtZxHROwp-FhDlYmgx8U2wpnqgr4",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzkBASABIVggcsaEPihKJ-pxD-KTlRr-WeFCsB2kYdapPnzGBO4HkssiWCCATxm01qZtA-LkT3AoDnwtIUAaMCGV9lPX3VyOqfhboQ",
+      "credential_id": "iz1Kc8oHLUq2r49FqyYGsg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/P-256/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "iz1Kc8oHLUq2r49FqyYGsg",
+        "rawId": "iz1Kc8oHLUq2r49FqyYGsg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiMVN5a3BrRDRYWVZVTDZpSHRaeEhST3dwLUZoRGxZbWd4OFUyd3BucWdyNCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MEMCH3PXvKVK9OyjgnceRXrrFQhz6HtMrMr4LGYFcFv0FGcCIEtAUzjGLlEnuTTAtkgPKjjs3G8DtrrB4Eim2Brls3cQ"
+        }
+      },
+      "challenge": "1SykpkD4XYVUL6iHtZxHROwp-FhDlYmgx8U2wpnqgr4",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzkBASABIVggcsaEPihKJ-pxD-KTlRr-WeFCsB2kYdapPnzGBO4HkssiWCCATxm01qZtA-LkT3AoDnwtIUAaMCGV9lPX3VyOqfhboQ",
+      "credential_id": "iz1Kc8oHLUq2r49FqyYGsg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/P-256/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "iz1Kc8oHLUq2r49FqyYGsg",
+        "rawId": "iz1Kc8oHLUq2r49FqyYGsg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiMVN5a3BrRDRYWVZVTDZpSHRaeEhST3dwLUZoRGxZbWd4OFUyd3BucWdyNCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MEUCIDZD3tjQHuDtUd5gkBK8x1fokrloKN3Q77mVblw8NkNCAiEAkAd1HB19OwURN76odJptp1r1N1QY0rj0JV7hAtpHHgM"
+        }
+      },
+      "challenge": "1SykpkD4XYVUL6iHtZxHROwp-FhDlYmgx8U2wpnqgr4",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzkBASABIVggcsaEPihKJ-pxD-KTlRr-WeFCsB2kYdapPnzGBO4HkssiWCCATxm01qZtA-LkT3AoDnwtIUAaMCGV9lPX3VyOqfhboQ",
+      "credential_id": "iz1Kc8oHLUq2r49FqyYGsg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-7/P-521/2048/65537/none",
+      "response": {
+        "id": "Mh8E1d_STQrz3gSjDzsE3A",
+        "rawId": "Mh8E1d_STQrz3gSjDzsE3A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoicWNYNENDREo0TUI2dHM5WC1UNXJhS0t3N1dTSURBM1MzLVRRRkEyTnBFcyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjYOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEDIfBNXf0k0K894Eow87BNylAQIDJiADIVhCAGj0IwvCTilOliA-hMZzP1cYxMqZhh-qpbfwc0YCFb009Fhcma9RTGK3ZfBolCx459KjpmXVsb4uDPXqelHwJ7tTIlhCAUJsP_eyD7jBr7BEPpeFlA2kcasiEViE1SH8d-uyjUpyfs7TEcp_ubTcd_rjZMDtaUvi4V8NAGz1r0TIRAg9nvot",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "qcX4CCDJ4MB6ts9X-T5raKKw7WSIDA3S3-TQFA2NpEs",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927445,
+      "public_key": "pQECAyYgAyFYQgBo9CMLwk4pTpYgPoTGcz9XGMTKmYYfqqW38HNGAhW9NPRYXJmvUUxit2XwaJQseOfSo6Zl1bG-Lgz16npR8Ce7UyJYQgFCbD_3sg-4wa-wRD6XhZQNpHGrIhFYhNUh_Hfrso1Kcn7O0xHKf7m03Hf642TA7WlL4uFfDQBs9a9EyEQIPZ76LQ",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-7/P-521/2048/65537/packed",
+      "response": {
+        "id": "Mh8E1d_STQrz3gSjDzsE3A",
+        "rawId": "Mh8E1d_STQrz3gSjDzsE3A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoicWNYNENDREo0TUI2dHM5WC1UNXJhS0t3N1dTSURBM1MzLVRRRkEyTnBFcyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZyZjc2lnWIswgYgCQgEWL6eIrJHfWvy8waJS-xgL_aO5oOJ3OEr50fRNRKya1XNXabY6anaQf4iU9eDm3QS9DEwhPsUItrHK8OAYOlMaMwJCATZrN4hfkUN5Rrye_qhRJD3ZgPB0ghg32k3QdPzxW0n6Uu_pne9E1mxY7et06wm-M-aUGv8896X9RQGSrzDF2fsBaGF1dGhEYXRhWNg6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQMh8E1d_STQrz3gSjDzsE3KUBAgMmIAMhWEIAaPQjC8JOKU6WID6ExnM_VxjEypmGH6qlt_BzRgIVvTT0WFyZr1FMYrdl8GiULHjn0qOmZdWxvi4M9ep6UfAnu1MiWEIBQmw_97IPuMGvsEQ-l4WUDaRxqyIRWITVIfx367KNSnJ-ztMRyn-5tNx3-uNkwO1pS-LhXw0AbPWvRMhECD2e-i0",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "qcX4CCDJ4MB6ts9X-T5raKKw7WSIDA3S3-TQFA2NpEs",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927447,
+      "public_key": "pQECAyYgAyFYQgBo9CMLwk4pTpYgPoTGcz9XGMTKmYYfqqW38HNGAhW9NPRYXJmvUUxit2XwaJQseOfSo6Zl1bG-Lgz16npR8Ce7UyJYQgFCbD_3sg-4wa-wRD6XhZQNpHGrIhFYhNUh_Hfrso1Kcn7O0xHKf7m03Hf642TA7WlL4uFfDQBs9a9EyEQIPZ76LQ",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-521/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "Mh8E1d_STQrz3gSjDzsE3A",
+        "rawId": "Mh8E1d_STQrz3gSjDzsE3A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicWNYNENDREo0TUI2dHM5WC1UNXJhS0t3N1dTSURBM1MzLVRRRkEyTnBFcyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "MIGIAkIA4QRROWL3mQA7NY8MKFwERQQ1PVm-fyifndBCar6MlbMyztSU_p3bWQYrGcJaRDTzVQ2-1O1CXz87O9HPdVNijnMCQgDhJmT-KCoub2lTpmOPUnKyKNfnpCYbdO8AVggJFk9wH6uHMyJSNLqnQn5QseHQ0zugBjkKSRUnrg4xGnTqXdWVuQ"
+        }
+      },
+      "challenge": "qcX4CCDJ4MB6ts9X-T5raKKw7WSIDA3S3-TQFA2NpEs",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pQECAyYgAyFYQgBo9CMLwk4pTpYgPoTGcz9XGMTKmYYfqqW38HNGAhW9NPRYXJmvUUxit2XwaJQseOfSo6Zl1bG-Lgz16npR8Ce7UyJYQgFCbD_3sg-4wa-wRD6XhZQNpHGrIhFYhNUh_Hfrso1Kcn7O0xHKf7m03Hf642TA7WlL4uFfDQBs9a9EyEQIPZ76LQ",
+      "credential_id": "Mh8E1d_STQrz3gSjDzsE3A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-521/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "Mh8E1d_STQrz3gSjDzsE3A",
+        "rawId": "Mh8E1d_STQrz3gSjDzsE3A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicWNYNENDREo0TUI2dHM5WC1UNXJhS0t3N1dTSURBM1MzLVRRRkEyTnBFcyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "MIGHAkIBfHJM2Dk0KU1cSe_tET5bNQQkBiQvIdPq3xqz71SfTQyqlIPnM4GDqSst3UK8i38n2hoPn1TBBmgxH34znRBqL8oCQQvq_kROgtwiN7UorwQR7el3NbbxaGx01NXHG2XTk8cidZ8CHB7icKF5r6TUP2JkVYU0a8EzgQSlQnJmPp7savLu"
+        }
+      },
+      "challenge": "qcX4CCDJ4MB6ts9X-T5raKKw7WSIDA3S3-TQFA2NpEs",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgAyFYQgBo9CMLwk4pTpYgPoTGcz9XGMTKmYYfqqW38HNGAhW9NPRYXJmvUUxit2XwaJQseOfSo6Zl1bG-Lgz16npR8Ce7UyJYQgFCbD_3sg-4wa-wRD6XhZQNpHGrIhFYhNUh_Hfrso1Kcn7O0xHKf7m03Hf642TA7WlL4uFfDQBs9a9EyEQIPZ76LQ",
+      "credential_id": "Mh8E1d_STQrz3gSjDzsE3A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-521/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "Mh8E1d_STQrz3gSjDzsE3A",
+        "rawId": "Mh8E1d_STQrz3gSjDzsE3A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicWNYNENDREo0TUI2dHM5WC1UNXJhS0t3N1dTSURBM1MzLVRRRkEyTnBFcyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MIGIAkIBe1C0W8_lxBu60RHtRx_uVS1-tFhfyDGE0QxJUQdn5cbNb_kXFAluHnsI0mIFTSegwCMGUC9zbuoixxGDosD9PH8CQgHgyWpI87jJTLlGtmM-JIJrN5nXqm6L_LJWtThxre5MXsskA70k7i6d2iRolxLBty_QeFFdDoZHAKnVPNBflDUcVg"
+        }
+      },
+      "challenge": "qcX4CCDJ4MB6ts9X-T5raKKw7WSIDA3S3-TQFA2NpEs",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgAyFYQgBo9CMLwk4pTpYgPoTGcz9XGMTKmYYfqqW38HNGAhW9NPRYXJmvUUxit2XwaJQseOfSo6Zl1bG-Lgz16npR8Ce7UyJYQgFCbD_3sg-4wa-wRD6XhZQNpHGrIhFYhNUh_Hfrso1Kcn7O0xHKf7m03Hf642TA7WlL4uFfDQBs9a9EyEQIPZ76LQ",
+      "credential_id": "Mh8E1d_STQrz3gSjDzsE3A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-521/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "Mh8E1d_STQrz3gSjDzsE3A",
+        "rawId": "Mh8E1d_STQrz3gSjDzsE3A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicWNYNENDREo0TUI2dHM5WC1UNXJhS0t3N1dTSURBM1MzLVRRRkEyTnBFcyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MIGHAkFL32DR28CGP74eXHYP1-2KeoIQwE812l38LiiVWeg884RCDtpX4QJEAhrsjrCZUoCTFD5BDcD7FbJmjr2IY-PLCAJCAPej8GJTNKPOL0iO6qadD1Zu0Bkw2W3oIFuUupmMXT_7FYF8N7Z7CmuucdtwQze08dqrXBpSK6ISpori2HA3xHW_"
+        }
+      },
+      "challenge": "qcX4CCDJ4MB6ts9X-T5raKKw7WSIDA3S3-TQFA2NpEs",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgAyFYQgBo9CMLwk4pTpYgPoTGcz9XGMTKmYYfqqW38HNGAhW9NPRYXJmvUUxit2XwaJQseOfSo6Zl1bG-Lgz16npR8Ce7UyJYQgFCbD_3sg-4wa-wRD6XhZQNpHGrIhFYhNUh_Hfrso1Kcn7O0xHKf7m03Hf642TA7WlL4uFfDQBs9a9EyEQIPZ76LQ",
+      "credential_id": "Mh8E1d_STQrz3gSjDzsE3A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-65535/P-384/2048/65537/none",
+      "response": {
+        "id": "sSx_ifNIoIshbbWV_NxAdA",
+        "rawId": "sSx_ifNIoIshbbWV_NxAdA",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoickpzSHNFQ0gweFZ3bHJMUWxIb0dyUlJucHlYVlRHWllVVktSQndBSTdTbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi2OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAELEsf4nzSKCLIW21lfzcQHSlAQIDOf_-IAIhWDDj8DsnpREHLxRcjL7Z7SdUNgfUcdiC16di_iwqF9wQ7O-79GACRqXn6PqiHi4TVBEiWDDoRMT3qJMsf_h7MZ788PqfXgQrOJdw4osDXvHVgQUJyxOBqwEdCaWZLgyXiIEWPZU",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "rJsHsECH0xVwlrLQlHoGrRRnpyXVTGZYUVKRBwAI7So",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927457,
+      "public_key": "pQECAzn__iACIVgw4_A7J6URBy8UXIy-2e0nVDYH1HHYgtenYv4sKhfcEOzvu_RgAkal5-j6oh4uE1QRIlgw6ETE96iTLH_4ezGe_PD6n14EKziXcOKLA17x1YEFCcsTgasBHQmlmS4Ml4iBFj2V",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-65535/P-384/2048/65537/packed",
+      "response": {
+        "id": "sSx_ifNIoIshbbWV_NxAdA",
+        "rawId": "sSx_ifNIoIshbbWV_NxAdA",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoickpzSHNFQ0gweFZ3bHJMUWxIb0dyUlJucHlYVlRHWllVVktSQndBSTdTbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzn__mNzaWdYZzBlAjBwLegSJcGmFAiwJCcKZQy6C4hNamO9hwOFJYmm0JZStHvehm7PLNSnC_id4UuQAt4CMQCgD0gwswRxujQ5_7HfC0YmFoWS6IQWIIUA8b57RMZTAGmTH3_9PoZ8s_J54tuDt2hoYXV0aERhdGFYtjoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCxLH-J80igiyFttZX83EB0pQECAzn__iACIVgw4_A7J6URBy8UXIy-2e0nVDYH1HHYgtenYv4sKhfcEOzvu_RgAkal5-j6oh4uE1QRIlgw6ETE96iTLH_4ezGe_PD6n14EKziXcOKLA17x1YEFCcsTgasBHQmlmS4Ml4iBFj2V",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "rJsHsECH0xVwlrLQlHoGrRRnpyXVTGZYUVKRBwAI7So",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927458,
+      "public_key": "pQECAzn__iACIVgw4_A7J6URBy8UXIy-2e0nVDYH1HHYgtenYv4sKhfcEOzvu_RgAkal5-j6oh4uE1QRIlgw6ETE96iTLH_4ezGe_PD6n14EKziXcOKLA17x1YEFCcsTgasBHQmlmS4Ml4iBFj2V",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/P-384/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "sSx_ifNIoIshbbWV_NxAdA",
+        "rawId": "sSx_ifNIoIshbbWV_NxAdA",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoickpzSHNFQ0gweFZ3bHJMUWxIb0dyUlJucHlYVlRHWllVVktSQndBSTdTbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "MGUCMQCg0O8IeXJhUq2QYZymjqdr8srLfBsxQij9pzOPnXx3cLH1MdkQK69Avej8uxko8asCMDSaAnUnBpvdy5NtfxwpKpxRvww7Ns8TYWvRFI6wkOhTaLD9RIWQbPhBnIRTwXhnzw"
+        }
+      },
+      "challenge": "rJsHsECH0xVwlrLQlHoGrRRnpyXVTGZYUVKRBwAI7So",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pQECAzn__iACIVgw4_A7J6URBy8UXIy-2e0nVDYH1HHYgtenYv4sKhfcEOzvu_RgAkal5-j6oh4uE1QRIlgw6ETE96iTLH_4ezGe_PD6n14EKziXcOKLA17x1YEFCcsTgasBHQmlmS4Ml4iBFj2V",
+      "credential_id": "sSx_ifNIoIshbbWV_NxAdA",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/P-384/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "sSx_ifNIoIshbbWV_NxAdA",
+        "rawId": "sSx_ifNIoIshbbWV_NxAdA",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoickpzSHNFQ0gweFZ3bHJMUWxIb0dyUlJucHlYVlRHWllVVktSQndBSTdTbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "MGUCMAXUFlDuMiGhVRsykVnMDd_JeLEmRMqOGjHlcosMBzayv3UFex5a6yDJmtdmjeDeYAIxAPTJRb0HjBDrI6L6amTXnppntH3kae2Jc1Z1IQgJA7CGVl1dZBKbAwEKd9l-egc9-w"
+        }
+      },
+      "challenge": "rJsHsECH0xVwlrLQlHoGrRRnpyXVTGZYUVKRBwAI7So",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzn__iACIVgw4_A7J6URBy8UXIy-2e0nVDYH1HHYgtenYv4sKhfcEOzvu_RgAkal5-j6oh4uE1QRIlgw6ETE96iTLH_4ezGe_PD6n14EKziXcOKLA17x1YEFCcsTgasBHQmlmS4Ml4iBFj2V",
+      "credential_id": "sSx_ifNIoIshbbWV_NxAdA",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/P-384/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "sSx_ifNIoIshbbWV_NxAdA",
+        "rawId": "sSx_ifNIoIshbbWV_NxAdA",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoickpzSHNFQ0gweFZ3bHJMUWxIb0dyUlJucHlYVlRHWllVVktSQndBSTdTbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MGUCMQC_HqJDx8ZKvPFZc-9TgLI9pxeNHOdcAtxpotihCtaA-FuBgLN-iasdJRz7Srcr6cYCMDFyKk6b1McYBenxoTaqDTmSQ4zA87mGTd8_Z8mm8tzFLIHa5PVdDhc2EKfwuXClYw"
+        }
+      },
+      "challenge": "rJsHsECH0xVwlrLQlHoGrRRnpyXVTGZYUVKRBwAI7So",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzn__iACIVgw4_A7J6URBy8UXIy-2e0nVDYH1HHYgtenYv4sKhfcEOzvu_RgAkal5-j6oh4uE1QRIlgw6ETE96iTLH_4ezGe_PD6n14EKziXcOKLA17x1YEFCcsTgasBHQmlmS4Ml4iBFj2V",
+      "credential_id": "sSx_ifNIoIshbbWV_NxAdA",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/P-384/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "sSx_ifNIoIshbbWV_NxAdA",
+        "rawId": "sSx_ifNIoIshbbWV_NxAdA",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoickpzSHNFQ0gweFZ3bHJMUWxIb0dyUlJucHlYVlRHWllVVktSQndBSTdTbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MGQCMCLA-JUu4d_v2w2Kf_2Oy29Ua1irt-pWfTQ1t2fY3NIKfopsdDFWDd6iqeOe4foCcQIwPquEjouX1Yv_ho9SShCMp9mk-RJYYGsuR8-_x90Zb763tDsULGil5sD0_QvomZCx"
+        }
+      },
+      "challenge": "rJsHsECH0xVwlrLQlHoGrRRnpyXVTGZYUVKRBwAI7So",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzn__iACIVgw4_A7J6URBy8UXIy-2e0nVDYH1HHYgtenYv4sKhfcEOzvu_RgAkal5-j6oh4uE1QRIlgw6ETE96iTLH_4ezGe_PD6n14EKziXcOKLA17x1YEFCcsTgasBHQmlmS4Ml4iBFj2V",
+      "credential_id": "sSx_ifNIoIshbbWV_NxAdA",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-7/P-256/2048/65537/none",
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViUOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEInp5-sJVGrMl4UwTjoxdU-lAQIDJiABIVggMt1Vtbzt33gZsZeYnFvuhrmBH1PJoanGHQYnBnLlweUiWCAlLo7_a3K2LErRouLevZtGL0tcSCicAV5hZvhzaetd6Q",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927462,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-7/P-256/2048/65537/packed",
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZyZjc2lnWEgwRgIhAKV2CWECzQL8sWqMhQoMbdmAGkJ-l-s8n1bmrfPCYM1tAiEA4yvaA1h4t-EHV9vOkMM5ygrksAwDYd6Hb_-kQ0NkdXBoYXV0aERhdGFYlDoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCJ6efrCVRqzJeFME46MXVPpQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927462,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-256/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "MEUCIQCDVP59ckVZ4oubuUU6YUzW9z6g_OBFXCbfoaMl_mjpgQIgft4WCFSuH82UqDMtShoLwv6F3BMutwNyHE-WOY-Q6HA"
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+      "credential_id": "ienn6wlUasyXhTBOOjF1Tw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-256/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "MEUCIBscZ3mNduytZ1rtNYRHTE_UWrkFcOStxxWSIg01HOXDAiEA6JNc4TX_JwWZCbOzltj5czQ3ZhPrxhLrNqR2rKZPr8E"
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+      "credential_id": "ienn6wlUasyXhTBOOjF1Tw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-256/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MEUCIQDiblfjAMkKdf_gAOCKvcZ1mHr2ohnoEZ9UQ4UKasesLQIgWzRQPjTzDRym6kN6BlDlT4TR-sKVnkOSsx8uRsQrEz4"
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+      "credential_id": "ienn6wlUasyXhTBOOjF1Tw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-7/P-256/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MEUCIHKrq1QBjgce2hnwV3ZGFlS9Er5OMIbm6VSL17HknRdbAiEAqe4ebC9dkR10feq7fnBwXfbu-AgqpA6ADHDEjmIbkBc"
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+      "credential_id": "ienn6wlUasyXhTBOOjF1Tw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-35/P-384/2048/65537/none",
+      "response": {
+        "id": "IFpztFzZt_F_DEDcqnOEAw",
+        "rawId": "IFpztFzZt_F_DEDcqnOEAw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNFFpdGlKS2xVdVY2M3NBY05neGZhVkN3LUpRMGs4RUFORjNWLWo0Y1NKbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi1OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAECBac7Rc2bfxfwxA3KpzhAOlAQIDOCIgAiFYMPQHtOjKkHSji7lG-INc-cqXJ892HdXw2mMx-625hIXb2W1pT2bcfNwK5LhblcHZmiJYMKxfXKGFGmd-ZnzvdUIt0cTuo4IpT54dtci3KesTao2tA1hBTR1Jg7kOSXLmJhFA8g",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "4QitiJKlUuV63sAcNgxfaVCw-JQ0k8EANF3V-j4cSJo",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927463,
+      "public_key": "pQECAzgiIAIhWDD0B7ToypB0o4u5RviDXPnKlyfPdh3V8NpjMfutuYSF29ltaU9m3HzcCuS4W5XB2ZoiWDCsX1yhhRpnfmZ873VCLdHE7qOCKU-eHbXItynrE2qNrQNYQU0dSYO5Dkly5iYRQPI",
+      "expected_success": false,
+      "error": "Error: Unexpected public key alg \"-35\", expected one of \"-8, -7, -36, -37, -38, -39, -257, -258, -259, -65535\""
+    },
+    {
+      "kind": "registration",
+      "name": "-35/P-384/2048/65537/packed",
+      "response": {
+        "id": "IFpztFzZt_F_DEDcqnOEAw",
+        "rawId": "IFpztFzZt_F_DEDcqnOEAw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNFFpdGlKS2xVdVY2M3NBY05neGZhVkN3LUpRMGs4RUFORjNWLWo0Y1NKbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzgiY3NpZ1hmMGQCMCL2r7zXcGxzNvu4tqctClC8hnxZfGHFJKJFR0287kklFNeBKky2e_ECsctJerw-fAIwGNzGuOYO-JGMHPuH5pjVWexU_Fx12dXdy-QQ8UvSGBKISJ6kxvrhSR0Yl5KOLYGQaGF1dGhEYXRhWLU6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQIFpztFzZt_F_DEDcqnOEA6UBAgM4IiACIVgw9Ae06MqQdKOLuUb4g1z5ypcnz3Yd1fDaYzH7rbmEhdvZbWlPZtx83ArkuFuVwdmaIlgwrF9coYUaZ35mfO91Qi3RxO6jgilPnh21yLcp6xNqja0DWEFNHUmDuQ5JcuYmEUDy",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "4QitiJKlUuV63sAcNgxfaVCw-JQ0k8EANF3V-j4cSJo",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927464,
+      "public_key": "pQECAzgiIAIhWDD0B7ToypB0o4u5RviDXPnKlyfPdh3V8NpjMfutuYSF29ltaU9m3HzcCuS4W5XB2ZoiWDCsX1yhhRpnfmZ873VCLdHE7qOCKU-eHbXItynrE2qNrQNYQU0dSYO5Dkly5iYRQPI",
+      "expected_success": false,
+      "error": "Error: Unexpected public key alg \"-35\", expected one of \"-8, -7, -36, -37, -38, -39, -257, -258, -259, -65535\""
+    },
+    {
+      "kind": "assertion",
+      "name": "-35/P-384/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "IFpztFzZt_F_DEDcqnOEAw",
+        "rawId": "IFpztFzZt_F_DEDcqnOEAw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNFFpdGlKS2xVdVY2M3NBY05neGZhVkN3LUpRMGs4RUFORjNWLWo0Y1NKbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "MGYCMQDMPp6P_9RWmldugANi553njOUbQOH4vIXVQOFJ3WYgQcAN_Zb7Kp2Z1ORK1D_XKnUCMQDs_yPHmTElxEeB9JsDqEtLwM7RNwHydd-UfbS8wjw0oLvpsEaN5bAPzQtCBk7L2ag"
+        }
+      },
+      "challenge": "4QitiJKlUuV63sAcNgxfaVCw-JQ0k8EANF3V-j4cSJo",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pQECAzgiIAIhWDD0B7ToypB0o4u5RviDXPnKlyfPdh3V8NpjMfutuYSF29ltaU9m3HzcCuS4W5XB2ZoiWDCsX1yhhRpnfmZ873VCLdHE7qOCKU-eHbXItynrE2qNrQNYQU0dSYO5Dkly5iYRQPI",
+      "credential_id": "IFpztFzZt_F_DEDcqnOEAw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-35/P-384/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "IFpztFzZt_F_DEDcqnOEAw",
+        "rawId": "IFpztFzZt_F_DEDcqnOEAw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNFFpdGlKS2xVdVY2M3NBY05neGZhVkN3LUpRMGs4RUFORjNWLWo0Y1NKbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "MGYCMQCWU780cQP9w0PvaSuiAHSS1-S-trEJ-BZXLiF6yY2lIyty-lpdn7tKMdz-q6IpOiACMQCdgamQmUILRxFrArRVld9PF-6mxFIFbH5Z9ZC5bFv9e4seWornPS7vLzoUKsOJfCY"
+        }
+      },
+      "challenge": "4QitiJKlUuV63sAcNgxfaVCw-JQ0k8EANF3V-j4cSJo",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzgiIAIhWDD0B7ToypB0o4u5RviDXPnKlyfPdh3V8NpjMfutuYSF29ltaU9m3HzcCuS4W5XB2ZoiWDCsX1yhhRpnfmZ873VCLdHE7qOCKU-eHbXItynrE2qNrQNYQU0dSYO5Dkly5iYRQPI",
+      "credential_id": "IFpztFzZt_F_DEDcqnOEAw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-35/P-384/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "IFpztFzZt_F_DEDcqnOEAw",
+        "rawId": "IFpztFzZt_F_DEDcqnOEAw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNFFpdGlKS2xVdVY2M3NBY05neGZhVkN3LUpRMGs4RUFORjNWLWo0Y1NKbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MGQCMH3q0mVEVvTTAnqPUq15fEHy_Wmo-8T7x1vkTVv2dUICbVgJ8wkXMice-0WUNH30iQIwTzJKQDwLLyumP-1f9BoE90pLMmgHSpBIGF4Ud74Yv3ORGvrtv6wli0bu85KfBPlX"
+        }
+      },
+      "challenge": "4QitiJKlUuV63sAcNgxfaVCw-JQ0k8EANF3V-j4cSJo",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzgiIAIhWDD0B7ToypB0o4u5RviDXPnKlyfPdh3V8NpjMfutuYSF29ltaU9m3HzcCuS4W5XB2ZoiWDCsX1yhhRpnfmZ873VCLdHE7qOCKU-eHbXItynrE2qNrQNYQU0dSYO5Dkly5iYRQPI",
+      "credential_id": "IFpztFzZt_F_DEDcqnOEAw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-35/P-384/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "IFpztFzZt_F_DEDcqnOEAw",
+        "rawId": "IFpztFzZt_F_DEDcqnOEAw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNFFpdGlKS2xVdVY2M3NBY05neGZhVkN3LUpRMGs4RUFORjNWLWo0Y1NKbyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MGUCMGkl61_vce1kmn-WbIU82jxurtJapVodSsyt0asx5ojvvIotWAxf5tz5L21_8V6aQgIxANXTkTjdRK7T59h24yK0f_vqkkPJmcxrHFP3puYheuTiQbGVMAACzlSb7wZida5XAQ"
+        }
+      },
+      "challenge": "4QitiJKlUuV63sAcNgxfaVCw-JQ0k8EANF3V-j4cSJo",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzgiIAIhWDD0B7ToypB0o4u5RviDXPnKlyfPdh3V8NpjMfutuYSF29ltaU9m3HzcCuS4W5XB2ZoiWDCsX1yhhRpnfmZ873VCLdHE7qOCKU-eHbXItynrE2qNrQNYQU0dSYO5Dkly5iYRQPI",
+      "credential_id": "IFpztFzZt_F_DEDcqnOEAw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-36/P-521/2048/65537/none",
+      "response": {
+        "id": "pVuZT2QEgZeiTlGhNdx-4g",
+        "rawId": "pVuZT2QEgZeiTlGhNdx-4g",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnFydm44U1Z3NHBpbmRNeFhhNV9pT09STkhIZXZBUTVUM19pdkNVWTZNRSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjZOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEKVbmU9kBIGXok5RoTXcfuKlAQIDOCMgAyFYQgDGALPkbBJoheMqYwf2QRS0SF_7ouzFqn_7KAVs4Tg7FKnbCMDg2Sx2GBiKF4ylBKZfBgHOuXT1afj_E4agfWnm3yJYQgCqIAILx8jtPftZr4AjFfLW1LeYdtXAOI-I1fdj8XI_2KjHxtb5U0YxM43RY8JHou1pVeaRE_d5D_bEhZuhGoXEHA",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "Vqrvn8SVw4pindMxXa5_iOORNHHevAQ5T3_ivCUY6ME",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927469,
+      "public_key": "pQECAzgjIAMhWEIAxgCz5GwSaIXjKmMH9kEUtEhf-6Lsxap_-ygFbOE4OxSp2wjA4NksdhgYiheMpQSmXwYBzrl09Wn4_xOGoH1p5t8iWEIAqiACC8fI7T37Wa-AIxXy1tS3mHbVwDiPiNX3Y_FyP9iox8bW-VNGMTON0WPCR6LtaVXmkRP3eQ_2xIWboRqFxBw",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-36/P-521/2048/65537/packed",
+      "response": {
+        "id": "pVuZT2QEgZeiTlGhNdx-4g",
+        "rawId": "pVuZT2QEgZeiTlGhNdx-4g",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnFydm44U1Z3NHBpbmRNeFhhNV9pT09STkhIZXZBUTVUM19pdkNVWTZNRSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzgjY3NpZ1iLMIGIAkIBJK4HvuoesAZn4BvEKWxTcZP1N-SGzz7BhUmJeSyNBtuIC-DGJreGHTG5x4OnlL5WhrlKnbIAlkzbs_QZx2es-q4CQgEEWbYzN86CFSWgFezNUDVqzKZtFFLDfT6isADoPB9IChsBqyp9q6kFqqLpoVTOgA47RR6AhxtUZiG-NxB4sbjh5mhhdXRoRGF0YVjZOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEKVbmU9kBIGXok5RoTXcfuKlAQIDOCMgAyFYQgDGALPkbBJoheMqYwf2QRS0SF_7ouzFqn_7KAVs4Tg7FKnbCMDg2Sx2GBiKF4ylBKZfBgHOuXT1afj_E4agfWnm3yJYQgCqIAILx8jtPftZr4AjFfLW1LeYdtXAOI-I1fdj8XI_2KjHxtb5U0YxM43RY8JHou1pVeaRE_d5D_bEhZuhGoXEHA",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "Vqrvn8SVw4pindMxXa5_iOORNHHevAQ5T3_ivCUY6ME",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927471,
+      "public_key": "pQECAzgjIAMhWEIAxgCz5GwSaIXjKmMH9kEUtEhf-6Lsxap_-ygFbOE4OxSp2wjA4NksdhgYiheMpQSmXwYBzrl09Wn4_xOGoH1p5t8iWEIAqiACC8fI7T37Wa-AIxXy1tS3mHbVwDiPiNX3Y_FyP9iox8bW-VNGMTON0WPCR6LtaVXmkRP3eQ_2xIWboRqFxBw",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-36/P-521/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "pVuZT2QEgZeiTlGhNdx-4g",
+        "rawId": "pVuZT2QEgZeiTlGhNdx-4g",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVnFydm44U1Z3NHBpbmRNeFhhNV9pT09STkhIZXZBUTVUM19pdkNVWTZNRSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "MIGIAkIAxX04ZIVjkj2C55ZVWw2dZNDnoB3etm7_HDXe8B2TgLz4GtkcK3lwxZwjaWaBTr65-yMOHpQ072W0K57f3JlK1fcCQgH1XwyCLNFdH4scCVIZhAnILySx_cHbjIt42U2JWNHppVrqkhY3EllPw4HiGJATaT3ITUACvKzlgivAR7JU-0zMyQ"
+        }
+      },
+      "challenge": "Vqrvn8SVw4pindMxXa5_iOORNHHevAQ5T3_ivCUY6ME",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pQECAzgjIAMhWEIAxgCz5GwSaIXjKmMH9kEUtEhf-6Lsxap_-ygFbOE4OxSp2wjA4NksdhgYiheMpQSmXwYBzrl09Wn4_xOGoH1p5t8iWEIAqiACC8fI7T37Wa-AIxXy1tS3mHbVwDiPiNX3Y_FyP9iox8bW-VNGMTON0WPCR6LtaVXmkRP3eQ_2xIWboRqFxBw",
+      "credential_id": "pVuZT2QEgZeiTlGhNdx-4g",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-36/P-521/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "pVuZT2QEgZeiTlGhNdx-4g",
+        "rawId": "pVuZT2QEgZeiTlGhNdx-4g",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVnFydm44U1Z3NHBpbmRNeFhhNV9pT09STkhIZXZBUTVUM19pdkNVWTZNRSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "MIGHAkIAyRbj4tDuxqqfxX2hGXXNxyxScXaMLiv902GRZZsXLXz1fgv3BPXcUfTxDsWPXHDxcmvRER2eMlvOjYcLvARAs5kCQQb693R9X_hURiAPBJkQkxEeVHs4i14CznWkRzdhQ2kgkND1kywkrhoMq5sqzi3LmEetBhHcrLf2oMaQShmipLGS"
+        }
+      },
+      "challenge": "Vqrvn8SVw4pindMxXa5_iOORNHHevAQ5T3_ivCUY6ME",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzgjIAMhWEIAxgCz5GwSaIXjKmMH9kEUtEhf-6Lsxap_-ygFbOE4OxSp2wjA4NksdhgYiheMpQSmXwYBzrl09Wn4_xOGoH1p5t8iWEIAqiACC8fI7T37Wa-AIxXy1tS3mHbVwDiPiNX3Y_FyP9iox8bW-VNGMTON0WPCR6LtaVXmkRP3eQ_2xIWboRqFxBw",
+      "credential_id": "pVuZT2QEgZeiTlGhNdx-4g",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-36/P-521/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "pVuZT2QEgZeiTlGhNdx-4g",
+        "rawId": "pVuZT2QEgZeiTlGhNdx-4g",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVnFydm44U1Z3NHBpbmRNeFhhNV9pT09STkhIZXZBUTVUM19pdkNVWTZNRSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MIGIAkIBU5LAoW0WQFmJ0JYl3hwVzWdm5JqMbZMj_0iDWyVLgyKV4IIxsVF0xQ7j3LaJTb6BJpqmkTqIdgB6hbvIPrzfM8sCQgCqvUbZpTnn3q7uTGUKySUBW0RDDOL4XhIkt6JGI9_t4zZeFd6voT-n7oW6UZHCj-xxZq1fbuYXtCLk5d80s_Kikg"
+        }
+      },
+      "challenge": "Vqrvn8SVw4pindMxXa5_iOORNHHevAQ5T3_ivCUY6ME",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzgjIAMhWEIAxgCz5GwSaIXjKmMH9kEUtEhf-6Lsxap_-ygFbOE4OxSp2wjA4NksdhgYiheMpQSmXwYBzrl09Wn4_xOGoH1p5t8iWEIAqiACC8fI7T37Wa-AIxXy1tS3mHbVwDiPiNX3Y_FyP9iox8bW-VNGMTON0WPCR6LtaVXmkRP3eQ_2xIWboRqFxBw",
+      "credential_id": "pVuZT2QEgZeiTlGhNdx-4g",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-36/P-521/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "pVuZT2QEgZeiTlGhNdx-4g",
+        "rawId": "pVuZT2QEgZeiTlGhNdx-4g",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVnFydm44U1Z3NHBpbmRNeFhhNV9pT09STkhIZXZBUTVUM19pdkNVWTZNRSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MIGIAkIBlzq-Nn2CSHUEs8Iw9ieKd4giCqCNqGL424244L6Japvq55MvR2tcShHB60xxd2FbtIckJDX576E3ZPT7Z95fPkMCQgCrZbTibk0nuMp2ptAk1W-I-igdDehqlzCBGPlpvzulwo9iqKMnn2YJ50lC3NN5F1E2tTpXG-SnCTGYkv61-MjgNw"
+        }
+      },
+      "challenge": "Vqrvn8SVw4pindMxXa5_iOORNHHevAQ5T3_ivCUY6ME",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pQECAzgjIAMhWEIAxgCz5GwSaIXjKmMH9kEUtEhf-6Lsxap_-ygFbOE4OxSp2wjA4NksdhgYiheMpQSmXwYBzrl09Wn4_xOGoH1p5t8iWEIAqiACC8fI7T37Wa-AIxXy1tS3mHbVwDiPiNX3Y_FyP9iox8bW-VNGMTON0WPCR6LtaVXmkRP3eQ_2xIWboRqFxBw",
+      "credential_id": "pVuZT2QEgZeiTlGhNdx-4g",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-8/Ed25519/2048/65537/none",
+      "response": {
+        "id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "rawId": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoick9YYnBXR056TUNTbldvRklXRUtYX1NRckZYajJpeUtRSVVrLXdjek5qTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVhxOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBpG915a29brpTD3OBrfYQqkAQEDJyAGIVggka1WgamfiqSyUqqVHncaRUPAu51fZiZPOvEia-q8xfc",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "rOXbpWGNzMCSnWoFIWEKX_SQrFXj2iyKQIUk-wczNjM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927479,
+      "public_key": "pAEBAycgBiFYIJGtVoGpn4qkslKqlR53GkVDwLudX2YmTzrxImvqvMX3",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-8/Ed25519/2048/65537/packed",
+      "response": {
+        "id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "rawId": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoick9YYnBXR056TUNTbldvRklXRUtYX1NRckZYajJpeUtRSVVrLXdjek5qTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZydjc2lnWEDMEmg-3bagC03n9ltXqULIlxhbBq18wUdtEH2FwiFsa849K4ZoH4cX9PPqH0uY2QgP37_bqbmAyTWuBsIxvr0HaGF1dGhEYXRhWHE6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQGkb3Xlrb1uulMPc4Gt9hCqQBAQMnIAYhWCCRrVaBqZ-KpLJSqpUedxpFQ8C7nV9mJk868SJr6rzF9w",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "rOXbpWGNzMCSnWoFIWEKX_SQrFXj2iyKQIUk-wczNjM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927480,
+      "public_key": "pAEBAycgBiFYIJGtVoGpn4qkslKqlR53GkVDwLudX2YmTzrxImvqvMX3",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-8/Ed25519/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "rawId": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoick9YYnBXR056TUNTbldvRklXRUtYX1NRckZYajJpeUtRSVVrLXdjek5qTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "m1ijr9nXYZdwVDbOWfA8_7VGJP1VyzWIfuwzjblfnKfP18X-AM7VYSQFo0kTvU4CsaKSF6OqQjLa-u7ESnihAw"
+        }
+      },
+      "challenge": "rOXbpWGNzMCSnWoFIWEKX_SQrFXj2iyKQIUk-wczNjM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEBAycgBiFYIJGtVoGpn4qkslKqlR53GkVDwLudX2YmTzrxImvqvMX3",
+      "credential_id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-8/Ed25519/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "rawId": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoick9YYnBXR056TUNTbldvRklXRUtYX1NRckZYajJpeUtRSVVrLXdjek5qTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "ty6RUaFXq2Nwy8Zb6BN-cl2fz6UPdCg-auA_Om9F_E8F3pGJ1SssG30qTKPUvvZcukaCBBhaOFdO45VsdKq4Cw"
+        }
+      },
+      "challenge": "rOXbpWGNzMCSnWoFIWEKX_SQrFXj2iyKQIUk-wczNjM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEBAycgBiFYIJGtVoGpn4qkslKqlR53GkVDwLudX2YmTzrxImvqvMX3",
+      "credential_id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-8/Ed25519/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "rawId": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoick9YYnBXR056TUNTbldvRklXRUtYX1NRckZYajJpeUtRSVVrLXdjek5qTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "rjcFtsCwmUPOytZL9Nnuh-hBubclCyvFjIRDRHutkWfBH6xtBB24uItiPvy2IZqNlU5WTNr0GQ3ChAXlF4hAAg"
+        }
+      },
+      "challenge": "rOXbpWGNzMCSnWoFIWEKX_SQrFXj2iyKQIUk-wczNjM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEBAycgBiFYIJGtVoGpn4qkslKqlR53GkVDwLudX2YmTzrxImvqvMX3",
+      "credential_id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-8/Ed25519/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "rawId": "Gkb3Xlrb1uulMPc4Gt9hCg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoick9YYnBXR056TUNTbldvRklXRUtYX1NRckZYajJpeUtRSVVrLXdjek5qTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "v__V7Yd6yMkVntCcpV2Hc1HmjSuzmqeaTQZ2sIWmYSpryVP9C_KBNIsKHnFuArhzzHwPpxUcNHQ_2ZMdK39qCg"
+        }
+      },
+      "challenge": "rOXbpWGNzMCSnWoFIWEKX_SQrFXj2iyKQIUk-wczNjM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEBAycgBiFYIJGtVoGpn4qkslKqlR53GkVDwLudX2YmTzrxImvqvMX3",
+      "credential_id": "Gkb3Xlrb1uulMPc4Gt9hCg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/2048/65537/none",
+      "response": {
+        "id": "o1TjGruwNoySgWYPo_q-uw",
+        "rawId": "o1TjGruwNoySgWYPo_q-uw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoib3M5dEFlZ3ZhZG8zR3JITnF0WUVoQnN3ZlI1eG5hXzR4U1ZnVnNmR180byIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBVzoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCjVOMau7A2jJKBZg-j-r67pAEDAzkBACBZAQC_AZ8QwhZj-xYrkb5NWjO3d5tD6zpA_LaR-mUai_mKbylKtXiy8jr1nu3pe4BBA6z4KzLZArEK-p8urLpShZqmvDzNCB5GMYAlPxY12Rmhry116Ddfrv3lvDTlSnPr64-2Ue4UQia9fJYvNJyiCCD6BJi6wec8lJiKwhB6WEoylBotLAO0ejxWcqfJ9i2C8666L2lCPLh4Zst1lme2XM8MNvfWR4_52KzdzNeI1T3pO1dUePBSUGmpUrPCiXbRl5HR915QJdVYEQcu_svpbtUQlMjflyEIPpHYH0o5PQ0vAGgUs9OWM1LvKY2BX5q6w4VYi6b3jgzzqaPWTrOvvSS7IUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "os9tAegvado3GrHNqtYEhBswfR5xna_4xSVgVsfG_4o",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927515,
+      "public_key": "pAEDAzkBACBZAQC_AZ8QwhZj-xYrkb5NWjO3d5tD6zpA_LaR-mUai_mKbylKtXiy8jr1nu3pe4BBA6z4KzLZArEK-p8urLpShZqmvDzNCB5GMYAlPxY12Rmhry116Ddfrv3lvDTlSnPr64-2Ue4UQia9fJYvNJyiCCD6BJi6wec8lJiKwhB6WEoylBotLAO0ejxWcqfJ9i2C8666L2lCPLh4Zst1lme2XM8MNvfWR4_52KzdzNeI1T3pO1dUePBSUGmpUrPCiXbRl5HR915QJdVYEQcu_svpbtUQlMjflyEIPpHYH0o5PQ0vAGgUs9OWM1LvKY2BX5q6w4VYi6b3jgzzqaPWTrOvvSS7IUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/2048/65537/packed",
+      "response": {
+        "id": "o1TjGruwNoySgWYPo_q-uw",
+        "rawId": "o1TjGruwNoySgWYPo_q-uw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoib3M5dEFlZ3ZhZG8zR3JITnF0WUVoQnN3ZlI1eG5hXzR4U1ZnVnNmR180byIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAGNzaWdZAQBVmpPqR2iFKTuAPLR3yTQ7X__zzzp9TjuAQTcIAnvgCj8qfeygQpAyaF_79FU-OnCAwxoIceaLkdVcy_5NY6LLUFidYrrsT7Kq4Ir0DaYLvW8LxxWeGjQYzmBBcf_T69EiVUYTpk9LeDX5M6w1vxdJ2mLabgsk42CP0z-vvXBu-myOHYsiN1GStbgW_JEAB92Sk99HJXy509skf2YGJFzFCA1oVlpgY7NYydNmjEbxt2TRQEqK3bXu6Kal-y493Eaux1mhfdYXGaHr3BG8yDYUeN6d7IQA_3jslXaBq7HcAujiyX7jAiFCQBzKL_oSTuGJInmA-sxc7qrWuelYtGNDaGF1dGhEYXRhWQFXOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEKNU4xq7sDaMkoFmD6P6vrukAQMDOQEAIFkBAL8BnxDCFmP7FiuRvk1aM7d3m0PrOkD8tpH6ZRqL-YpvKUq1eLLyOvWe7el7gEEDrPgrMtkCsQr6ny6sulKFmqa8PM0IHkYxgCU_FjXZGaGvLXXoN1-u_eW8NOVKc-vrj7ZR7hRCJr18li80nKIIIPoEmLrB5zyUmIrCEHpYSjKUGi0sA7R6PFZyp8n2LYLzrrovaUI8uHhmy3WWZ7Zczww299ZHj_nYrN3M14jVPek7V1R48FJQaalSs8KJdtGXkdH3XlAl1VgRBy7-y-lu1RCUyN-XIQg-kdgfSjk9DS8AaBSz05YzUu8pjYFfmrrDhViLpveODPOpo9ZOs6-9JLshQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "os9tAegvado3GrHNqtYEhBswfR5xna_4xSVgVsfG_4o",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927516,
+      "public_key": "pAEDAzkBACBZAQC_AZ8QwhZj-xYrkb5NWjO3d5tD6zpA_LaR-mUai_mKbylKtXiy8jr1nu3pe4BBA6z4KzLZArEK-p8urLpShZqmvDzNCB5GMYAlPxY12Rmhry116Ddfrv3lvDTlSnPr64-2Ue4UQia9fJYvNJyiCCD6BJi6wec8lJiKwhB6WEoylBotLAO0ejxWcqfJ9i2C8666L2lCPLh4Zst1lme2XM8MNvfWR4_52KzdzNeI1T3pO1dUePBSUGmpUrPCiXbRl5HR915QJdVYEQcu_svpbtUQlMjflyEIPpHYH0o5PQ0vAGgUs9OWM1LvKY2BX5q6w4VYi6b3jgzzqaPWTrOvvSS7IUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "o1TjGruwNoySgWYPo_q-uw",
+        "rawId": "o1TjGruwNoySgWYPo_q-uw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib3M5dEFlZ3ZhZG8zR3JITnF0WUVoQnN3ZlI1eG5hXzR4U1ZnVnNmR180byIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "FPUShpIpTFGoRvA5EehaDJt4zDDJDdN2LJEXgWSF3oBNspMyWge1Qt9f-6__5Td2D_pNltQkMtvCIYEoa8XqPFHuwz-Lrj7NIM2aK9JveA5tUxo4r6hlrqzqc0QrKchJFjhU_4RDYGElvQR3A4NbxfK21E5cNPuSfnt7MECicaLO72Un9e4nlVlOdTYN8lpe2GKimtbl76R0ca_RvGaDCN5VM569GeCpgjq9Gh5PJG2yMEeSgbDAFd7KbX77L643y7kq9AwSxjV80BZX5olKK4fQi7N0w2AgUpKDVlaoajo91BfXKYVVHd-1Ta34e6-x4ufcBUenp2ecRo7gE2f7Ag"
+        }
+      },
+      "challenge": "os9tAegvado3GrHNqtYEhBswfR5xna_4xSVgVsfG_4o",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzkBACBZAQC_AZ8QwhZj-xYrkb5NWjO3d5tD6zpA_LaR-mUai_mKbylKtXiy8jr1nu3pe4BBA6z4KzLZArEK-p8urLpShZqmvDzNCB5GMYAlPxY12Rmhry116Ddfrv3lvDTlSnPr64-2Ue4UQia9fJYvNJyiCCD6BJi6wec8lJiKwhB6WEoylBotLAO0ejxWcqfJ9i2C8666L2lCPLh4Zst1lme2XM8MNvfWR4_52KzdzNeI1T3pO1dUePBSUGmpUrPCiXbRl5HR915QJdVYEQcu_svpbtUQlMjflyEIPpHYH0o5PQ0vAGgUs9OWM1LvKY2BX5q6w4VYi6b3jgzzqaPWTrOvvSS7IUMBAAE",
+      "credential_id": "o1TjGruwNoySgWYPo_q-uw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "o1TjGruwNoySgWYPo_q-uw",
+        "rawId": "o1TjGruwNoySgWYPo_q-uw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib3M5dEFlZ3ZhZG8zR3JITnF0WUVoQnN3ZlI1eG5hXzR4U1ZnVnNmR180byIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "ClgiT6cE0ZVjgMG8Kkt-bb1QYG-6l4ZrrACDayTGINOfo7fea2fsYOp2ZxeOEzUKsKG2tOks29JMQQWv2QOyalsQL6hThee8PbozVoItc4iVgeryTKy3akfPgVceXx8xkYCHkn9Ykd7mTJL_pWvPsEnlQAnCDdCXg3cSzrevUUqhiidNywHT---sqjLhRX2gX3DdumH5dI__jaXGXD9XbYCAqGJ0zWgT6cnpw3w_8UROZnZg5gvBwCw3GP2haAKVVMDHjoeavThgMDPMDZxwc97z9EdwW-dWt-ZTcwwwGX_hOegdaMSHARcoX2M-XmByFf2HKgil0rI8Hxjdjn2uoA"
+        }
+      },
+      "challenge": "os9tAegvado3GrHNqtYEhBswfR5xna_4xSVgVsfG_4o",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZAQC_AZ8QwhZj-xYrkb5NWjO3d5tD6zpA_LaR-mUai_mKbylKtXiy8jr1nu3pe4BBA6z4KzLZArEK-p8urLpShZqmvDzNCB5GMYAlPxY12Rmhry116Ddfrv3lvDTlSnPr64-2Ue4UQia9fJYvNJyiCCD6BJi6wec8lJiKwhB6WEoylBotLAO0ejxWcqfJ9i2C8666L2lCPLh4Zst1lme2XM8MNvfWR4_52KzdzNeI1T3pO1dUePBSUGmpUrPCiXbRl5HR915QJdVYEQcu_svpbtUQlMjflyEIPpHYH0o5PQ0vAGgUs9OWM1LvKY2BX5q6w4VYi6b3jgzzqaPWTrOvvSS7IUMBAAE",
+      "credential_id": "o1TjGruwNoySgWYPo_q-uw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "o1TjGruwNoySgWYPo_q-uw",
+        "rawId": "o1TjGruwNoySgWYPo_q-uw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib3M5dEFlZ3ZhZG8zR3JITnF0WUVoQnN3ZlI1eG5hXzR4U1ZnVnNmR180byIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "MgziE5p8EOr1RT5CNI7k3LdbCkF_khpuBoMvwwS-fmi4QSz8d9vFnNEgPWs-JqsHA0qvJLu-OWixyYyrr3tMWXyQSAc-3oXRJ2S_bdeySaH_JG3pwB6HYMzv0qWDPqk_QjC_rEcDcj8T4q6qPRt1kcDEUUyi9Og_tAP7INDJvXczqo5LdVqkQZrURS-AFTNshx0EKM9bqHHILfQbuF3HbTz76fRuptJ2YU_c2WZse77-fokX5N6cWqB5NZ3m987JGFyProe9NtNPVa-vNpa2CeI_nphojHlXSK4SxXQVQ_jPM35GQ7uAC9RulrBLbP3T6XdQjwsV4gwmxDwWStqX4g"
+        }
+      },
+      "challenge": "os9tAegvado3GrHNqtYEhBswfR5xna_4xSVgVsfG_4o",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZAQC_AZ8QwhZj-xYrkb5NWjO3d5tD6zpA_LaR-mUai_mKbylKtXiy8jr1nu3pe4BBA6z4KzLZArEK-p8urLpShZqmvDzNCB5GMYAlPxY12Rmhry116Ddfrv3lvDTlSnPr64-2Ue4UQia9fJYvNJyiCCD6BJi6wec8lJiKwhB6WEoylBotLAO0ejxWcqfJ9i2C8666L2lCPLh4Zst1lme2XM8MNvfWR4_52KzdzNeI1T3pO1dUePBSUGmpUrPCiXbRl5HR915QJdVYEQcu_svpbtUQlMjflyEIPpHYH0o5PQ0vAGgUs9OWM1LvKY2BX5q6w4VYi6b3jgzzqaPWTrOvvSS7IUMBAAE",
+      "credential_id": "o1TjGruwNoySgWYPo_q-uw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "o1TjGruwNoySgWYPo_q-uw",
+        "rawId": "o1TjGruwNoySgWYPo_q-uw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib3M5dEFlZ3ZhZG8zR3JITnF0WUVoQnN3ZlI1eG5hXzR4U1ZnVnNmR180byIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "ET4gWHbmESpmsy2NIwPqzZmNKxnCI52iYn3yPUZ2skWf788YNryXU9vUkOh8JdYoZBYCtKSUdugypUfAj_GmWIyQJ022pYwcfJgKIiQyqt6-Is1DwmH8TshqZ-nZ0RlnqO_dnjivEyCF1jy0iZQifmWq5IvA72QtlxQq1I_URogUPXqj6ZJ2AeyGkAoxHe1dJOZ6uRinxIpDbXpTdtcLWHlkvnyxLtjKwxssgImOtWnir_ml6AOVp3C3KP-Me5xOwJKVL7qZNbrJS4eZ7COJX6HFZ1chJqCzAUVcDnOdS-FlZF7IjOY2v1VT0p9oSTFsTHzeAHTIPifcycEuFs01gw"
+        }
+      },
+      "challenge": "os9tAegvado3GrHNqtYEhBswfR5xna_4xSVgVsfG_4o",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZAQC_AZ8QwhZj-xYrkb5NWjO3d5tD6zpA_LaR-mUai_mKbylKtXiy8jr1nu3pe4BBA6z4KzLZArEK-p8urLpShZqmvDzNCB5GMYAlPxY12Rmhry116Ddfrv3lvDTlSnPr64-2Ue4UQia9fJYvNJyiCCD6BJi6wec8lJiKwhB6WEoylBotLAO0ejxWcqfJ9i2C8666L2lCPLh4Zst1lme2XM8MNvfWR4_52KzdzNeI1T3pO1dUePBSUGmpUrPCiXbRl5HR915QJdVYEQcu_svpbtUQlMjflyEIPpHYH0o5PQ0vAGgUs9OWM1LvKY2BX5q6w4VYi6b3jgzzqaPWTrOvvSS7IUMBAAE",
+      "credential_id": "o1TjGruwNoySgWYPo_q-uw",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-258/SHA-384/2048/65537/none",
+      "response": {
+        "id": "sweXeSXYmXyt5UQRBHn3PQ",
+        "rawId": "sweXeSXYmXyt5UQRBHn3PQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiT2NmVmJiV2Z4dVR0NjVTYVVNSXZqUWx2SHhCQ1ZjazB1VmpEb1puc2dtUSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBVzoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCzB5d5JdiZfK3lRBEEefc9pAEDAzkBASBZAQC_2kCN6XxN-YXpYcJg5LA998-fzagCfF3s6b1XS2xY_olcMYrYWukkGVB5V6fRDcOPwRQK9-IgZ8PcUsB-D5u8N8OTS11Iq823Z92sfe9T3dWqyRA5vOcfYWOHRdWqbaPGRsYi9c0S_ZXwrCDOBtg_7g2yAppFo8SL7eQ_FeFFtFwhvNAVsm7jDW5MQsPyoBM7oG-9qv2jIepmySx4cW7gYEqGnTnMibbRHi7BnwqI7ZcnM6AySQ1dHfa1-LNtChwT9OYFdqVKiMP0twRf2mDr-hJJrqUJFTckFz4IP5PXA7GmRQFyTxQlALLV0MYZB-zSSYDZ6QSgdT_mYLdszZpXIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "OcfVbbWfxuTt65SaUMIvjQlvHxBCVck0uVjDoZnsgmQ",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927555,
+      "public_key": "pAEDAzkBASBZAQC_2kCN6XxN-YXpYcJg5LA998-fzagCfF3s6b1XS2xY_olcMYrYWukkGVB5V6fRDcOPwRQK9-IgZ8PcUsB-D5u8N8OTS11Iq823Z92sfe9T3dWqyRA5vOcfYWOHRdWqbaPGRsYi9c0S_ZXwrCDOBtg_7g2yAppFo8SL7eQ_FeFFtFwhvNAVsm7jDW5MQsPyoBM7oG-9qv2jIepmySx4cW7gYEqGnTnMibbRHi7BnwqI7ZcnM6AySQ1dHfa1-LNtChwT9OYFdqVKiMP0twRf2mDr-hJJrqUJFTckFz4IP5PXA7GmRQFyTxQlALLV0MYZB-zSSYDZ6QSgdT_mYLdszZpXIUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-258/SHA-384/2048/65537/packed",
+      "response": {
+        "id": "sweXeSXYmXyt5UQRBHn3PQ",
+        "rawId": "sweXeSXYmXyt5UQRBHn3PQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiT2NmVmJiV2Z4dVR0NjVTYVVNSXZqUWx2SHhCQ1ZjazB1VmpEb1puc2dtUSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAWNzaWdZAQAkHiBHS2B5QYN-327nH8ZmzTdZXm-e4FyhRDcd1djAO6CFFTe8XMH9U7Jcv6lVeDOc9j5101kY2dEZWfmtRXXcn6NRc0yYYmhEeV_VcVi_im-78YWjL6AhY7ATmduxTeL7zzjpv4UFjOlrUf5aywRlBKZn7eEZTGHvL1_4dz22dWWUPexBFG7iAKADkSQlLE0Vxp_vnxk8Lw6xz1jNyJft1twBzs4NFuKPsIsSuCQbgC1F5txavMOYIZCRIYe1enI-GwJix_Ki4AFS4S3RuPilElqf5cfxpFd7UEG1QD-LyEsVDVSsnodg8CZDQ40mMqD1Zy5R1uHD20tO0_wAG0iFaGF1dGhEYXRhWQFXOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAELMHl3kl2Jl8reVEEQR59z2kAQMDOQEBIFkBAL_aQI3pfE35helhwmDksD33z5_NqAJ8XezpvVdLbFj-iVwxitha6SQZUHlXp9ENw4_BFAr34iBnw9xSwH4Pm7w3w5NLXUirzbdn3ax971Pd1arJEDm85x9hY4dF1apto8ZGxiL1zRL9lfCsIM4G2D_uDbICmkWjxIvt5D8V4UW0XCG80BWybuMNbkxCw_KgEzugb72q_aMh6mbJLHhxbuBgSoadOcyJttEeLsGfCojtlyczoDJJDV0d9rX4s20KHBP05gV2pUqIw_S3BF_aYOv6EkmupQkVNyQXPgg_k9cDsaZFAXJPFCUAstXQxhkH7NJJgNnpBKB1P-Zgt2zNmlchQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "OcfVbbWfxuTt65SaUMIvjQlvHxBCVck0uVjDoZnsgmQ",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927556,
+      "public_key": "pAEDAzkBASBZAQC_2kCN6XxN-YXpYcJg5LA998-fzagCfF3s6b1XS2xY_olcMYrYWukkGVB5V6fRDcOPwRQK9-IgZ8PcUsB-D5u8N8OTS11Iq823Z92sfe9T3dWqyRA5vOcfYWOHRdWqbaPGRsYi9c0S_ZXwrCDOBtg_7g2yAppFo8SL7eQ_FeFFtFwhvNAVsm7jDW5MQsPyoBM7oG-9qv2jIepmySx4cW7gYEqGnTnMibbRHi7BnwqI7ZcnM6AySQ1dHfa1-LNtChwT9OYFdqVKiMP0twRf2mDr-hJJrqUJFTckFz4IP5PXA7GmRQFyTxQlALLV0MYZB-zSSYDZ6QSgdT_mYLdszZpXIUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/SHA-384/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "sweXeSXYmXyt5UQRBHn3PQ",
+        "rawId": "sweXeSXYmXyt5UQRBHn3PQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiT2NmVmJiV2Z4dVR0NjVTYVVNSXZqUWx2SHhCQ1ZjazB1VmpEb1puc2dtUSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "ir9pl6dER1M9wsDwrv5J2YxykpNSpmDUUgkQjym7rE5bC4h54HJP99ZNOhlPSv4Zd9b2Z6cRcZqJNlPAWb-oTpkGKPL29kfVWQpgL68rDOpvgUJCZ6lHcGYdPrctp3fEein7cS3Eyx2tJOTmx4rkgdpKnVpGMOzdMupqIX9NAba--V6kfK9LPkqW5TBEwTuYjtkx5oTfjEbX-GMey1nqRUyHb-p8Cy4MPHSkCtjOiqnA7_exc7sH2soEWJAs4lW0_hiBhraBfCPG0DSIAbc-PTwfkgb5MtdlWL2MJmfIV2--AeshRk4SvuoVbZFy_Dm7wbiSeFcLzGLME3d8OagplA"
+        }
+      },
+      "challenge": "OcfVbbWfxuTt65SaUMIvjQlvHxBCVck0uVjDoZnsgmQ",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzkBASBZAQC_2kCN6XxN-YXpYcJg5LA998-fzagCfF3s6b1XS2xY_olcMYrYWukkGVB5V6fRDcOPwRQK9-IgZ8PcUsB-D5u8N8OTS11Iq823Z92sfe9T3dWqyRA5vOcfYWOHRdWqbaPGRsYi9c0S_ZXwrCDOBtg_7g2yAppFo8SL7eQ_FeFFtFwhvNAVsm7jDW5MQsPyoBM7oG-9qv2jIepmySx4cW7gYEqGnTnMibbRHi7BnwqI7ZcnM6AySQ1dHfa1-LNtChwT9OYFdqVKiMP0twRf2mDr-hJJrqUJFTckFz4IP5PXA7GmRQFyTxQlALLV0MYZB-zSSYDZ6QSgdT_mYLdszZpXIUMBAAE",
+      "credential_id": "sweXeSXYmXyt5UQRBHn3PQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/SHA-384/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "sweXeSXYmXyt5UQRBHn3PQ",
+        "rawId": "sweXeSXYmXyt5UQRBHn3PQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiT2NmVmJiV2Z4dVR0NjVTYVVNSXZqUWx2SHhCQ1ZjazB1VmpEb1puc2dtUSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "C2QL3fbnAB6-FYNCHRFveX3Hydg7N60ZkRMlUFIfw-MM3GrinMy57iZ6L0N5XhOArfcD1QGOxkXQzBJ8BFoFbE7bwFUyXGJuoNW6yPCARbpYvAf4EY5ghTzOlYGqYMY6KhhpkUNQBgljJSJ32OUk2L_MbiqmhuQ9NGi8nMur4oJIKBrciFcxSSTMKRMfSmi9bjig6UM_k-UsTwe7nqW476OP-CemhrdQEAqy-ZIIgxDEf6eIPKuUatyktAJs8pQYUasziEo4b8qq7dbwk790byARuVvd_-P2L8asoNcy6Y7OKT5-EwsuFUQK4hJg7od7rv110Vgn9bNl3oVdCOk1mA"
+        }
+      },
+      "challenge": "OcfVbbWfxuTt65SaUMIvjQlvHxBCVck0uVjDoZnsgmQ",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBASBZAQC_2kCN6XxN-YXpYcJg5LA998-fzagCfF3s6b1XS2xY_olcMYrYWukkGVB5V6fRDcOPwRQK9-IgZ8PcUsB-D5u8N8OTS11Iq823Z92sfe9T3dWqyRA5vOcfYWOHRdWqbaPGRsYi9c0S_ZXwrCDOBtg_7g2yAppFo8SL7eQ_FeFFtFwhvNAVsm7jDW5MQsPyoBM7oG-9qv2jIepmySx4cW7gYEqGnTnMibbRHi7BnwqI7ZcnM6AySQ1dHfa1-LNtChwT9OYFdqVKiMP0twRf2mDr-hJJrqUJFTckFz4IP5PXA7GmRQFyTxQlALLV0MYZB-zSSYDZ6QSgdT_mYLdszZpXIUMBAAE",
+      "credential_id": "sweXeSXYmXyt5UQRBHn3PQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/SHA-384/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "sweXeSXYmXyt5UQRBHn3PQ",
+        "rawId": "sweXeSXYmXyt5UQRBHn3PQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiT2NmVmJiV2Z4dVR0NjVTYVVNSXZqUWx2SHhCQ1ZjazB1VmpEb1puc2dtUSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "vB0p-9Shkpaui2xv5bd4WHqcsu3xACX8u6OuWBCsGa6RqTb25Kn9IvbrM3zQLDb1PcqCZBIjqqf3wKspOFc8hmB7kxSixMnpQnURLT1AoUCDryJfVbFKspTVhZdC2AZKxZaUBrWjvomimc6kIl9oYrV7SwCM5wc696Ua9l7Kb8smKhK0JJPqDx2TvB8tRIeJvw9ALxqCA6ouHo9-sEznbnclUw5YLcy0JhVUtNgLZiJ75MX40_hBP_njSuoEelYmub83ETwU0NOfINoYyPusMEaS0lkVBP1_mj_YbgpYAAnVJM6C1f7sVmbRngbcM8ckZ1HW7XNAP_7LPsH9ZaAbKQ"
+        }
+      },
+      "challenge": "OcfVbbWfxuTt65SaUMIvjQlvHxBCVck0uVjDoZnsgmQ",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBASBZAQC_2kCN6XxN-YXpYcJg5LA998-fzagCfF3s6b1XS2xY_olcMYrYWukkGVB5V6fRDcOPwRQK9-IgZ8PcUsB-D5u8N8OTS11Iq823Z92sfe9T3dWqyRA5vOcfYWOHRdWqbaPGRsYi9c0S_ZXwrCDOBtg_7g2yAppFo8SL7eQ_FeFFtFwhvNAVsm7jDW5MQsPyoBM7oG-9qv2jIepmySx4cW7gYEqGnTnMibbRHi7BnwqI7ZcnM6AySQ1dHfa1-LNtChwT9OYFdqVKiMP0twRf2mDr-hJJrqUJFTckFz4IP5PXA7GmRQFyTxQlALLV0MYZB-zSSYDZ6QSgdT_mYLdszZpXIUMBAAE",
+      "credential_id": "sweXeSXYmXyt5UQRBHn3PQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-258/SHA-384/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "sweXeSXYmXyt5UQRBHn3PQ",
+        "rawId": "sweXeSXYmXyt5UQRBHn3PQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiT2NmVmJiV2Z4dVR0NjVTYVVNSXZqUWx2SHhCQ1ZjazB1VmpEb1puc2dtUSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "ne7Ns-hJ_UxK2XNAOyu80ty8-NdrB67HDlJ6-7xCzyyT5jTUzLKHSEpWTebxzA6r28UOUNZ8l_5htTixVkl2eXVjr6hIwg6XW2Cb_kWATEfiCZY82cZAVAg-GAaOgD9TLXdDlKKYnVXbXuWHOpWfBDRRdBEdGB9wHUc2yqTNcVD4gn3JZ_EewyNL7uU1SeCt6R6i7nIAgXv2RUGoeIbTl-uxYexFoTNCyT5jKRIzuqUbL9qedyHCeIeI2JehahCKI76rSY0wh1QJOJRIRNQ1Gm3ucbeS5HgjDNRStEtcrmK8gb5xqoO5tKxCH4f8WCh0FLKiTTrpjmnG-WY-ZqdrYw"
+        }
+      },
+      "challenge": "OcfVbbWfxuTt65SaUMIvjQlvHxBCVck0uVjDoZnsgmQ",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBASBZAQC_2kCN6XxN-YXpYcJg5LA998-fzagCfF3s6b1XS2xY_olcMYrYWukkGVB5V6fRDcOPwRQK9-IgZ8PcUsB-D5u8N8OTS11Iq823Z92sfe9T3dWqyRA5vOcfYWOHRdWqbaPGRsYi9c0S_ZXwrCDOBtg_7g2yAppFo8SL7eQ_FeFFtFwhvNAVsm7jDW5MQsPyoBM7oG-9qv2jIepmySx4cW7gYEqGnTnMibbRHi7BnwqI7ZcnM6AySQ1dHfa1-LNtChwT9OYFdqVKiMP0twRf2mDr-hJJrqUJFTckFz4IP5PXA7GmRQFyTxQlALLV0MYZB-zSSYDZ6QSgdT_mYLdszZpXIUMBAAE",
+      "credential_id": "sweXeSXYmXyt5UQRBHn3PQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-259/SHA-512/2048/65537/none",
+      "response": {
+        "id": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "rawId": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoidVRqcUt6RnUzT1Ftd1ZLT2JVd3JlWVJBV1ZoN3BvV2s0Sl9JWm5pSjRtayIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBVzoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABBA9M2LdoBEPGxMnY2gzcbFpAEDAzkBAiBZAQC9DGFFIk4NPFELVv7MM1ny3ZBodGQzq0hhZU8NmYK0eyqEWn7Kx1b_YcEVWrM_QxuChy8RK7iQ3B0Amt07z4YddYMXCXTrrGBdokMx5EzUYkILhrHDqoow4OVS9eYNNfdruUzvVKDy6dTaupJdjENZSaow-FOSeQHBLjgjiCS4QIxAmasVejviut5ZO35dSpjevVqoKynHiFwXHn9EmsPHTvLQivW3v6rqK-BbpxtKLszB9ypWA3SSUV9kXs9lK3yenP6_b0IFR3pRGX46UXxHybVLJnO1TuSKre6Y4_Lfdo8qQaycqVKw0iD-9LZ-8ktuLzBfZcUM0if_AgpvxRUbIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "uTjqKzFu3OQmwVKObUwreYRAWVh7poWk4J_IZniJ4mk",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927590,
+      "public_key": "pAEDAzkBAiBZAQC9DGFFIk4NPFELVv7MM1ny3ZBodGQzq0hhZU8NmYK0eyqEWn7Kx1b_YcEVWrM_QxuChy8RK7iQ3B0Amt07z4YddYMXCXTrrGBdokMx5EzUYkILhrHDqoow4OVS9eYNNfdruUzvVKDy6dTaupJdjENZSaow-FOSeQHBLjgjiCS4QIxAmasVejviut5ZO35dSpjevVqoKynHiFwXHn9EmsPHTvLQivW3v6rqK-BbpxtKLszB9ypWA3SSUV9kXs9lK3yenP6_b0IFR3pRGX46UXxHybVLJnO1TuSKre6Y4_Lfdo8qQaycqVKw0iD-9LZ-8ktuLzBfZcUM0if_AgpvxRUbIUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-259/SHA-512/2048/65537/packed",
+      "response": {
+        "id": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "rawId": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoidVRqcUt6RnUzT1Ftd1ZLT2JVd3JlWVJBV1ZoN3BvV2s0Sl9JWm5pSjRtayIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAmNzaWdZAQAQ5FuHeUj26JQl8QaXrhKZcLZPfLdHtelJcSPi0tqsFnbJmlbR-6BFBypES41mtEzN5w_Rwyibc23GaI4opVG9GQKp1OC6XpNV_Ho7d0a25wN4pwgtv7AuhV-ZyxbkKQrJmqMnJI1CNwmD01Tv_6pNfa04O6Iv9-1ra6rMnnEfs_1MOV-ajIOclsRRMjsf7mEZc8vtMU77FnLr1mNxbuUqpR9C-R9_CV7BHvPEHJpaI0ttQTsL3Tq33L2UGLNVVKCrMucPHY54a-sR5AQ6BV0ipXysPPIGpz1uw0koWN_giCmrXiMA9_66_QU-ipLWEblF0NOn3RMgI_jspiFJIMqjaGF1dGhEYXRhWQFXOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEED0zYt2gEQ8bEydjaDNxsWkAQMDOQECIFkBAL0MYUUiTg08UQtW_swzWfLdkGh0ZDOrSGFlTw2ZgrR7KoRafsrHVv9hwRVasz9DG4KHLxEruJDcHQCa3TvPhh11gxcJdOusYF2iQzHkTNRiQguGscOqijDg5VL15g0192u5TO9UoPLp1Nq6kl2MQ1lJqjD4U5J5AcEuOCOIJLhAjECZqxV6O-K63lk7fl1KmN69WqgrKceIXBcef0Saw8dO8tCK9be_quor4FunG0ouzMH3KlYDdJJRX2Rez2UrfJ6c_r9vQgVHelEZfjpRfEfJtUsmc7VO5Iqt7pjj8t92jypBrJypUrDSIP70tn7yS24vMF9lxQzSJ_8CCm_FFRshQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "uTjqKzFu3OQmwVKObUwreYRAWVh7poWk4J_IZniJ4mk",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927590,
+      "public_key": "pAEDAzkBAiBZAQC9DGFFIk4NPFELVv7MM1ny3ZBodGQzq0hhZU8NmYK0eyqEWn7Kx1b_YcEVWrM_QxuChy8RK7iQ3B0Amt07z4YddYMXCXTrrGBdokMx5EzUYkILhrHDqoow4OVS9eYNNfdruUzvVKDy6dTaupJdjENZSaow-FOSeQHBLjgjiCS4QIxAmasVejviut5ZO35dSpjevVqoKynHiFwXHn9EmsPHTvLQivW3v6rqK-BbpxtKLszB9ypWA3SSUV9kXs9lK3yenP6_b0IFR3pRGX46UXxHybVLJnO1TuSKre6Y4_Lfdo8qQaycqVKw0iD-9LZ-8ktuLzBfZcUM0if_AgpvxRUbIUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-259/SHA-512/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "rawId": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoidVRqcUt6RnUzT1Ftd1ZLT2JVd3JlWVJBV1ZoN3BvV2s0Sl9JWm5pSjRtayIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "C_QyYRzhagvGvK551lbVqp3fzAgRAO_2bMCLwMQJYDCvz9T4lt6yMxK6dDUXTeKW5ya7RNZVsbhB61SeeERlj2SLtinkhD-M85qvdNA6jAuz0_j_Se1Um4RzOKp35YTaoIaIDRM1Zk9F-1W8zAZvJU1OqMW9-PdamAHTONHTLDlI09Wpbvt2XR5E-x1iqb_mIRPMk1PKKXfq2ZbR7xh8zsZaoC6lHWXeXXiyOXqHC5GNO96pkRyzeCSRZ14noA0Q1PAxm0hL0mg6tVYIkswYl-YLFSn48tDOXh-n78Sq_EJwfrOgE_MPHBkZsc2yi0X23qS2QKdmH-E_fv2tEYgLXA"
+        }
+      },
+      "challenge": "uTjqKzFu3OQmwVKObUwreYRAWVh7poWk4J_IZniJ4mk",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzkBAiBZAQC9DGFFIk4NPFELVv7MM1ny3ZBodGQzq0hhZU8NmYK0eyqEWn7Kx1b_YcEVWrM_QxuChy8RK7iQ3B0Amt07z4YddYMXCXTrrGBdokMx5EzUYkILhrHDqoow4OVS9eYNNfdruUzvVKDy6dTaupJdjENZSaow-FOSeQHBLjgjiCS4QIxAmasVejviut5ZO35dSpjevVqoKynHiFwXHn9EmsPHTvLQivW3v6rqK-BbpxtKLszB9ypWA3SSUV9kXs9lK3yenP6_b0IFR3pRGX46UXxHybVLJnO1TuSKre6Y4_Lfdo8qQaycqVKw0iD-9LZ-8ktuLzBfZcUM0if_AgpvxRUbIUMBAAE",
+      "credential_id": "QPTNi3aARDxsTJ2NoM3GxQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-259/SHA-512/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "rawId": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoidVRqcUt6RnUzT1Ftd1ZLT2JVd3JlWVJBV1ZoN3BvV2s0Sl9JWm5pSjRtayIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "VQW-OgyLC9VQlawXcWbD7osIwJW53CHoPdlcwfI0gVCblLXcb6aF4qcLBJdbARWFpCmjG00U3TR6-wdo11KCjHccQBWl2lx6rydTg2x379kH55egiolL9Pk1tDspPoC3jYjsgSajbtHON5Jy8BRkj3_ubmBcYiPhPc2g-MKF6vwKOHX29ENsv52qo5Ixqg35oEB8VkCEKVQJHkFZPDDCcLKX0Oe4HaeasadRWPS-Gr8IbsfQ8I6nFGC3NABkF7W2Dz6haKzBu-QaafQDsyq8s2ScuyKiNgNwp_s1GRnl7YdxniiOmj8WxErUHT4fdzMrGslP8uM8kj68YSKxj93mkA"
+        }
+      },
+      "challenge": "uTjqKzFu3OQmwVKObUwreYRAWVh7poWk4J_IZniJ4mk",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBAiBZAQC9DGFFIk4NPFELVv7MM1ny3ZBodGQzq0hhZU8NmYK0eyqEWn7Kx1b_YcEVWrM_QxuChy8RK7iQ3B0Amt07z4YddYMXCXTrrGBdokMx5EzUYkILhrHDqoow4OVS9eYNNfdruUzvVKDy6dTaupJdjENZSaow-FOSeQHBLjgjiCS4QIxAmasVejviut5ZO35dSpjevVqoKynHiFwXHn9EmsPHTvLQivW3v6rqK-BbpxtKLszB9ypWA3SSUV9kXs9lK3yenP6_b0IFR3pRGX46UXxHybVLJnO1TuSKre6Y4_Lfdo8qQaycqVKw0iD-9LZ-8ktuLzBfZcUM0if_AgpvxRUbIUMBAAE",
+      "credential_id": "QPTNi3aARDxsTJ2NoM3GxQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-259/SHA-512/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "rawId": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoidVRqcUt6RnUzT1Ftd1ZLT2JVd3JlWVJBV1ZoN3BvV2s0Sl9JWm5pSjRtayIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "iqFpRV7ik-jJfrscvt3R-BAcpDI92BEXPVndZPFiVlmdAuBo5X_0kv9LjfCcyd92MWHAy5SLaqSyXHVua2QBdfNH_BIoxmMGSLJyELFL_obdvEQDck-2wDEaoIHCLDDNVZY7chz6mKG5BiWSi4tFRpWMb-QxKDCk-e-J6UWK2vaDctbb_fLjNWCWwh5fvGHEFYnK5lsrLCXbGP8DXqa48yYgEBx2EPmjGgfGnPs646Tg-x83VuY5qeGeUdw8_5qmrcOQvG-ugxI5LNqrSU1pf1MLQeC5-IDSmbDA6zWHWIl_yzmjGiP1bCOVyoGrGR3aSFerlqd7x6T7ZUyUwzEsNA"
+        }
+      },
+      "challenge": "uTjqKzFu3OQmwVKObUwreYRAWVh7poWk4J_IZniJ4mk",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBAiBZAQC9DGFFIk4NPFELVv7MM1ny3ZBodGQzq0hhZU8NmYK0eyqEWn7Kx1b_YcEVWrM_QxuChy8RK7iQ3B0Amt07z4YddYMXCXTrrGBdokMx5EzUYkILhrHDqoow4OVS9eYNNfdruUzvVKDy6dTaupJdjENZSaow-FOSeQHBLjgjiCS4QIxAmasVejviut5ZO35dSpjevVqoKynHiFwXHn9EmsPHTvLQivW3v6rqK-BbpxtKLszB9ypWA3SSUV9kXs9lK3yenP6_b0IFR3pRGX46UXxHybVLJnO1TuSKre6Y4_Lfdo8qQaycqVKw0iD-9LZ-8ktuLzBfZcUM0if_AgpvxRUbIUMBAAE",
+      "credential_id": "QPTNi3aARDxsTJ2NoM3GxQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-259/SHA-512/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "rawId": "QPTNi3aARDxsTJ2NoM3GxQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoidVRqcUt6RnUzT1Ftd1ZLT2JVd3JlWVJBV1ZoN3BvV2s0Sl9JWm5pSjRtayIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "MZh4cQoFPFRLzjgtFCLraHUv0OpBsWohRfCGy2UBTtXdUevfbiY6YtEe8HgGrjFH8gmieZ0O-xWoP_7PUqgCYGAk5mjv0xPcgk8Izem8jJYiJWFTvdvyfl6oCEIKiExHoIn8muRyLqIBswnzAwQCYroX7hW7aOP_X4eBPiGCcXta3eqhJTuIEKmf31blOnIXqXYxp5HufSA_OIxGXdeg4VlufZfaeXGVoSd2VdooylH6tYxgB4VY_Hfvu0BhinFsvFGXYujaMz2O0h3F8gs5fjtUz8MOObKAqqY_x3Wkk3MNfPgxbnv0YN7Ilc0GbcGdDMV77qmRjhrv1NBKpwm47Q"
+        }
+      },
+      "challenge": "uTjqKzFu3OQmwVKObUwreYRAWVh7poWk4J_IZniJ4mk",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBAiBZAQC9DGFFIk4NPFELVv7MM1ny3ZBodGQzq0hhZU8NmYK0eyqEWn7Kx1b_YcEVWrM_QxuChy8RK7iQ3B0Amt07z4YddYMXCXTrrGBdokMx5EzUYkILhrHDqoow4OVS9eYNNfdruUzvVKDy6dTaupJdjENZSaow-FOSeQHBLjgjiCS4QIxAmasVejviut5ZO35dSpjevVqoKynHiFwXHn9EmsPHTvLQivW3v6rqK-BbpxtKLszB9ypWA3SSUV9kXs9lK3yenP6_b0IFR3pRGX46UXxHybVLJnO1TuSKre6Y4_Lfdo8qQaycqVKw0iD-9LZ-8ktuLzBfZcUM0if_AgpvxRUbIUMBAAE",
+      "credential_id": "QPTNi3aARDxsTJ2NoM3GxQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-65535/SHA-1/2048/65537/none",
+      "response": {
+        "id": "hc2flP0TuotVUbBfjZf5CQ",
+        "rawId": "hc2flP0TuotVUbBfjZf5CQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiZndMNTV3VzFyRnF2Wk93cFQxM1M0RU5UMmVmbFlWbURTYXBzelJJZEE1VSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBVzoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCFzZ-U_RO6i1VRsF-Nl_kJpAEDAzn__iBZAQCz_0-3GzjQvzSvXi-8811FueT8B6kvsvWbkOTyMqgTxxyVbv--ia1u1LK-Gh800r2BFLLPFout1P-pfWRwTAIFYXN6YprvjiuHLTaaMT3IQb0hx_xD6vQpQUiJkuLse1dz39qaP0rdzO-JAUBMufBNKlj9NAjJ0JirVO89E_beLRY-DsqEXZCcjo92JqhDp-_BI-kvBJCzENArxvpvHg1IMq2uJO-xgq1ZyhTHm5xXh2Vv64KyhWkhmjRBfIgG4-V0pl5xvCpdxD37Bc72dBPXgjzVsA7Oeyh0gcWFqybUjQJjrr5QtqDPKfeBM_yurCU34NgRe-oPT1AamAtWBm63IUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "fwL55wW1rFqvZOwpT13S4ENT2eflYVmDSapszRIdA5U",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927675,
+      "public_key": "pAEDAzn__iBZAQCz_0-3GzjQvzSvXi-8811FueT8B6kvsvWbkOTyMqgTxxyVbv--ia1u1LK-Gh800r2BFLLPFout1P-pfWRwTAIFYXN6YprvjiuHLTaaMT3IQb0hx_xD6vQpQUiJkuLse1dz39qaP0rdzO-JAUBMufBNKlj9NAjJ0JirVO89E_beLRY-DsqEXZCcjo92JqhDp-_BI-kvBJCzENArxvpvHg1IMq2uJO-xgq1ZyhTHm5xXh2Vv64KyhWkhmjRBfIgG4-V0pl5xvCpdxD37Bc72dBPXgjzVsA7Oeyh0gcWFqybUjQJjrr5QtqDPKfeBM_yurCU34NgRe-oPT1AamAtWBm63IUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-65535/SHA-1/2048/65537/packed",
+      "response": {
+        "id": "hc2flP0TuotVUbBfjZf5CQ",
+        "rawId": "hc2flP0TuotVUbBfjZf5CQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiZndMNTV3VzFyRnF2Wk93cFQxM1M0RU5UMmVmbFlWbURTYXBzelJJZEE1VSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzn__mNzaWdZAQArmQVyl6JkDf7_ijHgGBo5iurUE11GJCJmdgWTH9YgVyK2xI2ZpWSSX9IZcaxy_WhXdgi4nCaScQW8Nl8gINfTWXLXUdQntJr-8KR8jHtsHGbWMvh1LxoKNcS7GKnT-Zm92IvSzdOt1S2IRgnI06NHniTmmqt3_LjowmjwzavCEUAv7gDKz6btzp32gtoRGQosGuKfCD8QYr_VAtzDLwROoFUwAG-vzJShu0ugvHpedE6QVa0EZJ8CYo_ZP_bY6E44wA3c-59gI7e_ywr4lIBs1pW3iZGeQQM_9mN_apnseG3EZK1l4OIGRwMgpsphpFDEpcARqoArrqENtIaq1qCTaGF1dGhEYXRhWQFXOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEIXNn5T9E7qLVVGwX42X-QmkAQMDOf_-IFkBALP_T7cbONC_NK9eL7zzXUW55PwHqS-y9ZuQ5PIyqBPHHJVu_76JrW7Usr4aHzTSvYEUss8Wi63U_6l9ZHBMAgVhc3pimu-OK4ctNpoxPchBvSHH_EPq9ClBSImS4ux7V3Pf2po_St3M74kBQEy58E0qWP00CMnQmKtU7z0T9t4tFj4OyoRdkJyOj3YmqEOn78Ej6S8EkLMQ0CvG-m8eDUgyra4k77GCrVnKFMebnFeHZW_rgrKFaSGaNEF8iAbj5XSmXnG8Kl3EPfsFzvZ0E9eCPNWwDs57KHSBxYWrJtSNAmOuvlC2oM8p94Ez_K6sJTfg2BF76g9PUBqYC1YGbrchQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "fwL55wW1rFqvZOwpT13S4ENT2eflYVmDSapszRIdA5U",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927676,
+      "public_key": "pAEDAzn__iBZAQCz_0-3GzjQvzSvXi-8811FueT8B6kvsvWbkOTyMqgTxxyVbv--ia1u1LK-Gh800r2BFLLPFout1P-pfWRwTAIFYXN6YprvjiuHLTaaMT3IQb0hx_xD6vQpQUiJkuLse1dz39qaP0rdzO-JAUBMufBNKlj9NAjJ0JirVO89E_beLRY-DsqEXZCcjo92JqhDp-_BI-kvBJCzENArxvpvHg1IMq2uJO-xgq1ZyhTHm5xXh2Vv64KyhWkhmjRBfIgG4-V0pl5xvCpdxD37Bc72dBPXgjzVsA7Oeyh0gcWFqybUjQJjrr5QtqDPKfeBM_yurCU34NgRe-oPT1AamAtWBm63IUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/SHA-1/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "hc2flP0TuotVUbBfjZf5CQ",
+        "rawId": "hc2flP0TuotVUbBfjZf5CQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZndMNTV3VzFyRnF2Wk93cFQxM1M0RU5UMmVmbFlWbURTYXBzelJJZEE1VSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "JDK6kVuJ9PIPcTKHwA3TF7B-NBmRkWweSEnOlG5dqiswuSK-cKTjWnelOVIBvWKJ4gDxNXj2cdYDc0cGeOEdYN0u6k1pDWZoVom0GfMXBwCiu4iH-ieQxVtMJDPbR7rxFhp9IPZ-nYOUcrYsVApX8gIzmtlknfvFbfK_pmmnCLWgSfzvV9n8biDl5eaIGz4mwjPG2gt4fAnKSC7px9drzAhG4MRcx4hQi53Ll8nqQG4_CL3kqYCop9XkK4G0LLlDj-9U1c5N8-JPzYSoIo89Q9m_aB9pnJZEXtLhx-kvhAf944PN3vKBmQDLQRrYxHqGclVIn1sX8aaEoxne7P2Mcg"
+        }
+      },
+      "challenge": "fwL55wW1rFqvZOwpT13S4ENT2eflYVmDSapszRIdA5U",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzn__iBZAQCz_0-3GzjQvzSvXi-8811FueT8B6kvsvWbkOTyMqgTxxyVbv--ia1u1LK-Gh800r2BFLLPFout1P-pfWRwTAIFYXN6YprvjiuHLTaaMT3IQb0hx_xD6vQpQUiJkuLse1dz39qaP0rdzO-JAUBMufBNKlj9NAjJ0JirVO89E_beLRY-DsqEXZCcjo92JqhDp-_BI-kvBJCzENArxvpvHg1IMq2uJO-xgq1ZyhTHm5xXh2Vv64KyhWkhmjRBfIgG4-V0pl5xvCpdxD37Bc72dBPXgjzVsA7Oeyh0gcWFqybUjQJjrr5QtqDPKfeBM_yurCU34NgRe-oPT1AamAtWBm63IUMBAAE",
+      "credential_id": "hc2flP0TuotVUbBfjZf5CQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/SHA-1/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "hc2flP0TuotVUbBfjZf5CQ",
+        "rawId": "hc2flP0TuotVUbBfjZf5CQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZndMNTV3VzFyRnF2Wk93cFQxM1M0RU5UMmVmbFlWbURTYXBzelJJZEE1VSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "UZFzMUpLovD7Hw36iwBqHIsj2jQfTMTIzQybznDVJrPgFm5P5MAoT4v9XRx2obwtO7FkonfKtYrYu5joCU0FllfIr-7dE739UCnPPLASCYj2iwUNrf_W_woKYBE-dgYmCVE9sCvJnFgGCSh1O3ex-jvud8WeRrf0L39P5zXFZau-qMUGJgbDs9hfeGogpJtzH7PwGWIOkFXvicy2Q8BCTXy-Cl0SomGJMQVomZkzT0yAmHw_VR9B3xxI3f_exjw0sCZwyhh0W8T8sHY1dFTE-sTn6Gxwn9piAwVC7s1g6UVQo84Kk0dIrdB_RX0D0Z-mXTkyxFXCcwj95bhYSznbuQ"
+        }
+      },
+      "challenge": "fwL55wW1rFqvZOwpT13S4ENT2eflYVmDSapszRIdA5U",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzn__iBZAQCz_0-3GzjQvzSvXi-8811FueT8B6kvsvWbkOTyMqgTxxyVbv--ia1u1LK-Gh800r2BFLLPFout1P-pfWRwTAIFYXN6YprvjiuHLTaaMT3IQb0hx_xD6vQpQUiJkuLse1dz39qaP0rdzO-JAUBMufBNKlj9NAjJ0JirVO89E_beLRY-DsqEXZCcjo92JqhDp-_BI-kvBJCzENArxvpvHg1IMq2uJO-xgq1ZyhTHm5xXh2Vv64KyhWkhmjRBfIgG4-V0pl5xvCpdxD37Bc72dBPXgjzVsA7Oeyh0gcWFqybUjQJjrr5QtqDPKfeBM_yurCU34NgRe-oPT1AamAtWBm63IUMBAAE",
+      "credential_id": "hc2flP0TuotVUbBfjZf5CQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/SHA-1/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "hc2flP0TuotVUbBfjZf5CQ",
+        "rawId": "hc2flP0TuotVUbBfjZf5CQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZndMNTV3VzFyRnF2Wk93cFQxM1M0RU5UMmVmbFlWbURTYXBzelJJZEE1VSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "KbggnCVzXoRCIBt8osaFGA95dcZ2WoYKIju8GGMWvokyGq5gQLv1iCIiGQRdrv4Kq1NbMRzHDvcUi9Ap9wVXk744mcpsX8oszRW6lc5RiDYjeg8-_n3cGRZiTtVbK6dahlFWCm4kcgg4-398tg7_wN4o2M7TjFalQ4ayEiNWxAPXCDluT_Um6QmkGczQS6Es5fQGT5VDyo12Vws7zZYI1arQl__8_wCk3SD8fLybsdUN9woFVth3BqFAvVAGx8tTpYqn3YEq3No-uoGsEwhrjP_98QuvsyG0ynISYyi4kUa7glzpZCEgCoXbhm9Va32-Lde7m-VzzbfNA_lOnIKuQw"
+        }
+      },
+      "challenge": "fwL55wW1rFqvZOwpT13S4ENT2eflYVmDSapszRIdA5U",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzn__iBZAQCz_0-3GzjQvzSvXi-8811FueT8B6kvsvWbkOTyMqgTxxyVbv--ia1u1LK-Gh800r2BFLLPFout1P-pfWRwTAIFYXN6YprvjiuHLTaaMT3IQb0hx_xD6vQpQUiJkuLse1dz39qaP0rdzO-JAUBMufBNKlj9NAjJ0JirVO89E_beLRY-DsqEXZCcjo92JqhDp-_BI-kvBJCzENArxvpvHg1IMq2uJO-xgq1ZyhTHm5xXh2Vv64KyhWkhmjRBfIgG4-V0pl5xvCpdxD37Bc72dBPXgjzVsA7Oeyh0gcWFqybUjQJjrr5QtqDPKfeBM_yurCU34NgRe-oPT1AamAtWBm63IUMBAAE",
+      "credential_id": "hc2flP0TuotVUbBfjZf5CQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-65535/SHA-1/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "hc2flP0TuotVUbBfjZf5CQ",
+        "rawId": "hc2flP0TuotVUbBfjZf5CQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZndMNTV3VzFyRnF2Wk93cFQxM1M0RU5UMmVmbFlWbURTYXBzelJJZEE1VSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "mc2ifAOYjydRTHY18CVdNnRTStalJO-kgBdIoMEHsStBK69J-6X1pgF5eGUyXoA7zidJ_LxMq2LOnopReLgU3izFVzG9cG7-W7Ca2XreUbHEYuSn7JQjJMWO__Lvrt3jrlmpEj0MyKQjVHN9S1oJHR0fIf9WWPnPixqF42ILhDXBgzx339fN7tMo1LA21ytOi3wLtl8WPYUskixvRTT-RvBPWpfTa-Ynu2QW2rviZiiG0Q6ce9DmkDA0GNRT_exwNfbGK6EBjCMqvP5wQ-5Hk4LTglWZFy44yjxJGcKbKFMiT8kaNw0Cz5idmKz_sTk0jOkPsI-4NmEMTUjy_HbahQ"
+        }
+      },
+      "challenge": "fwL55wW1rFqvZOwpT13S4ENT2eflYVmDSapszRIdA5U",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzn__iBZAQCz_0-3GzjQvzSvXi-8811FueT8B6kvsvWbkOTyMqgTxxyVbv--ia1u1LK-Gh800r2BFLLPFout1P-pfWRwTAIFYXN6YprvjiuHLTaaMT3IQb0hx_xD6vQpQUiJkuLse1dz39qaP0rdzO-JAUBMufBNKlj9NAjJ0JirVO89E_beLRY-DsqEXZCcjo92JqhDp-_BI-kvBJCzENArxvpvHg1IMq2uJO-xgq1ZyhTHm5xXh2Vv64KyhWkhmjRBfIgG4-V0pl5xvCpdxD37Bc72dBPXgjzVsA7Oeyh0gcWFqybUjQJjrr5QtqDPKfeBM_yurCU34NgRe-oPT1AamAtWBm63IUMBAAE",
+      "credential_id": "hc2flP0TuotVUbBfjZf5CQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-37/SHA-256/2048/65537/none",
+      "response": {
+        "id": "BEq42xVDEfYiGHE0dbeXYg",
+        "rawId": "BEq42xVDEfYiGHE0dbeXYg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiSEFmcFh6YVZLRktfN09BTHVrVWg2T2RGQUJGbHp6b0xiZVlzVGt4Sy1wTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBVjoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABAESrjbFUMR9iIYcTR1t5dipAEDAzgkIFkBALenwZ6smK04Nj8x8qerv3mWxqLzEx62NP2qv6r4Q4Hgmx0s1VJM-S6lF2AkBFL0bFJ8TH7A20vxXcPiDBVslSEIh4CFwGTyPcHqQKoae2cC3wh-BV0795ST8Rc-emHLbmD3NeRX5DzI_RGe2PEfNtn2Z43AttQwolGcQXGKR0kGlGgGvEdFF2MascNrVukQvdR3LmV__A0proEePHVyX_HrZgXawFszNs-y1mBYxs2d90CNAUt0ddDBZs7kj8EHNwHYyr_uWAZe96GiAP4lbVHobF3oOysbSSodhGov2LV2dGncQkU8wjYiWCnZho3BuftH995xzi-o_1t2MTuXqyshQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "HAfpXzaVKFK_7OALukUh6OdFABFlzzoLbeYsTkxK-pM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927713,
+      "public_key": "pAEDAzgkIFkBALenwZ6smK04Nj8x8qerv3mWxqLzEx62NP2qv6r4Q4Hgmx0s1VJM-S6lF2AkBFL0bFJ8TH7A20vxXcPiDBVslSEIh4CFwGTyPcHqQKoae2cC3wh-BV0795ST8Rc-emHLbmD3NeRX5DzI_RGe2PEfNtn2Z43AttQwolGcQXGKR0kGlGgGvEdFF2MascNrVukQvdR3LmV__A0proEePHVyX_HrZgXawFszNs-y1mBYxs2d90CNAUt0ddDBZs7kj8EHNwHYyr_uWAZe96GiAP4lbVHobF3oOysbSSodhGov2LV2dGncQkU8wjYiWCnZho3BuftH995xzi-o_1t2MTuXqyshQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-37/SHA-256/2048/65537/packed",
+      "response": {
+        "id": "BEq42xVDEfYiGHE0dbeXYg",
+        "rawId": "BEq42xVDEfYiGHE0dbeXYg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiSEFmcFh6YVZLRktfN09BTHVrVWg2T2RGQUJGbHp6b0xiZVlzVGt4Sy1wTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzgkY3NpZ1kBAEJaUGw8SC9h3FVfvW0yXF6kSgq6m-jTfJTC-KsEMFleurFbDOoFxZzaQdg65B81urMz7Y0Rt6N-Hqwyxu9L-tMXHfzwWQYYopJrEp4UVFLvG-8Dwe2vpXj9zCpdDKLO9Y4Ge5xVvPPcgZhTj8wjLLj_R7uLy5_CehMPwJsKxlc0J6qQkr8M0Jgori5QJPdSNyiDQv5efH29pSU_xfsyqxnHy0Jt9pmYpSCuh_h8EmwyBGTjKtWA_Z-tW1se_qha-uhVrrK7OzMlsH7d1Bm6i3GA4p_ouAdPWy4JWy9qhj_7fdzd0Kx0vPLw0UDtfsobCm2uqwDwonTpvL7gq9GrQzdoYXV0aERhdGFZAVY6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQBEq42xVDEfYiGHE0dbeXYqQBAwM4JCBZAQC3p8GerJitODY_MfKnq795lsai8xMetjT9qr-q-EOB4JsdLNVSTPkupRdgJARS9GxSfEx-wNtL8V3D4gwVbJUhCIeAhcBk8j3B6kCqGntnAt8IfgVdO_eUk_EXPnphy25g9zXkV-Q8yP0RntjxHzbZ9meNwLbUMKJRnEFxikdJBpRoBrxHRRdjGrHDa1bpEL3Udy5lf_wNKa6BHjx1cl_x62YF2sBbMzbPstZgWMbNnfdAjQFLdHXQwWbO5I_BBzcB2Mq_7lgGXvehogD-JW1R6Gxd6DsrG0kqHYRqL9i1dnRp3EJFPMI2Ilgp2YaNwbn7R_fecc4vqP9bdjE7l6srIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "HAfpXzaVKFK_7OALukUh6OdFABFlzzoLbeYsTkxK-pM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927714,
+      "public_key": "pAEDAzgkIFkBALenwZ6smK04Nj8x8qerv3mWxqLzEx62NP2qv6r4Q4Hgmx0s1VJM-S6lF2AkBFL0bFJ8TH7A20vxXcPiDBVslSEIh4CFwGTyPcHqQKoae2cC3wh-BV0795ST8Rc-emHLbmD3NeRX5DzI_RGe2PEfNtn2Z43AttQwolGcQXGKR0kGlGgGvEdFF2MascNrVukQvdR3LmV__A0proEePHVyX_HrZgXawFszNs-y1mBYxs2d90CNAUt0ddDBZs7kj8EHNwHYyr_uWAZe96GiAP4lbVHobF3oOysbSSodhGov2LV2dGncQkU8wjYiWCnZho3BuftH995xzi-o_1t2MTuXqyshQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-37/SHA-256/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "BEq42xVDEfYiGHE0dbeXYg",
+        "rawId": "BEq42xVDEfYiGHE0dbeXYg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiSEFmcFh6YVZLRktfN09BTHVrVWg2T2RGQUJGbHp6b0xiZVlzVGt4Sy1wTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "jf05HE5bQJ2dMFAFO-tnhYs3JmmnaPajZmCsEcfGBwFOvyNm3QXA9lhRMvTB1yXDzvdxJDBMwAvxJddwyELQChepNmtc24DjO1W2itkAUz5WzdFsYniLgo_7mn7TEpUktfQmsXioaFBRCOpK6XYEEakwkmmKn1HVgPhqHvSB-woa0aINdfUmCOk_yQxcHHSc2dSrO7SLZ5CeCjaiPsQW6w0fq7jbqq-45D-dbT1ZfOXepztFglEdFUUQThL8_e49MCUrvWT34JfcVE0sIlN7abprrWlvKTa8vOdQdR1Fck1dfXzzoxKIjnUEP9-3s3xxiq0DZNEE6Ztfl5TTG-QazQ"
+        }
+      },
+      "challenge": "HAfpXzaVKFK_7OALukUh6OdFABFlzzoLbeYsTkxK-pM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzgkIFkBALenwZ6smK04Nj8x8qerv3mWxqLzEx62NP2qv6r4Q4Hgmx0s1VJM-S6lF2AkBFL0bFJ8TH7A20vxXcPiDBVslSEIh4CFwGTyPcHqQKoae2cC3wh-BV0795ST8Rc-emHLbmD3NeRX5DzI_RGe2PEfNtn2Z43AttQwolGcQXGKR0kGlGgGvEdFF2MascNrVukQvdR3LmV__A0proEePHVyX_HrZgXawFszNs-y1mBYxs2d90CNAUt0ddDBZs7kj8EHNwHYyr_uWAZe96GiAP4lbVHobF3oOysbSSodhGov2LV2dGncQkU8wjYiWCnZho3BuftH995xzi-o_1t2MTuXqyshQwEAAQ",
+      "credential_id": "BEq42xVDEfYiGHE0dbeXYg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-37/SHA-256/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "BEq42xVDEfYiGHE0dbeXYg",
+        "rawId": "BEq42xVDEfYiGHE0dbeXYg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiSEFmcFh6YVZLRktfN09BTHVrVWg2T2RGQUJGbHp6b0xiZVlzVGt4Sy1wTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "N9Z22OphaA9NYEqdx8mTGtP6zqK7ipG-5sqlWcT3ArY0-FTNiUgIthTx5Vbxl3aNfBKteuEFLKHsAjA4Ch3XYhfFKYiLn3SlRSGKz99Ao_drHv5eAqJTZ_ao7WGOEDw5ujZTchJv0eVjoQa3u8xJG-0oIupnZ0Df9iE_LcrXkFz-OOCqFQVE_rwhgMqJJKdZnMG9TRb62WR8C2tOUz2g9jwGr16pzojXjbpe05YuApt2DVY3gjhhPoA75WjFRaeU8wuCNcZXAfdlH45Ogodl5FLemA6zB_-pd8rnB_v78Tg901uYl_j8CO2wjJfzUl74HVaI1lKQMTuuC4mmPCnejg"
+        }
+      },
+      "challenge": "HAfpXzaVKFK_7OALukUh6OdFABFlzzoLbeYsTkxK-pM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzgkIFkBALenwZ6smK04Nj8x8qerv3mWxqLzEx62NP2qv6r4Q4Hgmx0s1VJM-S6lF2AkBFL0bFJ8TH7A20vxXcPiDBVslSEIh4CFwGTyPcHqQKoae2cC3wh-BV0795ST8Rc-emHLbmD3NeRX5DzI_RGe2PEfNtn2Z43AttQwolGcQXGKR0kGlGgGvEdFF2MascNrVukQvdR3LmV__A0proEePHVyX_HrZgXawFszNs-y1mBYxs2d90CNAUt0ddDBZs7kj8EHNwHYyr_uWAZe96GiAP4lbVHobF3oOysbSSodhGov2LV2dGncQkU8wjYiWCnZho3BuftH995xzi-o_1t2MTuXqyshQwEAAQ",
+      "credential_id": "BEq42xVDEfYiGHE0dbeXYg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-37/SHA-256/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "BEq42xVDEfYiGHE0dbeXYg",
+        "rawId": "BEq42xVDEfYiGHE0dbeXYg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiSEFmcFh6YVZLRktfN09BTHVrVWg2T2RGQUJGbHp6b0xiZVlzVGt4Sy1wTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "eqLEFP2FOvzyeuZQdC_6MEGNF-CqbAXpc9rZOBgPQjqxEmZjL24RT5apJzMQq-ne94L5S-dr_pWa8uFnP6P6HpCEzdN-sjEMV7uuoIqSisyrBBAcyTJUY6_7tO00Bh0GtFLTgOZD_4wD4RRc8eZMCWTYM8h8MfY1NKVFcyLpQ_wIRylMWnSkp4aOFiEJTM49L3ArE2ScynF3c6O5V89iJ_GzHcEg1QPhi4eLnZihgEwLSl7-WBI3TD-hvxAo2hywflWQ9NXvcF-gEALXBX9BzKN5KJzoB1u4j9_zxFhZIYC4n-hDkn3GBJmtSaeUy11ak0373TeZ9NbQ0XIIUyDjew"
+        }
+      },
+      "challenge": "HAfpXzaVKFK_7OALukUh6OdFABFlzzoLbeYsTkxK-pM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzgkIFkBALenwZ6smK04Nj8x8qerv3mWxqLzEx62NP2qv6r4Q4Hgmx0s1VJM-S6lF2AkBFL0bFJ8TH7A20vxXcPiDBVslSEIh4CFwGTyPcHqQKoae2cC3wh-BV0795ST8Rc-emHLbmD3NeRX5DzI_RGe2PEfNtn2Z43AttQwolGcQXGKR0kGlGgGvEdFF2MascNrVukQvdR3LmV__A0proEePHVyX_HrZgXawFszNs-y1mBYxs2d90CNAUt0ddDBZs7kj8EHNwHYyr_uWAZe96GiAP4lbVHobF3oOysbSSodhGov2LV2dGncQkU8wjYiWCnZho3BuftH995xzi-o_1t2MTuXqyshQwEAAQ",
+      "credential_id": "BEq42xVDEfYiGHE0dbeXYg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-37/SHA-256/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "BEq42xVDEfYiGHE0dbeXYg",
+        "rawId": "BEq42xVDEfYiGHE0dbeXYg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiSEFmcFh6YVZLRktfN09BTHVrVWg2T2RGQUJGbHp6b0xiZVlzVGt4Sy1wTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "XhuvyPnT2l347YbtPXJOvOmtKTjxdwCBDD7JDrVeKzRx2vXDGoGWkSQNv3-RIxg3ayYhIhGbXDfxpMmjp6JCRhWuoWhkr25NvWlWXl9q4Ip6JvK-jjior62lzy1cNxCKdIgG-P2ohuU7atPakKJuBply82hQ5eOa399CYqAWDy_P_LWBwkU063qs6hYopjAoHRvF6TxDHhU-PZOU6SPh1uzsNZOxU0RpED1WTwNCbJQSE3q5yS_hrvlS4TzyESHLAR-3mvD8HRDETSWN4nUM9MruAiPeaUi5nJltITw_ilfAFaB-oJzoCwfhXDaSKXqRBoHmAdmR9HChPiy_gcry6Q"
+        }
+      },
+      "challenge": "HAfpXzaVKFK_7OALukUh6OdFABFlzzoLbeYsTkxK-pM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzgkIFkBALenwZ6smK04Nj8x8qerv3mWxqLzEx62NP2qv6r4Q4Hgmx0s1VJM-S6lF2AkBFL0bFJ8TH7A20vxXcPiDBVslSEIh4CFwGTyPcHqQKoae2cC3wh-BV0795ST8Rc-emHLbmD3NeRX5DzI_RGe2PEfNtn2Z43AttQwolGcQXGKR0kGlGgGvEdFF2MascNrVukQvdR3LmV__A0proEePHVyX_HrZgXawFszNs-y1mBYxs2d90CNAUt0ddDBZs7kj8EHNwHYyr_uWAZe96GiAP4lbVHobF3oOysbSSodhGov2LV2dGncQkU8wjYiWCnZho3BuftH995xzi-o_1t2MTuXqyshQwEAAQ",
+      "credential_id": "BEq42xVDEfYiGHE0dbeXYg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-38/SHA-384/2048/65537/none",
+      "response": {
+        "id": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "rawId": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoia2VrR2FMa0d5dERqWUtLMVZIUkJfdVRhaFl0eGJfTHhaY1A3SWJfYmtISSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBVjoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCDVtKt-KuxN9WHYS7380UFpAEDAzglIFkBALMCE_WrCBgxNMuySn4TYlez_aOXOHJGtHaoYqKhAmf1MtwrhNxrXKuu_SlQsFVukJVCBVbrcrgDIFHflzYfmG-nS-bNCCus_SCPyuWiOBV2XAfBfqcES6W2I-vqD9Ly4pYHjGsjn4IZCEMJkJsSIc7So7X-vwdWwz2EBD5JtDJACYMRglKMoI4yPl0KC_dP-vnmFmvNp5RuCtyTWRIBUMngTlNgHWvRjbugp1S-XR322CPXxdeL5lQ2AqaagGoPKDZi-8a_otHEsK94vxOOockX1eDYxC92A9SBC8mdisKeH__FeuE4iHQBUHaSi-HYPM6EacI-2P4TojtnowWnbWshQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "kekGaLkGytDjYKK1VHRB_uTahYtxb_LxZcP7Ib_bkHI",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927756,
+      "public_key": "pAEDAzglIFkBALMCE_WrCBgxNMuySn4TYlez_aOXOHJGtHaoYqKhAmf1MtwrhNxrXKuu_SlQsFVukJVCBVbrcrgDIFHflzYfmG-nS-bNCCus_SCPyuWiOBV2XAfBfqcES6W2I-vqD9Ly4pYHjGsjn4IZCEMJkJsSIc7So7X-vwdWwz2EBD5JtDJACYMRglKMoI4yPl0KC_dP-vnmFmvNp5RuCtyTWRIBUMngTlNgHWvRjbugp1S-XR322CPXxdeL5lQ2AqaagGoPKDZi-8a_otHEsK94vxOOockX1eDYxC92A9SBC8mdisKeH__FeuE4iHQBUHaSi-HYPM6EacI-2P4TojtnowWnbWshQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-38/SHA-384/2048/65537/packed",
+      "response": {
+        "id": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "rawId": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoia2VrR2FMa0d5dERqWUtLMVZIUkJfdVRhaFl0eGJfTHhaY1A3SWJfYmtISSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzglY3NpZ1kBADsUVDcX1tD2o4upfDb1_BCVakepDuEBHF-EZjn5d9EgfUQepLQC3p2BMNtq14wy4LXTO5ZF5BwrU_xG4EnbQ1L0dWJjT1uWXZdlZQy3F4d-0xo_rrStAhWNf6HyZxNJZK-PxTwmaM2h1neScqty05dlt-RROEilfrZ3cy-ZmXRp-0hBro7xfOIZTlYK5mW6F6XNK_JpdjuUyqisrVt8sq-kw5bUgRnTsx7qzpTwlvyNjswSDr8t12GauT4N7HHplY2BiciTf8OjgC6jtMlcGn7AX4t-goszcpKkmafm9hg3JwRCj11Mq4hZjxJsayq7cFznDyU2TecOlKuMyTJ6gTtoYXV0aERhdGFZAVY6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQg1bSrfirsTfVh2Eu9_NFBaQBAwM4JSBZAQCzAhP1qwgYMTTLskp-E2JXs_2jlzhyRrR2qGKioQJn9TLcK4Tca1yrrv0pULBVbpCVQgVW63K4AyBR35c2H5hvp0vmzQgrrP0gj8rlojgVdlwHwX6nBEultiPr6g_S8uKWB4xrI5-CGQhDCZCbEiHO0qO1_r8HVsM9hAQ-SbQyQAmDEYJSjKCOMj5dCgv3T_r55hZrzaeUbgrck1kSAVDJ4E5TYB1r0Y27oKdUvl0d9tgj18XXi-ZUNgKmmoBqDyg2YvvGv6LRxLCveL8TjqHJF9Xg2MQvdgPUgQvJnYrCnh__xXrhOIh0AVB2kovh2DzOhGnCPtj-E6I7Z6MFp21rIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "kekGaLkGytDjYKK1VHRB_uTahYtxb_LxZcP7Ib_bkHI",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927756,
+      "public_key": "pAEDAzglIFkBALMCE_WrCBgxNMuySn4TYlez_aOXOHJGtHaoYqKhAmf1MtwrhNxrXKuu_SlQsFVukJVCBVbrcrgDIFHflzYfmG-nS-bNCCus_SCPyuWiOBV2XAfBfqcES6W2I-vqD9Ly4pYHjGsjn4IZCEMJkJsSIc7So7X-vwdWwz2EBD5JtDJACYMRglKMoI4yPl0KC_dP-vnmFmvNp5RuCtyTWRIBUMngTlNgHWvRjbugp1S-XR322CPXxdeL5lQ2AqaagGoPKDZi-8a_otHEsK94vxOOockX1eDYxC92A9SBC8mdisKeH__FeuE4iHQBUHaSi-HYPM6EacI-2P4TojtnowWnbWshQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-38/SHA-384/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "rawId": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoia2VrR2FMa0d5dERqWUtLMVZIUkJfdVRhaFl0eGJfTHhaY1A3SWJfYmtISSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "YO-0ysD9Cc38EjHYcVPeSfMOEQIkgIUbT0T7-m_SdqksoeEMHDB20aKvXYpnnB-8152N4BRMM_g8cUAHaDnG7OeYC3HtwBFLBquWEDqxIVrQ00qsuGwivZ1a_zUASbl_57kAELzOfPuKaLLlwhqpmS5y_I6iKUQ8w9_1zNy0W9KKuHQYIc0_qRxc66iwR3gjHCvLSupJqjkoKKtK9mWyc9WV_92y5pmPi8m4dS2aFvTA1eWEOc9jUFtS5W9SHtR75ePrS1gwI3MJdvS6r_6rB8u3LjV8Hv-ERsSmqiCZVfFiKzpJByeiLt40gLYUnU0Lf4N2ONNCnH2kN42TYDDQrA"
+        }
+      },
+      "challenge": "kekGaLkGytDjYKK1VHRB_uTahYtxb_LxZcP7Ib_bkHI",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzglIFkBALMCE_WrCBgxNMuySn4TYlez_aOXOHJGtHaoYqKhAmf1MtwrhNxrXKuu_SlQsFVukJVCBVbrcrgDIFHflzYfmG-nS-bNCCus_SCPyuWiOBV2XAfBfqcES6W2I-vqD9Ly4pYHjGsjn4IZCEMJkJsSIc7So7X-vwdWwz2EBD5JtDJACYMRglKMoI4yPl0KC_dP-vnmFmvNp5RuCtyTWRIBUMngTlNgHWvRjbugp1S-XR322CPXxdeL5lQ2AqaagGoPKDZi-8a_otHEsK94vxOOockX1eDYxC92A9SBC8mdisKeH__FeuE4iHQBUHaSi-HYPM6EacI-2P4TojtnowWnbWshQwEAAQ",
+      "credential_id": "g1bSrfirsTfVh2Eu9_NFBQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-38/SHA-384/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "rawId": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoia2VrR2FMa0d5dERqWUtLMVZIUkJfdVRhaFl0eGJfTHhaY1A3SWJfYmtISSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "Bt8W6Xmzy85dV-b6Ifwse7x6u1H_y2tseIXDT0FtUQe-kTkaj-IGf7amns-97F0Wgi7OZW5xVVcyFkyScSUO0aN8X7iq4DY6N71grbKnC8iUgDXCVgp99_9qcu7ASIyZ1JtTBpmgsIjbWwnwdQhFBQtuu6-Le6yKfIsLd0uDgr0jZS9QegnDDkvTpVaECjctjdvxMdXjflhr3JBEc7tkUMXIEJzqtQppNZ2gt8KbYoLQvHZ7tlQpEDcrbBUYWcCCpEzWRtBbM29LrO-cnUYN8nFPPfsRT1NXnoM59hmaJnSPYw2PY8R8rrD-3oxy4PO8HtxWRaM23nUC-akGo0DSdQ"
+        }
+      },
+      "challenge": "kekGaLkGytDjYKK1VHRB_uTahYtxb_LxZcP7Ib_bkHI",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzglIFkBALMCE_WrCBgxNMuySn4TYlez_aOXOHJGtHaoYqKhAmf1MtwrhNxrXKuu_SlQsFVukJVCBVbrcrgDIFHflzYfmG-nS-bNCCus_SCPyuWiOBV2XAfBfqcES6W2I-vqD9Ly4pYHjGsjn4IZCEMJkJsSIc7So7X-vwdWwz2EBD5JtDJACYMRglKMoI4yPl0KC_dP-vnmFmvNp5RuCtyTWRIBUMngTlNgHWvRjbugp1S-XR322CPXxdeL5lQ2AqaagGoPKDZi-8a_otHEsK94vxOOockX1eDYxC92A9SBC8mdisKeH__FeuE4iHQBUHaSi-HYPM6EacI-2P4TojtnowWnbWshQwEAAQ",
+      "credential_id": "g1bSrfirsTfVh2Eu9_NFBQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-38/SHA-384/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "rawId": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoia2VrR2FMa0d5dERqWUtLMVZIUkJfdVRhaFl0eGJfTHhaY1A3SWJfYmtISSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "efLJFpwKNse7IrfVql2PO-D1QDRbT5Wfae5juNI9Mv1ZfGqAg34vNmVXqSR53m7ebU7Kzg72RuAsCoe-cpPDML3I1Tu9NvOob41yXzURLOni9Maj8wENvKkKsvAPzAOnwlrkp5AdKobYbZXo3DwIIbV_F1pdUOeOaDGl1ZD6Y5TTZjXAgKxTswN15MDGmTh-c56wWDenVvXfxtPJsDnqOAbtiaKdExSpbL1N0GpzOf9E_VZ8JYvdw8FKqYDhbxvroY9PrUW_uFlSsAzywCVmoot2DyITsCFEKEB-eY3XeIYBb1FywA1dvF9K56HDnmC4qgHoeWauzRA1yWoAs2b18w"
+        }
+      },
+      "challenge": "kekGaLkGytDjYKK1VHRB_uTahYtxb_LxZcP7Ib_bkHI",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzglIFkBALMCE_WrCBgxNMuySn4TYlez_aOXOHJGtHaoYqKhAmf1MtwrhNxrXKuu_SlQsFVukJVCBVbrcrgDIFHflzYfmG-nS-bNCCus_SCPyuWiOBV2XAfBfqcES6W2I-vqD9Ly4pYHjGsjn4IZCEMJkJsSIc7So7X-vwdWwz2EBD5JtDJACYMRglKMoI4yPl0KC_dP-vnmFmvNp5RuCtyTWRIBUMngTlNgHWvRjbugp1S-XR322CPXxdeL5lQ2AqaagGoPKDZi-8a_otHEsK94vxOOockX1eDYxC92A9SBC8mdisKeH__FeuE4iHQBUHaSi-HYPM6EacI-2P4TojtnowWnbWshQwEAAQ",
+      "credential_id": "g1bSrfirsTfVh2Eu9_NFBQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-38/SHA-384/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "rawId": "g1bSrfirsTfVh2Eu9_NFBQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoia2VrR2FMa0d5dERqWUtLMVZIUkJfdVRhaFl0eGJfTHhaY1A3SWJfYmtISSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "RYqr2ftjRu1FxvyBo-WakNoe9mqJ995Ly_EwEGJqYfe95l16_17Q5AJ9RiJ06Yiu-_Vw9HKJu98FcJtD_6hWWwZzwxIsVkm-ZSZJVjvaQUa7Z9Fr30de5haSGlwAb4MGRHZeVyoF4EeaRSCsp155wwDRqF_4qeHjl5kfQdZjABRISETLh41lwQ-RhqkhanvYldaN2jQrOi0qUG3a_Wu_1wHN9Y5EK1BQsRhToejJKl7clsB_VaLaCu08eNC0liFVHCDkrjdK8W88QWgj23OfQgzg4WNpv8Wg1WbdCFUfgpReX8y92D1IlSTv4vCI_8l5wo7A2v_Jw4dQ0zbI9q9Y0Q"
+        }
+      },
+      "challenge": "kekGaLkGytDjYKK1VHRB_uTahYtxb_LxZcP7Ib_bkHI",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzglIFkBALMCE_WrCBgxNMuySn4TYlez_aOXOHJGtHaoYqKhAmf1MtwrhNxrXKuu_SlQsFVukJVCBVbrcrgDIFHflzYfmG-nS-bNCCus_SCPyuWiOBV2XAfBfqcES6W2I-vqD9Ly4pYHjGsjn4IZCEMJkJsSIc7So7X-vwdWwz2EBD5JtDJACYMRglKMoI4yPl0KC_dP-vnmFmvNp5RuCtyTWRIBUMngTlNgHWvRjbugp1S-XR322CPXxdeL5lQ2AqaagGoPKDZi-8a_otHEsK94vxOOockX1eDYxC92A9SBC8mdisKeH__FeuE4iHQBUHaSi-HYPM6EacI-2P4TojtnowWnbWshQwEAAQ",
+      "credential_id": "g1bSrfirsTfVh2Eu9_NFBQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-39/SHA-512/2048/65537/none",
+      "response": {
+        "id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "rawId": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVkp3WXlBdzFpNHc2TXhJa21ibnVvekRqLW83V1NmQUpHbzVaNXYxSmpiMCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBVjoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABAwxYUnZ0CT1O7wD7VljtcWpAEDAzgmIFkBAOpra1Bb-Enr1Hgwd6W1zd-kjHUcy1zcziLufIS6RwbZiDziR3M1yrEc3yMJgLqCpzK7n_SkQXmrekcibkXVtZIL6-QlwH81Gx7Ds8fiNme5AwxqOA68fjR8_wHq40pKJBUW3_HB8aQ0OdXTbQ6O2SC3LYwAt_g-p5syMqjYjrHfbEb4e-3NmAwCsy1O-piq461gx7_zOfXSYz_YSDekE0b7AzkXKYdMxH-sNK2kETroQGeh0zKaWnG2q5VtHsXz7AyjsiKOLf1_ZW2HYHZYOU7Ky0ehOJwHqub8mLGbyh644u8LwPj_s0cC3ojUmJtfoUUgzLo13FKKhNx8JtW3y7EhQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "VJwYyAw1i4w6MxIkmbnuozDj-o7WSfAJGo5Z5v1Jjb0",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927789,
+      "public_key": "pAEDAzgmIFkBAOpra1Bb-Enr1Hgwd6W1zd-kjHUcy1zcziLufIS6RwbZiDziR3M1yrEc3yMJgLqCpzK7n_SkQXmrekcibkXVtZIL6-QlwH81Gx7Ds8fiNme5AwxqOA68fjR8_wHq40pKJBUW3_HB8aQ0OdXTbQ6O2SC3LYwAt_g-p5syMqjYjrHfbEb4e-3NmAwCsy1O-piq461gx7_zOfXSYz_YSDekE0b7AzkXKYdMxH-sNK2kETroQGeh0zKaWnG2q5VtHsXz7AyjsiKOLf1_ZW2HYHZYOU7Ky0ehOJwHqub8mLGbyh644u8LwPj_s0cC3ojUmJtfoUUgzLo13FKKhNx8JtW3y7EhQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-39/SHA-512/2048/65537/packed",
+      "response": {
+        "id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "rawId": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVkp3WXlBdzFpNHc2TXhJa21ibnVvekRqLW83V1NmQUpHbzVaNXYxSmpiMCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzgmY3NpZ1kBAEHlzN2deruxodQKEv3Q9X2h1txcX8Yko3ld1aCeXvh7qBW5BhfRzB1f0BHR3Lm37YhUPl-eRa2X6lDBjOzdoZhGcuJ4o_3NAOptxK7IBUvwZfQREmjIf0kxIv1S5ip6z0_u-TZiF7z8kTn4Pl2SSqpVsh6PPWQK4Uz1eetBgXHrrJ-u8XYJbbRUyi32AZkbyoIwhRSbIw_6skMSl_qiWp2xAqRNMOzqKyvI_XVfrw0o6xNVir9jDiuUTPH46DpBoVvElK_cIfLJviF15LMbrHg-AtjjB5pHxTsmV9iwerMDm8XouEDUJBytgPOVtsjJF6OX_z7GqIpieNUv868lDgJoYXV0aERhdGFZAVY6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQMMWFJ2dAk9Tu8A-1ZY7XFqQBAwM4JiBZAQDqa2tQW_hJ69R4MHeltc3fpIx1HMtc3M4i7nyEukcG2Yg84kdzNcqxHN8jCYC6gqcyu5_0pEF5q3pHIm5F1bWSC-vkJcB_NRsew7PH4jZnuQMMajgOvH40fP8B6uNKSiQVFt_xwfGkNDnV020Ojtkgty2MALf4PqebMjKo2I6x32xG-HvtzZgMArMtTvqYquOtYMe_8zn10mM_2Eg3pBNG-wM5FymHTMR_rDStpBE66EBnodMymlpxtquVbR7F8-wMo7Iiji39f2Vth2B2WDlOystHoTicB6rm_Jixm8oeuOLvC8D4_7NHAt6I1JibX6FFIMy6NdxSioTcfCbVt8uxIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "VJwYyAw1i4w6MxIkmbnuozDj-o7WSfAJGo5Z5v1Jjb0",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927790,
+      "public_key": "pAEDAzgmIFkBAOpra1Bb-Enr1Hgwd6W1zd-kjHUcy1zcziLufIS6RwbZiDziR3M1yrEc3yMJgLqCpzK7n_SkQXmrekcibkXVtZIL6-QlwH81Gx7Ds8fiNme5AwxqOA68fjR8_wHq40pKJBUW3_HB8aQ0OdXTbQ6O2SC3LYwAt_g-p5syMqjYjrHfbEb4e-3NmAwCsy1O-piq461gx7_zOfXSYz_YSDekE0b7AzkXKYdMxH-sNK2kETroQGeh0zKaWnG2q5VtHsXz7AyjsiKOLf1_ZW2HYHZYOU7Ky0ehOJwHqub8mLGbyh644u8LwPj_s0cC3ojUmJtfoUUgzLo13FKKhNx8JtW3y7EhQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-39/SHA-512/2048/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "rawId": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVkp3WXlBdzFpNHc2TXhJa21ibnVvekRqLW83V1NmQUpHbzVaNXYxSmpiMCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "Li8Neqk2QWYHxHiErrj1q1QYW-PmayFl01dazVxNcWAgnKmYqnoK5TZvPmE4bw5Scw0q64LvrKRSYP-3oCluj2d2RMK451kbeRaZCHZF2l5rvp5xrSfX4oMs7fG-sXexXlil3OMC8aMNy2VeL3rh0T3qJjLbC5DwPxyELUjnP0n9w8lgKId0_1q0Mdjx35N-DpdZEX6wqJwRxJgIF3ClKChcYCB36lN5C523SGLgfvAClPlmTTHCPzbU1EU5KBapEMWoalA8x13keQ38A4zhqJ9iHaKP1EMVN5V5tCrlnPBxohRBCiWRgE_WHv1eHFShDJgIzsmlGp1SwFVZwTtjsA"
+        }
+      },
+      "challenge": "VJwYyAw1i4w6MxIkmbnuozDj-o7WSfAJGo5Z5v1Jjb0",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzgmIFkBAOpra1Bb-Enr1Hgwd6W1zd-kjHUcy1zcziLufIS6RwbZiDziR3M1yrEc3yMJgLqCpzK7n_SkQXmrekcibkXVtZIL6-QlwH81Gx7Ds8fiNme5AwxqOA68fjR8_wHq40pKJBUW3_HB8aQ0OdXTbQ6O2SC3LYwAt_g-p5syMqjYjrHfbEb4e-3NmAwCsy1O-piq461gx7_zOfXSYz_YSDekE0b7AzkXKYdMxH-sNK2kETroQGeh0zKaWnG2q5VtHsXz7AyjsiKOLf1_ZW2HYHZYOU7Ky0ehOJwHqub8mLGbyh644u8LwPj_s0cC3ojUmJtfoUUgzLo13FKKhNx8JtW3y7EhQwEAAQ",
+      "credential_id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-39/SHA-512/2048/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "rawId": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVkp3WXlBdzFpNHc2TXhJa21ibnVvekRqLW83V1NmQUpHbzVaNXYxSmpiMCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "TQQOR8j5ilG9mDSUzERSUjb_BwhKTY_AMpWyQoVHxyE5Jl-TYEyALBjhZSARWqATH9cHOv2lYQp0uTdFSFvBkGpiupg2CUlBui7R8zec22YHeU5SxZ29tFzY-DlnLc-XC537cYDv7vW3jx9ujfQ3-EwwZQDR5b5e8OmJnOv7VyEkEzeAYNvWHaQEsE40A80bOsl66JPShsLDf3R_kb5CKKCM1Rq7Nb70X6hZDT4flE6c54dAR94cbtelKsF_89N9_6WvhWjxgs0ZaGNyazCtdoY4KzXimrB05Obyz_CvKNcllKzU9XwQhYNNRTuOotxpg3a-wxr3J_f9uc78nsBsiw"
+        }
+      },
+      "challenge": "VJwYyAw1i4w6MxIkmbnuozDj-o7WSfAJGo5Z5v1Jjb0",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzgmIFkBAOpra1Bb-Enr1Hgwd6W1zd-kjHUcy1zcziLufIS6RwbZiDziR3M1yrEc3yMJgLqCpzK7n_SkQXmrekcibkXVtZIL6-QlwH81Gx7Ds8fiNme5AwxqOA68fjR8_wHq40pKJBUW3_HB8aQ0OdXTbQ6O2SC3LYwAt_g-p5syMqjYjrHfbEb4e-3NmAwCsy1O-piq461gx7_zOfXSYz_YSDekE0b7AzkXKYdMxH-sNK2kETroQGeh0zKaWnG2q5VtHsXz7AyjsiKOLf1_ZW2HYHZYOU7Ky0ehOJwHqub8mLGbyh644u8LwPj_s0cC3ojUmJtfoUUgzLo13FKKhNx8JtW3y7EhQwEAAQ",
+      "credential_id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-39/SHA-512/2048/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "rawId": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVkp3WXlBdzFpNHc2TXhJa21ibnVvekRqLW83V1NmQUpHbzVaNXYxSmpiMCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "hrXVmiyk8BIp_FgCRZ99IpW8yW1tiFXYoaxc9RrptrlZ2ZbrwZLFeqdGxTdo8fA42ouPr3GRQPURUJDjX8KhG2njp1Vue_mMlkCTvpUGJSUgHN6GEUkvzCpBp6Ot6jvpPGsME2jZIGLSqsJf0StbtacdwP0aUUI1EL7oyYb9RYbhV8_ztgmTRCJwTFTrTebgh3dmNwN5aUf9ZQABCZ8ILqGkYkBQHLWxaYf4dK76Q5fl7tQusRRve_eLIWg-f5hXdEl1YG8mii0IWL41p7FyhLvtnYXKalcxK1r62ZA2qI9Acxqr84aXEl2OdGIEf-oKXRCPKARwyO0tgAWbLs2AsA"
+        }
+      },
+      "challenge": "VJwYyAw1i4w6MxIkmbnuozDj-o7WSfAJGo5Z5v1Jjb0",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzgmIFkBAOpra1Bb-Enr1Hgwd6W1zd-kjHUcy1zcziLufIS6RwbZiDziR3M1yrEc3yMJgLqCpzK7n_SkQXmrekcibkXVtZIL6-QlwH81Gx7Ds8fiNme5AwxqOA68fjR8_wHq40pKJBUW3_HB8aQ0OdXTbQ6O2SC3LYwAt_g-p5syMqjYjrHfbEb4e-3NmAwCsy1O-piq461gx7_zOfXSYz_YSDekE0b7AzkXKYdMxH-sNK2kETroQGeh0zKaWnG2q5VtHsXz7AyjsiKOLf1_ZW2HYHZYOU7Ky0ehOJwHqub8mLGbyh644u8LwPj_s0cC3ojUmJtfoUUgzLo13FKKhNx8JtW3y7EhQwEAAQ",
+      "credential_id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-39/SHA-512/2048/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "rawId": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVkp3WXlBdzFpNHc2TXhJa21ibnVvekRqLW83V1NmQUpHbzVaNXYxSmpiMCIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "DOWPQS7IcqNVKE1fE0QrQq_x8bX15foxGyUVq95zym1_SPzBxQQML1F4MQRUqFZ15ILQWjgkiAIctXnvBXDUZ3mUznGirOtqDTOogGxVYRpnrSS8WfEaBCzuhjqH9M8fmfgse9rthrNmPzBPK495Fa6nUsY--pWGKaEq2bXV7GqEBW6q3S_X1hccDRcvb5xG4o-ZnQUgyxUeDnje0H20RC-9tt3OlSzufmK3UyIoIVsPUi7EHJvPtRkdTvq3cEbJSbA1sFZnnaI7ouYwDrrR6HRM4TdlnN7u-dy7Susag9bIh-1DKT3Am35n1-4gAN6qTFH672KXAjIBffjsttkubQ"
+        }
+      },
+      "challenge": "VJwYyAw1i4w6MxIkmbnuozDj-o7WSfAJGo5Z5v1Jjb0",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzgmIFkBAOpra1Bb-Enr1Hgwd6W1zd-kjHUcy1zcziLufIS6RwbZiDziR3M1yrEc3yMJgLqCpzK7n_SkQXmrekcibkXVtZIL6-QlwH81Gx7Ds8fiNme5AwxqOA68fjR8_wHq40pKJBUW3_HB8aQ0OdXTbQ6O2SC3LYwAt_g-p5syMqjYjrHfbEb4e-3NmAwCsy1O-piq461gx7_zOfXSYz_YSDekE0b7AzkXKYdMxH-sNK2kETroQGeh0zKaWnG2q5VtHsXz7AyjsiKOLf1_ZW2HYHZYOU7Ky0ehOJwHqub8mLGbyh644u8LwPj_s0cC3ojUmJtfoUUgzLo13FKKhNx8JtW3y7EhQwEAAQ",
+      "credential_id": "MMWFJ2dAk9Tu8A-1ZY7XFg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/1024/3/none",
+      "response": {
+        "id": "2dzgq3BiQjQATWrmbzYC-A",
+        "rawId": "2dzgq3BiQjQATWrmbzYC-A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoieXEwQjBnRG9hVWw2Sk9IVjZMQWM5THhONG1GbXl6YmlyUGE4OTlfQkRTTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjUOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAENnc4KtwYkI0AE1q5m82AvikAQMDOQEAIFiAsYXUszMoLrYcBtVUsSmO3n9aLW4oCVoxS0pXUN9QGPDr_OoiuX4VNa0mP4Shg1KJo0MEARj_KwgR4dBQIXOf4GiAbOKLoeOuIUp33kEVKaFvNo5NH4lI69l5Htlg9LZw08CcM4e0GoN7A1pI8kDMw24yae7foXYKQ6PqW4PPCC8hQQM",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "yq0B0gDoaUl6JOHV6LAc9LxN4mFmyzbirPa899_BDSM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927811,
+      "public_key": "pAEDAzkBACBYgLGF1LMzKC62HAbVVLEpjt5_Wi1uKAlaMUtKV1DfUBjw6_zqIrl-FTWtJj-EoYNSiaNDBAEY_ysIEeHQUCFzn-BogGzii6HjriFKd95BFSmhbzaOTR-JSOvZeR7ZYPS2cNPAnDOHtBqDewNaSPJAzMNuMmnu36F2CkOj6luDzwgvIUED",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/1024/3/packed",
+      "response": {
+        "id": "2dzgq3BiQjQATWrmbzYC-A",
+        "rawId": "2dzgq3BiQjQATWrmbzYC-A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoieXEwQjBnRG9hVWw2Sk9IVjZMQWM5THhONG1GbXl6YmlyUGE4OTlfQkRTTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAGNzaWdYgDP3Ct0f0dxidIObx4ME2FIahU6GugmupXbHzSHjIm2U1IOGukvt6Ple60bt9y3RgYdow8YugRCV5wkyGSzDxQbpIweVibowMQIKUsk_5btwsmheEQbpEBI2Npxi5ED4U8KtKJVdDczH3qLGojVx3qNk9yehpSx3MjdMNJoNWOxMaGF1dGhEYXRhWNQ6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ2dzgq3BiQjQATWrmbzYC-KQBAwM5AQAgWICxhdSzMyguthwG1VSxKY7ef1otbigJWjFLSldQ31AY8Ov86iK5fhU1rSY_hKGDUomjQwQBGP8rCBHh0FAhc5_gaIBs4ouh464hSnfeQRUpoW82jk0fiUjr2Xke2WD0tnDTwJwzh7Qag3sDWkjyQMzDbjJp7t-hdgpDo-pbg88ILyFBAw",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "yq0B0gDoaUl6JOHV6LAc9LxN4mFmyzbirPa899_BDSM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341927811,
+      "public_key": "pAEDAzkBACBYgLGF1LMzKC62HAbVVLEpjt5_Wi1uKAlaMUtKV1DfUBjw6_zqIrl-FTWtJj-EoYNSiaNDBAEY_ysIEeHQUCFzn-BogGzii6HjriFKd95BFSmhbzaOTR-JSOvZeR7ZYPS2cNPAnDOHtBqDewNaSPJAzMNuMmnu36F2CkOj6luDzwgvIUED",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/1024/3/flags5/currentUVtrue",
+      "response": {
+        "id": "2dzgq3BiQjQATWrmbzYC-A",
+        "rawId": "2dzgq3BiQjQATWrmbzYC-A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoieXEwQjBnRG9hVWw2Sk9IVjZMQWM5THhONG1GbXl6YmlyUGE4OTlfQkRTTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "mOTP4y08qEZtf-rzuE4APolMX6N0-HG9xZAulqsW9L0A1eB45g_I_JGXgxMzrQhA-pruroYFyqub8kE_4Q-zyM2ShzmM7ORilRLkRuG3rH6S00zF3Ey8T8228dZUa0R44XdscGQr_iZi8XP20IV6X7iWWZZ49wxcY_WlaZXIXx0"
+        }
+      },
+      "challenge": "yq0B0gDoaUl6JOHV6LAc9LxN4mFmyzbirPa899_BDSM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzkBACBYgLGF1LMzKC62HAbVVLEpjt5_Wi1uKAlaMUtKV1DfUBjw6_zqIrl-FTWtJj-EoYNSiaNDBAEY_ysIEeHQUCFzn-BogGzii6HjriFKd95BFSmhbzaOTR-JSOvZeR7ZYPS2cNPAnDOHtBqDewNaSPJAzMNuMmnu36F2CkOj6luDzwgvIUED",
+      "credential_id": "2dzgq3BiQjQATWrmbzYC-A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/1024/3/flags1/currentUVfalse",
+      "response": {
+        "id": "2dzgq3BiQjQATWrmbzYC-A",
+        "rawId": "2dzgq3BiQjQATWrmbzYC-A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoieXEwQjBnRG9hVWw2Sk9IVjZMQWM5THhONG1GbXl6YmlyUGE4OTlfQkRTTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "ReuTvbBbKUHo4zuXC9tIEgnFwVQ4A81_rNdZnUb3hH-M76R-BsVGBHFoCtwcFJJ_DNgapnOj1_jeSB9viXXu0xYVyKOsEE2bzG2ny9c-Abmer4RmtV7FYqXw_BV3B0YPSi9uQugH9_75ZAdMnCxM1Wo3a_ajjXHCvOMx8JHwgKs"
+        }
+      },
+      "challenge": "yq0B0gDoaUl6JOHV6LAc9LxN4mFmyzbirPa899_BDSM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBYgLGF1LMzKC62HAbVVLEpjt5_Wi1uKAlaMUtKV1DfUBjw6_zqIrl-FTWtJj-EoYNSiaNDBAEY_ysIEeHQUCFzn-BogGzii6HjriFKd95BFSmhbzaOTR-JSOvZeR7ZYPS2cNPAnDOHtBqDewNaSPJAzMNuMmnu36F2CkOj6luDzwgvIUED",
+      "credential_id": "2dzgq3BiQjQATWrmbzYC-A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/1024/3/flags13/currentUVfalse",
+      "response": {
+        "id": "2dzgq3BiQjQATWrmbzYC-A",
+        "rawId": "2dzgq3BiQjQATWrmbzYC-A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoieXEwQjBnRG9hVWw2Sk9IVjZMQWM5THhONG1GbXl6YmlyUGE4OTlfQkRTTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "Y0cG2Dw_Tf42d-PCf7sQoqr0h9TAkmDDeWBmWngRwFasQfnRq6COBdLTw2jQbPyCrOAb0JUWunmIi5Py-Q74-5xKz2vgaYYw1VCvxGO3zLY7-Havw9Te_MUXSQ_SY15QUNW43hLaITCGkrKjEY1pavrajU40TVciRJJtmdMN6aI"
+        }
+      },
+      "challenge": "yq0B0gDoaUl6JOHV6LAc9LxN4mFmyzbirPa899_BDSM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBYgLGF1LMzKC62HAbVVLEpjt5_Wi1uKAlaMUtKV1DfUBjw6_zqIrl-FTWtJj-EoYNSiaNDBAEY_ysIEeHQUCFzn-BogGzii6HjriFKd95BFSmhbzaOTR-JSOvZeR7ZYPS2cNPAnDOHtBqDewNaSPJAzMNuMmnu36F2CkOj6luDzwgvIUED",
+      "credential_id": "2dzgq3BiQjQATWrmbzYC-A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/1024/3/flags29/currentUVfalse",
+      "response": {
+        "id": "2dzgq3BiQjQATWrmbzYC-A",
+        "rawId": "2dzgq3BiQjQATWrmbzYC-A",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoieXEwQjBnRG9hVWw2Sk9IVjZMQWM5THhONG1GbXl6YmlyUGE4OTlfQkRTTSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "fQU1YPndRc4BKBcZ3qFc4cdEysnTmVYgD4MK38KAu2MXnwM1WDCDrrR_O6ULTsA94IOyv-f8PtcWhtySK18lzgrzjMxrPALXVH4IahMnSSVN6dRmxdZGPtwG8sRRxYYuq2AD2i7PWFpenODoaSKj18i9i1NIKXDYG2FhIwg-FPU"
+        }
+      },
+      "challenge": "yq0B0gDoaUl6JOHV6LAc9LxN4mFmyzbirPa899_BDSM",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBYgLGF1LMzKC62HAbVVLEpjt5_Wi1uKAlaMUtKV1DfUBjw6_zqIrl-FTWtJj-EoYNSiaNDBAEY_ysIEeHQUCFzn-BogGzii6HjriFKd95BFSmhbzaOTR-JSOvZeR7ZYPS2cNPAnDOHtBqDewNaSPJAzMNuMmnu36F2CkOj6luDzwgvIUED",
+      "credential_id": "2dzgq3BiQjQATWrmbzYC-A",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/3072/65537/none",
+      "response": {
+        "id": "W-P1R5yH_euSy4vE8F8btg",
+        "rawId": "W-P1R5yH_euSy4vE8F8btg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVXFKa2h4NGs4Vnl6WXB3eUZVRUdZel9KR0Zvd2s5Sno0MTFDUmVWWTI2QSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkB1zoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABBb4_VHnIf965LLi8TwXxu2pAEDAzkBACBZAYDS9OtlsiTqNwYoNWalDOER-JQE_4njxbCypBITdzcycPm3lXNkCqA6tV3XkHBio00fwncxRIWxlkpoXhf7g19dtcxgO2rlEH7yBJo5zrkVrJ2s4rcH-v_H97FVTEC5LnMOUiv2FKpH1KpDq7DdQvh2wdJB9EwAZKcfy99iGzLoMbO77u9Ir0-bpHSZ4OZhqLFMvYmNS_vqNJH0hfjPyfruCIHQ2ddK1ghN1iXx9YTDUSueoT-GkfZ7u5oi-wJ2mVfht3mPFNIjUBtVBtURUgXphVI1qW4fZDMRsocMZzBTLimUKzhuhFlQdj-SBbjIivuYS_o1UlG6_yGSfBg6RCCsuwaTGM7oFFBC3LlpYTDpHDQ5F7znYJaWI2AqZw6slxxXz9-zM-b7P6zfXikU7Gsomn1YN9WEhNprtTzlH9VonOTK5FStZ0zzEHZ2uZY_DxhuRlUEvlURvs5gCP0_FWi_xxbmqIAbGIcIi0G0VXuqrBQZNsQQ7Uhwkad53I6sTpMhQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "UqJkhx4k8VyzYpwyFUEGYz_JGFowk9Jz411CReVY26A",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341928024,
+      "public_key": "pAEDAzkBACBZAYDS9OtlsiTqNwYoNWalDOER-JQE_4njxbCypBITdzcycPm3lXNkCqA6tV3XkHBio00fwncxRIWxlkpoXhf7g19dtcxgO2rlEH7yBJo5zrkVrJ2s4rcH-v_H97FVTEC5LnMOUiv2FKpH1KpDq7DdQvh2wdJB9EwAZKcfy99iGzLoMbO77u9Ir0-bpHSZ4OZhqLFMvYmNS_vqNJH0hfjPyfruCIHQ2ddK1ghN1iXx9YTDUSueoT-GkfZ7u5oi-wJ2mVfht3mPFNIjUBtVBtURUgXphVI1qW4fZDMRsocMZzBTLimUKzhuhFlQdj-SBbjIivuYS_o1UlG6_yGSfBg6RCCsuwaTGM7oFFBC3LlpYTDpHDQ5F7znYJaWI2AqZw6slxxXz9-zM-b7P6zfXikU7Gsomn1YN9WEhNprtTzlH9VonOTK5FStZ0zzEHZ2uZY_DxhuRlUEvlURvs5gCP0_FWi_xxbmqIAbGIcIi0G0VXuqrBQZNsQQ7Uhwkad53I6sTpMhQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/3072/65537/packed",
+      "response": {
+        "id": "W-P1R5yH_euSy4vE8F8btg",
+        "rawId": "W-P1R5yH_euSy4vE8F8btg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVXFKa2h4NGs4Vnl6WXB3eUZVRUdZel9KR0Zvd2s5Sno0MTFDUmVWWTI2QSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAGNzaWdZAYABOYW4Q0881rZFXulQFhLcaEfoBw2bA3olZ4e3-WpMie9PDhG2ftgoFp9FyXDaNBWs5GnGnIp4eo3fLAF-F5_zktaL2MxVrJZt1i0MoCYgX_LKWz6_IuZraCz9sVWneo0h0nL9qLJthve6SIJmlcSH5W5PLLF3XOT9Go5T39sePzmxNr9N8F_U2iwaHgse3sBFRlRemHe1xIOUeTBXXjEuKaNFsxBmlzZsWyc1BqPmKbWn3qY9wea1TphM1pdqZLz3CNQuCGCCMJTPX0aEvXMF3AuF_7P-3cYTai1gY_S_ZFQbD4m_5XnrP7Z6-baFEKMuFP_gDycKW2M206jpSviSYEkdlhGIkVvvc-WhaTZ_q3y9XM5BncwwrS0Q6108iVj4JbWb6mdbgHMWA3mhLlo1Jjh1jsuEL8wDTiBchW0Eo09LFMbY0br2_iv__kWem1ve_pyxAovV2nLeUA2mG1xjWw0xgA83fRqbhqOqVuDKuTEb2KqDkbthQMhVa4-QpkJoYXV0aERhdGFZAdc6DEzE5M6ik76WwjAGcaAuUADpS2H-YE_H6g1TO3STaEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAQW-P1R5yH_euSy4vE8F8btqQBAwM5AQAgWQGA0vTrZbIk6jcGKDVmpQzhEfiUBP-J48WwsqQSE3c3MnD5t5VzZAqgOrVd15BwYqNNH8J3MUSFsZZKaF4X-4NfXbXMYDtq5RB-8gSaOc65FaydrOK3B_r_x_exVUxAuS5zDlIr9hSqR9SqQ6uw3UL4dsHSQfRMAGSnH8vfYhsy6DGzu-7vSK9Pm6R0meDmYaixTL2JjUv76jSR9IX4z8n67giB0NnXStYITdYl8fWEw1ErnqE_hpH2e7uaIvsCdplX4bd5jxTSI1AbVQbVEVIF6YVSNaluH2QzEbKHDGcwUy4plCs4boRZUHY_kgW4yIr7mEv6NVJRuv8hknwYOkQgrLsGkxjO6BRQQty5aWEw6Rw0ORe852CWliNgKmcOrJccV8_fszPm-z-s314pFOxrKJp9WDfVhITaa7U85R_VaJzkyuRUrWdM8xB2drmWPw8YbkZVBL5VEb7OYAj9PxVov8cW5qiAGxiHCItBtFV7qqwUGTbEEO1IcJGnedyOrE6TIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "UqJkhx4k8VyzYpwyFUEGYz_JGFowk9Jz411CReVY26A",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792341928026,
+      "public_key": "pAEDAzkBACBZAYDS9OtlsiTqNwYoNWalDOER-JQE_4njxbCypBITdzcycPm3lXNkCqA6tV3XkHBio00fwncxRIWxlkpoXhf7g19dtcxgO2rlEH7yBJo5zrkVrJ2s4rcH-v_H97FVTEC5LnMOUiv2FKpH1KpDq7DdQvh2wdJB9EwAZKcfy99iGzLoMbO77u9Ir0-bpHSZ4OZhqLFMvYmNS_vqNJH0hfjPyfruCIHQ2ddK1ghN1iXx9YTDUSueoT-GkfZ7u5oi-wJ2mVfht3mPFNIjUBtVBtURUgXphVI1qW4fZDMRsocMZzBTLimUKzhuhFlQdj-SBbjIivuYS_o1UlG6_yGSfBg6RCCsuwaTGM7oFFBC3LlpYTDpHDQ5F7znYJaWI2AqZw6slxxXz9-zM-b7P6zfXikU7Gsomn1YN9WEhNprtTzlH9VonOTK5FStZ0zzEHZ2uZY_DxhuRlUEvlURvs5gCP0_FWi_xxbmqIAbGIcIi0G0VXuqrBQZNsQQ7Uhwkad53I6sTpMhQwEAAQ",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/3072/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "W-P1R5yH_euSy4vE8F8btg",
+        "rawId": "W-P1R5yH_euSy4vE8F8btg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVXFKa2h4NGs4Vnl6WXB3eUZVRUdZel9KR0Zvd2s5Sno0MTFDUmVWWTI2QSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "EBj0Dc21TJMpvn6YhbtpuyjQwN2Dt3n4aztfo7bvUWqF7P0JheYh2wX3Cg5UKXEciXda4Vvz1Tfv_OF_G4BjqgDaquPjPfEuwQ67EJU55PAbnj5ce91yvkFCqrnch8DtUmMPEx0vPSjvXbNQetjIRbyDAF-Ezz_CSrVkrnksXpPipHH92wKU_uaJ7TcOL0GziiwVRWZmwqv2j23oF1uix8gpn2AYk6w-bWM0Qm-bcoSTftym2AuFsxEx0jYlfRZB8PM4rsqnZFUvZ4Mn8LDFzpqGqVpSDB2BPU6S3wJDF2dxMOLZ9a24IP3kq7AsWjvfB-3AukQsoQbNmThzGa9OsyFBQr6TCnETeo140IWwP9AvRwe2lQeaJ2SNIm9ch-LL-kZbFF0werALY5v7JJAcEArOvmZGiwz1j_8Mt_tBjcPQCmdJRyyleOYv3YCFiOGnOSeB8lEg02VfTjuNhOvS87i7EfqB6sA0TXPWcnxQ9YnHEESNtIwddg1BP1oLiJFP"
+        }
+      },
+      "challenge": "UqJkhx4k8VyzYpwyFUEGYz_JGFowk9Jz411CReVY26A",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzkBACBZAYDS9OtlsiTqNwYoNWalDOER-JQE_4njxbCypBITdzcycPm3lXNkCqA6tV3XkHBio00fwncxRIWxlkpoXhf7g19dtcxgO2rlEH7yBJo5zrkVrJ2s4rcH-v_H97FVTEC5LnMOUiv2FKpH1KpDq7DdQvh2wdJB9EwAZKcfy99iGzLoMbO77u9Ir0-bpHSZ4OZhqLFMvYmNS_vqNJH0hfjPyfruCIHQ2ddK1ghN1iXx9YTDUSueoT-GkfZ7u5oi-wJ2mVfht3mPFNIjUBtVBtURUgXphVI1qW4fZDMRsocMZzBTLimUKzhuhFlQdj-SBbjIivuYS_o1UlG6_yGSfBg6RCCsuwaTGM7oFFBC3LlpYTDpHDQ5F7znYJaWI2AqZw6slxxXz9-zM-b7P6zfXikU7Gsomn1YN9WEhNprtTzlH9VonOTK5FStZ0zzEHZ2uZY_DxhuRlUEvlURvs5gCP0_FWi_xxbmqIAbGIcIi0G0VXuqrBQZNsQQ7Uhwkad53I6sTpMhQwEAAQ",
+      "credential_id": "W-P1R5yH_euSy4vE8F8btg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/3072/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "W-P1R5yH_euSy4vE8F8btg",
+        "rawId": "W-P1R5yH_euSy4vE8F8btg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVXFKa2h4NGs4Vnl6WXB3eUZVRUdZel9KR0Zvd2s5Sno0MTFDUmVWWTI2QSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "a7PLGayctAl_YWhxsIHcSvGwmJ3Bk227A7ivc8MjkTkpe5u4TXLRCfKB8_cwMGoRLpQsLkkitow_T_fSe1wz5r3H2FKmnRe9mCV3mZEDs76xsS6aZ8fgMXfRv0EQ5Q-waasFy-7Ub1AmobAaXjxHIW4Ae77YdUDLL0THj03u6RomyQZ0Xat7dRTpG20_Ft-_HyICqZhayg86JufSSHTa_qs48mW9OEkUV0SMg5tiV6plnCThA5RdHccHBeoNGk-xTIE3HnxQu5QKSaxKY7liW46TUthgQi5OCXR5ILhzhpe8Yc1aGUAR1oUxjQXqJuVgTQ8XQMmPSSuGFtpSP9D5BEYjOWXsOQiUeir6N4UJWKzYqEM8DSDWSibM4GQ8hQ03OKXSzITKkcV0jSa_evhGKLX1zstc6SGaODjOOO_b3bHgnFsEPCC48-WwVCzn-MWkyavhRm-0UXJZI7FKqt0aRLPmYW5PduMsLsabnOOC7S1XRtOYaXj87kEIDTx3ijJY"
+        }
+      },
+      "challenge": "UqJkhx4k8VyzYpwyFUEGYz_JGFowk9Jz411CReVY26A",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZAYDS9OtlsiTqNwYoNWalDOER-JQE_4njxbCypBITdzcycPm3lXNkCqA6tV3XkHBio00fwncxRIWxlkpoXhf7g19dtcxgO2rlEH7yBJo5zrkVrJ2s4rcH-v_H97FVTEC5LnMOUiv2FKpH1KpDq7DdQvh2wdJB9EwAZKcfy99iGzLoMbO77u9Ir0-bpHSZ4OZhqLFMvYmNS_vqNJH0hfjPyfruCIHQ2ddK1ghN1iXx9YTDUSueoT-GkfZ7u5oi-wJ2mVfht3mPFNIjUBtVBtURUgXphVI1qW4fZDMRsocMZzBTLimUKzhuhFlQdj-SBbjIivuYS_o1UlG6_yGSfBg6RCCsuwaTGM7oFFBC3LlpYTDpHDQ5F7znYJaWI2AqZw6slxxXz9-zM-b7P6zfXikU7Gsomn1YN9WEhNprtTzlH9VonOTK5FStZ0zzEHZ2uZY_DxhuRlUEvlURvs5gCP0_FWi_xxbmqIAbGIcIi0G0VXuqrBQZNsQQ7Uhwkad53I6sTpMhQwEAAQ",
+      "credential_id": "W-P1R5yH_euSy4vE8F8btg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/3072/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "W-P1R5yH_euSy4vE8F8btg",
+        "rawId": "W-P1R5yH_euSy4vE8F8btg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVXFKa2h4NGs4Vnl6WXB3eUZVRUdZel9KR0Zvd2s5Sno0MTFDUmVWWTI2QSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "sfSIHV_lAlwb7jB-uwmnaG0VtptC3O-ACxfcD022Cg46xLEqoGY-7kLtLImc6qLdnT4GGgjuX_rdjpsNHxu7_2nTxTT39bBsZNoCUW_rExPU1VjMB6fkiwbF3zR-mnPE_lC0HTMtScGO7R6236h4bn95SUUEik89g7HPQrut4-E1iRfxYjmX97Y4fBTe-twhBlPJscLLi_b0cJvfrCj5wwz99UkJVuxrurADqqn9PoVO02KNxD3KwYUw5Ws21yIkTb2xDzbGeyPvql16plv4DFt80i4SnROd6qTxvILDiD6dCFHU-dKe_WOxfMle8sQsQRkcjZB7Xeb0RE2D7o3N7GEwXa9H67uftO1L07GyTMk03oEQ5TpF_pDQeuRzy2bsOsNzdVzZkOYC2-fuVs-2xCALKHv6vy_cnjGBlF-FBM02_Dslu_pIZKiQv9pPyv51mLQAlNdgaKkg4Yh2rM_0teJK1GM9uBjvrjK41tZTzRyofW3txYi3SxkKI9zdib1g"
+        }
+      },
+      "challenge": "UqJkhx4k8VyzYpwyFUEGYz_JGFowk9Jz411CReVY26A",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZAYDS9OtlsiTqNwYoNWalDOER-JQE_4njxbCypBITdzcycPm3lXNkCqA6tV3XkHBio00fwncxRIWxlkpoXhf7g19dtcxgO2rlEH7yBJo5zrkVrJ2s4rcH-v_H97FVTEC5LnMOUiv2FKpH1KpDq7DdQvh2wdJB9EwAZKcfy99iGzLoMbO77u9Ir0-bpHSZ4OZhqLFMvYmNS_vqNJH0hfjPyfruCIHQ2ddK1ghN1iXx9YTDUSueoT-GkfZ7u5oi-wJ2mVfht3mPFNIjUBtVBtURUgXphVI1qW4fZDMRsocMZzBTLimUKzhuhFlQdj-SBbjIivuYS_o1UlG6_yGSfBg6RCCsuwaTGM7oFFBC3LlpYTDpHDQ5F7znYJaWI2AqZw6slxxXz9-zM-b7P6zfXikU7Gsomn1YN9WEhNprtTzlH9VonOTK5FStZ0zzEHZ2uZY_DxhuRlUEvlURvs5gCP0_FWi_xxbmqIAbGIcIi0G0VXuqrBQZNsQQ7Uhwkad53I6sTpMhQwEAAQ",
+      "credential_id": "W-P1R5yH_euSy4vE8F8btg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/3072/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "W-P1R5yH_euSy4vE8F8btg",
+        "rawId": "W-P1R5yH_euSy4vE8F8btg",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVXFKa2h4NGs4Vnl6WXB3eUZVRUdZel9KR0Zvd2s5Sno0MTFDUmVWWTI2QSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "y_JqHwBmHvvcCPp5k9Gf0K4HaUH2ez8WF2XTqfCHmHfZF53lc6aQs98NI6MwBawSkkngFBqxJjunvRArTkc2i3QCxyxakyGnl2CWkpa4N8Ii70-01sZlYlaDEDS2PnS1FmNr_Cqms2cOPw_VJIIC7Hr15oNAUGV65hoZqCEb1jWn2DjQWO12_nhCettz5_G6COAvQGOnDhyt21Mzuf9TLTTLyFPADRjhhdmPTmmn1hFoSYoysM2HafPi1i2S_P7G2ZseFPlgxpvFoq5FdeBpspXCH9vpwaNFPLKGksR4iQaOxaPOA35h4jJVIhDBwDRNafQJp-0seaRTrrIByohnDm9dnKLKSLFDTXvrlJSGm0rZVp2F3xMSw5W8IHN1_IWW1OQJLgee6kb1OtHV_IgrILmAbO8ccHvFoSorogcMtCIwFj1vro_nBNOSvQ5V3xh5moZQ1fn_OtCnLNL5tr6Hd9NlsFTOl9fhf3Uwwiti0CodidQfgIJ7bS5F-teN0hYI"
+        }
+      },
+      "challenge": "UqJkhx4k8VyzYpwyFUEGYz_JGFowk9Jz411CReVY26A",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZAYDS9OtlsiTqNwYoNWalDOER-JQE_4njxbCypBITdzcycPm3lXNkCqA6tV3XkHBio00fwncxRIWxlkpoXhf7g19dtcxgO2rlEH7yBJo5zrkVrJ2s4rcH-v_H97FVTEC5LnMOUiv2FKpH1KpDq7DdQvh2wdJB9EwAZKcfy99iGzLoMbO77u9Ir0-bpHSZ4OZhqLFMvYmNS_vqNJH0hfjPyfruCIHQ2ddK1ghN1iXx9YTDUSueoT-GkfZ7u5oi-wJ2mVfht3mPFNIjUBtVBtURUgXphVI1qW4fZDMRsocMZzBTLimUKzhuhFlQdj-SBbjIivuYS_o1UlG6_yGSfBg6RCCsuwaTGM7oFFBC3LlpYTDpHDQ5F7znYJaWI2AqZw6slxxXz9-zM-b7P6zfXikU7Gsomn1YN9WEhNprtTzlH9VonOTK5FStZ0zzEHZ2uZY_DxhuRlUEvlURvs5gCP0_FWi_xxbmqIAbGIcIi0G0VXuqrBQZNsQQ7Uhwkad53I6sTpMhQwEAAQ",
+      "credential_id": "W-P1R5yH_euSy4vE8F8btg",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/8192/65537/none",
+      "response": {
+        "id": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "rawId": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoicDRCNFNIakhxcldCeDA1OUwwU1FtTklEQTU3cUtlVzdxZkpXcGhHV2MtSSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkEVzoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCujm6_eW1iZbo4zNgC8nERpAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "p4B4SHjHqrWBx059L0SQmNIDA57qKeW7qfJWphGWc-I",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792344420331,
+      "public_key": "pAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/8192/65537/packed",
+      "response": {
+        "id": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "rawId": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoicDRCNFNIakhxcldCeDA1OUwwU1FtTklEQTU3cUtlVzdxZkpXcGhHV2MtSSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZzkBAGNzaWdZBACZRFxxqjDPe5HXBsQYVLpdC31Z3lYQVfCjgdY3VhHHRQHHG06Ip0GV4f6AtwIcSNLbPu86MY4dkU5EtJtY8AQSc6S84_V215teOE6bSdVI3g7yMvJl8PQB2RBTenDUA7fGilG53Txy8luNBWO454uhYyWr6Ra2GMwtLKsnfniCGEkyTiRCPUMJ_LAvX4QefLH1liaknLGyyCyJqMwgn8ShhWCMcyTIvfDETkZEkp-Q5TdddJiRBrDvNlj4zocUKqhkgxiTeaijWoMptDDPhYrWTH8V4uZQCvokSy98rrwJtwOwIvjxIVNpWKFKhoMjjJvnCKXyoCx6VJv1BZIL4RLYcHdNA3h5hfzcsrqgtyCEyUSIx3MAlaIT0j8fknJbXJY6tuaHo3mNYxzOMeKBrhm80Ts4R_ygd0a3eBNDapf0jFgfbHiO52THBzSLM-JIrkO7NZ43N4bkmrNyz9y0gXOjffH9Vp9qAN75zkwnpwEpc9h0mWMB9ECxSJIl93e_jrMCwWFp60WJ03uRmfNn4FwE1AG615tBZmE-igFbXDaQ-DwwMp1mGNGOetOYdm--ia9BoYfiHVXu6_jgXtYoQp6wSESBT2IPr-3mqZh0o2mySmPGDNUNQrwDGGO6Cq8Hdb9fZcSfnBIcM8hZhjDikYO202q_ML9FGg9u-6Tzjni9P48AR3c7UKj2Cgq6fDeUVFVF9DO1g4zI4yg1dH4w7HqOKtOnLlMR61Z4IR3d91_96IIVj_ae3ioQ-pV02T4NZJ7BjtkzBt-3L2YZ4H9-ullWeivCWvI_JkqfnSe86A0xUKDSNBo8x4A8qnGjE507SDcdBGaqxJnJTD8A2Kq4KSNyHE0NtjuvDeuZHK-rWA_Re8e1JnnqAgPPr6iFljD005QJGb5pEiBycRk7dwXQtsOcExsyJGwgACL4FX7Tdm6dtBcrb9O9mHlEOxBOF5gbliywfpYuJfn9mkJQ1IQJkmlkU82HvpHSWCYdgN7Yzft-yBxGnQ51tjXMB9rzsPlXdt8d2kabJkmmClSajJHAK2HeNrfz0ZbvQJJdtWho-NAWkBYZKPaXJ1I18fJJruBGufJH7-ynTDLGZNlRBMaaQOGI1VvPPDOY-2XgDGyBJ7CfOJKMiodD2gIixF1-70WI27va4pAp6b0tVAdUb_a8A9tzdZX3_eXcghmVR7wwcNmLem70W30Xpa8K2pZlvaht10xiS7OpP_nNMwaRdAUcJkbtXJdgOpAU5VLhDYPYWcE5fuOqtwWQc6KxxohfDI7fTILvK-O7w9vmifqamsOjH3gUeIkv-BYBTyJ14XbixrzoCni24Ph1jx-8zgU3VxsP3Jx6Dy-mNHgc3uUt7SxdNdKeaGF1dGhEYXRhWQRXOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEK6Obr95bWJlujjM2ALycRGkAQMDOQEAIFkEAKy6PpQ_1LvZ3MlswkvHbnxBnH77QtRIT-K7-EOgLBr-ZWQ9w3alBQTSJnoefQFb69wnflzqV6yvHv_4UEuGGR1A_3sInlIoYz8-Louk2ze7dGpX4sl9civmccduf5sjQ2bri9sv6uxBMmV_sjD_I5wdfAhqfKk6Y0WsYzrw0UCAPifdJ289vSfrawRgu0Mnoz75gGgxwDGXIZc2nNqndqdc76eTYJ35-SHxxpDP_j5kcHOY2oLUhRyEka2W0XAyHPCL_L5ImVMbcJ4s2kaANPi_j-bUx8GA7-Lm2FdOPJip2j5K9Rb8FdmPYCLYi0U6rC-FK_tXmpUAApOb2cdK9haw9u-y65MwXy_k_DQUehPzd2u0strFyGH1f1qcdK-QYbrEXdOROkNYZ3OX8I_i7gD9Y5Rya1GrzoBVdqGl8nCRGYA8Zer0fI0a4hSrM4w3nJDCWsCwZDrr98o0P-EyPKu5is5LMnmR7bo0For8-xkH4BbAOzZ7NTXhRYf0ixemOluathy80avQEG3wYe5K_rHGfjgrLrb8YK7OH24bxvju-NNwTh_277tAQrp_lbONWXuR_L0Aeuv6I8Bm-yDlI8-7ftxgomGqumnMwIW5aTogBnFIp0hfjChs-42wEvnv4CRaWkf7YycEmZDXuNm-We7YzJ9-i1ASSDW9_nD1R721cVFUlw0Vo0o8OMEKWU_0l55SuOwJeHPf3k4PlM4iM-3h5vNcfMgNXHXmKCM8eyiSdXQPd5_KyOpGODxsFzKjkvRTbeWKTuIUISHsjkv4Lusfyv6-VzzfvU3vAUrkW7ezdkyAMF3Fu0Ti0ApCvWkc_YJI6nbA1hbnTdtLAaopuvgyMOrm3pzrWfbCjJBp0AhYolIt-1ufsjx_aeQ61BFSlR3mpnj0qNFClJaaopIp4Lgo6jd81jbmNJyVN0PjEjK2xPVf1bUyuyunVRioiFEqbNNuaUjhzD5ObAHbB7XBS4AolztXKBX1_Et7mX47yavAfsQEvqNNlH4SRmSixIkpY47cz50JdhWfIhTvxLPHCPFxXNnQoXy9s1VWn9NNxaYt8E-x5JRsJLGHwnDA2fOJwDj50aOiPWqNTZviIXWxPS-ADuU7TM5zU8Vptezlz7VrmiNi_wAfwjRL69BjQUCca3hFfsMcyWUyN_xNOuBAv2s35AFjVp6bjo-s7NssAHZSWU02-uVj8jR4BOxl5dK5LCcrLqJF4SJ37yVn-rIbzedOUViUAvqwp2meutn1bIZg4arI5uO9IeCUQ8bg4tzqnQZVnqtz6uDdxRNDwjOlzIBmDyBCqDbP0_PqttBsFU56mpkTHwZi4ifr0NUh-L7ttQuQQv6gMaY1tqHQJemW248hQwEAAQ",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "p4B4SHjHqrWBx059L0SQmNIDA57qKeW7qfJWphGWc-I",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792344420358,
+      "public_key": "pAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/8192/65537/flags5/currentUVtrue",
+      "response": {
+        "id": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "rawId": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicDRCNFNIakhxcldCeDA1OUwwU1FtTklEQTU3cUtlVzdxZkpXcGhHV2MtSSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gFAAAAAg",
+          "signature": "kUU9rNi-daviWaabxaIF8T2m7eWPbt0lR3L6e0ch1vOaqhKF5C2hjDEm5olE64zyokr0R3_Ddg8EzI22k7aScoJrLDynabUrx75UXXv85H5zu6-HWqq0lDXVRLhXf4TDjgQejhj90yAgNpZ7CrkQPTxIulRfYHM1sFl07cs5UL3tR2yWT6EEFskTWffWpDjyfNZ6veNawAgdzDGTVwgS81sVJL6rWdDeBbHeCI4ZFXrFBj05HeYo3Xlf4ph9uTZY_DjxxhruQv7LbSo8PM_7t52RPalxGZ_ha7UPDQyRxihZmjjCASQtJcBA-lzTvZ4KhNQkHfSQL5R7Khkt9E-XBLcwylZ_nFbEK-VNQisedl5vDFQa2XfAgb7y8HOyeJa2R8lQYT8gvVnoQbJ7FHRZFvzcJh8uWcHaTE3mLSWd72nUxn_3sr1xw7NmLfy1DAX8McQP49DrMZjrwnbYwow6w2fRO6X61_l5vPNbF19bFiyOLuyJb4SUt7PePaTV5Vc4mF7AstmUChf2ZDm3v8JiRl3jLFhoa_nRTH9AAe6Gyf54miFn3rxuYIEgRnWv0uGOCr_i6HLMl2u557EF8AeVoa9DO9_AAMailDCcquT2N0a2UWPZkMz0nWsPJ53g5eYQ05VtxqJCuWhoaXG3yz_qPjGwmmDGhxU7SC3xAsu3QcBxL540vhyNPDBdnNpPJDV8UDccDz7atagiOHelLlejxx_ek_Qk5izqTDl-parZ1iTXGLgQXgyHi2o5n1leUXY50CLJI0Ch_fOnbaQrMYXPVDPEBC8sxaJGgP7daoo7D0uDD2gCZ-zzcaFnimMigCjooExkDziY9vf-Xw2GA6lUfDkqnA75mv9iPvwDPOVbaYMc62hkBqYhejbGc0ZfPIGP_4yAxrybbeIQ2x01A1zACAn8Yc-SYNG63XvtucV9gXnO8gqFGruU4dR2nrUVCGl9Q7t3SCq3XxeYpTB6Yi-KnkLOlMUA22jP0DepBJfsb8WU8gpC_P0EQzcZTpB2kytSu6bUtH0TVtsRHm3gVpHL8bwum-TvO8CTVoChZisI08b6XMlVKS944_UeOpnTcD051SLWvpztuYOyB-U-d7kH-gRMMny1xLKt8z2FqF3z8nNAQRR2HSbln_BQrP_Lewieoh7h5Zz1Af9ZbdPq6He2aKdiylxR9oa3YaLO7kGR7nRUuDfk2XcxSg1wsTKhCMAol77A95-DU5TzpWRKU561F81ap7qs_-QMrmjsFXBAp4MirW2I2v-ppRqeDsRnotvMeU5t8VDxL58pcdu9AB_ci5bySTDnwCVD6ETos6wAcPogVWSpPQfTM_7OngmEPUPsHm5K9B8NDoeXNueG9lT6xw"
+        }
+      },
+      "challenge": "p4B4SHjHqrWBx059L0SQmNIDA57qKeW7qfJWphGWc-I",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "public_key": "pAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+      "credential_id": "ro5uv3ltYmW6OMzYAvJxEQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/8192/65537/flags1/currentUVfalse",
+      "response": {
+        "id": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "rawId": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicDRCNFNIakhxcldCeDA1OUwwU1FtTklEQTU3cUtlVzdxZkpXcGhHV2MtSSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gBAAAAAg",
+          "signature": "M7DAuQ__uTyXVslVwptRhWvaFsquBp5xGCCjxIWc76__GcuUnKBu7BoE8zWFIW75wWKrVyDF_hWeumi5NkTMp7vdSyKg6z2TqC7_JluBTWHCpXvJtkfalJan0vHotATcXVgNSd0sUnY-FjRiG4jBpDRNDqFrsIX81b40CERmNqx4agKzAtfuIgAcVEfNd5A_qhzVlcBlrHEyYrigVmn6z8QpC7mfqJ8SdZD62t5WBEOB8L_eE-F59pqRj7iC1ZkJ062rI1VI-NeyqxSfGvV6WsbPnW5f_pV4khdr0Z3Gs_YQCbQlbb58hvm06SJqzr97p2hnjeJ5N6iTPMLWus33pYzD8JELjlac5TBxkVDH7TcyEfwB1jw2TjEz5s5FXOpYYKTkKEaaGEWSnHFCxCeV-DS5vME35Prpk9MN8kCapuoWcRnz6dQlte8V2PeNttlLJfDPoRZF16Bh7woNJAhs1JG9XehW3YGnKXgedYUXUUDdfXohUMmqNZm6v2chmyzcBWVLMHgO3hhbhfGt2vInERVB7mOybfpqAUcobhl907LIDNp4RsCcAJqAGadV08FvucNjthHaTwK8gaJp-mt8Skp4P7odK0FQD5EO5-lIWI24fUECe_BYPVk4Uhzsbs7GXvzgVDikUgFpgGS3BJjEqM5zpA0G8P6MxFJcbFo_yOfkepK7Glj6sSlfyEOiDJB0iY_pfeTwfF3SngINVV6o5USXj-MMmwIfLLs6CqpsOZ-jrNVOMzSy_7ueyUWSr073rPPTBz2rve2csOeXwbnN70rXaDF2wtoaTRJm_Uum4oMb482GLfgAQ5-N4nKcEuJDZV3NKM4DLVFEnLIUFObEs-FgFV9A26QKpibUefgUF5qOU6JM_iRvwn7cYxLBcpUVKFWv0kehSMTNwzABY1pK9tb19X4I_7w7tGia6GNWD9VarEdrr6_h3pUmmR9pchtup7AbCFnky3IdRH3h9fBJ-13fMqxAXBAOnOrPizKdpcGQEH3I6OQwVmAZepf0s8oE87TZk19gnU5McK2YypYEA_lzp5tznBfxq_Br07uIknqC5YJRqxEAuhkhNhjNGh3hmfjPe85FymzOjjOHdxLjFgrO929sc5dyGo_khwaM2LzfpcMzGJWAESXIbD1khjS9UEDeSYn6YVMvs6vC0R1kvOhshcFch5kxxXsAUJq4gFF54b2xArwxiyR4PPEaNmvmTN2nDfT1bcyxwHXNHHvQ87zBoE_b_cB-R_ECY6wwt_RvXo3molAuF_-Xfx2NLTWRjy_B81NhhJSrOM9A6IGo2ePz45DzmTyJ_ExnsmRrgB67gEyphzJYijJ6TRykL7gj3iRa4UrZdlGXEQx_Q_9TjQ"
+        }
+      },
+      "challenge": "p4B4SHjHqrWBx059L0SQmNIDA57qKeW7qfJWphGWc-I",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+      "credential_id": "ro5uv3ltYmW6OMzYAvJxEQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/8192/65537/flags13/currentUVfalse",
+      "response": {
+        "id": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "rawId": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicDRCNFNIakhxcldCeDA1OUwwU1FtTklEQTU3cUtlVzdxZkpXcGhHV2MtSSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gNAAAAAg",
+          "signature": "jvIb-sfGH17zUHl0xUvEKK8CqpfAIS-wTJpuFS0-QqBcl8BGOXJh9FBihVNbnuJqcPSsUOsgQ-YtRwn8Hi1JfcVhxEnr0U0x7gwHvxNbMkBeuzPBrzawJv7PMkmwi9Lu1SGXgnDE4uLach-cXU5arZSfjMbwukXsPbGOCcfmkLAo-8U_NRNleUacuRrLBRGoejNDxAhidH6Ahrcwt9AgObfE9I6xg0vsMbNoYmx8me7QkvDVjZ11uANLYJR2nUl3GCmy4AiwNPRswloP_GEIZi9XJFKR5twFy77Dse0A6fQSgkrP4ILy9mwHW1GJERYpFm_Br6SKWSIk960rYEmhE-XbtVZ33uKTjypVK-ZLcqJrnq_MDKarRgi6nJKMUVDKEobilmT5VXie6P_rrACtw62YrOxeiUD9qhysIW_5_ZMQk7NhzMJ3I2EgC29qzVIIW9Y9ieLlM9vMcW3Y2bhxqe2c3AGfL0OpHI2y3W0X0cVuUtbxUm5wf7IjhtYVQ6OHiVOqT_-KZ-ti__VaO-XTDWuwWgeYbiSwC-pbGT1wmFBK4vyJJ4I5EZM6P0ynmTNtAaDfsvPtL0Z9GUjRP3J7HM9iUyxRc5d8alrWVq0MkbbRIQmWkp6wGxqN2jToDSvNINBd-QwBYc54KF4aI7J2cMkpn8TCSHfvPZYukfjJtR4G287RdaPFDzDBpYRy8Ark6fSya33fkPwAfSemDi9Gyjv8HEdzWma2AoQehJqBFQSdPpaWQsC1IUOUhnXo_5Zv4W5lAc7J_U-IVXu3HXxGGX9uvwtkrcgEGX3D_4BlNsKRL-xi0Buh-PV3uL4lKkWFL54xq-e86HfovituGwAxFVzYFGBJXMHKD6zRU5fRQKeyHxCLgbSP2tMVnR-cd3YDHQuUKt74m02fleSKokh9QFm12SMwfh338Z-hwdjAATdVIW1bhdQOft5wPYCCz-UMpelOM_n6u6dfJbXZ5QIpHUoEw-2SFvTeD2RoZw_HwStgXC3342KBFAheKcofJjAZfGf1C1ZHE4CseIZskvBuaWQwcwfO9G6hts2gboF15LMpnBBbjbyl4DyVOheqnu4oTIUa7Ml592IEE-FNWJKTk8JhYsaBisR3N0bAI1UMl6dJx9cMukvq2nulCx9qweNYyTEKkr6PK9KFgUOl2yqRntyo44h9bucnyWCyXBCIENfN0-mxpIYUf0uOvPSDPiHqlBr_MR1bm1UYxUivuu6MzD8PnxOpJRR9LqAKHb9vMMe4CzDH_UHJPwY2MNGf2fb8fbPbDS2FQZdmQCsHm8KR_bq7StZAOT89286gsRMNjN33ex_FxLa_ptcFjkKkgiMIyPyD7g856TIGV3aZjBw24A"
+        }
+      },
+      "challenge": "p4B4SHjHqrWBx059L0SQmNIDA57qKeW7qfJWphGWc-I",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+      "credential_id": "ro5uv3ltYmW6OMzYAvJxEQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "assertion",
+      "name": "-257/SHA-256/8192/65537/flags29/currentUVfalse",
+      "response": {
+        "id": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "rawId": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicDRCNFNIakhxcldCeDA1OUwwU1FtTklEQTU3cUtlVzdxZkpXcGhHV2MtSSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6ZmFsc2V9",
+          "authenticatorData": "OgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2gdAAAAAg",
+          "signature": "Tr2XeFZqWfUZ0Vni_UAbJa3ph2RuXK_qXvMJyf6aCFpV250639aTvOYqKk6P5LajSw-Lm5BYyLAfAUYzmHoMrDVyIHQE4fgVvx2injjepUPnXrAGxSFpZaUJzsteUv_z4pgBT563I2sC2BiOEmPgvsOO5B6CS-gOqORXRe1_1AlYsr0t_opcO-CYhmP44R-vgBW5Rb7ErCIiLdYZZXNVWyieh_SGNuy5eYAWIKYFMRz-QqRBzLE9LMguQsElb148XGFkrOMqtz_4jRgr4kDNzu4FVbwVxNjdKxEq4jhXzgKQYRddGJbmHHfyhs1CiToMjq7o_pWng9UgoSoOy3Dl3kFyF-zjeROeUgPeArd6HuVxeVIz3c4T15cBYSxPWnfY679DDGXt62yXDXBRGGssnlKlkV6UJoCAHfF4PGCiAMl5TpZtqdqrMqqg9eYpnAh4EIgVh-xxSPticVreqzM35ifHc9QSSqH23Tc5NTxOgsl66950JiBEl_vpUAFvFzLYTKeVq35TrrypHWLgTJgPIUiCqjSZ1a4hSiGyQ7eA4t0P9NhG1FN6sZUjEj_4_NVPc73CTIQaZLTcf3GKXK2J_ac9FjrzWCXEAnWj06m8Yxr5NwgN9bx9iFtv94daN0of0GEfGqzZaAapU-zSyVr_myBUsTeH9c67Wp9W4iTspat6S9LRg-AQG2Wl-W3pXbDaWPJaxeP8Dh0qKVFEeV2-dWuxZrTp6ld2puvA8hkgK0K39saIUPqbKQXK34ZUgo21K-IE8NZXh6-7JOqPSZ-quWrso5UpHYm5V49g9hYkgD5NVomiPI8qklwvFJ31vhH9TsCBIgA5jSZSISzY2YKV-_DoQpA9VTQnJAC8W7iTm1tW0JOHbeMzpLkiL0ZEwge08bie0eN5Z1QdIRcD3sEELBgtJx4pM8hQPVdosvkiHeN5Glug_jk8Eh6vSZQbaEQR5qh4ECTyjUMsxlBC-ZjUAKCrssvcYwJ-oIaZnzolXsO7l6AbLpWB7dRg3c0jFZMB40VTIXn7vKloRmCN_5Rr_XfA4Hijn9XYgbGNK87qBREkMFe3L20O0JiMbKyt85Q350UyH31dBDmF3dAxZQHVHBV3aH9rYV_gYNwDxX66mbyBojJNI8J28uhS_Fwxo64kIJmN_HP9hFfAbsR8j3NeZbR9AjxmAoJ7BSRMBBdJ1hoZ7DQxtJPntb_vKFICuH7ZGqCTvAm_pC9f5To3nU5Yg7mMIUXBQkTFqEgYcYY2gR8ANROmzt6C2H9klgxvzuupGhLAoPK8f0pJIcTNTa4Gv169sea5WET9re2Qq6f4HlYuQDBxm3BwDaKYHK63_0MyMHlcdKA5ezrq_gazya6znQ"
+        }
+      },
+      "challenge": "p4B4SHjHqrWBx059L0SQmNIDA57qKeW7qfJWphGWc-I",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": false,
+      "public_key": "pAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+      "credential_id": "ro5uv3ltYmW6OMzYAvJxEQ",
+      "sign_count": 1,
+      "expected_success": true
+    },
+    {
+      "kind": "registration",
+      "name": "-257/SHA-256/8192/65537/packed-x5c",
+      "response": {
+        "id": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "rawId": "ro5uv3ltYmW6OMzYAvJxEQ",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoicDRCNFNIakhxcldCeDA1OUwwU1FtTklEQTU3cUtlVzdxZkpXcGhHV2MtSSIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZzkBAGNzaWdZBACZRFxxqjDPe5HXBsQYVLpdC31Z3lYQVfCjgdY3VhHHRQHHG06Ip0GV4f6AtwIcSNLbPu86MY4dkU5EtJtY8AQSc6S84_V215teOE6bSdVI3g7yMvJl8PQB2RBTenDUA7fGilG53Txy8luNBWO454uhYyWr6Ra2GMwtLKsnfniCGEkyTiRCPUMJ_LAvX4QefLH1liaknLGyyCyJqMwgn8ShhWCMcyTIvfDETkZEkp-Q5TdddJiRBrDvNlj4zocUKqhkgxiTeaijWoMptDDPhYrWTH8V4uZQCvokSy98rrwJtwOwIvjxIVNpWKFKhoMjjJvnCKXyoCx6VJv1BZIL4RLYcHdNA3h5hfzcsrqgtyCEyUSIx3MAlaIT0j8fknJbXJY6tuaHo3mNYxzOMeKBrhm80Ts4R_ygd0a3eBNDapf0jFgfbHiO52THBzSLM-JIrkO7NZ43N4bkmrNyz9y0gXOjffH9Vp9qAN75zkwnpwEpc9h0mWMB9ECxSJIl93e_jrMCwWFp60WJ03uRmfNn4FwE1AG615tBZmE-igFbXDaQ-DwwMp1mGNGOetOYdm--ia9BoYfiHVXu6_jgXtYoQp6wSESBT2IPr-3mqZh0o2mySmPGDNUNQrwDGGO6Cq8Hdb9fZcSfnBIcM8hZhjDikYO202q_ML9FGg9u-6Tzjni9P48AR3c7UKj2Cgq6fDeUVFVF9DO1g4zI4yg1dH4w7HqOKtOnLlMR61Z4IR3d91_96IIVj_ae3ioQ-pV02T4NZJ7BjtkzBt-3L2YZ4H9-ullWeivCWvI_JkqfnSe86A0xUKDSNBo8x4A8qnGjE507SDcdBGaqxJnJTD8A2Kq4KSNyHE0NtjuvDeuZHK-rWA_Re8e1JnnqAgPPr6iFljD005QJGb5pEiBycRk7dwXQtsOcExsyJGwgACL4FX7Tdm6dtBcrb9O9mHlEOxBOF5gbliywfpYuJfn9mkJQ1IQJkmlkU82HvpHSWCYdgN7Yzft-yBxGnQ51tjXMB9rzsPlXdt8d2kabJkmmClSajJHAK2HeNrfz0ZbvQJJdtWho-NAWkBYZKPaXJ1I18fJJruBGufJH7-ynTDLGZNlRBMaaQOGI1VvPPDOY-2XgDGyBJ7CfOJKMiodD2gIixF1-70WI27va4pAp6b0tVAdUb_a8A9tzdZX3_eXcghmVR7wwcNmLem70W30Xpa8K2pZlvaht10xiS7OpP_nNMwaRdAUcJkbtXJdgOpAU5VLhDYPYWcE5fuOqtwWQc6KxxohfDI7fTILvK-O7w9vmifqamsOjH3gUeIkv-BYBTyJ14XbixrzoCni24Ph1jx-8zgU3VxsP3Jx6Dy-mNHgc3uUt7SxdNdKeY3g1Y4FZCVMwgglPMIIFN6ADAgECAgEBMA0GCSqGSIb3DQEBCwUAMGIxCzAJBgNVBAYTAlVTMREwDwYDVQQKEwhVT1MgVGVzdDEiMCAGA1UECxMZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjEcMBoGA1UEAxMTVU9TIFJTQTgxOTIgRml4dHVyZTAeFw0yNjEwMTgxNzI2MDBaFw0yNjEwMTkxNzI3MDBaMGIxCzAJBgNVBAYTAlVTMREwDwYDVQQKEwhVT1MgVGVzdDEiMCAGA1UECxMZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjEcMBoGA1UEAxMTVU9TIFJTQTgxOTIgRml4dHVyZTCCBCIwDQYJKoZIhvcNAQEBBQADggQPADCCBAoCggQBAKy6PpQ_1LvZ3MlswkvHbnxBnH77QtRIT-K7-EOgLBr-ZWQ9w3alBQTSJnoefQFb69wnflzqV6yvHv_4UEuGGR1A_3sInlIoYz8-Louk2ze7dGpX4sl9civmccduf5sjQ2bri9sv6uxBMmV_sjD_I5wdfAhqfKk6Y0WsYzrw0UCAPifdJ289vSfrawRgu0Mnoz75gGgxwDGXIZc2nNqndqdc76eTYJ35-SHxxpDP_j5kcHOY2oLUhRyEka2W0XAyHPCL_L5ImVMbcJ4s2kaANPi_j-bUx8GA7-Lm2FdOPJip2j5K9Rb8FdmPYCLYi0U6rC-FK_tXmpUAApOb2cdK9haw9u-y65MwXy_k_DQUehPzd2u0strFyGH1f1qcdK-QYbrEXdOROkNYZ3OX8I_i7gD9Y5Rya1GrzoBVdqGl8nCRGYA8Zer0fI0a4hSrM4w3nJDCWsCwZDrr98o0P-EyPKu5is5LMnmR7bo0For8-xkH4BbAOzZ7NTXhRYf0ixemOluathy80avQEG3wYe5K_rHGfjgrLrb8YK7OH24bxvju-NNwTh_277tAQrp_lbONWXuR_L0Aeuv6I8Bm-yDlI8-7ftxgomGqumnMwIW5aTogBnFIp0hfjChs-42wEvnv4CRaWkf7YycEmZDXuNm-We7YzJ9-i1ASSDW9_nD1R721cVFUlw0Vo0o8OMEKWU_0l55SuOwJeHPf3k4PlM4iM-3h5vNcfMgNXHXmKCM8eyiSdXQPd5_KyOpGODxsFzKjkvRTbeWKTuIUISHsjkv4Lusfyv6-VzzfvU3vAUrkW7ezdkyAMF3Fu0Ti0ApCvWkc_YJI6nbA1hbnTdtLAaopuvgyMOrm3pzrWfbCjJBp0AhYolIt-1ufsjx_aeQ61BFSlR3mpnj0qNFClJaaopIp4Lgo6jd81jbmNJyVN0PjEjK2xPVf1bUyuyunVRioiFEqbNNuaUjhzD5ObAHbB7XBS4AolztXKBX1_Et7mX47yavAfsQEvqNNlH4SRmSixIkpY47cz50JdhWfIhTvxLPHCPFxXNnQoXy9s1VWn9NNxaYt8E-x5JRsJLGHwnDA2fOJwDj50aOiPWqNTZviIXWxPS-ADuU7TM5zU8Vptezlz7VrmiNi_wAfwjRL69BjQUCca3hFfsMcyWUyN_xNOuBAv2s35AFjVp6bjo-s7NssAHZSWU02-uVj8jR4BOxl5dK5LCcrLqJF4SJ37yVn-rIbzedOUViUAvqwp2meutn1bIZg4arI5uO9IeCUQ8bg4tzqnQZVnqtz6uDdxRNDwjOlzIBmDyBCqDbP0_PqttBsFU56mpkTHwZi4ifr0NUh-L7ttQuQQv6gMaY1tqHQJemW248CAwEAAaMQMA4wDAYDVR0TAQH_BAIwADANBgkqhkiG9w0BAQsFAAOCBAEAGzAYbNagLnGPYHA-vT0iIEThAcU96OO2PS6ZZwvQxiZMJ2_MQYFXlm7Cceh1F-rm9cUEfdLZ5cUdbw6LNQL_30LX2LzBa-0ncLTXhn3e6y02vXC8eNHwTtOrfyrvwrajNd2PCkjLB8dfmZ4AEWFj8gN_24JtsKhhj5rPtSWQzuZIP3KQGaYBTVNod7mxn4ZNzeaW4HOPY-M-RryFUQq6jtuqa3tsQxXAZ8HwVmJB1X_Rtde-s2XyAmRQv085zyTTN6CryIFyPJb13jDQqk0kEMlE_8_LcdYSdRCoTGz9MiLtD8I7C9djlQkSyL0zptopTdopQc5CPMNe9H9Gj6_fHQjUjFya3k79dh2IlHQRs-Lx4iZ6w6NetaHYHf16vAJErKwRuPPoM6HceU9uqj3cvpMcHz-pJz9lxSJ8QdQ7Wz8wP_z2Xhmn5dxZCuop6I9kFg709PNIKvGVjCsdJFSRscx3iFjybu5B5DwvG4SuaLB5KXfAhcslcdlgQBdlxo1_vnx0iB-eVjEfq2cm471G7gUMkP20mFEpe8x41FNnP3x6AIRleBoy54UKWvzomJXZz2a9TTh4_wP2cBqziBFFxq75kqsrPBtkvfKwx28yabVnPW5fGpIQ1YAryApCpA2FAzkkLSvq9uqbWHsSJgvnCX1hZgAjQsenYJoXd6VaSqWu_29O-1XzyVHGQN9wyozP3eeAvBI8Nmiw8S-pdL-k3HZV4aPHGwtDtTP9T_5w-_Sl-_kbjOAfZQMVIKcsYSiwf6Gwz0DZ3mglCMblhO7Kb-ZmxVz0Brsd0amnUbfAGYPdZZBuAsDlAbay-vSDsjEUNO8LyYrX3HApoh4KBzUvVRXGlyvrbREgIRFaUhS-nm400Kjm0yChY_KYInQ6tf07AA3JY4sVmR7_je1pqkAgpzZnd5uMd_1euNXvD06U_1vYJDkeQSOA4UFnVGEIuCia43cEGccnjWydzwT67_WZnsjxILBZwXLDZklvihM4qWsCMszfOgQ321IrtPrfg0QCPbfvsRglBbYwJtQTD84nntMn9q9OrtPPb_WJYmrYKkdBdGfrfBpzsQOh5JbCsUu_NYluPzTtNqhNGhsq4xMImEAhtHPhhpoBxgUw2EA30yX6bLdT9aPnuKl1fII16Aip_ds1g3dZLhmYfliOMZsLzAwDAsqCAZ-Y5lFhSmBHmhtgV4vOml6tPwYtdxiX4wcvFwh9HdPwZJuZ-d7wNPNvjyD-dBCIsIr1O4oqgZfc3SYJrf0IR9lhmwolZBfRRHD6xFv7gCFDZEz_yP2fvk39DcXndEf5rTLNo9N738SfkpBKK7jbgvUWV-EtYWsg_-gwidJCGkjrTOcawfLWQWAwB2hhdXRoRGF0YVkEVzoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCujm6_eW1iZbo4zNgC8nERpAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "p4B4SHjHqrWBx059L0SQmNIDA57qKeW7qfJWphGWc-I",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "now_ms": 1792344420461,
+      "public_key": "pAEDAzkBACBZBACsuj6UP9S72dzJbMJLx258QZx--0LUSE_iu_hDoCwa_mVkPcN2pQUE0iZ6Hn0BW-vcJ35c6lesrx7_-FBLhhkdQP97CJ5SKGM_Pi6LpNs3u3RqV-LJfXIr5nHHbn-bI0Nm64vbL-rsQTJlf7Iw_yOcHXwIanypOmNFrGM68NFAgD4n3SdvPb0n62sEYLtDJ6M--YBoMcAxlyGXNpzap3anXO-nk2Cd-fkh8caQz_4-ZHBzmNqC1IUchJGtltFwMhzwi_y-SJlTG3CeLNpGgDT4v4_m1MfBgO_i5thXTjyYqdo-SvUW_BXZj2Ai2ItFOqwvhSv7V5qVAAKTm9nHSvYWsPbvsuuTMF8v5Pw0FHoT83drtLLaxchh9X9anHSvkGG6xF3TkTpDWGdzl_CP4u4A_WOUcmtRq86AVXahpfJwkRmAPGXq9HyNGuIUqzOMN5yQwlrAsGQ66_fKND_hMjyruYrOSzJ5ke26NBaK_PsZB-AWwDs2ezU14UWH9IsXpjpbmrYcvNGr0BBt8GHuSv6xxn44Ky62_GCuzh9uG8b47vjTcE4f9u-7QEK6f5WzjVl7kfy9AHrr-iPAZvsg5SPPu37cYKJhqrppzMCFuWk6IAZxSKdIX4wobPuNsBL57-AkWlpH-2MnBJmQ17jZvlnu2MyffotQEkg1vf5w9Ue9tXFRVJcNFaNKPDjBCllP9JeeUrjsCXhz395OD5TOIjPt4ebzXHzIDVx15igjPHsoknV0D3efysjqRjg8bBcyo5L0U23lik7iFCEh7I5L-C7rH8r-vlc8371N7wFK5Fu3s3ZMgDBdxbtE4tAKQr1pHP2CSOp2wNYW503bSwGqKbr4MjDq5t6c61n2woyQadAIWKJSLftbn7I8f2nkOtQRUpUd5qZ49KjRQpSWmqKSKeC4KOo3fNY25jSclTdD4xIytsT1X9W1Mrsrp1UYqIhRKmzTbmlI4cw-TmwB2we1wUuAKJc7VygV9fxLe5l-O8mrwH7EBL6jTZR-EkZkosSJKWOO3M-dCXYVnyIU78SzxwjxcVzZ0KF8vbNVVp_TTcWmLfBPseSUbCSxh8JwwNnzicA4-dGjoj1qjU2b4iF1sT0vgA7lO0zOc1PFabXs5c-1a5ojYv8AH8I0S-vQY0FAnGt4RX7DHMllMjf8TTrgQL9rN-QBY1aem46PrOzbLAB2UllNNvrlY_I0eATsZeXSuSwnKy6iReEid-8lZ_qyG83nTlFYlAL6sKdpnrrZ9WyGYOGqyObjvSHglEPG4OLc6p0GVZ6rc-rg3cUTQ8IzpcyAZg8gQqg2z9Pz6rbQbBVOepqZEx8GYuIn69DVIfi-7bULkEL-oDGmNbah0CXpltuPIUMBAAE",
+      "expected_success": true
+    }
+  ]
+}

@@ -846,7 +846,7 @@ pub(crate) struct TpmsRsaParms {
     _keybits: u16,
     // u32
     /// The Rsa Exponent
-    _exponent: u32,
+    pub(crate) _exponent: u32,
 }
 
 fn tpmsrsaparms_parser(i: &[u8]) -> nom::IResult<&[u8], TpmsRsaParms> {

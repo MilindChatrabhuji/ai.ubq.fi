@@ -227,7 +227,7 @@ pub struct COSERSAKey {
     #[serde_as(as = "PickFirst<(IfIsHumanReadable<Base64<UrlSafe, Unpadded>>, _)>")]
     pub n: Vec<u8>,
     /// An RSA exponent
-    pub e: [u8; 3],
+    pub e: Vec<u8>,
 }
 
 /// The type of Key contained within a COSE value. You should never need
