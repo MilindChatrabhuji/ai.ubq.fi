@@ -8,5 +8,6 @@ pub mod provider;
 pub mod query;
 pub mod state;
 pub mod tuple_key;
+pub mod value;
 
 pub use error::GatewayError;
