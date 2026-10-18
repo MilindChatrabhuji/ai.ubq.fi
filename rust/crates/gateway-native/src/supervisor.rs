@@ -266,31 +266,79 @@ fn newest_turn(value: &Value) -> Option<&Value> {
     value.get("data")?.as_array()?.first()
 }
 
+/// Preserve raw source revisions while sanitizing full fields before clipping.
+fn redacted_follow_entries(turn_id: &str, items: &Value) -> Vec<FollowEntry> {
+    let raw_revisions: BTreeMap<usize, String> = extract_follow(turn_id, items)
+        .into_iter()
+        .map(|entry| (entry.index, entry.revision))
+        .collect();
+    let sanitized = crate::redaction::sanitize_follow_items(items);
+    let mut entries = extract_follow(turn_id, &sanitized);
+    for entry in &mut entries {
+        if let Some(revision) = raw_revisions.get(&entry.index) {
+            entry.revision = revision.clone();
+        }
+    }
+    entries
+}
+
+/// Only emitted revisions become seen. Filtered/capped entries remain eligible
+/// on a later poll even after the cursor advances to the last recorded item.
+pub fn select_follow_updates(
+    entries: Vec<FollowEntry>,
+    start: i64,
+    revisions: &mut BTreeMap<String, String>,
+) -> Vec<FollowEntry> {
+    let mut updates: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            (entry.index as i64 > start || revisions.get(&entry.key) != Some(&entry.revision))
+                && (entry.kind == "command" || !entry.text.is_empty())
+        })
+        .collect();
+    if updates.len() > 120 {
+        updates.drain(..updates.len() - 120);
+    }
+    for entry in &updates {
+        revisions.insert(entry.key.clone(), entry.revision.clone());
+    }
+    updates
+}
+
 pub async fn follow_update<T: SupervisorTransport>(
     transport: &mut T,
     thread: &KnownThread,
     cursor: &str,
     revisions: &mut BTreeMap<String, String>,
 ) -> Result<FollowUpdate, GatewayError> {
-    let result=async{
-        let summary=transport.call(SupervisorMethod::ThreadTurnsList,json!({"threadId":thread.id,"limit":1,"sortDirection":"desc","itemsView":"summary"})).await?;
-        let Some(turn)=newest_turn(&summary)else{return Ok(FollowUpdate{entries:Vec::new(),cursor:cursor.into(),turn_id:None,turn_status:None,enriched:false});};
-        let Some(id)=str_field(turn,"id")else{return Ok(FollowUpdate{entries:Vec::new(),cursor:cursor.into(),turn_id:None,turn_status:None,enriched:false});};
-        let start=parse_cursor(cursor).filter(|(old,_)|*old==id).map(|(_,index)|index).unwrap_or(-1);
-        let mut entries=extract_follow(id,turn.get("items").unwrap_or(&Value::Null));let mut enriched=false;
-        if entries.iter().any(|entry|entry.text.is_empty()){
-            match transport.call(SupervisorMethod::ThreadTurnsList,json!({"threadId":thread.id,"limit":1,"sortDirection":"desc","itemsView":"full"})).await{
-                Ok(full)if newest_turn(&full).and_then(|turn|str_field(turn,"id"))==Some(id)=>{entries=extract_follow(id,newest_turn(&full).and_then(|turn|turn.get("items")).unwrap_or(&Value::Null));enriched=true;}
-                _=>{entries.retain(|entry|!entry.text.is_empty());}
+    let result = async {
+        let summary = transport.call(SupervisorMethod::ThreadTurnsList,
+            json!({"threadId":thread.id,"limit":1,"sortDirection":"desc","itemsView":"summary"})).await?;
+        let Some(turn) = newest_turn(&summary) else {
+            return Ok(FollowUpdate { entries: Vec::new(), cursor: cursor.into(), turn_id: None, turn_status: None, enriched: false });
+        };
+        let Some(id) = str_field(turn, "id") else {
+            return Ok(FollowUpdate { entries: Vec::new(), cursor: cursor.into(), turn_id: None, turn_status: None, enriched: false });
+        };
+        let start = parse_cursor(cursor).filter(|(old, _)| *old == id).map(|(_, index)| index).unwrap_or(-1);
+        let items = turn.get("items").unwrap_or(&Value::Null);
+        let mut entries = redacted_follow_entries(id, items);
+        let mut last = entries.last().map(|entry| entry.index as i64).unwrap_or(start);
+        let mut enriched = false;
+        if entries.iter().any(|entry| entry.text.is_empty()) {
+            match transport.call(SupervisorMethod::ThreadTurnsList,
+                json!({"threadId":thread.id,"limit":1,"sortDirection":"desc","itemsView":"full"})).await {
+                Ok(full) if newest_turn(&full).and_then(|turn| str_field(turn, "id")) == Some(id) => {
+                    entries = redacted_follow_entries(id, newest_turn(&full).and_then(|turn| turn.get("items")).unwrap_or(&Value::Null));
+                    last = entries.last().map(|entry| entry.index as i64).unwrap_or(start);
+                    enriched = true;
+                }
+                _ => entries.retain(|entry| !entry.text.is_empty()),
             }
         }
-        let last=entries.last().map(|entry|entry.index as i64).unwrap_or(start);let mut updates=Vec::new();
-        for entry in entries{
-            let changed=entry.index as i64>start||revisions.get(&entry.key)!=Some(&entry.revision);revisions.insert(entry.key.clone(),entry.revision.clone());
-            if changed&&(entry.kind=="command"||!entry.text.is_empty()){updates.push(entry);}
-        }
-        if updates.len()>120{updates.drain(..updates.len()-120);}
-        Ok(FollowUpdate{entries:updates,cursor:format!("{id}:{last}"),turn_id:Some(id.into()),turn_status:str_field(turn,"status").map(str::to_owned),enriched})
+        let entries = select_follow_updates(entries, start, revisions);
+        Ok(FollowUpdate { entries, cursor: format!("{id}:{last}"), turn_id: Some(id.into()),
+            turn_status: str_field(turn, "status").map(str::to_owned), enriched })
     }.await;
     let closed = transport.close().await;
     result.and_then(|result| closed.map(|()| result))

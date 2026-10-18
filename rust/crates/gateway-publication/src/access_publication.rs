@@ -165,6 +165,14 @@ impl PreparedAccessPublication {
             external_user_id: native.external_user_id.clone(),
         };
         let unchanged = old.same_credentials(&observed);
+        if !unchanged
+            && (snapshot.revision == revision
+                || normalized_row
+                    .as_ref()
+                    .is_some_and(|row| row.revision == revision))
+        {
+            return Err(conflict());
+        }
         if unchanged {
             if observed
                 .access_expires_at_ms()
