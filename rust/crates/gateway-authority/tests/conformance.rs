@@ -1,4 +1,5 @@
 mod support;
+mod claude_cases;
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 

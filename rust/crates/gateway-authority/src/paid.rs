@@ -175,6 +175,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         ));
                     }
                 }
+                PaidAuthorization::ClaudeSubscriptionUnavailable(proof) => {
+                    if routing.codex_enabled && routing.codex_models.contains(&input.model) {
+                        return Err(unavailable("codex_routing_unavailable", "Claude evidence cannot replace current Codex full-pool proof."));
+                    }
+                    self.require_claude_proof(&mut tx, proof, &input.model, now).await?;
+                }
             }
             let deletion: Option<serde_json::Value> =
                 tx.read(&keys::paid_deletion(&input.key_id.0)).await?;
@@ -198,6 +204,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     return Err(invalid("Paid attempt identity is consumed or conflicts."));
                 }
                 validate_attempt(&existing, &existing.reservation)?;
+                if let PaidAuthorization::ClaudeSubscriptionUnavailable(proof) = authorization {
+                    self.require_claude_proof(&mut tx, proof, &input.model, now).await?;
+                }
                 if tx.commit().await? {
                     return Ok(PaidAdmission::Existing(existing.reservation));
                 } else {
@@ -314,6 +323,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     &window,
                     Some(retention(reset, PAID_RETENTION_MS)?),
                 )?;
+            }
+            if let PaidAuthorization::ClaudeSubscriptionUnavailable(proof) = authorization {
+                self.require_claude_proof(&mut tx, proof, &input.model, now).await?;
             }
             if tx.commit().await? {
                 return Ok(PaidAdmission::Reserved(reservation));

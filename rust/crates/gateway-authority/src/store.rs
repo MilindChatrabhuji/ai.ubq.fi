@@ -16,7 +16,7 @@ pub trait TokenSource {
     fn next_token(&self) -> Result<String, GatewayError>;
 }
 
-/// A live reset must recheck time after awaited reads and before its spend boundary.
+/// Time-sensitive authority actions recheck time after awaited reads and before spending.
 pub trait AuthorityClock: Send + Sync {
     fn now_ms(&self) -> Result<i64, GatewayError>;
 }
@@ -51,7 +51,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             .ok_or_else(|| {
                 crate::unavailable(
                     "authority_clock_unavailable",
-                    "Live reset submission requires a trusted current clock.",
+                    "Time-sensitive authority actions require a trusted current clock.",
                 )
             })?
             .now_ms()?;
