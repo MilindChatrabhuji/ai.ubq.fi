@@ -129,7 +129,7 @@ pub async fn handle(
             ScalarKeyPart::String(owner),
             ScalarKeyPart::String(repo),
             ScalarKeyPart::String(state_id),
-            ScalarKeyPart::Number(record.created_at_ms as f64),
+            ScalarKeyPart::Number(record.created_at_ms),
             ScalarKeyPart::String(&record.id),
         ]);
         let value = serde_json::to_value(&record).map_err(|_| unavailable())?;

@@ -64,7 +64,14 @@ pub struct Cancellation {
 
 impl Cancellation {
     pub fn from_request(request: &Request) -> Result<Self, GatewayError> {
-        let incoming = request.inner().signal();
+        Self::from_signal(request.inner().signal())
+    }
+
+    pub fn child(&self) -> Result<Self, GatewayError> {
+        Self::from_signal(self.controller.signal())
+    }
+
+    fn from_signal(incoming: worker::web_sys::AbortSignal) -> Result<Self, GatewayError> {
         let controller =
             worker::web_sys::AbortController::new().map_err(|_| configuration_error())?;
         let forwarded = controller.clone();

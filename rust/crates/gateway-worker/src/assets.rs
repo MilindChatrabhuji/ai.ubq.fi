@@ -50,7 +50,7 @@ fn preference(accept: &str, target: (&str, &str)) -> Option<Preference> {
         let quality = components
             .find_map(|parameter| {
                 let mut pair = js_trim(parameter).splitn(2, '=');
-                (pair.next() == Some("q")).then(|| quality(pair.next().unwrap_or_default()))
+                (pair.next() == Some("q")).then(|| pair.next().map_or(1.0, quality))
             })
             .unwrap_or(1.0);
         let candidate = Preference {
@@ -156,7 +156,7 @@ pub async fn handle(
                         .with_status(response.status_code());
                     response
                         .headers_mut()
-                        .set("Content-Type", "application/json; charset=utf-8")
+                        .set("Content-Type", "application/json")
                         .map_err(|_| unavailable())?;
                 }
                 response

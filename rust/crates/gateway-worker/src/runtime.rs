@@ -90,7 +90,7 @@ pub async fn route(
         ));
     }
     if path == "/uos/models/catalog" && request.method() == Method::Get {
-        let state = CatalogState::load(&store, &env, now_ms()?).await?;
+        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
         return json_response(catalog::public_catalog(&state.input));
     }
     if path == "/health/providers" || path == "/health/upstream" {
@@ -110,7 +110,7 @@ pub async fn route(
         None
     };
     if path == "/v1/models" && request.method() == Method::Get {
-        let state = CatalogState::load(&store, &env, now_ms()?).await?;
+        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
         let url = request.url().map_err(|_| invalid_url())?;
         let versions = url
             .query_pairs()
@@ -133,7 +133,7 @@ pub async fn route(
         };
     }
     if path == "/uos/models/capabilities" && request.method() == Method::Get {
-        let state = CatalogState::load(&store, &env, now_ms()?).await?;
+        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
         return json_response(catalog::capabilities(&state.input));
     }
     if path == "/uos/agent-messages" {
@@ -164,7 +164,7 @@ pub async fn route(
             host.cancellation.clone(),
         )
         .await?;
-        let state = CatalogState::load(&store, &env, now_ms()?).await?;
+        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
         let mut response = inference::run(
             request,
             inference::RequestResources { context, permit },

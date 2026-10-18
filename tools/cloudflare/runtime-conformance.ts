@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { createRequire } from "node:module";
 import { connect } from "node:net";
 import { lookup } from "node:dns/promises";
@@ -307,6 +307,62 @@ async function staticRouteCases(url: (path: string) => string, cases: string[]):
   cases.push("source_root_media_negotiation");
 }
 
+async function agentMessageCases(url: (path: string) => string, cases: string[]): Promise<void> {
+  const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = pair.publicKey.export({ type: "spki", format: "pem" });
+  const created = await fetch(url("/admin/kernel-pubkeys"), {
+    method: "POST",
+    headers: { authorization: "Bearer fixture-admin", "content-type": "application/json" },
+    body: JSON.stringify({ app_id: 91, pem, owner: "runtime fixture" }),
+  });
+  assert.equal(created.status, 200);
+  await created.arrayBuffer();
+  const token = "ghs_fixture_kernel_access";
+  const headers = (stateId: string): HeadersInit => {
+    const now = Math.floor(Date.now() / 1000);
+    const claims = {
+      owner: "fixture-owner",
+      repo: "fixture-repo",
+      state_id: stateId,
+      auth_token_sha256: createHash("sha256").update(token).digest("base64url"),
+      jti: crypto.randomUUID(),
+      iat: now,
+      exp: now + 300,
+    };
+    const data = `${Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}`;
+    const jwt = `${data}.${sign("RSA-SHA256", Buffer.from(data), pair.privateKey).toString("base64url")}`;
+    return {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "x-github-owner": claims.owner,
+      "x-github-repo": claims.repo,
+      "x-ubiquity-kernel-token": jwt,
+    };
+  };
+  const message = await fetch(url("/uos/agent-messages"), {
+    method: "POST",
+    headers: headers("fixture-state"),
+    body: JSON.stringify({ agent_id: "fixture-agent", channel: "fixture-channel", body: "source scoped message", metadata: { value: 1 } }),
+  });
+  assert.equal(message.status, 200);
+  const saved = await objectBody(message);
+  assert(isObject(saved.message));
+  const list = await fetch(url("/uos/agent-messages?channel=fixture-channel&limit=1"), { headers: headers("fixture-state") });
+  const listed = await objectBody(list);
+  assert(Array.isArray(listed.messages) && listed.messages.length === 1 && isObject(listed.messages[0]));
+  assert.equal(listed.messages[0].id, saved.message.id);
+  const other = await objectBody(await fetch(url("/uos/agent-messages"), { headers: headers("other-state") }));
+  assert.deepEqual(other.messages, []);
+  const invalid = await fetch(url("/uos/agent-messages"), {
+    method: "POST",
+    headers: headers("fixture-state"),
+    body: JSON.stringify({ agent_id: "fixture-agent", body: "💻".repeat(4001) }),
+  });
+  assert.equal(invalid.status, 400);
+  await invalid.arrayBuffer();
+  cases.push("actual_kernel_rs256_github_auth_and_message_scope");
+}
+
 async function inner(): Promise<void> {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
@@ -470,6 +526,7 @@ async function inner(): Promise<void> {
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:still-blocked" }, key.token)).status, 429);
     assert.equal((await events()).length, before);
     cases.push("actual_sqlite_restart_preserves_key_and_quota");
+    await agentMessageCases(url, cases);
     const explicitSignal = await fetch(`${running.origin}/public/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: "Bearer fixture-access", "x-fixture-explicit-signal": "1", connection: "close" },

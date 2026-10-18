@@ -8,6 +8,7 @@ mod agent_messages;
 mod assets;
 pub mod authority;
 mod catalog;
+mod catalog_host;
 mod host;
 mod inference;
 mod lifecycle;

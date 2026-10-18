@@ -98,6 +98,12 @@ async function upstream(request, env, context) {
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
+    if (url.hostname === "api.github.com" && url.pathname === "/repos/fixture-owner/fixture-repo") {
+      if (request.headers.get("authorization") !== "Bearer ghs_fixture_kernel_access") return new Response(null, { status: 401 });
+      if (request.headers.get("accept") !== "application/vnd.github+json" || request.headers.get("x-github-api-version") !== "2022-11-28")
+        return new Response(null, { status: 400 });
+      return Response.json({ full_name: "fixture-owner/fixture-repo" });
+    }
     if (["api.deepseek.com", "api.cerebras.ai"].includes(url.hostname)) return upstream(request, env, context);
     if (url.pathname.startsWith("/public/")) {
       if (request.headers.get("x-fixture-disconnect") === "1") {
