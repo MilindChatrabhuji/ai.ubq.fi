@@ -1,6 +1,30 @@
 use gateway_admin_data::{profile, projection};
 use serde_json::Value;
 
+// Both wire formats use JavaScript numbers. Integer/f64 JSON representations
+// compare at the exact f64 value, with no rounding tolerance.
+fn assert_source(actual: &Value, expected: &Value, context: &str) {
+    match (actual, expected) {
+        (Value::Number(a), Value::Number(b)) => {
+            assert_eq!(a.as_f64(), b.as_f64(), "{context}");
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            assert_eq!(a.len(), b.len(), "{context}");
+            for (i, (a, b)) in a.iter().zip(b).enumerate() {
+                assert_source(a, b, &format!("{context}[{i}]"));
+            }
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            assert_eq!(a.len(), b.len(), "{context}");
+            for (key, b) in b {
+                let a = a.get(key).unwrap_or_else(|| panic!("{context}.{key} missing"));
+                assert_source(a, b, &format!("{context}.{key}"));
+            }
+        }
+        _ => assert_eq!(actual, expected, "{context}"),
+    }
+}
+
 #[test]
 fn kernel_policy_normalization_matches_frozen_bun_source() {
     let cases: Vec<Value> =
@@ -13,7 +37,11 @@ fn kernel_policy_normalization_matches_frozen_bun_source() {
             case["owner"].as_str().unwrap(),
             case["repo"].as_str(),
         );
-        assert_eq!(result.unwrap_or(Value::Null), case["expected"], "{case}");
+        assert_source(
+            &result.unwrap_or(Value::Null),
+            &case["expected"],
+            &case.to_string(),
+        );
     }
 }
 
@@ -60,23 +88,21 @@ fn quota_projections_match_frozen_bun_source() {
         let groups = projection::group_paid_fallback_usage_rollups(rollups, str::cmp);
         let usage = projection::summarize_paid_fallback_usage(&groups, now);
         let estimates = projection::project_paid_fallback_runway(&usage[0], &quota, now, history);
-        assert_eq!(
-            projection::public_quota_view(&quota),
-            case["expected"]["quota"],
-            "quota {}",
-            case["name"]
+        let context = case["name"].to_string();
+        assert_source(
+            &projection::public_quota_view(&quota),
+            &case["expected"]["quota"],
+            &context,
         );
-        assert_eq!(
-            serde_json::to_value(&usage).unwrap(),
-            case["expected"]["usage"],
-            "usage {}",
-            case["name"]
+        assert_source(
+            &serde_json::to_value(&usage).unwrap(),
+            &case["expected"]["usage"],
+            &context,
         );
-        assert_eq!(
-            serde_json::to_value(&estimates).unwrap(),
-            case["expected"]["estimates"],
-            "estimates {}",
-            case["name"]
+        assert_source(
+            &serde_json::to_value(&estimates).unwrap(),
+            &case["expected"]["estimates"],
+            &context,
         );
         let response =
             projection::project_quota(Some(rollups), snapshot, history, now, 7, str::cmp);
