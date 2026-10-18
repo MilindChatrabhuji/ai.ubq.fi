@@ -159,11 +159,11 @@ fn number(value: Option<&SourceJson>) -> Result<f64, GatewayError> {
         value.as_str().trim().as_bytes().first(),
         Some(b'"' | b'[' | b'{')
     ) {
-        return Ok(value
+        return value
             .as_str()
             .trim()
             .parse::<f64>()
-            .map_err(|_| error("Invalid source number."))?);
+            .map_err(|_| error("Invalid source number."));
     }
     Ok(js_text(Some(value))?
         .try_utf8()
