@@ -440,7 +440,7 @@ pub(crate) fn collect_context(
 
 /// Matches source per-field prompt framing; flags are redacted after comma join.
 pub fn sanitize_context_metadata(context: &mut SupervisorBriefContext) {
-    for field in [
+    for value in [
         &mut context.title,
         &mut context.cwd,
         &mut context.model,
@@ -448,10 +448,11 @@ pub fn sanitize_context_metadata(context: &mut SupervisorBriefContext) {
         &mut context.effort,
         &mut context.state,
         &mut context.rollout_path,
-    ] {
-        if let Some(value) = field {
-            *value = redact(value).text;
-        }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        *value = redact(value).text;
     }
     context.machine = redact(&context.machine).text;
     let joined = context.active_flags.join(",");
