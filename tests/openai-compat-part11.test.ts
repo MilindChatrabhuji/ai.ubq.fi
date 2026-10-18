@@ -687,12 +687,12 @@ test("openai: one shared completion-validity rule governs the DeepSeek and Cereb
     const originalCerebrasKey = process.env.CEREBRAS_API_KEY;
     process.env.DEEPSEEK_API_KEY = "deepseek-test-key";
     process.env.CEREBRAS_API_KEY = "cerebras-test-key";
-    const chatCompletion = (model: string, message: Record<string, unknown>): Record<string, unknown> => ({
+    const chatCompletion = (model: string, message: Record<string, unknown>, finishReason = "stop"): Record<string, unknown> => ({
       id: "shared-validity-rule",
       object: "chat.completion",
       created: 1_780_000_500,
       model,
-      choices: [{ index: 0, message, finish_reason: "stop" }],
+      choices: [{ index: 0, message, finish_reason: finishReason }],
       usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
     });
     const messages = [{ role: "user", content: "hi" }];
@@ -701,6 +701,16 @@ test("openai: one shared completion-validity rule governs the DeepSeek and Cereb
         const response = await withFetchMock(
           // `content` is absent, so the completion carries reasoning only.
           () => Response.json(chatCompletion("gpt-oss-120b", { role: "assistant", reasoning: "thinking only" })),
+          () => handleChatCompletions(specialProviderChatRequest({ model: "gpt-oss-120b", messages, reasoning_effort: "medium" }))
+        );
+        assert.equal(response.status, 502);
+        assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "cerebras_upstream_invalid_response");
+        assert.equal(getResponseTelemetry(response)?.failureKind, "invalid_completion_schema");
+      });
+
+      await step("Cerebras: explicit null content in a budget-stopped reasoning-only completion also fails closed", async () => {
+        const response = await withFetchMock(
+          () => Response.json(chatCompletion("gpt-oss-120b", { role: "assistant", content: null, reasoning: "thinking only" }, "length")),
           () => handleChatCompletions(specialProviderChatRequest({ model: "gpt-oss-120b", messages, reasoning_effort: "medium" }))
         );
         assert.equal(response.status, 502);
