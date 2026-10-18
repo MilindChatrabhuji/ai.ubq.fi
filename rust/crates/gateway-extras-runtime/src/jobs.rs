@@ -637,7 +637,7 @@ pub(crate) async fn get<S: QueryStore, H: ExtrasHost>(
             owner: &owner,
             seed: &seed,
             entry: row.as_ref(),
-            job: job,
+            job,
             options: &options,
             deadline: started + TIMEOUT_MS,
         },

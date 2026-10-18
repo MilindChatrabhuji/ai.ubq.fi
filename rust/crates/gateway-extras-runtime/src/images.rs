@@ -165,11 +165,9 @@ pub(crate) async fn images<H: ExtrasHost>(
     .await;
     host.finish_image_fanout().await?;
     let leader = first.get();
-    if let Some(index) = leader {
-        if index > 0 {
-            let first = results.remove(index);
-            results.insert(0, first);
-        }
+    if let Some(index) = leader.filter(|index| *index > 0) {
+        let first = results.remove(index);
+        results.insert(0, first);
     }
     for (_, settled) in &results {
         if let Err(e) = settled {
