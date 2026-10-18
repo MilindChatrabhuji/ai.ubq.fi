@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Explicit manual banked reset verifies and promotes one account - 2026-10-18
+
+An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.
+
+After a documented verified consume outcome, the manual action synchronously reads that account's current usage. One atomic transaction stores the fresh account-bound observation, reconciles only quota classes proven recovered, records completed manual promotion and selects that same account with reason `manual_reset`. This explicit operator transition may supersede a healthy active account; ordinary serial routing, provider selection, authentication and model eligibility remain unchanged. Pending propagation or a failed promotion never claims success, and a repeated completed action cannot restore an old priority. The manual intent contains opaque account/credential hashes and quota metadata, never tokens. KV export/import retains the intent together with its authoritative reset-window and account-day ledgers; importing only the intent would lose the consumption and daily-budget proof.
+
+Reason: a manual reset outside the gateway could leave exhausted routing state until a later capacity sample. The button owns verification and promotion directly, without waiting for chart sampling or issuing inference. Acceptance uses isolated upstream fixtures; agents remain forbidden from directly redeeming live credits.
+
 ## Allow overage spending false refuses all overage - 2026-10-18
 
 The per-account `Allow overage spending` setting is a hard gate. With the setting off, the gateway may redeem a banked reset, but it must never dispatch an overage probe, including after the reset preflight returns `no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or `account_day_limit_reached`. That case returns the ordinary `codex_quota_blocked` response. With the setting on, the existing resets-first flow and one bounded overage fallback remain unchanged.
@@ -2178,3 +2186,11 @@ The foundation refuses every unfinished route with an explicit non-success respo
 Before any Rust persistence or deployment, retire provisional JSON-array key identity. Every read, write, query and future migration uses the core `tuple-v1:<lowercase hex>` codec and its exact binary sort bytes. Preserve current source bytes/string/bigint/number/boolean distinctions, signed zeros, infinities, positive NaN and the proven negative-NaN refusal. No per-module JSON comparator, dual-codec fallback or live migration is authorized. A shared typed builder and raw validator prevent different modules from naming or ordering the same source key differently.
 
 The additive query interface preserves pinned source selectors: prefix alone or prefix with one strict descendant start/end bound, and ranges with both bounds. Exact-prefix rows are excluded, start is inclusive and end exclusive; empty prefix is the whole-keyspace form. Pages filter absolute expiry before their limit and use opaque version/selector/direction-bound continuations. Changed limits are allowed on resume; malformed and cross-query tokens fail closed. This shared contract adds no new gateway scheduler or provider behavior, and source/runtime/deployment acceptance remains separate.
+
+## Surplus inference enables provider secret masking - 2026-10-18
+
+Enable [Surplus Secret Masking](https://www.surplusintelligence.ai/docs/guides/secret-masking) for every Surplus inference POST with exactly one `X-SI-Mask-Secrets: on` header from the shared authenticated-header builder. This covers native Responses and native Claude Chat, streamed and buffered. The provider handles masking and restoration while the gateway retains its existing request and response contracts.
+
+Reason: the owner requested the announced feature. Surplus can globally pause masking and forward requests without protection or a receipt, so this opt-in does not guarantee that every request is masked. The gateway does not require or parse a masking receipt.
+
+Reversal risk: removing the header returns request-level enablement to the provider's defaults.

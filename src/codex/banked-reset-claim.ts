@@ -474,7 +474,7 @@ const prepareSubmissionAttempt = async (
   const fences = await readRequiredFences(kv, candidate);
   if (fences.kind === "failure") return { kind: "failure", code: fences.code };
 
-  const usage = await readUsageGate(kv, context.account.accountIdHash);
+  const usage = await readUsageGate(kv, context.account.accountIdHash, candidate.authorization);
   if (usage.kind === "failure") return { kind: "failure", code: usage.code };
   const budget = await readDailySubmissionBudget(kv, dailyKey, day, maxPerAccountPerDay);
   if (budget.kind === "failure") return { kind: "failure", code: budget.code };
@@ -597,7 +597,7 @@ const renewSubmittedAttempt = async (
   }
   if (!claimedDuringCurrentUtcDay(current, nowBeforeRead)) return { kind: "failure", code: "claim_day_elapsed" };
 
-  const usage = await readUsageGate(kv, context.account.accountIdHash);
+  const usage = await readUsageGate(kv, context.account.accountIdHash, candidate.authorization);
   if (usage.kind === "failure") return { kind: "failure", code: usage.code };
 
   const fences = await readRequiredFences(kv, candidate);
@@ -779,12 +779,13 @@ const unknownOutcome = (
   return outcome("pending", reason, context, record);
 };
 
-const liveSubmissionPolicyReason = (dependencies: CodexBankedResetDependencies): string | null => {
-  return loadLiveSubmissionConfig(dependencies).reason;
+const liveSubmissionPolicyReason = (dependencies: CodexBankedResetDependencies, manual = false): string | null => {
+  return loadLiveSubmissionConfig(dependencies, manual).reason;
 };
 
 const loadLiveSubmissionConfig = (
-  dependencies: CodexBankedResetDependencies
+  dependencies: CodexBankedResetDependencies,
+  manual = false
 ): Readonly<{ config: CodexBankedResetConfig; reason: null }> | Readonly<{ config: null; reason: string }> => {
   let config: CodexBankedResetConfig;
   try {
@@ -792,8 +793,8 @@ const loadLiveSubmissionConfig = (
   } catch {
     return { config: null, reason: "configuration_unavailable" };
   }
-  const reason = policyReason(config) ?? providerPolicyReason(config, dependencies.provider);
-  return reason || config.mode !== "live" ? { config: null, reason: reason ?? "mode_not_live" } : { config, reason: null };
+  const reason = policyReason(config, manual) ?? providerPolicyReason(config, dependencies.provider, manual);
+  return reason || (!manual && config.mode !== "live") ? { config: null, reason: reason ?? "mode_not_live" } : { config, reason: null };
 };
 
 export type { ClaimResult };

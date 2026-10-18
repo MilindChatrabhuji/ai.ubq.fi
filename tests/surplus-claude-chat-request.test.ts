@@ -166,6 +166,7 @@ test("Surplus Claude Chat fetch preserves dispatch guards, Max, measured cache a
   );
   assert.equal(requested, "https://api.surplusintelligence.ai/v1/chat/completions");
   assert.equal(headers.get("Authorization"), "Bearer test-provider-key");
+  assert.equal(headers.get("X-SI-Mask-Secrets"), "on");
   for (const privateHeader of ["conversation_id", "session-id", "thread-id", "x-client-request-id"]) assert.equal(headers.has(privateHeader), false);
   assert.deepEqual(actions, ["quota", "dispatch", "fetch"]);
   assert.deepEqual(wire, buildSurplusClaudeChatRequest({ ...base(), reasoning: { effort: "max" } })?.body);
