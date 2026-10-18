@@ -16,10 +16,10 @@ fn headers(value: &Value) -> Headers {
     headers.into_iter().map(|(key, value)| (key, value.trim_matches([' ', '\t']).into())).collect()
 }
 fn evidence(case: &Value) -> response::ErrorEvidence {
-    response::ErrorEvidence {
-        prefix: serde_json::from_value(case["body_units"].clone()).unwrap(),
-        complete: case["complete"].as_bool().unwrap_or(true),
-    }
+    response::ErrorEvidence::from_prefix(
+        serde_json::from_value(case["body_units"].clone()).unwrap(),
+        case["complete"].as_bool().unwrap_or(true),
+    ).unwrap()
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn exact_bun_source_classification_vectors_preserve_all_detail_units() {
         assert_eq!(actual.exhaustion.as_ref().map(|e| e.window.as_str()), expected["exhaustion"]["window"].as_str(), "window {index}");
         assert_eq!(actual.exhaustion.as_ref().and_then(|e| e.reset_at_ms), expected["exhaustion"]["reset_at_ms"].as_f64(), "reset {index}");
         let expected_units: Option<Vec<u16>> = serde_json::from_value(expected["detail_units"].clone()).unwrap();
-        assert_eq!(actual.detail.as_ref().map(|s| s.encode_utf16().collect::<Vec<_>>()), expected_units, "detail {index}");
+        assert_eq!(actual.detail.as_ref().map(|s| s.as_units().to_vec()), expected_units, "detail {index}");
     }
 }
 

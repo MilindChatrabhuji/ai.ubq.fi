@@ -9,7 +9,7 @@ use gateway_admin_runtime::{
 };
 use gateway_auth::AuthHost;
 use gateway_catalog_runtime::ProviderBinding;
-use gateway_core::{GatewayError, state::RevisionCheck};
+use gateway_core::{GatewayError, source_json::SourceJson, state::RevisionCheck};
 use gateway_providers::{AuthMaterial, Headers, PrepareOptions};
 use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
 use serde::Serialize;
@@ -81,6 +81,7 @@ pub enum PoolSelection {
     NotApplicable,
     Eligible(Box<SelectedAccount>),
     Unavailable,
+    Refused { status: u16, headers: Headers, body: SourceJson },
 }
 
 pub struct SelectionInput<'a> {

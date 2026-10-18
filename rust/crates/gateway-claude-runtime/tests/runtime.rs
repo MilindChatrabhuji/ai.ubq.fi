@@ -91,7 +91,7 @@ fn generic_429_cools_down_but_never_rotates_and_no_reset_limit_has_no_proof() {
         assert_eq!(store.roster().active_account_id, Some(a.account_id));
         if quota::cooling_down(store.quota(first.binding()).as_ref(), NOW) {
             let next = ClaudePoolSession::new(config);
-            let error = run(next.select(
+            let refused = run(next.select(
                 &store,
                 &host,
                 SelectionInput {
@@ -101,8 +101,8 @@ fn generic_429_cools_down_but_never_rotates_and_no_reset_limit_has_no_proof() {
                     selection: None,
                 },
             ))
-            .unwrap_err();
-            assert_eq!(error.status, 429);
+            .unwrap();
+            assert!(matches!(refused, PoolSelection::Refused { status: 429, .. }));
         }
     }
 }
@@ -119,7 +119,7 @@ fn a_success_is_recorded_at_head_receipt_before_any_clone_and_clears_older_proof
         run(session.observe_response(&store, &host, &first, head(401, Headers::new(), NOW)))
             .unwrap();
     assert!(matches!(
-        run(session.after_outcome(&store, &host, denied, response::ErrorEvidence::default()))
+        run(session.after_outcome(&store, &host, denied, error_evidence(None, false)))
             .unwrap(),
         OutcomeDecision::Paid
     ));
@@ -344,10 +344,7 @@ fn workspace_retry_selects_default_rotates_cohort_and_does_not_refetch_effort_ca
         &store,
         &host,
         observed,
-        response::ErrorEvidence {
-            prefix: Some("not scoped to a workspace".encode_utf16().collect()),
-            complete: true,
-        },
+        error_evidence(Some("not scoped to a workspace".encode_utf16().collect()), true),
     ))
     .unwrap();
     let OutcomeDecision::WorkspaceContinuation(next) = decision else {
@@ -380,10 +377,7 @@ fn disabled_thinking_refusal_never_discovers_workspace_or_transfers_permission()
             &store,
             &host,
             observed,
-            response::ErrorEvidence {
-                prefix: Some("not scoped to a workspace".encode_utf16().collect()),
-                complete: true
-            }
+            error_evidence(Some("not scoped to a workspace".encode_utf16().collect()), true)
         ))
         .unwrap(),
         OutcomeDecision::Preserve
@@ -408,14 +402,72 @@ fn revocation_during_workspace_fetch_refuses_retry_before_owner_update() {
         &store,
         &host,
         observed,
-        response::ErrorEvidence {
-            prefix: Some("not scoped to a workspace".encode_utf16().collect()),
-            complete: true,
-        },
+        error_evidence(Some("not scoped to a workspace".encode_utf16().collect()), true),
     ))
     .unwrap_err();
     assert_eq!(error.status, 403);
     assert_eq!(store.roster().accounts[0], a);
+}
+#[test]
+fn split_surrogate_detail_survives_quota_storage_and_the_next_cooldown_response() {
+    let store = Store::new();
+    let account = account(1);
+    let config = seed(&store, vec![account.clone()]);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config.clone());
+    let raw = raw();
+    let selected = selected(&session, &store, &host, &raw);
+    let body = format!("{{\"error\":{{\"message\":\"credit balance {}😀\"}}}}", "x".repeat(224));
+    let received = run(session.observe_response(&store, &host, &selected, head(403, Headers::new(), NOW))).unwrap();
+    assert!(matches!(run(session.after_outcome(&store, &host, received, error_evidence(Some(body.encode_utf16().collect()), true))).unwrap(), OutcomeDecision::Preserve));
+    let state = store.quota(&account).unwrap();
+    let message = state.last_error.unwrap().message.unwrap();
+    assert_eq!(message.as_units().len(), 240);
+    assert_eq!(message.as_units().last(), Some(&0xd83d));
+    assert!(state.pool_proofs.unwrap().is_empty());
+    let stored = store.get(&quota_key(&account)).unwrap();
+    assert_eq!(stored.value_encoding, gateway_core::value::ValueEncoding::ProfileV2);
+    assert!(stored.profile_v2_source_json().unwrap().as_str().contains("\\ud83d"));
+    let next = ClaudePoolSession::new(config);
+    let refused = run(next.select(&store, &host, SelectionInput { key_id: KEY, model: MODEL, raw: &raw, selection: None })).unwrap();
+    let PoolSelection::Refused { status, headers, body } = refused else { panic!("expected the retained cooldown refusal"); };
+    assert_eq!(status, 403);
+    assert_eq!(headers.get("Content-Type").map(String::as_str), Some("application/json"));
+    #[derive(serde::Deserialize)]
+    struct Error { message: gateway_core::js_string::JsString16, r#type: String, code: String }
+    #[derive(serde::Deserialize)]
+    struct Envelope { error: Error }
+    let parsed: Envelope = body.deserialize().unwrap();
+    assert_eq!(parsed.error.message, message);
+    assert_eq!(parsed.error.r#type, "invalid_request_error");
+    assert_eq!(parsed.error.code, "claude_code_cooling_down");
+}
+#[test]
+fn valid_source_negative_zero_does_not_disable_quota_or_full_pool_proof() {
+    let store = Store::new();
+    let account = account(1);
+    let config = seed(&store, vec![account.clone()]);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config);
+    let selected = selected(&session, &store, &host, &raw());
+    let headers = Headers::from([("anthropic-ratelimit-unified-5h-utilization".into(), "-0".into())]);
+    assert!(matches!(apply(&session, &store, &host, &selected, 401, headers, NOW), OutcomeDecision::Paid));
+    let quota = store.quota(&account).unwrap();
+    assert_eq!(quota.windows["5h"].utilization.unwrap().to_bits(), (-0.0f64).to_bits());
+    assert!(quota::applicable_proof(Some(&quota), &account, MODEL, NOW).is_some());
+}
+#[test]
+fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted() {
+    let value = json!({"updated_at_ms":NOW});
+    let json_record = gateway_core::state::StoredRecord::json("old", value.clone(), None);
+    assert!(quota::parse_record(&json_record, NOW).unwrap().is_some());
+    let portable = gateway_core::value::PortableValue::from_json(&value);
+    let legacy = gateway_core::state::StoredRecord::profile("legacy", portable.clone(), None).unwrap();
+    assert_eq!(quota::parse_record(&legacy, NOW).unwrap_err().envelope.error.code.as_deref(), Some("incompatible_value_encoding"));
+    let explicit = gateway_core::state::StoredRecord::profile_v2("current", portable, None).unwrap();
+    assert_eq!(quota::parse_record(&explicit, NOW).unwrap(), quota::parse_record(&json_record, NOW).unwrap());
+    let tagged_json = gateway_core::state::StoredRecord::json("tagged", explicit.value, None);
+    assert!(quota::parse_record(&tagged_json, NOW).unwrap().is_none());
 }
 #[test]
 fn real_sqlite_close_reopen_retains_global_active_and_quota() {

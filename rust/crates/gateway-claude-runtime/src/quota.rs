@@ -1,6 +1,7 @@
 //! Source Claude quota truth. Health/history remain optional post-acceptance subscribers.
 use gateway_admin_runtime::claude::AccountBinding;
-use gateway_schema::util::{js_trim, js_whitespace, json_stringify};
+use gateway_core::{GatewayError, js_string::JsString16, state::StoredRecord, value::{PortableValue, ValueEncoding}};
+use gateway_schema::util::{js_trim, json_stringify};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -51,7 +52,7 @@ impl QuotaObservation {
 pub struct QuotaError {
     pub kind: String,
     pub status: Option<f64>,
-    pub message: Option<String>,
+    pub message: Option<JsString16>,
     pub at_ms: f64,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -137,26 +138,8 @@ fn standard(value: &Value) -> Option<StandardWindow> {
             .trunc(),
     })
 }
-pub fn sanitize_error(raw: Option<&str>) -> Option<String> {
-    let collapsed = raw?
-        .split(js_whitespace)
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if collapsed.is_empty() {
-        None
-    } else {
-        Some(prefix_utf16(&collapsed, 240))
-    }
-}
-pub(crate) fn prefix_utf16(raw: &str, limit: usize) -> String {
-    let mut units = 0;
-    raw.chars()
-        .take_while(|c| {
-            units += c.len_utf16();
-            units <= limit
-        })
-        .collect()
+pub fn sanitize_error(raw: Option<&str>) -> Option<JsString16> {
+    JsString16::from_str(raw?).sanitize_js_whitespace_prefix(240)
 }
 fn error(value: &Value) -> Option<QuotaError> {
     let kind = js_trim(value.get("kind")?.as_str()?);
@@ -231,6 +214,82 @@ pub fn parse_state(value: &Value) -> Option<QuotaState> {
             .filter(|n| *n > 0.0)?
             .trunc(),
     })
+}
+// Fixed quota-schema access. Unrelated source -0 remains a real IEEE number,
+// and an operator string never has to pass through a scalar JSON value.
+fn profile_member<'a>(value: &'a PortableValue, name: &str) -> Option<&'a PortableValue> {
+    match value {
+        PortableValue::Object(fields) => fields.iter().rev().find(|(key, _)| key == name).map(|(_, value)| value),
+        PortableValue::ObjectUtf16(fields) => fields.iter().rev().find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16())).map(|(_, value)| value),
+        _ => None,
+    }
+}
+fn profile_scalar(value: &PortableValue) -> Value {
+    match value {
+        PortableValue::Null => Value::Null,
+        PortableValue::Boolean(value) => Value::Bool(*value),
+        PortableValue::String(value) => Value::String(value.clone()),
+        PortableValue::StringUtf16(value) => value.try_utf8().map(Value::String).unwrap_or(Value::Bool(false)),
+        PortableValue::NumberBits(_) => value.number_value().and_then(serde_json::Number::from_f64).map(Value::Number).unwrap_or(Value::Bool(false)),
+        _ => Value::Bool(false),
+    }
+}
+fn profile_fields(value: &PortableValue, names: &[&str]) -> Value {
+    Value::Object(names.iter().filter_map(|name| profile_member(value, name).map(|value| ((*name).into(), profile_scalar(value)))).collect())
+}
+fn parse_profile_state(value: &PortableValue) -> Option<QuotaState> {
+    let mut root = profile_fields(value, &["representative_claim", "blocked_until_ms", "block_window", "cooldown_until_ms", "updated_at_ms"]);
+    for (field, ids, columns) in [
+        ("windows", WINDOWS.as_slice(), ["status", "utilization", "reset_at_ms", "observed_at_ms"].as_slice()),
+        ("standard", STANDARD_FAMILIES.as_slice(), ["limit", "remaining", "reset_at_ms", "observed_at_ms"].as_slice()),
+    ] {
+        let rows = ids.iter().filter_map(|id| profile_member(value, field).and_then(|rows| profile_member(rows, id)).map(|row| ((*id).into(), profile_fields(row, columns)))).collect();
+        root[field] = Value::Object(rows);
+    }
+    if let Some(proofs) = profile_member(value, "pool_proofs") {
+        let columns = ["kind", "model_id", "observed_at_ms", "expires_at_ms", "evidence_generation"];
+        let rows = match proofs {
+            PortableValue::Object(rows) => rows.iter().map(|(key, row)| (key.clone(), profile_fields(row, &columns))).collect(),
+            PortableValue::ObjectUtf16(rows) => rows.iter().filter_map(|(key, row)| key.try_utf8().ok().map(|key| (key, profile_fields(row, &columns)))).collect(),
+            _ => serde_json::Map::new(),
+        };
+        root["pool_proofs"] = Value::Object(rows);
+    }
+    let error = profile_member(value, "last_error");
+    let mut message = None;
+    if let Some(error) = error {
+        root["last_error"] = profile_fields(error, &["kind", "status", "at_ms"]);
+        message = match profile_member(error, "message") {
+            Some(PortableValue::StringUtf16(message)) => message.sanitize_js_whitespace_prefix(240),
+            Some(PortableValue::String(message)) => sanitize_error(Some(message)),
+            _ => None,
+        };
+    }
+    let mut state = parse_state(&root)?;
+    if let Some(error) = &mut state.last_error { error.message = message; }
+    Some(state)
+}
+pub fn parse_record(record: &StoredRecord, now: i64) -> Result<Option<QuotaState>, GatewayError> {
+    record.validate_version()?;
+    if record.expires_at_ms.is_some_and(|at| at <= now) { return Ok(None); }
+    match record.value_encoding {
+        ValueEncoding::Json => Ok(parse_state(record.json_value()?)),
+        ValueEncoding::ProfileV2 => Ok(parse_profile_state(&record.profile_v2_value()?)),
+        ValueEncoding::ProfileV1 => Err(GatewayError::unavailable("Claude quota requires JSON or explicit ProfileV2.", "incompatible_value_encoding")),
+    }
+}
+pub(crate) fn stored_state(state: &QuotaState, revision: String) -> Result<StoredRecord, GatewayError> {
+    let mut numeric = state.clone();
+    let message = numeric.last_error.as_mut().and_then(|error| error.message.take());
+    let mut value = PortableValue::from_json(&serde_json::to_value(&numeric).expect("finite source quota fields"));
+    if let Some(message) = message {
+        let PortableValue::Object(fields) = &mut value else { unreachable!("QuotaState serializes as an object"); };
+        let error = fields.iter_mut().find(|(key, _)| key == "last_error").map(|(_, value)| value).expect("QuotaState has last_error");
+        let PortableValue::Object(fields) = error else { unreachable!("QuotaState has a nonempty error"); };
+        let text = fields.iter_mut().find(|(key, _)| key == "message").map(|(_, value)| value).expect("QuotaError has message");
+        *text = PortableValue::StringUtf16(message);
+    }
+    StoredRecord::profile_v2(revision, value, None)
 }
 pub fn applicable_proof<'a>(
     state: Option<&'a QuotaState>,

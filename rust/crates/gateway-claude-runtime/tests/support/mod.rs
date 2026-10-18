@@ -94,7 +94,7 @@ impl Store {
     }
     pub fn quota(&self, account: &AccountBinding) -> Option<quota::QuotaState> {
         self.get(&quota_key(account))
-            .and_then(|r| quota::parse_state(&r.value))
+            .and_then(|r| quota::parse_record(&r, self.now.get()).unwrap())
     }
     pub fn allow(&self, ids: Value) {
         self.put(
@@ -377,5 +377,8 @@ pub fn apply(
 ) -> OutcomeDecision {
     let head =
         run(session.observe_response(store, host, selected, head(status, headers, at))).unwrap();
-    run(session.after_outcome(store, host, head, response::ErrorEvidence::default())).unwrap()
+    run(session.after_outcome(store, host, head, error_evidence(None, false))).unwrap()
+}
+pub fn error_evidence(prefix: Option<Vec<u16>>, complete: bool) -> response::ErrorEvidence {
+    response::ErrorEvidence::from_prefix(prefix, complete).unwrap()
 }

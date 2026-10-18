@@ -1,8 +1,9 @@
 //! Actual response status/headers own proof classification. A caller supplies no exhaustion Boolean.
 use crate::quota::{
     Exhaustion, QuotaObservation, QuotaWindow, STANDARD_FAMILIES, StandardWindow, WINDOWS,
-    prefix_utf16, sanitize_error,
 };
+pub use gateway_core::claude::ClaudeErrorEvidence as ErrorEvidence;
+use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use gateway_providers::Headers;
 use gateway_schema::util::js_trim;
 use serde_json::Value;
@@ -60,13 +61,7 @@ pub struct Classification {
     pub kind: ResponseKind,
     pub exhaustion: Option<Exhaustion>,
     pub retry_after_ms: Option<i64>,
-    pub detail: Option<String>,
-}
-#[derive(Debug, Default)]
-pub struct ErrorEvidence {
-    pub prefix: Option<Vec<u16>>,
-    /// Complete bounded clone evidence, not the deliverable response body.
-    pub complete: bool,
+    pub detail: Option<JsString16>,
 }
 pub fn header<'a>(headers: &'a Headers, name: &str) -> Option<&'a str> {
     headers
@@ -193,7 +188,7 @@ pub fn refine_error(
     mut result: Classification,
     evidence: &ErrorEvidence,
 ) -> Result<Classification, gateway_core::GatewayError> {
-    if !evidence.complete
+    if !evidence.complete()
         || matches!(
             result.kind,
             ResponseKind::Ok | ResponseKind::DurableExhaustion | ResponseKind::UpstreamError
@@ -201,39 +196,49 @@ pub fn refine_error(
     {
         return Ok(result);
     }
-    let Some(units) = evidence.prefix.as_deref() else {
+    let Some(units) = evidence.prefix() else {
         return Ok(result);
     };
-    // The adapter retains exact source units. The shared lossless stored-text
-    // extension is an explicit integration prerequisite; never normalize/drop.
-    let body = String::from_utf16(&units[..units.len().min(4096)]).map_err(|_| {
-        gateway_core::GatewayError::unavailable(
-            "Exact Claude UTF16 detail storage is not yet bound.",
-            "claude_utf16_codec_unavailable",
-        )
-    })?;
-    let body = prefix_utf16(&body, 4096);
-    let parsed = serde_json::from_str::<Value>(&body).ok();
-    let nested = parsed
-        .as_ref()
-        .and_then(|p| p.pointer("/error/message"))
-        .and_then(Value::as_str)
-        .filter(|s| !js_trim(s).is_empty());
-    let Some(detail) = sanitize_error(nested.or(Some(&body))) else {
+    let body = JsString16::from_units(units.to_vec()).prefix_units(4096);
+    let nested = body.try_utf8().ok()
+        .and_then(|text| SourceJson::parse(&text).ok())
+        .and_then(|parsed| member(&parsed, "error"))
+        .and_then(|error| member(&error, "message"))
+        .and_then(|message| message.deserialize::<JsString16>().ok())
+        .and_then(|message| message.sanitize_js_whitespace_prefix(240));
+    let Some(detail) = nested.or_else(|| body.sanitize_js_whitespace_prefix(240)) else {
         return Ok(result);
     };
-    let lower = detail.to_lowercase();
-    if result.kind == ResponseKind::RequestRejected && lower.contains("not scoped to a workspace") {
+    if result.kind == ResponseKind::RequestRejected && includes_lowercase(&detail, "not scoped to a workspace") {
         result.kind = ResponseKind::WorkspaceRequired;
-    } else if (lower.contains("not found") && lower.contains("workspace"))
-        || (lower.contains("workspace") && lower.contains("valid workspace"))
+    } else if (includes_lowercase(&detail, "not found") && includes_lowercase(&detail, "workspace"))
+        || (includes_lowercase(&detail, "workspace") && includes_lowercase(&detail, "valid workspace"))
     {
         result.kind = ResponseKind::WorkspaceNotFound;
-    } else if lower.contains("credit balance") || lower.contains("purchase credits") {
+    } else if includes_lowercase(&detail, "credit balance") || includes_lowercase(&detail, "purchase credits") {
         result.kind = ResponseKind::BillingBlocked;
-    } else if lower.contains("workspace") && lower.contains("organization") {
+    } else if includes_lowercase(&detail, "workspace") && includes_lowercase(&detail, "organization") {
         result.kind = ResponseKind::WorkspaceNotFound;
     }
     result.detail = Some(detail);
     Ok(result)
+}
+fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
+    value.object_entries().ok()?.into_iter().rev()
+        .find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16()))
+        .map(|(_, value)| value)
+}
+fn includes_lowercase(text: &JsString16, needle: &str) -> bool {
+    let mut folded = Vec::new();
+    for scalar in char::decode_utf16(text.as_units().iter().copied()) {
+        match scalar {
+            Ok(scalar) => for lower in scalar.to_lowercase() {
+                let mut buffer = [0; 2];
+                folded.extend_from_slice(lower.encode_utf16(&mut buffer));
+            },
+            Err(error) => folded.push(error.unpaired_surrogate()),
+        }
+    }
+    let needle = needle.encode_utf16().collect::<Vec<_>>();
+    folded.windows(needle.len()).any(|part| part == needle)
 }

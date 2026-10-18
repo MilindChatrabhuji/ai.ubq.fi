@@ -11,9 +11,12 @@ use gateway_admin_runtime::{
 use gateway_catalog_runtime::{ProviderBinding, state::checks_current};
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
+    source_json::SourceJson,
     state::{AuthorityStore, RevisionCheck},
 };
-use gateway_providers::AuthMaterial;
+use gateway_providers::{AuthMaterial, Headers};
+use serde::Serialize;
 use gateway_schema::selection::ProviderSelection;
 use serde_json::Value;
 use std::{
@@ -119,14 +122,14 @@ impl ClaudePoolSession {
                     .filter(|n| n.fract() == 0.0 && (100.0..=599.0).contains(n))
                     .map(|n| n as u16)
                     .unwrap_or(429);
-                let message = error.and_then(|e| e.message.as_deref()).unwrap_or(
+                let message = error.and_then(|e| e.message.clone()).unwrap_or_else(|| JsString16::from_str(
                     "The Claude subscription is cooling down after an upstream rejection.",
-                );
-                return Err(GatewayError::new(
-                    status,
-                    message,
-                    Some("claude_code_cooling_down"),
                 ));
+                return Ok(PoolSelection::Refused {
+                    status,
+                    headers: Headers::from([("Content-Type".into(), "application/json".into())]),
+                    body: cooldown_body(&message)?,
+                });
             }
             let selected = self
                 .prepare(store, host, active.clone(), generation, &input, None)
@@ -511,6 +514,13 @@ impl ClaudePoolSession {
                 .await;
         }
     }
+}
+fn cooldown_body(message: &JsString16) -> Result<SourceJson, GatewayError> {
+    #[derive(Serialize)]
+    struct Error<'a> { message: &'a JsString16, r#type: &'static str, code: &'static str }
+    #[derive(Serialize)]
+    struct Envelope<'a> { error: Error<'a> }
+    SourceJson::from_serializable(&Envelope { error: Error { message, r#type: "invalid_request_error", code: "claude_code_cooling_down" } })
 }
 fn deduplicate(checks: Vec<RevisionCheck>) -> Result<Vec<RevisionCheck>, GatewayError> {
     let mut map = BTreeMap::new();

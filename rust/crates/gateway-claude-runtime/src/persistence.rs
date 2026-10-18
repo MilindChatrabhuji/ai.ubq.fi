@@ -13,7 +13,7 @@ use gateway_core::{
     GatewayError,
     state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 pub fn quota_key(binding: &AccountBinding) -> RecordKey {
     key(json!([
@@ -35,18 +35,6 @@ pub(crate) fn now<H: AuthHost>(host: &H) -> Result<i64, GatewayError> {
         Err(crate::unavailable("Claude source clock is invalid."))
     }
 }
-pub(crate) fn value(row: Option<&StoredRecord>, now: i64) -> Result<Option<Value>, GatewayError> {
-    match row {
-        Some(row) if row.expires_at_ms.is_none_or(|at| at > now) => {
-            Ok(Some(row.json_value()?.clone()))
-        }
-        Some(row) => {
-            row.validate_version()?;
-            Ok(None)
-        }
-        None => Ok(None),
-    }
-}
 pub(crate) async fn load_quota<S: AuthorityStore>(
     store: &S,
     binding: &AccountBinding,
@@ -54,9 +42,7 @@ pub(crate) async fn load_quota<S: AuthorityStore>(
 ) -> Result<(Option<QuotaState>, RevisionCheck), GatewayError> {
     let key = quota_key(binding);
     let row = store.read(&key).await?;
-    let parsed = value(row.as_ref(), now)?
-        .as_ref()
-        .and_then(quota::parse_state);
+    let parsed = row.as_ref().map(|row| quota::parse_record(row, now)).transpose()?.flatten();
     Ok((parsed, check(&key, row.as_ref())))
 }
 pub(crate) struct PoolView {
@@ -225,7 +211,7 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
             vec![roster_check, quota_check],
             vec![RecordMutation::Put {
                 key: quota_key(binding),
-                record: StoredRecord::json(revision(host)?, quota::source_value(&state), None),
+                record: quota::stored_state(&state, revision(host)?)?,
             }],
         )
         .await?
@@ -277,7 +263,7 @@ pub async fn clear_guards<S: AuthorityStore, H: ClaudePoolHost>(
         },
         RecordMutation::Put {
             key: quota_key(binding),
-            record: StoredRecord::json(revision(host)?, quota::source_value(&cleared), None),
+            record: quota::stored_state(&cleared, revision(host)?)?,
         },
     ];
     Ok(commit(store, checks, mutations).await?.then_some(cleared))
