@@ -1071,8 +1071,10 @@ test("admin quota projection returns the inferred-credit refill forecast", async
       const response = await handleAdminProvidersQuotaProjection(new Request("https://ai.ubq.fi/admin/providers/quota-projection?window_days=7"));
       assert.equal(response.status, 200);
       const payload = (await response.json()) as {
+        quota: Record<string, unknown>;
         models: { provider: string; estimates: import("../src/quota-projection.ts").PaidFallbackRunwayEstimate[] }[];
       };
+      assert.equal(Object.hasOwn(payload.quota, "last_inferred_credit_quota"), false);
       const estimate = payload.models.find((entry) => entry.provider === "metered")?.estimates[0];
       assert.ok(estimate);
       assert.equal(estimate.refill_amount_credits, 40);

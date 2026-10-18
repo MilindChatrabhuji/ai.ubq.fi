@@ -501,7 +501,7 @@ export const handleAdminProvidersQuotaProjection = async (
         balance_history_bucket_ms: balanceHistoryBucketMs,
         balance_history_window_ms: balanceWindowMs,
       },
-      quota,
+      quota: { ...quota, last_inferred_credit_quota: undefined },
       models,
       // A failed scan must not masquerade as zero history: operators need to
       // distinguish "nothing settled" from "history could not be read".
