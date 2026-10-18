@@ -1,6 +1,6 @@
 //! Rich exact-client-version Codex catalog. Never substitute the official model-list envelope.
 use serde_json::{Value,json};
-use crate::{aliases::*,catalog::*,metadata::*,provider_catalog::*,util::*};
+use crate::{catalog::*,metadata::*,provider_catalog::*,util::*};
 fn description(effort:&str)->String{if effort=="none"{"No reasoning".into()}else{format!("Reasoning effort: {effort}")}}
 fn common_fields(row:&mut Value,priority:i64,forwarding:bool){
     for(key,value)in[("shell_type",json!("shell_command")),("visibility",json!("list")),("supported_in_api",json!(true)),("priority",json!(priority)),("availability_nux",Value::Null),("upgrade",Value::Null),("base_instructions",json!("")),("support_verbosity",json!(false)),("default_verbosity",Value::Null),("apply_patch_tool_type",Value::Null),("web_search_tool_type",json!("text")),("truncation_policy",json!({"mode":"tokens","limit":10000}))]{row[key]=value;}

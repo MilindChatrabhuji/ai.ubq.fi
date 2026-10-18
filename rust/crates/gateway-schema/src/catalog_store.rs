@@ -3,7 +3,7 @@ use serde::{Serialize,Deserialize};
 use gateway_core::{tuple_key::{TupleKey,ScalarKeyPart,KeyPart},query::{QueryStore,QuerySelector,QueryRequest}};
 use serde_json::{Value,json};
 use gateway_core::{GatewayError,state::{AuthorityStore,RecordKey,StoredRecord,RecordMutation,RevisionCheck,AtomicTransition,CommitOutcome,PORTABLE_STATE_VERSION}};
-use crate::{catalog_cache::*,snapshot::{ModelSnapshot,SnapshotOverrides,normalize_snapshot,compare_client_versions},util::*};
+use crate::{catalog_cache::*,snapshot::{ModelSnapshot,SnapshotOverrides,normalize_snapshot,compare_client_versions}};
 fn string_tuple(parts:&[&str])->RecordKey{TupleKey::from_scalar_parts(&parts.iter().map(|part|ScalarKeyPart::String(part)).collect::<Vec<_>>()).to_record_key()}
 pub fn auth_generation_key()->RecordKey{string_tuple(&["ubq_ai","codex_catalog_auth_generation"])}
 pub fn metadata_key(version:&str)->RecordKey{string_tuple(&["ubq_ai","codex_catalog",version])}
