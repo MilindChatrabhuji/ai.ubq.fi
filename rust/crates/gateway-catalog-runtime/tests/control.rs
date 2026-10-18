@@ -861,45 +861,211 @@ fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() {
 #[cfg(not(target_arch = "wasm32"))]
 mod native_configuration {
     use super::*;
-    use gateway_auth::{crypto::{Secret,base64url},native::NATIVE_RPC_PATH,native_auth::{AuthenticatedNativeOwner,NativeAuthHeaders,NativeAuthenticator,NativeCapability,NativeNonceAuthority,NativeTransportIdentity}};
-    use gateway_native::control_publication::{ConfiguredPaidInputs,PreparedConfigurationPublication,bootstrap_fixture_owner,fixture_owner_statement};
+    use gateway_auth::{
+        crypto::{Secret, base64url},
+        native::NATIVE_RPC_PATH,
+        native_auth::{
+            AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
+            NativeNonceAuthority, NativeTransportIdentity,
+        },
+    };
+    use gateway_native::control_publication::{
+        ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
+        fixture_owner_statement,
+    };
     use std::collections::BTreeSet;
 
     struct Nonces<'a>(&'a Store);
     impl NativeNonceAuthority for Nonces<'_> {
-        async fn consume_nonce(&self,key_id:&str,nonce:&str,valid_through_ms:i64,now_ms:i64)->Result<(),GatewayError>{
-            let key=state::source_key(&["uos_ai","fixture_native_nonce",key_id,nonce]);
-            if self.0.get(&key).is_some(){return Err(GatewayError::new(401,"Fixture native nonce replay",Some("native_replay")));}
-            let result=self.0.commit(AtomicTransition{checks:vec![gateway_core::state::RevisionCheck{key:key.clone(),expected_revision:None}],mutations:vec![RecordMutation::Put{key,record:StoredRecord::json(format!("nonce-{nonce}"),json!({"observed_at_ms":now_ms}),Some(valid_through_ms+1))}]}).await?;
-            if result!=CommitOutcome::Committed{return Err(GatewayError::new(401,"Fixture native nonce race",Some("native_replay")));}Ok(())
+        async fn consume_nonce(
+            &self,
+            key_id: &str,
+            nonce: &str,
+            valid_through_ms: i64,
+            now_ms: i64,
+        ) -> Result<(), GatewayError> {
+            let key = state::source_key(&["uos_ai", "fixture_native_nonce", key_id, nonce]);
+            if self.0.get(&key).is_some() {
+                return Err(GatewayError::new(
+                    401,
+                    "Fixture native nonce replay",
+                    Some("native_replay"),
+                ));
+            }
+            let result = self
+                .0
+                .commit(AtomicTransition {
+                    checks: vec![gateway_core::state::RevisionCheck {
+                        key: key.clone(),
+                        expected_revision: None,
+                    }],
+                    mutations: vec![RecordMutation::Put {
+                        key,
+                        record: StoredRecord::json(
+                            format!("nonce-{nonce}"),
+                            json!({"observed_at_ms":now_ms}),
+                            Some(valid_through_ms + 1),
+                        ),
+                    }],
+                })
+                .await?;
+            if result != CommitOutcome::Committed {
+                return Err(GatewayError::new(
+                    401,
+                    "Fixture native nonce race",
+                    Some("native_replay"),
+                ));
+            }
+            Ok(())
         }
     }
-    async fn proof(store:&Store,identity:&NativeTransportIdentity,body:&[u8],sequence:u8)->AuthenticatedNativeOwner{
-        let now=store.now.get();let nonce=base64url(&[sequence;32]);let mac=identity.sign(NATIVE_RPC_PATH,now,&nonce,body).unwrap();let stamp=now.to_string();
-        NativeAuthenticator::new(identity,&Nonces(store)).authenticate(NATIVE_RPC_PATH,NativeAuthHeaders{version:"1",key_id:identity.key_id(),time_ms:&stamp,nonce:&nonce,mac:&mac},body,now).await.unwrap()
+    async fn proof(
+        store: &Store,
+        identity: &NativeTransportIdentity,
+        body: &[u8],
+        sequence: u8,
+    ) -> AuthenticatedNativeOwner {
+        let now = store.now.get();
+        let nonce = base64url(&[sequence; 32]);
+        let mac = identity.sign(NATIVE_RPC_PATH, now, &nonce, body).unwrap();
+        let stamp = now.to_string();
+        NativeAuthenticator::new(identity, &Nonces(store))
+            .authenticate(
+                NATIVE_RPC_PATH,
+                NativeAuthHeaders {
+                    version: "1",
+                    key_id: identity.key_id(),
+                    time_ms: &stamp,
+                    nonce: &nonce,
+                    mac: &mac,
+                },
+                body,
+                now,
+            )
+            .await
+            .unwrap()
     }
     #[test]
-    fn actual_authenticated_owner_configuration_publisher_drives_the_catalog_bridge(){run(async{
-        let store=Store::new();let template=Store::new();template.install(false,false);
-        for key in [catalog_store::runtime_config_key(),catalog_store::codex_snapshot_key(),catalog_store::auth_generation_key()]{let row=template.get(&key).unwrap();store.put(key,&row.revision,row.value);}
-        let identity=NativeTransportIdentity::new("fixture-m11-key".into(),"fixture-m11-owner".into(),"fixture-m11-epoch".into(),[19;32],BTreeSet::from([NativeCapability::ConfigurationPublish])).unwrap();
-        let statement=fixture_owner_statement(&identity).unwrap();let verified=proof(&store,&identity,&statement,1).await;
-        bootstrap_fixture_owner(&store,&identity,&verified,store.now.get(),"actual-owner").await.unwrap();
-        let inputs=ConfiguredPaidInputs::new(Some(Secret::new("fixture-actual-surplus-secret".into())),None,json!({"candidate":"controlled-fixture"})).unwrap();
-        let prepared=PreparedConfigurationPublication::capture(&store,&identity,&inputs,"configuration-1",store.now.get()).await.unwrap();
-        let verified=proof(&store,&identity,prepared.statement(),2).await;
-        let config=prepared.publish(&store,&verified,store.now.get(),"actual-config").await.unwrap();
-        let host=Host::new(&store,false,false);host.publication.borrow_mut().providers.insert(CatalogProvider::Surplus,ProviderBinding{identity:inputs.binding(PaidProvider::Surplus).unwrap()});
-        assert_eq!(config.surplus_binding,inputs.binding(PaidProvider::Surplus));
-        let runtime=CatalogRuntime::new();host.queue(surplus("actual-owned-model"));runtime.publish_paid_routing(&store,&host).await.unwrap();
-        assert_eq!(store.projection().policy.models["actual-owned-model"],vec![PaidProvider::Surplus]);
-        let retained=serde_json::to_string(&*store.rows.borrow()).unwrap();assert!(!retained.contains("fixture-actual-surplus-secret"));
-        let next=ConfiguredPaidInputs::new(Some(Secret::new("fixture-rotated-surplus-secret".into())),None,json!({"candidate":"controlled-fixture"})).unwrap();
-        let prepared=PreparedConfigurationPublication::capture(&store,&identity,&next,"configuration-2",store.now.get()).await.unwrap();
-        let verified=proof(&store,&identity,prepared.statement(),3).await;prepared.publish(&store,&verified,store.now.get(),"actual-config-2").await.unwrap();
-        assert!(store.get(&keys::paid_control_observation(PaidProvider::Surplus)).is_none());
-        assert!(runtime.publish_paid_routing(&store,&host).await.is_err());
-        host.publication.borrow_mut().providers.insert(CatalogProvider::Surplus,ProviderBinding{identity:next.binding(PaidProvider::Surplus).unwrap()});host.queue(surplus("new-owned-model"));
-        runtime.publish_paid_routing(&store,&host).await.unwrap();assert!(!store.projection().policy.models.contains_key("actual-owned-model"));assert!(store.projection().policy.models.contains_key("new-owned-model"));
-    });}
+    fn actual_authenticated_owner_configuration_publisher_drives_the_catalog_bridge() {
+        run(async {
+            let store = Store::new();
+            let template = Store::new();
+            template.install(false, false);
+            for key in [
+                catalog_store::runtime_config_key(),
+                catalog_store::codex_snapshot_key(),
+                catalog_store::auth_generation_key(),
+            ] {
+                let row = template.get(&key).unwrap();
+                store.put(key, &row.revision, row.value);
+            }
+            let identity = NativeTransportIdentity::new(
+                "fixture-m11-key".into(),
+                "fixture-m11-owner".into(),
+                "fixture-m11-epoch".into(),
+                [19; 32],
+                BTreeSet::from([NativeCapability::ConfigurationPublish]),
+            )
+            .unwrap();
+            let statement = fixture_owner_statement(&identity).unwrap();
+            let verified = proof(&store, &identity, &statement, 1).await;
+            bootstrap_fixture_owner(
+                &store,
+                &identity,
+                &verified,
+                store.now.get(),
+                "actual-owner",
+            )
+            .await
+            .unwrap();
+            let inputs = ConfiguredPaidInputs::new(
+                Some(Secret::new("fixture-actual-surplus-secret".into())),
+                None,
+                json!({"candidate":"controlled-fixture"}),
+            )
+            .unwrap();
+            let prepared = PreparedConfigurationPublication::capture(
+                &store,
+                &identity,
+                &inputs,
+                "configuration-1",
+                store.now.get(),
+            )
+            .await
+            .unwrap();
+            let verified = proof(&store, &identity, prepared.statement(), 2).await;
+            let config = prepared
+                .publish(&store, &verified, store.now.get(), "actual-config")
+                .await
+                .unwrap();
+            let host = Host::new(&store, false, false);
+            host.publication.borrow_mut().providers.insert(
+                CatalogProvider::Surplus,
+                ProviderBinding {
+                    identity: inputs.binding(PaidProvider::Surplus).unwrap(),
+                },
+            );
+            assert_eq!(
+                config.surplus_binding,
+                inputs.binding(PaidProvider::Surplus)
+            );
+            let runtime = CatalogRuntime::new();
+            host.queue(surplus("actual-owned-model"));
+            runtime.publish_paid_routing(&store, &host).await.unwrap();
+            assert_eq!(
+                store.projection().policy.models["actual-owned-model"],
+                vec![PaidProvider::Surplus]
+            );
+            let retained = serde_json::to_string(&*store.rows.borrow()).unwrap();
+            assert!(!retained.contains("fixture-actual-surplus-secret"));
+            let next = ConfiguredPaidInputs::new(
+                Some(Secret::new("fixture-rotated-surplus-secret".into())),
+                None,
+                json!({"candidate":"controlled-fixture"}),
+            )
+            .unwrap();
+            let prepared = PreparedConfigurationPublication::capture(
+                &store,
+                &identity,
+                &next,
+                "configuration-2",
+                store.now.get(),
+            )
+            .await
+            .unwrap();
+            let verified = proof(&store, &identity, prepared.statement(), 3).await;
+            prepared
+                .publish(&store, &verified, store.now.get(), "actual-config-2")
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .get(&keys::paid_control_observation(PaidProvider::Surplus))
+                    .is_none()
+            );
+            assert!(runtime.publish_paid_routing(&store, &host).await.is_err());
+            host.publication.borrow_mut().providers.insert(
+                CatalogProvider::Surplus,
+                ProviderBinding {
+                    identity: next.binding(PaidProvider::Surplus).unwrap(),
+                },
+            );
+            host.queue(surplus("new-owned-model"));
+            runtime.publish_paid_routing(&store, &host).await.unwrap();
+            assert!(
+                !store
+                    .projection()
+                    .policy
+                    .models
+                    .contains_key("actual-owned-model")
+            );
+            assert!(
+                store
+                    .projection()
+                    .policy
+                    .models
+                    .contains_key("new-owned-model")
+            );
+        });
+    }
 }
