@@ -12,6 +12,7 @@ export const copyOps = async (destination: string): Promise<void> => {
   for (const name of [
     "io.ts",
     "deploy-lock.ts",
+    "deploy-lock-bun.ts",
     "assert-bun-store.ts",
     "bun-runtime.ts",
     "release-artifact.ts",
