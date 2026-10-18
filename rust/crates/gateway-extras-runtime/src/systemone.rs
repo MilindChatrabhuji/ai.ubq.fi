@@ -71,7 +71,7 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
     match result {
         Err(failure) => {
             if failure.quota_refusal {
-                let mut r = ExtrasResponse::error(failure.error.clone());
+                let mut r = ExtrasResponse::error(failure.error.as_ref().clone());
                 r.headers.extend(failure.headers.clone());
                 r.upstream_errors.push(failure);
                 return Ok(r);
@@ -101,11 +101,11 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
                 ));
                 r.health.push(observed(result.status));
                 r.upstream_errors.push(DispatchFailure {
-                    error: GatewayError::new(
+                    error: Box::new(GatewayError::new(
                         status,
                         "System One upstream error",
                         Some("openrouter_upstream_error"),
-                    ),
+                    )),
                     headers: result.headers,
                     quota_refusal: false,
                     upstream_status: Some(result.status),

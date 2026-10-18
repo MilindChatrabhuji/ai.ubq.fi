@@ -235,10 +235,12 @@ impl ExtrasHost for Host {
         &self,
         _: ExtrasProvider,
     ) -> Result<Option<PrepareOptions>, GatewayError> {
-        Ok(self.0.configured.get().then(|| {
-            let mut o = PrepareOptions::default();
-            o.auth.secret = "fixture-not-a-credential".into();
-            o
+        Ok(self.0.configured.get().then(|| PrepareOptions {
+            auth: gateway_providers::types::AuthMaterial {
+                secret: "fixture-not-a-credential".into(),
+                ..Default::default()
+            },
+            ..Default::default()
         }))
     }
     async fn image_base_model(&self) -> Result<Option<String>, GatewayError> {
@@ -918,4 +920,34 @@ fn base64_vectors_use_source_little_endian_float32_output_without_forwarding_the
     assert_eq!(bytes.len(), 256 * 4);
     assert_eq!(&bytes[..4], &1.0f32.to_le_bytes());
     assert!(host.0.calls.borrow()[0].1.get("encoding_format").is_none());
+}
+
+#[test]
+fn provider_configuration_and_invalid_vector_statuses_stay_distinct() {
+    let (store, host, auth, ctx) = setup();
+    let rt = ExtrasRuntime::new(store, host.clone());
+    host.0.configured.set(false);
+    let missing = run(rt.handle(request(
+        ExtrasRoute::Embeddings,
+        embedding(json!("a")),
+        &auth,
+        &ctx,
+    )))
+    .unwrap();
+    assert_eq!(missing.status, 503);
+    assert_eq!(host.count(), 0);
+    host.0.configured.set(true);
+    host.reply(200, json!({"data":[{"embedding":vec![1.0;255]}]}));
+    let malformed = run(rt.handle(request(
+        ExtrasRoute::Embeddings,
+        embedding(json!("a")),
+        &auth,
+        &ctx,
+    )))
+    .unwrap();
+    assert_eq!(malformed.status, 502);
+    assert_eq!(
+        malformed.body["error"]["code"],
+        "upstream_dimension_mismatch"
+    );
 }

@@ -290,16 +290,20 @@ async fn succeeded<S: QueryStore, H: ExtrasHost>(
     r.usage = (job.usage_total_tokens > 0).then(|| usage(job.usage_total_tokens));
     Ok(r)
 }
+struct JobAttempt<'a> {
+    owner: &'a str,
+    seed: &'a Secret,
+    entry: Option<&'a StoredRecord>,
+    job: Job,
+    options: &'a gateway_providers::types::PrepareOptions,
+    deadline: i64,
+}
 async fn attempt<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
-    owner: &str,
-    seed: &Secret,
-    entry: Option<&StoredRecord>,
-    mut job: Job,
-    options: &gateway_providers::types::PrepareOptions,
-    deadline: i64,
+    input: JobAttempt<'_>,
 ) -> Result<ExtrasResponse, GatewayError> {
+    let JobAttempt { owner, seed, entry, mut job, options, deadline } = input;
     let at = now(host)?;
     if let Some(until) = job.locked_until_ms.filter(|e| *e > at) {
         let mut r = response(&job, None, 202);
@@ -553,12 +557,14 @@ pub(crate) async fn create<S: QueryStore, H: ExtrasHost>(
     attempt(
         store,
         host,
-        &owner,
-        &seed,
-        row.as_ref(),
-        value,
-        &options,
-        started + TIMEOUT_MS,
+        JobAttempt {
+            owner: &owner,
+            seed: &seed,
+            entry: row.as_ref(),
+            job: value,
+            options: &options,
+            deadline: started + TIMEOUT_MS,
+        },
     )
     .await
 }
@@ -620,12 +626,14 @@ pub(crate) async fn get<S: QueryStore, H: ExtrasHost>(
     attempt(
         store,
         host,
-        &owner,
-        &seed,
-        row.as_ref(),
-        job,
-        &options,
-        started + TIMEOUT_MS,
+        JobAttempt {
+            owner: &owner,
+            seed: &seed,
+            entry: row.as_ref(),
+            job: job,
+            options: &options,
+            deadline: started + TIMEOUT_MS,
+        },
     )
     .await
 }

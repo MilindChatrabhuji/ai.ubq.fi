@@ -93,7 +93,7 @@ pub struct UpstreamResponse {
 }
 #[derive(Clone, Debug)]
 pub struct DispatchFailure {
-    pub error: GatewayError,
+    pub error: Box<GatewayError>,
     pub headers: Headers,
     /// Quota failure is independent of upstream rejection or transport failure.
     pub quota_refusal: bool,
@@ -105,7 +105,7 @@ pub struct DispatchFailure {
 impl DispatchFailure {
     pub fn transport(error: GatewayError) -> Self {
         Self {
-            error,
+            error: Box::new(error),
             headers: Headers::new(),
             quota_refusal: false,
             upstream_status: None,

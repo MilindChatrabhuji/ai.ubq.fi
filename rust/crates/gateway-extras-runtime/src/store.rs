@@ -1,4 +1,4 @@
-use crate::types::{ExtrasHost, ExtrasResponse};
+use crate::types::ExtrasHost;
 use gateway_auth::crypto::{sha256_hex, uuid_from_random};
 use gateway_core::{
     GatewayError,
@@ -26,7 +26,9 @@ pub(crate) fn invalid(message: impl Into<String>, param: Option<&str>) -> Gatewa
     GatewayError::new(400, message, Some("invalid_request_error")).with_param(param)
 }
 pub(crate) fn server(message: impl Into<String>, code: &str) -> GatewayError {
-    GatewayError::unavailable(message, code).with_param(None)
+    GatewayError::new(502, message, Some(code))
+        .with_type("server_error")
+        .with_param(None)
 }
 pub(crate) fn now<H: ExtrasHost>(host: &H) -> Result<i64, GatewayError> {
     let n = host.now_ms();

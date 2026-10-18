@@ -192,7 +192,7 @@ pub(crate) async fn images<H: ExtrasHost>(
         })
         .flatten();
     let mut response = if let Some((Err(failure), _)) = results.first() {
-        let mut r = ExtrasResponse::error(failure.error.clone());
+        let mut r = ExtrasResponse::error(failure.error.as_ref().clone());
         r.headers.extend(failure.headers.clone());
         r.upstream_errors.push(failure.clone());
         r
@@ -206,7 +206,7 @@ pub(crate) async fn images<H: ExtrasHost>(
             let result = match result {
                 Ok(r) => r,
                 Err(e) => {
-                    failure = Some(ExtrasResponse::error(e.error.clone()));
+                    failure = Some(ExtrasResponse::error(e.error.as_ref().clone()));
                     break;
                 }
             };

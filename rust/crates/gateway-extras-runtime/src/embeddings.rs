@@ -13,10 +13,11 @@ use gateway_providers::{
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 pub(crate) fn configured_error() -> GatewayError {
-    server(
+    GatewayError::unavailable(
         "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
         "server_error",
     )
+    .with_param(None)
 }
 fn retry_after(headers: &Headers, at: i64) -> Option<u64> {
     let value = headers
@@ -55,10 +56,10 @@ pub(crate) async fn fetch_chunk<H: ExtrasHost>(
         .await?;
     if !(200..300).contains(&response.status) {
         return Err(DispatchFailure {
-            error: server(
+            error: Box::new(server(
                 format!("Voyage embeddings failed ({}).", response.status),
                 "upstream_error",
-            ),
+            )),
             headers: response.headers.clone(),
             quota_refusal: false,
             upstream_status: Some(response.status),
@@ -327,13 +328,15 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
                                 return Ok(idempotency::unavailable());
                             }
                         }
-                        let mut r = ExtrasResponse::error(failure.error.clone());
+                        let mut r = ExtrasResponse::error(failure.error.as_ref().clone());
                         r.headers.extend(failure.headers.clone());
                         r.upstream_errors.push(failure);
                         return Ok(r);
                     }
                     let Some(status) = failure.upstream_status else {
-                        return Ok(lease.ambiguous(store, host).await);
+                        let mut response = lease.ambiguous(store, host).await;
+                        response.upstream_errors.push(failure);
+                        return Ok(response);
                     };
                     let wait = failure.retry_after_ms.unwrap_or(backoff);
                     let mut r = ExtrasResponse::error(server(
