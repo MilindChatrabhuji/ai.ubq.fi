@@ -9,8 +9,12 @@ mod projection;
 pub use capture::{PrivateCapture, SourceEntry};
 pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
 pub use gateway_admin_data::profile::{CanonicalDates, SourceDateHost};
-pub use inverse::export_latest;
+pub use inverse::{
+    ArtifactContext, CustodyRecord, PrivateRollbackBundle, export_latest, export_rollback_bundle,
+};
+pub use projection::known_source_family;
 
+use gateway_core::source_json::SourceJson;
 use gateway_core::{
     GatewayError,
     state::{RecordKey, StoredRecord},
@@ -34,6 +38,7 @@ pub enum Transform {
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Mapping {
+    #[serde(with = "source_storage")]
     source: SourceEntry,
     // Only non-secret transformed source rows need an original value sidecar.
     transform: Transform,
@@ -85,9 +90,28 @@ fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
             }),
             DecodedKeyPart::Number(v) if v.is_finite() => Ok(serde_json::json!(v)),
             DecodedKeyPart::Boolean(v) => Ok(Value::Bool(v)),
-            _ => Err(unavailable(
-                "A new non-scalar application key requires its original typed mapping",
-            )),
+            DecodedKeyPart::Bytes(bytes)=>Ok(serde_json::json!({"type":"Uint8Array","value":gateway_admin_data::profile::encode_base64(&bytes)})),
+            DecodedKeyPart::BigInt{negative,magnitude}=>Ok(serde_json::json!({"type":"bigint","value":crate::inverse::decimal_key(negative,&magnitude)})),
+            DecodedKeyPart::Number(value)=>Ok(serde_json::json!({"type":"number","value":if value.is_nan(){"NaN"}else if value.is_sign_negative(){"-Infinity"}else{"Infinity"}})),
         })
         .collect()
+}
+
+// Private metadata stores source JSON as an explicit raw document string. It never
+// treats a surrogate as scalar text or reinterprets a source object as codec tags.
+mod source_storage {
+    use super::*;
+    pub fn serialize<S: serde::Serializer>(
+        entry: &SourceEntry,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let raw = serde_json::to_string(entry).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&raw)
+    }
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<SourceEntry, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        serde_json::from_str(&raw).map_err(serde::de::Error::custom)
+    }
 }

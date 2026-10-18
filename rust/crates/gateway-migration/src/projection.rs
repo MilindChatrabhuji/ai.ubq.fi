@@ -29,11 +29,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         return Ok(());
     }
     if row.record.value_encoding != gateway_core::value::ValueEncoding::Json {
-        if p.first()
-            .and_then(Value::as_str)
-            .is_some_and(|s| ["default", "key", "agent_messages", "embeddings"].contains(&s))
-            && known(p)
-        {
+        if retained_typed(p) && known(p) {
             return Ok(());
         }
         return Err(invalid(
@@ -206,65 +202,97 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     Ok(())
 }
 
-pub(crate) fn known(p: &[Value]) -> bool {
-    // Named source families only. Unknown namespaces never become an import capability.
+pub fn known_source_family(p: &[Value]) -> bool {
     const UOS: &[&str] = &[
+        "admin_error_log",
+        "api_key_usage",
+        "api_keys",
         "auth",
-        "runtime_config",
-        "provider_selection",
+        "claude_code_access",
         "claude_code_accounts",
         "claude_code_quota",
-        "kernel_quota",
-        "kernel_pubkeys",
-        "kernel_policy_queue",
-        "codex_instructions",
-        "codex_instructions_chunk",
-        "codex_reset_usage",
-        "codex_reset_redemption",
-        "codex_reset_shadow_decision",
         "codex_account_models",
         "codex_account_routing",
         "codex_active_account",
+        "codex_auth_refresh",
+        "codex_banked_reset_usage",
         "codex_capacity_routing",
+        "codex_instructions",
+        "codex_instructions_chunk",
+        "codex_live_calls",
+        "codex_models_whitelist",
         "codex_overage_usage",
-        "codex_overage_settings",
-        "codex_banked_reset_settings",
-        "paid_fallback",
-        "metered_quota",
-        "provider_capacity",
-        "migrations",
-        "voyage_api_key",
-        "api_key_usage",
+        "codex_reset_redemption",
+        "codex_reset_shadow_decision",
+        "codex_reset_usage",
+        "codex_session_activity",
         "debug_routing",
-        "error_log",
-        "admin_audit",
-        "errors",
-        "failure_capture",
+        "kernel_policy_queue",
+        "kernel_pubkeys",
+        "kernel_quota",
+        "metered_quota",
+        "migrations",
+        "paid_fallback",
+        "prompt_cache_analytics",
+        "prompt_cache_scope_experiment",
+        "prompt_cache_telemetry_gate",
+        "provider_capacity",
+        "provider_health",
+        "provider_selection",
+        "runtime_config",
+        "sentinel_incident",
+        "sentinel_replay",
+        "voyage_api_key",
     ];
     const UBQ: &[&str] = &[
         "api_keys",
-        "kernel_auth",
-        "codex_auth",
-        "codex_models",
-        "codex_catalog",
-        "codex_catalog_chunk",
-        "codex_catalog_source_chunk",
-        "codex_catalog_auth_generation",
-        "codex_catalog_refresh_lease",
         "claude_code_auth",
+        "claude_code_quota",
         "claude_code_workspace",
+        "codex_auth",
+        "codex_catalog",
+        "codex_catalog_auth_generation",
+        "codex_catalog_chunk",
+        "codex_catalog_refresh_lease",
+        "codex_catalog_source_chunk",
+        "codex_models",
+        "kernel_auth",
     ];
-    (p.first() == Some(&json!("uos_ai"))
+    (p.first() == Some(&serde_json::json!("uos_ai"))
         && p.get(1)
             .and_then(Value::as_str)
             .is_some_and(|s| UOS.contains(&s)))
-        || (p.first() == Some(&json!("ubq_ai"))
+        || (p.first() == Some(&serde_json::json!("ubq_ai"))
             && p.get(1)
                 .and_then(Value::as_str)
                 .is_some_and(|s| UBQ.contains(&s)))
         || p.first()
             .and_then(Value::as_str)
             .is_some_and(|s| ["default", "key", "agent_messages", "embeddings"].contains(&s))
+}
+pub(crate) fn known(p: &[Value]) -> bool {
+    known_source_family(p)
+}
+fn retained_typed(p: &[Value]) -> bool {
+    p.first()
+        .and_then(Value::as_str)
+        .is_some_and(|s| ["default", "key", "agent_messages", "embeddings"].contains(&s))
+        || (p.first() == Some(&serde_json::json!("uos_ai"))
+            && p.get(1).and_then(Value::as_str).is_some_and(|s| {
+                [
+                    "admin_error_log",
+                    "api_keys",
+                    "sentinel_incident",
+                    "sentinel_replay",
+                    "provider_capacity",
+                    "provider_health",
+                    "prompt_cache_analytics",
+                    "prompt_cache_scope_experiment",
+                    "prompt_cache_telemetry_gate",
+                    "codex_session_activity",
+                ]
+                .contains(&s)
+            }))
 }
 pub(crate) fn outstanding(row: &PaidAttempt) -> bool {
     matches!(

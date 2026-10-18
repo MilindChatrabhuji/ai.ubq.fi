@@ -386,6 +386,32 @@ pub fn decode_response(
         let mut decoder = crate::sse::StreamDecoder::new(plan.clone());
         let mut events = decoder.push(bytes)?;
         events.extend(decoder.finish()?);
+        // The decoder stops at the first terminal. An error must not fall back to
+        // an earlier response.created payload or the generic completed sentinel.
+        if plan.surface == ClientSurface::Responses
+            && let Some(event) = events.iter().find(|event| event.data["type"] == "error")
+        {
+            let body = if plan.stream {
+                output_headers.insert("Content-Type".into(), "text/event-stream".into());
+                event.data.clone()
+            } else {
+                json!({"error":{
+                    "message":event.data["message"].as_str().unwrap_or("Upstream Responses stream ended unexpectedly."),
+                    "type":"invalid_request_error",
+                    "code":event.data["code"].as_str().unwrap_or("server_error")
+                }})
+            };
+            return Ok(DecodedResponse {
+                status: if plan.stream { status } else { 502 },
+                headers: output_headers,
+                body,
+                events,
+                terminal: Some(SemanticTerminal::Error),
+                usage: None,
+                native_replay: None,
+                raw_body: None,
+            });
+        }
         let body = events
             .iter()
             .rev()
