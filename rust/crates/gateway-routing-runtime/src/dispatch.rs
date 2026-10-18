@@ -62,6 +62,30 @@ impl<
                 .ensure_admission_current(admission, self.now()?)
                 .await?;
         }
+        if let Some(reservation) = &record.paid {
+            let synthetic = match self.plan.hops.get(record.cursor) {
+                Some(crate::policy::RouteHop::Paid { provider, model, synthetic })
+                    if provider == &reservation.provider && model == &record.model => *synthetic,
+                _ => return Err(journal::unavailable("Paid dispatch no longer matches the original pinned hop.").into()),
+            };
+            let input = gateway_authority::paid::PaidRequest {
+                key_id: reservation.key_id.clone(), request_id: reservation.request_id.clone(),
+                attempt_id: reservation.attempt_id.clone(), provider: reservation.provider,
+                model: record.model.clone(), route: self.input.context.route.clone(),
+                path: if self.input.surface == gateway_providers::ClientSurface::Chat { "/v1/chat/completions" } else { "/v1/responses" }.into(),
+                stream: self.input.raw["stream"] == true,
+                reasoning: self.input.raw["reasoning"]["effort"].as_str().or_else(|| self.input.raw["reasoning_effort"].as_str()).map(str::to_owned),
+                created_at_ms: self.input.context.started_at_ms,
+            };
+            let context = self.paid_context(reservation.provider, synthetic);
+            let receipt = self.authority().authorize_paid_route(&input, &context, self.now()?).await?;
+            Self::check_paid_credential(&record.fence, &receipt)?;
+            let authorization = if synthetic { gateway_authority::paid::PaidAuthorization::DirectPaidModel } else { self.paid_authorization(&row).await? };
+            match self.authority().reserve_paid(&input, &authorization, &receipt, self.now()?).await? {
+                gateway_authority::paid::PaidAdmission::Existing(current) if current == *reservation => {},
+                _ => return Err(journal::unavailable("The paid reservation changed before dispatch.").into()),
+            }
+        }
         let mut api = row.api.clone();
         if let Some(reservation) = &api {
             api = Some(

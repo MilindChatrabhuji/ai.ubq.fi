@@ -13,7 +13,7 @@ impl ExtrasFamily{
     fn child_id(self,parent:&str,index:u32)->String{match self{Self::ImageGenerations|Self::ImageEdits if index>0=>format!("{parent}:image:{}:{}",if self==Self::ImageGenerations{"generations"}else{"edits"},index+1),_=>parent.into()}}
 }
 #[derive(Clone,Debug,Deserialize,PartialEq,Serialize)]
-pub(crate) struct ChildRecord{pub nonce:String,pub request_id:String,pub phase:Phase,pub transport_started:bool,pub known_not_started:bool,pub settled:bool}
+pub(crate) struct ChildRecord{pub nonce:String,pub request_id:String,pub phase:Phase,pub transport_started:bool,pub known_not_started:bool,pub settled:bool,pub model_sibling_retries:u8}
 #[derive(Clone,Debug,Deserialize,PartialEq,Serialize)]
 pub(crate) struct ExtraDispatch{pub nonce:String,pub provider:UpstreamProvider,pub transport_started:bool}
 #[derive(Clone,Debug,Deserialize,PartialEq,Serialize)]
@@ -70,14 +70,29 @@ impl<S:QueryStore+Clone,I:TokenSource+Clone,C:AuthorityClock+Clone+'static,H:Rou
         self.authority().ensure_admission_current(admission,self.clock.now_ms()?).await?;Ok(ticket)
     }
     pub async fn image_refusal(&self,attempt:&ImageChildAttempt,failure:AttemptFailure)->RoutingResult<RefusalDecision>{
-        let (_,row)=journal::load(&self.store,&self.parent).await?;settlement::ensure_active(&row)?;self.check(&attempt.scope,&row)?;
+        let (_,row)=journal::load(&self.store,&self.parent).await?;settlement::ensure_active(&row)?;let current=self.check(&attempt.scope,&row)?;
+        if current.settled || (current.transport_started && failure.transport==TransportState::NotStarted) {return Err(journal::unavailable("Image refusal conflicts with its child transport state.").into());}
         if failure.cancelled||self.host.cancelled()||matches!(failure.failure,gateway_providers::policy::HopFailure::Cancelled|gateway_providers::policy::HopFailure::Deadline){return Ok(RefusalDecision::Abort);}
         if failure.semantic_committed{return Ok(RefusalDecision::Return);}
         let CredentialFence::Codex{admission,..}=&attempt.credential else{return Err(journal::unavailable("Image refusal lacks a current Codex binding.").into());};
         let model=&attempt.request.decode.model;let mut retry=false;
         if let Some(block)=crate::classify::codex_quota(failure.status,&failure.headers,&failure.body,failure.body_complete,self.clock.now_ms()?){retry=self.authority().record_quota_block(admission,block,self.clock.now_ms()?).await?;}
-        else if failure.status==Some(401){let version=admission.binding.credential_version.0.clone();let published=if !row.refreshed_versions.contains(&version){journal::change(&self.store,&self.tokens,&self.parent,self.clock.now_ms()?,&[],|j|{j.refreshed_versions.push(version.clone());Ok(())}).await?;self.host.refresh_codex(&attempt.credential).await?==RefreshOutcome::Published}else{false};retry=published||self.authority().mark_credential_invalid(admission,self.clock.now_ms()?).await?;}
-        else if let Some(detail)=crate::classify::unsupported_model(failure.status,&failure.body,failure.body_complete,model){retry=self.authority().learn_model_unavailable(admission,&detail,self.clock.now_ms()?).await?;}
+        else if failure.status==Some(401){
+            let version=admission.binding.credential_version.0.clone();
+            let claimed=std::cell::Cell::new(false);
+            journal::change(&self.store,&self.tokens,&self.parent,self.clock.now_ms()?,&[],|j|{
+                claimed.set(!j.refreshed_versions.contains(&version));
+                if claimed.get(){j.refreshed_versions.push(version.clone());}Ok(())
+            }).await?;
+            let published=claimed.get()&&self.host.refresh_codex(&attempt.credential).await?==RefreshOutcome::Published;
+            retry=published||self.authority().mark_credential_invalid(admission,self.clock.now_ms()?).await?;
+        }
+        else if let Some(detail)=crate::classify::unsupported_model(failure.status,&failure.body,failure.body_complete,model){
+            if self.authority().learn_model_unavailable(admission,&detail,self.clock.now_ms()?).await?{
+                if current.model_sibling_retries>=1{return Err(GatewayError::new(404,format!("The model '{model}' is not available for these subscriptions."),Some("model_not_found")).into());}
+                journal::change(&self.store,&self.tokens,&self.parent,self.clock.now_ms()?,&[],|j|{let child=j.children.get_mut(attempt.scope.index as usize).ok_or_else(||journal::unavailable("Image child disappeared."))?;child.model_sibling_retries+=1;Ok(())}).await?;retry=true;
+            }
+        }
         Ok(if retry{RefusalDecision::Continue}else{RefusalDecision::Return})
     }
     async fn family(&self)->Result<ExtrasFamily,GatewayError>{let (_,row)=journal::load(&self.store,&self.parent).await?;settlement::ensure_active(&row)?;row.extras_family.ok_or_else(||journal::unavailable("An extras scope requires the original typed route admission."))}
@@ -89,7 +104,7 @@ impl<S:QueryStore+Clone,I:TokenSource+Clone,C:AuthorityClock+Clone+'static,H:Rou
         if family==ExtrasFamily::SystemOne&&count!=1{return Err(journal::unavailable("SystemOne has one logical dispatch child.").into());}
         let (_,prior)=journal::load(&self.store,&self.parent).await?;
         let children=if let Some(existing)=prior.extras_child_count{if existing!=count{return Err(journal::unavailable("The original extras plan already has another child count.").into());}prior.children}else{
-            let children=(0..count).map(|index|Ok(ChildRecord{nonce:self.tokens.next_token()?,request_id:family.child_id(&self.parent,index),phase:Phase::Prepared,transport_started:false,known_not_started:false,settled:false})).collect::<Result<Vec<_>,GatewayError>>()?;
+            let children=(0..count).map(|index|Ok(ChildRecord{nonce:self.tokens.next_token()?,request_id:family.child_id(&self.parent,index),phase:Phase::Prepared,transport_started:false,known_not_started:false,settled:false,model_sibling_retries:0})).collect::<Result<Vec<_>,GatewayError>>()?;
             journal::change(&self.store,&self.tokens,&self.parent,self.clock.now_ms()?,&[],|j|{settlement::ensure_active(j)?;if j.extras_child_count.is_some(){return Err(journal::unavailable("Another child plan was published."));}j.extras_child_count=Some(count);j.children=children.clone();Ok(())}).await?;children
         };
         Ok(children.into_iter().enumerate().map(|(index,child)|ChildScope{parent:self.parent.clone(),nonce:child.nonce,request_id:child.request_id,index:index as u32,family}).collect())
@@ -102,6 +117,7 @@ impl<S:QueryStore+Clone,I:TokenSource+Clone,C:AuthorityClock+Clone+'static,H:Rou
     /// child receives the one original source provider-dispatch capability.
     pub async fn before_dispatch(&self,child:&ChildScope)->RoutingResult<DispatchTicket>{
         let _guard=self.lock.lock().await;if self.host.cancelled(){return Err(self.host.cancellation_error().into());}
+        if child.family==ExtrasFamily::EmbeddingJobPoll{return Err(journal::unavailable("Embedding job reads have no upstream dispatch capability.").into());}
         let (_,row)=journal::load(&self.store,&self.parent).await?;settlement::ensure_active(&row)?;let current=self.check(child,&row)?;if current.settled{return Err(journal::unavailable("A settled child cannot dispatch again.").into());}
         let dispatch=if let Some(dispatch)=row.extras_dispatch{dispatch}else{
             let mut api=row.api.clone();if let Some(reservation)=&api{api=Some(self.authority().resolve_deferred_api(reservation,self.clock.now_ms()?).await?);}

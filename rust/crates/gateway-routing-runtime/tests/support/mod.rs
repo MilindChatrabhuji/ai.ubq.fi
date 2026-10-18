@@ -7,8 +7,7 @@ use gateway_authority::{
 use gateway_core::{
     GatewayError,
     identity::{
-        ApiKeyId, CredentialVersion, PoolVersionstamp, PrincipalId, RequestContext, RequestId,
-        RoutingAccountHash, SubscriptionSelectionHash,
+        ApiKeyId, PoolVersionstamp, PrincipalId, RequestContext, RequestId,
     },
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     state::{
@@ -215,26 +214,27 @@ pub fn seed_key(store: &Store) {
         },
     );
 }
+pub fn source_account(id: &str) -> gateway_auth::provider_credentials::CodexSourceAccount {
+    gateway_auth::provider_credentials::CodexSourceAccount {
+        access_token: Secret::new(format!("fixture-access-{id}")),
+        refresh_token: Secret::new(format!("fixture-refresh-{id}")),
+        account_id: id.into(), updated_at_ms: NOW as f64, native_owner: None,
+    }
+}
 pub fn seed_pool(store: &Store) {
-    store.seed(
-        keys::pool(),
-        SubscriptionPool {
-            v: 1,
-            pool_versionstamp: PoolVersionstamp("pool-original".into()),
-            accounts: ["a", "b"]
-                .map(|id| PoolAccount {
-                    account_id_hash: RoutingAccountHash(format!("route-{id}")),
-                    admin_account_hash: SubscriptionSelectionHash(format!("admin-{id}")),
-                    credential_version: CredentialVersion(format!("credential-{id}")),
-                    enabled: true,
-                })
-                .to_vec(),
-        },
-    );
-    store.seed(
-        source_key(),
-        json!({"fixture_owner":"native","generation":1}),
-    );
+    let accounts = ["a", "b"].map(source_account).to_vec();
+    let source = gateway_auth::provider_credentials::CodexSourcePool { accounts: accounts.clone(), updated_at_ms: NOW as f64 };
+    let revision = "pool-original";
+    store.rows.lock().unwrap().insert(source_key().0, StoredRecord::json(revision, source.private_source_value(), None));
+    store.seed(keys::pool(), SubscriptionPool {
+        v: 1, pool_versionstamp: PoolVersionstamp(revision.into()),
+        accounts: accounts.iter().map(|account| {
+            let identity = account.identity();
+            PoolAccount { account_id_hash: identity.routing_account_hash,
+                admin_account_hash: identity.administrative_account_hash,
+                credential_version: identity.credential_version, enabled: true }
+        }).collect(),
+    });
 }
 pub fn source_key() -> RecordKey {
     gateway_auth::provider_credentials::codex_source_pool_key()
@@ -351,6 +351,17 @@ impl RoutingHost for Host {
                 },
                 options: PrepareOptions::default(),
             })
+        } else if matches!(input.provider, gateway_core::provider::UpstreamProvider::Surplus | gateway_core::provider::UpstreamProvider::Metered) {
+            let config = self.store.value(keys::paid_control_config());
+            let mut published = direct_credential(input.provider, &Secret::new("fixture-paid-secret".into()));
+            published.fence = CredentialFence::Paid {
+                provider: input.provider,
+                owner_id: config["owner_id"].as_str().unwrap_or_default().into(),
+                owner_epoch: config["owner_epoch"].as_str().unwrap_or_default().into(),
+                configuration_generation: config["generation"].as_str().unwrap_or_default().into(),
+                credential_binding: config[if input.provider == gateway_core::provider::UpstreamProvider::Surplus {"surplus_binding"} else {"openlux_binding"}].as_str().unwrap_or_default().into(),
+            };
+            Ok(published)
         } else {
             Ok(direct_credential(
                 input.provider,

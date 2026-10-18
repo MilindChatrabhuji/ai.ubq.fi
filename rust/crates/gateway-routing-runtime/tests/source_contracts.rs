@@ -14,6 +14,186 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 use support::*;
 
+fn paid_input(store: &Store, id: &str, model: &str) -> gateway_routing_runtime::RoutingInput {
+    use gateway_authority::{keys, paid_control::*};
+    use gateway_core::provider::PaidProvider;
+    use gateway_core::state::AuthorityStore;
+    let mut request = input(id, model, &["surplus", "openlux"]);
+    let models = ["paid-model", "deepseek-v4.1-flash"].map(|id| json!({
+        "id":id,"supported_endpoint_types":["openai-response","openai"],
+        "supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002,
+    })).to_vec();
+    for provider in ["surplus", "openlux"] {
+        request.catalog.providers.get_mut(provider).unwrap().models = models.clone();
+    }
+    store.seed(keys::paid_control_owner(), PaidControlOwner { v:1, owner_id:"fixture-owner".into(), owner_epoch:"fixture-epoch".into(), key_fingerprint:"fixture-key".into() });
+    store.seed(keys::paid_control_config(), PaidControlConfig {
+        v:1,owner_id:"fixture-owner".into(),owner_epoch:"fixture-epoch".into(),generation:"fixture-generation".into(),configuration_fingerprint:"fixture-config".into(),
+        surplus_binding:Some("fixture-surplus".into()),openlux_binding:Some("fixture-openlux".into()),source_checks:vec![],
+    });
+    for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
+        store.seed(keys::paid_control_observation(provider), PaidProviderObservation {
+            v:1,provider,owner_id:"fixture-owner".into(),owner_epoch:"fixture-epoch".into(),configuration_generation:"fixture-generation".into(),configuration_fingerprint:"fixture-config".into(),
+            credential_binding:if provider==PaidProvider::Surplus {"fixture-surplus"} else {"fixture-openlux"}.into(),
+            observed_at_ms:NOW,source_valid_until_ms:None,stale:false,models:models.clone(),source_checks:vec![],
+        });
+    }
+    let revision = |key| run(store.read(&key)).unwrap().map(|row| row.revision);
+    store.seed(keys::paid_routing(), PaidRoutingProjection {
+        policy:gateway_authority::paid::PaidRoutingPolicy {
+            v:2,codex_enabled:true,codex_models:vec!["gpt-test".into()],
+            models:["paid-model","deepseek-v4.1-flash"].map(|model|(model.into(),vec![PaidProvider::Surplus,PaidProvider::Metered])).into_iter().collect(),
+        },
+        provenance:PaidProjectionProvenance {
+            v:1,owner_revision:revision(keys::paid_control_owner()).unwrap(),config_revision:revision(keys::paid_control_config()).unwrap(),
+            surplus_observation_revision:revision(keys::paid_control_observation(PaidProvider::Surplus)),openlux_observation_revision:revision(keys::paid_control_observation(PaidProvider::Metered)),
+            observed_at_ms:NOW,source_valid_until_ms:None,source_checks:paid_projection_source_keys().into_iter().map(|key|PaidSourceCheck {expected_revision:revision(key.clone()),key:key.0}).collect(),
+        },
+    });
+    request
+}
+
+#[test]
+fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() {
+    run(async {
+        let store=Store::new();seed_key(&store);
+        let request=paid_input(&store,"paid-current","paid-model");
+        let session=RoutingSession::begin(request,store.clone(),Host::new(&store),store.clone(),store.clone()).await.unwrap();
+        let attempt=session.next_attempt().await.unwrap().unwrap();
+        assert!(attempt.paid.is_some());
+        assert!(matches!(attempt.credential,gateway_routing_runtime::CredentialFence::Paid {..}));
+        session.before_dispatch(&attempt).await.unwrap();
+        session.transport_started(&attempt).await.unwrap();
+        assert_eq!(session.refusal(&attempt,refusal(503,TransportState::Started)).await.unwrap(),RefusalDecision::Return);
+        session.finish(TransportObservation::default()).await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],1);
+
+        let request=paid_input(&store,"paid-rotated","paid-model");
+        let session=RoutingSession::begin(request,store.clone(),Host::new(&store),store.clone(),store.clone()).await.unwrap();
+        let attempt=session.next_attempt().await.unwrap().unwrap();
+        let mut config=store.value(gateway_authority::keys::paid_control_config());config["generation"]=json!("next-generation");
+        store.seed(gateway_authority::keys::paid_control_config(),config);
+        assert!(session.before_dispatch(&attempt).await.is_err());
+        let mut failure=refusal(499,TransportState::NotStarted);failure.cancelled=true;
+        session.refusal(&attempt,failure).await.unwrap();session.finish(TransportObservation::default()).await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],1);
+    });
+}
+
+#[test]
+fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity() {
+    run(async {
+        let store=Store::new();seed_key(&store);
+        let mut request=paid_input(&store,"synthetic-paid","ubiquity/deepseek-flash");request.raw["reasoning"]=json!({"effort":"high"});
+        let session=RoutingSession::begin(request,store.clone(),Host::new(&store),store.clone(),store.clone()).await.unwrap();
+        let first=session.next_attempt().await.unwrap().unwrap();
+        let reservation=first.paid.as_ref().unwrap();
+        assert_eq!(reservation.attempt_id.0,gateway_providers::policy::paid_hop_identity("synthetic-paid",gateway_core::provider::PaidProvider::Surplus));
+        session.before_dispatch(&first).await.unwrap();session.transport_started(&first).await.unwrap();
+        assert_eq!(session.refusal(&first,refusal(429,TransportState::Started)).await.unwrap(),RefusalDecision::Continue);
+        let second=session.next_attempt().await.unwrap().unwrap();assert_eq!(second.request.provider,UpstreamProvider::Metered);
+        assert_ne!(first.paid.unwrap().attempt_id,second.paid.as_ref().unwrap().attempt_id);
+        assert_eq!(first.original_request_id,second.original_request_id);
+        let mut failure=refusal(499,TransportState::NotStarted);failure.cancelled=true;
+        session.refusal(&second,failure).await.unwrap();session.finish(TransportObservation::default()).await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],1);
+    });
+}
+
+#[test]
+fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() {
+    run(async {
+        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_authority::quota::KernelTerminal;
+        let store=Store::new();seed_key(&store);
+        let session=RoutingSession::begin_extras(input("image-parent","gpt-test",&[]),store.clone(),Host::new(&store),store.clone(),store.clone(),ExtrasFamily::ImageGenerations).await.unwrap();
+        let handle=session.admission_handle();let children=handle.children(2).await.unwrap();
+        assert_eq!(children[0].request_id(),"image-parent");assert_eq!(children[1].request_id(),"image-parent:image:generations:2");
+        assert!(session.next_attempt().await.is_err());assert!(session.finish(complete()).await.is_err());
+        let ticket=handle.before_dispatch(&children[0]).await.unwrap();handle.transport_started(&children[0],&ticket).await.unwrap();
+        handle.child_finished(&children[1],TransportState::NotStarted).await.unwrap();
+        assert!(handle.finish(complete(),KernelTerminal::Committed,"outer complete").await.is_err());
+        assert!(handle.child_finished(&children[0],TransportState::NotStarted).await.is_err());
+        handle.child_finished(&children[0],TransportState::Started).await.unwrap();
+        handle.finish(complete(),KernelTerminal::Committed,"outer complete").await.unwrap();
+        handle.finish(complete(),KernelTerminal::Committed,"outer complete").await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],1);
+    });
+}
+
+#[test]
+fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
+    run(async {
+        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_authority::quota::KernelTerminal;
+        let store=Store::new();seed_key(&store);
+        let session=RoutingSession::begin_extras(input("image-none","gpt-test",&[]),store.clone(),Host::new(&store),store.clone(),store.clone(),ExtrasFamily::ImageEdits).await.unwrap();
+        let handle=session.admission_handle();let children=handle.children(2).await.unwrap();
+        handle.before_dispatch(&children[0]).await.unwrap();
+        for child in children {handle.child_finished(&child,TransportState::NotStarted).await.unwrap();}
+        handle.finish(TransportObservation::default(),KernelTerminal::Released,"source cancelled").await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],0);
+        let session=RoutingSession::begin_extras(input("image-unknown","gpt-test",&[]),store.clone(),Host::new(&store),store.clone(),store.clone(),ExtrasFamily::ImageGenerations).await.unwrap();
+        let handle=session.admission_handle();let children=handle.children(1).await.unwrap();handle.before_dispatch(&children[0]).await.unwrap();
+        store.advance(gateway_authority::REQUEST_LEASE_MS+1);
+        let recovered=recover_pending(store.clone(),Host::new(&store),store.clone(),store.clone(),100).await.unwrap();
+        assert_eq!(recovered.len(),1);assert_eq!(recovered[0].observation.delivery,DeliveryOutcome::Unobserved);
+        assert_eq!(window(&store)["committed_requests"],1);
+    });
+}
+
+#[test]
+fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
+    run(async {
+        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_authority::quota::KernelTerminal;
+        let store=Store::new();seed_key(&store);
+        let session=RoutingSession::begin_extras(input("voyage","voyage-3",&[]),store.clone(),Host::new(&store),store.clone(),store.clone(),ExtrasFamily::Embeddings).await.unwrap();
+        let handle=session.admission_handle();let child=handle.children(1).await.unwrap().remove(0);
+        let other=RoutingSession::begin_extras(input("other","voyage-3",&[]),store.clone(),Host::new(&store),store.clone(),store.clone(),ExtrasFamily::Embeddings).await.unwrap().admission_handle();
+        let other_child=other.children(1).await.unwrap().remove(0);let other_ticket=other.before_dispatch(&other_child).await.unwrap();
+        assert!(handle.transport_started(&child,&other_ticket).await.is_err());
+        for _ in 0..2 {let ticket=handle.before_dispatch(&child).await.unwrap();handle.transport_started(&child,&ticket).await.unwrap();}
+        handle.child_finished(&child,TransportState::Started).await.unwrap();handle.finish(complete(),KernelTerminal::Committed,"voyage complete").await.unwrap();
+        assert!(handle.before_dispatch(&child).await.is_err());
+        other.child_finished(&other_child,TransportState::NotStarted).await.unwrap();other.finish(TransportObservation::default(),KernelTerminal::Released,"no chunk started").await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],1);
+    });
+}
+
+#[test]
+fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission() {
+    run(async {
+        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_authority::quota::KernelTerminal;
+        let store=Store::new();seed_key(&store);seed_pool(&store);
+        let session=RoutingSession::begin_extras(input("image-codex","gpt-test",&[]),store.clone(),Host::new(&store),store.clone(),store.clone(),ExtrasFamily::ImageGenerations).await.unwrap();
+        let handle=session.admission_handle();let child=handle.children(1).await.unwrap().remove(0);
+        let attempt=handle.prepare_image_child(&child,json!({"model":"gpt-test","input":"image fixture","tools":[{"type":"image_generation"}]})).await.unwrap();
+        assert_eq!(attempt.request.provider,UpstreamProvider::ChatgptCodex);
+        let ticket=handle.before_image_dispatch(&attempt).await.unwrap();handle.transport_started(&child,&ticket).await.unwrap();
+        assert_eq!(handle.image_refusal(&attempt,refusal(503,TransportState::Started)).await.unwrap(),RefusalDecision::Return);
+        handle.child_finished(&child,TransportState::Started).await.unwrap();handle.finish(complete(),KernelTerminal::Committed,"image complete").await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],1);
+    });
+}
+
+#[test]
+fn embedding_job_poll_never_dispatches_or_commits_kernel_admission() {
+    run(async {
+        use gateway_routing_runtime::ExtrasFamily;
+        use gateway_authority::quota::KernelTerminal;
+        let store=Store::new();seed_key(&store);
+        let session=RoutingSession::begin_extras(input("job-poll","voyage-3",&[]),store.clone(),Host::new(&store),store.clone(),store.clone(),ExtrasFamily::EmbeddingJobPoll).await.unwrap();
+        let handle=session.admission_handle();let child=handle.children(1).await.unwrap().remove(0);
+        assert!(handle.before_dispatch(&child).await.is_err());
+        handle.child_finished(&child,TransportState::NotStarted).await.unwrap();
+        assert!(handle.finish(complete(),KernelTerminal::Committed,"job cached").await.is_err());
+        handle.finish(complete(),KernelTerminal::Released,"job read").await.unwrap();
+        assert_eq!(window(&store)["committed_requests"],0);
+    });
+}
+
 fn refusal(status: u16, transport: TransportState) -> AttemptFailure {
     AttemptFailure {
         status: Some(status),
@@ -333,7 +513,7 @@ fn codex_generic429_is_not_paid_or_account_exhaustion() {
             RefusalDecision::Return
         );
         let active = store.value(gateway_authority::keys::active());
-        assert_eq!(active["account_id_hash"], "route-a");
+        assert_eq!(active["account_id_hash"], source_account("a").identity().routing_account_hash.0);
         session
             .finish(TransportObservation::default())
             .await
