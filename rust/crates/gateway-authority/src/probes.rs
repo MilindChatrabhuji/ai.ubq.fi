@@ -30,8 +30,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .get(&admission.binding.account_id_hash.0)
                 .copied()
                 .unwrap_or(false);
-            if let Some(reason) = overage_reason {
-                if !allowed
+            if let Some(reason) = overage_reason
+                && (!allowed
                     || !matches!(
                         reason,
                         "no_eligible_credit"
@@ -40,10 +40,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                             | "inventory_response_invalid_or_expired"
                             | "inventory_unavailable"
                             | "account_day_limit_reached"
-                    )
-                {
-                    return Ok(None);
-                }
+                    ))
+            {
+                return Ok(None);
             }
             let slot = &mut view.state.slots[admission.binding.slot as usize];
             if slot

@@ -710,7 +710,7 @@ fn bad_stored_versions_are_not_replaced_with_empty_state() {
         }],
     }))
     .unwrap_err();
-    assert!(store.len() > 0);
+    assert!(!store.is_empty());
 }
 
 #[test]

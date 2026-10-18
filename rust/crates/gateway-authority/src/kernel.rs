@@ -220,10 +220,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let cutover: Option<serde_json::Value> = tx.read(&keys::kernel_cutover()).await?;
             let scope_repo = repo_policy.as_ref().map(|_| repo.to_owned());
             let policy = repo_policy.or(org_policy);
-            if let Some(policy) = &policy {
-                if policy.v != 2 || policy.owner != owner || policy.repo != scope_repo {
-                    return Err(invalid("Kernel policy scope conflicts."));
-                }
+            if let Some(policy) = &policy
+                && (policy.v != 2 || policy.owner != owner || policy.repo != scope_repo)
+            {
+                return Err(invalid("Kernel policy scope conflicts."));
             }
             if policy.is_none() && cutover.is_some() {
                 return Err(unavailable(

@@ -208,10 +208,10 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         let checks = self.checks();
         let mut revisions = BTreeSet::new();
         for mutation in self.writes.values() {
-            if let RecordMutation::Put { record, .. } = mutation {
-                if !revisions.insert(record.revision.clone()) {
-                    return Err(invalid("Token source duplicated a mutation revision."));
-                }
+            if let RecordMutation::Put { record, .. } = mutation
+                && !revisions.insert(record.revision.clone())
+            {
+                return Err(invalid("Token source duplicated a mutation revision."));
             }
         }
         Ok(self

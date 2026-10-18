@@ -163,13 +163,11 @@ fn unavailable_model(
         .unsupported
         .get(&account.0)
         .and_then(|row| row.get(model))
-    {
-        if learned.observed_at_ms > 0
+        && learned.observed_at_ms > 0
             && learned.observed_at_ms <= now
             && now - learned.observed_at_ms <= 7 * crate::DAY_MS
-        {
-            return Some(Some(learned.detail.clone()));
-        }
+    {
+        return Some(Some(learned.detail.clone()));
     }
     let catalog = models.catalogs.get(&account.0)?;
     if catalog.models.iter().any(|slug| slug == model) {
@@ -311,12 +309,12 @@ fn evaluate(
         },
     );
     let override_positive = observed.is_some_and(|(_, available)| available > 0.0);
-    if let Some(block) = block {
-        if block.blocked_until_ms > now && !override_positive {
-            result.reason = Some(ActiveTransitionReason::QuotaExhausted);
-            result.retry = Some(block.blocked_until_ms);
-            return result;
-        }
+    if let Some(block) = block
+        && block.blocked_until_ms > now && !override_positive
+    {
+        result.reason = Some(ActiveTransitionReason::QuotaExhausted);
+        result.retry = Some(block.blocked_until_ms);
+        return result;
     }
     if let Some((observation, available)) = observed.filter(|(_, available)| *available == 0.0) {
         debug_assert_eq!(available, 0.0);
@@ -325,17 +323,15 @@ fn evaluate(
             .get(&row.account_id_hash.0)
             .copied()
             .unwrap_or(false)
-        {
-            if let Some(reset) = observation
+            && let Some(reset) = observation
                 .windows
                 .first()
                 .and_then(|window| window.reset_at_ms)
                 .filter(|reset| *reset > now)
-            {
-                result.reason = Some(ActiveTransitionReason::QuotaExhausted);
-                result.retry = Some(reset);
-                return result;
-            }
+        {
+            result.reason = Some(ActiveTransitionReason::QuotaExhausted);
+            result.retry = Some(reset);
+            return result;
         }
         result.probe = true;
     }

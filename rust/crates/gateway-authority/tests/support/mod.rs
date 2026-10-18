@@ -68,8 +68,8 @@ impl MemoryStore {
     pub fn race<T: Serialize>(&self, key: RecordKey, value: &T) {
         *self.race.lock().unwrap() = Some((key, serde_json::to_value(value).unwrap()));
     }
-    pub fn len(&self) -> usize {
-        self.rows.lock().unwrap().len()
+    pub fn is_empty(&self) -> bool {
+        self.rows.lock().unwrap().is_empty()
     }
     pub fn jump_on_read(&self, key: RecordKey, now: i64) {
         *self.jump.lock().unwrap() = Some((key, now));
@@ -88,10 +88,10 @@ impl AuthorityStore for MemoryStore {
         key: &RecordKey,
     ) -> impl Future<Output = Result<Option<StoredRecord>, GatewayError>> {
         let mut jump = self.jump.lock().unwrap();
-        if jump.as_ref().is_some_and(|(target, _)| target == key) {
-            if let Some((_, now)) = jump.take() {
-                self.clock(now);
-            }
+        if jump.as_ref().is_some_and(|(target, _)| target == key)
+            && let Some((_, now)) = jump.take()
+        {
+            self.clock(now);
         }
         drop(jump);
         let key_valid = TupleKey::from_record_key(key).and_then(|key| key.validate_stored_key());

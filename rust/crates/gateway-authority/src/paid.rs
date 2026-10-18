@@ -374,17 +374,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .await?
                 .ok_or_else(|| invalid("Paid attempt is missing."))?;
             validate_attempt(&row, reservation)?;
-            if let Some(id) = provider_request_id {
-                if row.provider_request_id.is_none() {
-                    row.provider_request_id = Some(id.to_owned());
-                }
+            if let Some(id) = provider_request_id
+                && row.provider_request_id.is_none()
+            {
+                row.provider_request_id = Some(id.to_owned());
             }
-            if row.terminal_state == PaidTerminalState::Pending {
-                if let Some(terminal) = terminal {
-                    row.terminal_state = terminal;
-                    if terminal != PaidTerminalState::Pending {
-                        row.terminal_at_ms = Some(now);
-                    }
+            if row.terminal_state == PaidTerminalState::Pending
+                && let Some(terminal) = terminal
+            {
+                row.terminal_state = terminal;
+                if terminal != PaidTerminalState::Pending {
+                    row.terminal_at_ms = Some(now);
                 }
             }
             row.updated_at_ms = now;
