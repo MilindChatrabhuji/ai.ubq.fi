@@ -1,9 +1,5 @@
 //! Source ba5ef05e provider/health.ts and paid-fallback/health.ts.
-use crate::{ObservabilityHost, ObservabilityRuntime, store, types::*};
-use futures_util::{
-    FutureExt,
-    future::{LocalBoxFuture, Shared},
-};
+use crate::{ObservabilityHost, ObservabilityRuntime, completion::Completion, store, types::*};
 use gateway_core::{
     GatewayError,
     query::QueryStore,
@@ -26,7 +22,7 @@ const RECORDS: [&str; 7] = [
 #[derive(Clone)]
 struct Pending {
     observation: HealthObservation,
-    tail: Shared<LocalBoxFuture<'static, HealthWrite>>,
+    tail: Completion<HealthWrite>,
     sequence: u64,
 }
 #[derive(Default)]
@@ -37,6 +33,18 @@ struct WriterState {
 }
 #[derive(Clone, Default)]
 pub(crate) struct HealthWriter(Rc<RefCell<WriterState>>);
+
+struct HealthCompletion {
+    writer:HealthWriter,key:String,sequence:u64,tail:Completion<HealthWrite>,finished:bool,
+}
+impl HealthCompletion {
+    fn complete(&self,result:HealthWrite){
+        {let mut state=self.writer.0.borrow_mut();if state.pending.get(&self.key).is_some_and(|p|p.sequence==self.sequence){state.pending.remove(&self.key);}}
+        self.tail.finish(result);
+    }
+    fn finish(mut self,result:HealthWrite)->HealthWrite{self.complete(result);self.finished=true;result}
+}
+impl Drop for HealthCompletion {fn drop(&mut self){if !self.finished{self.complete(HealthWrite::Unavailable)}}}
 
 pub fn normalize_provider_request_id(value: Option<&str>) -> Option<String> {
     value
@@ -229,7 +237,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Ok(project_health(&observations, at_ms))
     }
 }
-impl<S: QueryStore + 'static, H: ObservabilityHost + 'static> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     /// Arrival-ordered isolate queue; clones share this state. Optional writes never error to routing.
     pub async fn observe_provider(
         &self,
@@ -263,35 +271,19 @@ impl<S: QueryStore + 'static, H: ObservabilityHost + 'static> ObservabilityRunti
             state.sequence = state.sequence.wrapping_add(1);
             state.sequence
         };
-        let runtime = self.clone();
-        let key_copy = queue_key.clone();
-        let observed = observation.clone();
-        let tail = async move {
-            if let Some(pending) = previous {
-                pending.tail.await;
-            }
-            let result = runtime.persist_health(&target, observed, &key_copy).await;
-            let mut state = runtime.health.0.borrow_mut();
-            if state
-                .pending
-                .get(&key_copy)
-                .is_some_and(|p| p.sequence == sequence)
-            {
-                state.pending.remove(&key_copy);
-            }
-            result
-        }
-        .boxed_local()
-        .shared();
+        let tail=Completion::new();
+        let completion=HealthCompletion{writer:self.health.clone(),key:queue_key.clone(),sequence,tail:tail.clone(),finished:false};
         self.health.0.borrow_mut().pending.insert(
             queue_key,
             Pending {
-                observation,
+                observation:observation.clone(),
                 tail: tail.clone(),
                 sequence,
             },
         );
-        tail.await
+        if let Some(pending)=previous{pending.tail.await;}
+        let result=self.persist_health(&target,observation,&completion.key).await;
+        completion.finish(result)
     }
     async fn persist_health(
         &self,
