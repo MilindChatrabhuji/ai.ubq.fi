@@ -162,7 +162,13 @@ impl AuthHost for Host {
 }
 struct Capabilities;
 impl RuntimeCapabilities for Capabilities {
-    fn compare_admin_labels(&self,left:&str,right:&str)->Result<std::cmp::Ordering,GatewayError>{Ok(left.cmp(right))}
+    fn compare_admin_labels(
+        &self,
+        left: &str,
+        right: &str,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        Ok(left.cmp(right))
+    }
     async fn metered_diagnostics(&self) -> Result<Value, GatewayError> {
         Ok(json!({"state":"unavailable"}))
     }
@@ -620,45 +626,167 @@ fn errors_limit_does_not_truncate_five_xx_buckets() {
 #[test]
 fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
     use gateway_admin_runtime::claude::*;
-    let store=Store::default();let host=Host::default();let seed=Bootstrap::default();
-    let credential=parse_credential(&json!({"secret":"sk-ant-api-test-secret","kind":"api_key","updated_at_ms":900000}),"kv").unwrap();
-    let first=run(update_account(&store,&host,&seed,&AccountUpdate{account_id:None,create_new:false,credential:Some(credential.clone()),workspace:None,activate:false,expected:None})).unwrap();
-    assert!(run(current_binding(&store,&first,host.now_ms())).unwrap().is_some());
-    let mut renamed=credential.clone();renamed.label=Some("renamed".into());
-    let same=run(update_account(&store,&host,&seed,&AccountUpdate{account_id:Some(first.account_id.clone()),create_new:false,credential:Some(renamed),workspace:None,activate:false,expected:Some(first.clone())})).unwrap();
-    assert_eq!(first.account_cohort_id,same.account_cohort_id);assert_eq!(first.evidence_generation,same.evidence_generation);
-    let mut rotated=credential;rotated.secret=gateway_auth::crypto::Secret::new("sk-ant-api-rotated-secret".into());
-    let next=run(update_account(&store,&host,&seed,&AccountUpdate{account_id:Some(first.account_id.clone()),create_new:false,credential:Some(rotated),workspace:None,activate:false,expected:Some(first.clone())})).unwrap();
-    assert_eq!(first.account_id,next.account_id);assert_ne!(first.account_cohort_id,next.account_cohort_id);assert_ne!(first.evidence_generation,next.evidence_generation);
-    assert!(run(current_binding(&store,&first,host.now_ms())).unwrap().is_none());assert!(run(current_binding(&store,&next,host.now_ms())).unwrap().is_some());
-    let debug=format!("{next:?}");assert!(!debug.contains("sk-ant-api-rotated-secret"));
+    let store = Store::default();
+    let host = Host::default();
+    let seed = Bootstrap::default();
+    let credential = parse_credential(
+        &json!({"secret":"sk-ant-api-test-secret","kind":"api_key","updated_at_ms":900000}),
+        "kv",
+    )
+    .unwrap();
+    let first = run(update_account(
+        &store,
+        &host,
+        &seed,
+        &AccountUpdate {
+            account_id: None,
+            create_new: false,
+            credential: Some(credential.clone()),
+            workspace: None,
+            activate: false,
+            expected: None,
+        },
+    ))
+    .unwrap();
+    assert!(
+        run(current_binding(&store, &first, host.now_ms()))
+            .unwrap()
+            .is_some()
+    );
+    let mut renamed = credential.clone();
+    renamed.label = Some("renamed".into());
+    let same = run(update_account(
+        &store,
+        &host,
+        &seed,
+        &AccountUpdate {
+            account_id: Some(first.account_id.clone()),
+            create_new: false,
+            credential: Some(renamed),
+            workspace: None,
+            activate: false,
+            expected: Some(first.clone()),
+        },
+    ))
+    .unwrap();
+    assert_eq!(first.account_cohort_id, same.account_cohort_id);
+    assert_eq!(first.evidence_generation, same.evidence_generation);
+    let mut rotated = credential;
+    rotated.secret = gateway_auth::crypto::Secret::new("sk-ant-api-rotated-secret".into());
+    let next = run(update_account(
+        &store,
+        &host,
+        &seed,
+        &AccountUpdate {
+            account_id: Some(first.account_id.clone()),
+            create_new: false,
+            credential: Some(rotated),
+            workspace: None,
+            activate: false,
+            expected: Some(first.clone()),
+        },
+    ))
+    .unwrap();
+    assert_eq!(first.account_id, next.account_id);
+    assert_ne!(first.account_cohort_id, next.account_cohort_id);
+    assert_ne!(first.evidence_generation, next.evidence_generation);
+    assert!(
+        run(current_binding(&store, &first, host.now_ms()))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        run(current_binding(&store, &next, host.now_ms()))
+            .unwrap()
+            .is_some()
+    );
+    let debug = format!("{next:?}");
+    assert!(!debug.contains("sk-ant-api-rotated-secret"));
 }
 
 #[test]
 fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
     use gateway_admin_runtime::claude::*;
-    let store=Store::default();let host=Host::default();
-    let credential=parse_credential(&json!({"secret":"sk-ant-api-legacy-secret","kind":"api_key","updated_at_ms":900000}),"kv").unwrap();
-    store.put(json!(["ubq_ai","claude_code_auth"]),serde_json::to_value(&credential).unwrap());
-    let seed=Bootstrap{credential:Some(credential),workspace:None};
-    let read=run(load_roster(&store,&host,&seed)).unwrap();let account=active_binding(&read.roster).unwrap();assert!(read.revision.is_some());
-    assert!(run(remove_account(&store,&host,&seed,Some(&account.account_id))).unwrap());
-    let after=run(load_roster(&store,&host,&seed)).unwrap();assert!(after.roster.accounts.is_empty());assert!(after.roster.active_account_id.is_none());assert!(store.get(json!(["ubq_ai","claude_code_auth"])).is_some());
-    store.put(json!(["uos_ai","claude_code_accounts","v1"]),json!({"v":99}));assert_eq!(run(load_roster(&store,&host,&seed)).unwrap_err().status,503);
+    let store = Store::default();
+    let host = Host::default();
+    let credential = parse_credential(
+        &json!({"secret":"sk-ant-api-legacy-secret","kind":"api_key","updated_at_ms":900000}),
+        "kv",
+    )
+    .unwrap();
+    store.put(
+        json!(["ubq_ai", "claude_code_auth"]),
+        serde_json::to_value(&credential).unwrap(),
+    );
+    let seed = Bootstrap {
+        credential: Some(credential),
+        workspace: None,
+    };
+    let read = run(load_roster(&store, &host, &seed)).unwrap();
+    let account = active_binding(&read.roster).unwrap();
+    assert!(read.revision.is_some());
+    assert!(
+        run(remove_account(
+            &store,
+            &host,
+            &seed,
+            Some(&account.account_id)
+        ))
+        .unwrap()
+    );
+    let after = run(load_roster(&store, &host, &seed)).unwrap();
+    assert!(after.roster.accounts.is_empty());
+    assert!(after.roster.active_account_id.is_none());
+    assert!(store.get(json!(["ubq_ai", "claude_code_auth"])).is_some());
+    store.put(
+        json!(["uos_ai", "claude_code_accounts", "v1"]),
+        json!({"v":99}),
+    );
+    assert_eq!(
+        run(load_roster(&store, &host, &seed)).unwrap_err().status,
+        503
+    );
 }
 
 #[test]
 fn source_claude_submission_limits_and_workspace_parser_are_preserved() {
-    let accepted=gateway_admin_runtime::parse::claude(&json!({"credential":"sk-ant-api-valid","workspace_id":"wrkspc_a.b-c"})).unwrap();assert_eq!(accepted.workspace_id,Some(Some("wrkspc_a.b-c".into())));
-    assert_eq!(gateway_admin_runtime::parse::claude(&json!({"credential":format!("sk-ant-{}","x".repeat(507))})).err().unwrap().status,400);
+    let accepted = gateway_admin_runtime::parse::claude(
+        &json!({"credential":"sk-ant-api-valid","workspace_id":"wrkspc_a.b-c"}),
+    )
+    .unwrap();
+    assert_eq!(accepted.workspace_id, Some(Some("wrkspc_a.b-c".into())));
+    assert_eq!(
+        gateway_admin_runtime::parse::claude(
+            &json!({"credential":format!("sk-ant-{}","x".repeat(507))})
+        )
+        .err()
+        .unwrap()
+        .status,
+        400
+    );
     assert_eq!(gateway_admin_runtime::parse::claude(&json!({"credential":"sk-ant-api-valid","create_new":true,"account_id":"12345678-1234-4123-8123-123456789abc"})).err().unwrap().status,400);
 }
 
 #[test]
 fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
-    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);
-    store.put(json!(["ubq_ai","kernel_auth","org_usage","owner"]),json!({"owner":"owner","total_requests":5,"last_seen_at_ms":900000}));
+    let store = Store::default();
+    let host = Host::default();
+    let config = RuntimeConfig::default();
+    let service = runtime(&store, &host, &config);
+    store.put(
+        json!(["ubq_ai", "kernel_auth", "org_usage", "owner"]),
+        json!({"owner":"owner","total_requests":5,"last_seen_at_ms":900000}),
+    );
     store.put(json!(["ubq_ai","kernel_auth","org_usage_daily","owner"]),json!({"owner":"owner","days":[{"day":"1970-01-01","request_count":5}],"updated_at_ms":900000}));
-    let mut request=input(Value::Null);request.query.insert("scope".into(),vec!["org".into()]);request.query.insert("owner".into(),vec!["owner".into()]);request.query.insert("include_usage".into(),vec!["true".into()]);
-    let result=run(service.execute(AdminOperation::KernelUsageGet,request)).unwrap();let series=result.body["usage"]["daily_requests"].as_array().unwrap();assert_eq!(series.len(),30);assert_eq!(series[29],5);assert_eq!(result.body["usage"]["input_tokens"],0);
+    let mut request = input(Value::Null);
+    request.query.insert("scope".into(), vec!["org".into()]);
+    request.query.insert("owner".into(), vec!["owner".into()]);
+    request
+        .query
+        .insert("include_usage".into(), vec!["true".into()]);
+    let result = run(service.execute(AdminOperation::KernelUsageGet, request)).unwrap();
+    let series = result.body["usage"]["daily_requests"].as_array().unwrap();
+    assert_eq!(series.len(), 30);
+    assert_eq!(series[29], 5);
+    assert_eq!(result.body["usage"]["input_tokens"], 0);
 }

@@ -546,15 +546,26 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 }
                 records.push(row);
             }
-            let mut order_error=None;
-            records.sort_by(|left,right|{
-                for field in ["owner","repo"]{
-                    match self.capabilities.compare_admin_labels(left[field].as_str().unwrap_or(""),right[field].as_str().unwrap_or("")){
-                        Ok(std::cmp::Ordering::Equal)=>{},Ok(order)=>return order,Err(error)=>{order_error=Some(error);return std::cmp::Ordering::Equal}
+            let mut order_error = None;
+            records.sort_by(|left, right| {
+                for field in ["owner", "repo"] {
+                    match self.capabilities.compare_admin_labels(
+                        left[field].as_str().unwrap_or(""),
+                        right[field].as_str().unwrap_or(""),
+                    ) {
+                        Ok(std::cmp::Ordering::Equal) => {}
+                        Ok(order) => return order,
+                        Err(error) => {
+                            order_error = Some(error);
+                            return std::cmp::Ordering::Equal;
+                        }
                     }
-                }std::cmp::Ordering::Equal
+                }
+                std::cmp::Ordering::Equal
             });
-            if let Some(error)=order_error{return Err(error)}
+            if let Some(error) = order_error {
+                return Err(error);
+            }
             let mut body = json!({"scope":if org{"org"}else{"repo"}});
             body[if inventory { "usage" } else { "limits" }] = json!(records);
             return Ok(AuthResponse::json(200, body));
@@ -603,19 +614,82 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         } else {
             store::key(json!(["ubq_ai", "kernel_auth", "org_usage", owner]))
         };
-        let Some(raw)=store::read(self.store,&key,now).await? else{return Ok(Value::Null)};
-        let mut row=json!({"owner":raw.get("owner").and_then(Value::as_str).map(str::trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
-        if let Some(repo)=repo{row["repo"]=json!(raw.get("repo").and_then(Value::as_str).map(str::trim).filter(|s|!s.is_empty()).unwrap_or(repo));}
-        for field in ["total_requests","stream_requests","non_stream_requests","completed_requests","error_requests","input_tokens","output_tokens","total_tokens","first_seen_at_ms","last_seen_at_ms"]{
-            let fallback=if field=="first_seen_at_ms"||field=="last_seen_at_ms"{now}else{0};
-            row[field]=json!(raw.get(field).and_then(Value::as_f64).map(|n|n.trunc() as i64).unwrap_or(fallback));
+        let Some(raw) = store::read(self.store, &key, now).await? else {
+            return Ok(Value::Null);
+        };
+        let mut row = json!({"owner":raw.get("owner").and_then(Value::as_str).map(str::trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
+        if let Some(repo) = repo {
+            row["repo"] = json!(
+                raw.get("repo")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(repo)
+            );
         }
-        for field in ["last_model","last_reasoning","last_route"]{row[field]=json!(parse::text(raw.get(field)).map(|s|s.chars().take(120).collect::<String>()));}
-        if daily{
-            let key=if let Some(repo)=repo{store::key(json!(["ubq_ai","kernel_auth","usage_daily",owner,repo]))}else{store::key(json!(["ubq_ai","kernel_auth","org_usage_daily",owner]))};
-            let raw=store::read(self.store,&key,now).await?;let mut counts=BTreeMap::new();
-            if let Some(days)=raw.as_ref().and_then(|v|v.get("days")).and_then(Value::as_array){for day in days{if let Some(label)=day.get("day").and_then(Value::as_str){counts.insert(label.trim().to_owned(),day.get("request_count").and_then(Value::as_f64).map(|n|(n.trunc() as i64).max(0)).unwrap_or(0));}}}
-            let today=now.div_euclid(86400000);let series:Vec<i64>=(0..30).map(|offset|counts.get(&day_label(today-29+offset)).copied().unwrap_or(0)).collect();row["daily_requests"]=json!(series);
+        for field in [
+            "total_requests",
+            "stream_requests",
+            "non_stream_requests",
+            "completed_requests",
+            "error_requests",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "first_seen_at_ms",
+            "last_seen_at_ms",
+        ] {
+            let fallback = if field == "first_seen_at_ms" || field == "last_seen_at_ms" {
+                now
+            } else {
+                0
+            };
+            row[field] = json!(
+                raw.get(field)
+                    .and_then(Value::as_f64)
+                    .map(|n| n.trunc() as i64)
+                    .unwrap_or(fallback)
+            );
+        }
+        for field in ["last_model", "last_reasoning", "last_route"] {
+            row[field] =
+                json!(parse::text(raw.get(field)).map(|s| s.chars().take(120).collect::<String>()));
+        }
+        if daily {
+            let key = if let Some(repo) = repo {
+                store::key(json!(["ubq_ai", "kernel_auth", "usage_daily", owner, repo]))
+            } else {
+                store::key(json!(["ubq_ai", "kernel_auth", "org_usage_daily", owner]))
+            };
+            let raw = store::read(self.store, &key, now).await?;
+            let mut counts = BTreeMap::new();
+            if let Some(days) = raw
+                .as_ref()
+                .and_then(|v| v.get("days"))
+                .and_then(Value::as_array)
+            {
+                for day in days {
+                    if let Some(label) = day.get("day").and_then(Value::as_str) {
+                        counts.insert(
+                            label.trim().to_owned(),
+                            day.get("request_count")
+                                .and_then(Value::as_f64)
+                                .map(|n| (n.trunc() as i64).max(0))
+                                .unwrap_or(0),
+                        );
+                    }
+                }
+            }
+            let today = now.div_euclid(86400000);
+            let series: Vec<i64> = (0..30)
+                .map(|offset| {
+                    counts
+                        .get(&day_label(today - 29 + offset))
+                        .copied()
+                        .unwrap_or(0)
+                })
+                .collect();
+            row["daily_requests"] = json!(series);
         }
         Ok(row)
     }
@@ -635,10 +709,17 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     }
 }
 
-fn day_label(days:i64)->String{
+fn day_label(days: i64) -> String {
     // Gregorian UTC conversion, independent of host timezone or environment discovery.
-    let z=days+719468;let era=if z>=0{z}else{z-146096}/146097;let doe=z-era*146097;
-    let yoe=(doe-doe/1460+doe/36524-doe/146096)/365;let mut year=yoe+era*400;let doy=doe-(365*yoe+yoe/4-yoe/100);
-    let mp=(5*doy+2)/153;let day=doy-(153*mp+2)/5+1;let month=mp+if mp<10{3}else{-9};year+=i64::from(month<=2);
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
     format!("{year:04}-{month:02}-{day:02}")
 }

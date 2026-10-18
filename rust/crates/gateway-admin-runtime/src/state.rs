@@ -87,10 +87,20 @@ fn principal_ids(value: &Value) -> Result<Vec<String>, GatewayError> {
 }
 
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    fn sorted_principals(&self,value:&Value)->Result<Vec<String>,GatewayError>{
-        let mut ids=principal_ids(value)?;let mut error=None;
-        ids.sort_by(|a,b|match self.capabilities.compare_admin_labels(a,b){Ok(order)=>order,Err(failure)=>{error=Some(failure);std::cmp::Ordering::Equal}});
-        if let Some(error)=error{return Err(error)}Ok(ids)
+    fn sorted_principals(&self, value: &Value) -> Result<Vec<String>, GatewayError> {
+        let mut ids = principal_ids(value)?;
+        let mut error = None;
+        ids.sort_by(|a, b| match self.capabilities.compare_admin_labels(a, b) {
+            Ok(order) => order,
+            Err(failure) => {
+                error = Some(failure);
+                std::cmp::Ordering::Equal
+            }
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(ids)
     }
     pub(crate) async fn debug(
         &self,
@@ -264,7 +274,8 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     ) -> Result<AuthResponse, GatewayError> {
         let key = store::key(json!(["uos_ai", "claude_code_access", "v1"]));
         let policy = if operation == AdminOperation::ClaudeAccessSet {
-            let ids = self.sorted_principals(input.body.get("allowed_key_ids").unwrap_or(&Value::Null))?;
+            let ids =
+                self.sorted_principals(input.body.get("allowed_key_ids").unwrap_or(&Value::Null))?;
             let policy =
                 json!({"v":1,"source":"kv","allowed_key_ids":ids,"updated_at_ms":input.now_ms});
             let row = self.store.read(&key).await?;
@@ -300,12 +311,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                             "Claude principal policy is invalid; refusing environment fallback",
                         ));
                     }
-                    let ids = self.sorted_principals(value.get("allowed_key_ids").unwrap_or(&Value::Null))
+                    let ids = self
+                        .sorted_principals(value.get("allowed_key_ids").unwrap_or(&Value::Null))
                         .map_err(|_| {
-                        store::corrupt(
-                            "Claude principal policy is invalid; refusing environment fallback",
-                        )
-                    })?;
+                            store::corrupt(
+                                "Claude principal policy is invalid; refusing environment fallback",
+                            )
+                        })?;
                     found = Some(
                         json!({"v":1,"source":value["source"],"allowed_key_ids":ids,"updated_at_ms":value["updated_at_ms"]}),
                     );
