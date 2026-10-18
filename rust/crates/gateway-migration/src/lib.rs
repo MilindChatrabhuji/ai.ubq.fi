@@ -5,7 +5,6 @@ mod engine;
 mod indexes;
 mod inverse;
 mod projection;
-mod routing;
 
 pub use capture::{PrivateCapture, SourceEntry};
 pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
@@ -32,8 +31,6 @@ pub enum Transform {
     PaidRequest,
     PaidPending,
     PaidGate,
-    Routing,
-    Capacity,
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Mapping {

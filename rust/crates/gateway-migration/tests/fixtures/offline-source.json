@@ -1,0 +1,263 @@
+{
+  "v": 1,
+  "source_git_sha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "captured_at_ms": 2200,
+  "entries": [
+    {
+      "key": [
+        {
+          "type": "string",
+          "value": "ubq_ai"
+        },
+        {
+          "type": "string",
+          "value": "api_keys"
+        },
+        {
+          "type": "string",
+          "value": "id"
+        },
+        {
+          "type": "string",
+          "value": "offline-key"
+        }
+      ],
+      "value": {
+        "type": "object",
+        "value": {
+          "id": {
+            "type": "string",
+            "value": "offline-key"
+          },
+          "expires_at_ms": {
+            "type": "number",
+            "value": -1
+          },
+          "revoked_at_ms": {
+            "type": "null"
+          },
+          "usage_limit_requests": {
+            "type": "number",
+            "value": 3
+          },
+          "usage_requests": {
+            "type": "number",
+            "value": 0
+          },
+          "usage_reset_at_ms": {
+            "type": "number",
+            "value": 3000
+          },
+          "window_ms": {
+            "type": "number",
+            "value": 1000
+          },
+          "usage_quota_version": {
+            "type": "number",
+            "value": 3
+          },
+          "paid_fallback_enabled": {
+            "type": "boolean",
+            "value": false
+          },
+          "paid_fallback_limit_microcredits": {
+            "type": "number",
+            "value": 0
+          },
+          "paid_fallback_spent_microcredits": {
+            "type": "number",
+            "value": 0
+          },
+          "paid_fallback_reserved_microcredits": {
+            "type": "number",
+            "value": 0
+          },
+          "paid_fallback_reservation_request_id": {
+            "type": "null"
+          },
+          "name": {
+            "type": "string",
+            "value": "Synthetic offline fixture"
+          },
+          "prefix": {
+            "type": "string",
+            "value": "u_1111111111"
+          },
+          "hash": {
+            "type": "string",
+            "value": "Dl62OicAsdbGrtXthlBC5mVR3WtQIkPl2KMOrIRpk0o"
+          },
+          "created_at_ms": {
+            "type": "number",
+            "value": 1000
+          },
+          "paid_fallback_model_ids": {
+            "type": "Array",
+            "value": []
+          },
+          "paid_fallback_quota_per_credit": {
+            "type": "number",
+            "value": 0
+          },
+          "paid_fallback_max_exposure_microcredits": {
+            "type": "object",
+            "value": {}
+          },
+          "paid_fallback_pricing_checked_at_ms": {
+            "type": "null"
+          }
+        }
+      },
+      "versionstamp": "fixture-source-0",
+      "expires_at_ms": null
+    },
+    {
+      "key": [
+        {
+          "type": "string",
+          "value": "ubq_ai"
+        },
+        {
+          "type": "string",
+          "value": "api_keys"
+        },
+        {
+          "type": "string",
+          "value": "hash"
+        },
+        {
+          "type": "string",
+          "value": "Dl62OicAsdbGrtXthlBC5mVR3WtQIkPl2KMOrIRpk0o"
+        }
+      ],
+      "value": {
+        "type": "object",
+        "value": {
+          "id": {
+            "type": "string",
+            "value": "offline-key"
+          },
+          "expires_at_ms": {
+            "type": "number",
+            "value": -1
+          },
+          "revoked_at_ms": {
+            "type": "null"
+          },
+          "usage_limit_requests": {
+            "type": "number",
+            "value": 3
+          },
+          "usage_requests": {
+            "type": "number",
+            "value": 0
+          },
+          "usage_reset_at_ms": {
+            "type": "number",
+            "value": 3000
+          },
+          "window_ms": {
+            "type": "number",
+            "value": 1000
+          },
+          "usage_quota_version": {
+            "type": "number",
+            "value": 3
+          },
+          "paid_fallback_enabled": {
+            "type": "boolean",
+            "value": false
+          },
+          "paid_fallback_limit_microcredits": {
+            "type": "number",
+            "value": 0
+          },
+          "paid_fallback_spent_microcredits": {
+            "type": "number",
+            "value": 0
+          },
+          "paid_fallback_reserved_microcredits": {
+            "type": "number",
+            "value": 0
+          },
+          "paid_fallback_reservation_request_id": {
+            "type": "null"
+          }
+        }
+      },
+      "versionstamp": "fixture-source-1",
+      "expires_at_ms": null
+    },
+    {
+      "key": [
+        {
+          "type": "string",
+          "value": "uos_ai"
+        },
+        {
+          "type": "string",
+          "value": "api_key_usage"
+        },
+        {
+          "type": "string",
+          "value": "v3"
+        },
+        {
+          "type": "string",
+          "value": "window"
+        },
+        {
+          "type": "string",
+          "value": "offline-key"
+        },
+        {
+          "type": "string",
+          "value": "v3:1000"
+        },
+        {
+          "type": "number",
+          "value": 2000
+        }
+      ],
+      "value": {
+        "type": "object",
+        "value": {
+          "v": {
+            "type": "number",
+            "value": 3
+          },
+          "key_id": {
+            "type": "string",
+            "value": "offline-key"
+          },
+          "policy_version": {
+            "type": "string",
+            "value": "v3:1000"
+          },
+          "window_start_ms": {
+            "type": "number",
+            "value": 2000
+          },
+          "window_reset_at_ms": {
+            "type": "number",
+            "value": 3000
+          },
+          "committed_requests": {
+            "type": "number",
+            "value": 0
+          },
+          "reserved_requests": {
+            "type": "number",
+            "value": 0
+          },
+          "updated_at_ms": {
+            "type": "number",
+            "value": 2000
+          }
+        }
+      },
+      "versionstamp": "fixture-source-2",
+      "expires_at_ms": 10000
+    }
+  ]
+}
