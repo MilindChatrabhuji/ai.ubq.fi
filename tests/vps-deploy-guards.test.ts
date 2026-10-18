@@ -355,6 +355,16 @@ const archivePrevious = async (f: Fixture, sha: string, preparePayload: VpsPaylo
   await rm(archive);
 };
 
+const writeSupportedLegacyUnit = async (root: string, profile: Profile): Promise<void> => {
+  if (profile !== "legacy-supported") return;
+  await write(root, "ops/ai-ubq-fi.service", SUPPORTED_LEGACY_UNIT);
+};
+const restoreCurrentUnit = async (f: Fixture, root: string, profile: Profile): Promise<void> => {
+  if (profile !== "legacy-supported") return;
+  await write(root, "ops/ai-ubq-fi.service", await readFile(new URL("../ops/ai-ubq-fi.service", import.meta.url), "utf8"));
+  await runFixtureGit(f.root, f.env, ["add", "--", "ops/ai-ubq-fi.service"]);
+};
+
 const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"): Promise<Active> => {
   const root = f.root;
   const preparationInputs = {
@@ -421,7 +431,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   await copyOps(root + "/ops");
   for (const name of ["launch-service.ts", "launch-vps.sh"])
     await write(root, "ops/" + name, await readFile(new URL("../ops/" + name, import.meta.url), "utf8"));
-  if (profile === "legacy-supported") await write(root, "ops/ai-ubq-fi.service", SUPPORTED_LEGACY_UNIT);
+  await writeSupportedLegacyUnit(root, profile);
   await writePackage(root, { "#kv": "./src/storage/kv.ts", "#http": "./fixture-http.ts" });
   await write(
     root,
@@ -450,10 +460,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       stderr: "piped",
     });
     assert.equal(link.code, 0, decode(link.stderr));
-    if (profile === "legacy-supported") {
-      await write(root, "ops/ai-ubq-fi.service", await readFile(new URL("../ops/ai-ubq-fi.service", import.meta.url), "utf8"));
-      await runFixtureGit(f.root, f.env, ["add", "--", "ops/ai-ubq-fi.service"]);
-    }
+    await restoreCurrentUnit(f, root, profile);
   }
   const fixtureKv = await openKv(root + "/.data/kv-bun.sqlite3");
   await fixtureKv.set(["fixture"], "positive");
@@ -687,7 +694,9 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
         ' "-n systemctl restart ai-ubq-fi.service") exec ' +
           quote(process.execPath) +
           ' --no-env-file --no-install "$fixture_root/control-client.ts" restart ;;',
-        ' "-n systemctl reload caddy") if [ -f "$fixture_root/stop-after-candidate-ready" ]; then rm "$fixture_root/stop-after-candidate-ready"; kill -KILL "$PPID"; exit 137; fi; exec ' +
+        ' "-n systemctl reload caddy") ' +
+          'if [ -f "$fixture_root/stop-after-candidate-ready" ]; then ' +
+          '/bin/rm "$fixture_root/stop-after-candidate-ready"; kill -KILL "$PPID"; exit 137; fi; exec ' +
           quote(process.execPath) +
           ' --no-env-file --no-install "$fixture_root/control-client.ts" reload ;;',
         ' *) printf "unexpected fixture sudo arguments\\n" >&2; exit 74 ;;',
