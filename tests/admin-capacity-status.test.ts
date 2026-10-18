@@ -912,6 +912,8 @@ const providerPicker = (selection: string[], { tier = "all", onlyActive = false 
   };
   runInNewContext(
     [
+      between("let providerSelectionLoadId =", "let providerSelectionSaving ="),
+      between("const markProviderSelectionEdited =", "const setProvidersSelectionBadge"),
       between("const providerRosterEntry =", "/** One tier chip per tier"),
       between("const providersSubscriptionsFor =", "const providersTierCounts ="),
       between("const providersEntryMatchesQuery =", "/**\n * Provider health"),
