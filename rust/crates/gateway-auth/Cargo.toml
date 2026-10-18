@@ -13,6 +13,13 @@ base64 = "=0.22.1"
 sha2 = "=0.10.9"
 url = "=2.5.8"
 rsa = { version = "=0.9.10", features = ["sha2", "pem"] }
+ciborium = "=0.2.2"
+p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa"] }
+p384 = { version = "=0.13.1", default-features = false, features = ["ecdsa"] }
+p521 = { version = "=0.13.3", default-features = false, features = ["ecdsa"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "=0.2.16", features = ["js"] }
 
 [lints]
 workspace = true

@@ -21,8 +21,6 @@ impl AuthHost for Host{
     fn now_ms(&self)->i64{self.now.get()}
     fn random_bytes(&self,len:usize)->Result<Vec<u8>,GatewayError>{let serial=self.serial.get();self.serial.set(serial+1);Ok((0..len).map(|i|serial.wrapping_add(i as u64) as u8).collect())}
     async fn fetch_auth(&self,_:AuthUpstreamRequest)->Result<AuthUpstreamResponse,GatewayError>{Err(GatewayError::unavailable("Fixture forbids network","fixture_network_denied"))}
-    async fn verify_registration(&self,_:RegistrationVerification)->Result<VerifiedRegistration,GatewayError>{Err(GatewayError::unavailable("No cryptographic verifier installed in fixture","fixture_verifier_unavailable"))}
-    async fn verify_assertion(&self,_:AssertionVerification)->Result<u32,GatewayError>{Err(GatewayError::unavailable("No cryptographic verifier installed in fixture","fixture_verifier_unavailable"))}
     async fn kernel_principal(&self,_:&str,_:&str,_:&str,_:&str)->Result<String,GatewayError>{Err(GatewayError::unavailable("Fixture forbids policy creation","fixture_policy_denied"))}
 }
 fn request(url:&str)->AuthRequest{AuthRequest{method:"GET".into(),url:url.into(),..Default::default()}}
@@ -88,4 +86,9 @@ fn insert<T:serde::Serialize>(store:&Store,key:RecordKey,value:&T){store.rows.bo
 #[test]fn deno_console_requires_real_title_and_exact_candidate_is_prepared_only(){
     assert!(console_title_matches(b"<html><title>Org | p-ai-ubq-fi | Deploy</title></html>","p-ai-ubq-fi"));assert!(!console_title_matches(b"<body>/org/p-ai-ubq-fi | Deploy</body>","p-ai-ubq-fi"));
     assert!(deno_token_shape("ddw_012345678901234567890"));assert!(!deno_token_shape("uos_ai_session_012345678901234567890"));
+}
+
+impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+    async fn validate_key(&self,_:&gateway_auth::webauthn::CosePublicKey)->Result<(),GatewayError>{Err(GatewayError::unavailable("Fixture verifier absent","fixture_verifier_absent"))}
+    async fn verify_signature(&self,_:gateway_auth::webauthn::SignatureInput)->Result<bool,GatewayError>{Err(GatewayError::unavailable("Fixture verifier absent","fixture_verifier_absent"))}
 }

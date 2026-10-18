@@ -135,11 +135,26 @@ impl<'a,S:AuthorityStore,H:AuthHost> AuthService<'a,S,H> {
             }
             ("GET","/uos/auth")=>{
                 let mut auth=self.authenticate_client(request).await?;if local_bypass(request,self.config)||self.legacy_local(request){if let Ok(admin)=self.authenticate_admin(request).await{auth=admin;}}
-                let token=auth.token.as_ref().map(Secret::expose);let shape=token.map(token_shape);
-                AuthResponse::json(200,json!({"ok":true,"service":"ai.ubq.fi","auth":{"mode":if local_bypass(request,self.config)||self.legacy_local(request){"disabled"}else{"required"},"is_admin":auth.is_admin,"is_super_admin":auth.is_super_admin,"method":auth.method,"token":{"present":token.is_some(),"length":token.map(str::len),"shape":shape,"sha256_12":token.map(|token|sha256_hex(token.as_bytes())[..12].to_owned())}}}))
+                let method=self.method_wire(&auth.method).await?;let token=auth.token.as_ref().map(Secret::expose);let shape=token.map(token_shape);
+                AuthResponse::json(200,json!({"ok":true,"service":"ai.ubq.fi","auth":{"mode":if local_bypass(request,self.config)||self.legacy_local(request){"disabled"}else{"required"},"is_admin":auth.is_admin,"is_super_admin":auth.is_super_admin,"method":method,"token":{"present":token.is_some(),"length":token.map(str::len),"shape":shape,"sha256_12":token.map(|token|sha256_hex(token.as_bytes())[..12].to_owned())}}}))
             }
             _=>return Ok(None),
         };Ok(Some(result))
+    }
+    async fn method_wire(&self,method:&AuthMethod)->Result<Value,GatewayError>{
+        Ok(match method{
+            AuthMethod::PasskeySession{user_id,handle,is_admin,credential_count}=>json!({"kind":"passkey_session","user":{"id":user_id,"handle":handle,"is_admin":is_admin,"credential_count":credential_count}}),
+            AuthMethod::GithubToken{owner,repo,state_id,limit_scope}=>json!({"kind":"github_token","repo":{"owner":owner,"repo":repo},"state_id":state_id,"limit_scope":limit_scope}),
+            AuthMethod::KvApiKey{key_id,policy}=>{
+                let mut key=json!({"id":key_id});
+                if let Some(row)=self.store.read(&api_keys::id_key(key_id)).await?{
+                    row.validate_version()?;let record=row.value;let wk=crate::store::key(json!(["uos_ai","api_key_usage","v3","window",key_id,policy.policy_version,policy.window_start_ms]));
+                    let usage=match self.store.read(&wk).await?{None=>0,Some(row)=>{row.validate_version()?;row.value.get("committed_requests").and_then(Value::as_i64).filter(|n|*n>=0).ok_or_else(||GatewayError::unavailable("API key quota ledger is unavailable","server_error"))?}};
+                    key=json!({"id":key_id,"name":record.get("name"),"prefix":record.get("prefix"),"created_at_ms":record.get("created_at_ms"),"expires_at_ms":policy.expires_at_ms,"revoked_at_ms":record.get("revoked_at_ms"),"usage_limit_requests":policy.usage_limit_requests,"usage_requests":usage,"usage_reset_at_ms":policy.usage_reset_at_ms,"window_ms":policy.window_ms});
+                }json!({"kind":"kv_api_key","key":key})
+            }
+            _=>serde_json::to_value(method).map_err(|_|GatewayError::unavailable("Authentication method cannot be encoded","auth_state_corrupt"))?,
+        })
     }
 }
 

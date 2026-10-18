@@ -16,8 +16,10 @@ pub const SUPERVISOR_FRAME_LIMIT:usize=1_048_576;
 pub const RENEWAL_FRAME_LIMIT:usize=65_536;
 
 #[derive(Clone,Debug,Deserialize,Eq,PartialEq,Serialize)]
-#[serde(transparent)]
+#[serde(try_from="String",into="String")]
 pub struct SourceId(String);
+impl TryFrom<String> for SourceId{type Error=GatewayError;fn try_from(value:String)->Result<Self,Self::Error>{Self::parse(&value)}}
+impl From<SourceId> for String{fn from(value:SourceId)->Self{value.0}}
 impl SourceId{
     pub fn parse(id:&str)->Result<Self,GatewayError>{
         if id.is_empty()||id.len()>32||!id.as_bytes()[0].is_ascii_lowercase()&&!id.as_bytes()[0].is_ascii_digit()||!id.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||matches!(b,b'_'|b'-')){return Err(invalid("Invalid supervisor source id"));}Ok(Self(id.to_owned()))

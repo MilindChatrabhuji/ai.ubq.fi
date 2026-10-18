@@ -4,7 +4,13 @@ use serde_json::Value;
 
 use crate::GatewayError;
 
-pub fn key(parts: Value) -> RecordKey { RecordKey(parts.to_string()) }
+/// All call sites construct first-party arrays of strings and finite JSON numbers.
+/// Identity/ordering belong exclusively to the shared source-compatible tuple codec.
+pub fn key(parts: Value) -> RecordKey {
+    gateway_core::tuple_key::TupleKey::from_json_parts(parts.as_array().expect("first-party tuple-key constructor requires an array"))
+        .expect("first-party tuple-key constructor uses only JSON scalar parts")
+        .to_record_key()
+}
 
 pub fn decode<T: DeserializeOwned>(record: Option<&StoredRecord>, now: i64) -> Result<Option<T>, GatewayError> {
     let Some(record) = record else { return Ok(None); };

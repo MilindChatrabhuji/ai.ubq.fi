@@ -34,7 +34,7 @@ impl Socket{
             if reply.get("error").is_some(){return Err(owner_unavailable());}return Ok(reply.get("result").cloned().unwrap_or(Value::Null));
         }
     }
-    fn close(&mut self){let _=self.socket.close(None);let grace=Duration::from_millis(250);let _=self.socket.get_mut().set_read_timeout(Some(grace));let _=self.socket.get_mut().set_write_timeout(Some(grace));let _=self.socket.flush();let _=self.socket.read();let _=self.socket.get_mut().shutdown(Shutdown::Both);}
+    fn close(&mut self){let grace=Duration::from_millis(250);let _=self.socket.get_mut().set_read_timeout(Some(grace));let _=self.socket.get_mut().set_write_timeout(Some(grace));let _=self.socket.close(None);let _=self.socket.flush();let _=self.socket.read();let _=self.socket.get_mut().shutdown(Shutdown::Both);}
 }
 impl Drop for Socket{fn drop(&mut self){let _=self.socket.get_mut().shutdown(Shutdown::Both);}}
 

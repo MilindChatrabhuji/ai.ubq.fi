@@ -65,6 +65,7 @@ pub struct PasskeyService<'a, S, H> { pub store: &'a S, pub host: &'a H, pub con
 impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
     fn revision(&self) -> Result<String, GatewayError> { uuid_from_random(&self.host.random_bytes(16)?) }
     fn uuid(&self) -> Result<String, GatewayError> { self.revision() }
+    fn challenge(&self)->Result<String,GatewayError>{let bytes=self.host.random_bytes(32)?;if bytes.len()!=32{return Err(GatewayError::unavailable("Random source returned the wrong length","auth_random_unavailable"));}Ok(base64url(&bytes))}
     pub async fn session(&self, request: &AuthRequest, override_token: Option<&str>) -> Result<Option<SessionView>, GatewayError> {
         let cookie = cookie_token(request);
         let Some(token) = override_token.or_else(|| request.bearer()).or(cookie.as_deref()) else { return Ok(None); };
@@ -120,7 +121,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         }
         let handle=normalize_handle(raw.get("handle").and_then(Value::as_str).unwrap_or(""));
         let user=if handle.is_empty(){None}else{self.user_by_handle(&handle).await?};
-        let mut public_key=json!({"challenge":base64url(&self.host.random_bytes(32)?),"timeout":CHALLENGE_TTL_MS,"userVerification":"required"});
+        let mut public_key=json!({"challenge":self.challenge()?,"timeout":CHALLENGE_TTL_MS,"userVerification":"required"});
         if let Some(user)=user.filter(|user|!user.credential_ids.is_empty()) {public_key["allowCredentials"]=json!(user.credential_ids.iter().map(|id|json!({"id":id,"type":"public-key"})).collect::<Vec<_>>());public_key["userVerification"]=json!(if user.is_admin{"required"}else{"preferred"});}
         let (origin,rp_id)=passkey_meta(request,raw.get("client_origin").and_then(Value::as_str),self.config);public_key["rpId"]=json!(rp_id);
         let challenge=PasskeyChallenge{challenge:public_key["challenge"].as_str().unwrap_or_default().to_owned(),kind:"authentication".into(),origin,rp_id,audience_origin:audience,user_id:None,handle:None,is_admin:None,created_at_ms:now,expires_at_ms:now+CHALLENGE_TTL_MS};
@@ -133,7 +134,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         let challenge=self.consume_challenge(challenge_id,"authentication").await?;
         let k=key("credentials",id);let row=self.store.read(&k).await?;let credential:PasskeyCredential=store::decode(row.as_ref(),self.host.now_ms())?.ok_or_else(||invalid("Unknown passkey"))?;
         let user:PasskeyUser=store::decode(self.store.read(&key("users",&credential.user_id)).await?.as_ref(),self.host.now_ms())?.ok_or_else(unauthorized)?;
-        let counter=self.host.verify_assertion(AssertionVerification{response:response.clone(),challenge:challenge.challenge,origin:challenge.origin,rp_id:challenge.rp_id,require_user_verification:user.is_admin,credential:credential.clone()}).await?;
+        let counter=crate::webauthn::verify_assertion(self.host,AssertionVerification{response:response.clone(),challenge:challenge.challenge,origin:challenge.origin,rp_id:challenge.rp_id,require_user_verification:user.is_admin,credential:credential.clone()}).await?;
         if (counter>0 || credential.sign_count>0) && counter<=credential.sign_count {return Err(invalid("Invalid passkey assertion"));}
         let mut next=credential.clone();next.sign_count=counter;
         if !store::commit(self.store,vec![store::check(&k,row.as_ref())],vec![store::put(k,&next,None,&self.revision()?)?]).await? {return Err(conflict("Passkey credential was modified concurrently; retry"));}
@@ -149,9 +150,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         let handle=normalize_handle(raw.get("handle").and_then(Value::as_str).unwrap_or(""));let fallback=token_handle(token);
         let requested=if handle.is_empty(){None}else{self.user_by_handle(&handle).await?};let token_user=if fallback.is_empty(){None}else{self.user_by_handle(&fallback).await?};
         if requested.as_ref().is_some_and(|user|session.as_ref().map(|s|&s.user.id)!=Some(&user.id)&&token_user.as_ref().map(|s|&s.id)!=Some(&user.id)){return Err(conflict("A passkey account already exists for this username"));}
-        let existing=session.as_ref().map(|s|s.user.clone()).or(token_user).or(requested);let user_id=existing.as_ref().map(|u|u.id.clone()).unwrap_or(self.uuid()?);
+        let existing=session.as_ref().map(|s|s.user.clone()).or(token_user).or(requested);let user_id=match &existing{Some(user)=>user.id.clone(),None=>self.uuid()?};
         let handle=session.as_ref().map(|s|s.user.handle.clone()).filter(|s|!s.is_empty()).or((!handle.is_empty()).then_some(handle)).or((!fallback.is_empty()).then_some(fallback)).unwrap_or_else(||token_handle(&user_id));
-        let is_admin=existing.as_ref().is_none_or(|user|user.is_admin);let(origin,rp_id)=passkey_meta(request,raw.get("client_origin").and_then(Value::as_str),self.config);let now=self.host.now_ms();let challenge=base64url(&self.host.random_bytes(32)?);
+        let is_admin=existing.as_ref().is_none_or(|user|user.is_admin);let(origin,rp_id)=passkey_meta(request,raw.get("client_origin").and_then(Value::as_str),self.config);let now=self.host.now_ms();let challenge=self.challenge()?;
         self.save_challenge(&PasskeyChallenge{challenge:challenge.clone(),kind:"registration".into(),origin,rp_id:rp_id.clone(),audience_origin:None,user_id:Some(user_id.clone()),handle:Some(handle.clone()),is_admin:Some(is_admin),created_at_ms:now,expires_at_ms:now+CHALLENGE_TTL_MS}).await?;
         Ok(AuthResponse::json(200,json!({"publicKey":{"rp":{"id":rp_id,"name":"UbiquityOS AI Gateway"},"user":{"id":base64url(user_id.as_bytes()),"name":handle,"displayName":handle},"challenge":challenge,"pubKeyCredParams":[{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}],"timeout":CHALLENGE_TTL_MS,"attestation":"none","authenticatorSelection":{"residentKey":"required","userVerification":if is_admin{"required"}else{"preferred"}},"excludeCredentials":existing.as_ref().map(|u|u.credential_ids.iter().map(|id|json!({"id":id,"type":"public-key"})).collect::<Vec<_>>()).unwrap_or_default()},"handle":handle})))
     }
@@ -159,7 +160,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         let raw=crate::upstream::parse_json_body(request,false)?;let response=raw.get("response").filter(|v|v.is_object()).ok_or_else(||invalid("Invalid passkey response"))?;let client=client_data(response)?;
         let challenge_id=client.get("challenge").and_then(Value::as_str).filter(|s|!s.is_empty()).ok_or_else(||invalid("Invalid passkey response"))?;let challenge=self.consume_challenge(challenge_id,"registration").await?;
         let user_id=challenge.user_id.ok_or_else(||invalid("Invalid passkey challenge"))?;let handle=normalize_handle(challenge.handle.as_deref().unwrap_or(""));if handle.is_empty(){return Err(invalid("username is required"));}
-        let verified=self.host.verify_registration(RegistrationVerification{response:response.clone(),challenge:challenge.challenge,origin:challenge.origin,rp_id:challenge.rp_id,require_user_verification:challenge.is_admin==Some(true)}).await?;
+        let verified=crate::webauthn::verify_registration(self.host,RegistrationVerification{response:response.clone(),challenge:challenge.challenge,origin:challenge.origin,rp_id:challenge.rp_id,require_user_verification:challenge.is_admin==Some(true)}).await?;
         let uk=key("users",&user_id);let hk=key("handles",&handle);let ck=key("credentials",&verified.credential_id);
         let ur=self.store.read(&uk).await?;let hr=self.store.read(&hk).await?;let cr=self.store.read(&ck).await?;
         let claimed:Option<String>=store::decode(hr.as_ref(),self.host.now_ms())?;if claimed.as_ref().is_some_and(|id|id!=&user_id){return Err(conflict("A passkey account already exists for this username"));}

@@ -88,13 +88,11 @@ pub struct AuthPrincipal {
     pub is_super_admin: bool,
 }
 
-pub trait AuthHost {
+pub trait AuthHost: crate::webauthn::WebAuthnCrypto {
     fn now_ms(&self) -> i64;
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError>;
     /// Fixed, typed remote reads; implementations must disable automatic redirects.
     fn fetch_auth(&self, request: crate::upstream::AuthUpstreamRequest) -> impl Future<Output = Result<crate::upstream::AuthUpstreamResponse, GatewayError>>;
-    fn verify_registration(&self, input: crate::passkeys::RegistrationVerification) -> impl Future<Output = Result<crate::passkeys::VerifiedRegistration, GatewayError>>;
-    fn verify_assertion(&self, input: crate::passkeys::AssertionVerification) -> impl Future<Output = Result<u32, GatewayError>>;
     /// Called only after upstream and attestation verification; preserves the kernel authority.
     fn kernel_principal(&self, owner: &str, repo: &str, state_id: &str, path: &str) -> impl Future<Output = Result<String, GatewayError>>;
 }
