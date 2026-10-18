@@ -13,6 +13,7 @@ pub mod origin;
 pub mod passkeys;
 pub mod provider_credentials;
 pub mod resolve;
+pub mod session_index;
 pub mod store;
 pub mod types;
 pub mod upstream;
