@@ -96,6 +96,37 @@ impl StoredRecord {
     pub fn profile_v2_source_json(&self) -> Result<crate::source_json::SourceJson, GatewayError> {
         self.profile_v2_value()?.to_source_json()
     }
+    pub fn source_graph(
+        revision: impl Into<String>,
+        graph: crate::source_graph::SourceGraph,
+        expires_at_ms: Option<crate::identity::UnixMillis>,
+    ) -> Result<Self, GatewayError> {
+        graph.validate_for_storage()?;
+        let value = serde_json::to_value(graph).map_err(|_| {
+            GatewayError::unavailable("Native source graph encoding failed.", "source_graph_invalid")
+        })?;
+        Ok(Self {
+            schema_version: PORTABLE_STATE_VERSION,
+            value_encoding: crate::value::ValueEncoding::SourceGraphV1,
+            revision: revision.into(),
+            value,
+            expires_at_ms,
+        })
+    }
+    pub fn source_graph_value(&self) -> Result<crate::source_graph::SourceGraph, GatewayError> {
+        self.validate_version()?;
+        if self.value_encoding != crate::value::ValueEncoding::SourceGraphV1 {
+            return Err(GatewayError::unavailable("An explicit SourceGraphV1 record was required.", "incompatible_value_encoding"));
+        }
+        self.decode_source_graph()
+    }
+    fn decode_source_graph(&self) -> Result<crate::source_graph::SourceGraph, GatewayError> {
+        let graph: crate::source_graph::SourceGraph = serde_json::from_value(self.value.clone()).map_err(|_| {
+            GatewayError::unavailable("Native source graph decoding failed.", "source_graph_invalid")
+        })?;
+        graph.validate_for_storage()?;
+        Ok(graph)
+    }
     pub fn portable_value(&self) -> Result<crate::value::PortableValue, GatewayError> {
         self.validate_version()?;
         match self.value_encoding {
@@ -114,10 +145,14 @@ impl StoredRecord {
                 Ok(decoded)
             }
             crate::value::ValueEncoding::ProfileV2 => self.profile_v2_value(),
+            crate::value::ValueEncoding::SourceGraphV1 => Err(GatewayError::unavailable("A tree record was required.", "incompatible_value_encoding")),
         }
     }
     pub fn validate_version(&self) -> Result<(), GatewayError> {
         if self.schema_version == PORTABLE_STATE_VERSION {
+            if self.value_encoding == crate::value::ValueEncoding::SourceGraphV1 {
+                self.decode_source_graph()?;
+            }
             if matches!(
                 self.value_encoding,
                 crate::value::ValueEncoding::ProfileV1 | crate::value::ValueEncoding::ProfileV2
