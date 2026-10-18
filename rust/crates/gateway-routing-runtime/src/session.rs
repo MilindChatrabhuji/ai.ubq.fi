@@ -39,7 +39,9 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
-    pub fn elapsed_wait_ms(&self) -> i64 { self.elapsed_wait_ms.get() }
+    pub fn elapsed_wait_ms(&self) -> i64 {
+        self.elapsed_wait_ms.get()
+    }
     pub(crate) fn authority(&self) -> Authority<S, I> {
         Authority::with_clock(self.store.clone(), self.tokens.clone(), self.clock.clone())
     }

@@ -326,9 +326,18 @@ impl<
             self.transport_started(attempt).await?;
         }
         if failure.cancelled || self.host.cancelled() || failure.failure == HopFailure::Cancelled {
-            return Ok(if failure.origin == FailureOrigin::Provider && failure.status.is_some() { RefusalDecision::Return } else { RefusalDecision::Abort });
+            return Ok(
+                if failure.origin == FailureOrigin::Provider && failure.status.is_some() {
+                    RefusalDecision::Return
+                } else {
+                    RefusalDecision::Abort
+                },
+            );
         }
-        if failure.origin == FailureOrigin::GatewayDeadline || (failure.origin != FailureOrigin::Provider && failure.failure == HopFailure::Deadline) {
+        if failure.origin == FailureOrigin::GatewayDeadline
+            || (failure.origin != FailureOrigin::Provider
+                && failure.failure == HopFailure::Deadline)
+        {
             return Ok(RefusalDecision::Abort);
         }
         if row.semantic_committed || failure.semantic_committed {
@@ -346,7 +355,8 @@ impl<
                 HopDecision::Deliver => RefusalDecision::Return,
             };
         } else if let CredentialFence::Codex { admission, .. } = &record.fence
-            && failure.origin == FailureOrigin::Provider {
+            && failure.origin == FailureOrigin::Provider
+        {
             if let Some(block) = classify::codex_quota(
                 failure.status,
                 &failure.headers,
@@ -416,7 +426,9 @@ impl<
                     .into());
                 }
             }
-        } else if matches!(record.fence, CredentialFence::Claude { .. }) && failure.origin == FailureOrigin::Provider {
+        } else if matches!(record.fence, CredentialFence::Claude { .. })
+            && failure.origin == FailureOrigin::Provider
+        {
             if self
                 .host
                 .record_claude_refusal(&record.fence, &record.model, &failure)
@@ -444,8 +456,14 @@ impl<
             if allowed {
                 self.renew().await?;
                 let outcome = self.host.wait(wait).await;
-                if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) { return Err(journal::unavailable("The host wait duration is invalid.").into()); }
-                self.elapsed_wait_ms.set(self.elapsed_wait_ms.get().saturating_add(outcome.elapsed_ms));
+                if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
+                    return Err(journal::unavailable("The host wait duration is invalid.").into());
+                }
+                self.elapsed_wait_ms.set(
+                    self.elapsed_wait_ms
+                        .get()
+                        .saturating_add(outcome.elapsed_ms),
+                );
                 outcome.result?;
                 if self.host.cancelled() {
                     return Ok(RefusalDecision::Abort);

@@ -200,14 +200,22 @@ pub fn lithos_ladder(model: &str) -> Vec<String> {
     }
 }
 fn lithos_canonical(model: &str) -> String {
-    crate::request::LITHOS_MODELS.iter().find(|known| known.eq_ignore_ascii_case(model.trim())).copied().unwrap_or(model.trim()).to_owned()
+    crate::request::LITHOS_MODELS
+        .iter()
+        .find(|known| known.eq_ignore_ascii_case(model.trim()))
+        .copied()
+        .unwrap_or(model.trim())
+        .to_owned()
 }
 impl LithosWindows {
     pub fn refuse(&mut self, rung: &str, now: i64, wait_ms: i64) {
         if wait_ms > 0
             && let Some(deadline) = now.checked_add(wait_ms)
         {
-            let row = self.deadlines.entry(lithos_canonical(rung)).or_insert(deadline);
+            let row = self
+                .deadlines
+                .entry(lithos_canonical(rung))
+                .or_insert(deadline);
             *row = (*row).max(deadline);
         }
     }

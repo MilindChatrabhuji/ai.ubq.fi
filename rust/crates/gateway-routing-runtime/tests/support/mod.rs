@@ -351,7 +351,9 @@ impl RoutingHost for Host {
         let result = if self.cancel_wait_after_ms.is_some() {
             self.cancelled.store(true, Ordering::SeqCst);
             Err(self.cancellation_error())
-        } else { Ok(()) };
+        } else {
+            Ok(())
+        };
         WaitOutcome { elapsed_ms, result }
     }
     async fn credential(

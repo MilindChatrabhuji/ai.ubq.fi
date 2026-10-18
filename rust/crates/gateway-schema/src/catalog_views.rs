@@ -171,15 +171,25 @@ fn add_public(
     }
 }
 fn merge_provider_metadata(rows: &mut [Value], id: &str, hint: MetadataHint) {
-    let Some(entry) = rows.iter_mut().find(|row| row["id"].as_str() == Some(id)) else { return; };
-    let resolved = resolve_metadata(&MetadataSources { provider: Some(hint), ..MetadataSources::default() });
+    let Some(entry) = rows.iter_mut().find(|row| row["id"].as_str() == Some(id)) else {
+        return;
+    };
+    let resolved = resolve_metadata(&MetadataSources {
+        provider: Some(hint),
+        ..MetadataSources::default()
+    });
     apply_resolved_fields(entry, &resolved, false, false);
     if resolved.context_window_tokens.is_some() || resolved.max_context_window_tokens.is_some() {
         entry["context_source"] = json!(resolved.context_source);
     }
-    if let Some(levels) = &resolved.supported_reasoning_levels { entry["supported_reasoning_levels"] = json!(levels); }
-    if let Some(default) = &resolved.default_reasoning_effort { entry["default_reasoning_effort"] = json!(default); }
-    if resolved.supported_reasoning_levels.is_some() || resolved.default_reasoning_effort.is_some() {
+    if let Some(levels) = &resolved.supported_reasoning_levels {
+        entry["supported_reasoning_levels"] = json!(levels);
+    }
+    if let Some(default) = &resolved.default_reasoning_effort {
+        entry["default_reasoning_effort"] = json!(default);
+    }
+    if resolved.supported_reasoning_levels.is_some() || resolved.default_reasoning_effort.is_some()
+    {
         entry["reasoning_source"] = json!(resolved.reasoning_source);
     }
 }
@@ -231,7 +241,9 @@ pub fn build_catalog_snapshot(input: &CatalogInput) -> Value {
                     positive_integer(model.get("created")),
                     &input.metadata(id, None, hint.clone(), false),
                 );
-                if existing && let Some(hint) = hint { merge_provider_metadata(&mut rows, id, hint); }
+                if existing && let Some(hint) = hint {
+                    merge_provider_metadata(&mut rows, id, hint);
+                }
             }
         }
     }
@@ -253,7 +265,9 @@ pub fn build_catalog_snapshot(input: &CatalogInput) -> Value {
                 None,
                 &input.metadata(id, None, Some(provider_hint(provider, id)), false),
             );
-            if existing { merge_provider_metadata(&mut rows, id, provider_hint(provider, id)); }
+            if existing {
+                merge_provider_metadata(&mut rows, id, provider_hint(provider, id));
+            }
         }
     }
     if input.synthetic_configured() {
@@ -271,7 +285,13 @@ pub fn build_catalog_snapshot(input: &CatalogInput) -> Value {
             Some(1_791_244_800),
             &resolved,
         );
-        if existing { merge_provider_metadata(&mut rows, SYNTHETIC_MODEL, provider_hint("ubiquity", SYNTHETIC_MODEL)); }
+        if existing {
+            merge_provider_metadata(
+                &mut rows,
+                SYNTHETIC_MODEL,
+                provider_hint("ubiquity", SYNTHETIC_MODEL),
+            );
+        }
         for provider in FLASH_ORDER {
             if input.configured(provider) {
                 add_public(

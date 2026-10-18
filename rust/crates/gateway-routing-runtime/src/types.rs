@@ -175,9 +175,16 @@ pub enum TransportState {
     Started,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FailureOrigin { Provider, Transport, GatewayDeadline }
+pub enum FailureOrigin {
+    Provider,
+    Transport,
+    GatewayDeadline,
+}
 #[derive(Clone, Debug)]
-pub struct WaitOutcome { pub elapsed_ms: i64, pub result: Result<(), GatewayError> }
+pub struct WaitOutcome {
+    pub elapsed_ms: i64,
+    pub result: Result<(), GatewayError>,
+}
 #[derive(Clone, Debug)]
 pub struct AttemptFailure {
     /// Captured before awaiting the bounded refusal body; never inferred from status alone.
