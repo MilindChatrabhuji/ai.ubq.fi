@@ -6,6 +6,13 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Owner-only follow-ups from #1132 remain pending - 2026-10-18 (#1176)
+
+PR #1156 closed #1132 on 2026-10-18 without resolving the two owner-only actions below. #1176 tracks both; this entry records pending work, not an owner decision or authorization to change runtime behavior. Keep #1176 open until the owner resolves these actions or each is transferred to a linked open owner task.
+
+- **#1073 item 2 / #139 — hard-cap disposition.** Oldest-first eviction has not been implemented. The retention document previously attributed a decline to the owner on 2026-10-16 in #139, but no supporting owner record is available in #139 or this journal. The owner must confirm and record that reported decline in a comment on #139 or a dated decision here, or correct the attribution. If declined, consider changing #139's close reason from "completed" to "not planned"; its current close reason does not prove eviction exists. The 5 GiB figure remains a growth-alert threshold, not an eviction limit.
+- **#1077 item 2 — non-loopback macOS live e2e.** Darwin live e2e accepts only a host-loopback `BASE_URL`; the default `https://ai.ubq.fi` fails closed. The owner must explicitly accept that limit or open a task for a destination-scoped CONNECT relay (or equivalent). No relay implementation or broader network permission is authorized while that decision is pending.
+
 ## Assistant output replay accepts and drops log probabilities - 2026-10-17
 
 Responses `output_text` accepts the official `logprobs` field when it is an array, including an empty array. Validation intentionally checks only the array shape, matching the existing `annotations` rule; neither field's entries affect generation. Both fields are dropped when constructing `MessageContentItem`, so the Codex subscription and paid provider request bodies carry only the replayed text. Non-array values retain a precise nested field error, non-assistant `output_text` remains invalid, and genuinely unknown fields remain rejected.

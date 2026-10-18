@@ -269,6 +269,25 @@ const runFile = async (
     await settleGroup(child.pid);
   }
 };
+export const runGroups = async (
+  groups: ReturnType<typeof validatedGroups>,
+  run: (path: string, selected: Parameters<typeof runFile>[1]) => Promise<number>
+): Promise<{ files: number; failures: number }> => {
+  let files = 0;
+  let failures = 0;
+  for (const item of groups) {
+    for (const file of item.files) {
+      console.log(`\n==> ${item.profile}: ${file.label}`);
+      const code = await withLiveRelayParent(item.policy, (policy) => run(file.path, { ...item, policy }));
+      files++;
+      if (code !== 0) {
+        failures++;
+        console.error(`FAILED ${file.label} (exit ${code})`);
+      }
+    }
+  }
+  return { files, failures };
+};
 const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: boolean; wallTimeMs: number; nativeBinding?: string }> => {
   const files: string[] = [];
   let list = false;
@@ -300,19 +319,7 @@ const main = async (): Promise<void> => {
   const resolved = validatedGroups(selected);
   const binding = options.nativeBinding === undefined ? await prepareTestNativeKv(ROOT) : verifiedTestNativeKvBinding(options.nativeBinding);
   const preload = createTestNativeKvPreload(ROOT);
-  let files = 0;
-  let failures = 0;
-  for (const item of resolved) {
-    for (const file of item.files) {
-      console.log(`\n==> ${item.profile}: ${file.label}`);
-      const code = await withLiveRelayParent(item.policy, (policy) => runFile(file.path, { ...item, policy }, options.wallTimeMs, binding, preload));
-      files++;
-      if (code !== 0) {
-        failures++;
-        console.error(`FAILED ${file.label} (exit ${code})`);
-      }
-    }
-  }
+  const { files, failures } = await runGroups(resolved, (path, item) => runFile(path, item, options.wallTimeMs, binding, preload));
   console.log(`test:${segment}: ${files} files, ${failures} failures`);
   process.exitCode = failures === 0 && !interrupted ? 0 : 1;
 };
