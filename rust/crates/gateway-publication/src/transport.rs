@@ -354,8 +354,8 @@ pub trait PublicationCarrier {
     ) -> impl Future<Output = Result<PublicationResponse, GatewayError>>;
 }
 pub struct NativePublicationSender<'a, C> {
-    identity: &'a NativeTransportIdentity,
-    carrier: &'a C,
+    pub(crate) identity: &'a NativeTransportIdentity,
+    pub(crate) carrier: &'a C,
 }
 impl<'a, C: PublicationCarrier> NativePublicationSender<'a, C> {
     pub fn configured(identity: &'a NativeTransportIdentity, carrier: &'a C) -> Self {
@@ -421,14 +421,17 @@ impl<'a, C: PublicationCarrier> NativePublicationSender<'a, C> {
         Ok(receipt)
     }
 }
-fn unverified() -> GatewayError {
+pub(crate) fn unverified() -> GatewayError {
     GatewayError::unavailable(
         "Native publication response is not an authenticated matching receipt",
         "native_publication_response_unverified",
     )
 }
 
-fn decode_response_error(status: u16, body: &[u8]) -> Result<GatewayError, GatewayError> {
+pub(crate) fn decode_response_error(
+    status: u16,
+    body: &[u8],
+) -> Result<GatewayError, GatewayError> {
     let value: serde_json::Value = serde_json::from_slice(body).map_err(|_| unverified())?;
     let error = value
         .get("error")
