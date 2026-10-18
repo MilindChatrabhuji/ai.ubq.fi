@@ -4,8 +4,7 @@ use std::{
     future::Future,
     pin::pin,
     rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
 
 use gateway_auth::{AuthMethod, AuthPrincipal, crypto::Secret};
@@ -20,12 +19,7 @@ use gateway_live_runtime::*;
 use serde_json::{Value, json};
 
 fn run<F: Future>(future: F) -> F::Output {
-    struct Noop;
-    impl Wake for Noop {
-        fn wake(self: Arc<Self>) {}
-    }
-    let waker = Waker::from(Arc::new(Noop));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = pin!(future);
     loop {
         if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
@@ -112,11 +106,13 @@ impl LiveAccount for Account {
         &self.id
     }
 }
+type UpstreamResult = Result<LiveResponse<Vec<u8>>, LiveDispatchFailure<Vec<u8>>>;
+type CapturedRequest = (String, String, BTreeMap<String, String>);
 struct Host {
     now: Cell<i64>,
     selected: RefCell<VecDeque<Result<Account, LiveResponse<Vec<u8>>>>>,
-    upstream: RefCell<VecDeque<Result<LiveResponse<Vec<u8>>, LiveDispatchFailure<Vec<u8>>>>>,
-    requests: RefCell<Vec<(String, String, BTreeMap<String, String>)>>,
+    upstream: RefCell<VecDeque<UpstreamResult>>,
+    requests: RefCell<Vec<CapturedRequest>>,
     events: RefCell<Vec<String>>,
     generation: Cell<u32>,
     removed: Cell<bool>,
