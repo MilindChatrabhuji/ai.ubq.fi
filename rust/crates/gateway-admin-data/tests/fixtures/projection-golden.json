@@ -1,0 +1,1985 @@
+[
+  {
+    "name": "sustainable",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 840,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 840,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 5,
+              "quota_per_hour": 5,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 840,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 5,
+              "quota_per_hour": 1.1666666666666667,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 840,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 5,
+              "quota_per_hour": 0.3888888888888889,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 52,
+          "time_remaining_ms": 187200000,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800244800000,
+          "percent_per_request_vs_balance": 1.9230769230769231,
+          "percent_per_request_vs_baseline": 1.9230769230769231
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 52,
+          "time_remaining_ms": 802285714,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800859885714,
+          "percent_per_request_vs_balance": 1.9230769230769231,
+          "percent_per_request_vs_baseline": 1.9230769230769231
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 52,
+          "time_remaining_ms": 2406857142,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1802464457142,
+          "percent_per_request_vs_balance": 1.9230769230769231,
+          "percent_per_request_vs_baseline": 1.9230769230769231
+        }
+      ]
+    }
+  },
+  {
+    "name": "early",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 6720,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 6720,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 40,
+              "quota_per_hour": 40,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 6720,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 40,
+              "quota_per_hour": 9.333333333333334,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 6720,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 40,
+              "quota_per_hour": 3.111111111111111,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 6,
+          "time_remaining_ms": 23400000,
+          "refill_aware_status": "exhausts_without_refill",
+          "refill_aware_time_remaining_ms": 23400000,
+          "refill_aware_exhausted_at_ms": 1800081000000,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800081000000,
+          "percent_per_request_vs_balance": 15.384615384615385,
+          "percent_per_request_vs_baseline": 15.384615384615385
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 6,
+          "time_remaining_ms": 100285714,
+          "refill_aware_status": "exhausts_with_refill",
+          "refill_aware_time_remaining_ms": 192857142,
+          "refill_aware_exhausted_at_ms": 1800250457142,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800157885714,
+          "percent_per_request_vs_balance": 15.384615384615385,
+          "percent_per_request_vs_baseline": 15.384615384615385
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 6,
+          "time_remaining_ms": 300857142,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800358457142,
+          "percent_per_request_vs_balance": 15.384615384615385,
+          "percent_per_request_vs_baseline": 15.384615384615385
+        }
+      ]
+    }
+  },
+  {
+    "name": "scheduled",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 93600000,
+          "refill_aware_status": "exhausts_with_refill",
+          "refill_aware_time_remaining_ms": 165600000,
+          "refill_aware_exhausted_at_ms": 1800223200000,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800151200000,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 401142857,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800458742857,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 1203428571,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1801261028571,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        }
+      ]
+    }
+  },
+  {
+    "name": "missing-amount",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 0,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 93600000,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": 1800151200000,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 401142857,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": 1800458742857,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 1203428571,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": 1801261028571,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        }
+      ]
+    }
+  },
+  {
+    "name": "history-unavailable",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": null,
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 93600000,
+          "refill_aware_status": "exhausts_with_refill",
+          "refill_aware_time_remaining_ms": 108000000,
+          "refill_aware_exhausted_at_ms": 1800165600000,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 57600000,
+          "refill_rate_quota_per_hour": 2.5,
+          "next_refill_at_ms": 1800115200000,
+          "exhausted_at_ms": 1800151200000,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 401142857,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 57600000,
+          "refill_rate_quota_per_hour": 2.5,
+          "next_refill_at_ms": 1800115200000,
+          "exhausted_at_ms": 1800458742857,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 1203428571,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 57600000,
+          "refill_rate_quota_per_hour": 2.5,
+          "next_refill_at_ms": 1800115200000,
+          "exhausted_at_ms": 1801261028571,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        }
+      ]
+    }
+  },
+  {
+    "name": "empty-history",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 93600000,
+          "refill_aware_status": "exhausts_with_refill",
+          "refill_aware_time_remaining_ms": 108000000,
+          "refill_aware_exhausted_at_ms": 1800165600000,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 57600000,
+          "refill_rate_quota_per_hour": 2.5,
+          "next_refill_at_ms": 1800115200000,
+          "exhausted_at_ms": 1800151200000,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 401142857,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 57600000,
+          "refill_rate_quota_per_hour": 2.5,
+          "next_refill_at_ms": 1800115200000,
+          "exhausted_at_ms": 1800458742857,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 26,
+          "time_remaining_ms": 1203428571,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 57600000,
+          "refill_rate_quota_per_hour": 2.5,
+          "next_refill_at_ms": 1800115200000,
+          "exhausted_at_ms": 1801261028571,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        }
+      ]
+    }
+  },
+  {
+    "name": "token",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": 1000,
+      "total_granted": 1000,
+      "total_used": 400
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": null,
+        "unlimited_quota": false,
+        "balance_quota": null,
+        "baseline_quota": null,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": 1000,
+        "total_granted": 1000,
+        "total_used": 400,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": null,
+        "last_credit_at_ms": null,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 100,
+          "time_remaining_ms": 360000000,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": 1800417600000,
+          "percent_per_request_vs_balance": 1,
+          "percent_per_request_vs_baseline": 1
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 100,
+          "time_remaining_ms": 1542857142,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": 1801600457142,
+          "percent_per_request_vs_balance": 1,
+          "percent_per_request_vs_baseline": 1
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": 100,
+          "time_remaining_ms": 4628571428,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": 1804686171428,
+          "percent_per_request_vs_balance": 1,
+          "percent_per_request_vs_baseline": 1
+        }
+      ]
+    }
+  },
+  {
+    "name": "unlimited",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": true,
+      "total_available": 1000,
+      "total_granted": 1000,
+      "total_used": 400
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": null,
+        "unlimited_quota": true,
+        "balance_quota": null,
+        "baseline_quota": null,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": 1000,
+        "total_granted": 1000,
+        "total_used": 400,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": null,
+        "last_credit_at_ms": null,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": true,
+          "stale_balance": false,
+          "requests_remaining": null,
+          "time_remaining_ms": null,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": null,
+          "percent_per_request_vs_balance": null,
+          "percent_per_request_vs_baseline": null
+        },
+        {
+          "window_days": 30,
+          "unlimited": true,
+          "stale_balance": false,
+          "requests_remaining": null,
+          "time_remaining_ms": null,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": null,
+          "percent_per_request_vs_balance": null,
+          "percent_per_request_vs_baseline": null
+        },
+        {
+          "window_days": 90,
+          "unlimited": true,
+          "stale_balance": false,
+          "requests_remaining": null,
+          "time_remaining_ms": null,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": null,
+          "percent_per_request_vs_balance": null,
+          "percent_per_request_vs_baseline": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "unconfigured",
+    "snapshot": null,
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": false,
+        "available": false,
+        "cache_state": null,
+        "confidence": null,
+        "unlimited_quota": false,
+        "balance_quota": null,
+        "baseline_quota": null,
+        "quota_per_credit": null,
+        "balance_credits": null,
+        "baseline_credits": null,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": null,
+        "cycle_started_at_ms": null,
+        "last_credit_at_ms": null,
+        "latest_refill_amount_credits": null,
+        "latest_refill_completed_at_ms": null
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": null,
+          "time_remaining_ms": null,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": null,
+          "percent_per_request_vs_balance": null,
+          "percent_per_request_vs_baseline": null
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": null,
+          "time_remaining_ms": null,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": null,
+          "percent_per_request_vs_balance": null,
+          "percent_per_request_vs_baseline": null
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": false,
+          "requests_remaining": null,
+          "time_remaining_ms": null,
+          "refill_aware_status": "unknown",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": null,
+          "refill_cadence_ms": null,
+          "refill_rate_quota_per_hour": null,
+          "next_refill_at_ms": null,
+          "exhausted_at_ms": null,
+          "percent_per_request_vs_balance": null,
+          "percent_per_request_vs_baseline": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "stale",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "stale",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "metered",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "stale",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "metered",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": [
+        {
+          "window_days": 7,
+          "unlimited": false,
+          "stale_balance": true,
+          "requests_remaining": 26,
+          "time_remaining_ms": 93600000,
+          "refill_aware_status": "exhausts_with_refill",
+          "refill_aware_time_remaining_ms": 165600000,
+          "refill_aware_exhausted_at_ms": 1800223200000,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800151200000,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 30,
+          "unlimited": false,
+          "stale_balance": true,
+          "requests_remaining": 26,
+          "time_remaining_ms": 401142857,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1800458742857,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        },
+        {
+          "window_days": 90,
+          "unlimited": false,
+          "stale_balance": true,
+          "requests_remaining": 26,
+          "time_remaining_ms": 1203428571,
+          "refill_aware_status": "sustainable",
+          "refill_aware_time_remaining_ms": null,
+          "refill_aware_exhausted_at_ms": null,
+          "refill_amount_credits": 40,
+          "refill_cadence_ms": 28800000,
+          "refill_rate_quota_per_hour": 5,
+          "next_refill_at_ms": 1800086400000,
+          "exhausted_at_ms": 1801261028571,
+          "percent_per_request_vs_balance": 3.8461538461538463,
+          "percent_per_request_vs_baseline": 3.8461538461538463
+        }
+      ]
+    }
+  },
+  {
+    "name": "surplus",
+    "snapshot": {
+      "state": {
+        "current_balance_quota": 260,
+        "post_refill_baseline_quota": 260,
+        "quota_per_credit": 1,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "confidence": "inferred_adjustment",
+        "last_inferred_credit_quota": 40,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "cache_state": "fresh",
+      "balance_credits": 260,
+      "baseline_credits": 260,
+      "remaining_percent": null,
+      "used_percent": null,
+      "unlimited_quota": false,
+      "total_available": null,
+      "total_granted": null,
+      "total_used": null
+    },
+    "rollups": [
+      {
+        "v": 1,
+        "model": "gpt-example",
+        "provider": "surplus",
+        "bucket_start_at_ms": 1800054000000,
+        "request_count": 168,
+        "quota_sum": 1680,
+        "input_tokens": 100,
+        "cached_input_tokens": 10,
+        "output_tokens": 20,
+        "spend_microcredits": 0
+      }
+    ],
+    "history": [
+      {
+        "bucket_start_at_ms": 1800000000000,
+        "observed_at_ms": 1800000000000,
+        "balance_quota": 200,
+        "baseline_quota": 200,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800028800000,
+        "observed_at_ms": 1800028800000,
+        "balance_quota": 230,
+        "baseline_quota": 230,
+        "quota_per_credit": 1
+      },
+      {
+        "bucket_start_at_ms": 1800057600000,
+        "observed_at_ms": 1800057600000,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1
+      }
+    ],
+    "now": 1800057600000,
+    "expected": {
+      "quota": {
+        "configured": true,
+        "available": true,
+        "cache_state": "fresh",
+        "confidence": "inferred_adjustment",
+        "unlimited_quota": false,
+        "balance_quota": 260,
+        "baseline_quota": 260,
+        "quota_per_credit": 1,
+        "balance_credits": 260,
+        "baseline_credits": 260,
+        "remaining_percent": null,
+        "used_percent": null,
+        "total_available": null,
+        "total_granted": null,
+        "total_used": null,
+        "observed_at_ms": 1800057600000,
+        "cycle_started_at_ms": 1800057600000,
+        "last_credit_at_ms": 1800057600000,
+        "latest_refill_amount_credits": 100,
+        "latest_refill_completed_at_ms": 1800000000000
+      },
+      "usage": [
+        {
+          "model": "gpt-example",
+          "provider": "surplus",
+          "windows": [
+            {
+              "window_days": 7,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 10,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 30,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 2.3333333333333335,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            },
+            {
+              "window_days": 90,
+              "bucket_count": 1,
+              "request_count": 168,
+              "quota_sum": 1680,
+              "spend_microcredits": 0,
+              "input_tokens": 100,
+              "cached_input_tokens": 10,
+              "output_tokens": 20,
+              "avg_quota_per_request": 10,
+              "quota_per_hour": 0.7777777777777778,
+              "first_bucket_start_at_ms": 1800054000000,
+              "last_bucket_start_at_ms": 1800054000000
+            }
+          ]
+        }
+      ],
+      "estimates": []
+    }
+  }
+]
