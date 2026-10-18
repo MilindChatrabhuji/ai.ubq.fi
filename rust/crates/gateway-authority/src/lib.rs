@@ -7,6 +7,7 @@ mod capacity_rules;
 pub mod claude;
 mod kernel;
 pub mod keys;
+pub mod native_control;
 pub mod paid;
 pub mod paid_control;
 mod paid_types;
