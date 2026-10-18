@@ -31,7 +31,7 @@ async function bounded<T>(work: Promise<T>, ms: number): Promise<T | null> {
 
 /**
  * @public Trusted filesystem adapter. Cipher and fresh scope come only from the authenticated host.
- * It shares the Bun deploy lock, so it lives outside the journal-metrics import graph.
+ * It shares the deploy lock, so it lives outside the read-only journal-metrics import graph.
  */
 export function createVpsJoinFileStorage(
   root: string,
