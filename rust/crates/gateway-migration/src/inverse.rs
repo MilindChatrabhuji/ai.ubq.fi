@@ -107,8 +107,6 @@ fn inverse_value(
         }
         Transform::PaidPending => remove(&mut out, &["key_id", "attempt_id"]),
         Transform::PaidGate => remove(&mut out, &["pending"]),
-        Transform::Routing => out = crate::routing::inverse_routing(current, &original)?,
-        Transform::Capacity => out = crate::routing::inverse_capacity(current, &original)?,
         Transform::Identity | Transform::CatalogBytes => {}
     }
     if matches!(
@@ -225,6 +223,15 @@ pub async fn export_latest<S: QueryStore>(
             continue;
         }
         if starts(&p, &["uos_ai", "authority"]) {
+            if p.get(3).and_then(Value::as_str)==Some("api_policy") {
+                let id=p.get(4).and_then(Value::as_str).ok_or_else(||invalid("Derived API policy ID is missing"))?;
+                let source=all.get(&gateway_auth::api_keys::id_key(id).0).ok_or_else(||invalid("Derived API policy has no source ID"))?;
+                let source:gateway_admin::keys::ApiKeyRecord=decode(source.json_value()?)?;
+                let mut expected=gateway_admin::keys::authority_policy(&source,now_ms);
+                let actual:gateway_authority::quota::ApiKeyPolicy=decode(record.json_value()?)?;
+                if source.policy.revoked_at_ms.is_some() && actual.expires_at_ms<=now_ms {expected.expires_at_ms=actual.expires_at_ms;}
+                if actual!=expected {return Err(invalid("Latest derived API policy differs from the source ID; inverse would lose policy"));}
+            }
             if p.get(3).and_then(Value::as_str).is_some_and(|s| {
                 [
                     "api_policy",
@@ -262,10 +269,14 @@ pub async fn export_latest<S: QueryStore>(
             expires_at_ms: record.expires_at_ms,
         });
     }
-    Ok(PrivateCapture {
+    let result=PrivateCapture {
         v: 1,
         source_git_sha: manifest.source_git_sha,
         captured_at_ms: now_ms,
         entries,
-    })
+    };
+    // A private export is not a successful rollback until every latest source/index
+    // invariant can be re-adopted. This reads no old database or backup.
+    crate::prepare(&result,&CanonicalDates)?;
+    Ok(result)
 }
