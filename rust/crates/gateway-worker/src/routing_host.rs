@@ -28,6 +28,7 @@ pub struct Host {
     pub store: RemoteAuthorityStore,
     pub env: Env,
     pub platform: PlatformHost,
+    claude: crate::claude_host::Binding,
 }
 
 fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
@@ -41,7 +42,7 @@ fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
 }
 
 impl RoutingHost for Host {
-    type ClaudeHead = ();
+    type ClaudeHead = crate::claude_host::Head;
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
     }
@@ -132,10 +133,13 @@ impl RoutingHost for Host {
     async fn ensure_credential_current(
         &self,
         fence: &CredentialFence,
-        _principal: &AuthPrincipal,
-        _model: &str,
+        principal: &AuthPrincipal,
+        model: &str,
     ) -> Result<(), GatewayError> {
         match fence {
+            CredentialFence::Claude { .. } => {
+                self.claude.ensure_current(fence, principal, model).await
+            }
             CredentialFence::Direct { provider } if provider_name(*provider).is_some() => {
                 self.credential(CredentialRequest {
                     provider: *provider,
@@ -214,34 +218,26 @@ impl RoutingHost for Host {
     }
     async fn select_claude(
         &self,
-        _principal: &AuthPrincipal,
-        _model: &str,
-        _raw: &Value,
+        principal: &AuthPrincipal,
+        model: &str,
+        raw: &Value,
     ) -> Result<ClaudeSelection, GatewayError> {
-        Err(unavailable(
-            "The source Claude account selector capability is not yet integrated.",
-        ))
+        self.claude.select(principal, model, raw).await
     }
     async fn observe_claude_response(
         &self,
-        _fence: &CredentialFence,
-        _model: &str,
-        _response: gateway_routing_runtime::ResponseHead,
+        fence: &CredentialFence,
+        model: &str,
+        response: gateway_routing_runtime::ResponseHead,
     ) -> Result<Self::ClaudeHead, GatewayError> {
-        Err(GatewayError::unavailable(
-            "The Claude response observer is not configured.",
-            "claude_response_unavailable",
-        ))
+        self.claude.observe(fence, model, response).await
     }
     async fn finish_claude_response(
         &self,
-        _head: Self::ClaudeHead,
-        _evidence: gateway_core::claude::ClaudeErrorEvidence,
+        head: Self::ClaudeHead,
+        evidence: gateway_core::claude::ClaudeErrorEvidence,
     ) -> Result<gateway_routing_runtime::ClaudeOutcome, GatewayError> {
-        Err(GatewayError::unavailable(
-            "The Claude response finalizer is not configured.",
-            "claude_response_unavailable",
-        ))
+        self.claude.finish(head, evidence).await
     }
     async fn recover_codex(
         &self,
@@ -261,6 +257,19 @@ impl RoutingHost for Host {
 }
 
 impl Host {
+    pub fn new(
+        store: RemoteAuthorityStore,
+        platform: PlatformHost,
+        context: std::rc::Rc<worker::Context>,
+    ) -> Self {
+        let claude = crate::claude_host::Binding::new(store.clone(), platform.clone(), context);
+        Self {
+            store,
+            env: platform.env.clone(),
+            platform,
+            claude,
+        }
+    }
     async fn wait_result(&self, milliseconds: i64) -> Result<(), GatewayError> {
         let child = self.platform.cancellation.child()?;
         let wait =

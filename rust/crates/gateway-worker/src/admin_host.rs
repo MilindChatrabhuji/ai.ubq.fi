@@ -9,15 +9,10 @@ use gateway_admin_runtime::{
 };
 use gateway_auth::AuthResponse;
 use gateway_core::{GatewayError, identity::RequestId};
-use gateway_observability::{ObservabilityRuntime, ObservabilityState};
 use gateway_schema::util::js_trim;
 use worker::Env;
 use worker::js_sys::{Function, Reflect};
 use worker::wasm_bindgen::{JsCast, JsValue};
-
-thread_local! {
-    static OBSERVABILITY_STATE: ObservabilityState = ObservabilityState::default();
-}
 
 pub fn config(env: &Env) -> RuntimeConfig {
     let raw = crate::host::setting(env, "CLAUDE_CODE_ALLOWED_KEY_IDS").unwrap_or_default();
@@ -40,10 +35,7 @@ pub struct Capabilities {
     original_body_bytes: usize,
     catalog_service: gateway_catalog_runtime::CatalogRuntime,
     catalog_host: crate::catalog_host::Host,
-    observations: ObservabilityRuntime<
-        crate::authority::RemoteAuthorityStore,
-        crate::observability_host::Host,
-    >,
+    observations: crate::observability_host::Runtime,
 }
 
 impl Capabilities {
@@ -54,6 +46,13 @@ impl Capabilities {
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
     ) -> Self {
+        let observations = crate::observability_host::bind(
+            request_id,
+            original_body,
+            store.clone(),
+            platform,
+            context.clone(),
+        );
         Self {
             request_id: request_id.0.clone(),
             original_body_bytes: original_body.len(),
@@ -64,11 +63,7 @@ impl Capabilities {
                 platform: platform.clone(),
                 context,
             },
-            observations: ObservabilityRuntime::with_state(
-                store,
-                crate::observability_host::Host,
-                OBSERVABILITY_STATE.with(Clone::clone),
-            ),
+            observations,
         }
     }
     fn measured_body_bytes(&self, context: &Context) -> Result<usize, GatewayError> {
@@ -120,15 +115,8 @@ impl RuntimeCapabilities for Capabilities {
         request: ProviderRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
-        let original_body_bytes = self.measured_body_bytes(&context)?;
-        match request {
-            ProviderRequest::Observations { document } => {
-                self.observations
-                    .capacity_observation_response(&document, original_body_bytes, context)
-                    .await
-            }
-            _ => Err(unavailable("provider_capacity")),
-        }
+        self.measured_body_bytes(&context)?;
+        self.observations.provider(request, context).await
     }
     async fn analytics(
         &self,
@@ -136,13 +124,7 @@ impl RuntimeCapabilities for Capabilities {
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
-        match request {
-            AnalyticsRequest::PromptCache { group_by } => Ok(AuthResponse::json(
-                200,
-                self.observations.prompt_analytics(&group_by).await?,
-            )),
-            _ => Err(unavailable("analytics")),
-        }
+        self.observations.analytics(request, context).await
     }
     fn compare_admin_labels(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
         compare_labels(left, right)
@@ -170,11 +152,4 @@ pub fn compare_labels(left: &str, right: &str) -> Result<Ordering, GatewayError>
         .as_f64()
         .and_then(|value| value.partial_cmp(&0.0))
         .ok_or_else(unavailable)
-}
-
-fn unavailable(capability: &str) -> GatewayError {
-    GatewayError::unavailable(
-        format!("Required {capability} capability is not configured"),
-        "admin_capability_unavailable",
-    )
 }

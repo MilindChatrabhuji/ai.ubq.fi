@@ -1,5 +1,5 @@
 use gateway_core::GatewayError;
-use gateway_core::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, HealthResponse, ReleaseIdentity};
+use gateway_core::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, ReleaseIdentity};
 use std::rc::Rc;
 #[cfg(feature = "entrypoint")]
 use worker::event;
@@ -12,6 +12,7 @@ mod assets;
 pub mod authority;
 mod catalog;
 mod catalog_host;
+mod claude_host;
 mod cors;
 mod extras;
 mod extras_host;
@@ -107,7 +108,10 @@ pub async fn fetch_with_bindings(
         if request.method() == Method::Head {
             Response::empty()?
         } else {
-            Response::from_json(&HealthResponse::available(&identity))?
+            match crate::observability_host::health_response().and_then(runtime::auth_response) {
+                Ok(response) => response,
+                Err(error) => return error_response(error),
+            }
         }
     } else {
         match runtime::route(

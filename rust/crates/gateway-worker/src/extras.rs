@@ -153,11 +153,7 @@ pub async fn run(
             retry_prohibited: false,
         },
         store.clone(),
-        routing_host::Host {
-            store: store.clone(),
-            env: platform.env.clone(),
-            platform: platform.clone(),
-        },
+        routing_host::Host::new(store.clone(), platform.clone(), context.clone()),
         PlatformClock,
         PlatformTokens,
         family,
