@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executeRustPlan, parseRustArguments, planRustVerification, runCommand, verifyWorkerArtifact, type RustCommand } from "./rust-verify.ts";
+import {
+  executeRustPlan,
+  parseRustArguments,
+  planRustVerification,
+  runCommand,
+  rustVerificationEnvironment,
+  verifyWorkerArtifact,
+  type RustCommand,
+} from "./rust-verify.ts";
 
 const temporary = mkdtempSync(join(tmpdir(), "uos-rust-gate-contract-"));
 afterAll(() => {
@@ -176,4 +184,28 @@ test("a native companion cannot enter the Worker dependency closure", () => {
     '[package]\nname="gateway-worker"\n[dependencies]\ngateway-native={path="../gateway-native"}\n'
   );
   assert.throws(() => planRustVerification(root, ["rust/crates/gateway-worker/src/lib.rs"], "wasm"), /native-only package/);
+});
+
+test("isolated Rust children preserve account HOME and isolate ambient Git configuration", () => {
+  const source = {
+    HOME: "/home/build-account",
+    PATH: "/usr/bin:/bin",
+    CARGO_HOME: join(temporary, "rust-cargo"),
+    RUSTUP_HOME: join(temporary, "rust-rustup"),
+    CARGO_TARGET_DIR: join(temporary, "rust-target"),
+    XDG_CACHE_HOME: join(temporary, "rust-cache"),
+    GIT_CONFIG_GLOBAL: "/private/ambient-git-config",
+    GIT_CONFIG_SYSTEM: "/private/system-git-config",
+    GIT_CONFIG_NOSYSTEM: "0",
+    UNLISTED_CREDENTIAL_PROBE: "fixture-only",
+  };
+  const environment = rustVerificationEnvironment(source);
+  assert.equal(environment.HOME, source.HOME);
+  assert.equal(environment.GIT_CONFIG_NOSYSTEM, "1");
+  assert.equal(environment.GIT_CONFIG_GLOBAL, "/dev/null");
+  assert.equal(environment.GIT_CONFIG_SYSTEM, "/dev/null");
+  assert.equal(environment.CARGO_NET_OFFLINE, "true");
+  assert.equal(environment.UNLISTED_CREDENTIAL_PROBE, undefined);
+  assert.throws(() => rustVerificationEnvironment({ ...source, HOME: undefined }), /explicit inherited absolute HOME/);
+  assert.throws(() => rustVerificationEnvironment({ ...source, HOME: "relative-home" }), /explicit inherited absolute HOME/);
 });
