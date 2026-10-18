@@ -365,9 +365,8 @@ fn kernel_legacy_reserved_aggregate_is_reconciled_only_from_complete_inventory()
         ]),
         reservation("done", "committed"),
     );
-    assert!(
-        kernel::reconcile_imported_window(&observed, &[active.clone()], false, 500, "new").is_err()
-    );
+    let partial = std::slice::from_ref(&active);
+    assert!(kernel::reconcile_imported_window(&observed, partial, false, 500, "new").is_err());
     let transition =
         kernel::reconcile_imported_window(&observed, &[active, done], true, 500, "new")
             .unwrap()
