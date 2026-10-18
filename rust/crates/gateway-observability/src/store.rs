@@ -41,9 +41,12 @@ pub(crate) async fn commit<S:AuthorityStore>(store:&S,checks:Vec<RevisionCheck>,
     Ok(store.commit(AtomicTransition{checks,mutations}).await?==CommitOutcome::Committed)
 }
 pub(crate) async fn scan<S:QueryStore>(store:&S,prefix:RecordKey,reverse:bool,at:i64,limit:usize)->Result<Vec<QueryEntry>,GatewayError>{
+    scan_selector(store,QuerySelector::Prefix{prefix,start:None,end:None},reverse,at,limit).await
+}
+pub(crate) async fn scan_selector<S:QueryStore>(store:&S,selector:QuerySelector,reverse:bool,at:i64,limit:usize)->Result<Vec<QueryEntry>,GatewayError>{
     let mut cursor=None;let mut rows=Vec::new();
     loop {
-        let request=QueryRequest{selector:QuerySelector::Prefix{prefix:prefix.clone(),start:None,end:None},reverse,limit:(limit.saturating_sub(rows.len())).clamp(1,256) as u32,cursor:cursor.clone(),now_ms:at};
+        let request=QueryRequest{selector:selector.clone(),reverse,limit:(limit.saturating_sub(rows.len())).clamp(1,256) as u32,cursor:cursor.clone(),now_ms:at};
         let page=store.query(request).await?;
         if page.next_cursor.is_some()&&page.next_cursor==cursor{return Err(error("Observation scan cursor did not advance"))}
         rows.extend(page.entries);if rows.len()>=limit{rows.truncate(limit);break}

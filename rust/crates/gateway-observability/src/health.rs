@@ -70,7 +70,7 @@ pub fn paid_health(provider:HealthProvider,status:Option<u16>,body:&[u8],complet
         None|Some(500..)=>Some(HealthEvent::UpstreamError),Some(100..)=>Some(HealthEvent::Reachable),_=>None,
     }
 }
-async fn binding_current<S:AuthorityStore>(store:&S,target:&HealthTarget)->Result<bool,GatewayError>{
+pub(crate) async fn binding_current<S:AuthorityStore>(store:&S,target:&HealthTarget)->Result<bool,GatewayError>{
     if target.provider==HealthProvider::ClaudeCode&&target.identity!="default"&&target.source_checks.is_empty(){return Ok(false)}
     for fence in &target.source_checks{
         if store.read(&fence.key).await?.as_ref().map(|r|&r.revision)!=fence.expected_revision.as_ref(){return Ok(false)}

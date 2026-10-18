@@ -57,4 +57,14 @@ pub trait ObservabilityHost {
     fn now_ms(&self) -> i64;
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError>;
     fn wait_ms(&self, milliseconds: u32) -> impl Future<Output=Result<(), GatewayError>>;
+    fn build_identity(&self)->Result<crate::host_types::BuildIdentity,GatewayError>{Err(crate::store::missing("immutable_build_identity"))}
+    fn provider_inventory(&self,_context:&Context)->impl Future<Output=Result<crate::host_types::ProviderInventory,GatewayError>>{async{Err(crate::store::missing("provider_inventory"))}}
+    /// Only the source fixed Codex models, monitoring quota and Claude models GETs.
+    /// Implementations enforce this one absolute 3-second deadline and cancel late bodies.
+    fn probe_upstream_health(&self,_deadline_ms:i64)->impl Future<Output=Result<crate::host_types::UpstreamHealthEvidence,GatewayError>>{async{Err(crate::store::missing("active_upstream_health"))}}
+    fn codex_capacity_accounts(&self)->impl Future<Output=Result<Vec<crate::host_types::CapacityAccountRef>,GatewayError>>{async{Err(crate::store::missing("codex_capacity_accounts"))}}
+    fn probe_codex_capacity(&self,_account:&crate::host_types::CapacityAccountRef,_deadline_ms:i64)->impl Future<Output=Result<crate::host_types::CapacityProbe,GatewayError>>{async{Err(crate::store::missing("codex_capacity_probe"))}}
+    fn metered_quota_snapshot(&self,_force_refresh:bool,_deadline_ms:i64)->impl Future<Output=Result<Option<serde_json::Value>,GatewayError>>{async{Err(crate::store::missing("metered_quota_snapshot"))}}
+    /// Calls the existing authority's current-binding observation writer; never another ledger.
+    fn accept_capacity_observations(&self,_observations:&[crate::host_types::CapacityRoutingObservation],_at_ms:i64)->impl Future<Output=Result<(),GatewayError>>{async{Err(crate::store::missing("capacity_authority_observation"))}}
 }

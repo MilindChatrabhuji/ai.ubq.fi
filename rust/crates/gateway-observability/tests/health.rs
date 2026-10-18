@@ -1,5 +1,5 @@
 mod support;
-use gateway_core::state::{RecordKey,RevisionCheck,StoredRecord};
+use gateway_core::state::{RevisionCheck,StoredRecord};
 use gateway_observability::{HealthEvent as E,HealthProvider as P,HealthTarget,HealthWrite as W,ObservabilityRuntime,health::*};
 use serde_json::json;
 use std::{future::Future,pin::pin,task::{Context,Poll,Waker}};
@@ -38,10 +38,11 @@ fn durable_health_transitions_first_correlation_heartbeat_and_restart(){
     assert_eq!(run(runtime.observe_provider(target.clone(),E::Success,Some(200),Some("r1"))),W::Stored);
     host.at.set(100001);
     assert_eq!(run(runtime.observe_provider(target.clone(),E::Success,Some(200),Some("r2"))),W::Throttled);
+    assert_eq!(run(runtime.provider_health(&target,100001)).unwrap()["last_provider_request_id"],"r1");
     assert_eq!(run(runtime.observe_provider(target.clone(),E::UpstreamError,Some(503),None)),W::Stored);
     assert_eq!(run(runtime.observe_provider(target.clone(),E::Success,Some(200),None)),W::Stored);
     let view=run(runtime.provider_health(&target,100001)).unwrap();
-    assert_eq!(view["state"],"healthy");assert_eq!(view["last_provider_request_id"],"r1");
+    assert_eq!(view["state"],"healthy");assert_eq!(view["last_provider_request_id"],serde_json::Value::Null);
     assert_eq!(run(runtime.provider_health(&target,100001+STALE_AFTER_MS)).unwrap()["stale"],false);
     assert_eq!(run(runtime.provider_health(&target,100002+STALE_AFTER_MS)).unwrap()["stale"],true);
     let restarted=ObservabilityRuntime::new(memory.clone(),host);

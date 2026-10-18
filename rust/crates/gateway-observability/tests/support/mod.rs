@@ -35,6 +35,7 @@ impl AuthorityStore for Memory {
 }
 impl QueryStore for Memory {
     async fn query(&self,request:QueryRequest)->Result<QueryPage,GatewayError>{
+        if self.unavailable.get(){return Err(GatewayError::unavailable("fixture unavailable","fixture_unavailable"))}
         let validated=request.validate()?;let mut entries=Vec::new();
         for(key,record)in self.rows.borrow().iter(){let key=RecordKey(key.clone());if validated.accepts_record(&key,record)?{entries.push(gateway_core::query::QueryEntry{key,record:record.clone()})}}
         if request.reverse{entries.reverse()}
