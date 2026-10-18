@@ -14,7 +14,9 @@ pub struct ReleaseIdentity {
 impl ReleaseIdentity {
     pub fn cloudflare(git_sha: &str, deployment_id: &str) -> Result<Self, GatewayError> {
         let full_sha = git_sha.len() == 40
-            && git_sha.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            && git_sha
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
         if !full_sha || deployment_id != format!("cloudflare-{git_sha}") {
             return Err(GatewayError::unavailable(
                 "The Rust Worker release identity is unavailable.",

@@ -25,7 +25,11 @@ pub async fn fetch(request: Request, _env: Env, _context: Context) -> Result<Res
         ))?
     };
     response.headers_mut().set("Cache-Control", "no-store")?;
-    response.headers_mut().set(GIT_SHA_HEADER, identity.git_sha())?;
-    response.headers_mut().set(DEPLOYMENT_ID_HEADER, identity.deployment_id())?;
+    response
+        .headers_mut()
+        .set(GIT_SHA_HEADER, identity.git_sha())?;
+    response
+        .headers_mut()
+        .set(DEPLOYMENT_ID_HEADER, identity.deployment_id())?;
     Ok(response)
 }
