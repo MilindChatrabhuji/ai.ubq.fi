@@ -26,7 +26,7 @@ pub fn paid_pending(id: &str, request: &str) -> RecordKey { key(json!(["uos_ai",
 pub fn paid_gate() -> RecordKey { key(json!(["uos_ai","paid_fallback","v3","reconciliation_gate"])) }
 pub fn paid_lease(id: &str) -> RecordKey { key(json!(["uos_ai","paid_fallback","v3","reconciliation_lease",id])) }
 pub fn paid_deletion(id: &str) -> RecordKey { key(json!(["uos_ai","paid_fallback","v3","deletion_guard",id])) }
-pub fn paid_rollup(bucket: i64, model: &str, provider: &str, shard: u8) -> RecordKey { key(json!(["uos_ai","authority","v1","paid_rollup",bucket,model,provider,shard])) }
+pub fn paid_rollup(bucket: i64, model: &str, provider: &str, shard: u8) -> RecordKey { key(json!(["uos_ai","paid_fallback","v3","usage_rollup",bucket,model,provider,shard])) }
 pub fn reset_redemption(hash: &str, generation: &str) -> RecordKey { key(json!(["uos_ai","codex_reset_redemption","v1",hash,generation])) }
 pub fn reset_day(hash: &str, day: &str) -> RecordKey { key(json!(["uos_ai","codex_reset_redemption","account_day","v1",hash,day])) }
 pub fn reset_config() -> RecordKey { key(json!(["uos_ai","authority","v1","codex_reset_config"])) }

@@ -1,0 +1,89 @@
+//! Deterministic conformance store, not a Worker/runtime acceptance substitute.
+use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::task::{Context, Poll, Wake, Waker};
+
+use gateway_authority::{Authority, TokenSource};
+use gateway_authority::quota::ApiKeyPolicy;
+use gateway_authority::routing::{AdmittedAccount, PoolAccount, QuotaBlock, QuotaBlockSource, RouteSelection, SubscriptionPool};
+use gateway_core::GatewayError;
+use gateway_core::identity::{ApiKeyId, CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash};
+use gateway_core::provider::CodexQuotaClass;
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey, RecordMutation, StoredRecord};
+use serde::Serialize;
+
+pub const NOW:i64=1_792_329_600_000;
+
+#[derive(Clone)]
+pub struct MemoryStore{
+    rows:Arc<Mutex<BTreeMap<String,StoredRecord>>>,
+    now:Arc<AtomicI64>,
+    pub conflicts:Arc<AtomicUsize>,
+    sequence:Arc<AtomicU64>,
+    race:Arc<Mutex<Option<(RecordKey,serde_json::Value)>>>,
+}
+
+impl Default for MemoryStore{
+    fn default()->Self{Self{rows:Arc::new(Mutex::new(BTreeMap::new())),now:Arc::new(AtomicI64::new(NOW)),conflicts:Arc::new(AtomicUsize::new(0)),sequence:Arc::new(AtomicU64::new(1)),race:Arc::new(Mutex::new(None))}}
+}
+
+impl MemoryStore{
+    pub fn seed<T:Serialize>(&self,key:RecordKey,value:&T){
+        self.rows.lock().unwrap().insert(key.0,StoredRecord{schema_version:PORTABLE_STATE_VERSION,revision:format!("seed-{}",self.sequence.fetch_add(1,Ordering::SeqCst)),value:serde_json::to_value(value).unwrap(),expires_at_ms:None});
+    }
+    pub fn row(&self,key:&RecordKey)->Option<StoredRecord>{self.rows.lock().unwrap().get(&key.0).cloned()}
+    pub fn clock(&self,now:i64){self.now.store(now,Ordering::SeqCst);}
+    pub fn race<T:Serialize>(&self,key:RecordKey,value:&T){*self.race.lock().unwrap()=Some((key,serde_json::to_value(value).unwrap()));}
+    pub fn len(&self)->usize{self.rows.lock().unwrap().len()}
+}
+
+impl AuthorityStore for MemoryStore{
+    fn read(&self,key:&RecordKey)->impl Future<Output=Result<Option<StoredRecord>,GatewayError>>{
+        let row=self.rows.lock().unwrap().get(&key.0).cloned();let now=self.now.load(Ordering::SeqCst);
+        async move{
+            if let Some(row)=&row{row.validate_version()?;}
+            Ok(row.filter(|row|row.expires_at_ms.is_none_or(|expiry|expiry>now)))
+        }
+    }
+    fn commit(&self,transition:AtomicTransition)->impl Future<Output=Result<CommitOutcome,GatewayError>>{
+        async move{
+            if self.conflicts.fetch_update(Ordering::SeqCst,Ordering::SeqCst,|count|count.checked_sub(1)).is_ok(){return Ok(CommitOutcome::Conflict);}
+            let mut rows=self.rows.lock().unwrap();let now=self.now.load(Ordering::SeqCst);
+            if let Some((key,value))=self.race.lock().unwrap().take(){rows.insert(key.0,StoredRecord{schema_version:PORTABLE_STATE_VERSION,revision:format!("race-{}",self.sequence.fetch_add(1,Ordering::SeqCst)),value,expires_at_ms:None});}
+            let checked:BTreeSet<_>=transition.checks.iter().map(|check|check.key.0.clone()).collect();let mut mutated=BTreeSet::new();
+            for check in &transition.checks{
+                let actual=rows.get(&check.key.0).filter(|row|row.expires_at_ms.is_none_or(|expiry|expiry>now)).map(|row|row.revision.clone());
+                if actual!=check.expected_revision{return Ok(CommitOutcome::Conflict);}
+            }
+            for mutation in &transition.mutations{
+                let key=match mutation{RecordMutation::Put{key,..}|RecordMutation::Delete{key}=>key};
+                assert!(checked.contains(&key.0),"mutation without a checked strong read");assert!(mutated.insert(key.0.clone()),"duplicate mutation");
+                if let RecordMutation::Put{record,..}=mutation{record.validate_version()?;assert!(!record.revision.is_empty());}
+            }
+            for mutation in transition.mutations{match mutation{RecordMutation::Put{key,record}=>{rows.insert(key.0,record);},RecordMutation::Delete{key}=>{rows.remove(&key.0);}}}
+            Ok(CommitOutcome::Committed)
+        }
+    }
+}
+
+#[derive(Clone,Default)]
+pub struct Tokens(Arc<AtomicU64>);
+impl TokenSource for Tokens{fn next_token(&self)->Result<String,GatewayError>{Ok(format!("fixture-opaque-{}",self.0.fetch_add(1,Ordering::SeqCst)))}}
+pub type TestAuthority=Authority<MemoryStore,Tokens>;
+pub fn authority(store:&MemoryStore)->TestAuthority{Authority::new(store.clone(),Tokens::default())}
+
+struct WakeNow;
+impl Wake for WakeNow{fn wake(self:Arc<Self>){}}
+pub fn run<F:Future>(future:F)->F::Output{
+    let waker=Waker::from(Arc::new(WakeNow));let mut context=Context::from_waker(&waker);let mut future=std::pin::pin!(future);
+    loop{match future.as_mut().poll(&mut context){Poll::Ready(result)=>return result,Poll::Pending=>std::thread::yield_now()}}
+}
+
+pub fn pool()->SubscriptionPool{
+    SubscriptionPool{v:1,pool_versionstamp:PoolVersionstamp("pool-original".to_owned()),accounts:["a","b"].into_iter().map(|id|PoolAccount{account_id_hash:RoutingAccountHash(format!("route-{id}")),admin_account_hash:SubscriptionSelectionHash(format!("admin-{id}")),credential_version:CredentialVersion(format!("credential-{id}")),enabled:true}).collect()}
+}
+pub fn policy()->ApiKeyPolicy{ApiKeyPolicy{v:3,key_id:ApiKeyId("key-a".to_owned()),expires_at_ms:-1,usage_limit_requests:2,window_ms:gateway_authority::DAY_MS,usage_reset_at_ms:NOW+gateway_authority::DAY_MS,paid_fallback_enabled:true,paid_fallback_limit_microcredits:10_000,paid_fallback_quota_per_credit:1_000_000,paid_fallback_pricing_checked_at_ms:NOW,paid_fallback_models:vec!["gpt-test".to_owned(),"paid-model".to_owned()],paid_fallback_max_exposure_microcredits:BTreeMap::from([("gpt-test".to_owned(),1_000),("paid-model".to_owned(),1_000)])}}
+pub fn admitted(authority:&TestAuthority)->AdmittedAccount{match run(authority.select_account("gpt-test",CodexQuotaClass::Standard,NOW)).unwrap(){RouteSelection::Eligible(account)=>account,_=>panic!("expected eligible account")}}
+pub fn block()->QuotaBlock{QuotaBlock{blocked_until_ms:NOW+60_000,source:QuotaBlockSource::BodyResetsAt,observed_at_ms:NOW,reset_at_ms:Some(NOW+60_000),reset_is_stable:true,reset_ambiguous:false,recovery_pending:false}}

@@ -71,6 +71,7 @@ pub struct ApiUsageRequest {
 pub struct ApiReservation {
     pub key_id: ApiKeyId, pub request_id: RequestId, pub route: String, pub policy_version: String,
     pub window_start_ms: i64, pub window_reset_at_ms: i64,
+    #[serde(default)] pub deferred: bool,
 }
 
 fn api_row_matches(row: &ApiUsageRequest, reservation: &ApiReservation) -> bool {
@@ -92,7 +93,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let policy: ApiKeyPolicy = tx.read(&keys::api_policy(&key_id.0)).await?.ok_or_else(|| GatewayError::new(401, "API key is unavailable.", Some("invalid_api_key")))?;
             policy.validate(key_id, now)?;
             let (start, reset) = policy.current_window(now)?;
-            let reservation = ApiReservation { key_id: key_id.clone(), request_id: request_id.clone(), route: route.to_owned(), policy_version: format!("v3:{}", policy.window_ms), window_start_ms: start, window_reset_at_ms: reset };
+            let reservation = ApiReservation { key_id: key_id.clone(), request_id: request_id.clone(), route: route.to_owned(), policy_version: format!("v3:{}", policy.window_ms), window_start_ms: start, window_reset_at_ms: reset, deferred: false };
             let window_key = keys::api_window(&key_id.0, &reservation.policy_version, start);
             let request_key = keys::api_request(&key_id.0, &reservation.policy_version, start, &request_id.0);
             let mut window: ApiUsageWindow = tx.read(&window_key).await?.unwrap_or(ApiUsageWindow { v: 3, key_id: key_id.clone(), policy_version: reservation.policy_version.clone(), window_start_ms: start, window_reset_at_ms: reset, committed_requests: 0, reserved_requests: 0, updated_at_ms: now, reservations: BTreeMap::new() });
@@ -125,8 +126,30 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         Err(unavailable("api_key_quota_reservation_unavailable", "API key quota ledger changed concurrently."))
     }
 
+    /// Matches handler deferWhenFull: local compaction/cache paths may finish without quota.
+    /// The runtime must resolve this handle immediately before its first provider dispatch.
+    pub async fn reserve_api_key_deferred(&self,key_id:&ApiKeyId,request_id:&RequestId,route:&str,now:i64)->Result<ApiReservation,GatewayError>{
+        match self.reserve_api_key(key_id,request_id,route,now).await{
+            Ok(reservation)=>Ok(reservation),
+            Err(error) if error.status==429=>{
+                for _ in 0..5{
+                    let mut tx=self.transaction(now)?;let policy:ApiKeyPolicy=tx.read(&keys::api_policy(&key_id.0)).await?.ok_or_else(|| unavailable("api_key_quota_reservation_unavailable","API policy is missing."))?;policy.validate(key_id,now)?;
+                    let(start,reset)=policy.current_window(now)?;let reservation=ApiReservation{key_id:key_id.clone(),request_id:request_id.clone(),route:route.to_owned(),policy_version:format!("v3:{}",policy.window_ms),window_start_ms:start,window_reset_at_ms:reset,deferred:true};
+                    if tx.commit().await?{return Ok(reservation);}
+                }
+                Err(unavailable("api_key_quota_reservation_unavailable","Deferred API policy changed concurrently."))
+            }
+            Err(error)=>Err(error),
+        }
+    }
+
+    pub async fn resolve_deferred_api(&self,reservation:&ApiReservation,now:i64)->Result<ApiReservation,GatewayError>{
+        if reservation.deferred{self.reserve_api_key(&reservation.key_id,&reservation.request_id,&reservation.route,now).await}else{Ok(reservation.clone())}
+    }
+
     /// Returns true only for this reservation's first charge; all retries share that charge.
     pub async fn dispatch_api_key(&self, reservation: &ApiReservation, provider: UpstreamProvider, now: i64) -> Result<bool, GatewayError> {
+        if reservation.deferred{return Err(unavailable("api_key_quota_reservation_unavailable","Resolve deferred API admission before provider dispatch."));}
         for _ in 0..5 {
             let mut tx = self.transaction(now)?;
             let request_key = keys::api_request(&reservation.key_id.0, &reservation.policy_version, reservation.window_start_ms, &reservation.request_id.0);
@@ -159,6 +182,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 
     pub async fn release_api_key(&self, reservation: &ApiReservation, known_before_transport: bool, reason: &str, now: i64) -> Result<bool, GatewayError> {
+        if reservation.deferred{return Ok(false);}
         for _ in 0..5 {
             let mut tx = self.transaction(now)?;
             let request_key = keys::api_request(&reservation.key_id.0, &reservation.policy_version, reservation.window_start_ms, &reservation.request_id.0);
@@ -184,7 +208,7 @@ pub struct KernelPolicy { pub v: u32, pub owner: String, pub repo: Option<String
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct KernelDefaults { pub usage_limit_requests: i64, pub window_ms: i64 }
 
-impl Default for KernelDefaults { fn default() -> Self { Self { usage_limit_requests: -1, window_ms: 30 * DAY_MS } } }
+impl Default for KernelDefaults { fn default() -> Self { Self { usage_limit_requests: -1, window_ms: 7 * DAY_MS } } }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

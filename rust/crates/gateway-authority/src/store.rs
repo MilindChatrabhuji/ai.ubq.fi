@@ -96,7 +96,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         let mut revisions = BTreeSet::new();
         for mutation in self.writes.values() {
             if let RecordMutation::Put { record, .. } = mutation {
-                if !revisions.insert(&record.revision) { return Err(invalid("Token source duplicated a mutation revision.")); }
+                if !revisions.insert(record.revision.clone()) { return Err(invalid("Token source duplicated a mutation revision.")); }
             }
         }
         Ok(self.store.commit(AtomicTransition { checks, mutations: self.writes.into_values().collect() }).await? == CommitOutcome::Committed)
