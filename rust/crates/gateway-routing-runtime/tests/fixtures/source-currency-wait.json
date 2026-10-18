@@ -1,0 +1,13 @@
+{
+  "completed": {
+    "planned_ms": 3,
+    "elapsed_ms": 4
+  },
+  "cancelled": {
+    "planned_ms": 60000,
+    "elapsed_ms": 4,
+    "name": "AbortError"
+  },
+  "ladder": ["deepseek-ai/DeepSeek-V4.1-Flash-fast", "deepseek-ai/DeepSeek-V4.1-Flash"],
+  "selected": "deepseek-ai/DeepSeek-V4.1-Flash-fast"
+}

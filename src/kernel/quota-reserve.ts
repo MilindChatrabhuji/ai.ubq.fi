@@ -1,12 +1,11 @@
 import type { Kv, KvEntryMaybe, KvKey } from "#kv";
 // Kernel quota v2 reservation entry points, split out of src/kernel_quota_v2.ts.
 
-import { API_KEY_NO_USAGE_LIMIT } from "../api-keys.ts";
+import { decideKernelQuotaEligibility, decideKernelQuotaReserve } from "../authority/native-kernel.ts";
 import { openaiError } from "../http.ts";
 import { getKv } from "../kv.ts";
 import {
   KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY,
-  KERNEL_QUOTA_RESERVATION_LEASE_MS,
   type KernelDefaultWindowCutoverV2,
   type KernelDefaults,
   type KernelQuotaEffectivePolicy,
@@ -17,20 +16,17 @@ import {
   type KernelQuotaScope,
   type KernelQuotaWindowV2,
   MAX_KV_RETRIES,
-  isExpired,
+  KERNEL_QUOTA_CONSTANTS,
+  kernelQuotaRead,
   kernelPolicyKeys,
   kernelRepoPolicyKey,
   loadDefaults,
-  policyFor,
   windowForEffectivePolicy,
 } from "./quota-v2.ts";
 import {
   kernelQuotaUnavailable,
   kernelReservationContext,
   kernelReservationKey,
-  kernelReservationMatchesRequest,
-  kernelReservationRetentionMs,
-  normalizeKernelQuotaReservationRowV2,
   readKernelQuotaPolicyState,
   reclaimExpiredKernelReservationUnlocked,
   reconcileKernelQuotaWindowReservations,
@@ -112,22 +108,21 @@ const evaluateKernelQuotaEligibility = async (
   options: KernelQuotaReserveOptions,
   nowMs: number
 ): Promise<KernelQuotaEligibility> => {
-  if (options.expectedRepoPolicy === "present" && entries.policyEntry.value === null) {
-    return { kind: "decision", decision: kernelQuotaUnavailable("Kernel quota policy scope changed; retry") };
-  }
-  if (options.expectedRepoPolicy === "absent" && entries.repoGuardEntry !== null && entries.repoGuardEntry.value !== null) {
-    return { kind: "decision", decision: kernelQuotaUnavailable("Kernel quota policy scope changed; retry") };
-  }
-  const effective = policyFor(entries.policyEntry, scope, owner, repo, entries.defaults);
-  if (effective.source === "default" && entries.defaultCutoverEntry.value !== null) {
-    return { kind: "decision", decision: kernelQuotaUnavailable("Kernel quota defaults are changing; retry") };
-  }
-  if (isExpired(effective.expiresAtMs, nowMs)) {
-    return { kind: "decision", decision: kernelLimitBlocked("Kernel auth usage limit expired; update it via /admin/kernel-usage.") };
-  }
-  if (effective.limit === 0) {
-    return { kind: "decision", decision: kernelLimitBlocked("Kernel auth usage limit is 0; update it via /admin/kernel-usage.") };
-  }
+  const plan = decideKernelQuotaEligibility(
+    { scope, owner, repo },
+    {
+      policy: kernelQuotaRead(entries.policyEntry),
+      repoGuard: entries.repoGuardEntry === null ? null : kernelQuotaRead(entries.repoGuardEntry),
+      defaultCutover: kernelQuotaRead(entries.defaultCutoverEntry),
+      expectedRepoPolicy: options.expectedRepoPolicy,
+    },
+    entries.defaults,
+    KERNEL_QUOTA_CONSTANTS,
+    nowMs
+  );
+  if (plan.kind === "refused")
+    return { kind: "decision", decision: plan.status === 503 ? kernelQuotaUnavailable(plan.message) : kernelLimitBlocked(plan.message) };
+  const effective = plan.effective;
   const existingWindow = await reconcileKernelQuotaWindowReservations(kv, entries.windowEntry, scope, owner, repo);
   if (entries.windowEntry.value !== null && !existingWindow) {
     return { kind: "decision", decision: kernelQuotaUnavailable("Kernel quota aggregate is malformed") };
@@ -178,40 +173,21 @@ const commitKernelQuotaReservation = async (
   const { policyEntry, windowEntry, repoGuardEntry, defaultCutoverEntry, defaults, windowKey, effective, resolved } = target;
   const reservationKey = kernelReservationKey(scope, owner, repo, resolved.window.created_at_ms, requestId);
   const reservationEntry = await kv.get<KernelQuotaReservationRowV2>(reservationKey, { consistency: "strong" });
-  if (reservationEntry.value !== null) {
-    const existingReservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, scope, owner, repo);
-    if (!kernelReservationMatchesRequest(existingReservation, requestId, route, resolved.window.created_at_ms)) {
-      return { kind: "decision", decision: kernelQuotaUnavailable("Kernel quota request identity conflicts") };
-    }
-    return { kind: "decision", decision: kernelQuotaUnavailable("Kernel quota request already has a reservation") };
-  }
-  const admitted = resolved.window.usage_requests + resolved.window.reserved_requests;
-  if (effective.limit !== API_KEY_NO_USAGE_LIMIT && admitted >= effective.limit) {
-    return await reclaimKernelQuotaCapacity(kv, scope, owner, repo, resolved.window, effective.limit, nowMs, reclaimedExpiredReservation);
-  }
-  const reservation: KernelQuotaReservationRowV2 = {
-    v: 2,
-    scope,
-    owner,
-    ...(scope === "repo" ? { repo } : {}),
-    request_id: requestId,
+  const plan = decideKernelQuotaReserve(
+    { scope, owner, repo },
+    effective,
+    resolved.window,
+    kernelQuotaRead(reservationEntry),
+    requestId,
     route,
-    window_created_at_ms: resolved.window.created_at_ms,
-    window_reset_at_ms: resolved.window.usage_reset_at_ms,
-    state: "reserved",
-    terminal_intent: null,
-    reserved_at_ms: nowMs,
-    lease_expires_at_ms: nowMs + KERNEL_QUOTA_RESERVATION_LEASE_MS,
-    committed_at_ms: null,
-    released_at_ms: null,
-    release_reason: null,
-  };
-  const reservedWindow: KernelQuotaWindowV2 = {
-    ...resolved.window,
-    reserved_requests: resolved.window.reserved_requests + 1,
-    updated_at_ms: nowMs,
-  };
-  const retentionMs = kernelReservationRetentionMs(reservedWindow.usage_reset_at_ms, nowMs);
+    KERNEL_QUOTA_CONSTANTS.noUsageLimit,
+    nowMs
+  );
+  if (plan.kind === "refused") return { kind: "decision", decision: kernelQuotaUnavailable(plan.message) };
+  if (plan.kind === "full") return await reclaimKernelQuotaCapacity(kv, scope, owner, repo, plan.window, plan.limit, nowMs, reclaimedExpiredReservation);
+  const reservation = plan.reservation;
+  const reservedWindow = plan.window;
+  const retentionMs = plan.expireIn;
   let atomic = kv.atomic().check(policyEntry).check(windowEntry).check(reservationEntry);
   if (repoGuardEntry !== null) atomic = atomic.check(repoGuardEntry);
   if (effective.source === "default") {

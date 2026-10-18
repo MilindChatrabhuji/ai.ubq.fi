@@ -223,7 +223,7 @@ mod tests {
             .unwrap();
         drop(writable);
         let read = open_read_only(&path).unwrap();
-        assert!(read.is_readonly(rusqlite::DatabaseName::Main).unwrap());
+        assert!(read.is_readonly(rusqlite::MAIN_DB).unwrap());
         assert!(
             read.execute("INSERT INTO proof VALUES ('synthetic')", [])
                 .is_err()

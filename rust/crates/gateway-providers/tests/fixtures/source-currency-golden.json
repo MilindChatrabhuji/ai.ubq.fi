@@ -1,0 +1,497 @@
+{
+  "cases": [
+    {
+      "name": "reasoning-reset-message",
+      "select": "reasoning",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": [
+          {
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "old reasoning"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "new scope"
+          },
+          {
+            "role": "assistant",
+            "content": "answer"
+          }
+        ]
+      },
+      "expected": [null]
+    },
+    {
+      "name": "reasoning-reset-text",
+      "select": "reasoning",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": [
+          {
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "old reasoning"
+              }
+            ]
+          },
+          "new scope",
+          {
+            "role": "assistant",
+            "content": "answer"
+          }
+        ]
+      },
+      "expected": [null]
+    },
+    {
+      "name": "reasoning-reset-agent",
+      "select": "reasoning",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": [
+          {
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "old reasoning"
+              }
+            ]
+          },
+          {
+            "type": "agent_message",
+            "author": "peer",
+            "recipient": "root",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "new scope"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": "answer"
+          }
+        ]
+      },
+      "expected": [null]
+    },
+    {
+      "name": "tool-choice-3",
+      "select": "tools",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "go",
+        "reasoning": {
+          "effort": "none"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "search",
+            "parameters": {}
+          },
+          {
+            "type": "namespace",
+            "name": "repo",
+            "tools": [
+              {
+                "type": "function",
+                "name": "search",
+                "parameters": {}
+              }
+            ]
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "name": "search",
+          "namespace": "repo"
+        }
+      },
+      "expected": {
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "repo_search"
+          }
+        },
+        "names": ["search", "repo_search"]
+      }
+    },
+    {
+      "name": "tool-choice-4",
+      "select": "tools",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "go",
+        "reasoning": {
+          "effort": "none"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "search",
+            "parameters": {}
+          },
+          {
+            "type": "namespace",
+            "name": "repo",
+            "tools": [
+              {
+                "type": "function",
+                "name": "search",
+                "parameters": {}
+              }
+            ]
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "search",
+            "namespace": "repo"
+          }
+        }
+      },
+      "expected": {
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "repo_search"
+          }
+        },
+        "names": ["search", "repo_search"]
+      }
+    },
+    {
+      "name": "tool-choice-5",
+      "select": "tools",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "go",
+        "reasoning": {
+          "effort": "none"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "search",
+            "parameters": {}
+          },
+          {
+            "type": "namespace",
+            "name": "repo",
+            "tools": [
+              {
+                "type": "function",
+                "name": "search",
+                "parameters": {}
+              }
+            ]
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "name": "search"
+        }
+      },
+      "expected": {
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "search"
+          }
+        },
+        "names": ["search", "repo_search"]
+      }
+    },
+    {
+      "name": "tool-choice-6",
+      "select": "tools",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "go",
+        "reasoning": {
+          "effort": "none"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "search",
+            "parameters": {}
+          },
+          {
+            "type": "namespace",
+            "name": "repo",
+            "tools": [
+              {
+                "type": "function",
+                "name": "search",
+                "parameters": {}
+              }
+            ]
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "name": "repo_search"
+        }
+      },
+      "expected": {
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "search"
+          }
+        },
+        "names": ["search", "repo_search"]
+      }
+    },
+    {
+      "name": "tool-choice-namespace-first",
+      "select": "tools",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "go",
+        "reasoning": {
+          "effort": "none"
+        },
+        "tools": [
+          {
+            "type": "namespace",
+            "name": "repo",
+            "tools": [
+              {
+                "type": "function",
+                "name": "search",
+                "parameters": {}
+              }
+            ]
+          },
+          {
+            "type": "function",
+            "name": "search",
+            "parameters": {}
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "name": "search"
+        }
+      },
+      "expected": {
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "search_2"
+          }
+        },
+        "names": ["search", "search_2"]
+      }
+    },
+    {
+      "name": "sampling-8",
+      "select": "sampling",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "sampling",
+        "temperature": 0,
+        "top_p": 0.25
+      },
+      "expected": {
+        "effort": null,
+        "temperature": null,
+        "top_p": null,
+        "warnings": ["temperature_ignored", "top_p_ignored"]
+      }
+    },
+    {
+      "name": "sampling-9",
+      "select": "sampling",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "sampling",
+        "temperature": 0,
+        "top_p": 0.25,
+        "reasoning": {
+          "effort": "none"
+        }
+      },
+      "expected": {
+        "effort": "none",
+        "temperature": 0,
+        "top_p": 0.25,
+        "warnings": []
+      }
+    },
+    {
+      "name": "sampling-10",
+      "select": "sampling",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "sampling",
+        "temperature": 0,
+        "top_p": 0.25,
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "expected": {
+        "effort": "none",
+        "temperature": 0,
+        "top_p": 0.25,
+        "warnings": []
+      }
+    },
+    {
+      "name": "sampling-11",
+      "select": "sampling",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "sampling",
+        "temperature": 0,
+        "top_p": 0.25,
+        "thinking": {
+          "type": " DISABLED "
+        }
+      },
+      "expected": {
+        "effort": "none",
+        "temperature": 0,
+        "top_p": 0.25,
+        "warnings": []
+      }
+    },
+    {
+      "name": "sampling-12",
+      "select": "sampling",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "sampling",
+        "temperature": 0,
+        "top_p": 0.25,
+        "reasoning": {
+          "effort": "high"
+        },
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "expected": {
+        "effort": "high",
+        "temperature": null,
+        "top_p": null,
+        "warnings": ["temperature_ignored", "top_p_ignored"]
+      }
+    },
+    {
+      "name": "sampling-13",
+      "select": "sampling",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "sampling",
+        "temperature": 0,
+        "top_p": 0.25,
+        "reasoning": {}
+      },
+      "expected": {
+        "effort": null,
+        "temperature": null,
+        "top_p": null,
+        "warnings": ["temperature_ignored", "top_p_ignored"]
+      }
+    },
+    {
+      "name": "sampling-14",
+      "select": "sampling",
+      "raw": {
+        "model": "deepseek-flash",
+        "input": "sampling",
+        "temperature": 0,
+        "top_p": 0.25,
+        "reasoning": {
+          "effort": "ultra"
+        }
+      },
+      "expected": {
+        "effort": "max",
+        "temperature": null,
+        "top_p": null,
+        "warnings": ["temperature_ignored", "top_p_ignored"]
+      }
+    }
+  ],
+  "native": [
+    {
+      "slug": "other",
+      "id": null,
+      "future": 1,
+      "efforts": null,
+      "default": null
+    },
+    {
+      "slug": "deepseek-v4-flash",
+      "id": null,
+      "future": null,
+      "efforts": ["none", "low", "high", "max"],
+      "default": "high"
+    },
+    {
+      "slug": "deepseek-flash",
+      "id": null,
+      "future": null,
+      "efforts": ["none", "low", "high", "max"],
+      "default": "high"
+    },
+    {
+      "slug": "deepseek-v4-pro",
+      "id": null,
+      "future": null,
+      "efforts": ["none", "low", "high", "max"],
+      "default": "high"
+    }
+  ],
+  "collision": {
+    "id": "deepseek-v4-flash",
+    "providers": [
+      {
+        "id": "surplus"
+      },
+      {
+        "id": "deepseek"
+      }
+    ],
+    "created": 123,
+    "context_window_tokens": 1000000,
+    "default_reasoning_effort": "high",
+    "max_context_window_tokens": 1000000,
+    "auto_compact_token_limit_tokens": 850000,
+    "effective_context_window_percent": 95,
+    "context_source": "provider_discovery",
+    "supported_reasoning_levels": ["none", "low", "high", "max"],
+    "reasoning_source": "provider_discovery"
+  },
+  "wait": {
+    "completed": {
+      "planned_ms": 3,
+      "elapsed_ms": 4
+    },
+    "cancelled": {
+      "planned_ms": 60000,
+      "elapsed_ms": 4,
+      "name": "AbortError"
+    },
+    "ladder": ["deepseek-ai/DeepSeek-V4.1-Flash-fast", "deepseek-ai/DeepSeek-V4.1-Flash"],
+    "selected": "deepseek-ai/DeepSeek-V4.1-Flash-fast"
+  }
+}
