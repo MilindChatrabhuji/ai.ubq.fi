@@ -168,11 +168,7 @@ const lithosRetryAbortError = (signal: AbortSignal): Error => {
 };
 
 /** Abort-aware sleep: an abandoned request never keeps waiting for a provider window; the observer sees elapsed time on either outcome. */
-export const waitForLithosRetry = (
-  milliseconds: number,
-  signal: AbortSignal,
-  onElapsed?: (elapsedMs: number) => void
-): Promise<void> => {
+export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal, onElapsed?: (elapsedMs: number) => void): Promise<void> => {
   if (milliseconds <= 0) {
     onElapsed?.(0);
     return Promise.resolve();

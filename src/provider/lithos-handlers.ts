@@ -515,12 +515,7 @@ const runLithosDispatch = async (
         pending: (async (): Promise<LithosDispatchOutcome> => {
           try {
             const elapsedWaitMs = await waitForLithosRateLimit(input, pass.planned.waitMs, pass.state.elapsedWaitMs);
-            const continued = await runLithosDispatch(
-              input,
-              { ...pass.state, elapsedWaitMs: pass.state.elapsedWaitMs + elapsedWaitMs },
-              policy,
-              false
-            );
+            const continued = await runLithosDispatch(input, { ...pass.state, elapsedWaitMs: pass.state.elapsedWaitMs + elapsedWaitMs }, policy, false);
             if ("pending" in continued) throw new Error("A resumed LithosAI dispatch cannot defer again.");
             return continued;
           } catch (error) {
@@ -575,15 +570,7 @@ const dispatchLithosUpstreamResult = async (
   }
   return await runLithosDispatch(
     { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    {
-      attempt: 0,
-      attemptModel: stickyTarget ?? modelRaw,
-      ladderIndex: stickyIndex + 1,
-      noRetryModels: new Set(),
-      waitedMs: 0,
-      elapsedWaitMs: 0,
-      waits: 0,
-    },
+    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, noRetryModels: new Set(), waitedMs: 0, elapsedWaitMs: 0, waits: 0 },
     streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
     streamed
   );
