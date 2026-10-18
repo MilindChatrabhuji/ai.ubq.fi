@@ -178,6 +178,7 @@ export class NativeAuthority {
     }
     if (command.method === "recordTransportStarted") {
       this._requestForDispatch(cap, command.args.handle, command.args.provider, now);
+      this._paid.assertStart(cap, command.args, now);
       if (receipt.reply.kind === "started") this._api.assertTransportReceipt(cap, command.args.handle, command.operationId, now);
       else this._api.assertDispatchReceipt(cap, command.args.handle, now);
     }

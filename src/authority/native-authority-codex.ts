@@ -46,6 +46,7 @@ export class NativeAuthorityCodex {
       pool: { ...pool, value: pool.value, revision: pool.revision },
       active,
       routing,
+      parsed,
       capacity,
       normalized: normalizeRoutingState(parsed, pool.value.identities, now, true),
       revisions: { pool: pool.revision, active: active.revision, routing: routing.revision, capacity: capacity.revision },
@@ -142,7 +143,11 @@ export class NativeAuthorityCodex {
     const request = this._api.request(cap, args.handle, now),
       account = request.codex;
     if (!account) throw new NativeAuthorityError("codex_admission_missing");
-    this._api.save({ ...request, providerObserved: true });
+    this._api.save({
+      ...request,
+      providerObserved: true,
+      ...(args.signal === "success" && request.semantic === null ? { responding: { provider: "chatgpt_codex", attemptHandle: null } } : {}),
+    });
     const rows = this._rows(now),
       identity = rows.pool.value.identities.find((candidate) => candidate.slot === account.slot);
     if (identity?.accountIdHash !== account.accountIdHash || identity.credentialVersion !== account.credentialVersion) return { kind: "stale" };
@@ -218,8 +223,7 @@ export class NativeAuthorityCodex {
     const currentAccount: CodexRoutingAccount = { ...account, ...resetProbe, ...transferred, credentialVersion: identity.credentialVersion };
     const generation = mutation.admissionRefreshRoutingGeneration(rows.routing.value === null ? null : rows.normalized, currentAccount);
     if (generation === null) return { kind: "stale" };
-    if (routingStateChangedByNormalization(rows.routing.value, rows.normalized))
-      this._sql.write("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, rows.normalized);
+    if (routingStateChangedByNormalization(rows.parsed, rows.normalized)) this._sql.write("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, rows.normalized);
     const prepared = mutation.prepareCodexAdmissionRefresh(active, currentAccount, rows.pool.revision, generation);
     if (prepared.kind === "refresh") this._sql.write("codex_active", CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, { ...prepared.next, updated_at_ms: now });
     const owner = this._owner(currentAccount, now);

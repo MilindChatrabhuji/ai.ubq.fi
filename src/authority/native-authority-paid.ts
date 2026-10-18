@@ -199,15 +199,20 @@ export class NativeAuthorityPaid {
     const attempt = this.attempt(cap, attemptHandle, now);
     return { attempt, provider: this._hop(attempt.hopId).ledgerProvider };
   }
-  start(cap: NativeCapability, args: NativeArguments["recordTransportStarted"], now: number): void {
+  assertStart(cap: NativeCapability, args: NativeArguments["recordTransportStarted"], now: number): NativeAttempt | null {
     if (!args.attemptHandle) {
       if (args.provider === "metered" || args.provider === "surplus") throw new NativeAuthorityError("paid_transport_attempt_required", 403);
-      return;
+      return null;
     }
     const { attempt, provider } = this.response(cap, args.attemptHandle, now);
     if (attempt.requestHandle !== args.handle || provider !== args.provider) throw new NativeAuthorityError("transport_attempt_mismatch", 403);
     const row = this._request(attempt, now).value;
     if (row?.billing_state !== "pending" || row.terminal_state !== "pending") throw new NativeAuthorityError("paid_attempt_not_dispatchable");
+    return attempt;
+  }
+  start(cap: NativeCapability, args: NativeArguments["recordTransportStarted"], now: number): void {
+    const attempt = this.assertStart(cap, args, now);
+    if (!attempt) return;
     this.lifecycle(cap, { attemptHandle: attempt.handle, patch: {}, fetchStarted: true }, now);
   }
   lifecycle(cap: NativeCapability, args: NativeArguments["recordPaidAttemptLifecycle"], now: number): NativeReply {
@@ -231,7 +236,8 @@ export class NativeAuthorityPaid {
     }
     const observed = plan?.request ?? entry.value;
     if (observed.terminal_state !== "pending") this._expedite(attempt, now);
-    if (observed.provider_request_id !== null || observed.terminal_state !== "pending" || args.fetchStarted) {
+    const providerTerminal = args.patch.terminal_state !== undefined && args.patch.terminal_state !== "pending";
+    if (observed.provider_request_id !== null || providerTerminal || args.fetchStarted) {
       const original = this._api.request(cap, attempt.requestHandle, now);
       if (original.semantic === null)
         this._api.save({ ...original, providerObserved: true, responding: { provider: hop.ledgerProvider, attemptHandle: attempt.handle } });
@@ -353,6 +359,7 @@ export class NativeAuthorityPaid {
     }
     const attempt = this._sql.paidAttempt(cap.keyId, billingId, now);
     if (!attempt) throw new NativeAuthorityError("paid_attempt_lifetime_missing", 503);
+    if (attempt.principalId !== cap.principalId) return null;
     this.attempt(cap, attempt.handle, now);
     return {
       attemptHandle: attempt.handle,
