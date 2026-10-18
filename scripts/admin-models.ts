@@ -20,7 +20,10 @@ type AdminModelsOptions = Readonly<{
 const firstSet = (...values: (string | undefined)[]): string | undefined => values.find((value) => value !== undefined && value !== "");
 
 const appendNoProxyHost = (current: string | undefined, hostname: string): string => {
-  const hosts = (current ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  const hosts = (current ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
   if (!hosts.includes("*") && !hosts.includes(hostname)) hosts.push(hostname);
   return hosts.join(",");
 };
