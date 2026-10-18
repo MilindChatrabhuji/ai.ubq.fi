@@ -6,6 +6,7 @@ use gateway_core::provider::PaidProvider;
 use gateway_core::state::AuthorityStore;
 
 use crate::quota::ApiKeyPolicy;
+use crate::paid_control::PaidRoutingReceipt;
 use crate::routing::validate_cohort;
 use crate::store::Transaction;
 use crate::{
@@ -101,6 +102,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         &self,
         input: &PaidRequest,
         authorization: &PaidAuthorization,
+        receipt: &PaidRoutingReceipt,
         now: i64,
     ) -> Result<PaidAdmission, GatewayError> {
         text(&input.key_id.0)?;
@@ -133,24 +135,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "Paid fallback is disabled or this model is not allowed.",
                 ));
             }
-            let routing: PaidRoutingPolicy =
-                tx.read(&keys::paid_routing()).await?.ok_or_else(|| {
-                    unavailable(
-                        "paid_fallback_unavailable",
-                        "Paid routing catalog is unavailable.",
-                    )
-                })?;
-            if routing.v != 1
-                || !routing
-                    .models
-                    .get(&input.model)
-                    .is_some_and(|providers| providers.contains(&input.provider))
-            {
-                return Err(unavailable(
-                    "paid_fallback_unavailable",
-                    "This paid provider cannot serve the model.",
-                ));
-            }
+            let routing = self.require_paid_route(&mut tx,input,receipt,now).await?;
             match authorization {
                 PaidAuthorization::DirectPaidModel => {
                     if routing.codex_enabled && routing.codex_models.contains(&input.model) {
@@ -212,6 +197,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     self.require_claude_proof(&mut tx, proof, &input.model, now)
                         .await?;
                 }
+                tx.now=self.fresh_time(tx.now.max(now))?;
+                if let PaidAuthorization::SubscriptionUnavailable(proof)=authorization
+                    && !validate_cohort(&mut tx,proof,false).await? {
+                    return Err(unavailable("codex_routing_unavailable","Subscription-pool proof expired before paid reservation."));
+                }
+                self.require_paid_route(&mut tx,input,receipt,now).await?;
                 if tx.commit().await? {
                     return Ok(PaidAdmission::Existing(existing.reservation));
                 } else {
@@ -333,6 +324,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 self.require_claude_proof(&mut tx, proof, &input.model, now)
                     .await?;
             }
+            tx.now=self.fresh_time(tx.now.max(now))?;
+            if let PaidAuthorization::SubscriptionUnavailable(proof)=authorization
+                && !validate_cohort(&mut tx,proof,false).await? {
+                return Err(unavailable("codex_routing_unavailable","Subscription-pool proof expired before paid reservation."));
+            }
+            self.require_paid_route(&mut tx,input,receipt,now).await?;
             if tx.commit().await? {
                 return Ok(PaidAdmission::Reserved(reservation));
             }

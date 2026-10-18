@@ -189,6 +189,8 @@ pub(crate) struct RoutingView {
     pub state: RoutingState,
     pub active: Option<ActiveSelection>,
     models: ModelAvailability,
+    models_source: serde_json::Value,
+    source_ids: BTreeMap<String,String>,
     capacity: CapacityStore,
     pub(crate) overage: BTreeMap<String, bool>,
 }
@@ -211,7 +213,7 @@ pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
         generation(active.generation)?;
     }
     let capacity = tx.read(&keys::capacity()).await?.unwrap_or_default();
-    let models = tx.read(&keys::models()).await?.unwrap_or_default();
+    let source_models = crate::source_models::load(tx,&pool).await?;
     let mut overage = BTreeMap::new();
     for account in &pool.accounts {
         let setting: Option<serde_json::Value> = tx
@@ -227,7 +229,9 @@ pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
         state,
         active,
         capacity,
-        models,
+        models: source_models.models,
+        models_source: source_models.raw,
+        source_ids: source_models.ids,
         overage,
     })
 }
@@ -728,30 +732,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if !view.matches(admission) {
                 return Ok(false);
             }
-            let mut models = view.models;
-            let account = models
-                .unsupported
-                .entry(admission.binding.account_id_hash.0.clone())
-                .or_default();
-            account.retain(|_, row| {
-                row.observed_at_ms <= now && now - row.observed_at_ms <= 7 * crate::DAY_MS
-            });
-            account.insert(
-                admission.requested_model.clone(),
-                UnsupportedModel {
-                    observed_at_ms: now,
-                    detail: detail.to_owned(),
-                },
-            );
-            while account.len() > 32 {
-                let oldest = account
-                    .iter()
-                    .min_by_key(|(_, value)| value.observed_at_ms)
-                    .map(|(key, _)| key.clone());
-                if let Some(key) = oldest {
-                    account.remove(&key);
-                }
-            }
+            let id=view.source_ids.get(&admission.binding.account_id_hash.0)
+                .ok_or_else(||invalid("Current source account mapping is missing."))?;
+            let models=crate::source_models::learn(&view.models_source,id,&admission.requested_model,now)?;
             tx.put(&keys::models(), &models, None)?;
             if tx.commit().await? {
                 return Ok(true);
