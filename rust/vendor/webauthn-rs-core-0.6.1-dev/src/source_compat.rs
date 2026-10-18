@@ -14,7 +14,8 @@ use crypto_glue::{
 use serde_cbor_2::Value;
 use std::time::SystemTime;
 
-/// A CRL URL extracted from a certificate in an already verified trust path.
+/// An untrusted CRL URL from a source-accepted certificate path.
+/// Source early-stop behavior does not guarantee a configured trust anchor.
 #[derive(Clone, Debug)]
 pub struct RevocationCheck {
     /// First CRL distribution-point URI, exactly as in the signed certificate.

@@ -136,7 +136,7 @@ pub struct SignatureInput {
 }
 
 pub trait WebAuthnCrypto {
-    /// Raw DER from the signed certificate's first CRL URL. Source semantics
+    /// Raw DER from the signed certificate's untrusted first CRL URL. Source semantics
     /// ignore unavailable/malformed CRLs; only Rust parsing decides revocation.
     fn fetch_certificate_revocation_list(
         &self,
