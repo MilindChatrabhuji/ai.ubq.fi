@@ -6,9 +6,15 @@ mod counters;
 pub mod health;
 pub mod host_types;
 pub mod ledger;
+pub mod ledger_stats;
 pub mod prompt;
 pub mod prompt_gate;
 pub mod providers;
+pub mod claude_capacity;
+pub mod capacity_events;
+mod capacity_store;
+pub mod capacity;
+pub mod remote_capacity;
 mod store;
 pub mod telemetry;
 pub mod types;
@@ -21,6 +27,7 @@ pub struct ObservabilityRuntime<S, H> {
     pub(crate) host: Rc<H>,
     pub(crate) health: health::HealthWriter,
     pub(crate) active_health: providers::ActiveHealth,
+    pub(crate) sampled_bucket:Rc<std::cell::Cell<i64>>,
 }
 impl<S, H> Clone for ObservabilityRuntime<S, H> {
     fn clone(&self) -> Self {
@@ -29,6 +36,7 @@ impl<S, H> Clone for ObservabilityRuntime<S, H> {
             host: self.host.clone(),
             health: self.health.clone(),
             active_health: self.active_health.clone(),
+            sampled_bucket:self.sampled_bucket.clone(),
         }
     }
 }
@@ -39,6 +47,7 @@ impl<S, H> ObservabilityRuntime<S, H> {
             host: Rc::new(host),
             health: health::HealthWriter::default(),
             active_health: providers::ActiveHealth::default(),
+            sampled_bucket:Rc::new(std::cell::Cell::new(0)),
         }
     }
     pub fn store(&self) -> &S {

@@ -216,10 +216,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     ) -> Result<Value, GatewayError> {
         let mut observations = Vec::new();
         for record in RECORDS {
-            if let Some(row) = self.store.read(&health_key(target, record)).await? {
-                if let Some(v) = store::value(Some(&row), at_ms)?.and_then(parse_observation) {
+            if let Some(row) = self.store.read(&health_key(target, record)).await?
+                && let Some(v) = store::value(Some(&row), at_ms)?.and_then(parse_observation) {
                     observations.push(v)
-                }
             }
         }
         if target.provider == HealthProvider::ClaudeCode
@@ -250,15 +249,14 @@ impl<S: QueryStore + 'static, H: ObservabilityHost + 'static> ObservabilityRunti
         };
         let queue_key = format!("{}:{}", target.provider.id(), target.identity);
         let previous = { self.health.0.borrow().pending.get(&queue_key).cloned() };
-        if let Some(ref pending) = previous {
-            if pending.observation.event == event
+        if let Some(ref pending) = previous
+            && pending.observation.event == event
                 && pending.observation.status == observation.status
                 && (pending.observation.provider_request_id.is_some()
                     || observation.provider_request_id.is_none())
             {
                 pending.tail.clone().await;
                 return HealthWrite::Coalesced;
-            }
         }
         let sequence = {
             let mut state = self.health.0.borrow_mut();
