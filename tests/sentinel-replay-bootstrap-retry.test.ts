@@ -839,12 +839,12 @@ for (const outcome of ["complete", "replaced"] as const) {
       } else {
         const state = await readLedger(kv, budget);
         assert.equal(state.kind, "ok");
-        if (state.kind !== "ok") throw new Error("unexpected fixture ledger");
         await kv.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, { ...state.ledger, bootstrap_sweep: "replacement-sweep" });
       }
       const rechecked = Promise.withResolvers<undefined>();
-      interposing.arm(async () => {
+      interposing.arm(() => {
         rechecked.resolve(undefined);
+        return Promise.resolve();
       });
       hold.release();
       const checked = await Promise.race([rechecked.promise.then(() => true), sleep(1_000).then(() => false)]);
