@@ -20,6 +20,8 @@ mod image_host;
 mod inference;
 mod lifecycle;
 mod multipart;
+mod native_host;
+mod native_transport;
 mod observability_host;
 mod paid_lookup;
 mod publication;
@@ -29,6 +31,7 @@ pub mod storage;
 pub mod transport;
 
 pub use authority::GatewayAuthority;
+pub use native_host::NativeBindings;
 
 fn error_response(error: GatewayError) -> Result<Response> {
     let mut response = Response::from_json(&error.envelope)?.with_status(error.status);
@@ -55,6 +58,18 @@ pub async fn fetch_with_publication(
     env: Env,
     context: Context,
     receiver: Option<&gateway_publication::transport::PublicationReceiver>,
+) -> Result<Response> {
+    fetch_with_bindings(request, env, context, receiver, NativeBindings::default()).await
+}
+
+/// Capabilities are supplied by trusted native configuration or a private
+/// runtime fixture. Neither a client field nor a provider token constructs them.
+pub async fn fetch_with_bindings(
+    request: Request,
+    env: Env,
+    context: Context,
+    receiver: Option<&gateway_publication::transport::PublicationReceiver>,
+    native: NativeBindings,
 ) -> Result<Response> {
     let identity = match ReleaseIdentity::cloudflare(
         env!("UOS_RUST_BUILD_GIT_SHA"),
@@ -101,6 +116,7 @@ pub async fn fetch_with_publication(
             Rc::new(context),
             identity.git_sha(),
             gateway_core::identity::RequestId(request_id.clone()),
+            native,
         )
         .await
         {
