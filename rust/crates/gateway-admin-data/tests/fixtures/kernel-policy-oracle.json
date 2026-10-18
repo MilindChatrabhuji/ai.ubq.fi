@@ -1,0 +1,42 @@
+{
+  "source_revision": "dc6be2c3b59188b0e4135b80cb4f0f6b492e232c",
+  "scope": "kernel quota policy original pure source function bodies plus source constants/isRecord",
+  "argv": [
+    "bwrap",
+    "--die-with-parent",
+    "--unshare-net",
+    "--ro-bind",
+    "/",
+    "/",
+    "--bind",
+    "/var/tmp/ai-rust-wasm-20261018",
+    "/var/tmp/ai-rust-wasm-20261018",
+    "--bind",
+    "/var/tmp/ai-rust-wasm-20261018/tmp",
+    "/tmp",
+    "--proc",
+    "/proc",
+    "--dev",
+    "/dev",
+    "--chdir",
+    "/var/tmp/ai-rust-wasm-20261018/artifacts/m08-oracle",
+    "--",
+    "env",
+    "-i",
+    "PATH=/usr/local/bin:/usr/bin:/bin",
+    "HOME=/home/codex",
+    "/usr/local/bin/bun",
+    "--no-env-file",
+    "--no-install",
+    "kernel-policy-oracle.ts"
+  ],
+  "exit": 0,
+  "stdout": "30\n",
+  "stderr": "",
+  "files": {
+    "kernel-policy-cases.json": "961633c688025477f95f6dadb623852939fbb805ba0c2dbcc04d08bcde0eb15a",
+    "kernel-policy-source.ts": "a27f0912247a8ee75772dea98283e000114a0befbb0f487d5d2b2a2f240d09fc",
+    "kernel-policy-oracle.ts": "30ab66360a2dacd9a521f890c261e92e26308639e168a0647f519bb86a150da1",
+    "kernel-policy-golden.json": "1f9f98decb971034739cff8d7bf7d4103759c99c23936cd542d50bc61b59a1ac"
+  }
+}

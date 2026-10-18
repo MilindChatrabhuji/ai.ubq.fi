@@ -2,6 +2,22 @@ use gateway_admin_data::{profile, projection};
 use serde_json::Value;
 
 #[test]
+fn kernel_policy_normalization_matches_frozen_bun_source() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/kernel-policy-golden.json")).unwrap();
+    assert_eq!(cases.len(), 30);
+    for case in cases {
+        let result = gateway_admin_data::migration::kernel::normalize_policy(
+            &case["value"],
+            case["scope"].as_str().unwrap(),
+            case["owner"].as_str().unwrap(),
+            case["repo"].as_str(),
+        );
+        assert_eq!(result.unwrap_or(Value::Null), case["expected"], "{case}");
+    }
+}
+
+#[test]
 fn profile_types_match_frozen_bun_source() {
     let cases: Vec<Value> =
         serde_json::from_str(include_str!("fixtures/profile-golden.json")).unwrap();
@@ -77,7 +93,10 @@ fn quota_projections_match_frozen_bun_source() {
 fn profile_stream_keeps_typed_key_identity_and_never_treats_plain_objects_as_tags() {
     let line = r#"{"key":[{"type":"string","value":"default"},{"type":"bigint","value":"256"},{"type":"Uint8Array","value":"AAD_"}],"value":{"type":"object","value":{"type":{"type":"string","value":"Date"},"value":{"type":"string","value":"ordinary"}}},"versionstamp":"source-only"}"#;
     let entry = profile::normalize_import_line(line).unwrap().unwrap();
-    assert_eq!(entry.key.0, "tuple-v1:0264656661756c74001601000100ff00ffff00");
+    assert_eq!(
+        entry.key.0,
+        "tuple-v1:0264656661756c74001601000100ff00ffff00"
+    );
     assert_eq!(
         entry.value.to_json_lossless().unwrap(),
         serde_json::json!({"type":"Date","value":"ordinary"})
