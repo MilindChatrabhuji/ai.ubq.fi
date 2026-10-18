@@ -889,23 +889,27 @@ withLauncher("VPS same-SHA retry restores the previous release after an interrup
   assert.equal(await identity(await a.publicHealth()), a.sha);
   assert.equal(await pathExists(f.root + "/.data/deploy-recovery.json"), false);
 });
-withLauncher("VPS legacy same-SHA retry refuses cross-codec rollback after an interrupted candidate-ready run", async (f, a) => {
-  await write(f.root, "stop-after-candidate-ready", "fault\n");
-  const interrupted = await runDeployFixture(f, a.options);
-  assert.notEqual(interrupted.code, 0);
-  assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
-  assert.equal(await recoveryPhase(f), "candidate_ready");
+withLauncher(
+  "VPS legacy same-SHA retry refuses cross-codec rollback after an interrupted candidate-ready run",
+  async (f, a) => {
+    await write(f.root, "stop-after-candidate-ready", "fault\n");
+    const interrupted = await runDeployFixture(f, a.options);
+    assert.notEqual(interrupted.code, 0);
+    assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+    assert.equal(await recoveryPhase(f), "candidate_ready");
 
-  const before = (await calls(f)).filter((line) => line === RESTART_COMMAND).length;
-  assert.equal(before, 1, "the interrupted first run started the candidate exactly once");
-  await write(f.root, "reload-refused", "fault\n");
-  const retry = await runDeployFixture(f, a.options);
-  assert.notEqual(retry.code, 0);
-  assert.match(retry.stderr, /Cross-codec rollback/);
-  assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
-  assert.equal(await recoveryPhase(f), "candidate_ready");
-  assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, before);
-}, "legacy-supported");
+    const before = (await calls(f)).filter((line) => line === RESTART_COMMAND).length;
+    assert.equal(before, 1, "the interrupted first run started the candidate exactly once");
+    await write(f.root, "reload-refused", "fault\n");
+    const retry = await runDeployFixture(f, a.options);
+    assert.notEqual(retry.code, 0);
+    assert.match(retry.stderr, /Cross-codec rollback/);
+    assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+    assert.equal(await recoveryPhase(f), "candidate_ready");
+    assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, before);
+  },
+  "legacy-supported"
+);
 withLauncher("VPS post-ingress failure retains candidate and retries without restart", async (f, a) => {
   await write(f.root, "public-refused", "fault\n");
   const first = await runDeployFixture(f, a.options);
