@@ -278,7 +278,7 @@ async function staticRouteCases(url: (path: string) => string, cases: string[]):
       const served = await fetch(url(String(route)));
       assert.equal(served.status, 200, String(route));
       assert.equal(served.headers.get("content-type"), match[3]);
-      assert.equal(served.headers.get("cache-control"), "public, max-age=300");
+      assert.equal(served.headers.get("cache-control"), route === "/admin" || String(route).startsWith("/admin/") ? "no-store" : "public, max-age=300");
       assert.equal(served.headers.get("x-content-type-options"), "nosniff");
       if (match[4]) {
         assert(served.headers.get("content-security-policy")?.includes("frame-ancestors 'none'"));
@@ -295,12 +295,15 @@ async function staticRouteCases(url: (path: string) => string, cases: string[]):
   for (const [accept, status, contentType] of [
     ["text/markdown", 200, "text/markdown; charset=utf-8"],
     ["application/json", 200, "application/json"],
-    ["text/html;q=0, */*;q=1", 200, "text/markdown; charset=utf-8"],
+    ["text/html;q=0, */*;q=1", 200, "text/html; charset=utf-8"],
     ["image/png", 406, "application/json"],
   ] as const) {
     const served = await fetch(url("/"), { headers: { Accept: accept } });
     assert.equal(served.status, status);
-    assert(served.headers.get("content-type")?.startsWith(contentType));
+    assert(
+      served.headers.get("content-type")?.startsWith(contentType),
+      JSON.stringify({ accept, expected: contentType, actual: served.headers.get("content-type") })
+    );
     assert.equal(served.headers.get("vary"), "Accept, Accept-Encoding");
     await served.arrayBuffer();
   }
@@ -416,6 +419,12 @@ async function inner(): Promise<void> {
     assert.equal(identity.release.git_sha, expectedSha);
     assert.equal(health.headers.get("x-uos-git-sha"), expectedSha);
     cases.push("exact_rust_source_identity");
+    const preflight = await fetch(url("/v1/responses"), { method: "OPTIONS", headers: { origin: "https://ai.ubq.fi" } });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "https://ai.ubq.fi");
+    assert.equal(preflight.headers.get("access-control-allow-credentials"), "true");
+    assert(preflight.headers.get("access-control-expose-headers")?.includes("x-uos-provider-request-id"));
+    cases.push("source_credential_cors_preflight_before_authentication");
     await staticRouteCases(url, cases);
     assert.equal((await post("/uos/agent-messages", { agent_id: "fixture", body: "fixture" })).status, 403);
     assert.equal((await fetch(url("/uos/agent-messages"))).status, 401);

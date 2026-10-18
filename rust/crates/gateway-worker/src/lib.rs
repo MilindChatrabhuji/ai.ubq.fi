@@ -11,6 +11,7 @@ mod assets;
 pub mod authority;
 mod catalog;
 mod catalog_host;
+mod cors;
 mod host;
 mod inference;
 mod lifecycle;
@@ -46,30 +47,34 @@ pub async fn fetch(request: Request, env: Env, context: Context) -> Result<Respo
         Ok(id) => id,
         Err(error) => return error_response(error),
     };
-    let mut response =
-        if request.path() == "/health" && matches!(request.method(), Method::Get | Method::Head) {
-            if request.method() == Method::Head {
-                Response::empty()?
-            } else {
-                Response::from_json(&HealthResponse::available(&identity))?
-            }
+    let cors = cors::Cors::from_request(&request, &env)?;
+    let mut response = if request.method() == Method::Options {
+        Response::empty()?.with_status(204)
+    } else if request.path() == "/health" && matches!(request.method(), Method::Get | Method::Head)
+    {
+        if request.method() == Method::Head {
+            Response::empty()?
         } else {
-            match runtime::route(
-                request,
-                env,
-                Rc::new(context),
-                identity.git_sha(),
-                gateway_core::identity::RequestId(request_id.clone()),
-            )
-            .await
-            {
-                Ok(response) => response,
-                Err(error) => error_response(error)?,
-            }
-        };
+            Response::from_json(&HealthResponse::available(&identity))?
+        }
+    } else {
+        match runtime::route(
+            request,
+            env,
+            Rc::new(context),
+            identity.git_sha(),
+            gateway_core::identity::RequestId(request_id.clone()),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => error_response(error)?,
+        }
+    };
     if response.headers().get("Cache-Control")?.is_none() {
         response.headers_mut().set("Cache-Control", "no-store")?;
     }
+    cors.apply(&mut response)?;
     response
         .headers_mut()
         .set("x-uos-request-id", &request_id)?;
