@@ -38,15 +38,21 @@ impl SignatureAlgorithm {
             Self::Es384 => json!({"name":"ECDSA","namedCurve":"P-384"}),
             Self::Es512 => json!({"name":"ECDSA","namedCurve":"P-521"}),
             Self::Ed25519 => json!({"name":"Ed25519"}),
-            Self::RsaPssSha256 | Self::RsaPssSha384 | Self::RsaPssSha512 => json!({"name":"RSA-PSS","hash":{"name":self.hash_name()}}),
+            Self::RsaPssSha256 | Self::RsaPssSha384 | Self::RsaPssSha512 => {
+                json!({"name":"RSA-PSS","hash":{"name":self.hash_name()}})
+            }
             _ => json!({"name":"RSASSA-PKCS1-v1_5","hash":{"name":self.hash_name()}}),
         }
     }
     pub fn verify_algorithm(self) -> Value {
         match self {
-            Self::Es256 | Self::Es384 | Self::Es512 => json!({"name":"ECDSA","hash":{"name":self.hash_name()}}),
+            Self::Es256 | Self::Es384 | Self::Es512 => {
+                json!({"name":"ECDSA","hash":{"name":self.hash_name()}})
+            }
             Self::Ed25519 => json!({"name":"Ed25519"}),
-            Self::RsaPssSha256 | Self::RsaPssSha384 | Self::RsaPssSha512 => json!({"name":"RSA-PSS","saltLength":self.pss_salt_length()}),
+            Self::RsaPssSha256 | Self::RsaPssSha384 | Self::RsaPssSha512 => {
+                json!({"name":"RSA-PSS","saltLength":self.pss_salt_length()})
+            }
             _ => json!({"name":"RSASSA-PKCS1-v1_5"}),
         }
     }
@@ -276,12 +282,12 @@ fn verify_client(
     }
     if let Some(binding) = client.get("tokenBinding")
         && !binding.is_null()
-            && !binding
-                .get("status")
-                .and_then(Value::as_str)
-                .is_some_and(|s| matches!(s, "present" | "supported" | "not-supported"))
-        {
-            return Err(invalid("Invalid passkey token binding"));
+        && !binding
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|s| matches!(s, "present" | "supported" | "not-supported"))
+    {
+        return Err(invalid("Invalid passkey token binding"));
     }
     encoded_field(response, "clientDataJSON")
 }

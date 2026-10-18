@@ -20,7 +20,9 @@ fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
     loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut context) { return value; }
+        if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
+            return value;
+        }
         std::thread::yield_now();
     }
 }

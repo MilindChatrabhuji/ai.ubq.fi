@@ -37,7 +37,15 @@ impl NativeCredentials {
         sha256_hex(self.account_id.as_bytes())
     }
     pub fn routing_credential_version(&self) -> String {
-        sha256_hex(format!("{}\0{}\0{}", self.account_id, self.access_token.expose(), self.refresh_token.expose()).as_bytes())
+        sha256_hex(
+            format!(
+                "{}\0{}\0{}",
+                self.account_id,
+                self.access_token.expose(),
+                self.refresh_token.expose()
+            )
+            .as_bytes(),
+        )
     }
     pub fn generation_hash(&self) -> String {
         sha256_hex(
@@ -177,8 +185,9 @@ pub fn verify_generation(
         return Err(owner_conflict());
     }
     if let Some(user) = previous.external_user_id.as_ref()
-        && next.external_user_id.as_ref() != Some(user) {
-            return Err(owner_conflict());
+        && next.external_user_id.as_ref() != Some(user)
+    {
+        return Err(owner_conflict());
     }
     if next.external_user_id.is_some() {
         let identity = jwt_payload(previous.access_token.expose())

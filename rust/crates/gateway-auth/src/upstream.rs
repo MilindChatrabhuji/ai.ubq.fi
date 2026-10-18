@@ -194,12 +194,11 @@ pub fn verify_kernel(
     if let (Some(owner), Some(repo)) = (
         request.header("x-github-owner"),
         request.header("x-github-repo"),
-    )
-        && !owner.trim().is_empty()
-            && !repo.trim().is_empty()
-            && (claims.owner != owner.trim() || claims.repo != repo.trim())
-        {
-            return Err(kernel_error("kernel attestation repo mismatch"));
+    ) && !owner.trim().is_empty()
+        && !repo.trim().is_empty()
+        && (claims.owner != owner.trim() || claims.repo != repo.trim())
+    {
+        return Err(kernel_error("kernel attestation repo mismatch"));
     }
     if let Some(expected) = claims.installation_id {
         let actual = request.header("x-github-installation-id").and_then(|s| s.trim().parse::<i64>().ok()).ok_or_else(|| GatewayError::new(401,"Unauthorized: missing 'X-GitHub-Installation-Id' header, required for kernel attestation verification",Some("missing_installation_id")))?;

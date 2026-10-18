@@ -30,10 +30,22 @@ fn source_account_identities_keep_their_distinct_hash_contracts() {
     };
     // Fixed vectors from the source's UTF-8 SHA-256 inputs, independently computed
     // with Python hashlib; swapping these domains must break conformance.
-    assert_eq!(auth.routing_account_hash(), "484a1343b26c959daf682d78764d851fff7201648d4c18104f45f490570141be");
-    assert_eq!(auth.administrative_account_hash(), "f705fb57e2c0ddd862af3f17acf9a3dc64aebd260f44888899898ca2abb88e19");
-    assert_eq!(auth.routing_credential_version(), "a54556bde850d41f3791d5cb7f8740e62be0e8da6845803f48d4318a41557ed5");
-    assert_eq!(auth.generation_hash(), "ed4213412e76b59cdbf9c764a316e4028e86bb8fe85caf3a1246b94e10ad96d5");
+    assert_eq!(
+        auth.routing_account_hash(),
+        "484a1343b26c959daf682d78764d851fff7201648d4c18104f45f490570141be"
+    );
+    assert_eq!(
+        auth.administrative_account_hash(),
+        "f705fb57e2c0ddd862af3f17acf9a3dc64aebd260f44888899898ca2abb88e19"
+    );
+    assert_eq!(
+        auth.routing_credential_version(),
+        "a54556bde850d41f3791d5cb7f8740e62be0e8da6845803f48d4318a41557ed5"
+    );
+    assert_eq!(
+        auth.generation_hash(),
+        "ed4213412e76b59cdbf9c764a316e4028e86bb8fe85caf3a1246b94e10ad96d5"
+    );
 }
 
 #[test]

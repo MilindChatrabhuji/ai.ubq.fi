@@ -187,7 +187,9 @@ fn bounded(value: &str, max: usize) -> String {
         let mut used = 0;
         let mut output = String::new();
         for ch in value.chars() {
-            if used + ch.len_utf16() > max.saturating_sub(1) { break; }
+            if used + ch.len_utf16() > max.saturating_sub(1) {
+                break;
+            }
             used += ch.len_utf16();
             output.push(ch);
         }
