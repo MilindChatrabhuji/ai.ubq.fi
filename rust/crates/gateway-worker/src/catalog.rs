@@ -34,7 +34,12 @@ pub async fn public_response(
     platform: &PlatformHost,
     context: Rc<Context>,
 ) -> Result<gateway_auth::AuthResponse, GatewayError> {
-    let host = Host { store: store.clone(), env: env.clone(), platform: platform.clone(), context };
+    let host = Host {
+        store: store.clone(),
+        env: env.clone(),
+        platform: platform.clone(),
+        context,
+    };
     let response = service().public_catalog(store, &host).await?;
     let mut wire = gateway_auth::AuthResponse::json(response.status, response.body);
     wire.headers.extend(response.headers);

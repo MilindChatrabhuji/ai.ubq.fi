@@ -308,7 +308,10 @@ impl<
         if matches!(record.fence, CredentialFence::Claude { .. })
             && failure.origin == FailureOrigin::Provider
         {
-            return Err(journal::unavailable("Claude refusals require the consumed actual response-head capability.").into());
+            return Err(journal::unavailable(
+                "Claude refusals require the consumed actual response-head capability.",
+            )
+            .into());
         }
         if failure.transport == TransportState::NotStarted && record.transport_started {
             return Err(journal::unavailable(

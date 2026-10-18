@@ -31,7 +31,10 @@ pub struct DispatchFailure {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DispatchOrigin { Gateway, Transport }
+pub enum DispatchOrigin {
+    Gateway,
+    Transport,
+}
 
 impl From<GatewayError> for DispatchFailure {
     fn from(error: GatewayError) -> Self {

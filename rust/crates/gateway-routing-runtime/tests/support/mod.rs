@@ -329,7 +329,11 @@ pub struct Host {
     pub cancelled: Arc<AtomicBool>,
     pub cancel_wait_after_ms: Option<i64>,
     pub claude: Option<PublishedCredential>,
-    pub claude_refused: Option<(u16, BTreeMap<String,String>, gateway_core::source_json::SourceJson)>,
+    pub claude_refused: Option<(
+        u16,
+        BTreeMap<String, String>,
+        gateway_core::source_json::SourceJson,
+    )>,
     pub claude_outcomes: Arc<Mutex<VecDeque<ClaudeOutcome>>>,
     pub claude_heads: Arc<AtomicU64>,
     pub consumed_heads: Arc<Mutex<BTreeSet<u64>>>,
@@ -459,8 +463,12 @@ impl RoutingHost for Host {
         _model: &str,
         _raw: &Value,
     ) -> Result<ClaudeSelection, GatewayError> {
-        if let Some((status,headers,body)) = &self.claude_refused {
-            return Ok(ClaudeSelection::Refused { status:*status, headers:headers.clone(), body:body.clone() });
+        if let Some((status, headers, body)) = &self.claude_refused {
+            return Ok(ClaudeSelection::Refused {
+                status: *status,
+                headers: headers.clone(),
+                body: body.clone(),
+            });
         }
         Ok(self
             .claude
