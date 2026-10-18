@@ -13,7 +13,7 @@ use gateway_core::{
     GatewayError,
     state::{AuthorityStore, RevisionCheck},
 };
-use gateway_providers::{AuthMaterial, PrepareOptions};
+use gateway_providers::AuthMaterial;
 use gateway_schema::selection::ProviderSelection;
 use serde_json::Value;
 use std::{

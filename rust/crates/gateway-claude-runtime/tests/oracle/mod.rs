@@ -11,7 +11,9 @@ fn fixture() -> Value {
     value
 }
 fn headers(value: &Value) -> Headers {
-    serde_json::from_value(value.clone()).unwrap()
+    let headers: Headers = serde_json::from_value(value.clone()).unwrap();
+    // The Bun oracle constructs Fetch Headers, which normalizes HTTP OWS.
+    headers.into_iter().map(|(key, value)| (key, value.trim_matches([' ', '\t']).into())).collect()
 }
 fn evidence(case: &Value) -> response::ErrorEvidence {
     response::ErrorEvidence {
