@@ -323,8 +323,7 @@ pub fn inspect_source_rows(
         if let Some(request) = record
             .get("paid_fallback_reservation_request_id")
             .filter(|v| !v.is_null())
-        {
-            if !rows.iter().any(|row| {
+            && !rows.iter().any(|row| {
                 under(&row.parts, &["uos_ai", "paid_fallback", "ledger"])
                     && row.record.json_value().is_ok_and(|v| {
                         v["key_id"] == id
@@ -332,11 +331,11 @@ pub fn inspect_source_rows(
                             && (v["billing_status"] == "pending"
                                 || v["billing_status"] == "unresolved")
                     })
-            }) {
-                audit.errors.push(format!(
-                    "paid fallback reservation has no pending ledger record: {id}"
-                ));
-            }
+            })
+        {
+            audit.errors.push(format!(
+                "paid fallback reservation has no pending ledger record: {id}"
+            ));
         }
     }
     Ok(audit)

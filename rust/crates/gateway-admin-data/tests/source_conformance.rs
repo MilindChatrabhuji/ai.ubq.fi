@@ -17,7 +17,9 @@ fn assert_source(actual: &Value, expected: &Value, context: &str) {
         (Value::Object(a), Value::Object(b)) => {
             assert_eq!(a.len(), b.len(), "{context}");
             for (key, b) in b {
-                let a = a.get(key).unwrap_or_else(|| panic!("{context}.{key} missing"));
+                let a = a
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{context}.{key} missing"));
                 assert_source(a, b, &format!("{context}.{key}"));
             }
         }
