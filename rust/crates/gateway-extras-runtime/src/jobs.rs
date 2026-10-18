@@ -303,7 +303,14 @@ async fn attempt<S: QueryStore, H: ExtrasHost>(
     host: &H,
     input: JobAttempt<'_>,
 ) -> Result<ExtrasResponse, GatewayError> {
-    let JobAttempt { owner, seed, entry, mut job, options, deadline } = input;
+    let JobAttempt {
+        owner,
+        seed,
+        entry,
+        mut job,
+        options,
+        deadline,
+    } = input;
     let at = now(host)?;
     if let Some(until) = job.locked_until_ms.filter(|e| *e > at) {
         let mut r = response(&job, None, 202);

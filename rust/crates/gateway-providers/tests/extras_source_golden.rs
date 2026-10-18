@@ -423,8 +423,11 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
     assert_eq!(plan.responses["tools"][0]["output_compression"], 100.0);
     for n in ["01", "1e0", "+1", "1.0"] {
         assert!(
-            extras::parse_multipart_image(&json!({"prompt":"image","n":n}), std::slice::from_ref(&file))
-                .is_err()
+            extras::parse_multipart_image(
+                &json!({"prompt":"image","n":n}),
+                std::slice::from_ref(&file)
+            )
+            .is_err()
         );
     }
     error(
