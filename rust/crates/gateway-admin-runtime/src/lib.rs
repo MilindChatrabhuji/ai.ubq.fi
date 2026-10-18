@@ -498,7 +498,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         if response.status >= 400 && response.stream.is_none() {
             return Ok(response);
         }
-        let body = &response.body;
+        let body = response.body.as_json().ok_or_else(|| {
+            GatewayError::unavailable(
+                "Supervisor brief capability did not return the final public source response",
+                "supervisor_brief_invalid_response",
+            )
+        })?;
         let fields = [
             "sourceId",
             "threadId",
