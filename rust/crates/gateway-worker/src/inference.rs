@@ -189,6 +189,9 @@ pub async fn run(
             cancellation: host.cancellation.clone(),
             lifecycle: lifecycle.clone(),
             next_sequence: 0,
+            heartbeat: Box::pin(worker::Delay::from(std::time::Duration::from_millis(
+                gateway_providers::sse::KEEPALIVE_INTERVAL_MS,
+            ))),
         };
         let source = Box::pin(futures_util::stream::unfold(
             relay,
@@ -200,7 +203,31 @@ pub async fn run(
                     if state.done {
                         return None;
                     }
-                    let result = match state.source.next().await {
+                    let incoming = {
+                        match futures_util::future::select(
+                            Box::pin(state.source.next()),
+                            state.heartbeat.as_mut(),
+                        )
+                        .await
+                        {
+                            futures_util::future::Either::Left((incoming, remaining)) => {
+                                drop(remaining);
+                                Some(incoming)
+                            }
+                            futures_util::future::Either::Right(((), remaining)) => {
+                                drop(remaining);
+                                None
+                            }
+                        }
+                    };
+                    let Some(incoming) = incoming else {
+                        state.heartbeat =
+                            Box::pin(worker::Delay::from(std::time::Duration::from_millis(
+                                gateway_providers::sse::KEEPALIVE_INTERVAL_MS,
+                            )));
+                        return Some((Ok(b": keep-alive\n\n".to_vec()), state));
+                    };
+                    let result = match incoming {
                         Some(Ok(bytes)) => state.decoder.push(&bytes),
                         Some(Err(_)) => Err(invalid("Upstream Chat Completions stream failed.")),
                         None => {
@@ -381,6 +408,7 @@ struct Relay {
     cancellation: Rc<crate::transport::outbound::Cancellation>,
     lifecycle: Rc<Lifecycle>,
     next_sequence: u64,
+    heartbeat: std::pin::Pin<Box<worker::Delay>>,
 }
 
 impl Relay {

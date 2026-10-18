@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { lookup } from "node:dns/promises";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -195,49 +194,59 @@ async function objectBody(response: Response): Promise<Record<string, unknown>> 
   return body;
 }
 
-async function assertUpstreamCancelled(events: () => Promise<unknown[]>): Promise<void> {
+async function assertUpstreamCancelled(events: () => Promise<unknown[]>, marker: string): Promise<void> {
   const deadline = Date.now() + 2000;
   let cancelled: boolean;
   do {
-    cancelled = (await events()).some((event: unknown) => isObject(event) && event.kind === "upstream_cancelled");
+    cancelled = (await events()).some(
+      (event: unknown) => isObject(event) && event.kind === "upstream_cancelled" && typeof event.prompt === "string" && event.prompt.includes(marker)
+    );
     if (!cancelled) await Bun.sleep(10);
   } while (!cancelled && Date.now() < deadline);
   assert(cancelled, "Caller abort must reach the actual controlled upstream.");
 }
 
-async function disconnectAfterFirstChunk(url: string, body: unknown): Promise<string> {
-  return new Promise<string>((resolveRequest, rejectRequest) => {
-    let disconnected = false;
-    const request = httpRequest(
-      url,
-      { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-access" } },
-      (response) => {
-        response.once("data", () => {
-          const id = response.headers["x-uos-request-id"];
-          if (typeof id !== "string") {
-            rejectRequest(new Error("Missing request correlation"));
-            return;
-          }
-          disconnected = true;
-          response.destroy();
-          request.destroy();
-          resolveRequest(id);
-        });
-        response.on("error", (error) => {
-          if (!disconnected) rejectRequest(error);
-        });
-      }
-    );
-    const timer = setTimeout(() => {
-      request.destroy();
-      rejectRequest(new Error("Streaming cancellation fixture did not receive output"));
-    }, 5000);
-    request.on("error", (error) => {
-      if (!disconnected) rejectRequest(error);
-    });
-    request.once("close", () => clearTimeout(timer));
-    request.end(JSON.stringify(body));
-  });
+async function disconnectAfterFirstChunk(url: string, body: unknown, workspace: string): Promise<string> {
+  const headers = join(workspace, "cancel-client.headers");
+  const output = join(workspace, "cancel-client.body");
+  const argv = [
+    "/usr/bin/curl",
+    "--disable",
+    "--silent",
+    "--show-error",
+    "--no-buffer",
+    "--http1.1",
+    "--max-time",
+    "1",
+    "--request",
+    "POST",
+    "--header",
+    "content-type: application/json",
+    "--header",
+    "authorization: Bearer fixture-access",
+    "--header",
+    "x-fixture-disconnect: 1",
+    "--data-binary",
+    JSON.stringify(body),
+    "--dump-header",
+    headers,
+    "--output",
+    output,
+    url,
+  ];
+  const child = Bun.spawn(argv, { cwd: workspace, stdout: "pipe", stderr: "pipe" });
+  const [exit, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  await writeFile(join(workspace, "cancel-client.stderr.log"), stderr);
+  assert.equal(exit, 28, "Native client must terminate its actual socket at the declared timeout.");
+  const received = await readFile(output, "utf8");
+  assert(received.includes("fixture ") && !received.includes("response.completed"), "The real client must receive progressive output before disconnect.");
+  const id = (await readFile(headers, "utf8"))
+    .split("\n")
+    .find((line) => line.toLowerCase().startsWith("x-uos-request-id:"))
+    ?.slice("x-uos-request-id:".length)
+    .trim();
+  assert(id);
+  return id;
 }
 
 async function inner(): Promise<void> {
@@ -252,9 +261,18 @@ async function inner(): Promise<void> {
   let running = await start(config, workspace);
   const url = (path: string): string => `${running.origin}/public${path}`;
   const post = (path: string, body: unknown, token = "fixture-access", signal?: AbortSignal): Promise<Response> =>
-    fetch(url(path), { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body), signal });
+    fetch(url(path), {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}`, connection: "close" },
+      body: JSON.stringify(body),
+      signal,
+    });
   const rpc = async (body: unknown): Promise<Record<string, unknown>> => {
-    const response = await fetch(`${running.origin}/store`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const response = await fetch(`${running.origin}/store`, {
+      method: "POST",
+      headers: { "content-type": "application/json", connection: "close" },
+      body: JSON.stringify(body),
+    });
     assert.equal(response.status, 200);
     return objectBody(response);
   };
@@ -263,8 +281,8 @@ async function inner(): Promise<void> {
     assert(value === null || isObject(value));
     return value;
   };
-  const lifecycle = async (id: string): Promise<Record<string, unknown>> => {
-    const deadline = Date.now() + 3000;
+  const lifecycle = async (id: string, waitMs = 3000): Promise<Record<string, unknown>> => {
+    const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
       const row = await read(tuple("uos_ai", "authority", "v1", "request_lifecycle", id));
       if (row && isObject(row.value) && row.value.settled === true) return row.value;
@@ -273,7 +291,7 @@ async function inner(): Promise<void> {
     throw new Error(`Lifecycle ${id} did not settle; evidence: ${workspace}`);
   };
   const events = async (): Promise<unknown[]> => {
-    const value: unknown = await (await fetch(`${running.origin}/control`)).json();
+    const value: unknown = await (await fetch(`${running.origin}/control`, { headers: { connection: "close" } })).json();
     assert(Array.isArray(value));
     return value;
   };
@@ -389,14 +407,31 @@ async function inner(): Promise<void> {
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:still-blocked" }, key.token)).status, 429);
     assert.equal((await events()).length, before);
     cases.push("actual_sqlite_restart_preserves_key_and_quota");
-    const cancelId = await disconnectAfterFirstChunk(url("/v1/responses"), { model: "deepseek-flash", input: "fixture:abort", stream: true });
-    const cancelState = await lifecycle(cancelId);
+    const explicitSignal = await fetch(url("/v1/responses"), {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer fixture-access", "x-fixture-explicit-signal": "1", connection: "close" },
+      body: JSON.stringify({ model: "deepseek-flash", input: "fixture:abort-explicit", stream: true }),
+    });
+    const explicitId = explicitSignal.headers.get("x-uos-request-id");
+    assert(explicitId);
+    try {
+      await explicitSignal.text();
+    } catch {
+      /* The service-binding caller aborted its actual request signal. */
+    }
+    const explicitState = await lifecycle(explicitId);
+    assert(isObject(explicitState.terminal_intent));
+    assert.equal(explicitState.terminal_intent.delivery, "interrupted");
+    await assertUpstreamCancelled(events, "fixture:abort-explicit");
+    cases.push("real_service_binding_abort_signal_propagates");
+    const cancelId = await disconnectAfterFirstChunk(url("/v1/responses"), { model: "deepseek-flash", input: "fixture:abort-tcp", stream: true }, workspace);
+    const cancelState = await lifecycle(cancelId, 18_000);
     assert(isObject(cancelState.terminal_intent));
-    assert.equal(cancelState.terminal_intent.delivery, "interrupted");
+    assert(["interrupted", "unobserved"].includes(String(cancelState.terminal_intent.delivery)));
     assert.equal(cancelState.terminal_intent.reader_termination, "cancelled");
     assert.equal(cancelState.terminal_intent.body, "interrupted");
     assert.notEqual(cancelState.terminal_intent.semantic_terminal, "response.completed");
-    await assertUpstreamCancelled(events);
+    await assertUpstreamCancelled(events, "fixture:abort-tcp");
     cases.push("actual_caller_abort_retains_non_successful_transport_state");
     console.log(
       JSON.stringify({

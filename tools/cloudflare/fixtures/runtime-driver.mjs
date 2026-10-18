@@ -68,7 +68,13 @@ async function upstream(request, env, context) {
     start(controller) {
       controller.enqueue(chunk({ role: "assistant", content: "fixture " }));
       if (prompt.includes("fixture:abort")) {
-        timer = setTimeout(cancelled, 10_000);
+        timer = setTimeout(() => {
+          if (closed) return;
+          closed = true;
+          context.waitUntil(log(env, { kind: "fixture_safety_timeout", prompt }));
+          controller.error(new Error("Controlled upstream safety timeout"));
+          finish();
+        }, 60_000);
         return;
       }
       timer = setTimeout(() => {
@@ -94,6 +100,29 @@ export default {
     const url = new URL(request.url);
     if (["api.deepseek.com", "api.cerebras.ai"].includes(url.hostname)) return upstream(request, env, context);
     if (url.pathname.startsWith("/public/")) {
+      if (request.headers.get("x-fixture-disconnect") === "1") {
+        request.signal.addEventListener("abort", () => console.error(JSON.stringify({ event: "fixture_incoming_abort", at_ms: Date.now() })), { once: true });
+      }
+      if (request.headers.get("x-fixture-explicit-signal") === "1") {
+        const cancellation = new AbortController();
+        context.waitUntil(
+          new Promise((resolve) =>
+            setTimeout(() => {
+              console.error(JSON.stringify({ event: "fixture_explicit_signal_abort", at_ms: Date.now() }));
+              cancellation.abort();
+              resolve();
+            }, 250)
+          )
+        );
+        return env.GATEWAY.fetch(
+          new Request(`https://gateway.internal/${url.pathname.slice(8)}${url.search}`, {
+            method: request.method,
+            headers: request.headers,
+            body: request.body,
+            signal: cancellation.signal,
+          })
+        );
+      }
       return env.GATEWAY.fetch(new Request(`https://gateway.internal/${url.pathname.slice(8)}${url.search}`, request));
     }
     if (url.pathname === "/control") return env.CONTROL.getByName("runtime-control-v1").fetch("https://control.internal/events");

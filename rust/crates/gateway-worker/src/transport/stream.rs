@@ -1,10 +1,11 @@
 use std::cell::RefCell;
-use std::future::Future;
+use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context as PollContext, Poll};
 
 use futures_util::Stream;
+use futures_util::task::AtomicWaker;
 use gateway_core::lifecycle::{
     BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
 };
@@ -14,6 +15,11 @@ use super::outbound::{Cancellation, Deadline};
 
 pub type FinishFuture = Pin<Box<dyn Future<Output = ()>>>;
 pub type FinishHook = Box<dyn FnOnce(TransportObservation) -> FinishFuture>;
+
+struct FinishSignal {
+    observation: RefCell<Option<TransportObservation>>,
+    waker: AtomicWaker,
+}
 
 #[derive(Clone, Default)]
 pub struct ObservationHandle(Rc<RefCell<TransportObservation>>);
@@ -35,10 +41,9 @@ impl ObservationHandle {
 pub struct ObservedStream<S> {
     source: S,
     observation: ObservationHandle,
-    context: Rc<Context>,
     cancellation: Rc<Cancellation>,
     _deadline: Option<Deadline>,
-    finish: Option<FinishHook>,
+    finish: Option<Rc<FinishSignal>>,
 }
 
 impl<S> ObservedStream<S> {
@@ -50,18 +55,36 @@ impl<S> ObservedStream<S> {
         deadline: Option<Deadline>,
         finish: FinishHook,
     ) -> Self {
+        let signal = Rc::new(FinishSignal {
+            observation: RefCell::new(None),
+            waker: AtomicWaker::new(),
+        });
+        let receiver = signal.clone();
+        // Register while the invocation is alive. Registering only after a
+        // disconnect can be too late to retain the durable terminal writer.
+        context.wait_until(async move {
+            let observed = poll_fn(|context| {
+                receiver.waker.register(context.waker());
+                receiver
+                    .observation
+                    .borrow_mut()
+                    .take()
+                    .map_or(Poll::Pending, Poll::Ready)
+            })
+            .await;
+            finish(observed).await;
+        });
         Self {
             source,
             observation,
-            context,
             cancellation,
             _deadline: deadline,
-            finish: Some(finish),
+            finish: Some(signal),
         }
     }
 
     fn finalize(&mut self, reader: ReaderTermination, body: BodyOutcome) {
-        let Some(finish) = self.finish.take() else {
+        let Some(signal) = self.finish.take() else {
             return;
         };
         let observed = {
@@ -75,7 +98,8 @@ impl<S> ObservedStream<S> {
             };
             *state
         };
-        self.context.wait_until(finish(observed));
+        *signal.observation.borrow_mut() = Some(observed);
+        signal.waker.wake();
     }
 }
 
