@@ -136,7 +136,8 @@ pub fn codex_quota(
         } else {
             QuotaBlockSource::HeaderRetryAfter
         },
-        observed_at_ms: now,
+        legacy_fallback: false,
+        observed_at_ms: Some(now),
         reset_at_ms: stable.then_some(deadline),
         reset_is_stable: stable,
         reset_ambiguous: conflict,

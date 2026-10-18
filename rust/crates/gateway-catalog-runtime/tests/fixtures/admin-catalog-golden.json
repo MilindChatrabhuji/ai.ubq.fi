@@ -1,5 +1,5 @@
 {
-  "locale_order": ["a", "A", "ä", "ubiquity/deepseek-flash", "z"],
+  "locale_order": ["a", "A", "ä", "claude-a", "ubiquity/deepseek-flash", "z"],
   "operations": [
     {
       "name": "null",

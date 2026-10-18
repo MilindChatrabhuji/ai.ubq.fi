@@ -1,7 +1,9 @@
 //! Worker transport primitives. Authentication, provider policy and settlement
 //! remain with their domain owners; transport EOF never becomes delivery proof.
 
+pub mod aead;
 pub mod body;
+pub mod claude_body;
 pub mod crypto;
 pub mod outbound;
 pub mod random;

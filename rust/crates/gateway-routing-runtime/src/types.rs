@@ -34,12 +34,29 @@ pub struct RoutingInput {
 pub struct RoutingError {
     pub error: Box<GatewayError>,
     pub headers: Headers,
+    pub source_body: Option<SourceRefusalBody>,
+}
+
+#[derive(Clone, Debug)]
+pub enum SourceRefusalBody {
+    Json(gateway_core::source_json::SourceJson),
+    /// Exact source HTTP-constructor failure; never a quota or paid proof.
+    InternalServerError,
+}
+impl SourceRefusalBody {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Json(body) => body.as_bytes(),
+            Self::InternalServerError => b"Internal Server Error",
+        }
+    }
 }
 impl From<GatewayError> for RoutingError {
     fn from(error: GatewayError) -> Self {
         Self {
             error: Box::new(error),
             headers: BTreeMap::new(),
+            source_body: None,
         }
     }
 }
@@ -114,6 +131,12 @@ pub enum ClaudeSelection {
     NotApplicable,
     Eligible(Box<PublishedCredential>),
     Unavailable,
+    InternalServerError,
+    Refused {
+        status: u16,
+        headers: Headers,
+        body: gateway_core::source_json::SourceJson,
+    },
 }
 #[derive(Clone, Debug)]
 pub enum CodexRecovery {
@@ -126,9 +149,51 @@ pub enum RefreshOutcome {
     Unavailable,
 }
 
+#[derive(Clone)]
+pub struct ResponseHead {
+    pub status: u16,
+    pub headers: Headers,
+    pub provider_request_id: Option<String>,
+    pub observed_at_ms: i64,
+}
+
+pub enum ClaudeOutcome {
+    Preserve,
+    Retry,
+    Paid,
+    WorkspaceContinuation(Box<PublishedCredential>),
+}
+
+/// Minted only for a current actual transport header receipt; never client data.
+pub struct ObservedResponse<T> {
+    pub(crate) original_request_id: String,
+    pub(crate) attempt_id: String,
+    pub(crate) nonce: String,
+    pub(crate) response: ResponseHead,
+    pub(crate) head: Option<T>,
+}
+
+pub enum ResponseDecision {
+    Return,
+    Continue,
+    WorkspaceContinuation(Box<WorkspaceContinuation>),
+}
+
+/// A single owner-verified workspace retry within the original dispatch claim.
+pub struct WorkspaceContinuation {
+    pub(crate) attempt: PreparedAttempt,
+    pub(crate) nonce: String,
+}
+impl WorkspaceContinuation {
+    pub fn attempt(&self) -> &PreparedAttempt {
+        &self.attempt
+    }
+}
+
 /// Server-owned capabilities. Implementations must not accept arbitrary URLs,
 /// paths, JSON-RPC methods, uploaded proofs or refresh credentials.
 pub trait RoutingHost {
+    type ClaudeHead;
     fn cancelled(&self) -> bool;
     fn cancellation_error(&self) -> GatewayError;
     fn wait(&self, milliseconds: i64) -> impl Future<Output = WaitOutcome>;
@@ -152,12 +217,17 @@ pub trait RoutingHost {
         model: &str,
         raw: &Value,
     ) -> impl Future<Output = Result<ClaudeSelection, GatewayError>>;
-    fn record_claude_refusal(
+    fn observe_claude_response(
         &self,
         fence: &CredentialFence,
         model: &str,
-        failure: &AttemptFailure,
-    ) -> impl Future<Output = Result<bool, GatewayError>>;
+        response: ResponseHead,
+    ) -> impl Future<Output = Result<Self::ClaudeHead, GatewayError>>;
+    fn finish_claude_response(
+        &self,
+        head: Self::ClaudeHead,
+        evidence: gateway_core::claude::ClaudeErrorEvidence,
+    ) -> impl Future<Output = Result<ClaudeOutcome, GatewayError>>;
     fn recover_codex(
         &self,
         proof: &CohortProof,
@@ -177,6 +247,7 @@ pub enum TransportState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FailureOrigin {
     Provider,
+    Gateway,
     Transport,
     GatewayDeadline,
 }
