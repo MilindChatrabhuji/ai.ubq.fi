@@ -1,7 +1,7 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { openLegacyCodec } from "../src/kv-conversion/legacy-codec.ts";
-import { ensureCaddyIngressReady, healthServesRelease, reloadCaddyIngress } from "./deploy.ts";
+import { ensureCaddyIngressReady, healthServesRelease, reloadCaddyIngress } from "./vps-ingress.ts";
 import { runtimePath, selectedRuntime, verifyRuntimeBinary } from "./bun-runtime.ts";
 import { command, digest, exists, fileDigest } from "./io.ts";
 import type { CapturedCutoverArtifact } from "./cutover-artifact.ts";
