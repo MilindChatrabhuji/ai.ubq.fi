@@ -215,16 +215,20 @@ pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(
     let capacity = tx.read(&keys::capacity()).await?.unwrap_or_default();
     let source_models = crate::source_models::load(tx, &pool).await?;
     let selection: Option<serde_json::Value> = tx.read(&keys::provider_selection()).await?;
-    let selection = selection.as_ref().filter(|value| !value.is_null()).map(|value| {
-        gateway_schema::selection::ProviderSelection::normalize(value)
-            .ok_or_else(|| invalid("Current source provider selection is malformed."))
-    }).transpose()?;
+    let selection = selection
+        .as_ref()
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            gateway_schema::selection::ProviderSelection::normalize(value)
+                .ok_or_else(|| invalid("Current source provider selection is malformed."))
+        })
+        .transpose()?;
     for account in &mut pool.accounts {
         // Source selection determines this cohort, never a stale normalized projection flag.
         // Current native credential invalidity/leases/quota remain separate evaluation rules.
-        account.enabled = selection.as_ref().is_none_or(|selection| {
-            selection.account_eligible(&account.admin_account_hash.0)
-        });
+        account.enabled = selection
+            .as_ref()
+            .is_none_or(|selection| selection.account_eligible(&account.admin_account_hash.0));
     }
     let mut overage = BTreeMap::new();
     for account in &pool.accounts {
