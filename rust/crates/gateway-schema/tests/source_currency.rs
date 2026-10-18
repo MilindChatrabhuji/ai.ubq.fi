@@ -42,7 +42,20 @@ fn configured_deepseek_replaces_same_id_at_original_slot_and_preserves_envelope(
     );
     let golden: Value =
         serde_json::from_str(include_str!("fixtures/source-currency-golden.json")).unwrap();
-    let observed=output["models"].as_array().unwrap().iter().map(|row|json!({"slug":row["slug"],"id":row["id"],"future":row["future"],"efforts":row["supported_reasoning_levels"].as_array().map(|levels|levels.iter().map(|l|l["effort"].clone()).collect::<Vec<_>>()),"default":row["default_reasoning_level"]})).collect::<Vec<_>>();
+    // The source oracle owns the official-row overlay. The full catalog also
+    // adds its configured synthetic route, which remains present exactly once.
+    assert_eq!(
+        output["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["slug"] == "ubiquity/deepseek-flash")
+            .count(),
+        1
+    );
+    let observed=output["models"].as_array().unwrap().iter()
+        .filter(|row| row["slug"] != "ubiquity/deepseek-flash")
+        .map(|row|json!({"slug":row["slug"],"id":row["id"],"future":row["future"],"efforts":row["supported_reasoning_levels"].as_array().map(|levels|levels.iter().map(|l|l["effort"].clone()).collect::<Vec<_>>()),"default":row["default_reasoning_level"]})).collect::<Vec<_>>();
     assert_eq!(json!(observed), golden["native"]);
 }
 
