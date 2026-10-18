@@ -67,47 +67,9 @@ fn selection(value: Option<&Value>) -> Option<Value> {
     Some(json!({"provider_ids":normalize_ids(&ids),"updated_at_ms":time}))
 }
 
-fn principal_ids(value: &Value) -> Result<Vec<String>, GatewayError> {
-    let values = value
-        .as_array()
-        .filter(|v| v.len() <= 1000)
-        .ok_or_else(|| invalid("allowed_key_ids must be an explicit array of principal IDs"))?;
-    let mut ids = BTreeSet::new();
-    for value in values {
-        let id = value
-            .as_str()
-            .filter(|s| {
-                !s.trim_matches(gateway_schema::util::js_whitespace)
-                    .is_empty()
-                    && s.encode_utf16().count() <= 256
-                    && !s.chars().any(|c| {
-                        gateway_schema::util::js_whitespace(c)
-                            || c == ','
-                            || (c as u32) < 32
-                            || c == '\x7f'
-                    })
-            })
-            .ok_or_else(|| invalid("allowed_key_ids must be an explicit array of principal IDs"))?;
-        ids.insert(id.to_owned());
-    }
-    Ok(ids.into_iter().collect())
-}
-
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    fn sorted_principals(&self, value: &Value) -> Result<Vec<String>, GatewayError> {
-        let mut ids = principal_ids(value)?;
-        let mut error = None;
-        ids.sort_by(|a, b| match self.capabilities.compare_admin_labels(a, b) {
-            Ok(order) => order,
-            Err(failure) => {
-                error = Some(failure);
-                std::cmp::Ordering::Equal
-            }
-        });
-        if let Some(error) = error {
-            return Err(error);
-        }
-        Ok(ids)
+    fn sorted_principals(&self,value:&Value)->Result<Vec<String>,GatewayError>{
+        crate::claude_access::parse_ids(value,&|a,b|self.capabilities.compare_admin_labels(a,b))
     }
     pub(crate) async fn debug(
         &self,
@@ -300,53 +262,8 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             }
             policy
         } else {
-            let mut found = None;
-            for _ in 0..8 {
-                let row = self.store.read(&key).await?;
-                if let Some(value) = store::value(row.as_ref(), input.now_ms)? {
-                    if value.get("v") != Some(&json!(1))
-                        || ![Some("env"), Some("kv")]
-                            .contains(&value.get("source").and_then(Value::as_str))
-                        || value
-                            .get("updated_at_ms")
-                            .and_then(Value::as_i64)
-                            .is_none_or(|n| n <= 0)
-                    {
-                        return Err(store::corrupt(
-                            "Claude principal policy is invalid; refusing environment fallback",
-                        ));
-                    }
-                    let ids = self
-                        .sorted_principals(value.get("allowed_key_ids").unwrap_or(&Value::Null))
-                        .map_err(|_| {
-                            store::corrupt(
-                                "Claude principal policy is invalid; refusing environment fallback",
-                            )
-                        })?;
-                    found = Some(
-                        json!({"v":1,"source":value["source"],"allowed_key_ids":ids,"updated_at_ms":value["updated_at_ms"]}),
-                    );
-                    break;
-                }
-                let ids = self.sorted_principals(&json!(self.config.claude_allowed_key_ids))?;
-                let policy = json!({"v":1,"source":"env","allowed_key_ids":ids,"updated_at_ms":input.now_ms});
-                if commit(
-                    self.store,
-                    vec![check(&key, row.as_ref())],
-                    vec![put(
-                        key.clone(),
-                        &policy,
-                        None,
-                        &store::revision(self.host)?,
-                    )?],
-                )
-                .await?
-                {
-                    found = Some(policy);
-                    break;
-                }
-            }
-            found.ok_or_else(|| conflict("Claude principal policy changed repeatedly"))?
+            let snapshot=crate::claude_access::load_policy(self.store,self.host,&self.config.claude_allowed_key_ids,&|a,b|self.capabilities.compare_admin_labels(a,b)).await?;
+            json!(snapshot.policy)
         };
         Ok(AuthResponse::json(
             200,
