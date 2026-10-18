@@ -678,7 +678,7 @@ test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded, and 
               JSON.stringify(
                 completionWithMessage("chatcmpl_cerebras_reasoning_stream", {
                   role: "assistant",
-                  content: null,
+                  content: "pong",
                   reasoning: "streamed reasoning trace.",
                 })
               ),
@@ -694,9 +694,10 @@ test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded, and 
         const firstEvent = JSON.parse(firstDataLine.slice("data: ".length)) as {
           choices?: { delta?: Record<string, unknown> }[];
         };
-        // Native mirror: reasoning rides the leading delta (content stays in
-        // the same chunk when present; here the fixture has content: null).
+        // Native mirror: reasoning and the answer ride the same leading delta.
+        // Reasoning alone is not sufficient payload for a valid completion.
         assert.equal(firstEvent.choices?.[0]?.delta?.role, "assistant");
+        assert.equal(firstEvent.choices[0]?.delta?.content, "pong");
         assert.equal(firstEvent.choices[0]?.delta?.reasoning, "streamed reasoning trace.");
         assert.match(streamText, /data: \[DONE\]/);
       });
