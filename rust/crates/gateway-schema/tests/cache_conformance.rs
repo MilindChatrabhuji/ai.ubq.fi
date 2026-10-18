@@ -5,7 +5,7 @@ use serde_json::{Value,json};
 struct WakeThread(std::thread::Thread);impl Wake for WakeThread{fn wake(self:Arc<Self>){self.0.unpark();}}
 fn run<F:Future>(future:F)->F::Output{let waker=Waker::from(Arc::new(WakeThread(std::thread::current())));let mut context=Context::from_waker(&waker);let mut future=std::pin::pin!(future);loop{match future.as_mut().poll(&mut context){Poll::Ready(output)=>return output,Poll::Pending=>std::thread::park()}}}
 #[derive(Default)]struct Store{records:RefCell<BTreeMap<String,StoredRecord>>}
-impl Store{fn seed_generation(&self,generation:&str){self.records.borrow_mut().insert(auth_generation_key().0,StoredRecord{schema_version:1,revision:generation.into(),value:json!(generation),expires_at_ms:None});}}
+impl Store{fn seed_generation(&self,generation:&str){self.records.borrow_mut().insert(auth_generation_key().0,StoredRecord::json(generation,json!(generation),None));}}
 impl AuthorityStore for Store{
     async fn read(&self,key:&RecordKey)->Result<Option<StoredRecord>,GatewayError>{Ok(self.records.borrow().get(&key.0).cloned())}
     async fn commit(&self,transition:AtomicTransition)->Result<CommitOutcome,GatewayError>{let mut records=self.records.borrow_mut();if transition.checks.iter().any(|check|records.get(&check.key.0).map(|r|&r.revision)!=check.expected_revision.as_ref()){return Ok(CommitOutcome::Conflict);}for mutation in transition.mutations{match mutation{RecordMutation::Put{key,record}=>{records.insert(key.0,record);},RecordMutation::Delete{key}=>{records.remove(&key.0);}}}Ok(CommitOutcome::Committed)}
@@ -37,3 +37,5 @@ impl QueryStore for Store{
     let store=Store::default();store.seed_generation("auth");for index in 0..35{let mut prepared=prepared("auth",&format!("g{index}"),1000+index);prepared.metadata.client_version=format!("0.{index}.0");assert!(run(publish_catalog(&store,&prepared)).unwrap());}
     run(prune_stored_catalog_versions(&store,"0.0.0",2000)).unwrap();let count=store.records.borrow().values().filter(|record|record.value.get("client_version").is_some()).count();assert_eq!(count,32);assert!(store.records.borrow().contains_key(&metadata_key("0.0.0").0));assert!(!store.records.borrow().contains_key(&metadata_key("0.1.0").0));assert!(!store.records.borrow().contains_key(&chunk_key("0.1.0","g1",0,false).0));
 }
+
+#[test]fn catalog_json_reads_reject_valid_typed_profile_records_instead_of_treating_them_as_missing(){let store=Store::default();let typed=gateway_core::value::PortableValue::from_json(&json!({"models":[]}));let record=StoredRecord::profile("typed",typed,None).unwrap();store.records.borrow_mut().insert(metadata_key("0.163.0").0,record);let error=run(load_catalog(&store,"0.163.0","auth",1000)).unwrap_err();assert_eq!(error.envelope.error.code.as_deref(),Some("incompatible_value_encoding"));}

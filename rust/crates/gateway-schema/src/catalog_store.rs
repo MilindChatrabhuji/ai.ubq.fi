@@ -2,7 +2,7 @@
 use serde::{Serialize,Deserialize};
 use gateway_core::{tuple_key::{TupleKey,ScalarKeyPart,KeyPart},query::{QueryStore,QuerySelector,QueryRequest}};
 use serde_json::{Value,json};
-use gateway_core::{GatewayError,state::{AuthorityStore,RecordKey,StoredRecord,RecordMutation,RevisionCheck,AtomicTransition,CommitOutcome,PORTABLE_STATE_VERSION}};
+use gateway_core::{GatewayError,state::{AuthorityStore,RecordKey,StoredRecord,RecordMutation,RevisionCheck,AtomicTransition,CommitOutcome}};
 use crate::{catalog_cache::*,snapshot::{ModelSnapshot,SnapshotOverrides,normalize_snapshot,compare_client_versions}};
 fn string_tuple(parts:&[&str])->RecordKey{TupleKey::from_scalar_parts(&parts.iter().map(|part|ScalarKeyPart::String(part)).collect::<Vec<_>>()).to_record_key()}
 pub fn auth_generation_key()->RecordKey{string_tuple(&["ubq_ai","codex_catalog_auth_generation"])}
@@ -11,9 +11,13 @@ pub fn metadata_prefix()->RecordKey{string_tuple(&["ubq_ai","codex_catalog"])}
 pub fn chunk_key(version:&str,generation:&str,index:usize,source:bool)->RecordKey{TupleKey::from_parts(&[KeyPart::String("ubq_ai".into()),KeyPart::String(if source{"codex_catalog_source_chunk"}else{"codex_catalog_chunk"}.into()),KeyPart::String(version.into()),KeyPart::String(generation.into()),KeyPart::Number(index as f64)]).expect("catalog chunk indices are finite numbers").to_record_key()}
 pub fn lease_key(version:&str)->RecordKey{string_tuple(&["ubq_ai","codex_catalog_refresh_lease",version])}
 fn cache_error(message:&str)->GatewayError{GatewayError::new(502,message,Some("codex_catalog_unavailable"))}
-async fn read<S:AuthorityStore>(store:&S,key:&RecordKey)->Result<Option<StoredRecord>,GatewayError>{let record=store.read(key).await?;if let Some(record)=&record{record.validate_version()?;}Ok(record)}
-fn check(key:RecordKey,record:Option<&StoredRecord>)->RevisionCheck{RevisionCheck{key,expected_revision:record.map(|r|r.revision.clone())}}
-fn put(key:RecordKey,value:Value,revision:&str,expires_at_ms:Option<i64>)->RecordMutation{RecordMutation::Put{key,record:StoredRecord{schema_version:PORTABLE_STATE_VERSION,revision:revision.into(),value,expires_at_ms}}}
+/// This read view exists only after the shared accessor has checked the JSON encoding tag.
+struct JsonRecord{revision:String,value:Value}
+async fn read<S:AuthorityStore>(store:&S,key:&RecordKey)->Result<Option<JsonRecord>,GatewayError>{
+    store.read(key).await?.map(|record|{let value=record.json_value()?.clone();Ok(JsonRecord{revision:record.revision,value})}).transpose()
+}
+fn check(key:RecordKey,record:Option<&JsonRecord>)->RevisionCheck{RevisionCheck{key,expected_revision:record.map(|r|r.revision.clone())}}
+fn put(key:RecordKey,value:Value,revision:&str,expires_at_ms:Option<i64>)->RecordMutation{RecordMutation::Put{key,record:StoredRecord::json(revision,value,expires_at_ms)}}
 pub async fn load_catalog<S:AuthorityStore>(store:&S,version:&str,auth_generation:&str,now_ms:i64)->Result<Option<LoadedCatalog>,GatewayError>{
     let Some(record)=read(store,&metadata_key(version)).await?else{return Ok(None)};let Ok(metadata)=serde_json::from_value::<CatalogMetadata>(record.value)else{return Ok(None)};if !metadata.retained(auth_generation,now_ms){return Ok(None);}
     async fn chunks<S:AuthorityStore>(store:&S,metadata:&CatalogMetadata,source:bool,count:usize)->Result<Option<Vec<Vec<u8>>>,GatewayError>{let mut chunks=Vec::new();for index in 0..count{let Some(record)=read(store,&chunk_key(&metadata.client_version,&metadata.body_generation,index,source)).await?else{return Ok(None)};let Ok(bytes)=serde_json::from_value::<Vec<u8>>(record.value)else{return Ok(None)};chunks.push(bytes);}Ok(Some(chunks))}
@@ -81,7 +85,7 @@ pub async fn publish_normalized_snapshot<S:AuthorityStore>(store:&S,parsed:&Valu
 pub async fn prune_stored_catalog_versions<S:QueryStore>(store:&S,current_version:&str,now_ms:i64)->Result<(),GatewayError>{
     let mut cursor=None;let mut all_metadata=Vec::new();let mut seen_cursors=std::collections::BTreeSet::new();
     loop{let request=QueryRequest{selector:QuerySelector::Prefix{prefix:metadata_prefix(),start:None,end:None},reverse:false,limit:100,cursor:cursor.clone(),now_ms};let page=store.query(request).await?;
-        for entry in page.entries{entry.record.validate_version()?;let metadata=serde_json::from_value::<CatalogMetadata>(entry.record.value).map_err(|_|cache_error("Stored Codex catalog metadata is corrupt"))?;if !metadata.valid(){return Err(cache_error("Stored Codex catalog metadata is corrupt"));}all_metadata.push(metadata);}
+        for entry in page.entries{let metadata=serde_json::from_value::<CatalogMetadata>(entry.record.json_value()?.clone()).map_err(|_|cache_error("Stored Codex catalog metadata is corrupt"))?;if !metadata.valid(){return Err(cache_error("Stored Codex catalog metadata is corrupt"));}all_metadata.push(metadata);}
         match page.next_cursor{Some(next)=>{if !seen_cursors.insert(next.clone()){return Err(cache_error("Codex catalog query repeated its continuation"));}cursor=Some(next);},None=>break}
     }
     prune_catalog_versions(store,&all_metadata,current_version).await
