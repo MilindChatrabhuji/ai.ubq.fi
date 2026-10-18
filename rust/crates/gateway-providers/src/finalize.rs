@@ -42,13 +42,12 @@ pub fn buffered_chat_events(completion: &Value, plan: &DecodePlan) -> Vec<Provid
         ProviderEvent::chat(base(json!(choices))),
         ProviderEvent::chat(base(json!(finishes))),
     ];
-    if plan.request["stream_options"]["include_usage"] == true {
-        if let Some(usage) = completion.get("usage") {
+    if plan.request["stream_options"]["include_usage"] == true
+ && let Some(usage) = completion.get("usage") {
             let mut chunk = base(json!([]));
             chunk["usage"] = usage.clone();
             events.push(ProviderEvent::chat(chunk));
         }
-    }
     events.push(ProviderEvent::chat(json!("[DONE]")));
     events
 }
@@ -97,13 +96,11 @@ pub fn lithos_stream_refusal(
 }
 /// Native Messages stop vocabulary has its own error identity, distinct from Chat finish reasons.
 pub fn native_stop_error(events: &mut [ProviderEvent], reason: &str) {
-    if let Some(last) = events.last_mut() {
-        if last.data["response"]["status"] == "failed"
+    if let Some(last) = events.last_mut()
+ && last.data["response"]["status"] == "failed"
             && last.data["response"]["error"]["code"]
                 .as_str()
-                .is_some_and(|s| s.starts_with("unrecognized_finish_reason:"))
-        {
+                .is_some_and(|s| s.starts_with("unrecognized_finish_reason:")) {
             last.data["response"]["error"] = json!({"code":"anthropic_unrecognized_stop_reason","message":format!("Anthropic Messages stopped with reason {reason}.")});
         }
-    }
 }

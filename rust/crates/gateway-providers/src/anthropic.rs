@@ -355,10 +355,9 @@ pub fn try_native_messages(raw: &Value, options: &PrepareOptions) -> Option<Valu
             .and_then(|c| c.last_mut());
         if let Some(last) = last {
             last["cache_control"] = control;
-        } else if let Some(last) = body["system"].as_array_mut().and_then(|v| v.last_mut()) {
-            last["cache_control"] = control;
         } else {
-            return None;
+            let last = body["system"].as_array_mut().and_then(|v| v.last_mut())?;
+            last["cache_control"] = control;
         }
     }
     Some(body)
@@ -531,10 +530,9 @@ pub fn try_claude_chat(
             .and_then(|c| c.last_mut());
         if let Some(last) = last {
             last["cache_control"] = control
-        } else if let Some(last) = body["tools"].as_array_mut().and_then(|t| t.last_mut()) {
-            last["function"]["cache_control"] = control
         } else {
-            return None;
+            let last = body["tools"].as_array_mut().and_then(|t| t.last_mut())?;
+            last["function"]["cache_control"] = control;
         }
     }
     Some(crate::chat::ChatProjection {

@@ -62,7 +62,7 @@ fn claude_oauth_has_native_attribution_and_console_key_does_not() {
         &api,
     )
     .unwrap();
-    assert!(api.headers.get("anthropic-beta").is_none());
+    assert!(!api.headers.contains_key("anthropic-beta"));
     assert_eq!(
         api.headers.get("x-api-key").map(String::as_str),
         Some("fixture")

@@ -132,15 +132,13 @@ pub fn chat_completion_to_responses(
         .enumerate()
     {
         let message = &choice["message"];
-        if let Some(reason) = message["reasoning_content"]
+        if (let Some(reason) = message["reasoning_content"]
             .as_str()
             .or_else(|| message["reasoning"].as_str())
-            .filter(|s| !s.is_empty())
-        {
-            if plan.reasoning_summary.as_deref() != Some("none") {
+            .filter(|s| !s.is_empty()))
+ && plan.reasoning_summary.as_deref() != Some("none") {
                 output.push(json!({"id":format!("rs_{}_{choice_index}",plan.response_id),"type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":reason}]}));
             }
-        }
         let mut parts = vec![];
         if let Some(text) = message["content"].as_str().filter(|s| !s.is_empty()) {
             parts.push(json!({"type":"output_text","text":text,"annotations":[]}));
@@ -397,11 +395,10 @@ pub fn decode_response(
         } else {
             body
         };
-        if plan.surface == ClientSurface::Chat {
-            if let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat) {
+        if plan.surface == ClientSurface::Chat
+ && let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat) {
                 body["usage"] = usage;
             }
-        }
         if plan.stream {
             output_headers.insert("Content-Type".into(), "text/event-stream".into());
         }
@@ -495,11 +492,10 @@ pub fn decode_response(
             if plan.stream {
                 events = replay_chat(&completion, plan, profile);
             }
-            if plan.decode == ResponseDecode::AnthropicChatToResponses {
-                if body["status"] == "completed" {
+            if plan.decode == ResponseDecode::AnthropicChatToResponses
+ && body["status"] == "completed" {
                     native_replay = value["choices"][0].get("message").cloned();
                 }
-            }
             if plan.surface == ClientSurface::Chat {
                 response_to_chat(&body, plan)?
             } else {

@@ -169,12 +169,11 @@ pub fn chat_request_to_responses(raw: &Value) -> Result<Value, GatewayError> {
     let mut instructions = vec![];
     for message in messages {
         let role = message["role"].as_str().unwrap_or("user");
-        if role == "system" || role == "developer" {
-            if let Some(text) = message["content"].as_str() {
+        if (role == "system" || role == "developer")
+ && let Some(text) = message["content"].as_str() {
                 instructions.push(text.to_owned());
                 continue;
             }
-        }
         if role == "tool" {
             if let Some(call) = message["tool_call_id"].as_str() {
                 input.push(json!({"type":"function_call_output","call_id":call,"output":message["content"]}));
@@ -530,8 +529,8 @@ pub fn prepare_request(
                     ));
                 } else {
                     url = "https://api.openlux.ai/v1/responses".into();
-                    if model == "gpt-5.6-sol" {
-                        if let Some(effort) = body["reasoning"]["effort"].as_str() {
+                    if model == "gpt-5.6-sol"
+ && let Some(effort) = body["reasoning"]["effort"].as_str() {
                             let suffix = match effort {
                                 "none" | "minimal" => "low",
                                 "ultra" => "max",
@@ -542,7 +541,6 @@ pub fn prepare_request(
                                 body.as_object_mut().expect("object").remove("reasoning");
                             }
                         }
-                    }
                     if crate::anthropic::is_claude(&model) {
                         warnings.push("openlux_claude_native_prompt_cache_unavailable".into());
                     }
@@ -815,7 +813,13 @@ fn strip_codex_transport_fields(body: &mut Value, warnings: &mut Vec<String>) {
     }
     fn strip(value: &mut Value) -> bool {
         match value {
-            Value::Array(a) => a.iter_mut().fold(false, |removed, v| strip(v) || removed),
+            Value::Array(a) => {
+                let mut removed = false;
+                for value in a {
+                    removed = strip(value) || removed;
+                }
+                removed
+            },
             Value::Object(o) => {
                 let mut removed = o.remove("prompt_cache_breakpoint").is_some();
                 for key in ["content", "output"] {

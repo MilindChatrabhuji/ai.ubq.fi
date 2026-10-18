@@ -360,11 +360,10 @@ pub fn project_responses(
     if stream && profile == ChatProfile::Deepseek {
         body["stream_options"] = json!({"include_usage":true});
     }
-    if profile == ChatProfile::Cerebras {
-        if let Some(key) = raw.get("prompt_cache_key") {
+    if profile == ChatProfile::Cerebras
+ && let Some(key) = raw.get("prompt_cache_key") {
             body["prompt_cache_key"] = key.clone();
         }
-    }
     if !tools.is_empty() {
         if raw["tool_choice"] != "none" {
             let system = messages
