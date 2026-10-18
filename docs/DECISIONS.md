@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## VPS join lifecycle bounds and conservative orphan handling - 2026-10-18
+
+For issue #1165, keep PID 1 rows about `ai-ubq-fi.service` out of request counts, but retain completed exit/restart timestamps as lifecycle evidence. Once a fully covered window has an unmatched admission before such a marker, persist `unavailable` / `terminal_lost`, stop its forward scan and release its slice pin. A preceding startup, a mere stopping/starting notice or unrelated manager output is not evidence that an admitted request was lost. Matched requests remain countable. Checkpoint schema 3 includes lifecycle markers and terminal-lost state; older schemas fail closed rather than silently discarding that evidence. This does not impose a new maximum stream lifetime or activate the standalone release bridge.
+
+Retain the conservative orphan-terminal rule from #1155: an unmatched accepted-stage or legacy null-stage terminal at or after a window's start can refuse that window even when `at - latency_ms - VPS_METRICS_SLICE_MS >= windowEnd`. Its reported latency bounds the backward admission search, but is not trusted to exclude it from the cohort. Ignoring it would let an under-reported latency hide a lost admission and produce falsely complete counts. Prefer a monitoring restart over that fail-open result; explicit `pre_admission` terminals remain excluded.
+
+Pending windows retain whole ledger slices. Evidence therefore grows with request rate times the longest in-flight lifetime, plus backward lookback and slice/proof overhead, until a terminal/lifecycle bound resolves the window or a configured limit refuses it. The hard byte cap is a refusal boundary, not a promise of constant-size or always-completable evidence. Sizing examples and the remaining no-lifecycle-marker limitation are in `ops/README.md`.
+
 ## First Bun cutover uses a stopped-state operator capability - 2026-10-15
 
 The first cross-codec deployment uses `ops/first-bun-cutover.ts` through a private pinned operator invocation. Ordinary CLI and bound-driver tracked-clean guards remain unchanged. The new operator executes from the complete accepted CI artifact and proves current shipping push CI, every required job, hosted ZIP digest, exact Git source archive/materialized source, dependency/native/permissions trees and matching service bootstrap bytes. The mutable checkout is a data/runtime anchor and immutable Git-object store; unrelated working-tree or submodule state never supplies executable source or a fabricated clean predicate.

@@ -82,15 +82,18 @@ export function insertSlice(ledger: VpsJoinLedger, slice: VpsJoinSlice): void {
   ledger.slices.splice(at, 0, slice);
 }
 /**
- * Drops slices no cohort can still adopt: those that end before every incomplete cohort of the identity and before the
+ * Drops slices no cohort can still adopt: those that end before every collecting cohort of the identity and before the
  * most recently scanned one, whose reach the next window is expected to share. Pruning never changes a result; a later
  * cohort that needs a pruned slice reads it again.
+ * Pending cohorts retain whole slices, not just their own requests: evidence grows with request rate times the longest
+ * in-flight lifetime (plus backward admission lookback and slice/proof overhead), not a constant number of windows.
+ * The evidence byte cap fails closed; terminal-lost cohorts no longer pin slices. See ops/README.md for sizing examples.
  */
 export function pruneJoinLedgers(checkpoint: VpsJoinCheckpoint): void {
   for (const ledger of checkpoint.ledgers) {
     let keepFrom = ledger.retainFrom;
     for (const cohort of checkpoint.cohorts)
-      if (cohort.summary === null && sameVps(cohort.identity, ledger.identity)) keepFrom = Math.min(keepFrom, cohort.scanStart);
+      if (cohort.summary === null && !cohort.terminalLost && sameVps(cohort.identity, ledger.identity)) keepFrom = Math.min(keepFrom, cohort.scanStart);
     ledger.slices = ledger.slices.filter((slice) => sliceEnd(slice) > keepFrom);
   }
   checkpoint.ledgers = checkpoint.ledgers.filter((ledger) => ledger.slices.length > 0);
@@ -117,7 +120,7 @@ function checkedEvent(value: unknown, start: number, end: number): VpsMetricEven
   return event as VpsMetricEvent;
 }
 function parseSlice(value: unknown): VpsJoinSlice {
-  const item = exactObject(value, ["coverage", "events"]);
+  const item = exactObject(value, ["coverage", "events", "lifecycleAt"]);
   const proof = exactObject(item.coverage, ["complete", "unit", "windowStart", "windowEnd", "bootId", "firstCursor", "lastCursor", "digest"]);
   const start = count(proof.windowStart),
     end = count(proof.windowEnd);
@@ -133,11 +136,17 @@ function parseSlice(value: unknown): VpsJoinSlice {
     typeof proof.lastCursor !== "string" ||
     !proof.lastCursor ||
     !Array.isArray(item.events) ||
-    item.events.length > VPS_METRICS_MAX_ENTRIES
+    item.events.length > VPS_METRICS_MAX_ENTRIES ||
+    (item.lifecycleAt !== null &&
+      (typeof item.lifecycleAt !== "number" || !Number.isFinite(item.lifecycleAt) || item.lifecycleAt < start || item.lifecycleAt >= end))
   )
     return refusal();
   sha256(proof.digest);
-  return { coverage: proof as VpsJournalCoverage, events: item.events.map((event) => checkedEvent(event, start, end)) };
+  return {
+    coverage: proof as VpsJournalCoverage,
+    events: item.events.map((event) => checkedEvent(event, start, end)),
+    lifecycleAt: item.lifecycleAt as number | null,
+  };
 }
 function parseLedger(value: unknown): VpsJoinLedger {
   const item = exactObject(value, ["identity", "retainFrom", "slices"]);
@@ -164,20 +173,22 @@ function parseSummary(value: unknown): VpsJoinSummary | null {
   return item as VpsJoinSummary;
 }
 function parseCohort(value: unknown, ledgers: readonly VpsJoinLedger[]): VpsJoinCohort {
-  const item = exactObject(value, ["identity", "windowStart", "windowEnd", "scanStart", "scanEnd", "bootId", "summary"]);
+  const item = exactObject(value, ["identity", "windowStart", "windowEnd", "scanStart", "scanEnd", "bootId", "summary", "terminalLost"]);
   const identity = parseVpsIdentity(item.identity);
   for (const key of ["windowStart", "windowEnd", "scanStart", "scanEnd"] as const) count(item[key]);
   const cohort = { ...item, identity, summary: parseSummary(item.summary) } as VpsJoinCohort;
   if (
+    typeof cohort.terminalLost !== "boolean" ||
+    (cohort.terminalLost && cohort.summary !== null) ||
     cohort.windowEnd - cohort.windowStart !== VPS_METRICS_SLICE_MS ||
     cohort.scanStart > cohort.windowStart ||
     cohort.scanEnd < cohort.windowStart ||
     (cohort.bootId !== null && (typeof cohort.bootId !== "string" || !cohort.bootId)) ||
-    (cohort.summary !== null && (cohort.scanEnd < cohort.windowEnd || cohort.bootId === null))
+    ((cohort.summary !== null || cohort.terminalLost) && (cohort.scanEnd < cohort.windowEnd || cohort.bootId === null))
   )
     return refusal();
-  if (cohort.summary === null) {
-    // An incomplete cohort's range must still be proven by its ledger; a completed one keeps only its summary.
+  if (cohort.summary === null && !cohort.terminalLost) {
+    // A collecting cohort must retain its proven range; final success/unavailability no longer pins the ledger.
     const ledger = ledgers.find((entry) => sameVps(entry.identity, identity)) ?? { identity, retainFrom: 0, slices: [] };
     const tiles = tiledSlices(ledger, cohort.scanStart, cohort.scanEnd);
     if (tiles === null || (tiles.length === 0) !== (cohort.bootId === null) || tiles.some((slice) => slice.coverage.bootId !== cohort.bootId)) return refusal();
@@ -200,7 +211,7 @@ export function parseJoinCheckpoint(value: unknown, binding: string, now: number
     "cohorts",
   ]);
   if (
-    item.schema !== 2 ||
+    item.schema !== 3 ||
     item.binding !== binding ||
     count(item.sequence) < 1 ||
     count(item.updatedAt) < count(item.createdAt) ||
@@ -241,7 +252,7 @@ export class VpsJoinCheckpoints {
       bytes = await this._options.storage.load(scope),
       now = this._now();
     const fresh = (sequence: number): VpsJoinCheckpoint => ({
-      schema: 2,
+      schema: 3,
       binding,
       sequence,
       createdAt: now,
