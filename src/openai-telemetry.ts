@@ -47,7 +47,7 @@ export const supportsReasoningProgressRelease = (provider: UpstreamProvider): bo
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason = "primary_quota_blocked" | "primary_subscriptions_unavailable" | "dynamic_paid_model";
 /**
- * Exact fallback reason for one failed hop of the `ubiquity/deepseek-v4.1-flash`
+ * Exact fallback reason for one failed hop of the `ubiquity/deepseek-flash`
  * waterfall, so production traffic keeps the same per-hop evidence the
  * benchmark recorded (provider plus failure class or status). The paid
  * admission reasons stay their own union; only the telemetry record carries

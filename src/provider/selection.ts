@@ -18,7 +18,7 @@ export const PROVIDER_SELECTION_CACHE_TTL_MS = 5_000;
  * paid fallback tiers (`surplus` before `openlux`), then the credential-gated
  * direct routes (`deepseek`, `cerebras`, `lithos`), and the gateway-owned
  * `ubiquity` identity last. Checking `ubiquity` allows the synthetic
- * `ubiquity/deepseek-v4.1-flash` route; in an active selection its absence
+ * `ubiquity/deepseek-flash` route; in an active selection its absence
  * switches that route off like any other unchecked provider.
  */
 export const SELECTABLE_PROVIDER_IDS = ["codex", "claude_code", "surplus", "openlux", "deepseek", "cerebras", "lithos", "openrouter", "ubiquity"] as const;
