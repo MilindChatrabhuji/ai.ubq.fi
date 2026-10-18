@@ -324,6 +324,7 @@ for (const wire of ["chat", "responses"] as const) {
 const refusalAdapter: ProviderStreamAdapter = {
   responseHeaders: () => ({}),
   frames: async function* () {
+    await Promise.resolve();
     yield* ([] as ProviderStreamFrame[]);
   },
   recordResponseHealth: () => {},
@@ -341,7 +342,12 @@ for (const wire of ["chat", "responses"] as const) {
   test(`Provider ${wire} distinguishes an upstream 504 from a local deadline`, async () => {
     const downstream = new AbortController();
     const request = new AbortController();
-    const refused = new Response(JSON.stringify({ error: { code: "provider_gateway_timeout", message: "provider gateway timed out" } }), { status: 504 });
+    const refused = new Response(
+      JSON.stringify({
+        error: { code: "provider_gateway_timeout", message: "provider gateway timed out" },
+      }),
+      { status: 504 }
+    );
     const upstreamFailure =
       wire === "chat"
         ? relayChatCompletionStream(refusalAdapter, refused, null, undefined, downstream.signal, request.signal, "deepseek-flash")
