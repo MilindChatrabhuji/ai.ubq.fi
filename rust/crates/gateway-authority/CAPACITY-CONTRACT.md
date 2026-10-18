@@ -29,3 +29,7 @@ Acceptance requires source decision/write-set vectors, original pool/credential/
 ## Version 1.1 fixed-fetch readback
 
 The opaque fence exposes `fetch_bindings()` read-only borrowed views with `source_slot()`, `account_id()`, `credential_version()`, `native_generation_hash()` and optional `native_owner()`. These contain the original prefetch identities, never credentials, caller-defined checks or accepted outcome flags. M19 consumes the views and trusted capture time; M05 validates the actual fixed-GET publication and credential against them. Record still rechecks every original source revision and owner after I/O.
+
+## Version 1.2 capacity reset materialization
+
+Capacity materialization follows the existing stable-deadline `buildQuotaBlockedSlot` reset-identity rules: retain ambiguous stable observations, preserve independent class blocks and their source ordering, stamp the quota event with its trusted event time, refuse an owned probe lease and retain a foreign class probe's generation and lease. Observation C remains unchanged and does not itself mint reset or paid authorization. General live 429 classification and recovery remain under their existing owners.

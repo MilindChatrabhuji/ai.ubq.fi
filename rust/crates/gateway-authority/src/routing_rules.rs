@@ -103,15 +103,41 @@ impl RoutingSlot {
         .max()
         .or(self.quota_signal_observed_at_ms)
     }
-    fn synchronize_class_facts(&mut self) {
-        self.quota_blocked_classes = CLASSES
+    fn effective_block_order(&self) -> Vec<String> {
+        let mut order: Vec<_> = CLASSES
             .into_iter()
-            .filter(|c| self.quota_blocks.contains_key(*c))
+            .filter(|class| self.quota_blocks.contains_key(*class))
             .map(str::to_owned)
             .collect();
-        let latest = CLASSES
+        if self.quota_blocked_until_ms.is_some() && self.quota_block_source.is_some() {
+            let named: Vec<_> = self
+                .quota_blocked_classes
+                .iter()
+                .filter(|class| CLASSES.contains(&class.as_str()))
+                .cloned()
+                .collect();
+            let legacy = if named.is_empty() {
+                CLASSES.into_iter().map(str::to_owned).collect()
+            } else {
+                named
+            };
+            for class in legacy {
+                if !order.contains(&class) {
+                    order.push(class);
+                }
+            }
+        }
+        order
+    }
+    fn synchronize_class_facts(&mut self, order: Vec<String>) {
+        self.quota_blocked_classes = order
+            .into_iter()
+            .filter(|class| self.quota_blocks.contains_key(class))
+            .collect();
+        let latest = self
+            .quota_blocked_classes
             .iter()
-            .filter_map(|class| self.quota_blocks.get(*class))
+            .filter_map(|class| self.quota_blocks.get(class))
             .reduce(|a, b| {
                 if b.blocked_until_ms > a.blocked_until_ms {
                     b
@@ -133,11 +159,24 @@ impl RoutingSlot {
         self.recovery_pending = self.quota_blocks.values().any(|b| b.recovery_pending);
     }
     pub(crate) fn insert_quota_block(&mut self, class: CodexQuotaClass, block: QuotaBlock) {
+        let mut order = self.effective_block_order();
+        let name = class_name(class).to_owned();
+        if !order.contains(&name) {
+            order.push(name.clone());
+        }
         self.quota_blocks = self.effective_quota_blocks();
-        self.quota_blocks.insert(class_name(class).into(), block);
-        self.synchronize_class_facts();
+        self.quota_blocks.insert(name, block.clone());
+        self.synchronize_class_facts(order);
+        // Source insertion seeds the reducer with the newly written class, so
+        // that class owns slot-wide reset metadata when deadlines tie.
+        if self.quota_blocked_until_ms == Some(block.blocked_until_ms) {
+            self.quota_block_source = Some(block.source);
+            self.retained_reset_at_ms = block.reset_at_ms;
+            self.reset_identity_stable = block.reset_is_stable;
+        }
     }
     pub(crate) fn remove_quota_class(&mut self, class: CodexQuotaClass) {
+        let order = self.effective_block_order();
         let selected = self.quota_block_for(class);
         self.quota_blocks = self.effective_quota_blocks();
         let key = if self.quota_blocks.get(class_name(class)) == selected.as_ref() {
@@ -159,7 +198,60 @@ impl RoutingSlot {
         {
             self.quota_blocks.remove("unknown");
         }
-        self.synchronize_class_facts();
+        self.synchronize_class_facts(order);
+    }
+    /// Source buildQuotaBlockedSlot for a stable absolute capacity deadline,
+    /// without a probe claim or recovery result supplied by this event.
+    pub(crate) fn capacity_quota_block(
+        &self,
+        class: CodexQuotaClass,
+        reset: i64,
+        now: i64,
+    ) -> QuotaBlock {
+        let mut aware = self.clone();
+        aware.quota_blocks = self.effective_quota_blocks();
+        let has_classes = !aware.quota_blocks.is_empty();
+        let prior = aware.quota_block_for(class);
+        let prior_reset = prior
+            .as_ref()
+            .and_then(|b| b.reset_at_ms)
+            .or(if has_classes {
+                None
+            } else {
+                self.retained_reset_at_ms
+            });
+        let prior_stable = prior
+            .as_ref()
+            .map_or(!has_classes && self.reset_identity_stable, |b| {
+                b.reset_is_stable
+            });
+        let stable_observed = prior_reset.is_some() && prior_stable;
+        let superseded = !has_classes && prior_reset.is_none_or(|at| at <= now) && reset > now;
+        let ambiguous = prior.as_ref().is_some_and(|b| b.reset_ambiguous)
+            || (!has_classes && self.reset_identity_ambiguous && !superseded)
+            || (stable_observed && prior_reset != Some(reset));
+        let preserve = stable_observed && ambiguous;
+        let extends = prior.as_ref().is_none_or(|b| reset >= b.blocked_until_ms);
+        QuotaBlock {
+            blocked_until_ms: prior
+                .as_ref()
+                .map_or(reset, |b| b.blocked_until_ms.max(reset)),
+            source: crate::routing::QuotaBlockSource::HeaderRetryAfter,
+            legacy_fallback: false,
+            observed_at_ms: Some(now),
+            reset_at_ms: if !preserve && extends {
+                Some(reset)
+            } else {
+                prior_reset
+            },
+            reset_is_stable: if !preserve && extends {
+                true
+            } else {
+                prior_stable
+            },
+            reset_ambiguous: ambiguous,
+            recovery_pending: prior.as_ref().is_some_and(|b| b.recovery_pending),
+        }
     }
     pub(crate) fn clear_quota_blocks(&mut self) {
         self.quota_blocks.clear();
