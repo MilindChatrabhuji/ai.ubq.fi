@@ -27,10 +27,16 @@ pub struct SubscriptionPool {
 pub struct QuotaBlock {
     pub blocked_until_ms: i64,
     pub source: QuotaBlockSource,
-    pub observed_at_ms: i64,
+    pub legacy_fallback: bool,
+    #[serde(rename = "quota_signal_observed_at_ms")]
+    pub observed_at_ms: Option<i64>,
+    #[serde(rename = "observed_reset_at_ms")]
     pub reset_at_ms: Option<i64>,
+    #[serde(rename = "observed_reset_at_is_stable")]
     pub reset_is_stable: bool,
+    #[serde(rename = "banked_reset_generation_ambiguous")]
     pub reset_ambiguous: bool,
+    #[serde(rename = "banked_reset_recovery_probe_pending")]
     pub recovery_pending: bool,
 }
 
@@ -41,58 +47,112 @@ pub enum QuotaBlockSource {
     HeaderRetryAfter,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeCircuit {
+    Quota,
+    UpstreamTimeout,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProbeLease {
     pub token: String,
-    pub generation: u64,
-    pub quota_class: CodexQuotaClass,
+    pub generation: i64,
+    pub circuit: ProbeCircuit,
+    pub quota_class: Option<CodexQuotaClass>,
     pub expires_at_ms: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RoutingSlot {
-    pub account_id_hash: RoutingAccountHash,
+    pub account_id_hash: Option<RoutingAccountHash>,
     pub credential_version: CredentialVersion,
+    pub quota_blocked_until_ms: Option<i64>,
+    pub quota_block_source: Option<QuotaBlockSource>,
+    pub quota_blocked_classes: Vec<String>,
     pub generation: u64,
     pub invalid_credential_version: Option<CredentialVersion>,
+    #[serde(rename = "quota_blocks_by_class")]
     pub quota_blocks: BTreeMap<String, QuotaBlock>,
     pub probe_lease: Option<ProbeLease>,
+    pub primary_used_percent: Option<f64>,
+    pub secondary_used_percent: Option<f64>,
+    pub quota_signal_observed_at_ms: Option<i64>,
+    pub capacity_observed_at_ms: Option<i64>,
+    pub upstream_timeout_blocked_until_ms: Option<i64>,
+    #[serde(rename = "observed_reset_at_ms")]
     pub retained_reset_at_ms: Option<i64>,
+    #[serde(rename = "observed_reset_at_is_stable")]
+    pub reset_identity_stable: bool,
+    #[serde(rename = "banked_reset_generation_ambiguous")]
     pub reset_identity_ambiguous: bool,
+    #[serde(rename = "banked_reset_recovery_probe_pending")]
+    pub recovery_pending: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RoutingState {
     pub v: u32,
     pub updated_at_ms: i64,
+    #[serde(rename = "banked_reset_legacy_identity_unresolved")]
     pub legacy_identity_unresolved: bool,
     pub slots: Vec<RoutingSlot>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CapacityStore {
+    pub v: u32,
+    pub updated_at_ms: i64,
     pub observations: Vec<CapacityObservation>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CapacityWindow {
+    pub limit_window_seconds: Option<i64>,
     pub used_percent: Option<f64>,
     pub reset_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ModelCapacity {
-    pub model: String,
-    pub windows: Vec<CapacityWindow>,
+pub struct CapacityAdditionalRateLimit {
+    pub limit_name: String,
+    pub metered_feature: Option<String>,
+    pub windows: CapacityWindows,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct CapacityWindows {
+    pub primary: Option<CapacityWindow>,
+    pub secondary: Option<CapacityWindow>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapacityState {
+    Available,
+    Stale,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CapacityObservation {
+    pub slot: u8,
     pub account_id_hash: RoutingAccountHash,
-    pub available: bool,
+    pub state: CapacityState,
+    pub source_observed_at_ms: Option<i64>,
     pub snapshot_at_ms: i64,
-    pub windows: Vec<CapacityWindow>,
-    pub additional: Vec<ModelCapacity>,
+    pub windows: CapacityWindows,
+    pub additional_rate_limits: Vec<CapacityAdditionalRateLimit>,
+}
+
+impl Default for CapacityStore {
+    fn default() -> Self {
+        Self {
+            v: 1,
+            updated_at_ms: 0,
+            observations: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
