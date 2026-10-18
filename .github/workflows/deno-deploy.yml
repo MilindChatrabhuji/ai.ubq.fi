@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   scope:
-    runs-on: ubuntu-26.04-arm
+    runs-on: ubuntu-latest
     env:
       GITHUB_EVENT_BEFORE: ${{ github.event.before }}
     outputs:
@@ -57,7 +57,7 @@ jobs:
   docs:
     needs: scope
     if: ${{ needs.scope.outputs.docs_only == 'true' }}
-    runs-on: ubuntu-26.04-arm
+    runs-on: ubuntu-latest
     env:
       GITHUB_EVENT_BEFORE: ${{ github.event.before }}
     steps:
