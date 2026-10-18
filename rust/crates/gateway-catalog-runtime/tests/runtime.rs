@@ -976,7 +976,11 @@ fn exact_version_response_replaces_stale_same_id_official_deepseek_rows() {
     let store = Store::new();
     let host = Host::new(&store);
     host.provider(CatalogProvider::Deepseek, "configured-deepseek");
-    store.put(state::selection_key(), "all", json!({"provider_ids":[],"updated_at_ms":store.now.get()}));
+    store.put(
+        state::selection_key(),
+        "all",
+        json!({"provider_ids":[],"updated_at_ms":store.now.get()}),
+    );
     store.seed("0.163.0", store.now.get(), &json!({"models":[
         {"slug":"unrelated-before","future":"retained"},
         {"slug":"  deepseek-v4-flash  ","owned_by":"stale-discovery","supported_reasoning_levels":["third-party"],"default_reasoning_level":"third-party"},
@@ -991,7 +995,12 @@ fn exact_version_response_replaces_stale_same_id_official_deepseek_rows() {
         let row = &result["models"][index];
         assert_eq!(row["slug"], id);
         assert_eq!(row["owned_by"], "deepseek");
-        let efforts = row["supported_reasoning_levels"].as_array().unwrap().iter().map(|level| level["effort"].as_str().unwrap()).collect::<Vec<_>>();
+        let efforts = row["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap())
+            .collect::<Vec<_>>();
         assert_eq!(efforts, ["none", "low", "high", "max"]);
         assert_eq!(row["default_reasoning_level"], "high");
         assert!(row.get("future").is_none());
@@ -1021,18 +1030,38 @@ fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_i
     let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
     let catalog = gateway_schema::catalog::build_catalog_snapshot(&state.input);
     let rows = catalog["models"].as_array().unwrap();
-    let official = rows.iter().find(|row| row["id"] == "deepseek-v4-flash").unwrap();
-    assert_eq!(official["providers"].as_array().unwrap().iter().map(|provider| provider["id"].as_str().unwrap()).collect::<Vec<_>>(), ["surplus", "deepseek"]);
+    let official = rows
+        .iter()
+        .find(|row| row["id"] == "deepseek-v4-flash")
+        .unwrap();
+    assert_eq!(
+        official["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|provider| provider["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["surplus", "deepseek"]
+    );
     assert_eq!(official["created"], 1_800_000_000i64);
     assert_eq!(official["context_window_tokens"], 1_000_000);
     assert_eq!(official["max_context_window_tokens"], 1_000_000);
-    assert_eq!(official["supported_reasoning_levels"], json!(["none", "low", "high", "max"]));
+    assert_eq!(
+        official["supported_reasoning_levels"],
+        json!(["none", "low", "high", "max"])
+    );
     assert_eq!(official["default_reasoning_effort"], "high");
     assert_eq!(official["context_source"], "provider_discovery");
     assert_eq!(official["reasoning_source"], "provider_discovery");
-    let unrelated = rows.iter().find(|row| row["id"] == "unrelated-discovery").unwrap();
+    let unrelated = rows
+        .iter()
+        .find(|row| row["id"] == "unrelated-discovery")
+        .unwrap();
     assert_eq!(unrelated["context_window_tokens"], 123_456);
-    assert_eq!(unrelated["supported_reasoning_levels"], json!(["retained-custom"]));
+    assert_eq!(
+        unrelated["supported_reasoning_levels"],
+        json!(["retained-custom"])
+    );
     assert_eq!(unrelated["context_source"], "openrouter");
 }
 
@@ -1049,12 +1078,16 @@ impl AuthorityStore for SelectionReads {
             let ordinal = self.count.get() + 1;
             self.count.set(ordinal);
             poll_fn(|_| {
-                if ordinal > 2 || (ordinal == 1 && self.release_first.get()) || (ordinal == 2 && self.release_second.get()) {
+                if ordinal > 2
+                    || (ordinal == 1 && self.release_first.get())
+                    || (ordinal == 2 && self.release_second.get())
+                {
                     Poll::Ready(())
                 } else {
                     Poll::Pending
                 }
-            }).await;
+            })
+            .await;
         }
         Ok(row)
     }
@@ -1074,22 +1107,59 @@ impl QueryStore for SelectionReads {
 fn pre_save_selection_read_cannot_replace_newer_pending_or_current_catalog_views() {
     let store = Store::new();
     let publication = CredentialPublication::default();
-    store.put(state::selection_key(), "before", json!({"provider_ids":["openlux"],"updated_at_ms":1_700_000_000_000i64}));
-    let reads = SelectionReads { store: store.clone(), count: Cell::new(0), release_first: Cell::new(false), release_second: Cell::new(false) };
+    store.put(
+        state::selection_key(),
+        "before",
+        json!({"provider_ids":["openlux"],"updated_at_ms":1_700_000_000_000i64}),
+    );
+    let reads = SelectionReads {
+        store: store.clone(),
+        count: Cell::new(0),
+        release_first: Cell::new(false),
+        release_second: Cell::new(false),
+    };
     let runtime = CatalogRuntime::new();
     let mut old = std::pin::pin!(runtime.load_state(&reads, &publication, store.now.get()));
     let mut cx = Context::from_waker(Waker::noop());
     assert!(old.as_mut().poll(&mut cx).is_pending());
-    store.put(state::selection_key(), "saved", json!({"provider_ids":["cerebras"],"updated_at_ms":store.now.get()}));
+    store.put(
+        state::selection_key(),
+        "saved",
+        json!({"provider_ids":["cerebras"],"updated_at_ms":store.now.get()}),
+    );
     let mut replacement = std::pin::pin!(runtime.load_state(&reads, &publication, store.now.get()));
     assert!(replacement.as_mut().poll(&mut cx).is_pending());
     reads.release_first.set(true);
-    assert_eq!(run(old.as_mut()).unwrap().input.selection.unwrap().provider_ids, ["openlux"]);
+    assert_eq!(
+        run(old.as_mut())
+            .unwrap()
+            .input
+            .selection
+            .unwrap()
+            .provider_ids,
+        ["openlux"]
+    );
     let current = run(runtime.load_state(&reads, &publication, store.now.get())).unwrap();
     assert_eq!(current.input.selection.unwrap().provider_ids, ["cerebras"]);
     assert!(replacement.as_mut().poll(&mut cx).is_pending());
     reads.release_second.set(true);
-    assert_eq!(run(replacement.as_mut()).unwrap().input.selection.unwrap().provider_ids, ["cerebras"]);
-    assert_eq!(run(runtime.load_state(&reads, &publication, store.now.get())).unwrap().input.selection.unwrap().provider_ids, ["cerebras"]);
+    assert_eq!(
+        run(replacement.as_mut())
+            .unwrap()
+            .input
+            .selection
+            .unwrap()
+            .provider_ids,
+        ["cerebras"]
+    );
+    assert_eq!(
+        run(runtime.load_state(&reads, &publication, store.now.get()))
+            .unwrap()
+            .input
+            .selection
+            .unwrap()
+            .provider_ids,
+        ["cerebras"]
+    );
     assert_eq!(reads.count.get(), 4);
 }
