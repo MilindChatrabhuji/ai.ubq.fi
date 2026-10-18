@@ -196,7 +196,9 @@ fn prepare_transition(transition: AtomicTransition) -> Result<PreparedTransition
                     .map_err(|_| invalid("Authority data cannot be encoded."))?;
                 let encoding = serde_json::to_value(record.value_encoding)
                     .map_err(|_| invalid("Authority value encoding is invalid."))?
-                    .as_str().ok_or_else(|| invalid("Authority value encoding is invalid."))?.to_owned();
+                    .as_str()
+                    .ok_or_else(|| invalid("Authority value encoding is invalid."))?
+                    .to_owned();
                 let bytes = key
                     .0
                     .len()
