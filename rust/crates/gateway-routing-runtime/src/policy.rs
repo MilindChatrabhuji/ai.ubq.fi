@@ -34,6 +34,9 @@ pub struct RoutePlan {
     pub paid: PaidRoutingPlan,
     pub quota_class: CodexQuotaClass,
 }
+pub(crate) fn admission_plan(input: &RoutingInput) -> RoutePlan {
+    RoutePlan {model:input.raw.get("model").and_then(Value::as_str).unwrap_or("").into(),hops:Vec::new(),synthetic:false,paid:PaidRoutingPlan{providers:Vec::new(),paid_model_known:false,metered_only:true,codex_enabled:false,surplus_billing:None},quota_class:CodexQuotaClass::Unknown}
+}
 pub fn class(model: &str) -> CodexQuotaClass {
     // Match the source quota-class table, not a broad provider-name inference.
     let id = model.trim().to_ascii_lowercase();

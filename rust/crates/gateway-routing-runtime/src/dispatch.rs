@@ -127,14 +127,9 @@ impl<
         if record.phase != Phase::Intent {
             return Err(journal::unavailable("Transport lacks a current dispatch intent.").into());
         }
-        self.host
-            .ensure_credential_current(&record.fence, &self.input.principal, &record.model)
-            .await?;
-        if let CredentialFence::Codex { admission, .. } = &record.fence {
-            self.authority()
-                .ensure_admission_current(admission, self.now()?)
-                .await?;
-        }
+        // This method records an actual invocation, not a new authorization.
+        // Credential/current-admission guards ran immediately before transport;
+        // a later rotation cannot erase the fact that the old attempt started.
         if let Some(api) = &row.api {
             self.authority()
                 .mark_api_transport_started(api, self.now()?)
@@ -423,6 +418,7 @@ impl<
         &self,
         observation: TransportObservation,
     ) -> RoutingResult<RecoveredSession> {
+        if journal::load(&self.store,self.id()).await?.1.extras_family.is_some() { return Err(journal::unavailable("Finalize extras through their aggregate admission handle.").into()); }
         Ok(settlement::finish_record(
             &self.store,
             &self.tokens,

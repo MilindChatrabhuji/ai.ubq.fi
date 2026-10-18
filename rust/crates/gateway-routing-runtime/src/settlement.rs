@@ -64,6 +64,8 @@ pub(crate) async fn finish_record<
         .attempts
         .iter()
         .all(|a| !a.transport_started && (a.phase == Phase::Prepared || a.known_not_started))
+        && intent.children.iter().all(|child| !child.transport_started && (child.known_not_started || child.phase == Phase::Prepared))
+        && intent.extras_dispatch.as_ref().is_none_or(|dispatch| !dispatch.transport_started)
         && let Some(api) = &intent.api
     {
         authority
@@ -71,11 +73,12 @@ pub(crate) async fn finish_record<
             .await?;
     }
     if let Some(kernel) = &intent.kernel {
-        let terminal = if observed.semantic_terminal == Some(SemanticTerminal::Completed) {
+        let derived = if observed.semantic_terminal == Some(SemanticTerminal::Completed) {
             KernelTerminal::Committed
         } else {
             KernelTerminal::Released
         };
+        let (terminal,reason) = intent.kernel_override.as_ref().map(|intent|(intent.terminal,intent.reason.as_str())).unwrap_or((derived,"routing_semantic_terminal"));
         authority
             .record_kernel_terminal_intent(kernel, terminal, clock.now_ms()?)
             .await?;
@@ -83,7 +86,7 @@ pub(crate) async fn finish_record<
             .settle_kernel(
                 kernel,
                 terminal,
-                "routing_semantic_terminal",
+                reason,
                 clock.now_ms()?,
             )
             .await?;

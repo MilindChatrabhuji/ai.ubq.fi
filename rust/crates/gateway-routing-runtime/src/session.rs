@@ -8,6 +8,7 @@ use gateway_auth::AuthMethod;
 use gateway_authority::{
     Authority, AuthorityClock, TokenSource,
     paid::PaidAuthorization,
+    paid_control::{PaidRequestContext, PaidRoutingReceipt, PaidSyntheticHop},
     quota::KernelTerminal,
     routing::{AdmittedAccount, RouteSelection},
 };
@@ -15,12 +16,9 @@ use gateway_core::{
     GatewayError, identity::ApiKeyId, provider::UpstreamProvider, query::QueryStore,
 };
 use gateway_providers::{
-    ClientSurface,
     policy::{LithosWindows, WaitBudget},
-    prepare_request,
 };
-use gateway_schema::reasoning::{ModelReasoning, effort_for_codex};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::cell::RefCell;
 
 pub struct RoutingSession<S, I, C, H> {
@@ -33,6 +31,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) lithos: RefCell<LithosWindows>,
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
+    pub(crate) extra_lock: std::rc::Rc<futures_util::lock::Mutex<()>>,
 }
 impl<
     S: QueryStore + Clone,
@@ -63,6 +62,12 @@ impl<
         clock: C,
         tokens: I,
     ) -> RoutingResult<Self> {
+        Self::initialize(input, store, host, clock, tokens, None).await
+    }
+    pub(crate) async fn initialize(
+        input: RoutingInput, store: S, host: H, clock: C, tokens: I,
+        family: Option<crate::extras::ExtrasFamily>,
+    ) -> RoutingResult<Self> {
         if host.cancelled() {
             return Err(host.cancellation_error().into());
         }
@@ -74,7 +79,7 @@ impl<
         {
             return Err(journal::unavailable("Invalid original request identity or clock.").into());
         }
-        let plan = policy::plan(&input, now)?;
+        let plan = if family.is_some() { policy::admission_plan(&input) } else { policy::plan(&input, now)? };
         let streamed = input.raw["stream"] == true;
         let mut row = Journal {
             v: 1,
@@ -100,6 +105,11 @@ impl<
                 .checked_add(gateway_authority::REQUEST_LEASE_MS)
                 .ok_or_else(|| journal::unavailable("Lease overflow."))?,
             updated_at_ms: now,
+            extras_family: family,
+            extras_child_count: None,
+            extras_dispatch: None,
+            children: Vec::new(),
+            kernel_override: None,
         };
         journal::create(&store, &tokens, &row).await?;
         let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
@@ -207,6 +217,7 @@ impl<
                 streamed,
             }),
             conversation_id,
+            extra_lock: std::rc::Rc::new(futures_util::lock::Mutex::new(())),
         })
     }
     pub(crate) async fn change<F: Fn(&mut Journal) -> Result<(), GatewayError>>(
@@ -264,7 +275,8 @@ impl<
             ) if expected == admission
                 && !source_revision.is_empty()
                 && !native_generation.is_empty() => {}
-            (None, CredentialFence::Direct { provider: observed }) if provider == *observed => {}
+            (None, CredentialFence::Direct { provider: observed }) if provider == *observed && !matches!(provider, UpstreamProvider::Surplus | UpstreamProvider::Metered) => {}
+            (None, CredentialFence::Paid { provider: observed, .. }) if provider == *observed && matches!(provider, UpstreamProvider::Surplus | UpstreamProvider::Metered) => {}
             _ => {
                 return Err(journal::unavailable(
                     "Credential publication does not match the admitted provider/account.",
@@ -276,52 +288,28 @@ impl<
             .await?;
         Ok(publication)
     }
-    pub(crate) fn prepare(
-        &self,
-        provider: UpstreamProvider,
-        model: &str,
-        publication: &PublishedCredential,
-        nonce: &str,
-    ) -> Result<gateway_providers::PreparedRequest, GatewayError> {
-        let mut options = publication.options.clone();
-        options.auth = publication.material.clone();
-        options.client_version = self.input.client_version.clone();
-        options.native_session_id = self.input.native_session_id.clone();
-        options.response_id = format!("resp_{}", nonce.replace('-', ""));
-        options.conversation_id = Some(self.conversation_id.clone());
-        options.created_at = self.now()? / 1000;
-        options.allowed_models = policy::provider_ids(&self.input, provider);
-        let mut raw = self.input.raw.clone();
-        raw["model"] = json!(model);
-        if provider == UpstreamProvider::ChatgptCodex {
-            let meta =
-                ModelReasoning::from_record(self.input.catalog.codex().and_then(|s| s.find(model)));
-            let raw_effort = if self.input.surface == ClientSurface::Chat {
-                raw.get("reasoning_effort")
-            } else {
-                raw.get("reasoning").and_then(|v| v.get("effort"))
-            };
-            let effort = gateway_schema::reasoning::parse_effort(
-                raw_effort,
-                if self.input.surface == ClientSurface::Chat {
-                    "reasoning_effort"
-                } else {
-                    "reasoning.effort"
-                },
-            )?
-            .or_else(|| meta.default_level.clone())
-            .unwrap_or_else(|| "none".into());
-            let effort = effort_for_codex(&effort, &meta);
-            if self.input.surface == ClientSurface::Chat {
-                raw["reasoning_effort"] = json!(effort);
-            } else {
-                if raw.get("reasoning").is_none_or(Value::is_null) {
-                    raw["reasoning"] = json!({});
-                }
-                raw["reasoning"]["effort"] = json!(effort);
-            }
+    pub(crate) fn prepare(&self,provider:UpstreamProvider,model:&str,publication:&PublishedCredential,nonce:&str)->Result<gateway_providers::PreparedRequest,GatewayError>{crate::wire::prepare(&self.input,&self.conversation_id,self.now()?,provider,model,publication,nonce)}
+    pub(crate) fn paid_context(&self, provider: gateway_core::provider::PaidProvider, synthetic: bool) -> PaidRequestContext {
+        let mut body = self.input.raw.clone();
+        body["model"] = Value::String(self.plan.model.clone());
+        PaidRequestContext {
+            original_model: self.plan.model.clone(),
+            body,
+            surface: self.input.surface,
+            synthetic_hop: synthetic.then_some(match provider {
+                gateway_core::provider::PaidProvider::Surplus => PaidSyntheticHop::Surplus,
+                gateway_core::provider::PaidProvider::Metered => PaidSyntheticHop::Openlux,
+            }),
         }
-        prepare_request(provider, self.input.surface, &raw, &options)
+    }
+    pub(crate) fn check_paid_credential(fence: &CredentialFence, receipt: &PaidRoutingReceipt) -> Result<(), GatewayError> {
+        match fence {
+            CredentialFence::Paid { owner_id, owner_epoch, configuration_generation, credential_binding, .. }
+                if owner_id == receipt.owner_id() && owner_epoch == receipt.owner_epoch()
+                    && configuration_generation == receipt.configuration_generation()
+                    && credential_binding == receipt.credential_binding() => Ok(()),
+            _ => Err(journal::unavailable("The paid credential does not match the current paid routing receipt.")),
+        }
     }
     pub(crate) async fn paid_authorization(
         &self,

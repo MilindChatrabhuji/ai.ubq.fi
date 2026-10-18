@@ -51,6 +51,13 @@ pub enum CredentialFence {
     Direct {
         provider: UpstreamProvider,
     },
+    Paid {
+        provider: UpstreamProvider,
+        owner_id: String,
+        owner_epoch: String,
+        configuration_generation: String,
+        credential_binding: String,
+    },
     Codex {
         admission: AdmittedAccount,
         #[serde(with = "record_key")]

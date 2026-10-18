@@ -32,6 +32,7 @@ impl<
             }
             let (_, row) = journal::load(&self.store, self.id()).await?;
             settlement::ensure_active(&row)?;
+            if row.extras_family.is_some() { return Err(journal::unavailable("Extras dispatch requires an opaque child scope.").into()); }
             if row.semantic_committed {
                 return Ok(None);
             }
@@ -162,7 +163,10 @@ if !proof.full_cohort_unavailable(){return Err(journal::unavailable("Subscriptio
                             .map(str::to_owned),
                         created_at_ms: self.input.context.started_at_ms,
                     };
-                    let reservation=match self.authority().reserve_paid(&input,&authorization,self.now()?).await?{PaidAdmission::Reserved(r)=>r,PaidAdmission::Existing(_)=>return Err(journal::unavailable("A retained paid attempt cannot be redispatched without reconciliation.").into())};
+                    let context = self.paid_context(provider, synthetic);
+                    let receipt = self.authority().authorize_paid_route(&input, &context, self.now()?).await?;
+                    Self::check_paid_credential(&credential.fence, &receipt)?;
+                    let reservation=match self.authority().reserve_paid(&input,&authorization,&receipt,self.now()?).await?{PaidAdmission::Reserved(r)=>r,PaidAdmission::Existing(_)=>return Err(journal::unavailable("A retained paid attempt cannot be redispatched without reconciliation.").into())};
                     (upstream, model, credential, Some(reservation))
                 }
             };
