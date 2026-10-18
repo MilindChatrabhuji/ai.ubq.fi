@@ -153,140 +153,100 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             pricing_checked_at_ms: Some(pricing.checked_at_ms),
         })
     }
-    pub(crate) async fn prepare_deletion(
-        &self,
-        id: &str,
-    ) -> Result<Vec<RevisionCheck>, GatewayError> {
-        let now = self.host.now_ms();
-        let id_key = gateway_auth::api_keys::id_key(id);
-        let id_row = self.store.read(&id_key).await?;
-        let value = store::value(id_row.as_ref(), now)?
-            .ok_or_else(|| GatewayError::new(404, "Not found", Some("not_found")))?;
-        if value.get("revoked_at_ms").is_none_or(Value::is_null) {
-            return Err(invalid("Only revoked keys can be deleted"));
-        }
-        let dk = keys::paid_deletion(id);
-        let prior = self.store.read(&dk).await?;
-        let key_revision = id_row
-            .as_ref()
-            .map(|r| r.revision.as_str())
-            .expect("existing key row");
-        let mut newly_claimed = false;
-        let guard = if let Some(row) = prior {
-            if row
-                .json_value()?
-                .get("key_revision")
-                .and_then(Value::as_str)
-                != Some(key_revision)
-            {
-                return Err(GatewayError::new(
-                    409,
-                    "API key deletion already has an owner",
-                    Some("paid_fallback_deletion_in_progress"),
-                ));
+    pub(crate) async fn prepare_deletion(&self,id:&str)->Result<Vec<RevisionCheck>,GatewayError>{
+        let now=self.host.now_ms();let id_key=gateway_auth::api_keys::id_key(id);let id_row=self.store.read(&id_key).await?;
+        let value=store::value(id_row.as_ref(),now)?.ok_or_else(||GatewayError::new(404,"Not found",Some("not_found")))?;
+        if value.get("revoked_at_ms").is_none_or(Value::is_null){return Err(invalid("Only revoked keys can be deleted"))}
+        let dk=keys::paid_deletion(id);let prior=self.store.read(&dk).await?;let prior_value=store::value(prior.as_ref(),now)?;
+        let local=id=="local-development";
+        let guard=if !local && prior_value.is_some(){
+            let row=prior.expect("present ordinary guard");
+            if row.json_value()?.get("created_at_ms").and_then(Value::as_i64).is_none_or(|at|at<=0){return Err(outstanding())}row
+        }else{
+            if local && prior_value.as_ref().is_some_and(|v|v.get("local_deletion").and_then(|l|l.get("owner"))!=Some(&Value::Null) || v.get("local_deletion").and_then(|l|l.get("completed_at_ms"))!=Some(&Value::Null) || v.get("created_at_ms").and_then(Value::as_i64).is_none_or(|at|at<=0)){
+                return Err(GatewayError::new(409,"Local API key deletion already has an owner",Some("paid_fallback_deletion_in_progress")))
             }
-            row
-        } else {
-            let revision = store::revision(self.host)?;
-            let guard = json!({"created_at_ms":now,"key_revision":key_revision,"owner":revision});
-            if !commit(
-                self.store,
-                vec![check(&dk, None), check(&id_key, id_row.as_ref())],
-                vec![put(dk.clone(), &guard, None, &revision)?],
-            )
-            .await?
-            {
-                return Err(conflict("API key deletion was claimed concurrently"));
-            }
-            let row = self
-                .store
-                .read(&dk)
-                .await?
-                .filter(|r| r.revision == revision)
-                .ok_or_else(|| store::corrupt("Paid deletion guard changed after claim"))?;
-            newly_claimed = true;
-            row
+            let revision=store::revision(self.host)?;
+            let created=prior_value.as_ref().and_then(|v|v.get("created_at_ms")).and_then(Value::as_i64).unwrap_or(now);
+            let guard=if local{json!({"created_at_ms":created,"local_deletion":{"owner":store::revision(self.host)?,"completed_at_ms":null}})}else{json!({"created_at_ms":created})};
+            if !commit(self.store,vec![check(&dk,prior.as_ref()),check(&id_key,id_row.as_ref())],vec![put(dk.clone(),&guard,None,&revision)?]).await?{return Err(conflict("API key deletion was claimed concurrently"))}
+            self.store.read(&dk).await?.filter(|r|r.revision==revision).ok_or_else(||store::corrupt("Paid deletion guard changed after claim"))?
         };
-        let result = async {
-            let gate_key = keys::paid_gate();
-            let gate_row = self.store.read(&gate_key).await?;
-            let gate: ReconciliationGate = store::value(gate_row.as_ref(), now)?
-                .map(|v| serde_json::from_value(v).map_err(|_| outstanding()))
-                .transpose()?
-                .unwrap_or_default();
-            if gate.pending.values().any(|p| p.key_id.0 == id) {
-                return Err(outstanding());
+        let guard_check=check(&dk,Some(&guard));
+        let result=async{
+            let gate_key=keys::paid_gate();let gate_row=self.store.read(&gate_key).await?;
+            let gate:ReconciliationGate=store::value(gate_row.as_ref(),now)?.map(|v|serde_json::from_value(v).map_err(|_|outstanding())).transpose()?.unwrap_or_default();
+            if gate.pending.values().any(|p|p.key_id.0==id){return Err(outstanding())}
+            let pending=store::scan(self.store,store::key(json!(["uos_ai","paid_fallback","v3","pending",id])),false,now).await?;
+            if !pending.is_empty(){return Err(outstanding())}
+            let attempts=store::scan(self.store,store::key(json!(["uos_ai","paid_fallback","v3","request",id])),false,now).await?;
+            let windows=store::scan(self.store,store::key(json!(["uos_ai","paid_fallback","v3","window",id])),false,now).await?;
+            for entry in &attempts{
+                let row:PaidAttempt=serde_json::from_value(entry.record.json_value()?.clone()).map_err(|_|outstanding())?;
+                if row.v!=3 || row.reservation.key_id.0!=id || entry.key!=keys::paid_attempt(id,&row.reservation.attempt_id.0) || matches!(row.billing_state,BillingState::Pending|BillingState::Unresolved){return Err(outstanding())}
             }
-            let pending = store::scan(
-                self.store,
-                store::key(json!(["uos_ai", "paid_fallback", "v3", "pending", id])),
-                false,
-                now,
-            )
-            .await?;
-            if !pending.is_empty() {
-                return Err(outstanding());
+            for entry in &windows{
+                let row:PaidWindow=serde_json::from_value(entry.record.json_value()?.clone()).map_err(|_|outstanding())?;
+                if row.v!=3 || row.key_id.0!=id || entry.key!=keys::paid_window(id,row.window_reset_at_ms) || row.pending_count!=0 || row.reserved_microcredits!=0 || row.settled_microcredits<0{return Err(outstanding())}
             }
-            let attempts = store::scan(
-                self.store,
-                store::key(json!(["uos_ai", "paid_fallback", "v3", "request", id])),
-                false,
-                now,
-            )
-            .await?;
-            let windows = store::scan(
-                self.store,
-                store::key(json!(["uos_ai", "paid_fallback", "v3", "window", id])),
-                false,
-                now,
-            )
-            .await?;
-            let mut fences = vec![
-                check(&dk, Some(&guard)),
-                check(&gate_key, gate_row.as_ref()),
-            ];
-            for entry in &attempts {
-                let row: PaidAttempt = serde_json::from_value(entry.record.json_value()?.clone())
-                    .map_err(|_| outstanding())?;
-                if row.v != 3
-                    || row.reservation.key_id.0 != id
-                    || entry.key != keys::paid_attempt(id, &row.reservation.attempt_id.0)
-                    || matches!(
-                        row.billing_state,
-                        BillingState::Pending | BillingState::Unresolved
-                    )
-                {
-                    return Err(outstanding());
-                }
-                fences.push(check(&entry.key, Some(&entry.record)));
+            // Every removed row is observed and fenced in its own bounded authority commit.
+            // The retained guard blocks new paid admissions throughout cleanup and the key CAS.
+            for entry in attempts.into_iter().chain(windows){
+                if !commit(self.store,vec![guard_check.clone(),check(&entry.key,Some(&entry.record))],vec![RecordMutation::Delete{key:entry.key}]).await?{return Err(conflict("Paid fallback state changed during deletion; retry"))}
             }
-            for entry in &windows {
-                let row: PaidWindow = serde_json::from_value(entry.record.json_value()?.clone())
-                    .map_err(|_| outstanding())?;
-                if row.v != 3
-                    || row.key_id.0 != id
-                    || entry.key != keys::paid_window(id, row.window_reset_at_ms)
-                    || row.pending_count != 0
-                    || row.reserved_microcredits != 0
-                    || row.settled_microcredits < 0
-                {
-                    return Err(outstanding());
-                }
-                fences.push(check(&entry.key, Some(&entry.record)));
-            }
-            // The shared guard prevents new paid reservations during this scan. Keep all ledger
-            // revisions in the key-deletion CAS; cleanup is the same authority owner's next event.
-            Ok(fences)
-        }
-        .await;
-        if result.is_err() && newly_claimed {
-            commit(
-                self.store,
-                vec![check(&dk, Some(&guard))],
-                vec![RecordMutation::Delete { key: dk }],
-            )
-            .await?;
-        }
+            let lease_key=keys::paid_lease(id);let lease=self.store.read(&lease_key).await?;
+            if lease.is_some() && !commit(self.store,vec![guard_check.clone(),check(&lease_key,lease.as_ref())],vec![RecordMutation::Delete{key:lease_key.clone()}]).await?{return Err(conflict("Paid reconciliation lease changed during deletion"))}
+            Ok(vec![guard_check.clone(),check(&gate_key,gate_row.as_ref()),RevisionCheck{key:lease_key,expected_revision:None}])
+        }.await;
+        if result.is_err() && local{self.abort_deletion(id,std::slice::from_ref(&guard_check)).await?;}
         result
+    }
+    /// After the same key/hash/policy/audit CAS deletes the key, remove only source-owned history.
+    pub async fn finish_deletion(&self,id:&str,prepared:&[RevisionCheck])->Result<(),GatewayError>{
+        let guard=self.deletion_fence(id,prepared).await?;
+        let id_key=gateway_auth::api_keys::id_key(id);
+        if self.store.read(&id_key).await?.is_some(){return Err(conflict("API key deletion ownership changed"))}
+        for parts in [json!(["ubq_ai","api_keys","usage",id]),json!(["ubq_ai","api_keys","usage_daily",id])]{
+            let key=store::key(parts);let row=self.store.read(&key).await?;
+            if row.is_some() && !commit(self.store,vec![guard.clone(),check(&id_key,None),check(&key,row.as_ref())],vec![RecordMutation::Delete{key}]).await?{return Err(conflict("API key cleanup changed concurrently"))}
+        }
+        for prefix in [json!(["uos_ai","paid_fallback","ledger",id]),json!(["ubq_ai","api_keys","request_log",id]),json!(["uos_ai","api_key_usage","v2",id]),json!(["uos_ai","api_key_usage","v3","window",id]),json!(["uos_ai","api_key_usage","v3","request",id])]{
+            self.delete_history_prefix(id,store::key(prefix),&guard).await?;
+        }
+        if id=="local-development"{
+            let key=keys::paid_deletion(id);let row=self.store.read(&key).await?;let mut value=store::value(row.as_ref(),self.host.now_ms())?.ok_or_else(||conflict("Local API key deletion ownership changed"))?;
+            if row.as_ref().map(|r|&r.revision)!=guard.expected_revision.as_ref() || value.get("local_deletion").and_then(|v|v.get("owner")).and_then(Value::as_str).is_none_or(str::is_empty){return Err(conflict("Local API key deletion ownership changed"))}
+            value["local_deletion"]["completed_at_ms"]=json!(self.host.now_ms());
+            if !commit(self.store,vec![guard,check(&id_key,None)],vec![put(key,&value,None,&store::revision(self.host)?)?]).await?{return Err(conflict("Local API key deletion ownership changed"))}
+        }
+        Ok(())
+    }
+    /// A known refusal before ID deletion releases only the local-development owner marker.
+    pub async fn abort_deletion(&self,id:&str,prepared:&[RevisionCheck])->Result<(),GatewayError>{
+        if id!="local-development"{return Ok(())}
+        let guard=self.deletion_fence(id,prepared).await?;let id_key=gateway_auth::api_keys::id_key(id);let id_row=self.store.read(&id_key).await?;
+        let Some(key_value)=store::value(id_row.as_ref(),self.host.now_ms())? else{return Ok(())};
+        if key_value.get("revoked_at_ms").is_none_or(Value::is_null){return Ok(())}
+        let key=keys::paid_deletion(id);let row=self.store.read(&key).await?;let mut value=store::value(row.as_ref(),self.host.now_ms())?.ok_or_else(||conflict("Local deletion guard changed"))?;
+        value["local_deletion"]=json!({"owner":null,"completed_at_ms":null});
+        if !commit(self.store,vec![guard,check(&id_key,id_row.as_ref())],vec![put(key,&value,None,&store::revision(self.host)?)?]).await?{return Err(conflict("Local deletion guard changed"))}Ok(())
+    }
+    async fn deletion_fence(&self,id:&str,prepared:&[RevisionCheck])->Result<RevisionCheck,GatewayError>{
+        let key=keys::paid_deletion(id);let guard=prepared.iter().find(|check|check.key==key && check.expected_revision.as_ref().is_some_and(|r|!r.is_empty())).ok_or_else(||store::corrupt("Paid deletion requires its exact claimed guard revision"))?;
+        let row=self.store.read(&key).await?;
+        if row.as_ref().map(|row|&row.revision)!=guard.expected_revision.as_ref(){return Err(conflict("API key deletion ownership changed"))}Ok(guard.clone())
+    }
+    async fn delete_history_prefix(&self,id:&str,prefix:gateway_core::state::RecordKey,guard:&RevisionCheck)->Result<(),GatewayError>{
+        use gateway_core::query::{QueryRequest,QuerySelector};
+        let mut cursor=None;let mut seen=BTreeSet::new();
+        loop{
+            let request=QueryRequest{selector:QuerySelector::Prefix{prefix:prefix.clone(),start:None,end:None},reverse:false,limit:200,cursor:cursor.clone(),now_ms:self.host.now_ms()};
+            let valid=request.validate()?;let page=self.store.query(request).await?;
+            for entry in page.entries{
+                if !valid.accepts_record(&entry.key,&entry.record)?{return Err(store::corrupt("API key cleanup query returned an unrelated row"))}
+                if !commit(self.store,vec![guard.clone(),check(&gateway_auth::api_keys::id_key(id),None),check(&entry.key,Some(&entry.record))],vec![RecordMutation::Delete{key:entry.key}]).await?{return Err(conflict("API key cleanup changed concurrently"))}
+            }
+            match page.next_cursor{Some(next) if seen.insert(next.clone())=>cursor=Some(next),Some(_)=>return Err(store::corrupt("API key cleanup repeated its cursor")),None=>return Ok(())}
+        }
     }
 }
