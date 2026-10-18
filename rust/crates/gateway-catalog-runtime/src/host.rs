@@ -68,16 +68,27 @@ impl CredentialPublication {
             a.account_id.trim().is_empty()
                 || a.credential_fingerprint.trim().is_empty()
                 || !seen.insert(&a.account_id)
-        }) || self.providers.values().any(|b| b.identity.trim().is_empty()) {
-            return Err(unavailable("The credential owner published an invalid catalog identity"));
+        }) || self
+            .providers
+            .values()
+            .any(|b| b.identity.trim().is_empty())
+        {
+            return Err(unavailable(
+                "The credential owner published an invalid catalog identity",
+            ));
         }
         Ok(())
     }
     pub fn binding(&self, provider: CatalogProvider) -> Option<ProviderBinding> {
         if provider == CatalogProvider::Openrouter {
-            Some(self.providers.get(&provider).cloned().unwrap_or(ProviderBinding {
-                identity: "public-openrouter-models".into(),
-            }))
+            Some(
+                self.providers
+                    .get(&provider)
+                    .cloned()
+                    .unwrap_or(ProviderBinding {
+                        identity: "public-openrouter-models".into(),
+                    }),
+            )
         } else {
             self.providers.get(&provider).cloned()
         }
@@ -100,15 +111,27 @@ pub enum CatalogFetch {
     },
 }
 impl CatalogFetch {
-    pub fn max_body_bytes(&self) -> usize {
-        if matches!(self, Self::Provider { provider: CatalogProvider::ClaudeCode, .. }) {
-            2 * 1024 * 1024
+    pub fn max_body_bytes(&self) -> Option<usize> {
+        if matches!(
+            self,
+            Self::Provider {
+                provider: CatalogProvider::ClaudeCode,
+                ..
+            }
+        ) {
+            Some(2 * 1024 * 1024)
         } else {
-            4 * 1024 * 1024
+            None
         }
     }
     pub fn timeout_ms(&self) -> u32 {
-        if matches!(self, Self::Provider { provider: CatalogProvider::ClaudeCode, .. }) {
+        if matches!(
+            self,
+            Self::Provider {
+                provider: CatalogProvider::ClaudeCode,
+                ..
+            }
+        ) {
             8_000
         } else {
             10_000
@@ -122,21 +145,43 @@ pub struct CatalogFetchResponse {
     pub content_type: Option<String>,
     /// Upstream validator, never the client validator.
     pub etag: Option<String>,
+    /// True only after a cloned single-account observation completed within the
+    /// source 4-MiB / 1-second limit. This never caps the main catalog body.
+    pub single_account_observation_complete: bool,
 }
 impl CatalogFetchResponse {
     pub fn json(status: u16, body: impl Into<String>) -> Self {
-        Self { status, body: body.into(), content_type: Some("application/json".into()), etag: None }
+        Self {
+            status,
+            body: body.into(),
+            content_type: Some("application/json".into()),
+            etag: None,
+            single_account_observation_complete: false,
+        }
     }
     pub fn is_json(&self) -> bool {
-        self.content_type.as_ref().is_some_and(|v| v.to_ascii_lowercase().contains("application/json"))
+        self.content_type
+            .as_ref()
+            .is_some_and(|v| v.to_ascii_lowercase().contains("application/json"))
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CatalogObservation {
-    CodexResponse { account: CodexAccount, status: u16 },
-    CodexTransportFailure { account: CodexAccount, code: Option<String> },
-    ProviderDegradation { client_version: String },
+    CodexResponse {
+        account: CodexAccount,
+        status: u16,
+    },
+    CodexTransportFailure {
+        account: CodexAccount,
+        code: Option<String>,
+    },
+    ProviderDegradation {
+        client_version: String,
+    },
+    MaintenanceFailure { operation: CatalogMaintenance, code: Option<String> },
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CatalogMaintenance { SnapshotPublication, VersionPruning }
 /// Implementations own cancellation and actual response bounds. Fetches must bind the
 /// exact current reference before sending; a different credential may not be substituted.
 pub trait CatalogHost {
@@ -144,16 +189,35 @@ pub trait CatalogHost {
     fn unique_id(&self) -> String;
     fn wait(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;
     fn publication(&self) -> impl Future<Output = Result<CredentialPublication, GatewayError>>;
-    fn fetch(&self, request: CatalogFetch) -> impl Future<Output = Result<CatalogFetchResponse, GatewayError>>;
+    fn fetch(
+        &self,
+        request: CatalogFetch,
+    ) -> impl Future<Output = Result<CatalogFetchResponse, GatewayError>>;
     /// Apply the existing provider-health/capacity sampling or standalone degradation seam.
     /// An unimplemented persistence capability is explicit and never becomes success evidence.
-    fn observe(&self, _observation: CatalogObservation) -> impl Future<Output = Result<(), GatewayError>> {
-        async { Err(GatewayError::unavailable("Catalog observation persistence is unavailable", "catalog_observation_unavailable")) }
+    fn observe(
+        &self,
+        _observation: CatalogObservation,
+    ) -> impl Future<Output = Result<(), GatewayError>> {
+        async {
+            Err(GatewayError::unavailable(
+                "Catalog observation persistence is unavailable",
+                "catalog_observation_unavailable",
+            ))
+        }
     }
     /// Invoke only the existing credential owner's coordinated valid-auth/401 flow.
     /// Unsupported owners fail explicitly; this default never refreshes OAuth.
-    fn refresh_codex(&self, _expected: &CodexAccount) -> impl Future<Output = Result<CodexAccount, GatewayError>> {
-        async { Err(GatewayError::unavailable("The Codex credential owner cannot refresh here", "catalog_credential_owner_unavailable")) }
+    fn refresh_codex(
+        &self,
+        _expected: &CodexAccount,
+    ) -> impl Future<Output = Result<CodexAccount, GatewayError>> {
+        async {
+            Err(GatewayError::unavailable(
+                "The Codex credential owner cannot refresh here",
+                "catalog_credential_owner_unavailable",
+            ))
+        }
     }
 }
 pub(crate) fn unavailable(message: &str) -> GatewayError {
