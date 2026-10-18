@@ -11,6 +11,8 @@ use crate::{
 pub const NATIVE_WIRE_VERSION: u8 = 1;
 pub const NATIVE_RPC_PATH: &str = "/v1/native/rpc";
 pub const NATIVE_FOLLOW_PATH: &str = "/v1/native/follow";
+pub const NATIVE_PUBLICATION_PATH: &str = "/uos/native/publication";
+pub const NATIVE_RESPONSE_MAC_HEADER: &str = "x-uos-native-response-mac";
 pub const NATIVE_MAX_BODY_BYTES: usize = 1_048_576;
 pub const NATIVE_AUTH_WINDOW_MS: i64 = 30_000;
 pub const NATIVE_NONCE_CAP: usize = 4096;
@@ -160,8 +162,10 @@ pub fn signature_input(
     nonce: &str,
     body: &[u8],
 ) -> Result<Vec<u8>, GatewayError> {
-    if !matches!(path, NATIVE_RPC_PATH | NATIVE_FOLLOW_PATH)
-        || key_id.is_empty()
+    if !matches!(
+        path,
+        NATIVE_RPC_PATH | NATIVE_FOLLOW_PATH | NATIVE_PUBLICATION_PATH
+    ) || key_id.is_empty()
         || key_id.len() > 64
         || !key_id
             .bytes()
@@ -181,4 +185,24 @@ pub fn signature_input(
         sha256_hex(body)
     )
     .into_bytes())
+}
+
+pub fn publication_response_input(
+    key_id: &str,
+    request_nonce: &str,
+    request_body: &[u8],
+    status: u16,
+    response_body: &[u8],
+) -> Result<Vec<u8>, GatewayError> {
+    signature_input(
+        NATIVE_PUBLICATION_PATH,
+        key_id,
+        0,
+        request_nonce,
+        request_body,
+    )?;
+    if !(200..=599).contains(&status) || response_body.len() > 65_536 {
+        return Err(invalid("Invalid native publication response frame"));
+    }
+    Ok(format!("uos-native-publication-response-v1\0POST\0{NATIVE_PUBLICATION_PATH}\0{key_id}\0{request_nonce}\0{}\0{status}\0{}",sha256_hex(request_body),sha256_hex(response_body)).into_bytes())
 }

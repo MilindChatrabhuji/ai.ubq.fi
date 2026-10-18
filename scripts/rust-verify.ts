@@ -118,7 +118,7 @@ export const planRustVerification = (root: string, paths: readonly string[], sta
   if (!worker) throw new Error("Rust workspace is missing gateway-worker");
   const wasm = workerDependencies(packages, worker);
   if (RUST_NATIVE_ONLY_PACKAGES.some((name) => wasm.has(name))) throw new Error("Worker dependency closure contains a native-only package");
-  const selected = packages.filter((item) => affected.has(item.name) && (stage === "native" || wasm.has(item.name)));
+  const selected = packages.filter((item) => affected.has(item.name) && (stage === "native" || !RUST_NATIVE_ONLY_PACKAGES.some((name) => name === item.name)));
   if (selected.length === 0) throw new Error(`Rust ${stage} gate has no selected packages`);
   const names = unique(selected.map((item) => item.name));
   const flags = names.flatMap((name) => ["-p", name]);

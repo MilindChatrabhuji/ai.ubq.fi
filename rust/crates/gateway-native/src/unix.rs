@@ -89,8 +89,9 @@ impl Socket {
         socket
             .connect_timeout(&address, remaining)
             .map_err(|_| owner_unavailable())?;
+        let owned_fd: std::os::fd::OwnedFd = socket.into();
         let stream = DeadlineStream {
-            stream: socket.into(),
+            stream: UnixStream::from(owned_fd),
             deadline: handshake_deadline,
         };
         let mut request = "ws://localhost/"

@@ -1,6 +1,7 @@
 //! Source administrative runtime over the common authority. External effects are finite injected capabilities.
 pub mod capabilities;
 pub mod claude;
+pub mod claude_generation;
 mod defaults;
 mod errors;
 mod kernel;

@@ -323,3 +323,45 @@ fn live_nonce_capacity_fails_closed_without_evicting_a_replay_fence() {
         assert_eq!(nonces.0.lock().unwrap().len(), 1);
     });
 }
+
+#[test]
+fn publication_response_hmac_has_independent_domain_and_exact_receipt_binding() {
+    let identity = identity();
+    let nonce = base64url(&[7; 32]);
+    let response = b"{\"v\":1}";
+    let signature = identity
+        .sign_publication_response(&nonce, b"{}", 200, response)
+        .unwrap();
+    // Python hmac.new([11]*32, independently NUL-framed UTF8 fields, sha256).
+    assert_eq!(signature, "T2lg-6ITeJtN3PddZXx1-DWOCK1900Msj_KtaMYB9Fo");
+    identity
+        .verify_publication_response(&nonce, b"{}", 200, response, &signature)
+        .unwrap();
+    for (request, status, body) in [
+        (b"{ }".as_slice(), 200, response.as_slice()),
+        (b"{}".as_slice(), 409, response.as_slice()),
+        (b"{}".as_slice(), 200, b"{\"v\":2}".as_slice()),
+    ] {
+        assert!(
+            identity
+                .verify_publication_response(&nonce, request, status, body, &signature)
+                .is_err()
+        );
+    }
+    assert!(
+        identity
+            .verify_publication_response(&base64url(&[8; 32]), b"{}", 200, response, &signature)
+            .is_err()
+    );
+    assert_ne!(
+        identity
+            .sign(
+                gateway_auth::native::NATIVE_PUBLICATION_PATH,
+                1_792_339_000_000,
+                &nonce,
+                response
+            )
+            .unwrap(),
+        signature
+    );
+}

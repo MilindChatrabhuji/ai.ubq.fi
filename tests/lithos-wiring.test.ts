@@ -34,6 +34,7 @@ const KIMI_MODEL = "moonshotai/Kimi-K3";
 const LITHOS_BASE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
 /** The Ultra tier's sibling: same weights, its own rate-limit bucket, and the long-context-safe target. */
 const LITHOS_SIBLING_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-fast";
+const LITHOS_MIXED_CASE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-ULTRA";
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
 
@@ -162,6 +163,11 @@ const usageContext = (requestId: string) => ({
   startedAtMs: Date.now(),
   startedAtMonotonicMs: performance.now(),
 });
+
+const assertElapsedRateLimitWait = (actualMs: number | null, plannedMs: number, message: string): void => {
+  if (actualMs === null) throw new Error(`${message}: no wait was recorded`);
+  assert.ok(actualMs >= plannedMs, `${message}: expected at least ${plannedMs}ms, observed ${actualMs}ms`);
+};
 
 /** The vendor's own refusal shape for a saturated budget, with its retry hint. */
 const lithosRateLimitRefusal = (retryAfterMs: string): Response =>
@@ -971,7 +977,6 @@ test("lithos wiring: a refusal on both tiers is relayed without waiting", async 
     assert.equal(telemetry.streamTerminalType, "response.failed");
   });
 });
-
 test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own window, then the requested tier answers", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
@@ -994,14 +999,13 @@ test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own win
       assert.equal(chat.result.status, 200);
       const telemetry = getResponseTelemetry(chat.result);
       if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 120, "the absorbed window is reported");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 120, "the elapsed absorbed window is reported");
       assert.equal(telemetry.rateLimitFailoverModel, null, "the requested tier served after the absorbed window");
     } finally {
       clearLithosFailoverWindows();
     }
   });
 });
-
 test("lithos wiring: retry waits preserve deadline and caller cancellation without dispatching again", async () =>
   runSequence(async (step) => {
     await withLithosKey(async () => {
@@ -1027,8 +1031,8 @@ test("lithos wiring: retry waits preserve deadline and caller cancellation witho
                 const { result, calls } = await withUpstream(
                   () => {
                     if (timing === "already") abort();
-                    else setTimeout(abort, 0);
-                    return lithosRateLimitRefusal("10000");
+                    else setTimeout(abort, 20);
+                    return lithosRateLimitRefusal("5000");
                   },
                   () =>
                     route === "chat"
@@ -1044,7 +1048,12 @@ test("lithos wiring: retry waits preserve deadline and caller cancellation witho
                 if (telemetry === null) throw new Error("The retry-wait terminal carries no telemetry.");
                 assert.equal(telemetry.failureKind, kind);
                 assert.equal(telemetry.streamTerminalType, kind === "deadline" ? "deadline" : "cancelled");
-                assert.equal(telemetry.rateLimitWaitMs, 10_000, "the handler reached the vendor retry wait");
+                if (telemetry.rateLimitWaitMs === null) throw new Error("the handler did not record the interrupted retry wait");
+                assert.ok(
+                  telemetry.rateLimitWaitMs < 1_000,
+                  `the interrupted wait must report elapsed time, observed ${telemetry.rateLimitWaitMs}ms instead of roughly 20ms`
+                );
+                if (timing === "during") assert.ok(telemetry.rateLimitWaitMs > 0, "a wait interrupted after 20ms must report positive elapsed time");
                 await assert.rejects(waitForLithosRetry(10_000, controller.signal), (error) => error === reason);
               } finally {
                 if (originalTimeout !== undefined) Object.defineProperty(AbortSignal, "timeout", originalTimeout);
@@ -1055,7 +1064,6 @@ test("lithos wiring: retry waits preserve deadline and caller cancellation witho
       }
     });
   }));
-
 test("lithos wiring: a window beyond the wait cap is relayed instead of absorbed", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
@@ -1124,7 +1132,7 @@ test("lithos wiring: a streamed absorb spends the wider stream budget beyond two
       assert.match(streamed.result.text, /event: response\.completed/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 180, "three vendor windows are absorbed behind the open stream");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 180, "three elapsed vendor windows are absorbed behind the open stream");
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
       clearLithosFailoverWindows();
@@ -1157,7 +1165,7 @@ test("lithos wiring: a streamed absorb that outlives the stream budget reports t
       assert.doesNotMatch(streamed.result.text, /event: response\.completed/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 300, "the full streamed budget is reported");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 300, "the full elapsed streamed budget is reported");
       assert.equal(telemetry.streamTerminalType, "response.failed");
     } finally {
       clearLithosFailoverWindows();
@@ -1206,7 +1214,7 @@ test("lithos wiring: a streamed Chat absorb spends the wider stream budget beyon
       assert.match(streamed.result.text, /\[DONE\]/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 180, "three vendor windows are absorbed behind the open stream");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 180, "three elapsed vendor windows are absorbed behind the open stream");
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
       clearLithosFailoverWindows();
@@ -1235,7 +1243,7 @@ test("lithos wiring: a streamed Chat absorb that outlives the stream budget repo
       assert.doesNotMatch(streamed.result.text, /\[DONE\]/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 300, "the full streamed budget is reported");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 300, "the full elapsed streamed budget is reported");
       assert.equal(telemetry.streamTerminalType, "response.failed");
     } finally {
       clearLithosFailoverWindows();
@@ -1317,8 +1325,7 @@ test("lithos wiring: a streamed refusal reports in-band instead of an HTTP 429 s
         { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
         // Unwaitable by the vendor's own instruction: no window is invented, and
         // the refusal still travels in-band - a streamed request never receives
-        // an HTTP 429 from this route, which is what makes the client's
-        // "retry-exhausted 429" banner unreachable here.
+        // an HTTP 429 from this route, which is what makes the client's "retry-exhausted 429" banner unreachable here.
         { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-should-retry": "false" } }
       );
     const streamed = await withUpstream(refusal, async () => {
@@ -1341,10 +1348,8 @@ test("lithos wiring: a streamed refusal on both tiers is absorbed by the vendor'
     clearLithosFailoverWindows();
     try {
       // The live incident shape: the client streams, both tiers refuse with the
-      // vendor's own short window, and the retry after that window must be the
-      // requested tier answering on the opened stream - never a 429 surfaced to
-      // the client. The wait is the vendor's own 60 ms hint so the test stays
-      // instantaneous.
+      // vendor's own short window, and the retry after that window must be the requested tier answering on the opened stream - never a 429 surfaced to
+      // the client. The wait is the vendor's own 60 ms hint so the test stays instantaneous.
       const frames = [
         {
           id: "chatcmpl-lithos-absorb",
@@ -1397,7 +1402,7 @@ test("lithos wiring: a streamed refusal on both tiers is absorbed by the vendor'
       assert.match(streamed.result.text, /event: response\.completed/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 60, "the absorbed window is reported on the streamed terminal");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 60, "the elapsed absorbed window is reported on the streamed terminal");
       assert.equal(telemetry.rateLimitFailoverModel, null, "the requested tier served after the absorbed window");
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
@@ -1423,7 +1428,7 @@ test("lithos wiring: only the mapped sibling may answer an Ultra request with a 
   });
 });
 
-test("lithos wiring: a refused Ultra tier serves from the sibling until the vendor's reset instant passes", async () => {
+test("lithos wiring: a differently-cased refused Ultra id serves from the sibling until reset", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1438,7 +1443,7 @@ test("lithos wiring: a refused Ultra tier serves from the sibling until the vend
       const first = await withUpstream(
         (_call, calls) =>
           calls.length === 1 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "sibling-served" }, LITHOS_SIBLING_MODEL)),
-        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-first"))
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MIXED_CASE_MODEL, messages: message, stream: false }), usageContext("lithos-window-first"))
       );
       assert.equal(first.calls.length, 2);
       assert.equal(first.calls[0].body.model, LITHOS_MODEL);
@@ -1447,7 +1452,7 @@ test("lithos wiring: a refused Ultra tier serves from the sibling until the vend
       // While the window is open the sibling answers directly: ultra is not asked again.
       const second = await withUpstream(
         () => Response.json(lithosCompletion({ role: "assistant", content: "sibling-direct" }, LITHOS_SIBLING_MODEL)),
-        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-second"))
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MIXED_CASE_MODEL, messages: message, stream: false }), usageContext("lithos-window-second"))
       );
       assert.equal(second.calls.length, 1, "one dispatch, straight to the sibling");
       assert.equal(second.calls[0].body.model, LITHOS_SIBLING_MODEL);
@@ -1461,10 +1466,13 @@ test("lithos wiring: a refused Ultra tier serves from the sibling until the vend
       await new Promise((resolve) => setTimeout(resolve, 420));
       const third = await withUpstream(
         () => Response.json(lithosCompletion({ role: "assistant", content: "ultra-again" })),
-        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-third"))
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MIXED_CASE_MODEL, messages: message, stream: false }), usageContext("lithos-window-third"))
       );
       assert.equal(third.calls.length, 1);
       assert.equal(third.calls[0].body.model, LITHOS_MODEL, "the window closed and ultra is asked again");
+      const thirdTelemetry = getResponseTelemetry(third.result);
+      if (thirdTelemetry === null) throw new Error("the chat terminal carries no telemetry");
+      assert.equal(thirdTelemetry.rateLimitFailoverModel, null, "the canonical requested tier served after reset");
     } finally {
       clearLithosFailoverWindows();
     }
@@ -1475,8 +1483,7 @@ test("lithos wiring: a refusal on a tier with no configured sibling opens no win
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
-    // The base tier has no sibling, and a window beyond the cap is never absorbed,
-    // so its refusal is relayed and nothing is remembered.
+    // The base tier has no sibling, and a window beyond the cap is never absorbed, so its refusal is relayed and nothing is remembered.
     const base = await withUpstream(
       () => lithosRateLimitRefusal("120000"),
       () => handleChatCompletions(chatRequest({ model: LITHOS_BASE_MODEL, messages: message, stream: false }), usageContext("lithos-scope-base"))

@@ -24,7 +24,7 @@ import {
 } from "../src/models/codex-models-whitelist.ts";
 import handler from "../src/handler/index.ts";
 const handlerSource = readFileSync(new URL("../src/handler/index.ts", import.meta.url), "utf8");
-import { resetOpenRouterModelsCacheForTest, type OpenRouterModelsSnapshot } from "../src/models/openrouter-models.ts";
+import { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest, type OpenRouterModelsSnapshot } from "../src/models/openrouter-models.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels, handlePublicModelCatalog } from "../src/models/catalog.ts";
 const openaiSource = readFileSync(new URL("../src/models/catalog.ts", import.meta.url), "utf8");
@@ -45,6 +45,12 @@ delete process.env.SURPLUS_API_KEY;
 const WHITELIST_URL = "https://ai.ubq.fi/admin/models/whitelist";
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
+
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
 
 /** Minimal Kv stand-in: the whitelist paths only read and write one key. */
 class WhitelistKv {
@@ -248,6 +254,64 @@ test("the official DeepSeek ids are cataloged as their own provider category", a
     resetSurplusModelsCacheForTest();
     resetOpenRouterModelsCacheForTest();
     delete process.env.DEEPSEEK_API_KEY;
+  }
+});
+
+test("a paid-discovered DeepSeek id receives the later official route metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  const paidModelId = "deepseek-v4-flash";
+  const providerEnv = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "METERED_API_KEY", "OPENROUTER_API_KEY", "SURPLUS_API_KEY"] as const;
+  const originalProviderEnv = providerEnv.map((name) => [name, process.env[name]] as const);
+  for (const name of providerEnv) Reflect.deleteProperty(process.env, name);
+  process.env.SURPLUS_API_KEY = "fixture-surplus-key";
+  process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
+  resetSurplusModelsCacheForTest();
+  resetMeteredModelsCacheForTest();
+  resetOpenRouterModelsCacheForTest();
+  try {
+    await fetchOpenRouterModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(
+          Response.json({
+            data: [
+              {
+                id: paidModelId,
+                context_length: 1_048_576,
+                top_provider: { context_length: 1_048_576 },
+                reasoning: { supported_efforts: ["third-party"], default_effort: "third-party" },
+              },
+            ],
+          })
+        ),
+    });
+    globalThis.fetch = createFetchMock((input) => {
+      if (requestUrl(input).includes("surplusintelligence.ai/v1/models")) {
+        return Promise.resolve(Response.json({ data: [{ id: paidModelId, created: 1_800_000_000, provider: "surplus" }] }));
+      }
+      return Promise.reject(new Error(`Unexpected discovery request: ${requestUrl(input)}`));
+    });
+    const row = (await buildModelCatalogSnapshot()).models.find((model) => model.id === paidModelId);
+    assert.ok(row);
+    assert.deepEqual(
+      row.providers.map((provider) => provider.id),
+      ["surplus", "deepseek"]
+    );
+    assert.equal(row.context_window_tokens, 1_000_000);
+    assert.equal(row.max_context_window_tokens, 1_000_000);
+    assert.deepEqual(row.supported_reasoning_levels, ["none", "low", "high", "max"]);
+    assert.equal(row.default_reasoning_effort, "high");
+    assert.equal(row.context_source, "provider_discovery");
+    assert.equal(row.reasoning_source, "provider_discovery");
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetSurplusModelsCacheForTest();
+    resetMeteredModelsCacheForTest();
+    resetOpenRouterModelsCacheForTest();
+    for (const [name, value] of originalProviderEnv) {
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
+      else process.env[name] = value;
+    }
   }
 });
 

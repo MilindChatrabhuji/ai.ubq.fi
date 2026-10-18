@@ -181,6 +181,7 @@ struct Host {
     on_wait: RefCell<Option<Callback>>,
     renewal: RefCell<Option<CodexAccount>>,
     observations: RefCell<Vec<CatalogObservation>>,
+    fail_observation: Cell<bool>,
 }
 impl Host {
     fn new(store: &Store) -> Self {
@@ -210,6 +211,7 @@ impl Host {
             on_wait: RefCell::default(),
             renewal: RefCell::default(),
             observations: RefCell::default(),
+            fail_observation: Cell::new(false),
         }
     }
     fn queue(&self, response: Outcome) {
@@ -271,6 +273,12 @@ impl CatalogHost for Host {
     }
     async fn observe(&self, observation: CatalogObservation) -> Result<(), GatewayError> {
         self.observations.borrow_mut().push(observation);
+        if self.fail_observation.get() {
+            return Err(GatewayError::unavailable(
+                "Optional sink unavailable",
+                "catalog_observation_unavailable",
+            ));
+        }
         Ok(())
     }
     async fn refresh_codex(&self, expected: &CodexAccount) -> Result<CodexAccount, GatewayError> {
@@ -939,4 +947,219 @@ fn claude_pages_share_the_original_deadline_and_codex_has_no_invented_timeout() 
     };
     assert_eq!(codex.remaining_timeout_ms(start).unwrap(), None);
     assert_eq!(codex.max_body_bytes(), None);
+}
+
+#[test]
+fn optional_health_persistence_failure_does_not_fail_a_valid_catalog() {
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    host.fail_observation.set(true);
+    let mut response = CatalogFetchResponse::json(200, catalog("served").to_string());
+    response.provider_request_id = Some(" request-correlation ".into());
+    response.access_token_expired = Some(false);
+    response.observed_at_ms = Some(store.now.get());
+    host.queue(Outcome {
+        response: Ok(response),
+        ticks: 0,
+        callback: None,
+    });
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    assert_eq!(ids(&response), ["served"]);
+    assert!(host.observations.borrow().iter().any(|event|matches!(event,CatalogObservation::CodexResponse{provider_request_id:Some(id),access_token_expired:Some(false),observed_at_ms:Some(_),..} if id=="request-correlation")));
+}
+
+// Source ba5ef05e: catalog/models.ts withDeepSeekOfficialModels replaces a matching
+// trimmed slug (or id when the slug is blank), without moving the original slot.
+#[test]
+fn exact_version_response_replaces_stale_same_id_official_deepseek_rows() {
+    let store = Store::new();
+    let host = Host::new(&store);
+    host.provider(CatalogProvider::Deepseek, "configured-deepseek");
+    store.put(
+        state::selection_key(),
+        "all",
+        json!({"provider_ids":[],"updated_at_ms":store.now.get()}),
+    );
+    store.seed("0.163.0", store.now.get(), &json!({"models":[
+        {"slug":"unrelated-before","future":"retained"},
+        {"slug":"  deepseek-v4-flash  ","owned_by":"stale-discovery","supported_reasoning_levels":["third-party"],"default_reasoning_level":"third-party"},
+        {"id":" \u{feff}deepseek-flash ","owned_by":"stale-discovery","future":"replaced"}
+    ],"future_envelope":"retained"}).to_string(), None);
+    let runtime = CatalogRuntime::new();
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    let result = body(&response);
+    assert_eq!(result["future_envelope"], "retained");
+    assert_eq!(result["models"][0]["future"], "retained");
+    for (index, id) in [(1, "deepseek-v4-flash"), (2, "deepseek-flash")] {
+        let row = &result["models"][index];
+        assert_eq!(row["slug"], id);
+        assert_eq!(row["owned_by"], "deepseek");
+        let efforts = row["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(efforts, ["none", "low", "high", "max"]);
+        assert_eq!(row["default_reasoning_level"], "high");
+        assert!(row.get("future").is_none());
+    }
+    assert!(host.requests.borrow().is_empty());
+}
+
+// Source ba5ef05e admin-models-catalog.test.ts: paid discovery is encountered
+// before the official declaration; the latter describes this gateway route.
+#[test]
+fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_its_route() {
+    let store = Store::new();
+    let host = Host::new(&store);
+    host.provider(CatalogProvider::Surplus, "configured-surplus");
+    host.provider(CatalogProvider::Deepseek, "configured-deepseek");
+    let runtime = CatalogRuntime::new();
+    host.queue(Outcome::json(json!({"data":[
+        {"id":"deepseek-v4-flash","created":1_800_000_000i64,"provider":"surplus"},
+        {"id":"unrelated-discovery","provider":"surplus"}
+    ]})));
+    run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, true)).unwrap();
+    host.queue(Outcome::json(json!({"data":[
+        {"id":"deepseek-v4-flash","context_length":1_048_576,"top_provider":{"context_length":1_048_576},"reasoning":{"supported_efforts":["third-party"],"default_effort":"third-party"}},
+        {"id":"unrelated-discovery","context_length":123_456,"reasoning":{"supported_efforts":["retained-custom"],"default_effort":"retained-custom"}}
+    ]})));
+    run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, true)).unwrap();
+    let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
+    let catalog = gateway_schema::catalog::build_catalog_snapshot(&state.input);
+    let rows = catalog["models"].as_array().unwrap();
+    let official = rows
+        .iter()
+        .find(|row| row["id"] == "deepseek-v4-flash")
+        .unwrap();
+    assert_eq!(
+        official["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|provider| provider["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["surplus", "deepseek"]
+    );
+    assert_eq!(official["created"], 1_800_000_000i64);
+    assert_eq!(official["context_window_tokens"], 1_000_000);
+    assert_eq!(official["max_context_window_tokens"], 1_000_000);
+    assert_eq!(
+        official["supported_reasoning_levels"],
+        json!(["none", "low", "high", "max"])
+    );
+    assert_eq!(official["default_reasoning_effort"], "high");
+    assert_eq!(official["context_source"], "provider_discovery");
+    assert_eq!(official["reasoning_source"], "provider_discovery");
+    let unrelated = rows
+        .iter()
+        .find(|row| row["id"] == "unrelated-discovery")
+        .unwrap();
+    assert_eq!(unrelated["context_window_tokens"], 123_456);
+    assert_eq!(
+        unrelated["supported_reasoning_levels"],
+        json!(["retained-custom"])
+    );
+    assert_eq!(unrelated["context_source"], "openrouter");
+}
+
+struct SelectionReads {
+    store: Store,
+    count: Cell<u8>,
+    release_first: Cell<bool>,
+    release_second: Cell<bool>,
+}
+impl AuthorityStore for SelectionReads {
+    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        let row = self.store.read(key).await?;
+        if key == &state::selection_key() {
+            let ordinal = self.count.get() + 1;
+            self.count.set(ordinal);
+            poll_fn(|_| {
+                if ordinal > 2
+                    || (ordinal == 1 && self.release_first.get())
+                    || (ordinal == 2 && self.release_second.get())
+                {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+        }
+        Ok(row)
+    }
+    async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        self.store.commit(transition).await
+    }
+}
+impl QueryStore for SelectionReads {
+    async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
+        self.store.query(request).await
+    }
+}
+
+// Source ba5ef05e provider-selection.test.ts allows the old in-flight caller's
+// captured answer, but forbids it from replacing the saved cache/current view.
+#[test]
+fn pre_save_selection_read_cannot_replace_newer_pending_or_current_catalog_views() {
+    let store = Store::new();
+    let publication = CredentialPublication::default();
+    store.put(
+        state::selection_key(),
+        "before",
+        json!({"provider_ids":["openlux"],"updated_at_ms":1_700_000_000_000i64}),
+    );
+    let reads = SelectionReads {
+        store: store.clone(),
+        count: Cell::new(0),
+        release_first: Cell::new(false),
+        release_second: Cell::new(false),
+    };
+    let runtime = CatalogRuntime::new();
+    let mut old = std::pin::pin!(runtime.load_state(&reads, &publication, store.now.get()));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(old.as_mut().poll(&mut cx).is_pending());
+    store.put(
+        state::selection_key(),
+        "saved",
+        json!({"provider_ids":["cerebras"],"updated_at_ms":store.now.get()}),
+    );
+    let mut replacement = std::pin::pin!(runtime.load_state(&reads, &publication, store.now.get()));
+    assert!(replacement.as_mut().poll(&mut cx).is_pending());
+    reads.release_first.set(true);
+    assert_eq!(
+        run(old.as_mut())
+            .unwrap()
+            .input
+            .selection
+            .unwrap()
+            .provider_ids,
+        ["openlux"]
+    );
+    let current = run(runtime.load_state(&reads, &publication, store.now.get())).unwrap();
+    assert_eq!(current.input.selection.unwrap().provider_ids, ["cerebras"]);
+    assert!(replacement.as_mut().poll(&mut cx).is_pending());
+    reads.release_second.set(true);
+    assert_eq!(
+        run(replacement.as_mut())
+            .unwrap()
+            .input
+            .selection
+            .unwrap()
+            .provider_ids,
+        ["cerebras"]
+    );
+    assert_eq!(
+        run(runtime.load_state(&reads, &publication, store.now.get()))
+            .unwrap()
+            .input
+            .selection
+            .unwrap()
+            .provider_ids,
+        ["cerebras"]
+    );
+    assert_eq!(reads.count.get(), 4);
 }
