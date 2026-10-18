@@ -57,7 +57,12 @@ pub struct OveragePermission(bool);
 
 impl OveragePermission {
     pub fn from_stored_record(record: Option<&serde_json::Value>) -> Self {
-        Self(record.and_then(|value| value.get("allow")).and_then(|value| value.as_bool()) == Some(true))
+        Self(
+            record
+                .and_then(|value| value.get("allow"))
+                .and_then(|value| value.as_bool())
+                == Some(true),
+        )
     }
 
     pub fn allows_dispatch(self) -> bool {
