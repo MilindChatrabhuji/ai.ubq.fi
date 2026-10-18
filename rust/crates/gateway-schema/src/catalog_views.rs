@@ -21,11 +21,11 @@ fn claude_capability(model:&Value)->Value{
     row["context_window_tokens"]=json!(window);row["context_source"]=json!(if window.is_some(){"provider_discovery"}else{"unknown"});row["reasoning_source"]=json!(if levels.is_empty(){"unknown"}else{"provider_discovery"});row["max_output_tokens"]=model.get("max_output_tokens").cloned().unwrap_or(Value::Null);row["upstream_capabilities"]=json!({"image_input":model.get("supports_image_input").cloned().unwrap_or(Value::Null),"pdf_input":model.get("supports_pdf_input").cloned().unwrap_or(Value::Null)});row
 }
 pub fn capabilities(input:&CatalogInput)->Value{
-    let mut rows=if input.enabled("codex"){input.full_snapshot.as_ref().map(|s|s.models.iter().filter_map(|r|normalized_codex_capability(input,r)).collect()).unwrap_or_default()}else{Vec::new()};
+    let mut rows=if input.enabled("codex"){input.codex().map(|s|s.models.iter().filter_map(|r|normalized_codex_capability(input,r)).collect()).unwrap_or_default()}else{Vec::new()};
     append_unique(&mut rows,configured_capabilities(input,"cerebras"),"id");append_unique(&mut rows,input.available_rows("claude_code").iter().map(claude_capability),"id");
     for(provider,label)in[("openlux","metered"),("surplus","surplus")]{append_unique(&mut rows,input.available_rows(provider).iter().map(|r|discovered_capability(input,r,label)),"id");}
     for provider in ["deepseek","lithos","ubiquity"]{let configured=configured_capabilities(input,provider);if !configured.is_empty(){rows.retain(|r|!configured.iter().any(|c|c["id"]==r["id"]));rows.extend(configured);}}
-    let mut rows=filter_whitelist(rows,input.whitelist.as_ref(),false);append_unique(&mut rows,openrouter_capabilities(input),"id");let snapshot=input.full_snapshot.as_ref();json!({"object":"list","data":rows,"upstream_provider":"codex_chatgpt","source":snapshot.map(|s|s.source.as_str()).unwrap_or("stored_codex_models"),"client_version":snapshot.and_then(|s|s.client_version.as_deref()),"updated_at_ms":snapshot.map(|s|s.updated_at_ms)})
+    let mut rows=filter_whitelist(rows,input.whitelist.as_ref(),false);append_unique(&mut rows,openrouter_capabilities(input),"id");let snapshot=input.codex();json!({"object":"list","data":rows,"upstream_provider":"codex_chatgpt","source":snapshot.map(|s|s.source.as_str()).unwrap_or("stored_codex_models"),"client_version":snapshot.and_then(|s|s.client_version.as_deref()),"updated_at_ms":snapshot.map(|s|s.updated_at_ms)})
 }
 fn public_entry(id:&str,provider:Value,created:Option<i64>,resolved:&ResolvedMetadata)->Value{
     let mut row=json!({"id":id,"providers":[provider]});if let Some(created)=created.filter(|n|*n>0){row["created"]=json!(created);}apply_resolved_fields(&mut row,resolved,false,false);
