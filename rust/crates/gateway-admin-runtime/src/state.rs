@@ -68,8 +68,8 @@ fn selection(value: Option<&Value>) -> Option<Value> {
 }
 
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    fn sorted_principals(&self,value:&Value)->Result<Vec<String>,GatewayError>{
-        crate::claude_access::parse_ids(value,&|a,b|self.capabilities.compare_admin_labels(a,b))
+    fn sorted_principals(&self, value: &Value) -> Result<Vec<String>, GatewayError> {
+        crate::claude_access::parse_ids(value, &|a, b| self.capabilities.compare_admin_labels(a, b))
     }
     pub(crate) async fn debug(
         &self,
@@ -262,7 +262,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             }
             policy
         } else {
-            let snapshot=crate::claude_access::load_policy(self.store,self.host,&self.config.claude_allowed_key_ids,&|a,b|self.capabilities.compare_admin_labels(a,b)).await?;
+            let snapshot = crate::claude_access::load_policy(
+                self.store,
+                self.host,
+                &self.config.claude_allowed_key_ids,
+                &|a, b| self.capabilities.compare_admin_labels(a, b),
+            )
+            .await?;
             json!(snapshot.policy)
         };
         Ok(AuthResponse::json(
