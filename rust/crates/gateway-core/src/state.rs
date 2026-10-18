@@ -61,6 +61,37 @@ impl StoredRecord {
         }
         Ok(&self.value)
     }
+    pub fn profile_v2(
+        revision: impl Into<String>,
+        value: crate::value::PortableValue,
+        expires_at_ms: Option<crate::identity::UnixMillis>,
+    ) -> Result<Self, GatewayError> {
+        value.validate_for_storage_v2()?;
+        let value = serde_json::to_value(value).map_err(|_| {
+            GatewayError::unavailable("Typed value encoding failed.", "portable_value_invalid")
+        })?;
+        Ok(Self {
+            schema_version: PORTABLE_STATE_VERSION,
+            value_encoding: crate::value::ValueEncoding::ProfileV2,
+            revision: revision.into(),
+            value,
+            expires_at_ms,
+        })
+    }
+    pub fn profile_v2_value(&self) -> Result<crate::value::PortableValue, GatewayError> {
+        self.validate_version()?;
+        if self.value_encoding != crate::value::ValueEncoding::ProfileV2 {
+            return Err(GatewayError::unavailable("An explicit ProfileV2 record was required", "incompatible_value_encoding"));
+        }
+        let value: crate::value::PortableValue = serde_json::from_value(self.value.clone()).map_err(|_| {
+            GatewayError::unavailable("Typed value decoding failed.", "portable_value_invalid")
+        })?;
+        value.validate_for_storage_v2()?;
+        Ok(value)
+    }
+    pub fn profile_v2_source_json(&self) -> Result<crate::source_json::SourceJson, GatewayError> {
+        self.profile_v2_value()?.to_source_json()
+    }
     pub fn portable_value(&self) -> Result<crate::value::PortableValue, GatewayError> {
         self.validate_version()?;
         match self.value_encoding {
@@ -78,11 +109,12 @@ impl StoredRecord {
                 decoded.validate_for_storage()?;
                 Ok(decoded)
             }
+            crate::value::ValueEncoding::ProfileV2 => self.profile_v2_value(),
         }
     }
     pub fn validate_version(&self) -> Result<(), GatewayError> {
         if self.schema_version == PORTABLE_STATE_VERSION {
-            if self.value_encoding == crate::value::ValueEncoding::ProfileV1 {
+            if matches!(self.value_encoding, crate::value::ValueEncoding::ProfileV1 | crate::value::ValueEncoding::ProfileV2) {
                 let decoded: crate::value::PortableValue =
                     serde_json::from_value(self.value.clone()).map_err(|_| {
                         GatewayError::unavailable(
@@ -90,7 +122,11 @@ impl StoredRecord {
                             "portable_value_invalid",
                         )
                     })?;
-                decoded.validate_for_storage()?;
+                if self.value_encoding == crate::value::ValueEncoding::ProfileV2 {
+                    decoded.validate_for_storage_v2()?;
+                } else {
+                    decoded.validate_for_storage()?;
+                }
             }
             Ok(())
         } else {

@@ -68,10 +68,48 @@ pub struct NativePeer {
 }
 
 #[derive(Clone, Debug)]
+pub enum AuthResponseBody {
+    Json(Value),
+    SourceJson(gateway_core::source_json::SourceJson),
+}
+impl AuthResponseBody {
+    pub fn as_json(&self) -> Option<&Value> {
+        if let Self::Json(value) = self { Some(value) } else { None }
+    }
+    pub fn to_bytes(&self) -> Result<Vec<u8>, GatewayError> {
+        match self {
+            Self::Json(value) => serde_json::to_vec(value).map_err(|_| GatewayError::unavailable("JSON response serialization failed", "response_json_invalid")),
+            Self::SourceJson(value) => Ok(value.as_bytes().to_vec()),
+        }
+    }
+}
+impl serde::Serialize for AuthResponseBody {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Json(value) => value.serialize(serializer),
+            Self::SourceJson(value) => value.serialize(serializer),
+        }
+    }
+}
+/// Legacy JSON inspections remain valid; lossless bodies require the explicit byte API.
+impl std::ops::Deref for AuthResponseBody {
+    type Target = Value;
+    fn deref(&self) -> &Value {
+        self.as_json().expect("A source JSON body cannot be inspected through serde_json::Value; use to_bytes")
+    }
+}
+impl PartialEq<Value> for AuthResponseBody {
+    fn eq(&self, other: &Value) -> bool { self.as_json() == Some(other) }
+}
+impl PartialEq<AuthResponseBody> for Value {
+    fn eq(&self, other: &AuthResponseBody) -> bool { other == self }
+}
+
+#[derive(Clone, Debug)]
 pub struct AuthResponse {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
-    pub body: Value,
+    pub body: AuthResponseBody,
     pub stream: Option<crate::native::AuthStream>,
 }
 
@@ -83,7 +121,18 @@ impl AuthResponse {
                 ("cache-control".into(), "no-store".into()),
                 ("content-type".into(), "application/json".into()),
             ]),
-            body,
+            body: AuthResponseBody::Json(body),
+            stream: None,
+        }
+    }
+    pub fn source_json(status: u16, body: gateway_core::source_json::SourceJson) -> Self {
+        Self {
+            status,
+            headers: BTreeMap::from([
+                ("cache-control".into(), "no-store".into()),
+                ("content-type".into(), "application/json".into()),
+            ]),
+            body: AuthResponseBody::SourceJson(body),
             stream: None,
         }
     }
