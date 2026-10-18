@@ -53,6 +53,7 @@ import {
   reportCodexBankedResetEvent,
 } from "./banked-reset.ts";
 import { evaluateCodexBankedResetPool } from "./banked-reset-pool.ts";
+import { overageUsageAllowedSync } from "./overage-settings.ts";
 import { createUpstreamCodexUsageResetProvider } from "./banked-reset-provider.ts";
 import { reconcileCodexBankedReset } from "./banked-reset-submission.ts";
 import {
@@ -145,6 +146,9 @@ const planOverageFallback = (
     (active === null ? undefined : blockedAccounts.find((account) => account.accountIdHash === active.account_id_hash && account.slot === active.slot)) ??
     blockedAccounts.at(0);
   if (!blocked) return null;
+  // The per-account setting is a hard gate: a blocked cohort that cannot
+  // redeem a reset must not spend overage when the operator left it off.
+  if (!overageUsageAllowedSync(blocked.accountIdHash)) return null;
   const routing: RoutingAccount = { ...blocked, probeRequired: true, probeCircuit: "quota", overageFallback: true, requestedModel };
   return { reason: evaluated.reason, accountEntry: { ...currentPoolEntry, auth: blocked.auth, routing }, routing };
 };

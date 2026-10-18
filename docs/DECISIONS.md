@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Allow overage spending false refuses all overage - 2026-10-18
+
+The per-account `Allow overage spending` setting is a hard gate. With the setting off, the gateway may redeem a banked reset, but it must never dispatch an overage probe, including after the reset preflight returns `no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or `account_day_limit_reached`. That case returns the ordinary `codex_quota_blocked` response. With the setting on, the existing resets-first flow and one bounded overage fallback remain unchanged.
+
+Reason: the previous implementation treated off as "try resets first" and still spent overage when no reset was redeemable, which contradicts the operator-facing switch. This change governs gateway-routed inference only; a native Codex client that authenticates directly to ChatGPT is outside the gateway and must be configured or authenticated separately.
+
+Reversal risk: turning the setting off now stops serving an exhausted subscription instead of silently drawing paid overage. That is the requested safe behavior, and re-enabling the setting restores the bounded fallback.
+
 ## Assistant output replay accepts and drops log probabilities - 2026-10-17
 
 Responses `output_text` accepts the official `logprobs` field when it is an array, including an empty array. Validation intentionally checks only the array shape, matching the existing `annotations` rule; neither field's entries affect generation. Both fields are dropped when constructing `MessageContentItem`, so the Codex subscription and paid provider request bodies carry only the replayed text. Non-array values retain a precise nested field error, non-assistant `output_text` remains invalid, and genuinely unknown fields remain rejected.
