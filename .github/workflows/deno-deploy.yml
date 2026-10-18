@@ -19,11 +19,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+
 jobs:
   scope:
     runs-on: ubuntu-latest
-    env:
-      GITHUB_EVENT_BEFORE: ${{ github.event.before }}
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
       needs_validate: ${{ steps.scope.outputs.needs_validate }}
@@ -63,8 +64,6 @@ jobs:
     needs: scope
     if: ${{ needs.scope.outputs.docs_only == 'true' }}
     runs-on: ubuntu-latest
-    env:
-      GITHUB_EVENT_BEFORE: ${{ github.event.before }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
