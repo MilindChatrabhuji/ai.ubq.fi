@@ -122,8 +122,11 @@ export class NativeAuthorityApi {
       codexProof: null,
       ownerFence: null,
       semantic: null,
+      providerObserved: false,
       delivery: null,
       dispatch: null,
+      transport: null,
+      responding: null,
     });
     return { kind: "reserved", handle };
   }
@@ -135,8 +138,34 @@ export class NativeAuthorityApi {
     this.save({ ...row, dispatch: { provider: args.provider, cancellationOwned: true, fetchStarted: false } });
     return { kind: "dispatched" };
   }
+  private _compensationSafe(row: NativeRequest): boolean {
+    return !row.transport && !row.responding && !row.providerObserved && row.semantic === null && (row.delivery === null || row.delivery === "unobserved");
+  }
+  assertDispatchReceipt(cap: NativeCapability, handle: string, now: number): void {
+    const row = this.request(cap, handle, now);
+    const api = normalizeApiKeyUsageRequestV3(this._snapshot(row, now).request);
+    if (api?.state !== "dispatched" || !row.dispatch?.cancellationOwned) throw new NativeAuthorityError("api_dispatch_receipt_stale");
+  }
+  assertTransportReceipt(cap: NativeCapability, handle: string, operationId: string, now: number): void {
+    this.assertDispatchReceipt(cap, handle, now);
+    const row = this.request(cap, handle, now);
+    if (row.transport?.operationId !== operationId || row.semantic !== null) throw new NativeAuthorityError("transport_start_receipt_stale");
+  }
+  start(cap: NativeCapability, args: NativeArguments["recordTransportStarted"], operationId: string, now: number): NativeReply {
+    const row = this.request(cap, args.handle, now);
+    this.assertDispatchReceipt(cap, args.handle, now);
+    if (row.semantic !== null) throw new NativeAuthorityError("request_already_terminal");
+    const attemptHandle = args.attemptHandle ?? null;
+    if (row.transport?.provider === args.provider && row.transport.attemptHandle === attemptHandle)
+      return { kind: "unchanged", detail: { provider: args.provider, attemptHandle } };
+    if (!row.dispatch) throw new NativeAuthorityError("api_dispatch_missing");
+    const responding = { provider: args.provider, attemptHandle };
+    this.save({ ...row, dispatch: { ...row.dispatch, fetchStarted: true }, transport: { ...responding, operationId, startedAtMs: now }, responding });
+    return { kind: "started", detail: responding };
+  }
   release(cap: NativeCapability, args: NativeArguments["releaseApiUndispatched"], now: number): NativeReply {
     const row = this.request(cap, args.handle, now);
+    if (!this._compensationSafe(row)) throw new NativeAuthorityError("prefetch_compensation_closed");
     const plan = planApiKeyUsageReservedRelease(row.api, row.requestId, args.reason, this._snapshot(row, now), now, row.route);
     if (plan.kind !== "write") return { kind: plan.kind };
     this._write(row.api, plan, now);
@@ -144,7 +173,8 @@ export class NativeAuthorityApi {
   }
   cancel(cap: NativeCapability, handle: string, now: number): NativeReply {
     const row = this.request(cap, handle, now);
-    if (!row.dispatch?.cancellationOwned || row.dispatch.fetchStarted) throw new NativeAuthorityError("prefetch_cancellation_not_owned");
+    if (!row.dispatch?.cancellationOwned || row.dispatch.fetchStarted || !this._compensationSafe(row))
+      throw new NativeAuthorityError("prefetch_cancellation_not_owned");
     const plan = planApiKeyUsageDispatchCancellation(row.api, row.requestId, row.route, row.dispatch.provider, this._snapshot(row, now), now);
     if (plan.kind !== "write") return { kind: plan.kind };
     this._write(row.api, plan, now);

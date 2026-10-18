@@ -11,10 +11,13 @@ import * as paid from "./native-paid.ts";
 import {
   NativeAuthorityError,
   type NativeAuthorityInitial,
+  type NativeArguments,
   type NativeCapability,
   type NativeCommand,
+  type NativeCodexAuthorization,
   type NativeReply,
   type NativeRequest,
+  type NativeRows,
   type NativeSqlStorage,
 } from "./native-authority-contracts.ts";
 import { NativeAuthoritySql } from "./native-authority-sql.ts";
@@ -71,16 +74,37 @@ export class NativeAuthority {
     const cap = this._sql.capability(capabilityId, now);
     if (!cap.roles.includes(NATIVE_METHOD_ROLES[command.method])) throw new NativeAuthorityError("authority_capability_denied", 403);
     if ("handle" in command.args) this._api.request(cap, command.args.handle, now);
-    if ("attemptHandle" in command.args) this._paid.attempt(cap, command.args.attemptHandle, now);
+    if ("attemptHandle" in command.args && command.args.attemptHandle !== undefined) this._paid.attempt(cap, command.args.attemptHandle, now);
     return cap;
   }
-  private _requestForDispatch(cap: NativeCapability, handle: string, now: number): NativeRequest {
+  private _requestForDispatch(cap: NativeCapability, handle: string, provider: string, now: number): NativeRequest {
     const request = this._api.request(cap, handle, now),
       policy = this._sql.read("api_policy", apiKeyHashKey(cap.tokenHash), now).value;
     if (!policy || policy.revoked || policy.api.key_id !== cap.keyId || (policy.api.expires_at_ms !== -1 && policy.api.expires_at_ms <= now))
       throw new NativeAuthorityError("api_policy_revoked", 403);
-    if (request.codex) this._codex.fence(cap, handle, now);
+    if (provider === "chatgpt_codex") this._codex.fence(cap, handle, now);
     return request;
+  }
+  private _terminalUsage(
+    request: NativeRequest,
+    provider: string | null,
+    observations: NonNullable<NativeArguments["recordSemanticTerminal"]["usage"]>,
+    now: number
+  ): void {
+    const input = {
+      ...observations,
+      model: request.model,
+      provider,
+      request_id: request.requestId,
+      request_created_at_ms: request.createdAtMs,
+    };
+    const usage = paid.paidFallbackTerminalUsageV3(input);
+    if (usage) {
+      const row = paid.paidFallbackTerminalRollupV3(input, usage, request.requestId, now),
+        key = paid.paidFallbackUsageRollupKey(row.bucket_start_at_ms, row.model, row.provider, paid.paidFallbackUsageRollupShard(request.requestId)),
+        prior = this._sql.read("paid_rollup", key, now).value;
+      this._sql.write("paid_rollup", key, paid.mergePaidFallbackUsageRollup(paid.isPaidFallbackUsageRollup(prior) ? prior : null, row), null);
+    }
   }
   private _observation(
     cap: NativeCapability,
@@ -95,23 +119,11 @@ export class NativeAuthority {
       return { kind: "recorded" };
     }
     if (request.semantic !== null) return { kind: request.semantic === command.args.outcome ? "unchanged" : "terminal_mismatch", detail: request.semantic };
-    this._api.save({ ...request, semantic: command.args.outcome });
-    if (command.args.usage) {
-      const input = {
-        ...command.args.usage,
-        model: request.model,
-        provider: request.dispatch?.provider ?? null,
-        request_id: request.requestId,
-        request_created_at_ms: request.createdAtMs,
-      };
-      const usage = paid.paidFallbackTerminalUsageV3(input);
-      if (usage) {
-        const row = paid.paidFallbackTerminalRollupV3(input, usage, request.requestId, now),
-          key = paid.paidFallbackUsageRollupKey(row.bucket_start_at_ms, row.model, row.provider, paid.paidFallbackUsageRollupShard(request.requestId)),
-          prior = this._sql.read("paid_rollup", key, now).value;
-        this._sql.write("paid_rollup", key, paid.mergePaidFallbackUsageRollup(paid.isPaidFallbackUsageRollup(prior) ? prior : null, row), null);
-      }
-    }
+    const responding = command.args.attemptHandle ? this._paid.response(cap, command.args.attemptHandle, now) : null;
+    if (responding && responding.attempt.requestHandle !== request.handle) throw new NativeAuthorityError("terminal_attempt_mismatch", 403);
+    const responseOwner = responding ? { provider: responding.provider, attemptHandle: responding.attempt.handle } : (request.responding ?? null);
+    this._api.save({ ...request, semantic: command.args.outcome, responding: responseOwner });
+    if (command.args.usage) this._terminalUsage(request, responseOwner?.provider ?? null, command.args.usage, now);
     return { kind: "recorded" };
   }
   private _status(cap: NativeCapability, args: Extract<NativeCommand, { method: "readRequestStatus" }>["args"], now: number): NativeReply {
@@ -157,6 +169,19 @@ export class NativeAuthority {
       },
     };
   }
+  private _validateReceipt(cap: NativeCapability, command: NativeCommand, receipt: NativeRows["operation_receipt"], canonical: string, now: number): void {
+    if (receipt.command !== canonical) throw new NativeAuthorityError("authority_operation_replay_conflict");
+    if (command.method === "markApiDispatch" && receipt.reply.kind === "dispatched") this._api.assertDispatchReceipt(cap, command.args.handle, now);
+    if (command.method === "refreshCodexAdmission" && receipt.reply.kind === "current") {
+      if (!receipt.codexAuthorization) throw new NativeAuthorityError("cached_codex_authorization_missing");
+      this._codex.fence(cap, command.args.handle, now, receipt.codexAuthorization);
+    }
+    if (command.method === "recordTransportStarted") {
+      this._requestForDispatch(cap, command.args.handle, command.args.provider, now);
+      if (receipt.reply.kind === "started") this._api.assertTransportReceipt(cap, command.args.handle, command.operationId, now);
+      else this._api.assertDispatchReceipt(cap, command.args.handle, now);
+    }
+  }
   async execute(capabilityId: string, input: NativeCommand): Promise<NativeReply> {
     const command = parseNativeCommand(input),
       observedAt = this._clock();
@@ -177,18 +202,22 @@ export class NativeAuthority {
       const now = this._clock(),
         cap = this._authorize(capabilityId, command, now);
       // Current dispatch/owner/epoch checks precede receipt lookup; a lost reply cannot revive revoked authority.
-      if (command.method === "markApiDispatch") this._requestForDispatch(cap, command.args.handle, now);
+      if (command.method === "markApiDispatch") this._requestForDispatch(cap, command.args.handle, command.args.provider, now);
       const key = [this._sql.epoch, cap.principalId, cap.id, command.operationId] as const,
         receipt = this._sql.read("operation_receipt", key, now).value;
       if (receipt) {
-        if (receipt.command !== canonical) throw new NativeAuthorityError("authority_operation_replay_conflict");
-        if (command.method === "refreshCodexAdmission") this._codex.fence(cap, command.args.handle, now);
+        this._validateReceipt(cap, command, receipt, canonical, now);
         return structuredClone(receipt.reply);
       }
       let reply: NativeReply;
       switch (command.method) {
         case "reserveApiUsage":
           reply = this._api.reserve(cap, command.args, now);
+          break;
+        case "recordTransportStarted":
+          this._requestForDispatch(cap, command.args.handle, command.args.provider, now);
+          this._paid.start(cap, command.args, now);
+          reply = this._api.start(cap, command.args, command.operationId, now);
           break;
         case "markApiDispatch":
           reply = this._api.dispatch(cap, command.args, now);
@@ -274,7 +303,12 @@ export class NativeAuthority {
           throw new NativeAuthorityError("invalid_authority_operation", 400);
       }
       const committed = JSON.parse(JSON.stringify(reply)) as NativeReply;
-      this._sql.write("operation_receipt", key, { command: canonical, reply: committed }, null, { scope: cap.keyId });
+      let codexAuthorization: NativeCodexAuthorization | undefined;
+      if (command.method === "refreshCodexAdmission" && committed.kind === "current")
+        codexAuthorization = this._codex.authorization(cap, command.args.handle, now);
+      this._sql.write("operation_receipt", key, { command: canonical, reply: committed, ...(codexAuthorization ? { codexAuthorization } : {}) }, null, {
+        scope: cap.keyId,
+      });
       return structuredClone(committed);
     });
   }

@@ -110,6 +110,7 @@ export type NativeAuthorityInitial = Readonly<{
   resetProofs: readonly NativeResetProof[];
 }>;
 export type NativeSemantic = "completed" | "incomplete" | "failed" | "cancelled";
+export type NativeCodexAuthorization = Readonly<{ account: CodexRoutingAccount; owner: NativeOwner }>;
 export type NativeRequest = Readonly<{
   handle: string;
   principalId: string;
@@ -127,7 +128,10 @@ export type NativeRequest = Readonly<{
   codexProof: CodexRoutingRowRevisions | null;
   ownerFence: NativeOwner | null;
   semantic: NativeSemantic | null;
+  providerObserved: boolean;
   delivery: "delivered" | "interrupted" | "unobserved" | null;
+  transport: Readonly<{ provider: ApiKeyUsageProvider; attemptHandle: string | null; operationId: string; startedAtMs: number }> | null;
+  responding: Readonly<{ provider: ApiKeyUsageProvider; attemptHandle: string | null }> | null;
   dispatch: Readonly<{ provider: ApiKeyUsageProvider; cancellationOwned: boolean; fetchStarted: boolean }> | null;
 }>;
 export type NativeAttempt = Readonly<{
@@ -170,13 +174,14 @@ export type NativeRows = {
   request_lifetime: NativeRequest;
   attempt_lifetime: NativeAttempt;
   cursor: NativeCursor;
-  operation_receipt: Readonly<{ command: string; reply: NativeReply }>;
+  operation_receipt: Readonly<{ command: string; reply: NativeReply; codexAuthorization?: NativeCodexAuthorization }>;
 };
 export type NativeTable = keyof NativeRows;
 export type NativeKey = readonly (Uint8Array | string | number | bigint | boolean)[];
 export type NativeRead<T> = Readonly<{ value: T | null; revision: string | null; versionstamp: string | null; expiresAtMs: number | null }>;
 export type NativeArguments = {
   reserveApiUsage: Readonly<{ requestId: string; route: string; model: string; stream: boolean; reasoning?: string | null }>;
+  recordTransportStarted: Readonly<{ handle: string; provider: ApiKeyUsageProvider; attemptHandle?: string }>;
   markApiDispatch: Readonly<{ handle: string; provider: ApiKeyUsageProvider }>;
   releaseApiUndispatched: Readonly<{ handle: string; reason: string }>;
   recordApiDispatchCancellation: Readonly<{ handle: string }>;
@@ -213,6 +218,7 @@ export type NativeArguments = {
   beginPaidKeyDeletion: Readonly<Record<string, never>>;
   recordSemanticTerminal: Readonly<{
     handle: string;
+    attemptHandle?: string;
     outcome: NativeSemantic;
     usage?: Pick<TerminalUsageRollupInput, "input_tokens" | "cached_input_tokens" | "output_tokens">;
   }>;
