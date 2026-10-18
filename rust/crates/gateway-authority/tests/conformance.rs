@@ -2,7 +2,6 @@ mod claude_cases;
 mod paid_control_cases;
 mod source_model_cases;
 mod support;
-use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
 use gateway_authority::paid::{
@@ -17,7 +16,7 @@ use gateway_authority::reset::{
 use gateway_authority::routing::RouteSelection;
 use gateway_authority::{DAY_MS, PAID_RETENTION_MS, QUOTA_RETENTION_MS, keys};
 use gateway_core::identity::{
-    ApiKeyId, CredentialVersion, PaidAttemptId, PoolVersionstamp, RequestId,
+    ApiKeyId, PaidAttemptId, PoolVersionstamp, RequestId,
 };
 use gateway_core::lifecycle::{BillingState, PaidTerminalState};
 use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
@@ -67,7 +66,7 @@ fn paid_reservation(
     input: &PaidRequest,
 ) -> gateway_authority::paid::PaidReservation {
     match run(reserve_paid(
-        &authority,
+        authority,
         input,
         &PaidAuthorization::DirectPaidModel,
         NOW,

@@ -271,6 +271,10 @@ fn source_stale_routes_remain_usable_without_invented_refresh_ttl() {
     store.seed(key, &raw);
     republish(&store);
     let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    assert_eq!(receipt.owner_id(),"fixture-owner");
+    assert_eq!(receipt.owner_epoch(),"fixture-epoch");
+    assert_eq!(receipt.configuration_generation(),"fixture-config-generation");
+    assert_eq!(receipt.credential_binding(),"fixture-surplus-binding");
     assert!(matches!(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
             .unwrap(),
