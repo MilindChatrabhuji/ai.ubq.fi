@@ -114,6 +114,55 @@ fn headers_require_actual_started_phase_and_are_consumed_once() {
 }
 
 #[test]
+fn codex_header_receipt_cannot_cross_original_requests_with_colliding_fixture_tokens() {
+    run(async {
+        // Independent authorities intentionally mint the same deterministic
+        // fixture tokens; the original request identity must still fence heads.
+        let mut sessions = Vec::new();
+        for id in ["codex-head-owner", "codex-head-other"] {
+            let store = Store::new();
+            seed_key(&store);
+            seed_pool(&store);
+            let host = Host::new(&store);
+            let session = RoutingSession::begin(
+                input(id, "gpt-test", &["codex"]),
+                store.clone(),
+                host,
+                store.clone(),
+                store.clone(),
+            )
+            .await
+            .unwrap();
+            let attempt = session.next_attempt().await.unwrap().unwrap();
+            assert_eq!(attempt.request.provider, UpstreamProvider::ChatgptCodex);
+            session.before_dispatch(&attempt).await.unwrap();
+            session.transport_started(&attempt).await.unwrap();
+            let observed = session.observe_response(&attempt, head(200)).await.unwrap();
+            sessions.push((session, attempt, observed, store));
+        }
+        let (other, other_attempt, other_head, other_store) = sessions.pop().unwrap();
+        let (owner, _owner_attempt, owner_head, owner_store) = sessions.pop().unwrap();
+        assert!(
+            other
+                .resolve_response(&other_attempt, owner_head, unknown(), None)
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            other
+                .resolve_response(&other_attempt, other_head, unknown(), None)
+                .await
+                .unwrap(),
+            ResponseDecision::Return
+        ));
+        owner.finish(TransportObservation::default()).await.unwrap();
+        other.finish(TransportObservation::default()).await.unwrap();
+        assert_eq!(window(&owner_store)["committed_requests"], 1);
+        assert_eq!(window(&other_store)["committed_requests"], 1);
+    });
+}
+
+#[test]
 fn workspace_continuation_keeps_encoded_body_attempt_and_single_claim() {
     run(async {
         let store = Store::new();
