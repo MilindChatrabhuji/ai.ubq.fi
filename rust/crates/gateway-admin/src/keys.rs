@@ -385,6 +385,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
             checks.push(store::check(&dk, dr.as_ref()));
         }
         let mut writes = Vec::new();
+        let mut deletion_checks = None;
         let action = match operation {
             AdminOperation::ApiKeysDelete => {
                 if record.policy.revoked_at_ms.is_none() {
@@ -403,11 +404,18 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                         "paid_fallback_billing_unavailable",
                     ));
                 }
+                deletion_checks = Some(prepared.clone());
                 checks.extend(prepared);
                 writes.extend([
                     RecordMutation::Delete { key: ik.clone() },
                     RecordMutation::Delete { key: hk.clone() },
                     RecordMutation::Delete { key: pk.clone() },
+                    RecordMutation::Delete {
+                        key: store::key(json!(["ubq_ai", "api_keys", "usage", id])),
+                    },
+                    RecordMutation::Delete {
+                        key: store::key(json!(["ubq_ai", "api_keys", "usage_daily", id])),
+                    },
                 ]);
                 "delete"
             }
@@ -510,16 +518,26 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
             &mut writes,
         )?;
         if !store::commit(self.store, checks, writes).await? {
+            if let Some(prepared) = &deletion_checks {
+                let _ = self.capabilities.abort_key_deletion(id, prepared).await;
+            }
             return Err(conflict("API key was modified concurrently; retry"));
         }
+        if let Some(prepared) = &deletion_checks {
+            self.capabilities.finish_key_deletion(id, prepared).await?;
+        }
         let body = match operation {
-            AdminOperation::ApiKeysDelete => json!({"id":id,"deleted":true}),
+            AdminOperation::ApiKeysDelete => json!({"id":id}),
             AdminOperation::ApiKeysRevoke | AdminOperation::ApiKeysUnrevoke => {
                 json!({"id":id,"revoked_at_ms":record.policy.revoked_at_ms})
             }
             _ => public_record(&record),
         };
-        Ok(AuthResponse::json(200, body))
+        let mut response = AuthResponse::json(200, body);
+        response
+            .headers
+            .insert("x-uos-upstream".into(), "chatgpt_codex".into());
+        Ok(response)
     }
 }
 

@@ -24,12 +24,32 @@ pub trait AdminHost {
     ) -> impl Future<Output = Result<AuthResponse, GatewayError>>;
     /// Claim the common paid-deletion guard before inspecting unsettled billing,
     /// and return its new nonempty revision plus every required ledger fence.
-    /// Refuse pending/unknown billing and release only the caller's claim on failure.
+    /// Refuse pending/unknown billing. Ordinary guards persist; only the source
+    /// local-development owner claim may release after a proven pre-delete refusal.
     /// The final key/hash/policy/audit transaction checks these exact revisions.
     fn prepare_key_deletion(
         &self,
         key_id: &str,
     ) -> impl Future<Output = Result<Vec<gateway_core::state::RevisionCheck>, GatewayError>>;
+    /// After the ID/hash/policy/audit CAS committed, remove source-owned historical
+    /// logs/counters under these exact guard fences and complete the local claim.
+    /// Failures remain failures after deletion; no fabricated success or new retry lifecycle.
+    fn finish_key_deletion(
+        &self,
+        _key_id: &str,
+        _prepared_checks: &[gateway_core::state::RevisionCheck],
+    ) -> impl Future<Output = Result<(), GatewayError>> {
+        std::future::ready(Err(missing_capability(AdminOperation::ApiKeysDelete)))
+    }
+    /// Called only after a known ID CAS conflict, never after an unknown commit.
+    /// Ordinary guards persist; local claims release only with fresh revoked-ID proof.
+    fn abort_key_deletion(
+        &self,
+        _key_id: &str,
+        _prepared_checks: &[gateway_core::state::RevisionCheck],
+    ) -> impl Future<Output = Result<(), GatewayError>> {
+        std::future::ready(Err(missing_capability(AdminOperation::ApiKeysDelete)))
+    }
     /// Source pricing/exposure discovery belongs before the atomic key-policy write, outside the transaction.
     fn paid_key_policy(
         &self,

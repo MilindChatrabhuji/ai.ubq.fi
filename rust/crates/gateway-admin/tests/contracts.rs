@@ -569,11 +569,7 @@ impl AdminHost for ClaimedDeletion<'_> {
         let key = deletion_key(id);
         let before = self.store.read(&key).await?;
         let revision = gateway_auth::crypto::uuid_from_random(&self.host.random_bytes(16)?)?;
-        let guard = StoredRecord::json(
-            &revision,
-            json!({"v":1,"owner":"fixture-claim","expires_at_ms":1_300_000}),
-            Some(1_300_000),
-        );
+        let guard = StoredRecord::json(&revision, json!({"created_at_ms":1_000_000}), None);
         let transition = AtomicTransition {
             checks: vec![gateway_auth::store::check(&key, before.as_ref())],
             mutations: vec![RecordMutation::Put {
@@ -597,6 +593,229 @@ impl AdminHost for ClaimedDeletion<'_> {
             expected_revision: Some(revision),
         }])
     }
+    async fn finish_key_deletion(
+        &self,
+        id: &str,
+        prepared: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        let key = gateway_auth::api_keys::id_key(id);
+        let row = self.store.read(&key).await?;
+        assert!(
+            row.is_none(),
+            "Finish must run only after the committed ID deletion"
+        );
+        let mut checks = prepared.to_vec();
+        checks.push(gateway_auth::store::check(&key, row.as_ref()));
+        let history = gateway_auth::store::key(json!([
+            "uos_ai",
+            "paid_fallback",
+            "ledger",
+            id,
+            1,
+            "fixture-history"
+        ]));
+        let result = self
+            .store
+            .commit(AtomicTransition {
+                checks,
+                mutations: vec![RecordMutation::Delete { key: history }],
+            })
+            .await?;
+        if result != CommitOutcome::Committed {
+            return Err(gateway_auth::conflict("Fixture cleanup ownership changed"));
+        }
+        Ok(())
+    }
+    async fn abort_key_deletion(
+        &self,
+        id: &str,
+        prepared: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        let row = self
+            .store
+            .read(&gateway_auth::api_keys::id_key(id))
+            .await?
+            .unwrap();
+        let record: ApiKeyRecord = gateway_auth::store::decode(Some(&row), 1_000_000)?.unwrap();
+        assert!(record.policy.revoked_at_ms.is_some());
+        assert!(prepared.iter().any(|check| check.key == deletion_key(id)));
+        // Source ordinary guards persist; this fixture never claims the special local key.
+        Ok(())
+    }
+}
+
+struct DeletionHooks<'a> {
+    inner: ClaimedDeletion<'a>,
+    fail_finish: Cell<bool>,
+    conflict: bool,
+    finishes: Cell<usize>,
+    aborts: Cell<usize>,
+}
+impl AdminHost for DeletionHooks<'_> {
+    async fn execute(
+        &self,
+        operation: AdminOperation,
+        _: AdminInput,
+    ) -> Result<AuthResponse, GatewayError> {
+        Err(missing_capability(operation))
+    }
+    async fn paid_key_policy(&self, _: &Value) -> Result<PaidKeyFields, GatewayError> {
+        Err(missing_capability(AdminOperation::ApiKeysUpdate))
+    }
+    async fn prepare_key_deletion(&self, id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
+        let checks = self.inner.prepare_key_deletion(id).await?;
+        if self.conflict {
+            let key = gateway_auth::api_keys::id_key(id);
+            let mut row = self.inner.store.read(&key).await?.unwrap();
+            row.revision = "concurrent-key-writer".into();
+            self.inner.store.rows.borrow_mut().insert(key.0, row);
+        }
+        Ok(checks)
+    }
+    async fn finish_key_deletion(
+        &self,
+        id: &str,
+        checks: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        self.finishes.set(self.finishes.get() + 1);
+        if self.fail_finish.replace(false) {
+            return Err(GatewayError::new(
+                500,
+                "Fixture post-cleanup failed",
+                Some("fixture_cleanup_failed"),
+            ));
+        }
+        self.inner.finish_key_deletion(id, checks).await
+    }
+    async fn abort_key_deletion(
+        &self,
+        id: &str,
+        checks: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        self.aborts.set(self.aborts.get() + 1);
+        self.inner.abort_key_deletion(id, checks).await
+    }
+}
+
+#[test]
+fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() {
+    run(async {
+        for (fail_finish, conflict) in [(false, false), (true, false), (false, true)] {
+            let store = Store::default();
+            let host = Host::default();
+            let caps = DeletionHooks {
+                inner: ClaimedDeletion {
+                    store: &store,
+                    host: &host,
+                },
+                fail_finish: Cell::new(fail_finish),
+                conflict,
+                finishes: Cell::new(0),
+                aborts: Cell::new(0),
+            };
+            let service = KeyService {
+                store: &store,
+                host: &host,
+                capabilities: &caps,
+                release: "fixture",
+            };
+            let created = service
+                .create(&json!({"name":"Cleanup"}), &actor(), "create")
+                .await
+                .unwrap();
+            let id = created.body["id"].as_str().unwrap();
+            service
+                .mutate(
+                    AdminOperation::ApiKeysRevoke,
+                    &json!({"id":id}),
+                    &actor(),
+                    "revoke",
+                )
+                .await
+                .unwrap();
+            let legacy = gateway_auth::store::key(json!(["ubq_ai", "api_keys", "usage", id]));
+            let daily = gateway_auth::store::key(json!(["ubq_ai", "api_keys", "usage_daily", id]));
+            let history = gateway_auth::store::key(json!([
+                "uos_ai",
+                "paid_fallback",
+                "ledger",
+                id,
+                1,
+                "fixture-history"
+            ]));
+            for key in [&legacy, &daily, &history] {
+                store.rows.borrow_mut().insert(
+                    key.0.clone(),
+                    StoredRecord::json("history", json!({"billing_status":"settled"}), None),
+                );
+            }
+            let result = service
+                .mutate(
+                    AdminOperation::ApiKeysDelete,
+                    &json!({"id":id}),
+                    &actor(),
+                    "delete",
+                )
+                .await;
+            let guard = store.read(&deletion_key(id)).await.unwrap().unwrap();
+            assert_eq!(guard.expires_at_ms, None);
+            if conflict {
+                assert_eq!(result.unwrap_err().status, 409);
+                assert_eq!(caps.aborts.get(), 1);
+                assert_eq!(caps.finishes.get(), 0);
+                assert!(
+                    store
+                        .read(&gateway_auth::api_keys::id_key(id))
+                        .await
+                        .unwrap()
+                        .is_some()
+                );
+                assert!(store.read(&legacy).await.unwrap().is_some());
+                assert!(store.read(&history).await.unwrap().is_some());
+                continue;
+            }
+            assert!(
+                store
+                    .read(&gateway_auth::api_keys::id_key(id))
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                store.read(&legacy).await.unwrap().is_none()
+                    && store.read(&daily).await.unwrap().is_none()
+            );
+            assert_eq!(caps.aborts.get(), 0);
+            assert_eq!(caps.finishes.get(), 1);
+            if fail_finish {
+                assert_eq!(result.unwrap_err().status, 500);
+                assert!(store.read(&history).await.unwrap().is_some());
+                assert_eq!(
+                    service
+                        .mutate(
+                            AdminOperation::ApiKeysDelete,
+                            &json!({"id":id}),
+                            &actor(),
+                            "retry"
+                        )
+                        .await
+                        .unwrap_err()
+                        .status,
+                    404
+                );
+            } else {
+                assert_eq!(result.unwrap().body, json!({"id":id}));
+            }
+            let checks = vec![RevisionCheck {
+                key: deletion_key(id),
+                expected_revision: Some(guard.revision.clone()),
+            }];
+            caps.finish_key_deletion(id, &checks).await.unwrap();
+            caps.finish_key_deletion(id, &checks).await.unwrap();
+            assert!(store.read(&history).await.unwrap().is_none());
+            assert_eq!(store.read(&deletion_key(id)).await.unwrap().unwrap(), guard);
+        }
+    });
 }
 
 struct PaidRaceStore<'a> {
