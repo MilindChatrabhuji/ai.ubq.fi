@@ -390,3 +390,40 @@ pub fn verify_public_key_signature(
     let key: Value = serde_cbor_2::from_slice(encoded).map_err(WebauthnError::ParseCBORFailure)?;
     COSEKey::try_from(&key)?.verify_signature(signature, data)
 }
+
+// Exact pinned source manufacturer catalog, including FIDO conformance devices.
+pub(crate) fn valid_tpm_manufacturer(value: &str) -> bool {
+    matches!(value,
+        "id:414D4400"
+        | "id:414E5400"
+        | "id:41544D4C"
+        | "id:4252434D"
+        | "id:4353434F"
+        | "id:464C5953"
+        | "id:524F4343"
+        | "id:474F4F47"
+        | "id:48504900"
+        | "id:48504500"
+        | "id:48495349"
+        | "id:49424d00"
+        | "id:49424D00"
+        | "id:49465800"
+        | "id:494E5443"
+        | "id:4C454E00"
+        | "id:4D534654"
+        | "id:4E534D20"
+        | "id:4E545A00"
+        | "id:4E534700"
+        | "id:4E544300"
+        | "id:51434F4D"
+        | "id:534D534E"
+        | "id:53454345"
+        | "id:534E5300"
+        | "id:534D5343"
+        | "id:53544D20"
+        | "id:54584E00"
+        | "id:57454300"
+        | "id:5345414C"
+        | "id:FFFFF1D0"
+    )
+}

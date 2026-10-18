@@ -224,7 +224,7 @@ index 000000000..b85d6408d
 +w1IdYIg2Wxg7yHcQZemFQg==
 +-----END CERTIFICATE-----
 diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
-index 8e5d9efa7..be90a0e6d 100644
+index 8e5d9efa7..7af173394 100644
 --- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
 +++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
 @@ -44,6 +44,7 @@ pub struct FidoGenCeAaguid;
@@ -387,7 +387,7 @@ index 8e5d9efa7..be90a0e6d 100644
  
      // If aik_cert contains an extension with OID 1 3 6 1 4 1 45724 1 1 4 (id-fido-gen-ce-aaguid)
      // verify that the value of this extension matches the aaguid in authenticatorData.
-@@ -1046,6 +1106,75 @@ pub(crate) fn assert_tpm_attest_req(x509: &x509::Certificate) -> Result<(), Weba
+@@ -1046,6 +1106,74 @@ pub(crate) fn assert_tpm_attest_req(x509: &x509::Certificate) -> Result<(), Weba
      Ok(())
  }
  
@@ -425,12 +425,11 @@ index 8e5d9efa7..be90a0e6d 100644
 +        .map(|(_, extn)| extn)
 +        .ok_or(WebauthnError::AttestationCertificateRequirementsNotMet)?;
 +
-+    let _tpm_san_data = TpmSanData::try_from(&subject_alt_name)
-+        .and_then(|san_data| {
-+            tpm_device_attribute_parser(san_data.manufacturer.as_bytes())
-+                .map_err(|_| WebauthnError::ParseNOMFailure)
-+        })
-+        .and_then(|(_, manufacturer_bytes)| TpmVendor::try_from(manufacturer_bytes))?;
++    let tpm_san_data = TpmSanData::try_from(&subject_alt_name)?;
++    if !crate::source_compat::valid_tpm_manufacturer(tpm_san_data.manufacturer)
++        || tpm_san_data._model.is_empty() || tpm_san_data._version.is_empty() {
++        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
++    }
 +
 +    // The Extended Key Usage extension MUST contain the "joint-iso-itu-t(2) internationalorganizations(23) 133 tcg-kp(8) tcg-kp-AIKCertificate(3)" OID.
 +    let extended_key_usage = x509_cert
@@ -463,7 +462,7 @@ index 8e5d9efa7..be90a0e6d 100644
  pub(crate) fn verify_apple_anonymous_attestation(
      acd: &AttestedCredentialData,
      att_obj: &AttestationObject<Registration>,
-@@ -1228,6 +1357,110 @@ pub(crate) fn verify_android_key_attestation(
+@@ -1228,6 +1356,110 @@ pub(crate) fn verify_android_key_attestation(
      Ok((ParsedAttestationData::Basic(arr_x509), meta))
  }
  
@@ -575,7 +574,7 @@ index 8e5d9efa7..be90a0e6d 100644
  pub fn verify_attestation_ca_chain<'a>(
      att_data: &'_ ParsedAttestationData,
 diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
-index 5d638f76e..d91455753 100644
+index 5d638f76e..6ef90a686 100644
 --- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
 +++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
 @@ -22,10 +22,10 @@ use crypto_glue::{
@@ -610,7 +609,26 @@ index 5d638f76e..d91455753 100644
  }
  
  pub(crate) struct TpmSanData<'a> {
-@@ -134,21 +131,27 @@ impl<'a> TryFrom<&'a SubjectAltName> for TpmSanData<'a> {
+@@ -123,6 +120,18 @@ impl<'a> TryFrom<&'a SubjectAltName> for TpmSanData<'a> {
+                             builder
+                         }
+                     }
++                    GeneralName::DirectoryName(name) => {
++                        name.0.iter().flat_map(|rdn| rdn.0.iter()).try_fold(builder, |builder, attribute| {
++                            let attr_value = str::from_utf8(attribute.value.value())?;
++                            Ok::<_, std::str::Utf8Error>(if attribute.oid == TCG_AT_TPM_MANUFACTURER_RAW {
++                                builder.manufacturer(attr_value)
++                            } else if attribute.oid == TCG_AT_TPM_MODEL_RAW {
++                                builder.model(attr_value)
++                            } else if attribute.oid == TCG_AT_TPM_VERSION_RAW {
++                                builder.version(attr_value)
++                            } else { builder })
++                        })?
++                    }
+                     _ => builder,
+                 };
+                 Ok(next)
+@@ -134,21 +143,27 @@ impl<'a> TryFrom<&'a SubjectAltName> for TpmSanData<'a> {
  
  pub(crate) fn only_hash_from_type(
      alg: COSEAlgorithm,
@@ -648,7 +666,7 @@ index 5d638f76e..d91455753 100644
  impl TryFrom<&serde_cbor_2::Value> for COSEKey {
      type Error = WebauthnError;
      fn try_from(d: &serde_cbor_2::Value) -> Result<COSEKey, Self::Error> {
-@@ -202,9 +205,7 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+@@ -202,9 +217,7 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
          // match key_type {
          // 1 => {} OctetKey
          if key_type == (COSEKeyTypeId::EC_EC2 as i128)
@@ -659,7 +677,7 @@ index 5d638f76e..d91455753 100644
          {
              // This indicates this is an EC2 key consisting of crv, x, y, which are stored in
              // crv (-1), x (-2) and y (-3)
-@@ -250,14 +251,15 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+@@ -250,14 +263,15 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
              cose_key.validate()?;
              // return it
              Ok(cose_key)
@@ -678,7 +696,7 @@ index 5d638f76e..d91455753 100644
  
              let n_value = m
                  .get(&serde_cbor_2::Value::Integer(-1))
-@@ -269,13 +271,12 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
+@@ -269,13 +283,12 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
                  .ok_or(WebauthnError::COSEKeyInvalidCBORValue)?;
              let e = cbor_try_bytes!(e_value)?;
  
@@ -695,7 +713,7 @@ index 5d638f76e..d91455753 100644
  
              // Right, now build the struct.
              let cose_key = COSEKey {
-@@ -417,21 +418,19 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
+@@ -417,21 +430,19 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
                  }))
              }
  
@@ -729,7 +747,7 @@ index 5d638f76e..d91455753 100644
          }?;
  
          Ok(COSEKey { type_: alg, key })
-@@ -441,9 +440,9 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
+@@ -441,9 +452,9 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
  enum COSEKeyPublic {
      EcdsaP256(EcdsaP256PublicKey),
      EcdsaP384(EcdsaP384PublicKey),
@@ -741,7 +759,7 @@ index 5d638f76e..d91455753 100644
      // Ed448(),
  }
  
-@@ -487,7 +486,7 @@ impl COSEKey {
+@@ -487,7 +498,7 @@ impl COSEKey {
                  }
                  ECDSACurve::SECP521R1 => {
                      ecdsa_p521::from_coords_raw(ec2k.x.as_ref(), ec2k.y.as_ref())
@@ -750,7 +768,7 @@ index 5d638f76e..d91455753 100644
                          .ok_or(WebauthnError::EcdsaPointInvalid)
                  }
              },
-@@ -499,25 +498,12 @@ impl COSEKey {
+@@ -499,25 +510,12 @@ impl COSEKey {
                      .map(COSEKeyPublic::RsaS256)
                      .map_err(|_err| WebauthnError::RsaParametersInvalid)
              }
@@ -782,7 +800,7 @@ index 5d638f76e..d91455753 100644
              }
          }
      }
-@@ -535,31 +521,44 @@ impl COSEKey {
+@@ -535,31 +533,44 @@ impl COSEKey {
                  let signature = EcdsaP256Signature::from_der(signature)
                      .map_err(|_err| WebauthnError::SignatureInvalid)?;
                  let verifier = EcdsaP256VerifyingKey::from(&pub_key);
@@ -885,10 +903,10 @@ index 049733ca9..5f151ece5 100644
  
 diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs
 new file mode 100644
-index 000000000..b1e8e1549
+index 000000000..437e91135
 --- /dev/null
 +++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,429 @@
 +//! Stateless SimpleWebAuthn 13.2.2 attestation policy. Ceremony, current-role UV,
 +//! original COSE bytes and persistence remain owned by the gateway adapter.
 +//! Uses the maintained attestation/DER parsers and RustCrypto primitives; no
@@ -1280,4 +1298,41 @@ index 000000000..b1e8e1549
 +) -> Result<bool, WebauthnError> {
 +    let key: Value = serde_cbor_2::from_slice(encoded).map_err(WebauthnError::ParseCBORFailure)?;
 +    COSEKey::try_from(&key)?.verify_signature(signature, data)
++}
++
++// Exact pinned source manufacturer catalog, including FIDO conformance devices.
++pub(crate) fn valid_tpm_manufacturer(value: &str) -> bool {
++    matches!(value,
++        "id:414D4400"
++        | "id:414E5400"
++        | "id:41544D4C"
++        | "id:4252434D"
++        | "id:4353434F"
++        | "id:464C5953"
++        | "id:524F4343"
++        | "id:474F4F47"
++        | "id:48504900"
++        | "id:48504500"
++        | "id:48495349"
++        | "id:49424d00"
++        | "id:49424D00"
++        | "id:49465800"
++        | "id:494E5443"
++        | "id:4C454E00"
++        | "id:4D534654"
++        | "id:4E534D20"
++        | "id:4E545A00"
++        | "id:4E534700"
++        | "id:4E544300"
++        | "id:51434F4D"
++        | "id:534D534E"
++        | "id:53454345"
++        | "id:534E5300"
++        | "id:534D5343"
++        | "id:53544D20"
++        | "id:54584E00"
++        | "id:57454300"
++        | "id:5345414C"
++        | "id:FFFFF1D0"
++    )
 +}

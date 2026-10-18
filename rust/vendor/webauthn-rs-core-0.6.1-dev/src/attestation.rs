@@ -1140,12 +1140,11 @@ pub(crate) fn assert_source_tpm_attest_req(x509: &x509::Certificate) -> Result<(
         .map(|(_, extn)| extn)
         .ok_or(WebauthnError::AttestationCertificateRequirementsNotMet)?;
 
-    let _tpm_san_data = TpmSanData::try_from(&subject_alt_name)
-        .and_then(|san_data| {
-            tpm_device_attribute_parser(san_data.manufacturer.as_bytes())
-                .map_err(|_| WebauthnError::ParseNOMFailure)
-        })
-        .and_then(|(_, manufacturer_bytes)| TpmVendor::try_from(manufacturer_bytes))?;
+    let tpm_san_data = TpmSanData::try_from(&subject_alt_name)?;
+    if !crate::source_compat::valid_tpm_manufacturer(tpm_san_data.manufacturer)
+        || tpm_san_data._model.is_empty() || tpm_san_data._version.is_empty() {
+        return Err(WebauthnError::AttestationCertificateRequirementsNotMet);
+    }
 
     // The Extended Key Usage extension MUST contain the "joint-iso-itu-t(2) internationalorganizations(23) 133 tcg-kp(8) tcg-kp-AIKCertificate(3)" OID.
     let extended_key_usage = x509_cert

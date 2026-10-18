@@ -120,6 +120,18 @@ impl<'a> TryFrom<&'a SubjectAltName> for TpmSanData<'a> {
                             builder
                         }
                     }
+                    GeneralName::DirectoryName(name) => {
+                        name.0.iter().flat_map(|rdn| rdn.0.iter()).try_fold(builder, |builder, attribute| {
+                            let attr_value = str::from_utf8(attribute.value.value())?;
+                            Ok::<_, std::str::Utf8Error>(if attribute.oid == TCG_AT_TPM_MANUFACTURER_RAW {
+                                builder.manufacturer(attr_value)
+                            } else if attribute.oid == TCG_AT_TPM_MODEL_RAW {
+                                builder.model(attr_value)
+                            } else if attribute.oid == TCG_AT_TPM_VERSION_RAW {
+                                builder.version(attr_value)
+                            } else { builder })
+                        })?
+                    }
                     _ => builder,
                 };
                 Ok(next)
