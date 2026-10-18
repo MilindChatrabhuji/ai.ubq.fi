@@ -10,6 +10,7 @@ use gateway_core::{
     identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
     state::{AuthorityStore, RecordKey},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
@@ -24,6 +25,18 @@ pub struct CodexNativeOwner {
     pub generation_hash: String,
     pub native_refreshed_at: Option<String>,
     pub external_user_id: Option<String>,
+    pub managed_source: Option<ManagedNativeSource>,
+}
+
+pub const MANAGED_NATIVE_SOURCE_VERSION: u8 = 2;
+
+/// Physical managed credentials remain native. This records only their
+/// authenticated generation; the containing row holds an access projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedNativeSource {
+    pub v: u8,
+    pub generation_hash: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,6 +111,9 @@ impl CodexSourceAccount {
             if let Some(user) = &owner.external_user_id {
                 native["auth_mode"] = json!("chatgptAuthTokens");
                 native["chatgpt_user_id"] = json!(user);
+            }
+            if let Some(managed) = &owner.managed_source {
+                native["managed_source"] = json!(managed);
             }
             value["native_owner"] = native;
         }
@@ -205,11 +221,25 @@ fn parse_owner(value: Option<&Value>) -> Result<Option<CodexNativeOwner>, Gatewa
         ),
         Some(_) => return Err(owner_error()),
     };
+    let managed_source = value
+        .get("managed_source")
+        .map(|value| {
+            serde_json::from_value::<ManagedNativeSource>(value.clone()).map_err(|_| owner_error())
+        })
+        .transpose()?;
+    if managed_source.as_ref().is_some_and(|managed| {
+        managed.v != MANAGED_NATIVE_SOURCE_VERSION
+            || !valid_native_generation(&managed.generation_hash)
+            || external_user_id.is_some()
+    }) {
+        return Err(owner_error());
+    }
     Ok(Some(CodexNativeOwner {
         codex_home: home.to_owned(),
         generation_hash: generation.to_owned(),
         native_refreshed_at: string(value.get("native_refreshed_at")).map(str::to_owned),
         external_user_id,
+        managed_source,
     }))
 }
 
@@ -231,7 +261,15 @@ fn parse_account(value: &Value) -> Result<Option<CodexSourceAccount>, GatewayErr
     else {
         return Ok(None);
     };
-    let refresh = if let Some(user) = owner
+    let refresh = if owner
+        .as_ref()
+        .is_some_and(|owner| owner.managed_source.is_some())
+    {
+        if value.get("refresh_token").and_then(Value::as_str) != Some("") {
+            return Ok(None);
+        }
+        ""
+    } else if let Some(user) = owner
         .as_ref()
         .and_then(|owner| owner.external_user_id.as_ref())
     {
@@ -254,6 +292,13 @@ fn parse_account(value: &Value) -> Result<Option<CodexSourceAccount>, GatewayErr
         updated_at_ms: updated,
         native_owner: owner,
     }))
+}
+
+pub fn valid_native_generation(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 /// Matches parseCodexAuthPool: malformed ownership is an error; other invalid
