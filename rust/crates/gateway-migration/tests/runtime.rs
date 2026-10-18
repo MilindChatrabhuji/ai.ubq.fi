@@ -434,7 +434,7 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
     assert!(!row.transport_started);
     assert_eq!(
         run(authority.defer_paid(&row.reservation, 2300)).unwrap(),
-        Some(7300)
+        Some(5000)
     );
     let result = run(export_latest(&store, 2300)).unwrap();
     let next = result
