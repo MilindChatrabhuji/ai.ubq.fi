@@ -147,7 +147,9 @@ export const relayChatCompletionStream = (
     pendingCancelled = true;
     cancelPending?.(reason);
   };
-  const cancelPendingOnDownstreamAbort = (): void => cancelPendingOnce(downstreamSignal.reason);
+  const cancelPendingOnDownstreamAbort = (): void => {
+    cancelPendingOnce(downstreamSignal.reason);
+  };
   if (downstreamSignal.aborted) cancelPendingOnDownstreamAbort();
   else downstreamSignal.addEventListener("abort", cancelPendingOnDownstreamAbort, { once: true });
   const cancelledResponses = new WeakSet<Response>();
@@ -155,10 +157,9 @@ export const relayChatCompletionStream = (
     if (cancelledResponses.has(response)) return;
     cancelledResponses.add(response);
     const body = response.body;
-    if (body && !body.locked) {
-      const reason = cancellationReason === undefined ? downstreamSignal.reason : cancellationReason;
-      void body.cancel(reason).catch(() => {});
-    }
+    if (!body || body.locked) return;
+    const reason = cancellationReason === undefined ? downstreamSignal.reason : cancellationReason;
+    void body.cancel(reason).catch(() => {});
   };
 
   const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
@@ -399,9 +400,13 @@ export const relayResponsesStream = (
   const cancelPendingOnce = (reason?: unknown): void => {
     if (pendingCancelled) return;
     pendingCancelled = true;
-    cancelPending?.(reason);
+    if (cancelPending !== undefined) {
+      cancelPending(reason);
+    }
   };
-  const cancelPendingOnDownstreamAbort = (): void => cancelPendingOnce(downstreamSignal.reason);
+  const cancelPendingOnDownstreamAbort = (): void => {
+    cancelPendingOnce(downstreamSignal.reason);
+  };
   if (downstreamSignal.aborted) cancelPendingOnDownstreamAbort();
   else downstreamSignal.addEventListener("abort", cancelPendingOnDownstreamAbort, { once: true });
   const cancelledResponses = new WeakSet<Response>();
