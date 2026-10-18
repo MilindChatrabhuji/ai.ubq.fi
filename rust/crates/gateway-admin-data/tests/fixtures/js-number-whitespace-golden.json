@@ -1,0 +1,114 @@
+{
+  "source": "ECMAScript Number source primitive",
+  "runtime": "Bun 1.4.0",
+  "cases": [
+    {
+      "name": "feff_empty",
+      "input": "﻿",
+      "expected": {
+        "kind": "finite",
+        "value": 0
+      }
+    },
+    {
+      "name": "feff_decimal",
+      "input": "﻿16﻿",
+      "expected": {
+        "kind": "finite",
+        "value": 16
+      }
+    },
+    {
+      "name": "feff_radix",
+      "input": " ﻿0x10﻿ ",
+      "expected": {
+        "kind": "finite",
+        "value": 16
+      }
+    },
+    {
+      "name": "nel_empty",
+      "input": "",
+      "expected": {
+        "kind": "nan"
+      }
+    },
+    {
+      "name": "nel_decimal",
+      "input": "16",
+      "expected": {
+        "kind": "nan"
+      }
+    },
+    {
+      "name": "ascii_whitespace",
+      "input": " \t\r\n16 \t",
+      "expected": {
+        "kind": "finite",
+        "value": 16
+      }
+    },
+    {
+      "name": "feff_array",
+      "input": ["﻿16﻿"],
+      "expected": {
+        "kind": "finite",
+        "value": 16
+      }
+    },
+    {
+      "name": "nel_array",
+      "input": ["16"],
+      "expected": {
+        "kind": "nan"
+      }
+    },
+    {
+      "name": "array_zero",
+      "input": [],
+      "expected": {
+        "kind": "finite",
+        "value": 0
+      }
+    },
+    {
+      "name": "boolean",
+      "input": true,
+      "expected": {
+        "kind": "finite",
+        "value": 1
+      }
+    },
+    {
+      "name": "null",
+      "input": null,
+      "expected": {
+        "kind": "finite",
+        "value": 0
+      }
+    },
+    {
+      "name": "binary",
+      "input": "0b10000",
+      "expected": {
+        "kind": "finite",
+        "value": 16
+      }
+    },
+    {
+      "name": "octal",
+      "input": "0o20",
+      "expected": {
+        "kind": "finite",
+        "value": 16
+      }
+    },
+    {
+      "name": "invalid",
+      "input": "16no",
+      "expected": {
+        "kind": "nan"
+      }
+    }
+  ]
+}

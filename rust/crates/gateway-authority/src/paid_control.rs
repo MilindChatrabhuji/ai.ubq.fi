@@ -113,6 +113,25 @@ pub struct PaidRoutingReceipt {
     pub(crate) request: PaidRequest,
     pub(crate) context: PaidRequestContext,
     pub(crate) checks: Vec<RevisionCheck>,
+    owner_id: String,
+    owner_epoch: String,
+    configuration_generation: String,
+    credential_binding: String,
+}
+
+impl PaidRoutingReceipt {
+    pub fn owner_id(&self) -> &str {
+        &self.owner_id
+    }
+    pub fn owner_epoch(&self) -> &str {
+        &self.owner_epoch
+    }
+    pub fn configuration_generation(&self) -> &str {
+        &self.configuration_generation
+    }
+    pub fn credential_binding(&self) -> &str {
+        &self.credential_binding
+    }
 }
 
 impl std::fmt::Debug for PaidRoutingReceipt {
@@ -336,11 +355,19 @@ async fn current_projection<S: AuthorityStore, I: TokenSource>(
     })
 }
 
+struct RouteView {
+    policy: PaidRoutingPolicy,
+    owner_id: String,
+    owner_epoch: String,
+    configuration_generation: String,
+    credential_binding: String,
+}
+
 async fn route_current<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     request: &PaidRequest,
     context: &PaidRequestContext,
-) -> Result<PaidRoutingPolicy, GatewayError> {
+) -> Result<RouteView, GatewayError> {
     text(&context.original_model)?;
     if context.body["model"].as_str() != Some(context.original_model.as_str()) {
         return Err(control_error(
@@ -450,7 +477,18 @@ async fn route_current<S: AuthorityStore, I: TokenSource>(
             "The exact source endpoint/tools/synthetic plan does not permit this paid provider.",
         ));
     }
-    Ok(projection.policy)
+    let credential_binding = match request.provider {
+        PaidProvider::Surplus => config.surplus_binding,
+        PaidProvider::Metered => config.openlux_binding,
+    }
+    .ok_or_else(|| control_error("Selected paid credential binding is missing."))?;
+    Ok(RouteView {
+        policy: projection.policy,
+        owner_id: config.owner_id,
+        owner_epoch: config.owner_epoch,
+        configuration_generation: config.generation,
+        credential_binding,
+    })
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -464,11 +502,15 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(self.fresh_time(now)?)?;
             let _ = route_current(&mut tx, request, context).await?;
             tx.now = self.fresh_time(tx.now)?;
-            let _ = route_current(&mut tx, request, context).await?;
+            let route = route_current(&mut tx, request, context).await?;
             let receipt = PaidRoutingReceipt {
                 request: request.clone(),
                 context: context.clone(),
                 checks: tx.checks(),
+                owner_id: route.owner_id,
+                owner_epoch: route.owner_epoch,
+                configuration_generation: route.configuration_generation,
+                credential_binding: route.credential_binding,
             };
             if tx.commit().await? {
                 return Ok(receipt);
@@ -500,6 +542,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         }
         let _ = route_current(tx, request, &receipt.context).await?;
         tx.now = self.fresh_time(tx.now)?;
-        route_current(tx, request, &receipt.context).await
+        let route = route_current(tx, request, &receipt.context).await?;
+        if route.owner_id != receipt.owner_id
+            || route.owner_epoch != receipt.owner_epoch
+            || route.configuration_generation != receipt.configuration_generation
+            || route.credential_binding != receipt.credential_binding
+        {
+            return Err(control_error("Paid receipt credential custody changed."));
+        }
+        Ok(route.policy)
     }
 }

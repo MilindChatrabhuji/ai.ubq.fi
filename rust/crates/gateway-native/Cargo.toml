@@ -8,12 +8,16 @@ publish.workspace = true
 [dependencies]
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
+gateway-authority = { path = "../gateway-authority" }
 serde.workspace = true
 serde_json.workspace = true
 time = { version = "=0.3.44", features = ["parsing", "formatting"] }
 
 [target.'cfg(unix)'.dependencies]
 tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
+socket2 = "=0.6.5"
+futures-executor = "=0.3.34"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 
 [lints]
 workspace = true
