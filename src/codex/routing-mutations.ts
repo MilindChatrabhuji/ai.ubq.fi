@@ -1,40 +1,29 @@
 import type { AtomicOperation, Kv, KvEntryMaybe, KvKey } from "#kv";
 // Codex routing account mutations and probe claiming, split out of src/codex_account_routing.ts.
 
+import * as routingDecisions from "../authority/native-codex-mutations.ts";
+import { nativeCodexAccountMetadata } from "./routing-state.ts";
 import { getKv } from "../kv.ts";
 import { isRecord } from "../utils.ts";
 import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_HALF_OPEN_LEASE_MS,
-  CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
   type CodexAccountRoutingState,
   type CodexRoutingSlot,
   type RoutingAccount,
-  hasUnresolvedLegacyResetIdentity,
   isSafeMs,
   parseCodexAccountRoutingState,
   setRoutingStateCache,
 } from "./routing-state.ts";
 import {
   loadCodexAccountRouting,
-  neutralSlot,
   openRoutingKv,
-  probeLeaseMatchesRoutingAccount,
-  quotaBlockForClass,
-  quotaBlockKeyForClass,
   quotaClass,
   quotaHeadroomFor,
-  releaseQuotaClassProbe,
-  rotateCredentialForSameAccount,
   routingAccountIdentity,
   routingProbeCircuit,
-  slotFor,
-  slotMatchesRoutingAccount,
   updateRoutingState,
-  withLegacyQuotaClassMap,
-  withSlot,
-  withoutQuotaClass,
 } from "./capacity-routing.ts";
 import { type Codex429Classification, type CodexKnownProbeLease, markCodexQuotaBlockedWithMode } from "./rate-limit-429.ts";
 
@@ -46,44 +35,12 @@ export const markCodexRecoveryProbeQuotaBlocked = async (account: RoutingAccount
  * longer calls it; normalized durable reads discard the resulting fence.
  */
 export const markCodexUpstreamTimeout = async (account: RoutingAccount, now = Date.now()): Promise<void> => {
-  const blockedUntil = now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS;
-  await updateRoutingState((state) => {
-    const current = slotFor(state, account);
-    if (!slotMatchesRoutingAccount(current, account)) return null;
-    if (account.probeGeneration === null && current.probe_lease !== null) return null;
-    if (account.probeGeneration !== null && !probeLeaseMatchesRoutingAccount(current, account)) return null;
-    const priorTimeout = current.upstream_timeout_blocked_until_ms ?? 0;
-    return withSlot(state, account.slot, {
-      ...current,
-      account_id_hash: account.accountIdHash,
-      upstream_timeout_blocked_until_ms: Math.max(priorTimeout, blockedUntil),
-      generation: current.generation + 1,
-      probe_lease: null,
-    });
-  });
+  await updateRoutingState((state) => routingDecisions.markCodexUpstreamTimeout(state, nativeCodexAccountMetadata(account), now, Date.now()));
 };
-
 export const markCodexCredentialInvalid = async (account: RoutingAccount): Promise<void> => {
   const now = Date.now();
-  await updateRoutingState((state) => {
-    const current = slotFor(state, account);
-    if (!slotMatchesRoutingAccount(current, account)) return null;
-    if (account.probeGeneration !== null && !probeLeaseMatchesRoutingAccount(current, account)) return null;
-    return withSlot(state, account.slot, {
-      ...current,
-      account_id_hash: account.accountIdHash,
-      quota_blocked_until_ms: null,
-      quota_block_source: null,
-      quota_blocked_classes: [],
-      quota_blocks_by_class: {},
-      upstream_timeout_blocked_until_ms: null,
-      invalid_credential_version: account.credentialVersion,
-      quota_signal_observed_at_ms: now,
-      probe_lease: null,
-    });
-  });
+  await updateRoutingState((state) => routingDecisions.markCodexCredentialInvalid(state, nativeCodexAccountMetadata(account), now, Date.now()));
 };
-
 /**
  * OAuth refresh can replace a token while an inference attempt is in flight.
  * Treat the token as a new credential version while retaining the account's
@@ -110,18 +67,15 @@ export const reconcileCodexRoutingAccount = async (account: RoutingAccount, auth
   // Credential rotation is exceptional. For the same account it releases
   // ordinary routing but retains a stable reset identity as lookup-only; only
   // a genuinely different account starts a neutral reset scope.
-  const nextState = await updateRoutingState((state) => {
-    const current = slotFor(state, account);
-    if (current.credential_version === credentialVersion) return null;
-    if (!slotMatchesRoutingAccount(current, account)) return null;
-    return withSlot(
+  const nextState = await updateRoutingState((state) =>
+    routingDecisions.reconcileRoutingCredential(
       state,
-      account.slot,
-      auth.account_id === account.auth.account_id
-        ? rotateCredentialForSameAccount(current, { accountIdHash, credentialVersion })
-        : neutralSlot(credentialVersion, accountIdHash)
-    );
-  });
+      nativeCodexAccountMetadata(account),
+      { accountIdHash, credentialVersion },
+      auth.account_id === account.auth.account_id,
+      Date.now()
+    )
+  );
   const nextSlot = nextState?.slots.at(account.slot);
   const nextProbeLease = nextSlot?.probe_lease ?? null;
   const retainedProbe =
@@ -145,71 +99,21 @@ export const reconcileCodexRoutingAccount = async (account: RoutingAccount, auth
 
 export const releaseCodexRoutingProbe = async (account: RoutingAccount): Promise<void> => {
   if (account.probeGeneration === null || !account.probeToken) return;
-  await updateRoutingState((state) => {
-    const current = slotFor(state, account);
-    if (!slotMatchesRoutingAccount(current, account) || !probeLeaseMatchesRoutingAccount(current, account)) return null;
-    const released = routingProbeCircuit(account) === "quota" ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel)) : current;
-    return withSlot(state, account.slot, {
-      ...released,
-      account_id_hash: account.accountIdHash,
-      upstream_timeout_blocked_until_ms: routingProbeCircuit(account) === "upstream_timeout" ? null : current.upstream_timeout_blocked_until_ms,
-      probe_lease: null,
-    });
-  });
+  await updateRoutingState((state) => routingDecisions.releaseCodexRoutingProbe(state, nativeCodexAccountMetadata(account), Date.now()));
 };
-
 /** A successful recovery probe is the only trusted way to clear reset ambiguity. */
 export const markCodexSuccess = async (account: RoutingAccount): Promise<void> => {
   if (account.probeGeneration === null || !account.probeToken) return;
-  await updateRoutingState((state) => {
-    const current = slotFor(state, account);
-    if (!slotMatchesRoutingAccount(current, account) || !probeLeaseMatchesRoutingAccount(current, account)) return null;
-    const classAwareCurrent = withLegacyQuotaClassMap(current);
-    const released =
-      routingProbeCircuit(account) === "quota"
-        ? withoutQuotaClass(
-            classAwareCurrent,
-            quotaBlockKeyForClass(classAwareCurrent, quotaClass(account.requestedModel)) ?? quotaClass(account.requestedModel)
-          )
-        : current;
-    const hasOtherQuotaClasses = Object.keys(released.quota_blocks_by_class ?? {}).length > 0;
-    return withSlot(state, account.slot, {
-      ...released,
-      account_id_hash: account.accountIdHash,
-      upstream_timeout_blocked_until_ms: routingProbeCircuit(account) === "upstream_timeout" ? null : current.upstream_timeout_blocked_until_ms,
-      observed_reset_at_ms: hasOtherQuotaClasses ? released.observed_reset_at_ms : null,
-      observed_reset_at_is_stable: hasOtherQuotaClasses ? released.observed_reset_at_is_stable : false,
-      banked_reset_generation_ambiguous: hasOtherQuotaClasses ? released.banked_reset_generation_ambiguous : false,
-      banked_reset_recovery_probe_pending: hasOtherQuotaClasses ? released.banked_reset_recovery_probe_pending : false,
-      probe_lease: null,
-    });
-  });
+  await updateRoutingState((state) => routingDecisions.markCodexSuccess(state, nativeCodexAccountMetadata(account), Date.now()));
 };
-
 /**
  * Pure exact-fence predicate used by both strong-read helpers and the banked
  * reset's atomic KV checks. Equality (rather than `>=`) prevents a shorter
  * later Retry-After from authorizing a reset against a longer existing block;
  * an unresolved legacy account association denies every new claim.
  */
-export const isCodexQuotaBlockFenceCurrent = (value: unknown, account: RoutingAccount, quotaResetAtMs: number, routingGeneration: number): boolean => {
-  if (!isSafeMs(quotaResetAtMs) || !Number.isSafeInteger(routingGeneration) || routingGeneration < 0) return false;
-  const state = parseCodexAccountRoutingState(value);
-  const current = state?.slots[account.slot];
-  const classBlock = current ? quotaBlockForClass(current, quotaClass(account.requestedModel)) : null;
-  return (
-    !hasUnresolvedLegacyResetIdentity(state) &&
-    current?.credential_version === account.credentialVersion &&
-    current.account_id_hash === account.accountIdHash &&
-    current.generation === routingGeneration &&
-    classBlock !== null &&
-    classBlock.observed_reset_at_ms === quotaResetAtMs &&
-    classBlock.observed_reset_at_is_stable &&
-    !classBlock.banked_reset_generation_ambiguous &&
-    classBlock.blocked_until_ms === quotaResetAtMs
-  );
-};
-
+export const isCodexQuotaBlockFenceCurrent = (value: unknown, account: RoutingAccount, quotaResetAtMs: number, routingGeneration: number): boolean =>
+  routingDecisions.isCodexQuotaBlockFenceCurrent(value, nativeCodexAccountMetadata(account), quotaResetAtMs, routingGeneration);
 /**
  * Returns a durable routing fence for a fully persisted quota observation.
  * Account routing otherwise fails open when KV is down; banked redemption is
@@ -320,22 +224,7 @@ const attemptCodexQuotaRecoveryProbe = async (
       circuit: "quota",
       quota_class: requestedQuotaClass,
     };
-    const classAwareCurrent = withLegacyQuotaClassMap(current);
-    const releasedClassBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
-    const released = withoutQuotaClass(classAwareCurrent, quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass) ?? requestedQuotaClass);
-    const next = withSlot(state, account.slot, {
-      ...released,
-      // The verified reset makes normal routing eligible, but an absolute
-      // Retry-After cannot prove whether a delayed response names this old
-      // window or a new one. Keep the observation lookup-only until a
-      // recovery probe independently proves the circuit healthy.
-      observed_reset_at_ms: releasedClassBlock?.observed_reset_at_ms ?? current.observed_reset_at_ms,
-      observed_reset_at_is_stable: releasedClassBlock?.observed_reset_at_is_stable ?? current.observed_reset_at_is_stable,
-      banked_reset_generation_ambiguous: true,
-      banked_reset_recovery_probe_pending: true,
-      generation: nextGeneration,
-      probe_lease: recoveryLease,
-    });
+    const next = routingDecisions.recoveryProbeTransition(state, nativeCodexAccountMetadata(account), recoveryLease, Date.now());
     const committed = await withReconciliationFences(kv.atomic().check(entry), fenceEntries).set(CODEX_ACCOUNT_ROUTING_KV_KEY, next).commit();
     if (!committed.ok) return "retry";
     setRoutingStateCache(next, committed.versionstamp);
@@ -399,28 +288,8 @@ export const reconcileCodexQuotaAfterStaleVerifiedReset = async (
     fences?: readonly CodexQuotaResetReconciliationFence[];
   }>
 ): Promise<RoutingAccount | null> => {
-  return await reconcileCodexQuotaAfterProbe(
-    account,
-    input,
-    (state, current, nowMs) =>
-      !state.banked_reset_legacy_identity_unresolved &&
-      slotMatchesRoutingAccount(current, account) &&
-      current.account_id_hash === account.accountIdHash &&
-      current.credential_version === account.credentialVersion &&
-      current.generation === input.routingGeneration &&
-      current.invalid_credential_version !== account.credentialVersion &&
-      (() => {
-        const requestedClass = quotaClass(account.requestedModel);
-        const classBlock = quotaBlockForClass(current, requestedClass);
-        const legacyDeadline = requestedClass === "unknown" ? (current.quota_blocked_until_ms ?? 0) : 0;
-        return (
-          classBlock !== null &&
-          Math.max(classBlock.blocked_until_ms, legacyDeadline) >= input.quotaResetAtMs &&
-          classBlock.observed_reset_at_ms === input.quotaResetAtMs &&
-          classBlock.observed_reset_at_is_stable
-        );
-      })() &&
-      (current.probe_lease?.expires_at_ms ?? 0) <= nowMs
+  return await reconcileCodexQuotaAfterProbe(account, input, (state, current, nowMs) =>
+    routingDecisions.staleVerifiedResetProbeEligible(state, current, nativeCodexAccountMetadata(account), input, nowMs)
   );
 };
 
@@ -438,43 +307,10 @@ const buildExpiredProbeClaim = (
   account: RoutingAccount,
   now: number
 ): Readonly<{ next: CodexAccountRoutingState; lease: CodexKnownProbeLease }> | null => {
-  const current = slotFor(base, account);
-  const circuit = routingProbeCircuit(account);
-  const requestedQuotaClass = quotaClass(account.requestedModel);
-  const classBlock = quotaBlockForClass(current, requestedQuotaClass);
-  const circuitDeadline = circuit === "upstream_timeout" ? current.upstream_timeout_blocked_until_ms : classBlock?.blocked_until_ms;
-  // A capacity-exhausted subscription with no class circuit is the probe
-  // candidate that has no deadline to expire: its only trusted recovery is a
-  // successful bounded probe, so it is claimed like an expired circuit.
-  const capacityProbe = circuit === "quota" && classBlock === null && account.quotaHeadroom === 0;
-  // A blocked cohort that proved no redeemable credit may hold exactly one
-  // scoped overage attempt even while its class-block deadline is still live.
-  // The live-lease check below still serializes the attempt.
-  const overageProbe = circuit === "quota" && account.overageFallback === true;
-  if (
-    !slotMatchesRoutingAccount(current, account) ||
-    current.invalid_credential_version === account.credentialVersion ||
-    (!capacityProbe && !overageProbe && (!circuitDeadline || circuitDeadline > now)) ||
-    (current.probe_lease?.expires_at_ms ?? 0) > now
-  )
-    return null;
-  const lease: CodexKnownProbeLease = {
-    token: crypto.randomUUID(),
-    expires_at_ms: now + CODEX_HALF_OPEN_LEASE_MS,
-    generation: current.generation,
-    circuit,
-    quota_class: circuit === "quota" ? requestedQuotaClass : null,
-  };
-  return {
-    next: withSlot(base, account.slot, {
-      ...current,
-      account_id_hash: account.accountIdHash,
-      probe_lease: lease,
-    }),
-    lease,
-  };
+  const metadata = nativeCodexAccountMetadata(account);
+  if (routingDecisions.buildExpiredProbeClaim(base, metadata, now, "eligibility-only", now) === null) return null;
+  return routingDecisions.buildExpiredProbeClaim(base, metadata, now, crypto.randomUUID(), Date.now());
 };
-
 /**
  * Claim locally. This retains availability when KV is unavailable, but not
  * cross-isolate coordination.
