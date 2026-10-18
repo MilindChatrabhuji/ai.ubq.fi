@@ -833,10 +833,10 @@ const PROVIDER_ROSTER = [
 ];
 
 /**
- * The shipped picker state helpers, status writer, and bulk click handlers,
+ * The shipped picker state helpers, visibility filter, renderer, and bulk click handlers,
  * with only the DOM, warnings, and badge stubbed.
  */
-const providerPicker = (selection: string[], visibleIds: string[]) => {
+const providerPicker = (selection: string[], { tier = "all", onlyActive = false } = {}) => {
   const between = (start: string, end: string) => {
     const from = sourceText.indexOf(start);
     const to = sourceText.indexOf(end, from);
@@ -851,21 +851,29 @@ const providerPicker = (selection: string[], visibleIds: string[]) => {
     providersDiscardBtn: new TestElement(),
     providersSelectionSave: new TestElement(),
   };
+  const providersList = Object.assign(new TestElement(), { querySelectorAll: () => [] });
   const fixture = {
     ...buttons,
     providerRoster: PROVIDER_ROSTER,
     providerSelection: new Set(selection),
     providersSavedSelection: new Set(selection),
-    providersVisibleIds: new Set(visibleIds),
+    providersVisibleIds: new Set<string>(),
+    providerTierFilter: tier,
     providerSelectionSaving: false,
     providerSelectionLoadedAt: 1,
     providerSelectionSaveError: "",
     providersSummary: new TestElement(),
     providersWarning: new TestElement(),
-    providersOnlyActiveInput: { checked: false },
-    providersList: { querySelectorAll: () => [] },
-    providersVisibleEntries: () => PROVIDER_ROSTER.filter((entry) => visibleIds.includes(entry.id)),
-    providersFilterIsActive: () => visibleIds.length < PROVIDER_ROSTER.length,
+    providersOnlyActiveInput: { checked: onlyActive },
+    providersSearchInput: { value: "" },
+    providersSortSelect: { value: "roster" },
+    providersList,
+    renderProvidersMessage: () => providersList.replaceChildren(),
+    buildProviderEntry: (entry: { id: string }) => {
+      const row = new TestElement();
+      row.dataset.providerId = entry.id;
+      return row;
+    },
     providersEmptyWarning: () => "",
     providersRoutingWarnings: () => [],
     providersHealthWarning: () => "",
@@ -877,19 +885,21 @@ const providerPicker = (selection: string[], visibleIds: string[]) => {
     [
       between("const providerRosterEntry =", "/** One tier chip per tier"),
       between("const providersSubscriptionsFor =", "const providersTierCounts ="),
+      between("const providersEntryMatchesQuery =", "/**\n * Provider health"),
       between("const updateProvidersStatus = () =>", "const renderProvidersPicker ="),
+      between("const renderProvidersPicker =", "const applyProvidersSelection ="),
       between("const applyProvidersSelection =", "const loadProviderSelection ="),
       between("const setProviderChecked =", 'providersList.addEventListener("change"'),
       between('providersCheckAllBtn.addEventListener("click"', 'providersInvertBtn.addEventListener("click"'),
-      "updateProvidersStatus();",
+      "renderProvidersPicker();",
     ].join("\n"),
     fixture
   );
-  return { ...buttons, selection: fixture.providerSelection };
+  return { ...buttons, selection: fixture.providerSelection, list: providersList, visibleIds: () => [...fixture.providersVisibleIds] };
 };
 
 test("a narrowed Codex tier filtered alone keeps Uncheck shown enabled, and unchecking clears its subscription", () => {
-  const picker = providerPicker(["sub-a"], ["codex"]);
+  const picker = providerPicker(["sub-a"], { tier: "subscription" });
   assert.equal(picker.providersUncheckAllBtn.disabled, false, "the narrowed Codex row is checked, so Uncheck shown has work to do");
   assert.equal(picker.providersUncheckAllBtn.textContent, "Uncheck 1 shown");
 
@@ -900,7 +910,7 @@ test("a narrowed Codex tier filtered alone keeps Uncheck shown enabled, and unch
 });
 
 test("a narrowed Codex tier filtered alone keeps Check shown enabled, and checking expands it to every subscription", () => {
-  const picker = providerPicker(["sub-a"], ["codex"]);
+  const picker = providerPicker(["sub-a"], { tier: "subscription" });
   assert.equal(picker.providersCheckAllBtn.disabled, false, "a partial Codex row is not fully checked, so Check shown still applies");
 
   picker.providersCheckAllBtn.click();
@@ -909,16 +919,30 @@ test("a narrowed Codex tier filtered alone keeps Check shown enabled, and checki
   assert.equal(picker.providersUncheckAllBtn.disabled, false);
 });
 
+test("Only active keeps a narrowed Codex row shown and rerenders after Uncheck shown clears its subscription", () => {
+  const picker = providerPicker(["sub-a"], { onlyActive: true, tier: "all" });
+  assert.deepEqual(picker.visibleIds(), ["codex"]);
+  assert.deepEqual(picker.list.children.map((entry) => entry.dataset.providerId), ["codex"]);
+  assert.equal(picker.providersUncheckAllBtn.disabled, false);
+  assert.equal(picker.providersUncheckAllBtn.textContent, "Uncheck 1 shown");
+
+  picker.providersUncheckAllBtn.click();
+  assert.deepEqual([...picker.selection], [], "Uncheck shown clears the narrowed subscription under Only active");
+  assert.deepEqual(picker.visibleIds(), [], "Only active recomputes the shown ids after the selection changes");
+  assert.deepEqual(picker.list.children, [], "the picker rerenders without the now-inactive Codex row");
+  assert.equal(picker.providersUncheckAllBtn.disabled, true);
+});
+
 test("provider bulk buttons keep their umbrella and unchecked-row states", () => {
-  const all = providerPicker(["codex"], ["codex"]);
+  const all = providerPicker(["codex"], { tier: "subscription" });
   assert.equal(all.providersCheckAllBtn.disabled, true, "the whole Codex tier is already checked");
   assert.equal(all.providersUncheckAllBtn.disabled, false);
 
-  const none = providerPicker(["surplus"], ["codex"]);
+  const none = providerPicker(["surplus"], { tier: "subscription" });
   assert.equal(none.providersCheckAllBtn.disabled, false);
   assert.equal(none.providersUncheckAllBtn.disabled, true, "no shown row is checked");
 
-  const mixed = providerPicker(["sub-b", "surplus"], ["codex", "surplus", "openlux"]);
+  const mixed = providerPicker(["sub-b", "surplus"]);
   assert.equal(mixed.providersCheckAllBtn.disabled, false);
   assert.equal(mixed.providersUncheckAllBtn.disabled, false);
   mixed.providersUncheckAllBtn.click();
