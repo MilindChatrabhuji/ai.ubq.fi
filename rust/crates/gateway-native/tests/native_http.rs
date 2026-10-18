@@ -81,6 +81,7 @@ impl Peer {
                         let result = match value["method"].as_str().unwrap() {
                             "initialize" => json!({"protocolVersion":1}),
                             "thread/loaded/list" => json!({"data":["thread-a"]}),
+                            "account/rateLimits/read" => json!({"rateLimits":{"usedPercent":35,"windowDurationMins":300,"resetsAt":1700000100}}),
                             "thread/list" => json!({"data":[{"id":"thread-a","name":"fixture session","source":"cli","updatedAt":1700000001000i64}],"nextCursor":null}),
                             "thread/read" => json!({"thread":{"id":"thread-a","status":{"type":"active"},"updatedAt":1700000002000i64}}),
                             "thread/turns/list" => {
