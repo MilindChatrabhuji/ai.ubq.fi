@@ -123,11 +123,13 @@ async function start(config: string, workspace: string): Promise<Running> {
   const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 503 }) });
   const port = reservation.port;
   await reservation.stop(true);
-  const output = Bun.file(join(workspace, `workerd-${Date.now()}.log`));
+  const runId = Date.now();
+  const output = Bun.file(join(workspace, `workerd-${runId}.stdout.log`));
+  const errors = Bun.file(join(workspace, `workerd-${runId}.stderr.log`));
   const child = Bun.spawn([workerdBinary, "serve", config, "--experimental", "--import-path", "/", "--socket-addr", `main=127.0.0.1:${port}`], {
     cwd: workspace,
     stdout: output,
-    stderr: output,
+    stderr: errors,
   });
   const origin = `http://127.0.0.1:${port}`;
   const stop = async (): Promise<void> => {

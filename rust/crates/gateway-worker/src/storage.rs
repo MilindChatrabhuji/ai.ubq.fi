@@ -158,9 +158,7 @@ impl AuthorityStore for SqliteAuthorityStore {
     }
 }
 
-fn prepare_transition(
-    transition: AtomicTransition,
-) -> Result<PreparedTransition, GatewayError> {
+fn prepare_transition(transition: AtomicTransition) -> Result<PreparedTransition, GatewayError> {
     let mut checks = BTreeMap::new();
     for check in transition.checks {
         validate_key(&check.key)?;
@@ -218,7 +216,10 @@ fn prepare_transition(
             }
         }
     }
-    Ok(PreparedTransition { checks, mutations: prepared })
+    Ok(PreparedTransition {
+        checks,
+        mutations: prepared,
+    })
 }
 
 fn read_record(
