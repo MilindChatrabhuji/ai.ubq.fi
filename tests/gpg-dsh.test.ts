@@ -342,6 +342,64 @@ test("a failed stale-lock removal is retried, not fatal", async () => {
   });
 });
 
+for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]])
+  test(`interrupted gate release preserves a competing caller's new gate (${shell.join(" ")})`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+      const gate = `${fixture.seed}.lock.break`;
+      const firstRelease = join(fixture.tmp, "first-release");
+      const interruptedRelease = join(fixture.tmp, "interrupted-release");
+      await executable(
+        join(fixture.bin, "rmdir"),
+        `#!/bin/sh
+if [ "$1" = ${shellQuote(gate)} ] && [ ! -d ${shellQuote(interruptedRelease)} ]; then
+  if ${hostCommand("mkdir")} ${shellQuote(firstRelease)} 2>/dev/null; then
+    exec ${hostCommand("rmdir")} "$@"
+  fi
+  ${hostCommand("rmdir")} "$@" || exit 1
+  ${hostCommand("mkdir")} ${shellQuote(gate)} || exit 1
+  ${hostCommand("mkdir")} ${shellQuote(interruptedRelease)} || exit 1
+  kill -TERM "$PPID" || exit 1
+  exit 0
+fi
+exec ${hostCommand("rmdir")} "$@"
+`
+      );
+      const result = await fixture.run("sandboxed", { shell });
+      assert.equal(result.code, 2, result.stderr);
+      assert.equal(result.stdout, "", "an interrupted signing never invokes gpg");
+      assert.match(result.stderr, /gpg-dsh: interrupted/);
+      assert.deepEqual(await readdir(gate), [], "cleanup must preserve the competing caller's gate");
+      await assert.rejects(stat(`${fixture.seed}.lock`), "the completed rebuild released its own lock");
+      assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
+    });
+  });
+
+test("a failed gate release remains fatal and leaves the gate closed", async () => {
+  await withFixture(async (fixture) => {
+    await signed(fixture);
+    await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+    const gate = `${fixture.seed}.lock.break`;
+    const firstRelease = join(fixture.tmp, "first-release");
+    await executable(
+      join(fixture.bin, "rmdir"),
+      `#!/bin/sh
+if [ "$1" = ${shellQuote(gate)} ]; then
+  if ! ${hostCommand("mkdir")} ${shellQuote(firstRelease)} 2>/dev/null; then exit 1; fi
+fi
+exec ${hostCommand("rmdir")} "$@"
+`
+    );
+    const result = await fixture.run("sandboxed");
+    assert.equal(result.code, 2, result.stderr);
+    assert.equal(result.stdout, "", "gpg must not run after an unsuccessful gate release");
+    assert.match(result.stderr, /cannot release the rebuild lock/);
+    assert.deepEqual(await readdir(gate), [], "failed removal must remain fail-closed");
+    await assert.rejects(stat(`${fixture.seed}.lock`));
+  });
+});
+
 const waitFor = async (condition: () => Promise<boolean>): Promise<void> => {
   const deadline = Date.now() + 5000;
   while (!(await condition())) {

@@ -27,8 +27,11 @@ old=
 # stale blank-owner observation or a delayed holder's cleanup could still delete a fresh lock.
 release_breaker() {
   [ -n "$breaker" ] || return 0
-  rmdir "$breaker" || return 1
+  # A signal after rmdir may run cleanup after another caller has acquired the path. Relinquish
+  # ownership first so cleanup cannot remove that caller's gate. Failed removal stays fail-closed.
+  set -- "$breaker"
   breaker=
+  rmdir "$1"
 }
 
 release_lock() {
