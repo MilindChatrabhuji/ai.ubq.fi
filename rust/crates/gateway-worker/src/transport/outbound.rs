@@ -124,10 +124,10 @@ pub struct Deadline {
 impl Drop for Deadline {
     fn drop(&mut self) {
         let global = worker::js_sys::global();
-        if let Ok(clear) = Reflect::get(&global, &JsValue::from_str("clearTimeout")) {
-            if let Some(clear) = clear.dyn_ref::<worker::js_sys::Function>() {
-                let _ = clear.call1(&global, &self.handle);
-            }
+        if let Ok(clear) = Reflect::get(&global, &JsValue::from_str("clearTimeout"))
+            && let Some(clear) = clear.dyn_ref::<worker::js_sys::Function>()
+        {
+            let _ = clear.call1(&global, &self.handle);
         }
         // Keep the closure alive until its timer has been cleared.
         let _ = &self.callback;

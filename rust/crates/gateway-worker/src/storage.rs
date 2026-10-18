@@ -51,6 +51,11 @@ enum PreparedMutation {
     },
 }
 
+struct PreparedTransition {
+    checks: BTreeMap<String, Option<String>>,
+    mutations: Vec<PreparedMutation>,
+}
+
 impl SqliteAuthorityStore {
     pub async fn open(storage: Storage) -> Result<Self, GatewayError> {
         let storage = Rc::new(storage);
@@ -95,7 +100,7 @@ impl AuthorityStore for SqliteAuthorityStore {
     }
 
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let (checks, mutations) = prepare_transition(transition)?;
+        let PreparedTransition { checks, mutations } = prepare_transition(transition)?;
         let outcome = Rc::new(Cell::new(CommitOutcome::Conflict));
         let transaction_outcome = Rc::clone(&outcome);
         let failure = Rc::new(RefCell::new(None));
@@ -155,7 +160,7 @@ impl AuthorityStore for SqliteAuthorityStore {
 
 fn prepare_transition(
     transition: AtomicTransition,
-) -> Result<(BTreeMap<String, Option<String>>, Vec<PreparedMutation>), GatewayError> {
+) -> Result<PreparedTransition, GatewayError> {
     let mut checks = BTreeMap::new();
     for check in transition.checks {
         validate_key(&check.key)?;
@@ -213,7 +218,7 @@ fn prepare_transition(
             }
         }
     }
-    Ok((checks, prepared))
+    Ok(PreparedTransition { checks, mutations: prepared })
 }
 
 fn read_record(
