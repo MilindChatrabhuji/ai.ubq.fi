@@ -42,18 +42,13 @@ pub fn normalize_request_record(
         return None;
     }
     let get = |name| input.get(name);
-    let provider = match input["provider"].as_str() {
-        Some(
-            p @ ("cerebras" | "deepseek" | "lithos" | "openrouter" | "voyage" | "surplus"
-            | "metered"),
-        ) => p,
-        _ => "chatgpt_codex",
-    };
+    let provider = input["provider"].as_str().filter(|p|matches!(*p,"cerebras"|"deepseek"|"lithos"|"openrouter"|"voyage"|"surplus"|"metered")).unwrap_or("chatgpt_codex");
+    let billing=input["billing_status"].as_str().filter(|p|matches!(*p,"pending"|"reconciled"|"not_billed"|"unresolved")).unwrap_or("not_applicable");
     let nullable_text = |name| {
         let s = text(get(name), 120, "");
         if s.is_empty() { Value::Null } else { json!(s) }
     };
-    let mut out = json!({"id":text(get("id"),120,request_id),"key_id":text(get("key_id"),200,key_id),"route":text(get("route"),120,"unknown"),"path":text(get("path"),1024,""),"method":text(get("method"),16,"UNKNOWN").to_uppercase(),"status_code":integer(get("status_code"),0).clamp(0,599),"stream":input["stream"]==true,"model":nullable_text("model"),"reasoning":nullable_text("reasoning"),"created_at_ms":integer(get("created_at_ms"),created_at_ms),"provider":provider,"fallback_reason":nullable_text("fallback_reason"),"provider_request_id":nullable_text("provider_request_id"),"billing_status":match input["billing_status"].as_str(){Some(v@("pending"|"reconciled"|"not_billed"|"unresolved"))=>v,_=>"not_applicable"}});
+    let mut out = json!({"id":text(get("id"),120,request_id),"key_id":text(get("key_id"),200,key_id),"route":text(get("route"),120,"unknown"),"path":text(get("path"),1024,""),"method":text(get("method"),16,"UNKNOWN").to_uppercase(),"status_code":integer(get("status_code"),0).clamp(0,599),"stream":input["stream"]==true,"model":nullable_text("model"),"reasoning":nullable_text("reasoning"),"created_at_ms":integer(get("created_at_ms"),created_at_ms),"provider":provider,"fallback_reason":nullable_text("fallback_reason"),"provider_request_id":nullable_text("provider_request_id"),"billing_status":billing});
     for field in [
         "completed_at_ms",
         "latency_ms",

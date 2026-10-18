@@ -1,4 +1,5 @@
 //! Source administrative runtime over the common authority. External effects are finite injected capabilities.
+pub mod brief;
 pub mod capabilities;
 pub mod claude;
 pub mod claude_access;
@@ -497,7 +498,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         if response.status >= 400 && response.stream.is_none() {
             return Ok(response);
         }
-        let body = &response.body;
+        let body = response.body.as_json().ok_or_else(|| {
+            GatewayError::unavailable(
+                "Supervisor brief capability did not return the final public source response",
+                "supervisor_brief_invalid_response",
+            )
+        })?;
         let fields = [
             "sourceId",
             "threadId",
@@ -573,7 +579,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         NativeRpcResponse {
             v: NATIVE_WIRE_VERSION,
             status: response.status,
-            body: response.body.clone(),
+            body: response.body.as_json().cloned().ok_or_else(|| {
+                GatewayError::unavailable(
+                    "Native protocol response is invalid",
+                    "native_protocol_invalid",
+                )
+            })?,
             stream: response.stream.clone(),
         }
         .validate_for(&envelope)?;

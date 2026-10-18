@@ -25,6 +25,13 @@ for binary_name in WASM_BINDGEN_BIN WASM_OPT_BIN ESBUILD_BIN; do
 done
 [[ -f bun.lock && -f tools/lint/bun.lock && -f rust/Cargo.lock ]] || fail 'Frozen dependency lockfiles are required.'
 [[ -z $(git status --porcelain --untracked-files=all -- rust static package.json bun.lock cloudflare.config.ts wrangler.config.ts ops/rust-worker-build.sh ops/rust-worker-deploy.sh) ]] || fail 'Build inputs must match their committed source.'
+[[ -z $(git status --porcelain --untracked-files=all) ]] || fail 'Exact-source Worker builds require a clean immutable Git checkout.'
+build_sha=$(git rev-parse HEAD)
+build_tree=$(git rev-parse 'HEAD^{tree}')
+# Cargo build-script fingerprints can retain absolute Git watcher paths from a
+# different immutable checkout. Never share that provenance cache across trees.
+export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/exact-worker/$build_sha-$build_tree"
+mkdir -p -- "$CARGO_TARGET_DIR"
 
 bun_bin=$(command -v bun) || fail 'Prepared Bun 1.4.0 is required.'
 [[ $("$bun_bin" --version) == 1.4.0 ]] || fail 'Bun 1.4.0 is required.'
@@ -40,6 +47,7 @@ mkdir -p -- "$XDG_CONFIG_HOME" "$(dirname -- "$WRANGLER_LOG_PATH")"
   worker-build --release --locked
 )
 [[ -s rust/crates/gateway-worker/build/index.js && -s rust/crates/gateway-worker/build/index_bg.wasm ]] || fail 'The prepared Rust Worker artifacts are missing.'
+"$bun_bin" --no-env-file --no-install tools/cloudflare/verify-build-identity.ts "$build_sha"
 "$bun_bin" --no-env-file --no-install run cf build
 "$bun_bin" --no-env-file --no-install run cf deploy --prebuilt --dry-run
 

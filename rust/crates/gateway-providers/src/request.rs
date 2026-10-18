@@ -453,6 +453,7 @@ pub fn prepare_request(
             };
             headers = bearer_headers(&options.auth.secret, "text/event-stream");
             if provider == UpstreamProvider::Surplus {
+                headers.insert("X-SI-Mask-Secrets".into(), "on".into());
                 url = "https://api.surplusintelligence.ai/v1/responses".into();
                 if let Some(projection) = anthropic::try_claude_chat(&normalized, options) {
                     body = projection.body;
