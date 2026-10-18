@@ -14,6 +14,67 @@ pub fn shared_state() -> ObservabilityState {
     STATE.with(Clone::clone)
 }
 pub type Runtime = ObservabilityRuntime<crate::authority::RemoteAuthorityStore, RequestHost>;
+pub enum CaptureInput {
+    Ready(gateway_observability::replay_producer::ReplayInput),
+    Omitted(&'static str),
+}
+/// The original accepted body receipt and actual request headers supply capture input.
+pub fn capture_input(
+    runtime: &Runtime,
+    request: &worker::Request,
+    upstream: gateway_observability::replay_trace::UpstreamTrace,
+) -> Result<CaptureInput, GatewayError> {
+    if request.method() != worker::Method::Post {
+        return Ok(CaptureInput::Omitted("non_post"));
+    }
+    let host = runtime.host();
+    if host.original_body.as_bytes().len() > gateway_observability::replay_crypto::MAX_REQUEST_BYTES
+    {
+        return Ok(CaptureInput::Omitted("body_over_limit"));
+    }
+    let url = request
+        .url()
+        .map_err(|_| unavailable("Capture request URL is invalid."))?;
+    let endpoint = format!(
+        "{}{}",
+        url.path(),
+        url.query().map(|q| format!("?{q}")).unwrap_or_default()
+    );
+    let headers = request.headers().entries().collect();
+    let request = gateway_observability::replay_producer::ReplayRequest {
+        endpoint,
+        method: "POST".into(),
+        body: ReplayBody::from_vec(host.original_body.as_bytes().to_vec()),
+        content_type: request
+            .headers()
+            .get("content-type")
+            .map_err(|_| unavailable("Capture request headers are invalid."))?,
+        headers,
+        request_id: host.request_id.clone(),
+        upstream,
+    };
+    Ok(CaptureInput::Ready(
+        gateway_observability::replay_producer::ReplayInput::new(host, request)?,
+    ))
+}
+/// Await from the same request/terminal event owner; no capture task is left floating.
+pub async fn persist_failure(
+    runtime: &Runtime,
+    input: gateway_observability::replay_producer::ReplayInput,
+    observation: gateway_observability::replay_producer::FailureObservation,
+    client: gateway_observability::replay_producer::ClientFailureObservation,
+) -> Result<gateway_observability::replay_producer::PersistResult, GatewayError> {
+    let key =
+        crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
+            gateway_observability::replay_crypto::ReplayKey::decode(
+                raw.trim_matches(gateway_schema::util::js_whitespace),
+            )
+            .ok()
+        });
+    runtime
+        .persist_failure(input, observation, client, key.as_ref())
+        .await
+}
 pub struct RequestHost {
     store: crate::authority::RemoteAuthorityStore,
     platform: crate::host::PlatformHost,

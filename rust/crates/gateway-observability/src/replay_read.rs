@@ -175,7 +175,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let at = store::now(self.host.as_ref())?;
         Ok(row.filter(|r| r.expires_at_ms.is_none_or(|t| t > at)))
     }
-    async fn export_manifest(&self, manifest: &Manifest) -> Result<ExportedCapture, GatewayError> {
+    pub(crate) async fn export_manifest(
+        &self,
+        manifest: &Manifest,
+    ) -> Result<ExportedCapture, GatewayError> {
         let mut chunks = Vec::new();
         for index in 0..manifest.chunk_count as usize {
             let row = self

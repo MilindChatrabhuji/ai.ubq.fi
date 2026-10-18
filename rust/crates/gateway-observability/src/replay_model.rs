@@ -332,7 +332,9 @@ pub(crate) fn wire_cursor(core: &str) -> Result<String, GatewayError> {
     }
     let decoded = bytes
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let hex =
                 std::str::from_utf8(pair).map_err(|_| store::error("Invalid query cursor"))?;

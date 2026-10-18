@@ -20,9 +20,16 @@ pub mod prompt_gate;
 pub mod providers;
 pub mod records;
 pub mod remote_capacity;
+mod replay_bootstrap;
+mod replay_cleanup;
 pub mod replay_crypto;
+mod replay_metadata;
 pub mod replay_model;
+pub mod replay_producer;
 pub mod replay_read;
+pub mod replay_retention;
+mod replay_retention_schema;
+pub mod replay_trace;
 mod replay_values;
 pub mod settings;
 mod store;
@@ -38,6 +45,7 @@ pub struct ObservabilityState {
     health: health::HealthWriter,
     active_health: providers::ActiveHealth,
     sampled_bucket: Rc<std::cell::Cell<i64>>,
+    replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
 }
 
 pub struct ObservabilityRuntime<S, H> {
@@ -46,6 +54,7 @@ pub struct ObservabilityRuntime<S, H> {
     pub(crate) health: health::HealthWriter,
     pub(crate) active_health: providers::ActiveHealth,
     pub(crate) sampled_bucket: Rc<std::cell::Cell<i64>>,
+    pub(crate) replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
 }
 impl<S, H> Clone for ObservabilityRuntime<S, H> {
     fn clone(&self) -> Self {
@@ -55,6 +64,7 @@ impl<S, H> Clone for ObservabilityRuntime<S, H> {
             health: self.health.clone(),
             active_health: self.active_health.clone(),
             sampled_bucket: self.sampled_bucket.clone(),
+            replay_bootstrap: self.replay_bootstrap.clone(),
         }
     }
 }
@@ -69,6 +79,7 @@ impl<S, H> ObservabilityRuntime<S, H> {
             health: state.health,
             active_health: state.active_health,
             sampled_bucket: state.sampled_bucket,
+            replay_bootstrap: state.replay_bootstrap,
         }
     }
     pub fn shared_state(&self) -> ObservabilityState {
@@ -76,6 +87,7 @@ impl<S, H> ObservabilityRuntime<S, H> {
             health: self.health.clone(),
             active_health: self.active_health.clone(),
             sampled_bucket: self.sampled_bucket.clone(),
+            replay_bootstrap: self.replay_bootstrap.clone(),
         }
     }
     pub fn store(&self) -> &S {
