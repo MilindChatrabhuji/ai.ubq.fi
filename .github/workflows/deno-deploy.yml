@@ -20,8 +20,71 @@ permissions:
   contents: read
 
 jobs:
+  scope:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+      needs_validate: ${{ steps.scope.outputs.needs_validate }}
+      needs_native: ${{ steps.scope.outputs.needs_native }}
+      needs_native_build: ${{ steps.scope.outputs.needs_native_build }}
+      needs_mac: ${{ steps.scope.outputs.needs_mac }}
+      needs_darwin: ${{ steps.scope.outputs.needs_darwin }}
+      needs_artifact: ${{ steps.scope.outputs.needs_artifact }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - name: Determine changed-path test scope
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun --no-env-file --no-install scripts/test-scope.ts --ci-json | tee "$RUNNER_TEMP/scope.json"
+          {
+            echo "docs_only=$(jq -r '.docsOnly' "$RUNNER_TEMP/scope.json")"
+            echo "needs_validate=$(jq -r '.needsValidate' "$RUNNER_TEMP/scope.json")"
+            echo "needs_native=$(jq -r '.needsNativeKv' "$RUNNER_TEMP/scope.json")"
+            echo "needs_native_build=$(jq -r '.needsNativeBuild' "$RUNNER_TEMP/scope.json")"
+            echo "needs_mac=$(jq -r '.needsMacContainment' "$RUNNER_TEMP/scope.json")"
+            echo "needs_darwin=$(jq -r '.needsDarwinNative' "$RUNNER_TEMP/scope.json")"
+            echo "needs_artifact=$(jq -r '.needsArtifact' "$RUNNER_TEMP/scope.json")"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### CI scope"
+            jq -r '"reason: `\(.reason)`", "changed paths: `\(.paths | length)`", "affected tests: `\(.affectedTests | length)`", "native tests: `\(.needsNativeKv)`", "artifact: `\(.needsArtifact)`"' "$RUNNER_TEMP/scope.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  docs:
+    needs: scope
+    if: ${{ needs.scope.outputs.docs_only == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - name: Frozen lint dependencies
+        working-directory: tools/lint
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+      - name: Validate changed documentation only
+        run: |
+          set -euo pipefail
+          git diff --check
+          bun --no-env-file --no-install scripts/test-scope.ts --check-docs
+
   validate:
-    runs-on: ubuntu-26.04-arm
+    needs: scope
+    if: ${{ needs.scope.outputs.needs_validate == 'true' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -40,6 +103,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends bubblewrap
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+      - name: Complete portable Bun gates
+        run: sh scripts/verify.sh --no-native-kv
+
+  native:
+    needs: scope
+    if: ${{ needs.scope.outputs.needs_native_build == 'true' }}
+    runs-on: ubuntu-26.04-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - name: Frozen dependencies
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+      - name: Prepare the Linux sandbox on the ephemeral runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
       - name: Prepare checksum-pinned ephemeral native toolchain
         run: bash ops/prepare-ci-native-toolchain.sh
       - name: Prepare one independently bound native KV artifact
@@ -48,6 +132,7 @@ jobs:
           set -euo pipefail
           bun --no-env-file --no-install -e 'import {join,resolve} from "node:path"; import {buildNativeKv} from "./scripts/build-native-kv.ts"; const workspace=process.env.RUNNER_TEMP; if(!workspace) throw new Error("Missing runner temporary directory"); const artifactDirectory=join(workspace,"uos-native-kv/artifact"); const buildReceipt=await buildNativeKv(artifactDirectory,{toolchainDirectory:join(workspace,"uos-native-kv/toolchain/bin"),workspaceDirectory:resolve(process.env.GITHUB_WORKSPACE,"../uos-native-kv-builds")}); console.log(JSON.stringify({artifactDirectory,expectedProvenanceSha256:buildReceipt.provenanceSha256,inputsManifest:resolve("tools/native-kv/inputs.json"),buildReceipt}));'  > "$RUNNER_TEMP/uos-native-kv/receipt.json"
       - name: Preflight deployment and immutable release fixtures
+        if: ${{ needs.scope.outputs.needs_native == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -55,12 +140,11 @@ jobs:
           bun --no-env-file --no-install run test:vps ops/tests/first-bun-cutover.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
           bun --no-env-file --no-install run test:deploy-guards "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
           bun --no-env-file --no-install run test:vps ops/tests/vps-release.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
-      - name: Complete Bun gates with the prepared binding
+      - name: Complete native and full Bun gates
         shell: bash
-        run: |
-          set -euo pipefail
-          sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
+        run: sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
       - name: Package immutable source, dependencies and native KV/permissions
+        if: ${{ needs.scope.outputs.needs_artifact == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -76,6 +160,7 @@ jobs:
           cp .release/source/.uos-release.json .release/artifact/manifest.json
           sha256sum .release/artifact/release.tar > .release/artifact/release.tar.sha256
       - name: Upload immutable artifact
+        if: ${{ needs.scope.outputs.needs_artifact == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ai-ubq-fi-source-${{ github.sha }}
@@ -85,6 +170,8 @@ jobs:
           retention-days: 14
 
   mac-containment:
+    needs: scope
+    if: ${{ needs.scope.outputs.needs_mac == 'true' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -95,6 +182,8 @@ jobs:
         run: bun --no-env-file --no-install ops/verify-mac-sandbox.ts
 
   darwin-native:
+    needs: scope
+    if: ${{ needs.scope.outputs.needs_darwin == 'true' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -134,7 +223,8 @@ jobs:
           bun --no-env-file --no-install run test tests/gpg-dsh.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
 
   verify-artifact:
-    needs: [validate, mac-containment, darwin-native]
+    needs: [scope, validate, native, mac-containment, darwin-native]
+    if: ${{ always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && needs.native.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped') }}
     runs-on: ubuntu-26.04-arm
     permissions:
       actions: read
