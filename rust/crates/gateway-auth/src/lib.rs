@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod crypto;
 pub mod origin;
 pub mod passkeys;
+pub mod provider_credentials;
 pub mod resolve;
 pub mod store;
 pub mod types;

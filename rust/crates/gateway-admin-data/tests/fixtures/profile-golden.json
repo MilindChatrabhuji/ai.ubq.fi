@@ -1,0 +1,762 @@
+[
+  {
+    "input": {
+      "type": "undefined",
+      "value": null
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "undefined"
+    }
+  },
+  {
+    "input": {
+      "type": "null",
+      "value": null
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "null",
+      "value": null
+    }
+  },
+  {
+    "input": {
+      "type": "boolean",
+      "value": true
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "boolean",
+      "value": true
+    }
+  },
+  {
+    "input": {
+      "type": "string",
+      "value": "雪\u0000x"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "string",
+      "value": "雪\u0000x"
+    }
+  },
+  {
+    "input": {
+      "type": "number",
+      "value": "NaN"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "number",
+      "value": "NaN"
+    }
+  },
+  {
+    "input": {
+      "type": "number",
+      "value": "Infinity"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "number",
+      "value": "Infinity"
+    }
+  },
+  {
+    "input": {
+      "type": "number",
+      "value": "-Infinity"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "number",
+      "value": "-Infinity"
+    }
+  },
+  {
+    "input": {
+      "type": "number",
+      "value": "-0"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "number",
+      "value": 0
+    }
+  },
+  {
+    "input": {
+      "type": "number",
+      "value": "0x10"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "number",
+      "value": 16
+    }
+  },
+  {
+    "input": {
+      "type": "bigint",
+      "value": "-123456789012345678901234567890"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "bigint",
+      "value": "-123456789012345678901234567890"
+    }
+  },
+  {
+    "input": {
+      "type": "bigint",
+      "value": "0x100"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "bigint",
+      "value": "256"
+    }
+  },
+  {
+    "input": {
+      "type": "bigint",
+      "value": ""
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "bigint",
+      "value": "0"
+    }
+  },
+  {
+    "input": {
+      "type": "KvU64",
+      "value": "18446744073709551615"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "KvU64",
+      "value": "18446744073709551615"
+    }
+  },
+  {
+    "input": {
+      "type": "KvU64",
+      "value": "-1"
+    },
+    "ok": false
+  },
+  {
+    "input": {
+      "type": "KvU64",
+      "value": "18446744073709551616"
+    },
+    "ok": false
+  },
+  {
+    "input": {
+      "type": "Date",
+      "value": "2026-10-18T15:00:00.000Z"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Date",
+      "value": "2026-10-18T15:00:00.000Z"
+    }
+  },
+  {
+    "input": {
+      "type": "Date",
+      "value": "+275760-09-13T00:00:00.000Z"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Date",
+      "value": "+275760-09-13T00:00:00.000Z"
+    }
+  },
+  {
+    "input": {
+      "type": "Date",
+      "value": "-271821-04-20T00:00:00.000Z"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Date",
+      "value": "-271821-04-20T00:00:00.000Z"
+    }
+  },
+  {
+    "input": {
+      "type": "Date",
+      "value": null
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Date",
+      "value": "1970-01-01T00:00:00.000Z"
+    }
+  },
+  {
+    "input": {
+      "type": "Date",
+      "value": "garbage"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Date",
+      "value": null
+    }
+  },
+  {
+    "input": {
+      "type": "Date",
+      "value": -1
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Date",
+      "value": "1969-12-31T23:59:59.999Z"
+    }
+  },
+  {
+    "input": {
+      "type": "RegExp",
+      "value": "/a/b/mi"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "RegExp",
+      "value": "/a\\/b/im"
+    }
+  },
+  {
+    "input": {
+      "type": "RegExp",
+      "value": "//gi"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "RegExp",
+      "value": "/(?:)/gi"
+    }
+  },
+  {
+    "input": {
+      "type": "RegExp",
+      "value": "/(?<=a)b/u"
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "RegExp",
+      "value": "/(?<=a)b/u"
+    }
+  },
+  {
+    "input": {
+      "type": "RegExp",
+      "value": "/[a-z&&[^b]]/v"
+    },
+    "ok": false
+  },
+  {
+    "input": {
+      "type": "RegExp",
+      "value": "/(/g"
+    },
+    "ok": false
+  },
+  {
+    "input": {
+      "type": "RegExp",
+      "value": "/a/gg"
+    },
+    "ok": false
+  },
+  {
+    "input": {
+      "type": "Int8Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Int8Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Uint8Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Uint8Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Uint8ClampedArray",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Uint8ClampedArray",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Int16Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Int16Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Uint16Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Uint16Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Int32Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Int32Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Uint32Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Uint32Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Float32Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Float32Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Float64Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Float64Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "BigInt64Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "BigInt64Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "BigUint64Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "BigUint64Array",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "ArrayBuffer",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "ArrayBuffer",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "DataView",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 4
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "DataView",
+      "value": "AAECAwQFBgcICQoLDA0ODw",
+      "byteLength": 16
+    }
+  },
+  {
+    "input": {
+      "type": "Error",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Error",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "EvalError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "EvalError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "RangeError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "RangeError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "ReferenceError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "ReferenceError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "SyntaxError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "SyntaxError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "TypeError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "TypeError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "URIError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "URIError",
+      "value": {
+        "message": "source error",
+        "stack": "supplied stack"
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "Array",
+      "value": [
+        {
+          "type": "undefined"
+        },
+        {
+          "type": "number",
+          "value": "NaN"
+        }
+      ]
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Array",
+      "value": [
+        {
+          "type": "undefined"
+        },
+        {
+          "type": "number",
+          "value": "NaN"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "type": "object",
+      "value": {
+        "type": {
+          "type": "string",
+          "value": "date"
+        },
+        "value": {
+          "type": "string",
+          "value": "ordinary"
+        }
+      }
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "object",
+      "value": {
+        "type": {
+          "type": "string",
+          "value": "date"
+        },
+        "value": {
+          "type": "string",
+          "value": "ordinary"
+        }
+      }
+    }
+  },
+  {
+    "input": {
+      "type": "Map",
+      "value": [
+        [
+          {
+            "type": "number",
+            "value": "-0"
+          },
+          {
+            "type": "string",
+            "value": "first"
+          }
+        ],
+        [
+          {
+            "type": "number",
+            "value": 0
+          },
+          {
+            "type": "string",
+            "value": "last"
+          }
+        ]
+      ]
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Map",
+      "value": [
+        [
+          {
+            "type": "number",
+            "value": 0
+          },
+          {
+            "type": "string",
+            "value": "last"
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "input": {
+      "type": "Set",
+      "value": [
+        {
+          "type": "number",
+          "value": "NaN"
+        },
+        {
+          "type": "number",
+          "value": "NaN"
+        },
+        {
+          "type": "number",
+          "value": "-0"
+        },
+        {
+          "type": "number",
+          "value": 0
+        }
+      ]
+    },
+    "ok": true,
+    "storage": true,
+    "expected": {
+      "type": "Set",
+      "value": [
+        {
+          "type": "number",
+          "value": "NaN"
+        },
+        {
+          "type": "number",
+          "value": 0
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "type": "Reference",
+      "value": 0
+    },
+    "ok": false
+  },
+  {
+    "input": {
+      "type": "Float32Array",
+      "value": "AA"
+    },
+    "ok": false
+  }
+]
