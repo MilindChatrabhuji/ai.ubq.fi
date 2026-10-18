@@ -184,3 +184,29 @@ fn source_generated_algorithm_ceremonies_and_current_role_metadata() {
         }
     }
 }
+
+struct CrlCrypto(&'static [u8]);
+impl WebAuthnCrypto for CrlCrypto {
+    async fn fetch_certificate_revocation_list(&self, _: &str) -> Result<Vec<u8>, GatewayError> { Ok(self.0.to_vec()) }
+    async fn validate_key(&self, key: &CosePublicKey) -> Result<(), GatewayError> { MaintainedCrypto.validate_key(key).await }
+    async fn verify_signature(&self, input: SignatureInput) -> Result<bool, GatewayError> { MaintainedCrypto.verify_signature(input).await }
+}
+#[test]
+fn downloaded_der_revocation_and_source_best_effort_failure_semantics() {
+    let data: Value = serde_json::from_str(include_str!("fixtures/webauthn-source-golden.json")).unwrap();
+    let case = data["cases"].as_array().unwrap().iter().find(|case|case["name"] == "safetyNetUsingGSR1RootCert").unwrap();
+    let input = RegistrationVerification { response:case["response"].clone(),challenge:case["challenge"].as_str().unwrap().into(),origin:case["origin"].as_str().unwrap().into(),rp_id:case["rp_id"].as_str().unwrap().into(),require_user_verification:false };
+    let now = case["now_ms"].as_i64().unwrap();
+    assert!(run(verify_registration(&CrlCrypto(b"invalid DER"),input.clone(),now)).is_ok());
+    let error = run(verify_registration(&CrlCrypto(include_bytes!("fixtures/webauthn-revoked-safetynet.crl")),input,now)).unwrap_err();
+    assert!(error.envelope.error.message.contains("Revoked passkey"));
+}
+#[test]
+fn host_clock_rejects_negative_and_unsafe_integer_time() {
+    let data: Value = serde_json::from_str(include_str!("fixtures/webauthn-algorithm-golden.json")).unwrap();
+    let case = &data["cases"][0];
+    for now in [-1,9_007_199_254_740_992] {
+        let input = RegistrationVerification { response:case["response"].clone(),challenge:case["challenge"].as_str().unwrap().into(),origin:case["origin"].as_str().unwrap().into(),rp_id:case["rp_id"].as_str().unwrap().into(),require_user_verification:true };
+        assert_eq!(run(verify_registration(&MaintainedCrypto,input,now)).unwrap_err().envelope.error.code.as_deref(),Some("auth_clock_unavailable"));
+    }
+}

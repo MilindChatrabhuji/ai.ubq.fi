@@ -29,7 +29,7 @@ impl RevocationCheck {
             .ok()
             .is_some_and(|(_, crl)| {
                 crl.iter_revoked_certificates()
-                    .any(|entry| entry.raw_serial() == self.serial)
+                    .any(|entry| entry.raw_serial().iter().skip_while(|b| **b == 0).eq(self.serial.iter().skip_while(|b| **b == 0)))
             })
     }
 }
@@ -317,7 +317,7 @@ pub fn verify_attestation_at_time(
             Ok(vec![])
         }
         "tpm" => {
-            verify_tpm_attestation(acd, &att, hash)?;
+            verify_source_tpm_attestation(acd, &att, hash)?;
             cert_time(certificates(&att.att_stmt)?.first().ok_or_else(failure)?, now)?;
             Ok(vec![])
         }
