@@ -113,7 +113,12 @@ fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
                 Ok(value) => Value::String(value),
                 Err(error) => serde_json::json!({"native_string_bytes":error.into_bytes()}),
             }),
-            DecodedKeyPart::Number(v) if v.is_finite() => Ok(serde_json::json!(v)),
+            DecodedKeyPart::Number(v) if v.is_finite() => {
+                let v = if v == 0.0 { 0.0 } else { v };
+                gateway_core::value::PortableValue::number(v)
+                    .to_json_lossless()
+                    .ok_or_else(|| invalid("Finite source key number cannot be projected"))
+            }
             DecodedKeyPart::Boolean(v) => Ok(Value::Bool(v)),
             DecodedKeyPart::Bytes(bytes)=>Ok(serde_json::json!({"type":"Uint8Array","value":gateway_admin_data::profile::encode_base64(&bytes)})),
             DecodedKeyPart::BigInt{negative,magnitude}=>Ok(serde_json::json!({"type":"bigint","value":crate::inverse::decimal_key(negative,&magnitude)})),
