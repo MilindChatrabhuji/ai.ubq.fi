@@ -37,8 +37,11 @@ fn ordinary_json_response_bytes_headers_and_inspection_remain_unchanged() {
     let value = json!({"message":"ordinary 😀","value":7});
     let response = AuthResponse::json(201, value.clone());
     assert_eq!(response.body, value);
-    assert_eq!(response.body["value"], 7);
-    assert_eq!(response.body.get("message").unwrap(), "ordinary 😀");
+    assert_eq!(response.body.as_json().unwrap()["value"], 7);
+    assert_eq!(
+        response.body.as_json().unwrap().get("message").unwrap(),
+        "ordinary 😀"
+    );
     assert_eq!(
         response.body.to_bytes().unwrap(),
         serde_json::to_vec(&value).unwrap()

@@ -3,6 +3,7 @@ use gateway_core::{
     js_string::JsString16,
     source_json::SourceJson,
     state::StoredRecord,
+    tuple_key::{KeyPart, TupleKey},
     value::{PortableValue, ValueEncoding},
 };
 use serde::{Deserialize, Serialize};
@@ -227,10 +228,24 @@ fn ordered_source_members_and_arrays_keep_non_scalar_keys_and_nested_tokens() {
     assert!(SourceJson::parse("null").unwrap().object_entries().is_err());
     assert!(SourceJson::parse("{}").unwrap().array_items().is_err());
     #[derive(Deserialize)]
-    struct RawEntry { key: Vec<SourceJson>, value: SourceJson }
-    let entry: RawEntry = serde_json::from_str(r#"{"key":["\ud800"],"value":{"message":"\udc00"}}"#).unwrap();
-    assert_eq!(entry.key[0].deserialize::<JsString16>().unwrap().as_units(), &[0xd800]);
-    assert_eq!(entry.value.object_entries().unwrap()[0].1.deserialize::<JsString16>().unwrap().as_units(), &[0xdc00]);
+    struct RawEntry {
+        key: Vec<SourceJson>,
+        value: SourceJson,
+    }
+    let entry: RawEntry =
+        serde_json::from_str(r#"{"key":["\ud800"],"value":{"message":"\udc00"}}"#).unwrap();
+    assert_eq!(
+        entry.key[0].deserialize::<JsString16>().unwrap().as_units(),
+        &[0xd800]
+    );
+    assert_eq!(
+        entry.value.object_entries().unwrap()[0]
+            .1
+            .deserialize::<JsString16>()
+            .unwrap()
+            .as_units(),
+        &[0xdc00]
+    );
 }
 
 #[test]
@@ -289,4 +304,29 @@ fn finite_error_evidence_is_data_not_a_deserializable_or_accepted_proof() {
             .is_none()
     );
     assert!(!format!("{evidence:?}").contains("55296"));
+}
+
+#[test]
+fn source_key_adapter_matches_pinned_text_encoder_without_changing_values() {
+    let cases: Value = serde_json::from_str(include_str!("fixtures/js-string-keys.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let units: Vec<u16> = serde_json::from_value(case["units"].clone()).unwrap();
+        let expected: Vec<u8> = serde_json::from_value(case["bytes"].clone()).unwrap();
+        let key = TupleKey::from_parts(&[KeyPart::source_string_utf16(&units)]).unwrap();
+        assert_eq!(key.sort_bytes(), expected.as_slice());
+        let value = JsString16::from_units(units.clone());
+        assert_eq!(value.as_units(), units);
+        assert_eq!(
+            value
+                .to_source_json()
+                .unwrap()
+                .deserialize::<JsString16>()
+                .unwrap(),
+            value
+        );
+    }
+    let key = TupleKey::from_parts(&[KeyPart::source_string_utf16(&[0xd800])]).unwrap();
+    let replacement = TupleKey::from_parts(&[KeyPart::String("\u{fffd}".into())]).unwrap();
+    assert_eq!(key, replacement);
+    assert!(JsString16::from_units(vec![0xd800]).try_utf8().is_err());
 }
