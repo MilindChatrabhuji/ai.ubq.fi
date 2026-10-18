@@ -43,20 +43,23 @@ impl<'de> Deserialize<'de> for NativeReadRequest {
         #[derive(Deserialize)]
         #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
         enum Wire {
-            SupervisorSessions {},
-            SupervisorOutput {
+            #[serde(rename = "supervisor_sessions")]
+            Sessions {},
+            #[serde(rename = "supervisor_output")]
+            Output {
                 source_id: String,
                 thread_id: String,
                 cursor: Option<String>,
             },
-            SupervisorBrief {
+            #[serde(rename = "supervisor_brief")]
+            Brief {
                 source_id: String,
                 thread_id: String,
             },
         }
         Ok(match Wire::deserialize(deserializer)? {
-            Wire::SupervisorSessions {} => Self::SupervisorSessions,
-            Wire::SupervisorOutput {
+            Wire::Sessions {} => Self::SupervisorSessions,
+            Wire::Output {
                 source_id,
                 thread_id,
                 cursor,
@@ -65,7 +68,7 @@ impl<'de> Deserialize<'de> for NativeReadRequest {
                 thread_id,
                 cursor,
             },
-            Wire::SupervisorBrief {
+            Wire::Brief {
                 source_id,
                 thread_id,
             } => Self::SupervisorBrief {
