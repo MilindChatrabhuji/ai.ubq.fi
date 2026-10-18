@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { createAuthorityState, PortableAuthority } from "../src/authority/admission-state.ts";
 import { AuthorityError, type AuthorityStore, type TerminalEvidence } from "../src/authority/contracts.ts";
 import { createWorkerBoundary } from "../src/worker/entrypoint.ts";
@@ -78,10 +79,11 @@ const fixture = () => {
   let revision = 0;
   let calls = 0;
   let outage = false;
+  let outageAfterRevision = Number.POSITIVE_INFINITY;
   const tasks: Promise<unknown>[] = [];
   const store: AuthorityStore = {
     read() {
-      if (outage) throw new Error("synthetic authority outage");
+      if (outage || revision >= outageAfterRevision) throw new Error("synthetic authority outage");
       return Promise.resolve({ revision, state: structuredClone(state) });
     },
     compareAndSwap(expected, value) {
@@ -145,6 +147,7 @@ const fixture = () => {
   });
   return {
     boundary,
+    upstream,
     lifetime: {
       waitUntil(task: Promise<unknown>) {
         tasks.push(task);
@@ -158,6 +161,9 @@ const fixture = () => {
     state: () => state,
     outage: () => {
       outage = true;
+    },
+    outageAfterRevision: (value: number) => {
+      outageAfterRevision = value;
     },
   };
 };
@@ -227,5 +233,112 @@ test("midstream body cancellation propagates abort and settles one admission", a
     expect(Object.values(f.state().windows)[0]).toMatchObject({ active: 0, dispatched: 1, kernelReserved: 0 });
   } finally {
     await f.stop();
+  }
+});
+
+test("fixed upstream refuses all redirect hops without forwarding synthetic credentials or request content", async () => {
+  let escaped = 0;
+  let dispatched = 0;
+  let observed = 0;
+  let status = 307;
+  const sink = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch() {
+      escaped += 1;
+      return Response.json({ status: "completed" });
+    },
+  });
+  const upstream = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(received) {
+      expect(received.headers.get("authorization")).toBe("Bearer synthetic-only");
+      return new Response(null, { status, headers: { location: sink.url.href } });
+    },
+  });
+  try {
+    const transport = new HttpUpstreamTransport({
+      provider: "surplus",
+      baseUrl: upstream.url.origin,
+      maximumExposureMicrocredits: 1,
+      fetch,
+      headers: () => Promise.resolve(new Headers({ authorization: "Bearer synthetic-only" })),
+      validate: (route, body) => Promise.resolve({ route, body, model: "fixture", stream: false }),
+      observe(response) {
+        observed += 1;
+        return observe(response);
+      },
+    });
+    const input = await transport.validate("/v1/responses", { model: "fixture", input: "synthetic-content" });
+    const attempt = await transport.attempt(input, null);
+    for (status of [301, 302, 303, 307, 308])
+      await assert.rejects(
+        transport.dispatch(input, attempt, new AbortController().signal, () => {
+          dispatched += 1;
+          return Promise.resolve();
+        }),
+        /upstream_redirect_refused/
+      );
+    expect(escaped).toBe(0);
+    expect(dispatched).toBe(5);
+    expect(observed).toBe(0);
+  } finally {
+    await upstream.stop(true);
+    await sink.stop(true);
+  }
+});
+
+test("authority cleanup outage returns structured refusal and preserves unresolved pre-dispatch or intent state", async () => {
+  for (const revision of [1, 3, 4]) {
+    const f = fixture();
+    f.outageAfterRevision(revision);
+    try {
+      const response = await f.boundary.fetch(request({ model: "fixture" }), f.lifetime);
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ error: { code: "upstream_unavailable", type: "gateway_error" } });
+      expect(f.calls()).toBe(0);
+      const admission = Object.values(f.state().admissions)[0];
+      expect(admission).toMatchObject({ semantic: null, delivery: null, settled: false });
+      expect(Object.values(f.state().windows)[0]).toMatchObject({ active: 1, reserved: 1, kernelReserved: 1 });
+      if (revision === 4) expect(Object.values(admission.attempts)[0].state).toBe("dispatch_intent");
+    } finally {
+      await f.stop();
+    }
+  }
+});
+
+test("cleanup outage preserves the original authority refusal and dispatched provider exposure", async () => {
+  const refused = fixture();
+  refused.upstream.attempt = () => {
+    refused.outage();
+    throw new AuthorityError("fixed_capability_refused", 403);
+  };
+  try {
+    const response = await refused.boundary.fetch(request({ model: "fixture" }), refused.lifetime);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: "fixed_capability_refused" } });
+    expect(refused.calls()).toBe(0);
+  } finally {
+    await refused.stop();
+  }
+  const dispatched = fixture();
+  const dispatch = dispatched.upstream.dispatch.bind(dispatched.upstream);
+  dispatched.upstream.dispatch = async (...args) => {
+    const result = await dispatch(...args);
+    dispatched.outage();
+    await result.response.body?.cancel("synthetic transport failure");
+    throw new Error("synthetic failure after provider exposure");
+  };
+  try {
+    const response = await dispatched.boundary.fetch(request({ model: "fixture" }), dispatched.lifetime);
+    expect(response.status).toBe(502);
+    expect(dispatched.calls()).toBe(1);
+    const admission = Object.values(dispatched.state().admissions)[0];
+    expect(admission).toMatchObject({ dispatched: true, semantic: null, delivery: null, settled: false });
+    expect(Object.values(admission.attempts)[0]).toMatchObject({ state: "dispatched", terminal: null, billingSettled: false });
+    expect(Object.values(dispatched.state().windows)[0]).toMatchObject({ active: 1, dispatched: 1, kernelReserved: 1 });
+  } finally {
+    await dispatched.stop();
   }
 });

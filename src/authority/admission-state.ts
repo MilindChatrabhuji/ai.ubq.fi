@@ -146,10 +146,11 @@ export class PortableAuthority {
       for (const amount of [policy.requestLimit, policy.kernelLimit, policy.concurrencyLimit, policy.paidLimitMicrocredits]) assertAmount(amount);
       const windowKey = JSON.stringify([input.principalId, policy.windowResetAtMs]);
       const window = (state.windows[windowKey] ??= emptyWindow());
+      const active = Object.values(state.admissions).filter((request) => request.principalId === input.principalId && !request.settled).length;
       if (
         window.reserved + window.dispatched >= policy.requestLimit ||
         window.kernelReserved + window.kernelCompleted >= policy.kernelLimit ||
-        window.active >= policy.concurrencyLimit
+        active >= policy.concurrencyLimit
       )
         throw new AuthorityError("principal_quota_exceeded", 429);
       const account = selectAccount(state, input.model, input.nowMs);
@@ -229,6 +230,33 @@ export class PortableAuthority {
     return await this._transact(handle.scope, (state) => {
       const request = this._request(state, handle);
       return { account: request.account, model: request.model, route: request.route };
+    });
+  }
+
+  /** Move a completed subscription hop without opening another principal admission. */
+  async reselectSubscription(handle: AdmissionHandle, nowMs: number): Promise<AccountBinding | null> {
+    return await this._transact(handle.scope, (state) => {
+      const request = this._request(state, handle);
+      if (request.settled || request.semantic !== null) throw new AuthorityError("admission_closed");
+      const attempts = Object.values(request.attempts);
+      if (attempts.some((attempt) => attempt.input.provider !== "codex")) throw new AuthorityError("provider_order_conflict");
+      if (
+        !attempts.some((attempt) => attempt.state === "dispatched" && sameEvidence(attempt.input.account, request.account)) ||
+        attempts.some((attempt) => attempt.state !== "not_dispatched" && (attempt.state !== "dispatched" || attempt.terminal === null))
+      )
+        throw new AuthorityError("attempt_outcome_pending");
+      const policy = lookup(state.policies, request.principalId);
+      if (!policy || policy.deleted || policy.version !== request.policyVersion) throw new AuthorityError("principal_policy_changed", 403);
+      if (policy.windowResetAtMs <= nowMs || request.windowKey !== JSON.stringify([request.principalId, policy.windowResetAtMs]))
+        throw new AuthorityError("quota_window_changed");
+      const binding = request.account;
+      const current = state.accounts.find((account) => account.accountId === binding?.accountId);
+      // Proof is the only captured field that an observation may change before reselection.
+      if (!binding || !current || !sameEvidence({ ...current, proof: binding.proof }, binding)) throw new AuthorityError("account_fence_mismatch");
+      if (!unavailable(current, request.model, nowMs)) throw new AuthorityError("subscription_proof_required", 503);
+      request.account = selectAccount(state, request.model, nowMs);
+      request.activeGeneration = state.active?.generation ?? null;
+      return request.account;
     });
   }
 

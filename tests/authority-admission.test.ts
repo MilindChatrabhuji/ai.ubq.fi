@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import assert from "node:assert/strict";
 import { createAuthorityState, PortableAuthority } from "../src/authority/admission-state.ts";
-import type { AccountBinding, AuthorityState, AuthorityStore, PrincipalPolicy } from "../src/authority/contracts.ts";
+import type { AccountBinding, AdmissionHandle, AuthorityState, AuthorityStore, PrincipalPolicy } from "../src/authority/contracts.ts";
 
 const scope = { namespace: "synthetic-admission", epoch: 1 };
 const now = 1_000;
@@ -146,4 +146,102 @@ test("a window rollover between reserve and dispatch is fenced", async () => {
   );
   f.state().policies.p = { ...policy, windowResetAtMs: 20_000 };
   await assert.rejects(f.authority.beginDispatch(handle, "a1", now), /quota_window_changed/);
+});
+
+const dispatchSubscription = async (f: ReturnType<typeof fixture>, handle: AdmissionHandle, attemptId: string): Promise<void> => {
+  await f.authority.reserveAttempt(
+    handle,
+    { attemptId, provider: "codex", account: (await f.authority.selection(handle)).account, maximumExposureMicrocredits: 0 },
+    now
+  );
+  await f.authority.beginDispatch(handle, attemptId, now);
+  await f.authority.confirmDispatched(handle, attemptId);
+};
+const exhaustedSubscription = async () => {
+  const f = fixture();
+  f.state().policies.p = { ...policy, requestLimit: 1, kernelLimit: 1, concurrencyLimit: 1 };
+  const handle = await f.authority.admit(input("failover"));
+  await dispatchSubscription(f, handle, "a-hop");
+  await f.authority.observeProof(handle, "a-hop", {
+    kind: "quota_exhausted",
+    model: "fixture",
+    fingerprint: "a-fp",
+    observedAtMs: now,
+    validUntilMs: 2_000,
+  });
+  await f.authority.observeTerminal(
+    handle,
+    "a-hop",
+    { outcome: "failed", providerRequestId: "a-upstream", spendMicrocredits: 0, fallback: "quota_exhausted" },
+    false
+  );
+  return { ...f, handle };
+};
+
+test("strong-proof subscription failover preserves one admission and reservation through CAS retry", async () => {
+  const f = await exhaustedSubscription();
+  await assert.rejects(f.authority.admit(input("another")), /principal_quota_exceeded/);
+  await assert.rejects(
+    f.authority.reserveAttempt(f.handle, { attemptId: "paid", provider: "surplus", account: null, maximumExposureMicrocredits: 10 }, now),
+    /paid_pool_proof_required/
+  );
+  f.conflict((state) => {
+    state.accounts.reverse();
+  });
+  expect((await f.authority.reselectSubscription(f.handle, now))?.accountId).toBe("b");
+  expect((await f.authority.selection(f.handle)).account?.accountId).toBe("b");
+  expect(f.state().active).toEqual({ accountId: "b", fingerprint: "b-fp", generation: 2 });
+  expect(Object.keys(f.state().admissions)).toEqual(["failover"]);
+  expect(Object.values(f.state().windows)[0]).toMatchObject({ reserved: 0, dispatched: 1, active: 1, kernelReserved: 1 });
+  await dispatchSubscription(f, f.handle, "b-hop");
+  await f.authority.observeTerminal(f.handle, "b-hop", { outcome: "completed", providerRequestId: "b-upstream", spendMicrocredits: 0, fallback: null });
+  await f.authority.observeDelivery(f.handle, "unobserved");
+  expect(await f.authority.settle(f.handle)).toBe("settled");
+  expect(Object.values(f.state().windows)[0]).toMatchObject({ dispatched: 1, active: 0, kernelReserved: 0, kernelCompleted: 1 });
+});
+
+test("subscription reselection rejects pending terminals, weak proof and changed policy or binding fences", async () => {
+  const pending = fixture();
+  const handle = await pending.authority.admit(input("pending"));
+  await dispatchSubscription(pending, handle, "hop");
+  await assert.rejects(pending.authority.reselectSubscription(handle, now), /attempt_outcome_pending/);
+  for (const proof of [{ kind: "transient" as const }, { validUntilMs: now }, { model: "another-model" }, { fingerprint: "retired-fingerprint" }]) {
+    const f = await exhaustedSubscription();
+    const current = f.state().accounts[0];
+    assert(current.proof);
+    f.state().accounts[0] = { ...current, proof: { ...current.proof, ...proof } };
+    await assert.rejects(f.authority.reselectSubscription(f.handle, now), /subscription_proof_required/);
+    expect(f.state().active?.accountId).toBe("a");
+  }
+  for (const field of ["credentialGeneration", "routingGeneration", "resetGeneration", "overageVersion"] as const) {
+    const f = await exhaustedSubscription();
+    f.conflict((state) => {
+      state.accounts[0] = { ...state.accounts[0], [field]: state.accounts[0][field] + 1 };
+    });
+    await assert.rejects(f.authority.reselectSubscription(f.handle, now), /account_fence_mismatch/);
+    expect(f.state().admissions.failover.account?.accountId).toBe("a");
+  }
+  for (const change of [{ deleted: true }, { version: 2 }, { windowResetAtMs: 20_000 }]) {
+    const f = await exhaustedSubscription();
+    f.state().policies.p = { ...f.state().policies.p, ...change };
+    await assert.rejects(f.authority.reselectSubscription(f.handle, now), /principal_policy_changed|quota_window_changed/);
+  }
+});
+
+test("quota rollover retains outstanding principal concurrency until the old admission settles", async () => {
+  const f = fixture();
+  f.state().policies.p = { ...policy, concurrencyLimit: 1 };
+  const old = await f.authority.admit(input("old-window"));
+  await dispatchSubscription(f, old, "old-hop");
+  f.state().policies.p = { ...f.state().policies.p, windowResetAtMs: 20_000 };
+  const rollover = (requestId: string) => ({ ...input(requestId), nowMs: 10_001 });
+  const blocked = await Promise.allSettled([f.authority.admit(rollover("blocked1")), f.authority.admit(rollover("blocked2"))]);
+  expect(blocked.every((result) => result.status === "rejected" && String(result.reason).includes("principal_quota_exceeded"))).toBe(true);
+  expect(Object.values(f.state().windows).reduce((sum, window) => sum + window.active, 0)).toBe(1);
+  await f.authority.observeTerminal(old, "old-hop", { outcome: "completed", providerRequestId: "old-upstream", spendMicrocredits: 0, fallback: null });
+  await f.authority.observeDelivery(old, "unobserved");
+  expect(await f.authority.settle(old)).toBe("settled");
+  const admitted = await Promise.allSettled([f.authority.admit(rollover("new1")), f.authority.admit(rollover("new2"))]);
+  expect(admitted.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  expect(Object.values(f.state().windows).reduce((sum, window) => sum + window.active, 0)).toBe(1);
 });
