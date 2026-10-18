@@ -78,27 +78,31 @@ pub fn event_key(event: &KeyChange) -> RecordKey {
         event.id
     ]))
 }
+pub struct ChangeInput<'a> {
+    pub principal: &'a AuthPrincipal,
+    pub request_id: &'a str,
+    pub release: &'a str,
+    pub action: &'a str,
+    pub id: &'a str,
+    pub name: Option<&'a str>,
+    pub changed: &'a Value,
+}
+
 pub fn mutation<H: AuthHost>(
     host: &H,
-    principal: &AuthPrincipal,
-    request_id: &str,
-    release: &str,
-    action: &str,
-    id: &str,
-    name: Option<&str>,
-    changed: Value,
+    input: ChangeInput<'_>,
 ) -> Result<RecordMutation, GatewayError> {
     let now = host.now_ms();
     let event = KeyChange {
         id: uuid_from_random(&host.random_bytes(16)?)?,
         at_ms: now,
-        action: action.into(),
-        actor: actor(principal),
-        target_key_id: id.into(),
-        target_key_name: name.map(str::to_owned),
-        changed: safe_changed(&changed),
-        request_id: request_id.into(),
-        release: release.into(),
+        action: input.action.into(),
+        actor: actor(input.principal),
+        target_key_id: input.id.into(),
+        target_key_name: input.name.map(str::to_owned),
+        changed: safe_changed(input.changed),
+        request_id: input.request_id.into(),
+        release: input.release.into(),
     };
     store::put(
         event_key(&event),

@@ -138,31 +138,29 @@ pub fn match_route(method: &str, path: &str) -> Option<AdminRoute> {
         ("GET", "/health/providers") => HealthProviders,
         ("GET", "/health/upstream") => HealthUpstream,
         _ => {
-            if method == "POST" {
-                if let Some(slot) = path
+            if method == "POST"
+                && let Some(slot) = path
                     .strip_prefix("/admin/providers/codex/")
                     .and_then(|rest| rest.strip_suffix("/recheck"))
-                {
-                    if !slot.is_empty() && slot.bytes().all(|b| b.is_ascii_digit()) {
-                        return Some(AdminRoute {
-                            operation: CodexRecheck,
-                            parameter: Some(slot.into()),
-                        });
-                    }
-                }
+                && !slot.is_empty()
+                && slot.bytes().all(|b| b.is_ascii_digit())
+            {
+                return Some(AdminRoute {
+                    operation: CodexRecheck,
+                    parameter: Some(slot.into()),
+                });
             }
-            if method == "GET" {
-                if let Some(id) = path
+            if method == "GET"
+                && let Some(id) = path
                     .strip_prefix("/admin/api-keys/")
                     .and_then(|rest| rest.strip_suffix("/paid-fallbacks"))
-                {
-                    if !id.is_empty() && !id.contains('/') {
-                        return Some(AdminRoute {
-                            operation: ApiKeyPaidFallbacks,
-                            parameter: Some(id.into()),
-                        });
-                    }
-                }
+                && !id.is_empty()
+                && !id.contains('/')
+            {
+                return Some(AdminRoute {
+                    operation: ApiKeyPaidFallbacks,
+                    parameter: Some(id.into()),
+                });
             }
             return None;
         }

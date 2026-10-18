@@ -5,7 +5,10 @@ use gateway_auth::AuthConfig;
 #[test]
 fn source_bootstrap_keeps_token_roles_and_nullish_hosting_precedence() {
     let values = BTreeMap::from([
-        ("UOS_AI_TOKEN".into(), " client-a ,client-b\nclient-a\n ".into()),
+        (
+            "UOS_AI_TOKEN".into(),
+            " client-a ,client-b\nclient-a\n ".into(),
+        ),
         ("DENO_DEPLOY_TOKEN".into(), " admin-a\nadmin-b ".into()),
         ("DENO_TIMELINE".into(), "production".into()),
         ("DENO_DEPLOY".into(), String::new()),
@@ -14,8 +17,22 @@ fn source_bootstrap_keeps_token_roles_and_nullish_hosting_precedence() {
         ("DENO_DEPLOY_ORG_SLUG".into(), " org ".into()),
     ]);
     let config = AuthConfig::from_source_values(&values, true);
-    assert_eq!(config.auth_tokens.iter().map(|value| value.expose()).collect::<Vec<_>>(), ["client-a", "client-b"]);
-    assert_eq!(config.admin_tokens.iter().map(|value| value.expose()).collect::<Vec<_>>(), ["admin-a", "admin-b"]);
+    assert_eq!(
+        config
+            .auth_tokens
+            .iter()
+            .map(|value| value.expose())
+            .collect::<Vec<_>>(),
+        ["client-a", "client-b"]
+    );
+    assert_eq!(
+        config
+            .admin_tokens
+            .iter()
+            .map(|value| value.expose())
+            .collect::<Vec<_>>(),
+        ["admin-a", "admin-b"]
+    );
     assert!(config.production);
     assert!(!config.hosted);
     assert!(config.git_sha_known);
@@ -33,9 +50,18 @@ fn source_bootstrap_keeps_token_roles_and_nullish_hosting_precedence() {
 fn source_bootstrap_extracts_public_key_blocks_and_preserves_source_escape_rules() {
     let first = "-----BEGIN PUBLIC KEY-----\nfirst\n-----END PUBLIC KEY-----";
     let second = "-----BEGIN PUBLIC KEY-----\nsecond\n-----END PUBLIC KEY-----";
-    let values = BTreeMap::from([("UOS_AI_KERNEL_PUBLIC_KEY".into(), format!("prefix{first}\n{second}suffix"))]);
+    let values = BTreeMap::from([(
+        "UOS_AI_KERNEL_PUBLIC_KEY".into(),
+        format!("prefix{first}\n{second}suffix"),
+    )]);
     let config = AuthConfig::from_source_values(&values, false);
     assert_eq!(config.kernel_public_keys_pem, [first, second]);
-    let escaped = BTreeMap::from([("UOS_AI_KERNEL_PUBLIC_KEY".into(), "unframed\\\\nvalue".into())]);
-    assert_eq!(AuthConfig::from_source_values(&escaped, false).kernel_public_keys_pem, ["unframed\\nvalue"]);
+    let escaped = BTreeMap::from([(
+        "UOS_AI_KERNEL_PUBLIC_KEY".into(),
+        "unframed\\\\nvalue".into(),
+    )]);
+    assert_eq!(
+        AuthConfig::from_source_values(&escaped, false).kernel_public_keys_pem,
+        ["unframed\\nvalue"]
+    );
 }

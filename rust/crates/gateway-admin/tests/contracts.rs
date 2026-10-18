@@ -10,7 +10,7 @@ use gateway_admin::{
     keys::*,
     *,
 };
-use gateway_auth::{crypto::Secret, passkeys::*, upstream::*, *};
+use gateway_auth::{crypto::Secret, upstream::*, *};
 use gateway_core::state::*;
 use serde_json::{Value, json};
 
@@ -18,7 +18,9 @@ fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
     loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut context) { return value; }
+        if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
+            return value;
+        }
         std::thread::yield_now();
     }
 }
@@ -228,7 +230,9 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             .rows
             .borrow()
             .values()
-            .find_map(|row| serde_json::from_value::<KeyChange>(row.json_value().unwrap().clone()).ok())
+            .find_map(|row| {
+                serde_json::from_value::<KeyChange>(row.json_value().unwrap().clone()).ok()
+            })
             .unwrap();
         assert_eq!(audit.action, "create");
         assert!(!serde_json::to_string(&audit).unwrap().contains(token));
@@ -353,7 +357,10 @@ fn revoked_deletion_never_discards_pending_billing() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(policy.json_value().unwrap()["expires_at_ms"], json!(1_000_000));
+        assert_eq!(
+            policy.json_value().unwrap()["expires_at_ms"],
+            json!(1_000_000)
+        );
     });
 }
 
