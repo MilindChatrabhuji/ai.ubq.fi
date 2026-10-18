@@ -817,6 +817,17 @@ test("completed chat content parts reject unusable shapes and reconcile repeats"
   assert.deepEqual(refusal, { outputText: "", refusal: "no" });
 });
 
+test("id-less completed chat parts are reconciled by output position", () => {
+  const textParts = new Map<string, string>();
+  const refusalParts = new Map<string, string>();
+  const response = reconcileChatResponseOutputContent(textParts, refusalParts, {}, [
+    { content: [{ type: "output_text", text: "ha" }] },
+    { content: [{ type: "output_text", text: "ha" }] },
+  ]);
+
+  assert.deepEqual(response, { outputText: "haha", refusal: "" });
+});
+
 test("completed output items and response outputs accumulate their content", () => {
   const textParts = new Map<string, string>();
   const refusalParts = new Map<string, string>();

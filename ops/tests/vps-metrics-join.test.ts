@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { acquireDeployLock } from "../deploy-lock.ts";
 import { VpsJournalMetrics } from "../vps-release-metrics.ts";
+import { joinBinding, parseJoinCheckpoint } from "../vps-metrics-join.ts";
 import { createVpsJoinFileStorage } from "../vps-metrics-storage.ts";
 import { boundedRows, metricsFixture } from "./vps-metrics-fixture.ts";
 import type { VpsIdentity } from "../vps-release-contract.ts";
@@ -330,6 +331,125 @@ const steadyTraffic = (from: number, to: number): JournalRow[] => {
   return rows;
 };
 
+const managerRow = (at: number, message: unknown): JournalRow => ({
+  at,
+  line: JSON.stringify({
+    _SYSTEMD_UNIT: "init.scope",
+    _PID: "1",
+    UNIT: "ai-ubq-fi.service",
+    _BOOT_ID: PRODUCTION_BOOT_ID,
+    __CURSOR: `systemd-${at}`,
+    __REALTIME_TIMESTAMP: String(at * 1000),
+    MESSAGE: message,
+  }),
+});
+const savedCheckpoint = async (fixture: Awaited<ReturnType<typeof metricsFixture>>, now: number) => {
+  const sealed = fixture.stored();
+  assert.ok(sealed);
+  const binding = await joinBinding(await fixture.options.context(input), fixture.options.retention);
+  const plain = await fixture.options.cipher.open(sealed, new TextEncoder().encode(binding));
+  return parseJoinCheckpoint(JSON.parse(new TextDecoder().decode(plain)), binding, now, fixture.options.retention);
+};
+
+test("VPS joins: a PID 1 exit/restart bounds a lost terminal, persists unavailability and releases its slices", async () => {
+  for (const message of [
+    "Stopped ai-ubq-fi.service - ai.ubq.fi gateway.",
+    "ai-ubq-fi.service: Main process exited, code=killed, status=9/KILL",
+    "ai-ubq-fi.service: Deactivated successfully.",
+    "ai-ubq-fi.service: Failed with result 'oom-kill'.",
+    "ai-ubq-fi.service: Scheduled restart job, restart counter is at 1.",
+  ]) {
+    let now = start + 35_000;
+    const source = journal([
+      productionRow(true, start + 1_000, "lost-terminal"),
+      managerRow(start + 65_000, message),
+      ...productionRequest(1, start + 95_000, 1_000),
+    ]);
+    const fixture = await metricsFixture(identity, source, () => now);
+    assert.equal((await fixture.metrics.sample(input)).coverage, "incomplete");
+    assert.equal((await fixture.metrics.progress(input)).state, "collecting");
+    const pendingBytes = fixture.stored()?.byteLength ?? 0;
+    now = start + 335_000;
+    fixture.metrics.beginTick(now);
+    const lost = await fixture.metrics.sample(input);
+    assert.equal(lost.coverage, "incomplete", message);
+    assert.equal(lost.requestCount, null);
+    assert.deepEqual(await fixture.metrics.progress(input), { state: "unavailable", reason: "terminal_lost" });
+    assert.equal(source.counter.reads, 3, "the forward scan stops at the marker, not at the available journal tail");
+    const checkpoint = await savedCheckpoint(fixture, now);
+    assert.equal(checkpoint.cohorts[0].terminalLost, true);
+    assert.equal(checkpoint.cohorts[0].summary, null);
+    assert.equal(checkpoint.ledgers.length, 0, "the failed window no longer pins whole ledger slices");
+    assert.ok((fixture.stored()?.byteLength ?? Infinity) < pendingBytes);
+
+    const resumed = new VpsJournalMetrics(source, () => now, 5000, [], [], fixture.options);
+    resumed.beginTick(now);
+    assert.equal((await resumed.sample(input)).coverage, "incomplete");
+    assert.deepEqual(await resumed.progress(input), { state: "unavailable", reason: "terminal_lost" });
+    assert.equal(source.counter.reads, 3, "a reconstructed lost window does not resume collecting");
+    const healthy = await resumed.sample(windowInput(3));
+    assert.equal(healthy.coverage, "complete", "later healthy windows can still complete");
+    assert.equal(healthy.requestCount, 1);
+  }
+});
+
+test("VPS joins: lifecycle markers survive checkpoint reconstruction and are shared with another pending cohort", async () => {
+  const now = start + 95_000;
+  const source = journal([
+    ...productionRequest(1, start + 1_000, 84_000),
+    productionRow(true, start + 40_000, "lost-terminal"),
+    managerRow(start + 65_000, "Stopped ai-ubq-fi.service - ai.ubq.fi gateway."),
+  ]);
+  const fixture = await metricsFixture(identity, source, () => now);
+  assert.equal((await fixture.metrics.sample(input)).requestCount, 1, "a joined request is not refused by a lifecycle row");
+  const checkpoint = await savedCheckpoint(fixture, now);
+  const marker = checkpoint.ledgers[0].slices.find((slice) => slice.lifecycleAt !== null);
+  assert.equal(marker?.lifecycleAt, start + 65_000);
+  for (const at of [NaN, Infinity, start + 59_999, start + 90_000]) {
+    const invalid = structuredClone(checkpoint);
+    invalid.ledgers[0].slices[2].lifecycleAt = at;
+    assert.throws(() => parseJoinCheckpoint(invalid, checkpoint.binding, now, fixture.options.retention));
+  }
+  const invalid = structuredClone(checkpoint);
+  invalid.cohorts[0].terminalLost = true;
+  assert.throws(() => parseJoinCheckpoint(invalid, checkpoint.binding, now, fixture.options.retention), "a lost cohort cannot also carry success counts");
+
+  assert.throws(
+    () => parseJoinCheckpoint({ ...checkpoint, schema: 2 }, checkpoint.binding, now, fixture.options.retention),
+    "a pre-lifecycle checkpoint cannot silently omit the new evidence"
+  );
+  const reads = source.counter.reads;
+  const resumed = new VpsJournalMetrics(source, () => now, 5000, [], [], fixture.options);
+  resumed.beginTick(now);
+  assert.equal((await resumed.sample(windowInput(1))).coverage, "incomplete");
+  assert.deepEqual(await resumed.progress(windowInput(1)), { state: "unavailable", reason: "terminal_lost" });
+  assert.equal(source.counter.reads, reads, "the second cohort adopts the saved lifecycle marker without rereading");
+  assert.equal((await savedCheckpoint(fixture, now)).ledgers.length, 0);
+});
+
+test("VPS joins: an earlier restart and non-terminal PID 1 messages do not cut short a live request", async () => {
+  let now = start + 65_000;
+  const source = journal([
+    managerRow(start + 500, "Stopped ai-ubq-fi.service - ai.ubq.fi gateway."),
+    ...productionRequest(1, start + 1_000, 64_000),
+    ...[
+      "Stopping ai-ubq-fi.service...",
+      "Starting ai-ubq-fi.service...",
+      "Started ai-ubq-fi.service - ai.ubq.fi gateway.",
+      "Reloaded ai-ubq-fi.service.",
+      null,
+    ].map((message, index) => managerRow(start + 35_000 + index, message)),
+  ]);
+  const fixture = await metricsFixture(identity, source, () => now);
+  assert.equal((await fixture.metrics.sample(input)).coverage, "incomplete");
+  assert.deepEqual(await fixture.metrics.progress(input), { state: "collecting", reason: "terminal_or_slice_pending" });
+  now = start + 95_000;
+  fixture.metrics.beginTick(now);
+  const result = await fixture.metrics.sample(input);
+  assert.equal(result.coverage, "complete");
+  assert.equal(result.requestCount, 1);
+});
+
 test("VPS joins: sixty windows of production-sized traffic with five-minute streams stay inside a 4 MiB evidence policy", async () => {
   const rows: JournalRow[] = [];
   // Two requests a second; one in ten is a stream that runs five minutes, so every window has a multi-minute tail.
@@ -394,6 +514,25 @@ test("VPS joins: an accepted-stage orphan whose admission was lost is refused on
   assert.equal((await fixture.metrics.sample(input)).coverage, "incomplete");
   assert.deepEqual(await fixture.metrics.progress(input), { state: "unavailable", reason: "coverage_missing" }, "not collecting toward the retention floor");
   assert.ok(source.counter.reads <= 5, `the search covers the fifty-second lifetime and one slice of skew; read ${source.counter.reads}`);
+});
+
+test("VPS joins: a far-later orphan still refuses a pending window rather than trusting latency to exclude it", async () => {
+  for (const stage of ["accepted", null]) {
+    const source = journal([
+      productionRow(true, start + 1_000, "pending-stream"),
+      productionRow(false, start + 300_000, "orphan", {
+        status: 200,
+        stream: false,
+        failure_kind: null,
+        admission_stage: stage,
+        latency_ms: 4,
+      }),
+    ]);
+    const fixture = await metricsFixture(identity, source, () => start + 335_000);
+    assert.equal((await fixture.metrics.sample(input)).coverage, "incomplete");
+    assert.deepEqual(await fixture.metrics.progress(input), { state: "unavailable", reason: "coverage_missing" });
+    assert.ok(source.counter.reads <= 16, "the conservative orphan refusal remains bounded by the cohort tick budget");
+  }
 });
 
 test("VPS joins: a long admission chase spends only its share of a tick and still completes", async () => {

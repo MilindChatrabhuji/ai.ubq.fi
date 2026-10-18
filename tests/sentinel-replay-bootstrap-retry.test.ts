@@ -1,8 +1,8 @@
 import { test } from "bun:test";
 import { openKv, type AtomicOperation, type Kv, type KvEntryMaybe, type KvKey, type KvListIterator, type KvListOptions, type KvListSelector } from "#kv";
 import assert from "node:assert/strict";
-import { bootstrapBeforeMutation, runBootstrapBatch } from "../src/sentinel/replay-retention-bootstrap.ts";
-import { reclaimExpiredSentinelReplays, reserveSentinelReplayCapacity } from "../src/sentinel/replay-retention.ts";
+import { bootstrapBeforeMutation, forgetChunkOwnerIndex, runBootstrapBatch } from "../src/sentinel/replay-retention-bootstrap.ts";
+import { admitSentinelReplayStatusMetadata, reclaimExpiredSentinelReplays, reserveSentinelReplayCapacity } from "../src/sentinel/replay-retention.ts";
 import { decryptExportedSentinelReplay, listEncryptedSentinelReplaysByRequestId } from "../src/sentinel/replay-read.ts";
 import { persistEncryptedSentinelReplay } from "../src/sentinel/replay-store.ts";
 import {
@@ -726,6 +726,161 @@ test("bootstrap retry: a process that restarts every few calls still finishes th
     assert.equal(ledger.records, owned.length);
     await assertOrphansReclaimed(kv, orphans, owned);
   } finally {
+    kv.close();
+  }
+});
+
+for (const consumer of ["reservation", "status"] as const) {
+  test(`bootstrap retry: ${consumer} admission starts the owner fill without waiting, including concurrent refusals`, async () => {
+    const kv = await openKv(":memory:");
+    // Reservation reaping also lists accounting rows in pages of 64 before bootstrap starts.
+    // Hold the manifest slice so the pause can only belong to the background owner fill.
+    const pausing = holdNextList(kv, (prefix, options) => prefix.join("/") === SENTINEL_REPLAY_MANIFEST_PREFIX.join("/") && isOwnerIndexSlice(prefix, options));
+    const handle = pausing.handle;
+    let hold: ReturnType<typeof pausing.arm> | null = null;
+    const request = async (): Promise<boolean> => {
+      if (consumer === "status") {
+        return await admitSentinelReplayStatusMetadata(handle, {
+          key: [...SENTINEL_REPLAY_REQUEST_PREFIX, "no-wait"],
+          row: {
+            version: 1,
+            request_id: "no-wait",
+            status: "skipped",
+            reason: SENTINEL_REPLAY_ACCOUNTING_REASON,
+            captured_at_ms: now,
+            manifest_key: null,
+            fingerprint: null,
+            expires_at_ms: null,
+          },
+          now_ms: now,
+          ttl_ms: SENTINEL_REPLAY_STATUS_TTL_MS,
+          budget_bytes: budget,
+        });
+      }
+      return (
+        await reserveSentinelReplayCapacity(handle, {
+          capture_id: "no-wait",
+          request_id: "no-wait",
+          plaintext_bytes: 128,
+          metadata_bytes: 64,
+          fingerprint: "a".repeat(64),
+          now_ms: now,
+          budget_bytes: budget,
+        })
+      ).ok;
+    };
+    try {
+      await seedManifest(kv, manifestFor(1), false);
+      hold = pausing.arm();
+      const first = request();
+      await hold.reached;
+      assert.equal(await ledgerCursor(kv), "1|", "the held list belongs to the owner fill after its sweep id is durable");
+      // Both the caller starting the fill and later callers must return before the maintenance wait expires.
+      for (const pending of [first, request(), request()]) {
+        const result = await Promise.race([pending, sleep(200).then(() => "waited" as const)]);
+        assert.equal(result, false, "inference-path admission refuses promptly while its owner fill is held");
+      }
+      assert.equal(await ledgerCursor(kv), "1|", "no chunk was judged while the fill was held");
+      assert.notEqual((await kv.get(chunkKey(manifestFor(1).capture_id))).value, null);
+      assert.equal((await kv.get([...SENTINEL_REPLAY_REQUEST_PREFIX, "no-wait"])).value, null);
+    } finally {
+      forgetChunkOwnerIndex(handle);
+      hold?.release();
+      kv.close();
+    }
+  });
+}
+
+test("bootstrap retry: a replacement handle finishes while the previous process's owner fill is still held", async () => {
+  const kv = await openKv(":memory:");
+  const oldReads: ListReads = { count: 0 };
+  const newReads: ListReads = { count: 0 };
+  const pausing = holdNextList(countListReads(kv, oldReads, isOwnerIndexSlice), isOwnerIndexSlice);
+  const owned = ownedManifests(2 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+  const orphans = ["orphan-a", "orphan-b"];
+  let hold: ReturnType<typeof pausing.arm> | null = null;
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, false);
+    for (const orphan of orphans) await kv.set(chunkKey(orphan), new Uint8Array(32));
+    hold = pausing.arm();
+    const first = bootstrapBeforeMutation(pausing.handle, budget, now, 0);
+    await hold.reached;
+    assert.equal(await first, null);
+    assert.equal(await ledgerCursor(kv), "1|");
+    assert.equal(oldReads.count, 0, "the old process has not finished even its first slice");
+    // Do not release the old fill: the restarted process must build an independent index.
+    const replacement = countListReads({ ...kv }, newReads, isOwnerIndexSlice);
+    const ledger = await finishSweep(replacement);
+    assert.equal(ledger.bootstrap_complete, true);
+    assert.equal(ledger.accounting_error, null);
+    assert.equal(ledger.records, owned.length);
+    assert.equal(newReads.count, owned.length, "the replacement filled its own index");
+    assert.equal(oldReads.count, 0, "the previous process's fill is still unfinished");
+    await assertOrphansReclaimed(kv, orphans, owned);
+  } finally {
+    forgetChunkOwnerIndex(pausing.handle);
+    hold?.release();
+    kv.close();
+  }
+});
+
+for (const outcome of ["complete", "replaced"] as const) {
+  test(`bootstrap retry: the background owner fill stops when another process leaves the sweep ${outcome}`, async () => {
+    const kv = await openKv(":memory:");
+    const reads: ListReads = { count: 0 };
+    const interposing = interposeLedgerReads(countListReads(kv, reads, isOwnerIndexSlice));
+    const pausing = holdNextList(interposing.handle, isOwnerIndexSlice);
+    const owned = ownedManifests(3 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+    let hold: ReturnType<typeof pausing.arm> | null = null;
+    try {
+      for (const manifest of owned) await seedManifest(kv, manifest, false);
+      hold = pausing.arm();
+      const pending = bootstrapBeforeMutation(pausing.handle, budget, now);
+      await hold.reached;
+      if (outcome === "complete") {
+        assert.equal((await finishSweep({ ...kv })).bootstrap_complete, true);
+      } else {
+        const state = await readLedger(kv, budget);
+        assert.equal(state.kind, "ok");
+        await kv.set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, { ...state.ledger, bootstrap_sweep: "replacement-sweep" });
+      }
+      const rechecked = Promise.withResolvers<undefined>();
+      interposing.arm(() => {
+        rechecked.resolve(undefined);
+        return Promise.resolve();
+      });
+      hold.release();
+      const checked = await Promise.race([rechecked.promise.then(() => true), sleep(1_000).then(() => false)]);
+      assert.equal(checked, true, "the fill rechecks the ledger without another request on this handle");
+      await pending;
+      assert.equal(reads.count, BOOTSTRAP_OWNER_SCAN_ENTRIES, "only the in-flight slice was read, not the rest of the obsolete index");
+    } finally {
+      forgetChunkOwnerIndex(pausing.handle);
+      hold?.release();
+      kv.close();
+    }
+  });
+}
+
+test("bootstrap retry: the background owner fill yields between slices", async () => {
+  const kv = await openKv(":memory:");
+  const reads: ListReads = { count: 0 };
+  const pausing = holdNextList(countListReads(kv, reads, isOwnerIndexSlice), isOwnerIndexSlice);
+  const owned = ownedManifests(3 * BOOTSTRAP_OWNER_SCAN_ENTRIES);
+  let hold: ReturnType<typeof pausing.arm> | null = null;
+  try {
+    for (const manifest of owned) await seedManifest(kv, manifest, false);
+    hold = pausing.arm();
+    const pending = bootstrapBeforeMutation(pausing.handle, budget, now);
+    await hold.reached;
+    const nextTurn = sleep(0).then(() => reads.count);
+    hold.release();
+    assert.ok((await nextTurn) <= BOOTSTRAP_OWNER_SCAN_ENTRIES, "other event-loop work runs before the second slice");
+    await pending;
+    assert.equal(reads.count, owned.length, "the paced fill still completes without further requests");
+  } finally {
+    forgetChunkOwnerIndex(pausing.handle);
+    hold?.release();
     kv.close();
   }
 });

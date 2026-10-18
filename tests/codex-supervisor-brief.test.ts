@@ -800,6 +800,34 @@ const assertBriefFraming = (prompt: string, label: string): void => {
   assert.ok(prompt.endsWith(`</session_log>\n${BRIEF_CLOSING_INSTRUCTION}`), `${label}: the prompt must end with the closing instruction`);
 };
 
+for (const [label, parts] of [
+  [
+    "private key",
+    ["tool output: -----BEGIN OPENSSH PRIVATE KEY-----\nzqfirstsecretvalue", "tool output: zqsecondsecretvalue\n-----END OPENSSH PRIVATE KEY----- done"],
+  ],
+  ["array", ['{"api_keys": ["zqfirstsecretvalue", ', '"zqsecondsecretvalue"]} done']],
+  ["quoted string", ['password: "zqfirstsecretvalue', 'zqsecondsecretvalue" done']],
+] as const) {
+  test(`the ${label} split across two tool items cannot reach the brief prompt`, () => {
+    const context = briefContextWith({});
+    const turn = { ...context.turns[0], items: parts.map((text) => ({ type: "tool", text })) };
+    const turns = [turn, context.turns[1]];
+    const tail = appendRolloutTailTurn([], {
+      threadId: context.threadId,
+      state: context.state,
+      events: parts.map((text, index) => ({ atMs: index + 1, kind: "tool", text })),
+    });
+    // Cover direct prompt construction and both earlier redaction/clipping paths.
+    for (const assembly of [{ turns }, assembleBriefContext(turns), assembleBriefContext([...tail, context.turns[1]])]) {
+      const prompt = buildSupervisorBriefPrompt(briefContextWith(assembly));
+      assertBriefFraming(prompt, label);
+      assert.equal(prompt.includes("zqfirstsecretvalue"), false, prompt);
+      assert.equal(prompt.includes("zqsecondsecretvalue"), false, prompt);
+      assert.ok(prompt.includes(" done"), prompt);
+    }
+  });
+}
+
 test("an open bracket or quote in the thread title cannot erase the rest of the brief prompt", () => {
   const titles = [
     ["Fix tokens: [user's, admin] parsing", "title=Fix [redacted] parsing"],
