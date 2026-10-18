@@ -106,6 +106,47 @@ impl NativeTransportIdentity {
         mac.update(&message);
         Ok(base64url(&mac.finalize().into_bytes()))
     }
+    pub fn sign_authority_response(
+        &self,
+        nonce: &str,
+        request: &[u8],
+        status: u16,
+        response: &[u8],
+    ) -> Result<String, GatewayError> {
+        let message = crate::native_control::authority_response_input(
+            &self.key_id,
+            nonce,
+            request,
+            status,
+            response,
+        )?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).map_err(|_| unauthorized())?;
+        mac.update(&message);
+        Ok(base64url(&mac.finalize().into_bytes()))
+    }
+    pub fn verify_authority_response(
+        &self,
+        nonce: &str,
+        request: &[u8],
+        status: u16,
+        response: &[u8],
+        signature: &str,
+    ) -> Result<(), GatewayError> {
+        let message = crate::native_control::authority_response_input(
+            &self.key_id,
+            nonce,
+            request,
+            status,
+            response,
+        )?;
+        let bytes = decode_base64url(signature).map_err(|_| unauthorized())?;
+        if bytes.len() != 32 || base64url(&bytes) != signature {
+            return Err(unauthorized());
+        }
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).map_err(|_| unauthorized())?;
+        mac.update(&message);
+        mac.verify_slice(&bytes).map_err(|_| unauthorized())
+    }
     pub fn verify_control_response(
         &self,
         nonce: &str,
@@ -178,6 +219,7 @@ impl NativeTransportIdentity {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct NativeAuthHeaders<'a> {
     pub version: &'a str,
     pub key_id: &'a str,

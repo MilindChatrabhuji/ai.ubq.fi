@@ -7,6 +7,7 @@ use crate::{GatewayError, crypto::sha256_hex, native::*};
 pub const NATIVE_CONTROL_MAX_BYTES: usize = 65_536;
 pub const NATIVE_CONTROL_ERROR_MAX_BYTES: usize = 4096;
 pub const NATIVE_RENEWAL_MAX_MS: i64 = 45_000;
+pub const NATIVE_AUTHORITY_MAX_BYTES: usize = 98_304;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -124,6 +125,23 @@ pub fn control_response_input(
         "uos-native-control-response-v1\0POST\0{NATIVE_CONTROL_PATH}\0{key_id}\0{nonce}\0{}\0{status}\0{}",
         sha256_hex(request), sha256_hex(response)
     ).into_bytes())
+}
+
+pub fn authority_response_input(
+    key_id: &str,
+    nonce: &str,
+    request: &[u8],
+    status: u16,
+    response: &[u8],
+) -> Result<Vec<u8>, GatewayError> {
+    signature_input(NATIVE_RENEWAL_AUTHORITY_PATH, key_id, 0, nonce, request)?;
+    if !(200..=599).contains(&status)
+        || response.len() > NATIVE_CONTROL_MAX_BYTES
+        || status >= 400 && response.len() > NATIVE_CONTROL_ERROR_MAX_BYTES
+    {
+        return Err(invalid());
+    }
+    Ok(format!("uos-native-renewal-authority-response-v1\0POST\0{NATIVE_RENEWAL_AUTHORITY_PATH}\0{key_id}\0{nonce}\0{}\0{status}\0{}",sha256_hex(request),sha256_hex(response)).into_bytes())
 }
 
 fn identifier(value: &str) -> bool {

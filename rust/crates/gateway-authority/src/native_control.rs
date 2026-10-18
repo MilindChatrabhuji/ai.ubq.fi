@@ -6,6 +6,12 @@ use gateway_auth::native_auth::AuthenticatedNativeOwner;
 use gateway_core::GatewayError;
 use serde::{Deserialize, Serialize};
 
+mod facts;
+mod receiver;
+mod rows;
+pub mod wire;
+pub use receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
+
 pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
 
 /// The source-native generation and the cloud access credential version are distinct.
@@ -22,6 +28,9 @@ pub struct NativeRenewalFence {
     pub account_id_hash: String,
     pub credential_version: String,
     pub source_native_generation: String,
+    pub access_generation: String,
+    pub access_expires_at_ms: Option<i64>,
+    pub native_refreshed_at: Option<String>,
     pub principal: String,
     pub principal_policy_digest: String,
     pub original_request_id: String,
@@ -72,6 +81,7 @@ pub struct NativeRenewalClaim {
     operation_id: String,
     action: NativeRenewalAction,
     mode: NativeRenewalMode,
+    start_permit: Option<String>,
 }
 
 impl NativeRenewalClaim {
@@ -86,6 +96,10 @@ impl NativeRenewalClaim {
     }
     pub fn mode(&self) -> NativeRenewalMode {
         self.mode
+    }
+    /// Returned once to the private authenticated carrier; never present on replay.
+    pub fn start_permit(&self) -> Option<&str> {
+        self.start_permit.as_deref()
     }
 }
 
@@ -104,14 +118,11 @@ pub trait NativeRenewalCancellation {
     fn cancelled(&self) -> bool;
 }
 
-/// A per-original-request coordinator retains authentication in the trusted Worker request lifetime.
-/// The concrete implementation reauthenticates through AuthService on its own AuthorityStore,
-/// resolves the existing routing session/active Codex attempt, and derives every fixed fence.
+/// Preparation authenticates the original request through AuthService on the same AuthorityStore.
+/// Reverse calls resolve only captured nonsecret current fences; they never need the original bearer.
 /// Durable rows contain only secretless checks/digests, never the original credential or request body.
 /// This trait defines the finite receiver/transport seam; it grants no generic store or native RPC access.
 pub trait NativeRenewalControl {
-    fn prepare(&self) -> impl Future<Output = Result<NativeRenewalAction, GatewayError>>;
-
     /// Initial native authentication must bind the exact control envelope/body and OwnerRenewal route.
     /// The implementation resolves the prepared action and atomically binds operation ID + digest.
     fn claim(

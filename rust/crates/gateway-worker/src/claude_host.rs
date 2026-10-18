@@ -1,6 +1,8 @@
 //! Request-owned Claude selection and actual response receipts over the source runtime.
+mod admin;
 mod catalog;
 mod platform;
+pub use admin::admin;
 
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost};
 use gateway_admin_runtime::claude_generation::StateGeneration;
