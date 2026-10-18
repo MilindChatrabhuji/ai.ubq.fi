@@ -16,7 +16,7 @@ impl JsString16 {
     pub fn from_units(units: Vec<u16>) -> Self {
         Self(units)
     }
-    pub fn from_str(text: &str) -> Self {
+    pub fn from_utf8(text: &str) -> Self {
         Self(text.encode_utf16().collect())
     }
     pub fn as_units(&self) -> &[u16] {
@@ -141,13 +141,13 @@ impl JsString16 {
 
 impl From<&str> for JsString16 {
     fn from(value: &str) -> Self {
-        Self::from_str(value)
+        Self::from_utf8(value)
     }
 }
 impl std::str::FromStr for JsString16 {
     type Err = std::convert::Infallible;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from_str(value))
+        Ok(Self::from_utf8(value))
     }
 }
 impl Serialize for JsString16 {
