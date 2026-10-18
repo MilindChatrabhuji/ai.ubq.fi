@@ -209,13 +209,13 @@ const loadCatalog = async (kv: Kv, version: string, authGeneration: string, nowM
     metadata.source_chunk_count === undefined
       ? null
       : await readCatalogBody(
-        kv,
-        (index) => sourceChunkKey(version, metadata.body_generation, index),
-        metadata.source_chunk_count,
-        metadata.source_compressed_bytes ?? 0,
-        metadata.source_body_bytes ?? 0,
-        metadata.source_sha256 ?? ""
-      );
+          kv,
+          (index) => sourceChunkKey(version, metadata.body_generation, index),
+          metadata.source_chunk_count,
+          metadata.source_compressed_bytes ?? 0,
+          metadata.source_body_bytes ?? 0,
+          metadata.source_sha256 ?? ""
+        );
   const loaded = sourceBody && parseCatalogBody(sourceBody) ? { metadata, body, parsed, source_body: sourceBody } : { metadata, body, parsed };
   memoizeCatalog(loaded);
   return loaded;
