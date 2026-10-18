@@ -951,3 +951,24 @@ fn provider_configuration_and_invalid_vector_statuses_stay_distinct() {
         "upstream_dimension_mismatch"
     );
 }
+
+#[test]
+fn cache_timestamp_projection_preserves_source_negative_zero_key_identity() {
+    let (store, host, auth, ctx) = setup();
+    let profile = json!(["voyage-profile-v2","voyage-4-large","document",256,"float","float",true]).to_string();
+    let hash = gateway_auth::crypto::sha256_hex(b"zero");
+    store.seed(json!(["embeddings","v2","cache_index_by_hash",profile,hash]),json!(-0.0),None);
+    store.seed(json!(["embeddings","v2","cache_index",profile,-0.0,hash]),json!(1),None);
+    store.seed(json!(["embeddings","v2","cache_index_global",-0.0,profile,hash]),json!(1),None);
+    store.seed(json!(["embeddings","v2","cache",profile,hash]),json!({"embedding":vec![1.0;255],"created_at":"1970-01-01T00:00:00.000Z"}),None);
+    let rt = ExtrasRuntime::new(store.clone(),host);
+    let r = run(rt.handle(request(ExtrasRoute::Embeddings,embedding(json!("zero")),&auth,&ctx))).unwrap();
+    assert_eq!(r.status,200);
+    let prefix = TupleKey::from_json_parts(&[json!("embeddings"),json!("v2"),json!("cache_index_global")]).unwrap();
+    let rows = store.rows.borrow();
+    let indexes: Vec<_> = rows.keys().map(|k|TupleKey::from_record_key(&RecordKey(k.clone())).unwrap()).filter(|k|k.is_strict_descendant_of(&prefix)).collect();
+    assert_eq!(indexes.len(),1);
+    let parts = indexes[0].decoded_parts().unwrap();
+    let gateway_core::tuple_key::DecodedKeyPart::Number(at) = parts[3] else {panic!("timestamp")};
+    assert_eq!(at.to_bits(),(-0.0f64).to_bits());
+}

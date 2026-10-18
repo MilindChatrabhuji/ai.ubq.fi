@@ -301,13 +301,11 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
                     .before_failure(store, host, ExtrasResponse::error(cancelled()))
                     .await);
             }
-            if let Some(record) = &lease.lease {
-                if !lease.dispatched {
-                    if !idempotency::mark_dispatched(store, host, record).await {
-                        return Ok(idempotency::unavailable());
-                    }
-                    lease.dispatched = true;
+            if let Some(record) = &lease.lease && !lease.dispatched {
+                if !idempotency::mark_dispatched(store, host, record).await {
+                    return Ok(idempotency::unavailable());
                 }
+                lease.dispatched = true;
             }
             match fetch_chunk(host, &profile, &texts, &options, deadline).await {
                 Ok(value) => {
@@ -323,10 +321,10 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
                             .await);
                     }
                     if failure.quota_refusal {
-                        if let Some(record) = &lease.lease {
-                            if !idempotency::release(store, host, record, lease.dispatched).await {
-                                return Ok(idempotency::unavailable());
-                            }
+                        if let Some(record) = &lease.lease
+                            && !idempotency::release(store, host, record, lease.dispatched).await
+                        {
+                            return Ok(idempotency::unavailable());
                         }
                         let mut r = ExtrasResponse::error(failure.error.as_ref().clone());
                         r.headers.extend(failure.headers.clone());
@@ -442,15 +440,15 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
     let mut response = ExtrasResponse::json(200, result_body(&profile, &vectors, total_tokens));
     response.semantic_terminal = Some(SemanticTerminal::Completed);
     response.usage = saw_tokens.then(|| usage(total_tokens));
-    if let Some(record) = &lease.lease {
-        if !idempotency::success(store, host, record, &response).await {
-            if lease.dispatched {
-                return Ok(lease.ambiguous(store, host).await);
-            }
-            return Ok(lease
-                .before_failure(store, host, idempotency::unavailable())
-                .await);
+    if let Some(record) = &lease.lease
+        && !idempotency::success(store, host, record, &response).await
+    {
+        if lease.dispatched {
+            return Ok(lease.ambiguous(store, host).await);
         }
+        return Ok(lease
+            .before_failure(store, host, idempotency::unavailable())
+            .await);
     }
     Ok(response)
 }

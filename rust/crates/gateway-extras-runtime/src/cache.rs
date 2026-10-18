@@ -23,7 +23,7 @@ fn pointer_key(profile: &str, hash: &str) -> RecordKey {
         hash
     ]))
 }
-fn profile_index(profile: &str, at: i64, hash: &str) -> RecordKey {
+fn profile_index(profile: &str, at: f64, hash: &str) -> RecordKey {
     key(json!([
         "embeddings",
         "v2",
@@ -33,7 +33,7 @@ fn profile_index(profile: &str, at: i64, hash: &str) -> RecordKey {
         hash
     ]))
 }
-fn global_index(at: i64, profile: &str, hash: &str) -> RecordKey {
+fn global_index(at: f64, profile: &str, hash: &str) -> RecordKey {
     key(json!([
         "embeddings",
         "v2",
@@ -65,17 +65,13 @@ pub(crate) async fn cached<S: QueryStore>(
         .as_ref()
         .and_then(|v| vector(&v["embedding"], dimensions)))
 }
-fn iso(at: i64) -> Result<String, GatewayError> {
-    Ok(DateTime::<Utc>::from_timestamp_millis(at)
+fn iso(at: f64) -> Result<String, GatewayError> {
+    Ok(DateTime::<Utc>::from_timestamp_millis(at as i64)
         .ok_or_else(invalid_state)?
         .to_rfc3339_opts(SecondsFormat::Millis, true))
 }
-fn timestamp(v: &Value) -> Option<i64> {
-    v.as_f64()
-        .filter(|n| {
-            n.is_finite() && *n >= 0.0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER as f64
-        })
-        .map(|n| n.trunc() as i64)
+fn timestamp(v: &Value) -> Option<f64> {
+    v.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(f64::trunc)
 }
 async fn write_entry<S: QueryStore, H: ExtrasHost>(
     store: &S,
@@ -90,7 +86,7 @@ async fn write_entry<S: QueryStore, H: ExtrasHost>(
         let row = store.read(&pointer).await?;
         let value: Option<Value> = decoded(row.as_ref(), now(host)?)?;
         let existing = value.as_ref().and_then(timestamp);
-        let at = existing.unwrap_or(created);
+        let at = existing.unwrap_or(created as f64);
         let mut writes = vec![
             put(
                 host,
@@ -110,7 +106,7 @@ async fn write_entry<S: QueryStore, H: ExtrasHost>(
     }
     Ok(())
 }
-fn candidate(key: &RecordKey) -> Result<Option<(i64, String, String)>, GatewayError> {
+fn candidate(key: &RecordKey) -> Result<Option<(f64, String, String)>, GatewayError> {
     let p = TupleKey::from_record_key(key)?.decoded_parts()?;
     if p.len() < 3 {
         return Ok(None);
@@ -135,7 +131,7 @@ fn candidate(key: &RecordKey) -> Result<Option<(i64, String, String)>, GatewayEr
     if profile.is_empty() || hash.is_empty() {
         return Ok(None);
     }
-    Ok(Some((at.trunc() as i64, profile, hash)))
+    Ok(Some((at.trunc(), profile, hash)))
 }
 async fn evict<S: QueryStore, H: ExtrasHost>(
     store: &S,
@@ -235,9 +231,9 @@ pub(crate) async fn cache_best_effort<S: QueryStore, H: ExtrasHost>(
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Budget {
-    window_start_ms: i64,
-    requests: u64,
-    tokens: u64,
+    window_start_ms: f64,
+    requests: f64,
+    tokens: f64,
 }
 pub(crate) fn estimate(text: &str) -> u64 {
     (text.len() as u64).div_ceil(4)
@@ -275,22 +271,22 @@ pub(crate) async fn reserve_once<S: QueryStore, H: ExtrasHost>(
         let tokens = timestamp(&v["tokens"])?;
         Some(Budget {
             window_start_ms: at,
-            requests: requests as u64,
-            tokens: tokens as u64,
+            requests,
+            tokens,
         })
     });
     let mut state = current
-        .filter(|s| at - s.window_start_ms < 60_000)
+        .filter(|s| at as f64 - s.window_start_ms < 60_000.0)
         .unwrap_or(Budget {
-            window_start_ms: at,
-            requests: 0,
-            tokens: 0,
+            window_start_ms: at as f64,
+            requests: 0.0,
+            tokens: 0.0,
         });
-    if state.requests.saturating_add(1) > RPM || state.tokens.saturating_add(tokens) > TPM {
-        return Ok(Some((60_000 - (at - state.window_start_ms)).max(0) as u64));
+    if state.requests + 1.0 > RPM as f64 || state.tokens + tokens as f64 > TPM as f64 {
+        return Ok(Some((60_000.0 - (at as f64 - state.window_start_ms)).max(0.0) as u64));
     }
-    state.requests += 1;
-    state.tokens += tokens;
+    state.requests += 1.0;
+    state.tokens += tokens as f64;
     if commit(
         store,
         vec![check(&k, row.as_ref())],
@@ -330,7 +326,7 @@ pub(crate) async fn reserve<S: QueryStore, H: ExtrasHost>(
             return Ok(Some(if wait > 0 { wait } else { 1000 }));
         };
         if wait > 0 {
-            if at.saturating_add(wait as i64) > deadline {
+            if at.saturating_add(i64::try_from(wait).unwrap_or(i64::MAX)) > deadline {
                 return Ok(Some(wait));
             }
             host.sleep_ms(wait).await?;

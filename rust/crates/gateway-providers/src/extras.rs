@@ -960,16 +960,15 @@ pub fn parse_multipart_image(
                 if !trimmed.is_empty()
                     && trimmed.bytes().all(|v| v.is_ascii_digit())
                     && (trimmed == "0" || !trimmed.starts_with('0'))
+                    && let Ok(value) = serde_json::from_str::<Value>(trimmed)
                 {
-                    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-                        body[key] = value;
-                    }
+                    body[key] = value;
                 }
             } else if key == "output_compression" {
-                if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-                    if value.is_number() {
-                        body[key] = value;
-                    }
+                if let Ok(value) = serde_json::from_str::<Value>(trimmed)
+                    && value.is_number()
+                {
+                    body[key] = value;
                 }
             } else if key == "stream" && ["true", "false"].contains(&trimmed) {
                 body[key] = json!(trimmed == "true");
@@ -978,7 +977,7 @@ pub fn parse_multipart_image(
     }
     // Scalar validation precedes file selection in the source. Images are not
     // required until after scalar validation, so use the same private front end.
-    let _ = validate_multipart_scalars(&body)?;
+    validate_multipart_scalars(&body)?;
     let (images, mask) = multipart_image_references(files)?;
     body["images"] = json!(images);
     if let Some(mask) = mask {

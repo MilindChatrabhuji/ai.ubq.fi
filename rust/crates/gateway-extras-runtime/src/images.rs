@@ -39,13 +39,10 @@ fn headers(responses: &[&UpstreamResponse]) -> Headers {
         "RateLimit-Remaining",
         "RateLimit-Reset",
     ] {
-        if let Some(first) = responses.first().and_then(|r| header(&r.headers, name)) {
-            if responses
-                .iter()
-                .all(|r| header(&r.headers, name) == Some(first))
-            {
-                out.insert(name.into(), first.into());
-            }
+        if let Some(first) = responses.first().and_then(|r| header(&r.headers, name))
+            && responses.iter().all(|r| header(&r.headers, name) == Some(first))
+        {
+            out.insert(name.into(), first.into());
         }
     }
     out
@@ -274,10 +271,8 @@ pub(crate) async fn images<H: ExtrasHost>(
             r
         } else {
             let mut body = json!({"created":created.unwrap_or_else(||(host.now_ms()/1000) as f64),"data":images});
-            if consistent {
-                if let Some(format) = format {
-                    body["output_format"] = json!(format);
-                }
+            if consistent && let Some(format) = format {
+                body["output_format"] = json!(format);
             }
             let mut r = ExtrasResponse::json(200, body);
             r.headers.extend(headers(&successful));
