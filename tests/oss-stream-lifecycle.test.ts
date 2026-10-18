@@ -86,7 +86,7 @@ type UpstreamProbe = Readonly<{
  * `null` to hold that read open until the source is cancelled. Entering a pull
  * is the handshake these fixtures wait on instead of assuming microtask turns.
  */
-const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null): UpstreamProbe => {
+const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null, highWaterMark = 1): UpstreamProbe => {
   let started = 0;
   let pending = 0;
   let cancelCount = 0;
@@ -110,32 +110,35 @@ const probeUpstream = (produce?: (pullIndex: number) => Uint8Array | null): Upst
       waiters.add(waiter);
     });
   };
-  const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      started += 1;
-      pending += 1;
-      notify();
-      try {
-        const chunk = produce?.(started) ?? null;
-        if (chunk === null) {
-          await new Promise<void>((resolve) => {
-            releaseQuiet = resolve;
-          });
-          return;
-        }
-        controller.enqueue(chunk);
-      } finally {
-        pending -= 1;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        started += 1;
+        pending += 1;
         notify();
-      }
+        try {
+          const chunk = produce?.(started) ?? null;
+          if (chunk === null) {
+            await new Promise<void>((resolve) => {
+              releaseQuiet = resolve;
+            });
+            return;
+          }
+          controller.enqueue(chunk);
+        } finally {
+          pending -= 1;
+          notify();
+        }
+      },
+      cancel() {
+        cancelCount += 1;
+        releaseQuiet?.();
+        releaseQuiet = null;
+        resolveCancelled();
+      },
     },
-    cancel() {
-      cancelCount += 1;
-      releaseQuiet?.();
-      releaseQuiet = null;
-      resolveCancelled();
-    },
-  });
+    { highWaterMark }
+  );
   return { stream, started: () => started, pending: () => pending, startedAtLeast, cancelled, cancelCount: () => cancelCount };
 };
 
@@ -320,6 +323,77 @@ for (const wire of ["chat", "responses"] as const) {
     }
   });
 }
+
+test("Provider relays cancel a late deferred response without reading it", async () => {
+  const adapter: ProviderStreamAdapter = {
+    responseHeaders: () => ({}),
+    frames: iterateDeepSeekChatCompletionStream,
+    recordResponseHealth: () => {},
+    recordProviderError: () => {},
+    recordCancellation: () => {},
+    recordIncompleteResponse: () => {},
+    recordFinishFailureKind: () => {},
+    recordTransportFailure: () => {},
+    terminalTypeForError: () => "cancelled",
+    streamErrorCode: "upstream_stream_error",
+    responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
+  };
+  for (const wire of ["chat", "responses"] as const) {
+    // Bun eagerly pulls a normal stream once it enters the microtask queue;
+    // keep this late body genuinely unread until the relay owns it.
+    const lateUpstream = probeUpstream(undefined, 0);
+    let resolvePending: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      resolvePending = resolve;
+    });
+    let pendingResolved = false;
+    const signal = new AbortController().signal;
+    const pendingDispatch = new AbortController();
+    let pendingCancellationCount = 0;
+    const cancelPending = (reason?: unknown): void => {
+      pendingCancellationCount += 1;
+      pendingDispatch.abort(reason);
+    };
+    const response =
+      wire === "chat"
+        ? relayChatCompletionStream(adapter, pending, null, undefined, signal, signal, "deepseek-flash", cancelPending)
+        : relayResponsesStream(adapter, {
+            upstream: pending,
+            requestedModel: "deepseek-flash",
+            responseId: "resp_deferred_cancel",
+            createdAtSeconds: 1,
+            echo: { tools: [], tool_choice: "auto", parallel_tool_calls: true, instructions: null },
+            toolNames: new Map(),
+            customToolNames: new Set(),
+            providerRequestId: null,
+            usageContext: undefined,
+            downstreamSignal: signal,
+            requestSignal: signal,
+            upstreamModel: "deepseek-flash",
+            cancelPending,
+          });
+    const body = response.body;
+    assert.ok(body);
+    const reader = body.getReader();
+    const pendingRead = reader.read();
+    try {
+      await reader.cancel("client disconnected");
+      assert.equal(pendingCancellationCount, 1, "client cancellation must reach the deferred dispatch");
+      assert.equal(pendingDispatch.signal.aborted, true);
+      pendingResolved = true;
+      resolvePending(new Response(lateUpstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      assert.equal(await settlesWithin(pendingRead, 500), true, "the abandoned downstream read must settle");
+      assert.equal((await pendingRead).done, true, "client cancellation must not emit an error frame");
+      assert.equal(await settlesWithin(lateUpstream.cancelled, 500), true, "the late upstream body must be cancelled");
+      assert.equal(lateUpstream.cancelCount(), 1, "the late upstream body must be cancelled exactly once");
+      assert.equal(lateUpstream.started(), 0, "cancellation must not start an upstream read");
+    } finally {
+      if (!pendingResolved) resolvePending(new Response(lateUpstream.stream));
+      await reader.cancel("test cleanup").catch(() => {});
+      await releaseProbe(lateUpstream);
+    }
+  }
+});
 
 test("Responses proxy releases an in-flight upstream read when its reader cancels", async () => {
   const probe = probeUpstream();

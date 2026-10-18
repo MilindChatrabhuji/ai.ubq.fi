@@ -381,6 +381,7 @@ type LithosPendingDispatch = Readonly<{
   pending: Promise<LithosDispatchOutcome>;
   requestSignal: AbortSignal;
   downstreamSignal: AbortSignal;
+  cancel: (reason?: unknown) => void;
 }>;
 
 type LithosDispatchResult = LithosDispatchOutcome | LithosPendingDispatch;
@@ -497,24 +498,31 @@ const runLithosDispatch = async (
         cap_ms: LITHOS_REFUSAL_WAIT_CAP_MS,
       });
       recordLithosRateLimitWaitMs(input.usageContext, pass.state.waitedMs);
+      const cancellation = new AbortController();
+      const requestSignal = AbortSignal.any([input.requestSignal, cancellation.signal]);
+      const downstreamSignal = AbortSignal.any([input.downstreamSignal, cancellation.signal]);
+      const pendingInput: LithosDispatchInput = { ...input, requestSignal, downstreamSignal };
       return {
         pending: (async (): Promise<LithosDispatchOutcome> => {
           try {
-            await waitForLithosRetry(pass.planned.waitMs, input.requestSignal);
-            const continued = await runLithosDispatch(input, pass.state, policy, false);
+            await waitForLithosRetry(pass.planned.waitMs, requestSignal);
+            const continued = await runLithosDispatch(pendingInput, pass.state, policy, false);
             if ("pending" in continued) throw new Error("A resumed LithosAI dispatch cannot defer again.");
             return continued;
           } catch (error) {
             return {
               ok: false,
-              response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext),
-              requestSignal: input.requestSignal,
-              downstreamSignal: input.downstreamSignal,
+              response: await respondLithosChatDispatchFailure(error, downstreamSignal, input.usageContext),
+              requestSignal,
+              downstreamSignal,
             };
           }
         })(),
-        requestSignal: input.requestSignal,
-        downstreamSignal: input.downstreamSignal,
+        requestSignal,
+        downstreamSignal,
+        cancel: (reason) => {
+          if (!cancellation.signal.aborted) cancellation.abort(reason);
+        },
       };
     }
     state = pass.state;
@@ -631,7 +639,8 @@ export const handleLithosChatCompletions = async (
       dispatched.downstreamSignal,
       dispatched.requestSignal,
       upstreamModel,
-      () => servedModel.current
+      () => servedModel.current,
+      dispatched.cancel
     );
   }
   if (!dispatched.ok) {
@@ -883,7 +892,8 @@ export const handleLithosResponses = async (
       dispatched.downstreamSignal,
       dispatched.requestSignal,
       upstreamModel,
-      () => servedModel.current
+      () => servedModel.current,
+      dispatched.cancel
     );
   }
   if (!dispatched.ok) {
