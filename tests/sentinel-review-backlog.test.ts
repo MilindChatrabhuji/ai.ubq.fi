@@ -25,10 +25,7 @@ const archivedFindings = (value: unknown): ReviewFinding[] => {
     throw new Error("Sentinel review archive has no findings array");
   }
   return value.report.findings.map((finding, index) => {
-    if (
-      !isRecord(finding) || typeof finding.fingerprint !== "string" || typeof finding.title !== "string" ||
-      typeof finding.body !== "string"
-    ) {
+    if (!isRecord(finding) || typeof finding.fingerprint !== "string" || typeof finding.title !== "string" || typeof finding.body !== "string") {
       throw new Error(`Sentinel review archive finding ${index} is invalid`);
     }
     return { fingerprint: finding.fingerprint, title: finding.title, body: finding.body };
@@ -49,9 +46,14 @@ const backlogFindings = (markdown: string): ReadonlyMap<string, string> => {
     if (!line.startsWith("| `")) continue;
     const cells = line.slice(1, -1).split("|").map((cell) => cell.trim());
     if (cells.length !== 8) throw new Error("Sentinel review backlog row has the wrong number of columns");
-    const fingerprint = cells[0]!.slice(1, -1);
+    const fingerprintCell = cells[0];
+    const findingCell = cells[6];
+    if (fingerprintCell === undefined || findingCell === undefined) {
+      throw new Error("Sentinel review backlog row is missing required cells");
+    }
+    const fingerprint = fingerprintCell.slice(1, -1);
     if (entries.has(fingerprint)) throw new Error(`Duplicate Sentinel review backlog fingerprint ${fingerprint}`);
-    entries.set(fingerprint, decodeCell(cells[6]!));
+    entries.set(fingerprint, decodeCell(findingCell));
   }
   return entries;
 };
