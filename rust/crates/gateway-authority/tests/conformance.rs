@@ -18,6 +18,7 @@ use gateway_core::identity::{
 };
 use gateway_core::lifecycle::{BillingState, PaidTerminalState};
 use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
+use gateway_core::state::AuthorityStore;
 use support::*;
 
 fn id(value: &str) -> RequestId {
