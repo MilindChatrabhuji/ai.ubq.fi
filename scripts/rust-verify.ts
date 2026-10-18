@@ -138,8 +138,17 @@ export const planRustVerification = (root: string, paths: readonly string[], sta
   return { stage, packages: names, testPackages: tests, buildWorker: stage === "wasm", commands };
 };
 
-const childEnvironment = (): Record<string, string> => {
-  const environment: Record<string, string> = { CARGO_NET_OFFLINE: "true", CARGO_BUILD_JOBS: "1" };
+export const rustVerificationEnvironment = (source: NodeJS.ProcessEnv = process.env): Record<string, string> => {
+  // unshare maps the child to UID0: without HOME, config lookup falls back to
+  // /root rather than the invoking account. Refuse that ambiguous identity.
+  if (!source.HOME || !isAbsolute(source.HOME)) throw new Error("An explicit inherited absolute HOME is required for isolated Rust checks");
+  const environment: Record<string, string> = {
+    CARGO_NET_OFFLINE: "true",
+    CARGO_BUILD_JOBS: "1",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+  };
   for (const name of [
     "PATH",
     "HOME",
@@ -152,7 +161,7 @@ const childEnvironment = (): Record<string, string> => {
     "WASM_OPT_BIN",
     "ESBUILD_BIN",
   ])
-    if (process.env[name] !== undefined) environment[name] = process.env[name];
+    if (source[name] !== undefined) environment[name] = source[name];
   for (const name of ["CARGO_HOME", "RUSTUP_HOME", "CARGO_TARGET_DIR", "XDG_CACHE_HOME"])
     if (!environment[name] || !isAbsolute(environment[name])) throw new Error(`Prepared task-local ${name} is required`);
   return environment;
@@ -362,7 +371,7 @@ const main = async (): Promise<void> => {
     return;
   }
   if (process.platform !== "linux" || process.arch !== "arm64") throw new Error("Interactive Rust compilation requires the primary Linux ARM64 build host");
-  const environment = childEnvironment();
+  const environment = rustVerificationEnvironment();
   const sha = await checkedRun(["git", "rev-parse", "HEAD"], ROOT, environment);
   const tree = await checkedRun(["git", "rev-parse", "HEAD^{tree}"], ROOT, environment);
   if (await checkedRun(["git", "status", "--porcelain", "--untracked-files=no"], ROOT, environment))
