@@ -81,25 +81,29 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             true,
             input.now_ms,
             |entry| {
-            let row = entry.record.json_value()?;
-            if !valid(row) {
-                return Ok(());
-            }
-            if row["status"]
-                .as_f64()
-                .is_some_and(|s| (500.0..=599.0).contains(&s))
-            {
-                let time = row["created_at_ms"].as_f64().expect("validated number");
-                let bucket = ((time / 900000.0).floor() as i64).checked_mul(900000)
-                    .ok_or_else(|| store::corrupt("Error history timestamp cannot be represented"))?;
-                *buckets.entry(bucket).or_default() += 1;
-            }
-            if data.len() < limit && !suppress(row) {
-                data.push(row.clone())
-            }
-            Ok(())
+                let row = entry.record.json_value()?;
+                if !valid(row) {
+                    return Ok(());
+                }
+                if row["status"]
+                    .as_f64()
+                    .is_some_and(|s| (500.0..=599.0).contains(&s))
+                {
+                    let time = row["created_at_ms"].as_f64().expect("validated number");
+                    let bucket = ((time / 900000.0).floor() as i64)
+                        .checked_mul(900000)
+                        .ok_or_else(|| {
+                            store::corrupt("Error history timestamp cannot be represented")
+                        })?;
+                    *buckets.entry(bucket).or_default() += 1;
+                }
+                if data.len() < limit && !suppress(row) {
+                    data.push(row.clone())
+                }
+                Ok(())
             },
-        ).await?;
+        )
+        .await?;
         let diagnostics = self
             .capabilities
             .error_diagnostics(Context {

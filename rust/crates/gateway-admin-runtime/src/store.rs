@@ -43,7 +43,8 @@ pub async fn scan<S: QueryStore>(
     visit(store, prefix, reverse, now, |entry| {
         rows.push(entry);
         Ok(())
-    }).await?;
+    })
+    .await?;
     Ok(rows)
 }
 
