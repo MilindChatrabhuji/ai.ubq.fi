@@ -200,7 +200,9 @@ pub fn refine_error(
         return Ok(result);
     };
     let body = JsString16::from_units(units.to_vec()).prefix_units(4096);
-    let nested = body.try_utf8().ok()
+    let nested = body
+        .try_utf8()
+        .ok()
         .and_then(|text| SourceJson::parse(&text).ok())
         .and_then(|parsed| member(&parsed, "error"))
         .and_then(|error| member(&error, "message"))
@@ -209,22 +211,33 @@ pub fn refine_error(
     let Some(detail) = nested.or_else(|| body.sanitize_js_whitespace_prefix(240)) else {
         return Ok(result);
     };
-    if result.kind == ResponseKind::RequestRejected && includes_lowercase(&detail, "not scoped to a workspace") {
+    if result.kind == ResponseKind::RequestRejected
+        && includes_lowercase(&detail, "not scoped to a workspace")
+    {
         result.kind = ResponseKind::WorkspaceRequired;
     } else if (includes_lowercase(&detail, "not found") && includes_lowercase(&detail, "workspace"))
-        || (includes_lowercase(&detail, "workspace") && includes_lowercase(&detail, "valid workspace"))
+        || (includes_lowercase(&detail, "workspace")
+            && includes_lowercase(&detail, "valid workspace"))
     {
         result.kind = ResponseKind::WorkspaceNotFound;
-    } else if includes_lowercase(&detail, "credit balance") || includes_lowercase(&detail, "purchase credits") {
+    } else if includes_lowercase(&detail, "credit balance")
+        || includes_lowercase(&detail, "purchase credits")
+    {
         result.kind = ResponseKind::BillingBlocked;
-    } else if includes_lowercase(&detail, "workspace") && includes_lowercase(&detail, "organization") {
+    } else if includes_lowercase(&detail, "workspace")
+        && includes_lowercase(&detail, "organization")
+    {
         result.kind = ResponseKind::WorkspaceNotFound;
     }
     result.detail = Some(detail);
     Ok(result)
 }
 fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
-    value.object_entries().ok()?.into_iter().rev()
+    value
+        .object_entries()
+        .ok()?
+        .into_iter()
+        .rev()
         .find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16()))
         .map(|(_, value)| value)
 }
@@ -232,10 +245,12 @@ fn includes_lowercase(text: &JsString16, needle: &str) -> bool {
     let mut folded = Vec::new();
     for scalar in char::decode_utf16(text.as_units().iter().copied()) {
         match scalar {
-            Ok(scalar) => for lower in scalar.to_lowercase() {
-                let mut buffer = [0; 2];
-                folded.extend_from_slice(lower.encode_utf16(&mut buffer));
-            },
+            Ok(scalar) => {
+                for lower in scalar.to_lowercase() {
+                    let mut buffer = [0; 2];
+                    folded.extend_from_slice(lower.encode_utf16(&mut buffer));
+                }
+            }
             Err(error) => folded.push(error.unpaired_surrogate()),
         }
     }

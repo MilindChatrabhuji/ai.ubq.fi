@@ -81,7 +81,11 @@ pub enum PoolSelection {
     NotApplicable,
     Eligible(Box<SelectedAccount>),
     Unavailable,
-    Refused { status: u16, headers: Headers, body: SourceJson },
+    Refused {
+        status: u16,
+        headers: Headers,
+        body: SourceJson,
+    },
 }
 
 pub struct SelectionInput<'a> {

@@ -16,8 +16,8 @@ use gateway_core::{
     state::{AuthorityStore, RevisionCheck},
 };
 use gateway_providers::{AuthMaterial, Headers};
-use serde::Serialize;
 use gateway_schema::selection::ProviderSelection;
+use serde::Serialize;
 use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
@@ -79,7 +79,9 @@ impl ClaudePoolSession {
             return Ok(PoolSelection::NotApplicable);
         }
         if gateway_schema::util::js_trim(&self.config.replay_scope).is_empty() {
-            return Err(crate::unavailable("The existing Claude principal replay scope is unavailable."));
+            return Err(crate::unavailable(
+                "The existing Claude principal replay scope is unavailable.",
+            ));
         }
         loop {
             self.turn()?;
@@ -122,9 +124,11 @@ impl ClaudePoolSession {
                     .filter(|n| n.fract() == 0.0 && (100.0..=599.0).contains(n))
                     .map(|n| n as u16)
                     .unwrap_or(429);
-                let message = error.and_then(|e| e.message.clone()).unwrap_or_else(|| JsString16::from_str(
-                    "The Claude subscription is cooling down after an upstream rejection.",
-                ));
+                let message = error.and_then(|e| e.message.clone()).unwrap_or_else(|| {
+                    JsString16::from_str(
+                        "The Claude subscription is cooling down after an upstream rejection.",
+                    )
+                });
                 return Ok(PoolSelection::Refused {
                     status,
                     headers: Headers::from([("Content-Type".into(), "application/json".into())]),
@@ -517,10 +521,22 @@ impl ClaudePoolSession {
 }
 fn cooldown_body(message: &JsString16) -> Result<SourceJson, GatewayError> {
     #[derive(Serialize)]
-    struct Error<'a> { message: &'a JsString16, r#type: &'static str, code: &'static str }
+    struct Error<'a> {
+        message: &'a JsString16,
+        r#type: &'static str,
+        code: &'static str,
+    }
     #[derive(Serialize)]
-    struct Envelope<'a> { error: Error<'a> }
-    SourceJson::from_serializable(&Envelope { error: Error { message, r#type: "invalid_request_error", code: "claude_code_cooling_down" } })
+    struct Envelope<'a> {
+        error: Error<'a>,
+    }
+    SourceJson::from_serializable(&Envelope {
+        error: Error {
+            message,
+            r#type: "invalid_request_error",
+            code: "claude_code_cooling_down",
+        },
+    })
 }
 fn deduplicate(checks: Vec<RevisionCheck>) -> Result<Vec<RevisionCheck>, GatewayError> {
     let mut map = BTreeMap::new();

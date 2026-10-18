@@ -42,7 +42,11 @@ pub(crate) async fn load_quota<S: AuthorityStore>(
 ) -> Result<(Option<QuotaState>, RevisionCheck), GatewayError> {
     let key = quota_key(binding);
     let row = store.read(&key).await?;
-    let parsed = row.as_ref().map(|row| quota::parse_record(row, now)).transpose()?.flatten();
+    let parsed = row
+        .as_ref()
+        .map(|row| quota::parse_record(row, now))
+        .transpose()?
+        .flatten();
     Ok((parsed, check(&key, row.as_ref())))
 }
 pub(crate) struct PoolView {
