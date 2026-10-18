@@ -475,7 +475,9 @@ test("openai: DeepSeek official Chat Completions adapter streams natively and st
         const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
         const originalTimeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
         const bufferedDeadline = new AbortController();
-        const deadlineTimer = setTimeout(() => bufferedDeadline.abort(new DOMException("buffered deadline", "TimeoutError")), 20);
+        const deadlineTimer = setTimeout(() => {
+          bufferedDeadline.abort(new DOMException("buffered deadline", "TimeoutError"));
+        }, 20);
         const firstFrame = `data: ${JSON.stringify(streamChunk({ content: "first" }))}\n\n`;
         const secondFrame = `data: ${JSON.stringify(streamChunk({ content: "second" }, { finish_reason: "stop" }))}\n\n`;
         let cancelled = false;
