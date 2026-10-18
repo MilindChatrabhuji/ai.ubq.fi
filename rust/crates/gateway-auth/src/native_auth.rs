@@ -16,6 +16,7 @@ pub enum NativeCapability {
     SupervisorRead,
     ConfigurationPublish,
     AccessPublish,
+    OwnerRenewal,
 }
 
 #[derive(Clone)]
@@ -86,6 +87,47 @@ impl NativeTransportIdentity {
     }
     pub fn key_fingerprint(&self) -> &str {
         &self.key_fingerprint
+    }
+    pub fn sign_control_response(
+        &self,
+        nonce: &str,
+        request: &[u8],
+        status: u16,
+        response: &[u8],
+    ) -> Result<String, GatewayError> {
+        let message = crate::native_control::control_response_input(
+            &self.key_id,
+            nonce,
+            request,
+            status,
+            response,
+        )?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).map_err(|_| unauthorized())?;
+        mac.update(&message);
+        Ok(base64url(&mac.finalize().into_bytes()))
+    }
+    pub fn verify_control_response(
+        &self,
+        nonce: &str,
+        request: &[u8],
+        status: u16,
+        response: &[u8],
+        signature: &str,
+    ) -> Result<(), GatewayError> {
+        let message = crate::native_control::control_response_input(
+            &self.key_id,
+            nonce,
+            request,
+            status,
+            response,
+        )?;
+        let bytes = decode_base64url(signature).map_err(|_| unauthorized())?;
+        if bytes.len() != 32 || base64url(&bytes) != signature {
+            return Err(unauthorized());
+        }
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).map_err(|_| unauthorized())?;
+        mac.update(&message);
+        mac.verify_slice(&bytes).map_err(|_| unauthorized())
     }
     pub fn sign_publication_response(
         &self,
@@ -167,6 +209,7 @@ pub struct AuthenticatedNativeOwner {
     authenticated_at_ms: i64,
     valid_through_ms: i64,
     request_digest: String,
+    request_path: String,
 }
 
 impl AuthenticatedNativeOwner {
@@ -181,6 +224,23 @@ impl AuthenticatedNativeOwner {
     }
     pub fn request_digest(&self) -> &str {
         &self.request_digest
+    }
+    pub fn require_request(
+        &self,
+        capability: NativeCapability,
+        path: &str,
+        body: &[u8],
+        now_ms: i64,
+    ) -> Result<(), GatewayError> {
+        self.require_body(capability, body, now_ms)?;
+        if self.request_path != path {
+            return Err(GatewayError::new(
+                403,
+                "Native owner proof is bound to a different operation",
+                Some("native_capability_forbidden"),
+            ));
+        }
+        Ok(())
     }
     /// A publisher cannot reuse an authenticated owner request for another body.
     pub fn require_body(
@@ -272,6 +332,7 @@ impl<'a, R: NativeNonceAuthority> NativeAuthenticator<'a, R> {
             authenticated_at_ms: now_ms,
             valid_through_ms: valid_through,
             request_digest: sha256_hex(body),
+            request_path: path.to_owned(),
         })
     }
 }

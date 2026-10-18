@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod crypto;
 pub mod native;
 pub mod native_auth;
+pub mod native_control;
 pub mod native_credentials;
 pub mod native_replay;
 pub mod origin;

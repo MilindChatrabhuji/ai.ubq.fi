@@ -17,7 +17,7 @@ use std::{
     },
     task::{Context, Poll, Waker},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tungstenite::{
     Message, accept_hdr,
@@ -126,6 +126,43 @@ fn actual_unix_supervisor_uses_localhost_header_and_read_only_method() {
             ["initialize", "initialized", "thread/read"]
         );
     });
+}
+
+#[test]
+fn renewal_outer_deadline_bounds_an_actual_stalled_handshake() {
+    let home = FixtureHome::new();
+    let listener = UnixListener::bind(home.socket()).unwrap();
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        thread::sleep(Duration::from_millis(400));
+    });
+    let owner = NativeOwnerId("fixture-deadline".into());
+    let start = Instant::now();
+    let transport = UnixOwnerTransport::until(
+        vec![NativeOwnerLocation::configured(owner.clone(), home.0.clone()).unwrap()],
+        start + Duration::from_millis(120),
+    )
+    .unwrap();
+    assert!(run(transport.request(&owner, RenewalStep::Initialize)).is_err());
+    assert!(start.elapsed() < Duration::from_millis(350));
+    server.join().unwrap();
+}
+
+#[test]
+fn expired_renewal_deadline_refuses_before_opening_registered_socket() {
+    let home = FixtureHome::new();
+    let listener = UnixListener::bind(home.socket()).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let owner = NativeOwnerId("fixture-expired".into());
+    let transport = UnixOwnerTransport::until(
+        vec![NativeOwnerLocation::configured(owner.clone(), home.0.clone()).unwrap()],
+        Instant::now(),
+    )
+    .unwrap();
+    assert!(run(transport.request(&owner, RenewalStep::Initialize)).is_err());
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    );
 }
 
 fn renewal_fixture(
