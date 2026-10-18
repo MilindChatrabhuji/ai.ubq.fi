@@ -160,11 +160,12 @@ export const testRequiresNativeKv = (testPath: string, root = ROOT): boolean => 
 };
 
 const RELEASE_PATH = /^(?:src\/|ops\/|static\/|serve\.ts$|package\.json$|bun\.lock$|tsconfig\.json$|tools\/native-kv\/)/;
+const NATIVE_PATH =
+  /^(?:src\/storage\/(?:kv|native-addon)\.ts$|tools\/native-kv\/|scripts\/(?:build-native-kv|build-native-kv-darwin|test-native-kv|prepare-native-runtime)\.ts$|ops\/prepare-ci-native-toolchain\.sh$)/;
 const MAC_PATH =
   /(?:^ops\/(?:deploy-mac|macos-sandbox|verify-mac-sandbox|launch-mac|mac-runtime|mac-sqlite-temp)\.ts$|^ops\/com\.ubiquity\.ai\.local\.plist$|^scripts\/serve-mac\.ts$|^src\/storage\/native-addon\.ts$|^tools\/native-kv\/inputs-darwin-arm64\.json$)/;
-const DARWIN_TEST = /(?:tests\/gpg-dsh\.test\.ts$|ops\/tests\/mac-)/;
 const DARWIN_PATH =
-  /(?:^ops\/(?:macos-sandbox|verify-mac-sandbox)\.ts$|^scripts\/build-native-kv-darwin\.ts$|^src\/storage\/native-addon\.ts$|^tools\/native-kv\/inputs-darwin-arm64\.json$)/;
+  /(?:^ops\/(?:macos-sandbox|verify-mac-sandbox)\.ts$|^scripts\/build-native-kv-darwin\.ts$|^src\/storage\/native-addon\.ts$|^tools\/native-kv\/inputs-darwin-arm64\.json$|^tests\/gpg-dsh\.test\.ts$)/;
 
 const candidateTestFiles = (changedPaths: readonly string[]): string[] =>
   uniqueSorted([...pathList(["ls-files", "-z"]).map(normalizePath).filter(isTestPath), ...changedPaths.filter(isTestPath)]);
@@ -184,9 +185,9 @@ export const detectTestSelection = (): TestSelection => {
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
 
-export const ciScopeForSelection = (selection: TestSelection, root = ROOT): CiScope => {
+export const ciScopeForSelection = (selection: TestSelection): CiScope => {
   const docsOnly = selection.reason === "documentation-only";
-  const needsNativeKv = selection.runAll || selection.affectedTests.some((testPath) => testRequiresNativeKv(testPath, root));
+  const needsNativeKv = selection.runAll || selection.paths.some((path) => NATIVE_PATH.test(path));
   const needsArtifact = !docsOnly && selection.paths.some((path) => RELEASE_PATH.test(path));
   return {
     ...selection,
@@ -194,11 +195,8 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT): CiSc
     needsValidate: !docsOnly,
     needsNativeKv,
     needsNativeBuild: needsNativeKv || needsArtifact,
-    needsMacContainment:
-      !docsOnly && (selection.runAll || selection.affectedTests.some((path) => MAC_PATH.test(path)) || selection.paths.some((path) => MAC_PATH.test(path))),
-    needsDarwinNative:
-      !docsOnly &&
-      (selection.runAll || selection.affectedTests.some((path) => DARWIN_TEST.test(path)) || selection.paths.some((path) => DARWIN_PATH.test(path))),
+    needsMacContainment: !docsOnly && (selection.runAll || selection.paths.some((path) => MAC_PATH.test(path))),
+    needsDarwinNative: !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path))),
     needsArtifact,
   };
 };

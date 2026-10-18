@@ -46,6 +46,12 @@ const SENTINEL_FILES = [
   "sentinel-replay-staging",
   "sentinel-replay-deletion-budget",
 ];
+const PORTABLE_EXCLUDED = [
+  /ops\/tests\/mac-native-auth-permissions\.test\.ts$/,
+  /tests\/runtime-permissions(?:-probe)?\.test\.ts$/,
+  /tests\/vps-deploy-guards\.test\.ts$/,
+  /ops\/tests\/vps-release\.test\.ts$/,
+];
 const TEST_SELECTION = detectTestSelection();
 if (!TEST_SELECTION.runAll && TEST_SELECTION.affectedTests.length === 0) {
   console.log(formatScopeMessage(TEST_SELECTION, "bun run test"));
@@ -271,13 +277,15 @@ const runFile = async (
     await settleGroup(child.pid);
   }
 };
-const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: boolean; wallTimeMs: number; nativeBinding?: string }> => {
+const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: boolean; portable: boolean; wallTimeMs: number; nativeBinding?: string }> => {
   const files: string[] = [];
   let list = false;
+  let portable = false;
   let wallTimeMs = MAX_FILE_WALL_TIME_MS;
   let nativeBinding: string | undefined;
   for (const arg of args) {
     if (arg === "--list") list = true;
+    else if (arg === "--portable") portable = true;
     else if (arg.startsWith("--file-timeout-ms=")) {
       wallTimeMs = Number(arg.slice("--file-timeout-ms=".length));
       if (!Number.isInteger(wallTimeMs) || wallTimeMs <= 0 || wallTimeMs > MAX_FILE_WALL_TIME_MS) {
@@ -286,8 +294,15 @@ const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: 
     } else if (arg.startsWith("--native-kv-binding=")) nativeBinding = arg.slice("--native-kv-binding=".length);
     else files.push(arg);
   }
-  return { files, list, wallTimeMs, nativeBinding };
+  return { files, list, portable, wallTimeMs, nativeBinding };
 };
+const portableGroups = (groups: readonly Group[]): Group[] =>
+  groups
+    .map((item) => ({
+      ...item,
+      files: item.files.filter((path) => !PORTABLE_EXCLUDED.some((pattern) => pattern.test(path)) && !testRequiresNativeKv(path)),
+    }))
+    .filter((item) => item.files.length !== 0);
 const resolveNativeTestArtifacts = async (needsNativeKv: boolean, nativeBinding?: string) => {
   if (nativeBinding !== undefined) {
     return { binding: verifiedTestNativeKvBinding(nativeBinding), preload: createTestNativeKvPreload(ROOT) };
@@ -300,7 +315,7 @@ const main = async (): Promise<void> => {
   if (!existsSync(join(ROOT, "bun.lock"))) throw new Error("Restore bun.lock before running tests");
   const [segment = "main", ...args] = process.argv.slice(2);
   const options = invocation(args);
-  const selected = groupsFor(segment, options.files);
+  const selected = options.portable ? portableGroups(groupsFor(segment, options.files)) : groupsFor(segment, options.files);
   if (selected.length === 0) {
     console.log(formatScopeMessage(TEST_SELECTION, `bun run test:${segment}`));
     return;
@@ -312,7 +327,8 @@ const main = async (): Promise<void> => {
   // Resolve every requested file before an expensive parent build can start.
   const resolved = validatedGroups(selected);
   const needsNativeKv =
-    options.nativeBinding !== undefined || TEST_SELECTION.runAll || resolved.some((item) => item.files.some((file) => testRequiresNativeKv(file.label)));
+    options.nativeBinding !== undefined ||
+    (!options.portable && (TEST_SELECTION.runAll || resolved.some((item) => item.files.some((file) => testRequiresNativeKv(file.label)))));
   const { binding, preload } = await resolveNativeTestArtifacts(needsNativeKv, options.nativeBinding);
   let files = 0;
   let failures = 0;

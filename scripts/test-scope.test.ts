@@ -70,14 +70,15 @@ describe("test scope", () => {
 
   test("derives CI capability flags from the same selection", () => {
     const base = { paths: ["src/http.ts"], documentationOnly: false, runAll: false, reason: "selected" as const };
-    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/a.test.ts"] }, fixture)).toMatchObject({
+    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/a.test.ts"] })).toMatchObject({
       docsOnly: false,
       needsValidate: true,
       needsNativeKv: false,
       needsNativeBuild: true,
       needsArtifact: true,
     });
-    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/storage.test.ts"] }, fixture).needsNativeKv).toBe(true);
+    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/storage.test.ts"] }).needsNativeKv).toBe(false);
+    expect(ciScopeForSelection({ ...base, paths: ["src/storage/kv.ts"], affectedTests: ["tests/storage.test.ts"] }).needsNativeKv).toBe(true);
     expect(
       ciScopeForSelection({
         paths: ["AGENTS.md"],

@@ -33,7 +33,7 @@ run_test() {
   if [ -n "$task_native_binding" ]; then
     run "$label" bun --no-env-file --no-install scripts/test-runner.ts "$profile" "--native-kv-binding=$task_native_binding"
   elif [ "$no_native_kv" -eq 1 ]; then
-    run "$label" bun --no-env-file --no-install scripts/test-runner.ts "$profile"
+    run "$label" bun --no-env-file --no-install scripts/test-runner.ts "$profile" --portable
   else
     printf '!!! FAILED: %s (trusted native KV preparation unavailable)\n' "$label"
     fail=1

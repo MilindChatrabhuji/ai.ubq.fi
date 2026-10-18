@@ -79,7 +79,7 @@ jobs:
   validate:
     needs: scope
     if: ${{ needs.scope.outputs.needs_validate == 'true' }}
-    runs-on: ubuntu-26.04-arm
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -98,11 +98,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends bubblewrap
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+      - name: Complete portable Bun gates
+        run: sh scripts/verify.sh --no-native-kv
+
+  native:
+    needs: scope
+    if: ${{ needs.scope.outputs.needs_native_build == 'true' }}
+    runs-on: ubuntu-26.04-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - name: Frozen dependencies
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+      - name: Prepare the Linux sandbox on the ephemeral runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
       - name: Prepare checksum-pinned ephemeral native toolchain
-        if: ${{ needs.scope.outputs.needs_native_build == 'true' }}
         run: bash ops/prepare-ci-native-toolchain.sh
       - name: Prepare one independently bound native KV artifact
-        if: ${{ needs.scope.outputs.needs_native_build == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -116,15 +135,9 @@ jobs:
           bun --no-env-file --no-install run test:vps ops/tests/first-bun-cutover.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
           bun --no-env-file --no-install run test:deploy-guards "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
           bun --no-env-file --no-install run test:vps ops/tests/vps-release.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
-      - name: Complete Bun gates with the prepared binding
+      - name: Complete native and full Bun gates
         shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ needs.scope.outputs.needs_native_build }}" = "true" ]; then
-            sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
-          else
-            sh scripts/verify.sh --no-native-kv
-          fi
+        run: sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
       - name: Package immutable source, dependencies and native KV/permissions
         if: ${{ needs.scope.outputs.needs_artifact == 'true' }}
         shell: bash
@@ -205,9 +218,9 @@ jobs:
           bun --no-env-file --no-install run test tests/gpg-dsh.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
 
   verify-artifact:
-    needs: [scope, validate, mac-containment, darwin-native]
-    if: ${{ always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped') }}
-    runs-on: ubuntu-26.04-arm
+    needs: [scope, validate, native, mac-containment, darwin-native]
+    if: ${{ always() && needs.scope.outputs.needs_artifact == 'true' && needs.validate.result == 'success' && needs.native.result == 'success' && (needs.mac-containment.result == 'success' || needs.mac-containment.result == 'skipped') && (needs.darwin-native.result == 'success' || needs.darwin-native.result == 'skipped') }}
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
