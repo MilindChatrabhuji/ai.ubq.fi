@@ -2164,3 +2164,11 @@ Reversal risk: the provider-owned base ids must actually track the latest weight
 gateway cannot detect that from a dated row. OpenRouter's `~deepseek/deepseek-flash-latest` alias must remain routable.
 The paid hops use `deepseek-v4.1-flash`, so paid key policies keep their existing base model id rather than requiring a
 new dated snapshot.
+
+## Rust WASM migration starts with isolated shared contracts - 2026-10-18
+
+The owner requested the complete gateway in Rust/WASM on Cloudflare. The first milestone adds the separate `rust/` workspace, pinned dependencies, source-derived domain types, an atomic persistence interface and the actual workers-rs fetch export; it does not replace or activate the existing backend. The [foundation contract](research/rust-wasm-port-contract.md) records the exact boundaries, source references, gates and missing parity. All Rust compiles run on the isolated VPS build workspace unless its recorded failure requires the authorized Mac fallback.
+
+Keep operator provider IDs separate from transport/accounting IDs, preserve distinct administrative/routing account hashes and native-owner credential generations, and retain one original request identity across distinct paid hops. Semantic completion, API-key dispatch quota, kernel settlement, paid reconciliation and actual delivery remain independent; Workers EOF supplies no native delivery receipt and never invents success or a refund. The latest disabled-overage hard gate is unchanged. Hot coordination and retained history share atomic authority without forcing indefinite ledgers into an evicting snapshot.
+
+The foundation refuses every unfinished route with an explicit non-success response; health is only release liveness with validated full-source identity. Full authentication, routing, durable state, native boundaries, protocol/admin parity, migration, CI and live deployment acceptance remain required for the original goal. This scoped Rust decision does not change the existing Bun runtime, locks, production service, credentials, databases, DNS or Sentinel ownership.
