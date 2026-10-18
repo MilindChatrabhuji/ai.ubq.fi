@@ -9,6 +9,7 @@ pub mod lifecycle;
 pub mod provider;
 pub mod query;
 pub mod redaction;
+pub mod source_graph;
 pub mod source_json;
 pub mod state;
 pub mod tuple_key;
