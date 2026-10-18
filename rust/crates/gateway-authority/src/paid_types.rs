@@ -39,7 +39,7 @@ pub enum PaidAdmission {
     Existing(PaidReservation),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaidRequest {
     pub key_id: ApiKeyId,
     pub request_id: RequestId,

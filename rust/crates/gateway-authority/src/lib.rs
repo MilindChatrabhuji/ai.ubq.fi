@@ -6,6 +6,7 @@ pub mod claude;
 mod kernel;
 pub mod keys;
 pub mod paid;
+pub mod paid_control;
 mod paid_types;
 mod probes;
 pub mod quota;
@@ -14,6 +15,7 @@ mod reset_recovery;
 mod reset_types;
 pub mod routing;
 mod routing_types;
+mod source_models;
 mod store;
 
 pub use store::{Authority, AuthorityClock, TokenSource};

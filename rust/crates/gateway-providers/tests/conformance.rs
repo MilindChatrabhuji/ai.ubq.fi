@@ -390,9 +390,11 @@ fn lithos_rung_windows_recover_independently() {
 }
 #[test]
 fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary() {
-    let embedding =
-        extras::prepare_embeddings(&json!({"input":["hello"],"dimensions":256}), &options())
-            .unwrap();
+    let embedding = extras::prepare_embeddings(
+        &json!({"model":"voyage-4-large","input":["hello"],"dimensions":256}),
+        &options(),
+    )
+    .unwrap();
     assert_eq!(
         embedding.body,
         json!({"model":"voyage-4-large","input":"hello","input_type":"document","output_dimension":256,"output_dtype":"float","truncation":true})

@@ -12,7 +12,7 @@ use gateway_authority::routing::{
 use gateway_authority::{Authority, AuthorityClock, TokenSource};
 use gateway_core::GatewayError;
 use gateway_core::identity::{
-    ApiKeyId, CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash,
+    ApiKeyId, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash,
 };
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::{
@@ -47,6 +47,12 @@ impl Default for MemoryStore {
 }
 
 impl MemoryStore {
+    pub fn seed_with_revision<T: Serialize>(&self, key: RecordKey, value: &T, revision: &str) {
+        self.rows.lock().unwrap().insert(
+            key.0,
+            StoredRecord::json(revision, serde_json::to_value(value).unwrap(), None),
+        );
+    }
     pub fn seed<T: Serialize>(&self, key: RecordKey, value: &T) {
         self.rows.lock().unwrap().insert(
             key.0,
@@ -202,14 +208,71 @@ pub fn pool() -> SubscriptionPool {
         pool_versionstamp: PoolVersionstamp("pool-original".to_owned()),
         accounts: ["a", "b"]
             .into_iter()
-            .map(|id| PoolAccount {
-                account_id_hash: RoutingAccountHash(format!("route-{id}")),
-                admin_account_hash: SubscriptionSelectionHash(format!("admin-{id}")),
-                credential_version: CredentialVersion(format!("credential-{id}")),
-                enabled: true,
+            .map(|id| {
+                let identity = source_account(id, false).identity();
+                PoolAccount {
+                    account_id_hash: identity.routing_account_hash,
+                    admin_account_hash: identity.administrative_account_hash,
+                    credential_version: identity.credential_version,
+                    enabled: true,
+                }
             })
             .collect(),
     }
+}
+pub fn source_account(
+    id: &str,
+    refreshed: bool,
+) -> gateway_auth::provider_credentials::CodexSourceAccount {
+    use gateway_auth::crypto::Secret;
+    gateway_auth::provider_credentials::CodexSourceAccount {
+        access_token: Secret::new(format!("fixture-access-{id}-{}", u8::from(refreshed))),
+        refresh_token: Secret::new(format!("fixture-refresh-{id}")),
+        account_id: id.into(),
+        updated_at_ms: NOW as f64,
+        native_owner: None,
+    }
+}
+pub fn routing_hash(id: &str) -> RoutingAccountHash {
+    source_account(id, false).identity().routing_account_hash
+}
+pub fn admin_hash(id: &str) -> SubscriptionSelectionHash {
+    source_account(id, false)
+        .identity()
+        .administrative_account_hash
+}
+pub fn seed_pool(store: &MemoryStore, pool: &SubscriptionPool) {
+    let candidates = [
+        source_account("a", false),
+        source_account("a", true),
+        source_account("b", false),
+        source_account("b", true),
+    ];
+    let accounts = pool
+        .accounts
+        .iter()
+        .map(|configured| {
+            candidates
+                .iter()
+                .find(|source| {
+                    let identity = source.identity();
+                    identity.routing_account_hash == configured.account_id_hash
+                        && identity.credential_version == configured.credential_version
+                })
+                .expect("fixture normalized pool must match actual fixture source credentials")
+                .clone()
+        })
+        .collect();
+    let source = gateway_auth::provider_credentials::CodexSourcePool {
+        accounts,
+        updated_at_ms: NOW as f64,
+    };
+    store.seed_with_revision(
+        gateway_auth::provider_credentials::codex_source_pool_key(),
+        &source.private_source_value(),
+        &pool.pool_versionstamp.0,
+    );
+    store.seed(gateway_authority::keys::pool(), pool);
 }
 pub fn policy() -> ApiKeyPolicy {
     ApiKeyPolicy {

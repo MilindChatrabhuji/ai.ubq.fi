@@ -179,6 +179,35 @@ pub fn paid_routing() -> RecordKey {
         Text("paid_routing"),
     ])
 }
+pub fn paid_control_owner() -> RecordKey {
+    key(&[
+        Text("uos_ai"),
+        Text("authority"),
+        Text("v1"),
+        Text("paid_control_owner"),
+    ])
+}
+pub fn paid_control_config() -> RecordKey {
+    key(&[
+        Text("uos_ai"),
+        Text("authority"),
+        Text("v1"),
+        Text("paid_control_config"),
+    ])
+}
+pub fn paid_control_observation(provider: gateway_core::provider::PaidProvider) -> RecordKey {
+    let provider = match provider {
+        gateway_core::provider::PaidProvider::Surplus => "surplus",
+        gateway_core::provider::PaidProvider::Metered => "openlux",
+    };
+    key(&[
+        Text("uos_ai"),
+        Text("authority"),
+        Text("v1"),
+        Text("paid_control_observation"),
+        Text(provider),
+    ])
+}
 pub fn paid_window(id: &str, reset: i64) -> RecordKey {
     key(&[
         Text("uos_ai"),
