@@ -1321,3 +1321,107 @@ fn public_supervisor_brief_uses_final_operation_and_never_leaks_native_context()
         }
     }
 }
+
+#[test]
+fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_deny() {
+    use gateway_admin_runtime::claude_access::*;
+    let store = Store::default();
+    let host = Host::default();
+    store.conflicts.set(2);
+    let loaded = run(load_policy(
+        &store,
+        &host,
+        &["trusted-seed".into()],
+        &|a, b| Ok(a.cmp(b)),
+    ))
+    .unwrap();
+    assert_eq!(loaded.policy.source, PolicySource::Env);
+    assert_eq!(loaded.policy.allowed_key_ids, vec!["trusted-seed"]);
+    let actual = run(store.read(&policy_key())).unwrap().unwrap();
+    assert_eq!(loaded.check.expected_revision, Some(actual.revision));
+    store.put(
+        json!(["uos_ai", "claude_code_access", "v1"]),
+        json!({"v":1,"source":"kv","allowed_key_ids":[],"updated_at_ms":100}),
+    );
+    let denied = run(load_policy(
+        &store,
+        &host,
+        &["must-not-resurrect".into()],
+        &|a, b| Ok(a.cmp(b)),
+    ))
+    .unwrap();
+    assert!(denied.policy.allowed_key_ids.is_empty());
+    assert_eq!(denied.policy.source, PolicySource::Kv);
+    assert_eq!(
+        run(store.commit(AtomicTransition {
+            checks: vec![loaded.check],
+            mutations: vec![]
+        }))
+        .unwrap(),
+        CommitOutcome::Conflict
+    );
+    store.put(
+        json!(["uos_ai", "claude_code_access", "v1"]),
+        json!({"v":1,"source":"kv","allowed_key_ids":null,"updated_at_ms":100}),
+    );
+    assert!(
+        run(load_policy(
+            &store,
+            &host,
+            &["forbidden-fallback".into()],
+            &|a, b| Ok(a.cmp(b))
+        ))
+        .is_err()
+    );
+}
+#[test]
+fn shared_claude_access_parser_preserves_stable_locale_ties_and_missing_host_refuses() {
+    use gateway_admin_runtime::claude_access::*;
+    let ids = parse_ids(&json!(["é", "e\u{0301}", "é"]), &|_, _| {
+        Ok(std::cmp::Ordering::Equal)
+    })
+    .unwrap();
+    assert_eq!(ids, vec!["é", "e\u{0301}"]);
+    assert!(
+        parse_policy(
+            &json!({"v":1,"source":"kv","allowed_key_ids":[],"updated_at_ms":9007199254740992_i64}),
+            &|a, b| Ok(a.cmp(b))
+        )
+        .is_err()
+    );
+    let store = Store::default();
+    let host = Host::default();
+    let error = run(load_policy(
+        &store,
+        &host,
+        &["a".into(), "b".into()],
+        &|_, _| {
+            Err(GatewayError::unavailable(
+                "locale host missing",
+                "source_collation_unavailable",
+            ))
+        },
+    ))
+    .unwrap_err();
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("source_collation_unavailable")
+    );
+    assert!(
+        store
+            .get(json!(["uos_ai", "claude_code_access", "v1"]))
+            .is_none()
+    );
+    store.conflicts.set(8);
+    assert_eq!(
+        run(load_policy(&store, &host, &[], &|a, b| Ok(a.cmp(b))))
+            .unwrap_err()
+            .status,
+        409
+    );
+    assert!(
+        store
+            .get(json!(["uos_ai", "claude_code_access", "v1"]))
+            .is_none()
+    );
+}

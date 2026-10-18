@@ -285,6 +285,11 @@ impl PreparedConfigurationPublication {
         revision: &str,
         authenticated_body: &[u8],
     ) -> Result<PaidControlConfig, GatewayError> {
+        if !crate::wire::valid_revision(revision)
+            || self.changed && self.checks[1].expected_revision.as_deref() == Some(revision)
+        {
+            return Err(crate::wire::invalid());
+        }
         verify_owner(
             proof,
             &self.owner,
