@@ -406,6 +406,84 @@
       "rp_id": "webauthn.org",
       "require_user_verification": true,
       "expected_success": false
+    },
+    {
+      "name": "packed full statement certificate P-256/SHA-256",
+      "now_ms": 1792343435246,
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEcwRQIhAKVdiSZq_pG7aBd9YtHKByClWcXrt4hJvGtcNKcCFylQAiB7AqeEgorPIOSSHGspzAcmNCz2eXt1ZPElm1TLpKms-GN4NWOBWQG3MIIBszCCAVmgAwIBAgIBATAKBggqhkjOPQQDAjBaMQswCQYDVQQGEwJVUzERMA8GA1UEChMIVU9TIFRlc3QxIjAgBgNVBAsTGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xFDASBgNVBAMTC1VPUyBGaXh0dXJlMB4XDTI2MTAxODE3MDkzNVoXDTI2MTAxOTE3MTAzNVowWjELMAkGA1UEBhMCVVMxETAPBgNVBAoTCFVPUyBUZXN0MSIwIAYDVQQLExlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMRQwEgYDVQQDEwtVT1MgRml4dHVyZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABK019ynxwG8ebw1rpNvXJmjW34MRjwvCS_HNtZB0ELpK8sLQ8vFWhLC2e6Na_ekcVAYg9mA_xMhj6ccafDEeiyajEDAOMAwGA1UdEwEB_wQCMAAwCgYIKoZIzj0EAwIDSAAwRQIhAJxWi6IANvlw4LsUYVK4iPoiDrMDceRGCDUxiV-3p90LAiBrS6YdMsqZ5DgKY06OntAvZT5mxTLYPvTxMDzdZ5k9BGhhdXRoRGF0YViUOgxMxOTOopO-lsIwBnGgLlAA6Uth_mBPx-oNUzt0k2hFAAAAAAAAAAAAAAAAAAAAAAAAAAAAEInp5-sJVGrMl4UwTjoxdU-lAQIDJiABIVggMt1Vtbzt33gZsZeYnFvuhrmBH1PJoanGHQYnBnLlweUiWCAlLo7_a3K2LErRouLevZtGL0tcSCicAV5hZvhzaetd6Q",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "expected_success": true,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek"
+    },
+    {
+      "name": "packed full statement certificate P-384/SHA-256",
+      "now_ms": 1792343435262,
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWGgwZgIxAPrB2ggvwNVDvOL1W04aqvH749Epz4bWzjHDs_US52kdsoGiP7_8lHGcIPRMcqF1oQIxAJ9xm3JwB7oTgSbeYXUYFrfuX59XBC5YNwHQQQVNCqLdlIHA0gtactQtqfNDhaWepGN4NWOBWQH0MIIB8DCCAXagAwIBAgIBATAKBggqhkjOPQQDAjBaMQswCQYDVQQGEwJVUzERMA8GA1UEChMIVU9TIFRlc3QxIjAgBgNVBAsTGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xFDASBgNVBAMTC1VPUyBGaXh0dXJlMB4XDTI2MTAxODE3MDkzNVoXDTI2MTAxOTE3MTAzNVowWjELMAkGA1UEBhMCVVMxETAPBgNVBAoTCFVPUyBUZXN0MSIwIAYDVQQLExlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMRQwEgYDVQQDEwtVT1MgRml4dHVyZTB2MBAGByqGSM49AgEGBSuBBAAiA2IABC0RusvlcmRq9vkU8XAF45y4ezXY-FoS3-rzgp9sH6MXEwzkZq1SOjZGh8-PScFwWLZmJObSM0OZcDAuul-jT_Mevs1xcxkJCsOnkoai9PPzluxJqb8A7mywBZR3x6xM9KMQMA4wDAYDVR0TAQH_BAIwADAKBggqhkjOPQQDAgNoADBlAjBlZgwkK0TDGSLIXcU60_WEea84-rw5RGWeoudvzkwZ5tw7Prmg48lmRBkUcirxRHcCMQDNp4VKI4XLhi9n4404N2i27JDdqOZyyUOv9iZiBMqY_ruJKYx3vQIRI2uMZpeV6v5oYXV0aERhdGFYlDoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCJ6efrCVRqzJeFME46MXVPpQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "expected_success": true,
+      "public_key": "pQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek"
+    },
+    {
+      "name": "packed full statement certificate P-521/SHA-512",
+      "now_ms": 1792343435267,
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZzgjY3NpZ1iLMIGIAkIBn3svSuE-mAqczkC0Z69AygLleIFM0I8694gKdSaShW6LZ37MmrthZNUzUf4WdJuoqEktSGcthkyIe1eTRuWDy78CQgGuVprq7JonrOHfp_rBHp9efLzOes4EnMfq2HNaYHl-d4nPq8KtRbpo96cTv2aPtTs8a-8Jxyzu88t68ZrE168_2GN4NWOBWQI_MIICOzCCAZygAwIBAgIBATAKBggqhkjOPQQDBDBaMQswCQYDVQQGEwJVUzERMA8GA1UEChMIVU9TIFRlc3QxIjAgBgNVBAsTGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xFDASBgNVBAMTC1VPUyBGaXh0dXJlMB4XDTI2MTAxODE3MDkzNVoXDTI2MTAxOTE3MTAzNVowWjELMAkGA1UEBhMCVVMxETAPBgNVBAoTCFVPUyBUZXN0MSIwIAYDVQQLExlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMRQwEgYDVQQDEwtVT1MgRml4dHVyZTCBmzAQBgcqhkjOPQIBBgUrgQQAIwOBhgAEAZSh-xr-D-XCKURFucjP18mqDId7O7hTMYodo9feizqLwbi1Dr64ZL6F9dxEyBMyF7XLjKt2vv5CXsmrxCoOXi4TATQfu6YMQaL9BGGCU3kWbp2_4qFotRK-Lc7iWKIDQJPENhilVRs0-4KKuN-8GWuqJNBzbuWEUHsd6xipCg6gNr1JoxAwDjAMBgNVHRMBAf8EAjAAMAoGCCqGSM49BAMEA4GMADCBiAJCAMAs4gK26RG0qxkfcG9L-xas7xElwQOcRPXWESqsjc4Oj9j76M_6XCkAmn3e28jXPI6aeFck6kWfVYU6jOT32vLBAkIA3DQizDWn2rOhVULeeyZ-PxFQE-VJHmuHJm6rS2-8x3DGajy1zAZINg8mYL8jnTryxI7XU6I6UTno5gP8I1vfEw9oYXV0aERhdGFYlDoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCJ6efrCVRqzJeFME46MXVPpQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "expected_success": false
+    },
+    {
+      "name": "packed full statement certificate Ed25519/Ed25519",
+      "now_ms": 1792343435272,
+      "response": {
+        "id": "ienn6wlUasyXhTBOOjF1Tw",
+        "rawId": "ienn6wlUasyXhTBOOjF1Tw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiNllvTm14bWUzNE9YeHpnUHdPeXEzN0VIbTJ6clNoSVp1Wk52QlFfQWtMdyIsIm9yaWdpbiI6Imh0dHBzOi8vYWkudWJxLmZpIiwiY3Jvc3NPcmlnaW4iOnRydWUsInRva2VuQmluZGluZyI6eyJzdGF0dXMiOiJzdXBwb3J0ZWQifX0",
+          "attestationObject": "o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZydjc2lnWEClKXnCI06y4fhnc0dRC6NW948RTAzagGmlycvh5dcMN6i_ATvUtpHX0HJlEGjSN3MY_7d0HMot-kf4K8Whh2AEY3g1Y4FZAXcwggFzMIIBJaADAgECAgEBMAUGAytlcDBaMQswCQYDVQQGEwJVUzERMA8GA1UEChMIVU9TIFRlc3QxIjAgBgNVBAsTGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xFDASBgNVBAMTC1VPUyBGaXh0dXJlMB4XDTI2MTAxODE3MDkzNVoXDTI2MTAxOTE3MTAzNVowWjELMAkGA1UEBhMCVVMxETAPBgNVBAoTCFVPUyBUZXN0MSIwIAYDVQQLExlBdXRoZW50aWNhdG9yIEF0dGVzdGF0aW9uMRQwEgYDVQQDEwtVT1MgRml4dHVyZTAqMAUGAytlcAMhAGxIU2Ka2T63NAracUMjk8WjnjDAaRA3S_tEhvK_BH5-oxAwDjAMBgNVHRMBAf8EAjAAMAUGAytlcANBAD845oRe2EdHq0UMpNFKBKc5p1LsIuCGkcZ5DyaG5NUqGXy8d_SK4T4l0_cKiQmF4X9BoGeWWNPUQ3wD0B7KNARoYXV0aERhdGFYlDoMTMTkzqKTvpbCMAZxoC5QAOlLYf5gT8fqDVM7dJNoRQAAAAAAAAAAAAAAAAAAAAAAAAAAABCJ6efrCVRqzJeFME46MXVPpQECAyYgASFYIDLdVbW87d94GbGXmJxb7oa5gR9TyaGpxh0GJwZy5cHlIlggJS6O_2tytixK0aLi3r2bRi9LXEgonAFeYWb4c2nrXek",
+          "transports": ["internal"]
+        }
+      },
+      "challenge": "6YoNmxme34OXxzgPwOyq37EHm2zrShIZuZNvBQ_AkLw",
+      "origin": "https://ai.ubq.fi",
+      "rp_id": "ai.ubq.fi",
+      "require_user_verification": true,
+      "expected_success": false
     }
   ],
   "derived_android_fixtures": "Maintained core real Google attestation with each exact source default public root appended; source unmodified results retained"

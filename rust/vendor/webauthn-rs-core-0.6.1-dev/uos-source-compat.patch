@@ -224,7 +224,7 @@ index 000000000..b85d6408d
 +w1IdYIg2Wxg7yHcQZemFQg==
 +-----END CERTIFICATE-----
 diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
-index 8e5d9efa7..7af173394 100644
+index 8e5d9efa7..f4c87d8d6 100644
 --- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
 +++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/attestation.rs
 @@ -44,6 +44,7 @@ pub struct FidoGenCeAaguid;
@@ -307,7 +307,7 @@ index 8e5d9efa7..7af173394 100644
  
      // Verify the sig using verificationData and certificate public key per [SEC1].
 -    let verified = verify_signature(cerificate_public_key, sig, &verification_data)?;
-+    let mut certificate_key = COSEKey::try_from((crate::source_compat::key_algorithm(cerificate_public_key)?, cerificate_public_key))?;
++    let mut certificate_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(cerificate_public_key)?, cerificate_public_key))?;
 +    certificate_key.type_ = COSEAlgorithm::ES256;
 +    let verified = certificate_key.verify_signature(sig, &verification_data)?;
  
@@ -371,7 +371,7 @@ index 8e5d9efa7..7af173394 100644
              // Alg was pre-loaded into the x509 struct during parsing
              // so we should just be able to verify
 -            verify_signature(aik_cert, &dsig, certinfo_bytes)?
-+            let mut key = COSEKey::try_from((crate::source_compat::key_algorithm(aik_cert)?, aik_cert))?;
++            let mut key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(aik_cert)?, aik_cert))?;
 +            key.type_ = alg;
 +            key.verify_signature(&dsig, certinfo_bytes)?
          }
@@ -545,7 +545,7 @@ index 8e5d9efa7..7af173394 100644
 +    }
 +
 +    // Source uses the explicit statement algorithm as the hash override.
-+    let mut signing_key = COSEKey::try_from((crate::source_compat::key_algorithm(attestn_cert)?, attestn_cert))?;
++    let mut signing_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(attestn_cert)?, attestn_cert))?;
 +    signing_key.type_ = alg;
 +    if !signing_key.verify_signature(sig, &data_to_verify)? { return Err(WebauthnError::AttestationStatementSigInvalid); }
 +
@@ -574,7 +574,7 @@ index 8e5d9efa7..7af173394 100644
  pub fn verify_attestation_ca_chain<'a>(
      att_data: &'_ ParsedAttestationData,
 diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
-index 5d638f76e..6ef90a686 100644
+index 5d638f76e..215c96141 100644
 --- a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
 +++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/crypto.rs
 @@ -22,10 +22,10 @@ use crypto_glue::{
@@ -602,7 +602,7 @@ index 5d638f76e..6ef90a686 100644
 -        .is_ok();
 -
 -    Ok(valid)
-+    let alg = crate::source_compat::key_algorithm(certificate)?;
++    let alg = crate::source_compat::statement_key_algorithm(certificate)?;
 +    let mut key = COSEKey::try_from((alg, certificate))?;
 +    key.type_ = crate::source_compat::certificate_signature_algorithm(certificate)?;
 +    key.verify_signature(signature, verification_data)
@@ -903,10 +903,10 @@ index 049733ca9..5f151ece5 100644
  
 diff --git a/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs
 new file mode 100644
-index 000000000..437e91135
+index 000000000..a19f4ea05
 --- /dev/null
 +++ b/rust/vendor/webauthn-rs-core-0.6.1-dev/src/source_compat.rs
-@@ -0,0 +1,429 @@
+@@ -0,0 +1,439 @@
 +//! Stateless SimpleWebAuthn 13.2.2 attestation policy. Ceremony, current-role UV,
 +//! original COSE bytes and persistence remain owned by the gateway adapter.
 +//! Uses the maintained attestation/DER parsers and RustCrypto primitives; no
@@ -994,6 +994,16 @@ index 000000000..437e91135
 +            }
 +        }
 +        _ => Err(failure()),
++    }
++}
++// Source statement-certificate conversion supports these key shapes only.
++// Chain verification and Apple credential-key equality retain key_algorithm.
++pub(crate) fn statement_key_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, WebauthnError> {
++    let algorithm = key_algorithm(cert)?;
++    match (cert.tbs_certificate.subject_public_key_info.algorithm.oid.to_string().as_str(), algorithm) {
++        ("1.2.840.10045.2.1", COSEAlgorithm::ES256 | COSEAlgorithm::ES384)
++        | ("1.2.840.113549.1.1.1", COSEAlgorithm::RS256) => Ok(algorithm),
++        _ => Err(WebauthnError::COSEKeyInvalidType),
 +    }
 +}
 +fn cert_time(cert: &Certificate, now: SystemTime) -> Result<(), WebauthnError> {
@@ -1178,7 +1188,7 @@ index 000000000..437e91135
 +        now,
 +    )?;
 +    // Source derives the signature algorithm from the certificate key, not the untrusted JWT alg header.
-+    let mut key = COSEKey::try_from((key_algorithm(leaf)?, leaf))?;
++    let mut key = COSEKey::try_from((statement_key_algorithm(leaf)?, leaf))?;
 +    key.type_ = certificate_signature_algorithm(leaf)?;
 +    if !key.verify_signature(
 +        &decode(parts[2])?,

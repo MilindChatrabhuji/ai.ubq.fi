@@ -719,7 +719,7 @@ pub(crate) fn verify_fidou2f_attestation(
         .collect();
 
     // Verify the sig using verificationData and certificate public key per [SEC1].
-    let mut certificate_key = COSEKey::try_from((crate::source_compat::key_algorithm(cerificate_public_key)?, cerificate_public_key))?;
+    let mut certificate_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(cerificate_public_key)?, cerificate_public_key))?;
     certificate_key.type_ = COSEAlgorithm::ES256;
     let verified = certificate_key.verify_signature(sig, &verification_data)?;
 
@@ -1003,7 +1003,7 @@ fn verify_tpm_attestation_internal(
         TpmtSignature::RawSignature(dsig) => {
             // Alg was pre-loaded into the x509 struct during parsing
             // so we should just be able to verify
-            let mut key = COSEKey::try_from((crate::source_compat::key_algorithm(aik_cert)?, aik_cert))?;
+            let mut key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(aik_cert)?, aik_cert))?;
             key.type_ = alg;
             key.verify_signature(&dsig, certinfo_bytes)?
         }
@@ -1435,7 +1435,7 @@ pub(crate) fn verify_source_android_key_attestation(
     }
 
     // Source uses the explicit statement algorithm as the hash override.
-    let mut signing_key = COSEKey::try_from((crate::source_compat::key_algorithm(attestn_cert)?, attestn_cert))?;
+    let mut signing_key = COSEKey::try_from((crate::source_compat::statement_key_algorithm(attestn_cert)?, attestn_cert))?;
     signing_key.type_ = alg;
     if !signing_key.verify_signature(sig, &data_to_verify)? { return Err(WebauthnError::AttestationStatementSigInvalid); }
 

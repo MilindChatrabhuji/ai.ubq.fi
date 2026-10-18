@@ -87,6 +87,16 @@ pub(crate) fn key_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, Webauth
         _ => Err(failure()),
     }
 }
+// Source statement-certificate conversion supports these key shapes only.
+// Chain verification and Apple credential-key equality retain key_algorithm.
+pub(crate) fn statement_key_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, WebauthnError> {
+    let algorithm = key_algorithm(cert)?;
+    match (cert.tbs_certificate.subject_public_key_info.algorithm.oid.to_string().as_str(), algorithm) {
+        ("1.2.840.10045.2.1", COSEAlgorithm::ES256 | COSEAlgorithm::ES384)
+        | ("1.2.840.113549.1.1.1", COSEAlgorithm::RS256) => Ok(algorithm),
+        _ => Err(WebauthnError::COSEKeyInvalidType),
+    }
+}
 fn cert_time(cert: &Certificate, now: SystemTime) -> Result<(), WebauthnError> {
     let now = now
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -269,7 +279,7 @@ fn safetynet(
         now,
     )?;
     // Source derives the signature algorithm from the certificate key, not the untrusted JWT alg header.
-    let mut key = COSEKey::try_from((key_algorithm(leaf)?, leaf))?;
+    let mut key = COSEKey::try_from((statement_key_algorithm(leaf)?, leaf))?;
     key.type_ = certificate_signature_algorithm(leaf)?;
     if !key.verify_signature(
         &decode(parts[2])?,

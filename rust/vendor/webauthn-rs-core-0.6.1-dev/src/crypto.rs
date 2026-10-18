@@ -34,7 +34,7 @@ pub fn verify_signature(
     signature: &[u8],
     verification_data: &[u8],
 ) -> Result<bool, WebauthnError> {
-    let alg = crate::source_compat::key_algorithm(certificate)?;
+    let alg = crate::source_compat::statement_key_algorithm(certificate)?;
     let mut key = COSEKey::try_from((alg, certificate))?;
     key.type_ = crate::source_compat::certificate_signature_algorithm(certificate)?;
     key.verify_signature(signature, verification_data)
