@@ -12,8 +12,8 @@
     "src/models/codex-models-fetch.ts": "eb18d8a89340714533cf4eb04c6f50eed486cfca71b1e95e4a22bd43b008479a",
     "src/admin/api-keys.ts": "6f9ccecc69e81aa7934b99cf014c93c951e2213ad26add262754d87564f6c589"
   },
-  "receipt": "/tmp/ai-rust-wasm-20261018/m24-oracle-v2/receipt.json",
+  "receipt": "/tmp/ai-rust-wasm-20261018/m24-oracle-v3/receipt.json",
   "operation_cases": 22,
   "live_requests": 0,
-  "locale_cases": 5
+  "locale_cases": 6
 }
