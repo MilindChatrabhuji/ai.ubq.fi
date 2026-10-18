@@ -263,8 +263,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 && (pending.observation.provider_request_id.is_some()
                     || observation.provider_request_id.is_none())
             {
-                pending.tail.clone().await;
-                return HealthWrite::Coalesced;
+                return match pending.tail.clone().await {
+                    HealthWrite::Stored|HealthWrite::Throttled|HealthWrite::Coalesced=>HealthWrite::Coalesced,
+                    outcome=>outcome,
+                };
         }
         let sequence = {
             let mut state = self.health.0.borrow_mut();

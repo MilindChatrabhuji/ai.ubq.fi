@@ -35,7 +35,7 @@ fn cancelled_producer_drops_its_host_and_releases_data_only_health_waiters(){
     let(host,a_drops,_,_,_)=request_host(&clock);let a=ObservabilityRuntime::with_state(memory.clone(),host,state.clone());let(host,_,b_random,_,_)=request_host(&clock);let b=ObservabilityRuntime::with_state(memory.clone(),host,state);
     let target=HealthTarget::codex("account");let mut first=Box::pin(a.observe_provider(target.clone(),E::Success,Some(200),None));let mut same=Box::pin(b.observe_provider(target.clone(),E::Success,Some(200),None));let mut cx=Context::from_waker(Waker::noop());
     assert!(matches!(first.as_mut().poll(&mut cx),Poll::Pending));assert!(matches!(same.as_mut().poll(&mut cx),Poll::Pending));drop(first);drop(a);assert_eq!(a_drops.get(),1);
-    assert_eq!(run(same),W::Coalesced);assert_eq!(memory.commits.get(),0);assert_eq!(b_random.get(),0);memory.pause.set(false);assert_eq!(run(b.observe_provider(target,E::UpstreamError,Some(503),None)),W::Stored);assert_eq!(b_random.get(),2);
+    assert_eq!(run(same),W::Unavailable);assert_eq!(memory.commits.get(),0);assert_eq!(b_random.get(),0);memory.pause.set(false);assert_eq!(run(b.observe_provider(target,E::UpstreamError,Some(503),None)),W::Stored);assert_eq!(b_random.get(),2);
 }
 #[test]
 fn active_health_coalesces_only_a_receipt_and_never_reuses_an_old_io_host(){
@@ -43,4 +43,13 @@ fn active_health_coalesces_only_a_receipt_and_never_reuses_an_old_io_host(){
     let mut first=Box::pin(a.upstream_health_response());let mut second=Box::pin(b.upstream_health_response());let mut cx=Context::from_waker(Waker::noop());assert!(matches!(first.as_mut().poll(&mut cx),Poll::Pending));assert!(matches!(second.as_mut().poll(&mut cx),Poll::Pending));assert_eq!((a_probes.get(),b_probes.get()),(1,0));
     drop(first);drop(a);assert_eq!(a_drops.get(),1);assert_eq!(run(second).unwrap_err().envelope.error.code.as_deref(),Some("active_upstream_health_interrupted"));assert_eq!(b_probes.get(),0);
     let response=run(b.upstream_health_response()).unwrap();assert_eq!(response.status,200);assert_eq!(response.body["probes"]["claude_subscription"]["status"],503);assert_eq!(b_probes.get(),1);
+}
+#[test]
+fn cancelled_coalescer_releases_its_executor_waker_while_the_producer_remains_pending(){
+    struct Executor;impl std::task::Wake for Executor{fn wake(self:std::sync::Arc<Self>){}}
+    let executor=std::sync::Arc::new(Executor);let waker=Waker::from(executor.clone());let mut cx=Context::from_waker(&waker);
+    let memory=Memory::default();memory.pause.set(true);let runtime=ObservabilityRuntime::new(memory.clone(),Host::default());let target=HealthTarget::codex("fixture");
+    let mut producer=Box::pin(runtime.observe_provider(target.clone(),E::Success,Some(200),None));let mut noop=Context::from_waker(Waker::noop());assert!(matches!(producer.as_mut().poll(&mut noop),Poll::Pending));
+    let mut waiter=Box::pin(runtime.observe_provider(target,E::Success,Some(200),None));assert!(matches!(waiter.as_mut().poll(&mut cx),Poll::Pending));assert_eq!(std::sync::Arc::strong_count(&executor),3);drop(waiter);assert_eq!(std::sync::Arc::strong_count(&executor),2);
+    memory.pause.set(false);assert_eq!(run(producer),W::Stored);
 }

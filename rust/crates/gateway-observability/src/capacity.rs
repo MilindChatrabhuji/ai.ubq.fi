@@ -19,11 +19,13 @@ pub fn claude_source(account:&ClaudeAccountReadback,health:&Value,at:i64)->Value
     json!({"source":"claude_code","label":"Claude subscription","account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"state":state,"source_observed_at_ms":observed,"snapshot_at_ms":at,"failure_kind":if failing{Some("upstream_error")}else{None},"failure_status":failure_status,"credential_kind":account.credential.kind,"workspace_id":account.workspace.as_ref().map(|w|&w.id),"windows":{"five_hour":window("5h"),"seven_day":window("7d")},"standard":standard,"blocked_until_ms":quota["blocked_until_ms"],"cooldown_until_ms":quota["cooldown_until_ms"],"last_error":quota["last_error"]})
 }
 impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H>{
-    async fn slot_capacity(&self,account:Option<&CapacityAccountRef>,slot:u8,at:i64)->Result<Value,GatewayError>{
+    async fn slot_capacity(&self,account:Option<&CapacityAccountRef>,slot:u8,fence:Option<&gateway_authority::capacity::CodexCapacityObservationFence>,at:i64)->Result<Value,GatewayError>{
         let Some(account)=account else{return Ok(shape::unavailable_codex(slot,at,"not_configured",None,false,None,None))};
+        let fence=fence.ok_or_else(||store::missing("capacity_authority_source_fence"))?;
+        if !fence.fetch_bindings().any(|binding|binding.source_slot()==slot&&binding.account_id()==account.account_id){return Err(store::error("Capacity GET does not match the captured source"))}
         let cohort=sha256_hex(format!("uos-prompt-cache-account-cohort-v1\0{}",account.account_id).as_bytes());
         let failed=|kind:&str,status:Option<u16>|shape::unavailable_codex(slot,at,kind,status,true,account.label.as_deref(),Some(&cohort));
-        let probe=self.host.probe_codex_capacity(account,at+8000).await?;
+        let probe=self.host.probe_codex_capacity(account,fence,at+8000).await?;
         match probe{
             CapacityProbe::Unreachable=>Ok(failed("unreachable",None)),
             CapacityProbe::Http{status,..}if !(200..300).contains(&status)=>Ok(failed(if status>=500{"upstream_error"}else{"http_error"},Some(status))),
@@ -35,12 +37,13 @@ impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H>{
     }
     async fn capture_capacity_snapshot(&self,at:i64,force_metered:bool)->Result<Value,GatewayError>{
         let accounts=self.host.codex_capacity_accounts().await?;let mut slots=std::collections::BTreeSet::new();
-        if accounts.len()>2||accounts.iter().any(|a|!(1..=2).contains(&a.slot)||store::trim(&a.account_id).is_empty()||store::trim(&a.credential_fingerprint).is_empty()||!slots.insert(a.slot)){return Err(store::error("Capacity owner published an invalid account roster"))}
-        let codex=futures_util::future::join(self.slot_capacity(accounts.iter().find(|a|a.slot==1),1,at),self.slot_capacity(accounts.iter().find(|a|a.slot==2),2,at));
+        if accounts.len()>2||accounts.iter().any(|a|!(1..=2).contains(&a.slot)||store::trim(&a.account_id).is_empty()||!slots.insert(a.slot)){return Err(store::error("Capacity owner published an invalid account roster"))}
+        let fence=if accounts.is_empty(){None}else{Some(self.host.begin_codex_capacity_observation(&accounts).await?)};let at=fence.as_ref().map_or(at,|f|f.observed_at_ms());
+        let codex=futures_util::future::join(self.slot_capacity(accounts.iter().find(|a|a.slot==1),1,fence.as_ref(),at),self.slot_capacity(accounts.iter().find(|a|a.slot==2),2,fence.as_ref(),at));
         let ((one,two),metered)=futures_util::future::join(codex,self.host.metered_quota_snapshot(force_metered,at+8000)).await;
         let one=one?;let two=two?;let metered=metered?;let mut observations=Vec::new();
-        for account in accounts{let source=if account.slot==1{&one}else{&two};let mut source=source.clone();source["additional_rate_limits"]=json!(shape::additional_for_routing(&source["additional_rate_limits"],at));observations.push(CapacityRoutingObservation{account,source});}
-        if !observations.is_empty(){self.host.accept_capacity_observations(&observations,at).await?;}
+        for account in accounts{let source=if account.slot==1{&one}else{&two};let invalid=||store::error("Capacity source observation does not match authority DTO");observations.push(gateway_authority::capacity::CodexCapacitySample{account:gateway_authority::capacity::CodexCapacityAccountRef{source_slot:account.slot,account_id:account.account_id},state:serde_json::from_value(source["state"].clone()).map_err(|_|invalid())?,source_observed_at_ms:store::safe_i64(&source["source_observed_at_ms"]),snapshot_at_ms:at,windows:serde_json::from_value(source["windows"].clone()).map_err(|_|invalid())?,additional_rate_limits:serde_json::from_value(json!(shape::additional_for_routing(&source["additional_rate_limits"],at))).map_err(|_|invalid())?});}
+        if let Some(fence)=fence.as_ref(){self.host.accept_capacity_observations(fence,&observations).await?;}
         Ok(json!({"snapshot_at_ms":at,"stale_after_ms":shape::STALE_MS,"sources":[one,two,shape::metered_source(metered.as_ref(),at)]}))
     }
     pub async fn persisted_capacity_view(&self)->Result<Value,GatewayError>{

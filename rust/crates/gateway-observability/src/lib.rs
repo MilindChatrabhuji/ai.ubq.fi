@@ -18,6 +18,8 @@ pub mod capacity;
 pub mod remote_capacity;
 mod store;
 pub mod telemetry;
+pub mod settings;
+pub mod api;
 pub mod types;
 
 use std::rc::Rc;

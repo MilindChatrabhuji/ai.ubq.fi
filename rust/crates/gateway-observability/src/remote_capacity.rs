@@ -11,10 +11,10 @@ pub fn parse_observations(value:&Value)->Option<Vec<Value>>{
     for value in values{let point=read_history(value)?;if !bucketed(&point)||gateway_schema::util::json_stringify(&point).len()>16*1024{return None}points.push(point)}Some(points)
 }
 impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H>{
-    /// The caller's request-owned bridge must bind this measured original count
-    /// to Context.request_id before this call. JSON reserialization is not a receipt.
-    pub async fn capacity_observation_response(&self,document:&Value,original_body_bytes:usize,_context:Context)->Result<AuthResponse,GatewayError>{
-        if original_body_bytes>MAX_BODY_BYTES{return Err(GatewayError::new(413,"Capacity observation payload too large",Some("invalid_request_error")))}
+    /// Consume actual original request bytes; a caller-supplied count cannot prove the limit.
+    pub async fn capacity_observation_response(&self,raw_body:&[u8],_context:Context)->Result<AuthResponse,GatewayError>{
+        if raw_body.len()>MAX_BODY_BYTES{return Err(GatewayError::new(413,"Capacity observation payload too large",Some("invalid_request_error")))}
+        let document:Value=serde_json::from_slice(raw_body).map_err(|_|store::invalid("Invalid capacity observation envelope"))?;
         if !document.is_object(){return Err(store::invalid("Invalid capacity observation envelope"))}
         let host=document["host"].as_str().filter(|s|host_id(s)).ok_or_else(||store::invalid("Invalid capacity observation host"))?;
         let points=parse_observations(&document["history"]).ok_or_else(||store::invalid("Invalid capacity observations"))?;let at=store::now(self.host.as_ref())?;
