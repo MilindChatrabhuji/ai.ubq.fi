@@ -608,6 +608,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
                 rp_id: challenge.rp_id,
                 require_user_verification: challenge.is_admin == Some(true),
             },
+            self.host.now_ms(),
         )
         .await?;
         let uk = key("users", &user_id);

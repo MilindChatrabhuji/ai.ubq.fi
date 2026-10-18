@@ -95,19 +95,20 @@ pub struct CapacityObservation {
     pub additional: Vec<ModelCapacity>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountCatalog {
     pub client_version: String,
     pub models: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnsupportedModel {
     pub observed_at_ms: i64,
     pub detail: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+/// Transient hash-keyed view; the source account-model row uses raw account IDs.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModelAvailability {
     pub catalogs: BTreeMap<String, AccountCatalog>,
     pub unsupported: BTreeMap<String, BTreeMap<String, UnsupportedModel>>,
