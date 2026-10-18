@@ -4,7 +4,7 @@ import { classifyCodex429, nonBlockingQuotaProbeSlot, quotaBlockedSlot, type Cod
 import { nativeCodexAccountMetadata, type RoutingAccount } from "./routing-state.ts";
 import { updateRoutingState, withSlot } from "./capacity-routing.ts";
 
-export { futureRetryAfterDeadline, type Codex429Classification, type CodexKnownProbeLease } from "../authority/native-codex-429.ts";
+export { type Codex429Classification, type CodexKnownProbeLease } from "../authority/native-codex-429.ts";
 
 export const readCodex429 = (response: Response, now = Date.now()): Promise<Codex429Classification> => classifyCodex429(response, now);
 
@@ -36,9 +36,3 @@ export const markCodexQuotaBlockedWithMode = async (
 
 export const markCodexQuotaBlocked = async (account: RoutingAccount, response: Response, now = Date.now()): Promise<Codex429Classification> =>
   await markCodexQuotaBlockedWithMode(account, response, now, false);
-
-/**
- * Record a failed probe immediately after a verified banked reset. Keep the
- * account fenced, but schedule a short half-open retry because reset
- * propagation can lag the provider's terminal consume response.
- */
