@@ -9,7 +9,7 @@ mod session;
 mod settlement;
 pub mod types;
 mod wire;
+pub use extras::{AdmissionHandle, ChildScope, DispatchTicket, ExtrasFamily};
 pub use session::RoutingSession;
 pub use settlement::recover_pending;
 pub use types::*;
-pub use extras::{AdmissionHandle,ChildScope,DispatchTicket,ExtrasFamily};

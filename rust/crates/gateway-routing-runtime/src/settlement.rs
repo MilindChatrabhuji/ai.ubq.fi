@@ -64,8 +64,13 @@ pub(crate) async fn finish_record<
         .attempts
         .iter()
         .all(|a| !a.transport_started && (a.phase == Phase::Prepared || a.known_not_started))
-        && intent.children.iter().all(|child| !child.transport_started && (child.known_not_started || child.phase == Phase::Prepared))
-        && intent.extras_dispatch.as_ref().is_none_or(|dispatch| !dispatch.transport_started)
+        && intent.children.iter().all(|child| {
+            !child.transport_started && (child.known_not_started || child.phase == Phase::Prepared)
+        })
+        && intent
+            .extras_dispatch
+            .as_ref()
+            .is_none_or(|dispatch| !dispatch.transport_started)
         && let Some(api) = &intent.api
     {
         authority
@@ -78,17 +83,16 @@ pub(crate) async fn finish_record<
         } else {
             KernelTerminal::Released
         };
-        let (terminal,reason) = intent.kernel_override.as_ref().map(|intent|(intent.terminal,intent.reason.as_str())).unwrap_or((derived,"routing_semantic_terminal"));
+        let (terminal, reason) = intent
+            .kernel_override
+            .as_ref()
+            .map(|intent| (intent.terminal, intent.reason.as_str()))
+            .unwrap_or((derived, "routing_semantic_terminal"));
         authority
             .record_kernel_terminal_intent(kernel, terminal, clock.now_ms()?)
             .await?;
         authority
-            .settle_kernel(
-                kernel,
-                terminal,
-                reason,
-                clock.now_ms()?,
-            )
+            .settle_kernel(kernel, terminal, reason, clock.now_ms()?)
             .await?;
     }
     for attempt in &intent.attempts {

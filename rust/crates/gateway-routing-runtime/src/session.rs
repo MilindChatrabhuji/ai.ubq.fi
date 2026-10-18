@@ -15,9 +15,7 @@ use gateway_authority::{
 use gateway_core::{
     GatewayError, identity::ApiKeyId, provider::UpstreamProvider, query::QueryStore,
 };
-use gateway_providers::{
-    policy::{LithosWindows, WaitBudget},
-};
+use gateway_providers::policy::{LithosWindows, WaitBudget};
 use serde_json::Value;
 use std::cell::RefCell;
 
@@ -65,7 +63,11 @@ impl<
         Self::initialize(input, store, host, clock, tokens, None).await
     }
     pub(crate) async fn initialize(
-        input: RoutingInput, store: S, host: H, clock: C, tokens: I,
+        input: RoutingInput,
+        store: S,
+        host: H,
+        clock: C,
+        tokens: I,
         family: Option<crate::extras::ExtrasFamily>,
     ) -> RoutingResult<Self> {
         if host.cancelled() {
@@ -79,7 +81,11 @@ impl<
         {
             return Err(journal::unavailable("Invalid original request identity or clock.").into());
         }
-        let plan = if family.is_some() { policy::admission_plan(&input) } else { policy::plan(&input, now)? };
+        let plan = if family.is_some() {
+            policy::admission_plan(&input)
+        } else {
+            policy::plan(&input, now)?
+        };
         let streamed = input.raw["stream"] == true;
         let mut row = Journal {
             v: 1,
@@ -275,8 +281,22 @@ impl<
             ) if expected == admission
                 && !source_revision.is_empty()
                 && !native_generation.is_empty() => {}
-            (None, CredentialFence::Direct { provider: observed }) if provider == *observed && !matches!(provider, UpstreamProvider::Surplus | UpstreamProvider::Metered) => {}
-            (None, CredentialFence::Paid { provider: observed, .. }) if provider == *observed && matches!(provider, UpstreamProvider::Surplus | UpstreamProvider::Metered) => {}
+            (None, CredentialFence::Direct { provider: observed })
+                if provider == *observed
+                    && !matches!(
+                        provider,
+                        UpstreamProvider::Surplus | UpstreamProvider::Metered
+                    ) => {}
+            (
+                None,
+                CredentialFence::Paid {
+                    provider: observed, ..
+                },
+            ) if provider == *observed
+                && matches!(
+                    provider,
+                    UpstreamProvider::Surplus | UpstreamProvider::Metered
+                ) => {}
             _ => {
                 return Err(journal::unavailable(
                     "Credential publication does not match the admitted provider/account.",
@@ -288,8 +308,28 @@ impl<
             .await?;
         Ok(publication)
     }
-    pub(crate) fn prepare(&self,provider:UpstreamProvider,model:&str,publication:&PublishedCredential,nonce:&str)->Result<gateway_providers::PreparedRequest,GatewayError>{crate::wire::prepare(&self.input,&self.conversation_id,self.now()?,provider,model,publication,nonce)}
-    pub(crate) fn paid_context(&self, provider: gateway_core::provider::PaidProvider, synthetic: bool) -> PaidRequestContext {
+    pub(crate) fn prepare(
+        &self,
+        provider: UpstreamProvider,
+        model: &str,
+        publication: &PublishedCredential,
+        nonce: &str,
+    ) -> Result<gateway_providers::PreparedRequest, GatewayError> {
+        crate::wire::prepare(
+            &self.input,
+            &self.conversation_id,
+            self.now()?,
+            provider,
+            model,
+            publication,
+            nonce,
+        )
+    }
+    pub(crate) fn paid_context(
+        &self,
+        provider: gateway_core::provider::PaidProvider,
+        synthetic: bool,
+    ) -> PaidRequestContext {
         let mut body = self.input.raw.clone();
         body["model"] = Value::String(self.plan.model.clone());
         PaidRequestContext {
@@ -302,13 +342,27 @@ impl<
             }),
         }
     }
-    pub(crate) fn check_paid_credential(fence: &CredentialFence, receipt: &PaidRoutingReceipt) -> Result<(), GatewayError> {
+    pub(crate) fn check_paid_credential(
+        fence: &CredentialFence,
+        receipt: &PaidRoutingReceipt,
+    ) -> Result<(), GatewayError> {
         match fence {
-            CredentialFence::Paid { owner_id, owner_epoch, configuration_generation, credential_binding, .. }
-                if owner_id == receipt.owner_id() && owner_epoch == receipt.owner_epoch()
-                    && configuration_generation == receipt.configuration_generation()
-                    && credential_binding == receipt.credential_binding() => Ok(()),
-            _ => Err(journal::unavailable("The paid credential does not match the current paid routing receipt.")),
+            CredentialFence::Paid {
+                owner_id,
+                owner_epoch,
+                configuration_generation,
+                credential_binding,
+                ..
+            } if owner_id == receipt.owner_id()
+                && owner_epoch == receipt.owner_epoch()
+                && configuration_generation == receipt.configuration_generation()
+                && credential_binding == receipt.credential_binding() =>
+            {
+                Ok(())
+            }
+            _ => Err(journal::unavailable(
+                "The paid credential does not match the current paid routing receipt.",
+            )),
         }
     }
     pub(crate) async fn paid_authorization(

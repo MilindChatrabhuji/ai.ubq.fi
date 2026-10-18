@@ -35,7 +35,24 @@ pub struct RoutePlan {
     pub quota_class: CodexQuotaClass,
 }
 pub(crate) fn admission_plan(input: &RoutingInput) -> RoutePlan {
-    RoutePlan {model:input.raw.get("model").and_then(Value::as_str).unwrap_or("").into(),hops:Vec::new(),synthetic:false,paid:PaidRoutingPlan{providers:Vec::new(),paid_model_known:false,metered_only:true,codex_enabled:false,surplus_billing:None},quota_class:CodexQuotaClass::Unknown}
+    RoutePlan {
+        model: input
+            .raw
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .into(),
+        hops: Vec::new(),
+        synthetic: false,
+        paid: PaidRoutingPlan {
+            providers: Vec::new(),
+            paid_model_known: false,
+            metered_only: true,
+            codex_enabled: false,
+            surplus_billing: None,
+        },
+        quota_class: CodexQuotaClass::Unknown,
+    }
 }
 pub fn class(model: &str) -> CodexQuotaClass {
     // Match the source quota-class table, not a broad provider-name inference.
@@ -92,6 +109,13 @@ pub fn provider_ids(input: &RoutingInput, provider: UpstreamProvider) -> Vec<Str
         _ => "",
     }))
 }
+pub(crate) fn validate_model(input: &RoutingInput, model: &str, now: i64) -> Result<(), GatewayError> {
+    let mut catalog = input.catalog.clone();
+    catalog.snapshot = input.catalog.codex().cloned();
+    let responses = input.surface != ClientSurface::Chat;
+    let metadata = gateway_schema::catalog::request_model_metadata(&catalog, model, responses, now);
+    gateway_schema::catalog::validate_model_available(model, responses, &metadata)
+}
 pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
     let default = input
         .runtime
@@ -101,7 +125,7 @@ pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
         .map(str::to_owned)
         .or_else(|| input.catalog.codex().and_then(|s| s.default_model()));
     let model = gateway_schema::request::resolve_model(input.raw.get("model"), default.as_deref())?;
-    let codex_known = input
+    let codex_known = model == "gpt-reserve" || input
         .catalog
         .codex()
         .is_some_and(|s| s.find(&model).is_some());
@@ -225,6 +249,7 @@ pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
             });
         }
         if hops.is_empty() {
+            validate_model(input, &model, now)?;
             hops.push(RouteHop::Claude);
             if matches!(policy::paid_entry(&paid), policy::PaidEntry::CodexPrimary) {
                 hops.push(RouteHop::Codex);
@@ -253,4 +278,10 @@ pub fn plan(input: &RoutingInput, now: i64) -> Result<RoutePlan, GatewayError> {
     })
 }
 
-pub fn endpoint(surface: ClientSurface) -> &'static str { if surface == ClientSurface::Chat { "openai" } else { "openai-response" } }
+pub fn endpoint(surface: ClientSurface) -> &'static str {
+    if surface == ClientSurface::Chat {
+        "openai"
+    } else {
+        "openai-response"
+    }
+}

@@ -64,26 +64,62 @@ impl<
         }
         if let Some(reservation) = &record.paid {
             let synthetic = match self.plan.hops.get(record.cursor) {
-                Some(crate::policy::RouteHop::Paid { provider, model, synthetic })
-                    if provider == &reservation.provider && model == &record.model => *synthetic,
-                _ => return Err(journal::unavailable("Paid dispatch no longer matches the original pinned hop.").into()),
+                Some(crate::policy::RouteHop::Paid {
+                    provider,
+                    model,
+                    synthetic,
+                }) if provider == &reservation.provider && model == &record.model => *synthetic,
+                _ => {
+                    return Err(journal::unavailable(
+                        "Paid dispatch no longer matches the original pinned hop.",
+                    )
+                    .into());
+                }
             };
             let input = gateway_authority::paid::PaidRequest {
-                key_id: reservation.key_id.clone(), request_id: reservation.request_id.clone(),
-                attempt_id: reservation.attempt_id.clone(), provider: reservation.provider,
-                model: record.model.clone(), route: self.input.context.route.clone(),
-                path: if self.input.surface == gateway_providers::ClientSurface::Chat { "/v1/chat/completions" } else { "/v1/responses" }.into(),
+                key_id: reservation.key_id.clone(),
+                request_id: reservation.request_id.clone(),
+                attempt_id: reservation.attempt_id.clone(),
+                provider: reservation.provider,
+                model: record.model.clone(),
+                route: self.input.context.route.clone(),
+                path: if self.input.surface == gateway_providers::ClientSurface::Chat {
+                    "/v1/chat/completions"
+                } else {
+                    "/v1/responses"
+                }
+                .into(),
                 stream: self.input.raw["stream"] == true,
-                reasoning: self.input.raw["reasoning"]["effort"].as_str().or_else(|| self.input.raw["reasoning_effort"].as_str()).map(str::to_owned),
+                reasoning: self.input.raw["reasoning"]["effort"]
+                    .as_str()
+                    .or_else(|| self.input.raw["reasoning_effort"].as_str())
+                    .map(str::to_owned),
                 created_at_ms: self.input.context.started_at_ms,
             };
             let context = self.paid_context(reservation.provider, synthetic);
-            let receipt = self.authority().authorize_paid_route(&input, &context, self.now()?).await?;
+            let receipt = self
+                .authority()
+                .authorize_paid_route(&input, &context, self.now()?)
+                .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
-            let authorization = if synthetic { gateway_authority::paid::PaidAuthorization::DirectPaidModel } else { self.paid_authorization(&row).await? };
-            match self.authority().reserve_paid(&input, &authorization, &receipt, self.now()?).await? {
-                gateway_authority::paid::PaidAdmission::Existing(current) if current == *reservation => {},
-                _ => return Err(journal::unavailable("The paid reservation changed before dispatch.").into()),
+            let authorization = if synthetic {
+                gateway_authority::paid::PaidAuthorization::DirectPaidModel
+            } else {
+                self.paid_authorization(&row).await?
+            };
+            match self
+                .authority()
+                .reserve_paid(&input, &authorization, &receipt, self.now()?)
+                .await?
+            {
+                gateway_authority::paid::PaidAdmission::Existing(current)
+                    if current == *reservation => {}
+                _ => {
+                    return Err(journal::unavailable(
+                        "The paid reservation changed before dispatch.",
+                    )
+                    .into());
+                }
             }
         }
         let mut api = row.api.clone();
@@ -336,11 +372,13 @@ impl<
                         Ok(())
                     })
                     .await?;
-                    let published = self.host.refresh_codex(&record.fence).await? == RefreshOutcome::Published;
-                    if published || self
-                        .authority()
-                        .mark_credential_invalid(admission, self.now()?)
-                        .await?
+                    let published =
+                        self.host.refresh_codex(&record.fence).await? == RefreshOutcome::Published;
+                    if published
+                        || self
+                            .authority()
+                            .mark_credential_invalid(admission, self.now()?)
+                            .await?
                     {
                         decision = RefusalDecision::Continue;
                     }
@@ -369,7 +407,15 @@ impl<
                     .await?;
                     decision = RefusalDecision::Continue;
                 } else {
-                    return Err(GatewayError::new(404, format!("The model '{}' is not available for these subscriptions.", record.model), Some("model_not_found")).into());
+                    return Err(GatewayError::new(
+                        404,
+                        format!(
+                            "The model '{}' is not available for these subscriptions.",
+                            record.model
+                        ),
+                        Some("model_not_found"),
+                    )
+                    .into());
                 }
             }
         } else if matches!(record.fence, CredentialFence::Claude { .. }) {
@@ -388,27 +434,29 @@ impl<
                 cursor += 1;
                 decision = RefusalDecision::Continue;
             }
-        } else if record.provider == UpstreamProvider::Lithos && failure.status == Some(429)
-            && let Some(wait) = classify::retry_after_millis(&failure.headers, self.now()?) {
-                let allowed = self
-                    .waits
-                    .borrow_mut()
-                    .claim(wait, self.input.retry_prohibited);
-                if allowed {
-                    self.renew().await?;
-                    self.host.wait(wait).await?;
-                    if self.host.cancelled() {
-                        return Ok(RefusalDecision::Abort);
-                    }
-                    decision = RefusalDecision::Continue;
-                } else if !self.input.retry_prohibited {
-                    self.lithos
-                        .borrow_mut()
-                        .refuse(&record.model, self.now()?, wait);
-                    if self.lithos.borrow().select(&record.model, self.now()?) != record.model {
-                        decision = RefusalDecision::Continue;
-                    }
+        } else if record.provider == UpstreamProvider::Lithos
+            && failure.status == Some(429)
+            && let Some(wait) = classify::retry_after_millis(&failure.headers, self.now()?)
+        {
+            let allowed = self
+                .waits
+                .borrow_mut()
+                .claim(wait, self.input.retry_prohibited);
+            if allowed {
+                self.renew().await?;
+                self.host.wait(wait).await?;
+                if self.host.cancelled() {
+                    return Ok(RefusalDecision::Abort);
                 }
+                decision = RefusalDecision::Continue;
+            } else if !self.input.retry_prohibited {
+                self.lithos
+                    .borrow_mut()
+                    .refuse(&record.model, self.now()?, wait);
+                if self.lithos.borrow().select(&record.model, self.now()?) != record.model {
+                    decision = RefusalDecision::Continue;
+                }
+            }
         }
         if decision == RefusalDecision::Continue {
             self.change(|j| {
@@ -442,7 +490,17 @@ impl<
         &self,
         observation: TransportObservation,
     ) -> RoutingResult<RecoveredSession> {
-        if journal::load(&self.store,self.id()).await?.1.extras_family.is_some() { return Err(journal::unavailable("Finalize extras through their aggregate admission handle.").into()); }
+        if journal::load(&self.store, self.id())
+            .await?
+            .1
+            .extras_family
+            .is_some()
+        {
+            return Err(journal::unavailable(
+                "Finalize extras through their aggregate admission handle.",
+            )
+            .into());
+        }
         Ok(settlement::finish_record(
             &self.store,
             &self.tokens,
