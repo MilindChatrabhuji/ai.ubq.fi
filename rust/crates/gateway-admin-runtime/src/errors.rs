@@ -107,7 +107,7 @@ fn error_row(record: &StoredRecord) -> Result<PortableValue, GatewayError> {
     match record.value_encoding {
         ValueEncoding::Json => Ok(PortableValue::from_json(record.json_value()?)),
         ValueEncoding::ProfileV2 => record.profile_v2_value(),
-        ValueEncoding::ProfileV1 => Err(GatewayError::unavailable(
+        ValueEncoding::ProfileV1 | ValueEncoding::SourceGraphV1 => Err(GatewayError::unavailable(
             "Error history requires JSON or explicit ProfileV2",
             "incompatible_value_encoding",
         )),
