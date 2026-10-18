@@ -308,8 +308,7 @@ fn finite_error_evidence_is_data_not_a_deserializable_or_accepted_proof() {
 
 #[test]
 fn source_key_adapter_matches_pinned_text_encoder_without_changing_values() {
-    let cases: Value =
-        serde_json::from_str(include_str!("fixtures/js-string-keys.json")).unwrap();
+    let cases: Value = serde_json::from_str(include_str!("fixtures/js-string-keys.json")).unwrap();
     for case in cases.as_array().unwrap() {
         let units: Vec<u16> = serde_json::from_value(case["units"].clone()).unwrap();
         let expected: Vec<u8> = serde_json::from_value(case["bytes"].clone()).unwrap();
@@ -318,7 +317,11 @@ fn source_key_adapter_matches_pinned_text_encoder_without_changing_values() {
         let value = JsString16::from_units(units.clone());
         assert_eq!(value.as_units(), units);
         assert_eq!(
-            value.to_source_json().unwrap().deserialize::<JsString16>().unwrap(),
+            value
+                .to_source_json()
+                .unwrap()
+                .deserialize::<JsString16>()
+                .unwrap(),
             value
         );
     }
