@@ -20,7 +20,7 @@ pub const NATIVE_TIME_HEADER: &str = "x-uos-native-time-ms";
 pub const NATIVE_NONCE_HEADER: &str = "x-uos-native-nonce";
 pub const NATIVE_MAC_HEADER: &str = "x-uos-native-mac";
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeReadRequest {
     SupervisorSessions,
@@ -33,6 +33,47 @@ pub enum NativeReadRequest {
         source_id: String,
         thread_id: String,
     },
+}
+
+impl<'de> Deserialize<'de> for NativeReadRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Serde internally tagged unit variants ignore extra fields even with
+        // deny_unknown_fields. A zero-field struct preserves the public unit
+        // variant while enforcing the exact finite wire object.
+        #[derive(Deserialize)]
+        #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+        enum Wire {
+            SupervisorSessions {},
+            SupervisorOutput {
+                source_id: String,
+                thread_id: String,
+                cursor: Option<String>,
+            },
+            SupervisorBrief {
+                source_id: String,
+                thread_id: String,
+            },
+        }
+        Ok(match Wire::deserialize(deserializer)? {
+            Wire::SupervisorSessions {} => Self::SupervisorSessions,
+            Wire::SupervisorOutput {
+                source_id,
+                thread_id,
+                cursor,
+            } => Self::SupervisorOutput {
+                source_id,
+                thread_id,
+                cursor,
+            },
+            Wire::SupervisorBrief {
+                source_id,
+                thread_id,
+            } => Self::SupervisorBrief {
+                source_id,
+                thread_id,
+            },
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
