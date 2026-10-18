@@ -207,9 +207,19 @@ impl ClaudePoolHost for Host {
 }
 
 pub(super) fn headers(binding: &AccountBinding, workspace: bool) -> gateway_providers::Headers {
-    credential_headers(&binding.credential, if workspace { binding.workspace.as_ref().map(|value| value.id.as_str()) } else { None })
+    credential_headers(
+        &binding.credential,
+        if workspace {
+            binding.workspace.as_ref().map(|value| value.id.as_str())
+        } else {
+            None
+        },
+    )
 }
-pub(super) fn credential_headers(credential: &claude::Credential, workspace: Option<&str>) -> gateway_providers::Headers {
+pub(super) fn credential_headers(
+    credential: &claude::Credential,
+    workspace: Option<&str>,
+) -> gateway_providers::Headers {
     let mut headers = gateway_providers::Headers::from([
         ("Content-Type".into(), "application/json".into()),
         ("Accept".into(), "application/json".into()),
@@ -224,10 +234,7 @@ pub(super) fn credential_headers(credential: &claude::Credential, workspace: Opt
             headers.insert("anthropic-beta".into(), "oauth-2025-04-20".into());
         }
         CredentialKind::ApiKey => {
-            headers.insert(
-                "x-api-key".into(),
-                credential.secret.expose().into(),
-            );
+            headers.insert("x-api-key".into(), credential.secret.expose().into());
         }
     }
     if let Some(workspace) = workspace {

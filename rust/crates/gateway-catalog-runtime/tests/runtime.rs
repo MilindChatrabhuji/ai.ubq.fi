@@ -838,15 +838,29 @@ fn validated_claude_metadata_uses_current_source_fences_and_the_existing_memo() 
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
     host.provider(CatalogProvider::ClaudeCode, "validated-owner");
-    let binding = ProviderBinding { identity: "validated-owner".into() };
+    let binding = ProviderBinding {
+        identity: "validated-owner".into(),
+    };
     let rows = vec![json!({"id":"claude-validated","supported_reasoning_levels":["high"]})];
-    assert!(run(runtime.cache_validated_claude(&store, &host, &binding, rows, store.now.get())).unwrap());
-    let cached = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false)).unwrap().unwrap();
+    assert!(
+        run(runtime.cache_validated_claude(&store, &host, &binding, rows, store.now.get()))
+            .unwrap()
+    );
+    let cached = run(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false))
+        .unwrap()
+        .unwrap();
     assert_eq!(cached.models[0]["id"], "claude-validated");
     assert!(host.requests.borrow().is_empty());
     host.provider(CatalogProvider::ClaudeCode, "replacement-owner");
-    assert!(!run(runtime.cache_validated_claude(&store, &host, &binding, vec![], store.now.get())).unwrap());
-    assert!(runtime.cached_provider(&host.published.borrow(), CatalogProvider::ClaudeCode).is_none());
+    assert!(
+        !run(runtime.cache_validated_claude(&store, &host, &binding, vec![], store.now.get()))
+            .unwrap()
+    );
+    assert!(
+        runtime
+            .cached_provider(&host.published.borrow(), CatalogProvider::ClaudeCode)
+            .is_none()
+    );
 }
 #[test]
 fn validation_publication_cannot_be_overwritten_by_an_older_inflight_refresh() {
@@ -857,12 +871,27 @@ fn validation_publication_cannot_be_overwritten_by_an_older_inflight_refresh() {
     let mut old = Outcome::json(json!({"data":[{"id":"claude-older"}],"has_more":false}));
     old.ticks = 1;
     host.queue(old);
-    let mut pending = std::pin::pin!(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false));
+    let mut pending =
+        std::pin::pin!(runtime.refresh_provider(&store, &host, CatalogProvider::ClaudeCode, false));
     let mut context = Context::from_waker(Waker::noop());
     assert!(pending.as_mut().poll(&mut context).is_pending());
-    let binding = ProviderBinding { identity: "same-owner".into() };
-    assert!(run(runtime.cache_validated_claude(&store, &host, &binding, vec![json!({"id":"claude-validated"})], store.now.get())).unwrap());
-    assert_eq!(run(pending).unwrap().unwrap().models[0]["id"], "claude-validated");
+    let binding = ProviderBinding {
+        identity: "same-owner".into(),
+    };
+    assert!(
+        run(runtime.cache_validated_claude(
+            &store,
+            &host,
+            &binding,
+            vec![json!({"id":"claude-validated"})],
+            store.now.get()
+        ))
+        .unwrap()
+    );
+    assert_eq!(
+        run(pending).unwrap().unwrap().models[0]["id"],
+        "claude-validated"
+    );
 }
 #[test]
 fn public_openrouter_enrichment_does_not_require_routing_credentials() {

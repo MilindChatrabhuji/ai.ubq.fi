@@ -285,11 +285,33 @@ fn cancelled() -> GatewayError {
         Some("client_cancelled"),
     )
 }
-pub(super) async fn prime(host: &Host, account: &AccountBinding, models: Vec<serde_json::Value>, fetched_at_ms: i64) -> Result<bool, GatewayError> {
+pub(super) async fn prime(
+    host: &Host,
+    account: &AccountBinding,
+    models: Vec<serde_json::Value>,
+    fetched_at_ms: i64,
+) -> Result<bool, GatewayError> {
     let generation = super::generation();
     let snapshot = generation.snapshot();
-    let identity = generation.catalog_identity(&snapshot, Some(account), &account.credential, account.workspace.as_ref().map(|workspace| workspace.id.as_str())).ok_or_else(|| super::invalid("Claude validation generation changed."))?;
+    let identity = generation
+        .catalog_identity(
+            &snapshot,
+            Some(account),
+            &account.credential,
+            account
+                .workspace
+                .as_ref()
+                .map(|workspace| workspace.id.as_str()),
+        )
+        .ok_or_else(|| super::invalid("Claude validation generation changed."))?;
     let identity = ProviderBinding { identity };
-    let adapter = AccountCatalog { host, account, identity: &identity, generation: snapshot };
-    crate::catalog::service().cache_validated_claude(&host.store, &adapter, &identity, models, fetched_at_ms).await
+    let adapter = AccountCatalog {
+        host,
+        account,
+        identity: &identity,
+        generation: snapshot,
+    };
+    crate::catalog::service()
+        .cache_validated_claude(&host.store, &adapter, &identity, models, fetched_at_ms)
+        .await
 }

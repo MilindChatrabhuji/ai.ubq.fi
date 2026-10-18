@@ -1,7 +1,7 @@
 //! Request-owned Claude selection and actual response receipts over the source runtime.
+mod admin;
 mod catalog;
 mod platform;
-mod admin;
 pub use admin::admin;
 
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost};
