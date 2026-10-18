@@ -94,6 +94,12 @@ fn configured(config: &PaidControlConfig, provider: PaidProvider) -> Option<&str
         PaidProvider::Metered => config.openlux_binding.as_deref(),
     }
 }
+fn discovery_binding(config: &PaidControlConfig, provider: PaidProvider) -> Option<&str> {
+    match provider {
+        PaidProvider::Surplus => config.surplus_binding.as_deref(),
+        PaidProvider::Metered => config.openlux_discovery_binding.as_deref(),
+    }
+}
 fn decode<T: DeserializeOwned>(record: &StoredRecord) -> Result<T, GatewayError> {
     serde_json::from_value(record.json_value()?.clone())
         .map_err(|_| missing("Paid control record is malformed"))
@@ -231,7 +237,7 @@ impl Controls {
         let owner: PaidControlOwner = decode(&owner_record)?;
         let config: PaidControlConfig = decode(&config_record)?;
         if owner.v != 1
-            || config.v != 1
+            || config.v != PAID_CONTROL_CONFIG_VERSION
             || owner.owner_id != config.owner_id
             || owner.owner_epoch != config.owner_epoch
         {
@@ -248,7 +254,11 @@ impl Controls {
         ] {
             text(value)?;
         }
-        for binding in [&config.surplus_binding, &config.openlux_binding]
+        for binding in [
+            &config.surplus_binding,
+            &config.openlux_discovery_binding,
+            &config.openlux_binding,
+        ]
             .into_iter()
             .flatten()
         {
@@ -275,7 +285,7 @@ impl Controls {
                 .providers
                 .get(&catalog_provider(provider))
                 .map(|binding| binding.identity.as_str())
-                != configured(&self.config, provider)
+                != discovery_binding(&self.config, provider)
             {
                 return Err(missing(
                     "Catalog credentials do not match the authenticated configuration owner publication",
@@ -291,7 +301,7 @@ impl Controls {
         now: i64,
     ) -> Result<PaidProviderObservation, GatewayError> {
         let observation: PaidProviderObservation = decode(record)?;
-        let binding = configured(&self.config, provider).ok_or_else(stale)?;
+        let binding = discovery_binding(&self.config, provider).ok_or_else(stale)?;
         if expired(record, now)
             || observation.v != 1
             || observation.provider != provider
@@ -371,7 +381,7 @@ impl CatalogRuntime {
             source.source(&old.source_checks)?;
         }
         let source_until = source_deadline(store, &source, started).await?;
-        let snapshot = if configured(&control.config, provider).is_some() {
+        let snapshot = if discovery_binding(&control.config, provider).is_some() {
             self.refresh_provider(store, host, catalog_provider(provider), force)
                 .await?
         } else {
@@ -511,7 +521,7 @@ impl CatalogRuntime {
                     ProviderCatalog {
                         models: observation.models,
                         updated_at_ms: Some(observation.observed_at_ms),
-                        configured: true,
+                        configured: binding.is_some(),
                         available: true,
                         stale: observation.stale,
                     },
