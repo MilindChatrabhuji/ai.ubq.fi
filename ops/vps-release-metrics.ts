@@ -329,7 +329,7 @@ export class VpsJournalMetrics {
     }
     return true;
   }
-  private async _scan(binding: string, ledger: VpsJoinLedger, cohort: VpsJoinCohort, key: string, floor: number, availableEnd: number): Promise<void> {
+  private async _scan(binding: string, ledger: VpsJoinLedger, cohort: VpsJoinCohort, key: string, floor: number, availableEnd: number): Promise<boolean> {
     anchored(ledger, cohort);
     for (;;) {
       const slices = tiledSlices(ledger, cohort.scanStart, cohort.scanEnd) ?? incomplete();
@@ -337,15 +337,15 @@ export class VpsJournalMetrics {
       const covered = cohort.scanEnd >= cohort.windowEnd;
       if (covered && terminalLost) {
         cohort.terminalLost = true;
-        return;
+        return true;
       }
       if (covered && orphanFloor === null && !pending) {
         cohort.summary = await summarized(binding, cohort, slices, members);
-        return;
+        return false;
       }
       const backward = covered && orphanFloor !== null;
       if (backward && cohort.scanStart <= orphanFloor) return incomplete();
-      if (!(await this._extend(ledger, cohort, key, floor, availableEnd, backward))) return;
+      if (!(await this._extend(ledger, cohort, key, floor, availableEnd, backward))) return false;
     }
   }
   private async _scope(input: VpsJournalRequest, identity: VpsIdentity, sampledAt: number) {
@@ -417,9 +417,9 @@ export class VpsJournalMetrics {
       const cohort = cohortFor(checkpoint, input, identity);
       if (cohort.summary === null && !cohort.terminalLost) {
         const ledger = joinLedger(checkpoint, identity, input.windowStart);
-        await this._scan(checkpoint.binding, ledger, cohort, key, floor, sampledAt - this._lagMs);
+        const terminalLost = await this._scan(checkpoint.binding, ledger, cohort, key, floor, sampledAt - this._lagMs);
         // A lost terminal must not pin the failed window's slices. Otherwise share the last scan with the next window.
-        ledger.retainFrom = cohort.terminalLost ? cohort.scanEnd : cohort.scanStart;
+        ledger.retainFrom = terminalLost ? cohort.scanEnd : cohort.scanStart;
       }
       const summary = cohort.summary;
       // A baseline window is sampled for its result alone; once complete, nothing of it is kept.
