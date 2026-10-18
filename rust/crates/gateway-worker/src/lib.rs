@@ -1,8 +1,14 @@
 use gateway_core::GatewayError;
 use gateway_core::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, HealthResponse, ReleaseIdentity};
+use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response, Result, event};
 
 pub mod authority;
+mod catalog;
+mod host;
+mod inference;
+mod lifecycle;
+mod runtime;
 pub mod storage;
 pub mod transport;
 
@@ -12,9 +18,8 @@ fn error_response(error: GatewayError) -> Result<Response> {
     Ok(Response::from_json(&error.envelope)?.with_status(error.status))
 }
 
-/// Public routes fail closed until their domain services and event owners are integrated.
 #[event(fetch)]
-pub async fn fetch(request: Request, _env: Env, _context: Context) -> Result<Response> {
+pub async fn fetch(request: Request, env: Env, context: Context) -> Result<Response> {
     let identity = match ReleaseIdentity::cloudflare(
         env!("UOS_RUST_BUILD_GIT_SHA"),
         env!("UOS_RUST_BUILD_DEPLOYMENT_ID"),
@@ -22,15 +27,37 @@ pub async fn fetch(request: Request, _env: Env, _context: Context) -> Result<Res
         Ok(identity) => identity,
         Err(error) => return error_response(error),
     };
-    let mut response = if request.path() == "/health" && request.method() == Method::Get {
-        Response::from_json(&HealthResponse::available(&identity))?
-    } else {
-        error_response(GatewayError::unavailable(
-            "This Rust gateway route is not yet integrated.",
-            "rust_port_route_unavailable",
-        ))?
+    let request_id = match transport::random::random_uuid() {
+        Ok(id) => id,
+        Err(error) => return error_response(error),
     };
-    response.headers_mut().set("Cache-Control", "no-store")?;
+    let mut response =
+        if request.path() == "/health" && matches!(request.method(), Method::Get | Method::Head) {
+            if request.method() == Method::Head {
+                Response::empty()?
+            } else {
+                Response::from_json(&HealthResponse::available(&identity))?
+            }
+        } else {
+            match runtime::route(
+                request,
+                env,
+                Rc::new(context),
+                identity.git_sha(),
+                gateway_core::identity::RequestId(request_id.clone()),
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => error_response(error)?,
+            }
+        };
+    if response.headers().get("Cache-Control")?.is_none() {
+        response.headers_mut().set("Cache-Control", "no-store")?;
+    }
+    response
+        .headers_mut()
+        .set("x-uos-request-id", &request_id)?;
     response
         .headers_mut()
         .set(GIT_SHA_HEADER, identity.git_sha())?;

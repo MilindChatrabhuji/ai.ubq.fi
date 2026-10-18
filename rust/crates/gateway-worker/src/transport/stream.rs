@@ -36,7 +36,7 @@ pub struct ObservedStream<S> {
     source: S,
     observation: ObservationHandle,
     context: Rc<Context>,
-    cancellation: Cancellation,
+    cancellation: Rc<Cancellation>,
     _deadline: Option<Deadline>,
     finish: Option<FinishHook>,
 }
@@ -46,7 +46,7 @@ impl<S> ObservedStream<S> {
         source: S,
         observation: ObservationHandle,
         context: Rc<Context>,
-        cancellation: Cancellation,
+        cancellation: Rc<Cancellation>,
         deadline: Option<Deadline>,
         finish: FinishHook,
     ) -> Self {
