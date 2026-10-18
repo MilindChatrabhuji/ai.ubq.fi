@@ -146,6 +146,30 @@ async function extrasUpstream(request, env) {
   return new Response("Unexpected extras upstream path", { status: 400 });
 }
 
+async function imageUpstream(request, env) {
+  const url = new URL(request.url);
+  if (request.headers.get("authorization") !== "Bearer fixture-provider-secret" || request.headers.get("chatgpt-account-id") !== "fixture-image-account")
+    return new Response(null, { status: 401 });
+  if (request.method === "GET" && url.pathname === "/backend-api/codex/models")
+    return Response.json({ models: [{ slug: "gpt-test", supported_reasoning_levels: [{ effort: "none" }], default_reasoning_level: "none" }] });
+  if (url.pathname !== "/backend-api/codex/responses") return new Response("Unexpected Codex path", { status: 400 });
+  const body = await request.json();
+  await log(env, { kind: "image_dispatch", body });
+  const response = {
+    id: "resp_fixture_image",
+    object: "response",
+    created_at: 1800000000,
+    model: "gpt-test",
+    status: "completed",
+    output: [{ id: "ig_fixture", type: "image_generation_call", status: "completed", result: "aW1hZ2U=", output_format: "png" }],
+    usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+  };
+  return new Response(
+    `data: ${JSON.stringify({ type: "response.created", sequence_number: 0, response: { ...response, status: "in_progress", output: [] } })}\n\ndata: ${JSON.stringify({ type: "response.completed", sequence_number: 1, response })}\n\n`,
+    { headers: { "content-type": "text/event-stream", "x-request-id": "fixture-image-provider-id" } }
+  );
+}
+
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
@@ -157,6 +181,7 @@ export default {
     }
     if (["api.deepseek.com", "api.cerebras.ai"].includes(url.hostname)) return upstream(request, env, context);
     if (["api.voyageai.com", "openrouter.ai"].includes(url.hostname)) return extrasUpstream(request, env);
+    if (url.hostname === "chatgpt.com") return imageUpstream(request, env);
     if (url.pathname.startsWith("/public/")) {
       if (request.headers.get("x-fixture-disconnect") === "1") {
         request.signal.addEventListener("abort", () => console.error(JSON.stringify({ event: "fixture_incoming_abort", at_ms: Date.now() })), { once: true });
