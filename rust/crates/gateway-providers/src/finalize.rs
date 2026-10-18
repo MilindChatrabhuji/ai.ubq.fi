@@ -1,0 +1,108 @@
+//! Source-specific final transport adaptations shared by buffered decoders.
+use crate::types::*;
+use gateway_core::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use serde_json::{Value, json};
+pub const CLAUDE_ATTRIBUTION: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+pub fn claude_native_transport(body: &mut Value, options: &PrepareOptions) {
+    if let Some(object) = body.as_object_mut() {
+        object.remove("prompt_cache_key");
+    }
+    if !options.auth.api_key {
+        let system = body
+            .get("system")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut attributed = vec![json!({"type":"text","text":CLAUDE_ATTRIBUTION})];
+        attributed.extend(system);
+        body["system"] = json!(attributed);
+    }
+}
+pub fn buffered_chat_events(completion: &Value, plan: &DecodePlan) -> Vec<ProviderEvent> {
+    let mut choices = vec![];
+    let mut finishes = vec![];
+    for (position, choice) in completion["choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let index = choice["index"].as_u64().unwrap_or(position as u64);
+        let mut delta = choice["message"].clone();
+        if let Some(calls) = delta["tool_calls"].as_array_mut() {
+            for (index, call) in calls.iter_mut().enumerate() {
+                call["index"] = json!(index);
+            }
+        }
+        choices.push(json!({"index":index,"delta":delta,"finish_reason":null}));
+        finishes.push(json!({"index":index,"delta":{},"finish_reason":choice["finish_reason"]}));
+    }
+    let base = |choices: Value| json!({"id":completion.get("id").cloned().unwrap_or(json!(plan.response_id)),"object":"chat.completion.chunk","created":completion.get("created").cloned().unwrap_or(json!(plan.created_at)),"model":plan.model,"choices":choices});
+    let mut events = vec![
+        ProviderEvent::chat(base(json!(choices))),
+        ProviderEvent::chat(base(json!(finishes))),
+    ];
+    if plan.request["stream_options"]["include_usage"] == true
+        && let Some(usage) = completion.get("usage")
+    {
+        let mut chunk = base(json!([]));
+        chunk["usage"] = usage.clone();
+        events.push(ProviderEvent::chat(chunk));
+    }
+    events.push(ProviderEvent::chat(json!("[DONE]")));
+    events
+}
+pub fn lithos_stream_refusal(
+    plan: &DecodePlan,
+    status: u16,
+    headers: &Headers,
+    value: &Value,
+) -> Option<DecodedResponse> {
+    if plan.provider != UpstreamProvider::Lithos || !plan.stream || status != 429 {
+        return None;
+    }
+    let detail = value
+        .get("error")
+        .filter(|v| v.is_object())
+        .unwrap_or(value);
+    let message = detail["message"]
+        .as_str()
+        .unwrap_or("Upstream refused the streaming request.");
+    let code = detail["code"]
+        .as_str()
+        .or_else(|| detail["type"].as_str())
+        .unwrap_or("lithos_upstream_error");
+    let mut output_headers = headers.clone();
+    output_headers.insert("Content-Type".into(), "text/event-stream".into());
+    output_headers.insert("x-uos-upstream".into(), "lithos".into());
+    let event = if plan.surface == ClientSurface::Chat {
+        ProviderEvent::chat(
+            json!({"error":{"message":message,"type":"server_error","code":code,"param":null}}),
+        )
+    } else {
+        let mut response = crate::writer::envelope(plan, "failed");
+        response["error"] = json!({"code":code,"message":message});
+        ProviderEvent::responses(json!({"type":"response.failed","response":response}))
+    };
+    Some(DecodedResponse {
+        status: 200,
+        headers: output_headers,
+        body: value.clone(),
+        events: vec![event],
+        terminal: Some(SemanticTerminal::Failed),
+        usage: None,
+        native_replay: None,
+        raw_body: None,
+    })
+}
+/// Native Messages stop vocabulary has its own error identity, distinct from Chat finish reasons.
+pub fn native_stop_error(events: &mut [ProviderEvent], reason: &str) {
+    if let Some(last) = events.last_mut()
+        && last.data["response"]["status"] == "failed"
+        && last.data["response"]["error"]["code"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("unrecognized_finish_reason:"))
+    {
+        last.data["response"]["error"] = json!({"code":"anthropic_unrecognized_stop_reason","message":format!("Anthropic Messages stopped with reason {reason}.")});
+    }
+}
