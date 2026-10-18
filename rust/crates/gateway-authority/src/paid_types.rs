@@ -1,4 +1,5 @@
 //! Independent paid attempt, semantic terminal and billing record contracts.
+use crate::claude::ClaudeCohortProof;
 use crate::routing::CohortProof;
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
 use gateway_core::lifecycle::{BillingState, DispatchState, PaidTerminalState};
@@ -17,6 +18,7 @@ pub struct PaidRoutingPolicy {
 #[derive(Clone, Debug)]
 pub enum PaidAuthorization {
     SubscriptionUnavailable(CohortProof),
+    ClaudeSubscriptionUnavailable(ClaudeCohortProof),
     DirectPaidModel,
 }
 
