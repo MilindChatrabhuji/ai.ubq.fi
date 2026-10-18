@@ -1,0 +1,109 @@
+use super::NativeRenewalFence;
+use gateway_core::{
+    GatewayError,
+    state::RecordKey,
+    tuple_key::{ScalarKeyPart, TupleKey},
+};
+use serde::{Deserialize, Serialize};
+
+pub(super) fn key(kind: &str, id: &str) -> RecordKey {
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("authority"),
+        ScalarKeyPart::String("native_owner_renewal"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String(kind),
+        ScalarKeyPart::String(id),
+    ])
+    .to_record_key()
+}
+
+pub(super) fn session_key(id: &str) -> RecordKey {
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("routing_runtime"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("session"),
+        ScalarKeyPart::String(id),
+    ])
+    .to_record_key()
+}
+
+pub(super) fn prefix() -> RecordKey {
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("authority"),
+        ScalarKeyPart::String("native_owner_renewal"),
+        ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key()
+}
+
+pub(super) fn fail() -> GatewayError {
+    GatewayError::unavailable(
+        "Native renewal authority is missing, stale, or unavailable.",
+        "native_renewal_authority_unavailable",
+    )
+}
+pub(super) fn conflict() -> GatewayError {
+    GatewayError::new(
+        409,
+        "Native renewal operation conflicts with current authority.",
+        Some("native_renewal_conflict"),
+    )
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum Actor {
+    ApiKey { key_id: String, token_hash: String },
+    Configuration { principal: String },
+}
+
+impl Actor {
+    pub(super) fn principal(&self) -> String {
+        match self {
+            Self::ApiKey { key_id, .. } => format!("api-key:{key_id}"),
+            Self::Configuration { principal } => principal.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ActionRow {
+    pub v: u8,
+    pub action_ref: String,
+    pub actor: Actor,
+    pub attempt_id: String,
+    pub created_at_ms: i64,
+    pub deadline_ms: i64,
+    pub fence: NativeRenewalFence,
+    pub checks_digest: String,
+    pub account_digests: Vec<String>,
+    pub operation_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Phase {
+    Claimed,
+    Started,
+    Unknown,
+    Published,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OperationRow {
+    pub v: u8,
+    pub action_ref: String,
+    pub operation_id: String,
+    pub request_digest: String,
+    pub claim_ref: String,
+    pub start_digest: String,
+    pub phase: Phase,
+    pub publication_revision: Option<String>,
+    pub native_source_generation: Option<String>,
+    pub access_generation: Option<String>,
+}
