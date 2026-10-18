@@ -1,0 +1,73 @@
+//! Audits complete supplied source-schema inventories; does not adopt them as authority state.
+mod usage;
+mod keys;
+mod paid;
+pub use keys::{inspect_key_pairs,valid_key_policy};
+pub use usage::{inspect_api_usage,inspect_kernel};
+pub use paid::inspect_paid;
+
+use std::collections::BTreeMap;
+use gateway_core::GatewayError;
+use serde::Serialize;
+use serde_json::{Value,json};
+use super::{ObservedRow,starts};
+use crate::{integer,number,text};
+
+#[derive(Clone,Debug,Default,Serialize)]
+pub struct Audit {pub counts:BTreeMap<String,usize>,pub errors:Vec<String>}
+impl Audit {pub fn count(&mut self,name:&str){*self.counts.entry(name.into()).or_default()+=1;}pub fn merge(&mut self,other:Self){self.counts.extend(other.counts);self.errors.extend(other.errors);}}
+pub fn api_id(value:Option<&Value>)->bool{value.and_then(Value::as_str).is_some_and(|s|!s.is_empty()&&s.len()<=200&&s==s.trim())}
+pub fn safe(value:Option<&Value>)->bool{value.and_then(Value::as_f64).is_some_and(|v|v.is_finite()&&v.fract()==0.0&&(0.0..=9_007_199_254_740_991.0).contains(&v))}
+pub fn positive(value:Option<&Value>)->bool{safe(value)&&value.and_then(Value::as_f64).is_some_and(|v|v>0.0)}
+pub fn nullable_safe(value:Option<&Value>,positive_only:bool)->bool{value.is_some_and(|v|v.is_null()||if positive_only{positive(Some(v))}else{safe(Some(v))})}
+pub fn nullable_text(value:Option<&Value>,nonempty:bool)->bool{value.is_some_and(|v|v.is_null()||v.as_str().is_some_and(|s|!nonempty||!s.is_empty()))}
+pub fn under(parts:&[Value],prefix:&[&str])->bool{parts.len()>prefix.len()&&starts(parts,prefix)}
+pub fn reference(parts:&[Value])->String{let parts:Vec<Value>=parts.iter().map(|v|if let Some(n)=v.as_f64(){crate::json_number(Some(n))}else{v.clone()}).collect();serde_json::to_string(&parts).unwrap_or_default()}
+pub fn valid_api_window(v:&Value)->bool{v["v"]==3&&text(v,"key_id").is_some_and(|s|!s.is_empty())&&text(v,"policy_version").is_some_and(|s|!s.is_empty())&&["window_start_ms","window_reset_at_ms","committed_requests","reserved_requests","updated_at_ms"].iter().all(|f|safe(v.get(f)))&&number(v,"window_reset_at_ms")>number(v,"window_start_ms")}
+pub fn valid_api_request(v:&Value)->bool{
+    if v["v"]!=3||!["key_id","request_id","route"].iter().all(|f|text(v,f).is_some_and(|s|!s.is_empty()))||!["reserved_at_ms","lease_expires_at_ms"].iter().all(|f|safe(v.get(f)))||!nullable_safe(v.get("dispatched_at_ms"),false)||!nullable_safe(v.get("released_at_ms"),false)||!nullable_text(v.get("release_reason"),false){return false;}
+    let provider=&v["provider"];if !v.get("provider").is_some_and(|p|p.is_null()||p.as_str().is_some_and(|p|["cerebras","chatgpt_codex","claude_code","deepseek","lithos","openrouter","removed_provider","metered","surplus","voyage"].contains(&p))){return false;}
+    match text(v,"state"){Some("reserved")=>provider.is_null()&&v["dispatched_at_ms"].is_null()&&v["released_at_ms"].is_null()&&v["release_reason"].is_null(),Some("dispatched")=>!provider.is_null()&&!v["dispatched_at_ms"].is_null()&&v["released_at_ms"].is_null()&&v["release_reason"].is_null(),Some("released")=>provider.is_null()&&v["dispatched_at_ms"].is_null()&&!v["released_at_ms"].is_null()&&!v["release_reason"].is_null(),_=>false}
+}
+pub fn valid_kernel_policy(v:&Value,scope:&str,owner:&str,repo:Option<&str>)->bool{
+    super::kernel::normalize_policy(v,scope,owner,repo).is_some()
+}
+pub fn inspect_reset_usage(rows:&[ObservedRow])->Result<Audit,GatewayError>{
+    let mut audit=Audit::default();for row in rows.iter().filter(|r|under(&r.parts,&["uos_ai","codex_reset_usage"])){
+        audit.count("codex_reset_usage");let p=&row.parts;let valid=p.len()==5&&p[2]=="account"&&p[3]=="v1"&&p[4].as_str().is_some_and(|s|!s.is_empty());
+        if !valid{audit.errors.push(format!("codex reset usage key is malformed: {}",reference(p)));continue;}
+        if !row.value()?.get("enabled").is_some_and(Value::is_boolean){audit.errors.push(format!("codex reset usage record is malformed: {}",reference(p)));}
+    }Ok(audit)
+}
+pub fn inspect_model_snapshot(rows:&[ObservedRow])->Result<Vec<String>,GatewayError>{
+    let get=|parts:&[Value]|rows.iter().find(|r|r.parts==parts).map(ObservedRow::value).transpose();
+    let default=get(&[json!("default"),json!("model")])?.filter(|v|!v.is_null()&&**v!=false&&**v!=0&&**v!="");let snapshot=get(&[json!("ubq_ai"),json!("codex_models")])?;let mut errors=vec![];
+    if let Some(default)=default&&let Some(snapshot)=snapshot.filter(|v|!v.is_null()){
+        let models=snapshot["models"].as_array();if models.is_none_or(Vec::is_empty){errors.push(format!("codex model snapshot is empty or malformed; cannot validate default model: {}",crate::profile::js_string(default)));}
+        else if !models.into_iter().flatten().any(|model|["slug","id","model","name"].iter().any(|field|model.get(field)==Some(default))){errors.push(format!("default model is not present in codex model snapshot: {}",crate::profile::js_string(default)));}
+    }Ok(errors)
+}
+pub fn inspect_source_rows(rows:&[ObservedRow],complete:bool,now:i64)->Result<Audit,GatewayError>{
+    if !complete{return Err(crate::error("Migration validation requires complete source inventories."));}
+    let (pairs,mut audit)=inspect_key_pairs(rows)?;let known:std::collections::BTreeSet<String>=pairs.iter().filter_map(|(id,_)|text(id,"id").map(str::to_owned)).collect();let unlimited:std::collections::BTreeSet<String>=pairs.iter().filter(|(id,_)|id["paid_fallback_limit_microcredits"] == -1).filter_map(|(id,_)|text(id,"id").map(str::to_owned)).collect();
+    audit.merge(inspect_api_usage(rows,&known)?);audit.merge(inspect_kernel(rows)?);audit.merge(inspect_paid(rows,&known,&unlimited,now)?);audit.merge(inspect_reset_usage(rows)?);audit.errors.extend(inspect_model_snapshot(rows)?);
+    let repo=rows.iter().filter(|r|under(&r.parts,&["ubq_ai","kernel_auth","limits"])).count();let org=rows.iter().filter(|r|under(&r.parts,&["ubq_ai","kernel_auth","org_limits"])).count();audit.counts.insert("kernel_repo_limits".into(),repo);audit.counts.insert("kernel_org_limits".into(),org);if repo>0||org>0{audit.errors.push(format!("legacy combined kernel quota records remain: repo={repo} org={org}"));}
+    for (record,hash) in pairs {
+        let id=text(&record,"id").unwrap_or("");
+        if record["usage_quota_version"]!=3||hash["usage_quota_version"]!=3{audit.errors.push(format!("api key quota ledger version is not V3: {id}"));continue;}
+        if record["usage_limit_requests"] != -1 {
+            let clock=super::counter::migration_policy_now(&record,now).ok_or_else(||crate::error("Invalid API-key migration clock."))?;
+            let span=integer(&record,"window_ms").ok_or_else(||crate::error("Invalid API-key window."))?;let initial=integer(&record,"usage_reset_at_ms").ok_or_else(||crate::error("Invalid API-key reset."))?-span;
+            let start=if clock<initial+span{initial}else{initial+(clock-initial).div_euclid(span)*span};let reset=start+span;let version=format!("v3:{span}");
+            let wp=vec![json!("uos_ai"),json!("api_key_usage"),json!("v3"),json!("window"),json!(id),json!(version),json!(start)];
+            let valid=rows.iter().find(|r|r.parts==wp).map(ObservedRow::value).transpose()?.is_some_and(|v|valid_api_window(v)&&text(v,"key_id")==Some(id)&&text(v,"policy_version")==Some(&version)&&integer(v,"window_start_ms")==Some(start)&&integer(v,"window_reset_at_ms")==Some(reset));
+            if !valid{audit.errors.push(format!("bounded V3 aggregate is missing or invalid: {id}"));}
+            let bp=vec![json!("uos_ai"),json!("migrations"),json!("kv_read_incident_v2"),json!("api_key_usage_baseline"),json!(id),json!(version),json!(start)];
+            let valid=rows.iter().find(|r|r.parts==bp).map(ObservedRow::value).transpose()?.is_some_and(|v|super::counter::valid_baseline(v)&&text(v,"key_id")==Some(id)&&text(v,"policy_version")==Some(&version)&&integer(v,"window_start_ms")==Some(start));
+            if !valid{audit.errors.push(format!("bounded counter migration baseline is missing, stale, or invalid: {id}"));}
+        }
+        if let Some(request)=record.get("paid_fallback_reservation_request_id").filter(|v|!v.is_null()){
+            if !rows.iter().any(|row|under(&row.parts,&["uos_ai","paid_fallback","ledger"])&&row.record.json_value().is_ok_and(|v|v["key_id"]==id&&v["id"]==*request&&(v["billing_status"]=="pending"||v["billing_status"]=="unresolved"))){audit.errors.push(format!("paid fallback reservation has no pending ledger record: {id}"));}
+        }
+    }Ok(audit)
+}
