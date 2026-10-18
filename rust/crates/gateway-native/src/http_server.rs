@@ -146,6 +146,7 @@ impl NativeHttpService {
             let context = NativeControlContext::admitted(
                 Instant::now() + Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64),
                 &disconnected,
+                headers,
             );
             context.check()?;
             let result = self.renewal.as_ref().map_or_else(
