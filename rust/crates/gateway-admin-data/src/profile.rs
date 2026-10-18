@@ -333,7 +333,26 @@ fn collection_key(value: PortableValue) -> PortableValue {
     }
 }
 
+/// Exact source Date constructor semantics supplied by the trusted execution realm.
+/// Inputs are data, never JavaScript code, a timezone guess or an arbitrary evaluation capability.
+pub trait SourceDateHost {
+    fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError>;
+}
+/// Retains the existing deterministic codec for canonical inputs; noncanonical inputs fail closed.
+pub struct CanonicalDates;
+impl SourceDateHost for CanonicalDates {
+    fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError> {
+        date(input)
+    }
+}
 pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
+    from_profile_with_host(input, &CanonicalDates)
+}
+
+pub fn from_profile_with_host(
+    input: &Value,
+    host: &dyn SourceDateHost,
+) -> Result<PortableValue, GatewayError> {
     let kind = input
         .get("type")
         .and_then(Value::as_str)
@@ -360,7 +379,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             }
         }
         "Date" => PortableValue::Date {
-            epoch_ms: date(value)?,
+            epoch_ms: host.date_value(value)?,
         },
         "RegExp" => {
             let (source, flags) =
@@ -371,7 +390,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             raw.as_array()
                 .ok_or_else(|| error("Malformed profile Array."))?
                 .iter()
-                .map(from_profile)
+                .map(|item| from_profile_with_host(item, host))
                 .collect::<Result<_, _>>()?,
         ),
         "object" => {
@@ -393,7 +412,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             PortableValue::Object(
                 fields
                     .into_iter()
-                    .map(|(k, v)| Ok((k, from_profile(&v)?)))
+                    .map(|(k, v)| Ok((k, from_profile_with_host(&v, host)?)))
                     .collect::<Result<_, GatewayError>>()?,
             )
         }
@@ -407,8 +426,8 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
                     .as_array()
                     .filter(|v| v.len() >= 2)
                     .ok_or_else(|| error("Malformed profile Map entry."))?;
-                let key = collection_key(from_profile(&pair[0])?);
-                let item = from_profile(&pair[1])?;
+                let key = collection_key(from_profile_with_host(&pair[0], host)?);
+                let item = from_profile_with_host(&pair[1], host)?;
                 if let Some(existing) = entries.iter_mut().find(|(k, _)| same_primitive(k, &key)) {
                     existing.1 = item;
                 } else {
@@ -423,7 +442,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
                 .as_array()
                 .ok_or_else(|| error("Malformed profile Set."))?
             {
-                let item = collection_key(from_profile(item)?);
+                let item = collection_key(from_profile_with_host(item, host)?);
                 if !entries.iter().any(|v| same_primitive(v, &item)) {
                     entries.push(item);
                 }
@@ -449,7 +468,7 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
             let cause = raw
                 .get("cause")
                 .filter(|v| !v.is_null() && **v != false && **v != 0 && **v != "")
-                .map(from_profile)
+                .map(|item| from_profile_with_host(item, host))
                 .transpose()?
                 .map(Box::new);
             PortableValue::Error {
@@ -561,6 +580,13 @@ pub fn to_profile(value: &PortableValue) -> Result<Value, GatewayError> {
 }
 
 pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, GatewayError> {
+    normalize_import_line_with_host(line, &CanonicalDates)
+}
+
+pub fn normalize_import_line_with_host(
+    line: &str,
+    host: &dyn SourceDateHost,
+) -> Result<Option<NormalizedEntry>, GatewayError> {
     if line.trim().is_empty() {
         return Ok(None);
     }
@@ -579,7 +605,7 @@ pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, Gate
         ) {
             return Err(error("Unsupported profile key type."));
         }
-        let decoded = from_profile(part)?;
+        let decoded = from_profile_with_host(part, host)?;
         let key = match decoded {
             PortableValue::String(v) => {
                 logical.push(json!(v));
@@ -611,9 +637,10 @@ pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, Gate
     }
     let tuple = TupleKey::from_parts(&parts)?;
     tuple.validate_stored_key()?;
-    let value = from_profile(
+    let value = from_profile_with_host(
         raw.get("value")
             .ok_or_else(|| error("Missing profile value."))?,
+        host,
     )?;
     Ok(Some(NormalizedEntry {
         key: tuple.to_record_key(),

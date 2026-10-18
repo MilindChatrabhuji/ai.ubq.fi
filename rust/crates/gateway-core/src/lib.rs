@@ -6,6 +6,7 @@ pub mod identity;
 pub mod lifecycle;
 pub mod provider;
 pub mod query;
+pub mod redaction;
 pub mod state;
 pub mod tuple_key;
 pub mod value;
