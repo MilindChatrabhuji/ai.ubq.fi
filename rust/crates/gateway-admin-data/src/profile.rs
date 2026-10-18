@@ -349,7 +349,10 @@ pub fn from_profile(input: &Value) -> Result<PortableValue, GatewayError> {
     from_profile_with_host(input, &CanonicalDates)
 }
 
-pub fn from_profile_with_host(input: &Value, host: &dyn SourceDateHost) -> Result<PortableValue, GatewayError> {
+pub fn from_profile_with_host(
+    input: &Value,
+    host: &dyn SourceDateHost,
+) -> Result<PortableValue, GatewayError> {
     let kind = input
         .get("type")
         .and_then(Value::as_str)
@@ -580,7 +583,10 @@ pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, Gate
     normalize_import_line_with_host(line, &CanonicalDates)
 }
 
-pub fn normalize_import_line_with_host(line: &str, host: &dyn SourceDateHost) -> Result<Option<NormalizedEntry>, GatewayError> {
+pub fn normalize_import_line_with_host(
+    line: &str,
+    host: &dyn SourceDateHost,
+) -> Result<Option<NormalizedEntry>, GatewayError> {
     if line.trim().is_empty() {
         return Ok(None);
     }
