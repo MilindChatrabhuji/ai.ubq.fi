@@ -81,11 +81,15 @@ impl StoredRecord {
     pub fn profile_v2_value(&self) -> Result<crate::value::PortableValue, GatewayError> {
         self.validate_version()?;
         if self.value_encoding != crate::value::ValueEncoding::ProfileV2 {
-            return Err(GatewayError::unavailable("An explicit ProfileV2 record was required", "incompatible_value_encoding"));
+            return Err(GatewayError::unavailable(
+                "An explicit ProfileV2 record was required",
+                "incompatible_value_encoding",
+            ));
         }
-        let value: crate::value::PortableValue = serde_json::from_value(self.value.clone()).map_err(|_| {
-            GatewayError::unavailable("Typed value decoding failed.", "portable_value_invalid")
-        })?;
+        let value: crate::value::PortableValue = serde_json::from_value(self.value.clone())
+            .map_err(|_| {
+                GatewayError::unavailable("Typed value decoding failed.", "portable_value_invalid")
+            })?;
         value.validate_for_storage_v2()?;
         Ok(value)
     }
@@ -114,7 +118,10 @@ impl StoredRecord {
     }
     pub fn validate_version(&self) -> Result<(), GatewayError> {
         if self.schema_version == PORTABLE_STATE_VERSION {
-            if matches!(self.value_encoding, crate::value::ValueEncoding::ProfileV1 | crate::value::ValueEncoding::ProfileV2) {
+            if matches!(
+                self.value_encoding,
+                crate::value::ValueEncoding::ProfileV1 | crate::value::ValueEncoding::ProfileV2
+            ) {
                 let decoded: crate::value::PortableValue =
                     serde_json::from_value(self.value.clone()).map_err(|_| {
                         GatewayError::unavailable(

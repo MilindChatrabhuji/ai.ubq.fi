@@ -76,7 +76,11 @@ impl PortableValue {
         Self::StringUtf16(JsString16::from_units(units))
     }
     pub fn as_string_utf16(&self) -> Option<&JsString16> {
-        if let Self::StringUtf16(value) = self { Some(value) } else { None }
+        if let Self::StringUtf16(value) = self {
+            Some(value)
+        } else {
+            None
+        }
     }
     pub fn to_source_json(&self) -> Result<crate::source_json::SourceJson, GatewayError> {
         crate::source_json::SourceJson::from_portable_json(self)
@@ -139,10 +143,16 @@ impl PortableValue {
                 .map(Value::Object),
             Self::ObjectUtf16(items) => {
                 let mut seen = std::collections::BTreeSet::new();
-                items.iter().map(|(k, v)| {
-                    if !seen.insert(k) { return None; }
-                    Some((k.try_utf8().ok()?, v.to_json_lossless()?))
-                }).collect::<Option<serde_json::Map<_, _>>>().map(Value::Object)
+                items
+                    .iter()
+                    .map(|(k, v)| {
+                        if !seen.insert(k) {
+                            return None;
+                        }
+                        Some((k.try_utf8().ok()?, v.to_json_lossless()?))
+                    })
+                    .collect::<Option<serde_json::Map<_, _>>>()
+                    .map(Value::Object)
             }
             _ => None,
         }
@@ -229,7 +239,9 @@ impl PortableValue {
             Self::ObjectUtf16(items) => {
                 let mut seen = std::collections::BTreeSet::new();
                 for (key, item) in items {
-                    if !seen.insert(key) { return Err(bad()); }
+                    if !seen.insert(key) {
+                        return Err(bad());
+                    }
                     item.validate()?;
                 }
             }
@@ -270,8 +282,19 @@ impl PortableValue {
     }
     fn validate_storage(&self, v2: bool) -> Result<(), GatewayError> {
         self.validate()?;
-        if !v2 && matches!(self, Self::StringUtf16(_) | Self::ObjectUtf16(_) | Self::RegExpUtf16 { .. } | Self::ErrorUtf16 { .. }) {
-            return Err(GatewayError::unavailable("ProfileV2 string nodes are not valid ProfileV1 payloads", "incompatible_value_encoding"));
+        if !v2
+            && matches!(
+                self,
+                Self::StringUtf16(_)
+                    | Self::ObjectUtf16(_)
+                    | Self::RegExpUtf16 { .. }
+                    | Self::ErrorUtf16 { .. }
+            )
+        {
+            return Err(GatewayError::unavailable(
+                "ProfileV2 string nodes are not valid ProfileV1 payloads",
+                "incompatible_value_encoding",
+            ));
         }
         match self {
             Self::Error { cause: Some(_), .. } | Self::ErrorUtf16 { cause: Some(_), .. } => {
@@ -291,7 +314,9 @@ impl PortableValue {
                 }
             }
             Self::ObjectUtf16(v) => {
-                for (_, item) in v { item.validate_storage(v2)?; }
+                for (_, item) in v {
+                    item.validate_storage(v2)?;
+                }
             }
             Self::Map(v) => {
                 for (key, item) in v {
@@ -308,12 +333,23 @@ impl PortableValue {
 mod utf16_object {
     use super::*;
     use serde::{Deserializer, Serializer};
-    pub fn serialize<S: Serializer>(values: &[(JsString16, PortableValue)], serializer: S) -> Result<S::Ok, S::Error> {
-        values.iter().map(|(k, v)| (k.as_units(), v)).collect::<Vec<_>>().serialize(serializer)
+    pub fn serialize<S: Serializer>(
+        values: &[(JsString16, PortableValue)],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        values
+            .iter()
+            .map(|(k, v)| (k.as_units(), v))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
     }
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<(JsString16, PortableValue)>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<(JsString16, PortableValue)>, D::Error> {
         Vec::<(Vec<u16>, PortableValue)>::deserialize(deserializer).map(|v| {
-            v.into_iter().map(|(key, value)| (JsString16::from_units(key), value)).collect()
+            v.into_iter()
+                .map(|(key, value)| (JsString16::from_units(key), value))
+                .collect()
         })
     }
 }

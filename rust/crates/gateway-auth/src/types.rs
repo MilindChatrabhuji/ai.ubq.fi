@@ -74,11 +74,20 @@ pub enum AuthResponseBody {
 }
 impl AuthResponseBody {
     pub fn as_json(&self) -> Option<&Value> {
-        if let Self::Json(value) = self { Some(value) } else { None }
+        if let Self::Json(value) = self {
+            Some(value)
+        } else {
+            None
+        }
     }
     pub fn to_bytes(&self) -> Result<Vec<u8>, GatewayError> {
         match self {
-            Self::Json(value) => serde_json::to_vec(value).map_err(|_| GatewayError::unavailable("JSON response serialization failed", "response_json_invalid")),
+            Self::Json(value) => serde_json::to_vec(value).map_err(|_| {
+                GatewayError::unavailable(
+                    "JSON response serialization failed",
+                    "response_json_invalid",
+                )
+            }),
             Self::SourceJson(value) => Ok(value.as_bytes().to_vec()),
         }
     }
@@ -95,14 +104,20 @@ impl serde::Serialize for AuthResponseBody {
 impl std::ops::Deref for AuthResponseBody {
     type Target = Value;
     fn deref(&self) -> &Value {
-        self.as_json().expect("A source JSON body cannot be inspected through serde_json::Value; use to_bytes")
+        self.as_json().expect(
+            "A source JSON body cannot be inspected through serde_json::Value; use to_bytes",
+        )
     }
 }
 impl PartialEq<Value> for AuthResponseBody {
-    fn eq(&self, other: &Value) -> bool { self.as_json() == Some(other) }
+    fn eq(&self, other: &Value) -> bool {
+        self.as_json() == Some(other)
+    }
 }
 impl PartialEq<AuthResponseBody> for Value {
-    fn eq(&self, other: &AuthResponseBody) -> bool { other == self }
+    fn eq(&self, other: &AuthResponseBody) -> bool {
+        other == self
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -1,13 +1,15 @@
 //! Validated JSON bytes; raw string leaves never pass through serde_json::Value.
 use crate::{GatewayError, js_string::JsString16, value::PortableValue};
-use serde::{Serialize, Serializer, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::{DeserializeOwned, Error}};
 use serde_json::value::RawValue;
 
 #[derive(Clone)]
 pub struct SourceJson(Box<RawValue>);
 impl std::fmt::Debug for SourceJson {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.debug_struct("SourceJson").field("bytes", &self.as_bytes().len()).finish()
+        out.debug_struct("SourceJson")
+            .field("bytes", &self.as_bytes().len())
+            .finish()
     }
 }
 impl PartialEq for SourceJson {
@@ -18,7 +20,9 @@ impl PartialEq for SourceJson {
 impl Eq for SourceJson {}
 impl SourceJson {
     pub fn parse(text: &str) -> Result<Self, GatewayError> {
-        RawValue::from_string(text.into()).map(Self).map_err(|_| invalid())
+        RawValue::from_string(text.into())
+            .map(Self)
+            .map_err(|_| invalid())
     }
     pub fn parse_bytes(bytes: &[u8]) -> Result<Self, GatewayError> {
         Self::parse(std::str::from_utf8(bytes).map_err(|_| invalid())?)
@@ -39,12 +43,16 @@ impl SourceJson {
     pub fn as_bytes(&self) -> &[u8] {
         self.as_str().as_bytes()
     }
-    pub fn as_raw(&self) -> &RawValue { &self.0 }
+    pub fn as_raw(&self) -> &RawValue {
+        &self.0
+    }
     /// Raw member order and duplicates are preserved; consumers apply their source schema.
     pub fn object_entries(&self) -> Result<Vec<(JsString16, Self)>, GatewayError> {
         let text = self.as_str();
         let bytes = text.as_bytes();
-        if bytes.first() != Some(&b'{') { return Err(invalid()); }
+        if bytes.first() != Some(&b'{') {
+            return Err(invalid());
+        }
         let mut at = skip_space(bytes, 1);
         let mut entries = Vec::new();
         while bytes.get(at) != Some(&b'}') {
@@ -52,29 +60,45 @@ impl SourceJson {
             let token = RawValue::from_string(text[at..end].into()).map_err(|_| invalid())?;
             let key = JsString16::from_json_token(&token)?;
             at = skip_space(bytes, end);
-            if bytes.get(at) != Some(&b':') { return Err(invalid()); }
+            if bytes.get(at) != Some(&b':') {
+                return Err(invalid());
+            }
             at = skip_space(bytes, at + 1);
             let end = value_end(bytes, at)?;
             entries.push((key, Self::parse(&text[at..end])?));
             at = skip_space(bytes, end);
-            if bytes.get(at) == Some(&b',') { at = skip_space(bytes, at + 1); } else { break; }
+            if bytes.get(at) == Some(&b',') {
+                at = skip_space(bytes, at + 1);
+            } else {
+                break;
+            }
         }
-        if bytes.get(at) != Some(&b'}') { return Err(invalid()); }
+        if bytes.get(at) != Some(&b'}') {
+            return Err(invalid());
+        }
         Ok(entries)
     }
     pub fn array_items(&self) -> Result<Vec<Self>, GatewayError> {
         let text = self.as_str();
         let bytes = text.as_bytes();
-        if bytes.first() != Some(&b'[') { return Err(invalid()); }
+        if bytes.first() != Some(&b'[') {
+            return Err(invalid());
+        }
         let mut at = skip_space(bytes, 1);
         let mut items = Vec::new();
         while bytes.get(at) != Some(&b']') {
             let end = value_end(bytes, at)?;
             items.push(Self::parse(&text[at..end])?);
             at = skip_space(bytes, end);
-            if bytes.get(at) == Some(&b',') { at = skip_space(bytes, at + 1); } else { break; }
+            if bytes.get(at) == Some(&b',') {
+                at = skip_space(bytes, at + 1);
+            } else {
+                break;
+            }
         }
-        if bytes.get(at) != Some(&b']') { return Err(invalid()); }
+        if bytes.get(at) != Some(&b']') {
+            return Err(invalid());
+        }
         Ok(items)
     }
     pub fn into_bytes(self) -> Vec<u8> {
@@ -85,11 +109,18 @@ impl SourceJson {
     }
 }
 fn skip_space(bytes: &[u8], mut at: usize) -> usize {
-    while bytes.get(at).is_some_and(|v| matches!(v, b' ' | b'\n' | b'\r' | b'\t')) { at += 1; }
+    while bytes
+        .get(at)
+        .is_some_and(|v| matches!(v, b' ' | b'\n' | b'\r' | b'\t'))
+    {
+        at += 1;
+    }
     at
 }
 fn string_end(bytes: &[u8], at: usize) -> Result<usize, GatewayError> {
-    if bytes.get(at) != Some(&b'"') { return Err(invalid()); }
+    if bytes.get(at) != Some(&b'"') {
+        return Err(invalid());
+    }
     let mut end = at + 1;
     while end < bytes.len() {
         match bytes[end] {
@@ -109,12 +140,19 @@ fn value_end(bytes: &[u8], at: usize) -> Result<usize, GatewayError> {
             let mut end = at + 1;
             while let Some(&byte) = bytes.get(end) {
                 match byte {
-                    b'"' => { end = string_end(bytes, end)?; continue; }
+                    b'"' => {
+                        end = string_end(bytes, end)?;
+                        continue;
+                    }
                     b'{' | b'[' => stack.push(byte),
                     b'}' | b']' => {
                         let open = stack.pop().ok_or_else(invalid)?;
-                        if !matches!((open, byte), (b'{', b'}') | (b'[', b']')) { return Err(invalid()); }
-                        if stack.is_empty() { return Ok(end + 1); }
+                        if !matches!((open, byte), (b'{', b'}') | (b'[', b']')) {
+                            return Err(invalid());
+                        }
+                        if stack.is_empty() {
+                            return Ok(end + 1);
+                        }
                     }
                     _ => {}
                 }
@@ -124,7 +162,12 @@ fn value_end(bytes: &[u8], at: usize) -> Result<usize, GatewayError> {
         }
         Some(_) => {
             let mut end = at;
-            while bytes.get(end).is_some_and(|v| !matches!(v, b',' | b']' | b'}' | b' ' | b'\n' | b'\r' | b'\t')) { end += 1; }
+            while bytes
+                .get(end)
+                .is_some_and(|v| !matches!(v, b',' | b']' | b'}' | b' ' | b'\n' | b'\r' | b'\t'))
+            {
+                end += 1;
+            }
             if end == at { Err(invalid()) } else { Ok(end) }
         }
         None => Err(invalid()),
@@ -133,6 +176,12 @@ fn value_end(bytes: &[u8], at: usize) -> Result<usize, GatewayError> {
 impl Serialize for SourceJson {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for SourceJson {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = Box::<RawValue>::deserialize(deserializer)?;
+        Self::parse(raw.get()).map_err(|_| D::Error::custom("Invalid source JSON"))
     }
 }
 fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayError> {
@@ -148,7 +197,9 @@ fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayErr
         PortableValue::Array(values) => {
             out.push('[');
             for (at, value) in values.iter().enumerate() {
-                if at != 0 { out.push(','); }
+                if at != 0 {
+                    out.push(',');
+                }
                 write_value(value, out)?;
             }
             out.push(']');
@@ -156,7 +207,9 @@ fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayErr
         PortableValue::Object(values) => {
             out.push('{');
             for (at, (key, value)) in values.iter().enumerate() {
-                if at != 0 { out.push(','); }
+                if at != 0 {
+                    out.push(',');
+                }
                 out.push_str(&JsString16::from_str(key).json_token());
                 out.push(':');
                 write_value(value, out)?;
@@ -166,7 +219,9 @@ fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayErr
         PortableValue::ObjectUtf16(values) => {
             out.push('{');
             for (at, (key, value)) in values.iter().enumerate() {
-                if at != 0 { out.push(','); }
+                if at != 0 {
+                    out.push(',');
+                }
                 out.push_str(&key.json_token());
                 out.push(':');
                 write_value(value, out)?;
@@ -178,5 +233,8 @@ fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayErr
     Ok(())
 }
 fn invalid() -> GatewayError {
-    GatewayError::unavailable("Source JSON is malformed or the typed value is not losslessly JSON-representable", "source_json_invalid")
+    GatewayError::unavailable(
+        "Source JSON is malformed or the typed value is not losslessly JSON-representable",
+        "source_json_invalid",
+    )
 }

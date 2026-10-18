@@ -112,16 +112,25 @@ impl JsString16 {
                 92 => out.push_str("\\\\"),
                 0..=31 => write!(out, "\\u{unit:04x}").expect("String formatting cannot fail"),
                 0xd800..=0xdbff => {
-                    if let Some(&low) = self.0.get(at + 1).filter(|&&v| (0xdc00..=0xdfff).contains(&v)) {
-                        let scalar = 0x10000 + ((u32::from(unit) - 0xd800) << 10) + u32::from(low) - 0xdc00;
+                    if let Some(&low) = self
+                        .0
+                        .get(at + 1)
+                        .filter(|&&v| (0xdc00..=0xdfff).contains(&v))
+                    {
+                        let scalar =
+                            0x10000 + ((u32::from(unit) - 0xd800) << 10) + u32::from(low) - 0xdc00;
                         out.push(char::from_u32(scalar).expect("A surrogate pair forms a scalar"));
                         at += 1;
                     } else {
                         write!(out, "\\u{unit:04x}").expect("String formatting cannot fail");
                     }
                 }
-                0xdc00..=0xdfff => write!(out, "\\u{unit:04x}").expect("String formatting cannot fail"),
-                _ => out.push(char::from_u32(u32::from(unit)).expect("A non-surrogate u16 is a scalar")),
+                0xdc00..=0xdfff => {
+                    write!(out, "\\u{unit:04x}").expect("String formatting cannot fail")
+                }
+                _ => out.push(
+                    char::from_u32(u32::from(unit)).expect("A non-surrogate u16 is a scalar"),
+                ),
             }
             at += 1;
         }
@@ -133,6 +142,12 @@ impl JsString16 {
 impl From<&str> for JsString16 {
     fn from(value: &str) -> Self {
         Self::from_str(value)
+    }
+}
+impl std::str::FromStr for JsString16 {
+    type Err = std::convert::Infallible;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_str(value))
     }
 }
 impl Serialize for JsString16 {
@@ -162,10 +177,18 @@ pub(crate) mod units {
 
 pub(crate) mod optional_units {
     use super::*;
-    pub fn serialize<S: Serializer>(value: &Option<JsString16>, serializer: S) -> Result<S::Ok, S::Error> {
-        value.as_ref().map(JsString16::as_units).serialize(serializer)
+    pub fn serialize<S: Serializer>(
+        value: &Option<JsString16>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value
+            .as_ref()
+            .map(JsString16::as_units)
+            .serialize(serializer)
     }
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<JsString16>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<JsString16>, D::Error> {
         Option::<Vec<u16>>::deserialize(deserializer).map(|v| v.map(JsString16::from_units))
     }
 }
@@ -173,5 +196,8 @@ fn whitespace(unit: u16) -> bool {
     matches!(unit, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
 }
 fn invalid() -> GatewayError {
-    GatewayError::unavailable("Source JSON string is invalid or cannot be represented as UTF8", "source_json_string_invalid")
+    GatewayError::unavailable(
+        "Source JSON string is invalid or cannot be represented as UTF8",
+        "source_json_string_invalid",
+    )
 }

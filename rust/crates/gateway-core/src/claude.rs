@@ -9,12 +9,19 @@ pub struct ClaudeErrorEvidence {
 impl ClaudeErrorEvidence {
     pub fn from_prefix(prefix: Option<Vec<u16>>, complete: bool) -> Result<Self, GatewayError> {
         if prefix.as_ref().is_some_and(|v| v.len() > 4096) {
-            return Err(GatewayError::unavailable("Claude error evidence exceeds its source UTF16 prefix", "claude_error_evidence_invalid"));
+            return Err(GatewayError::unavailable(
+                "Claude error evidence exceeds its source UTF16 prefix",
+                "claude_error_evidence_invalid",
+            ));
         }
         Ok(Self { prefix, complete })
     }
-    pub fn prefix(&self) -> Option<&[u16]> { self.prefix.as_deref() }
-    pub fn complete(&self) -> bool { self.complete }
+    pub fn prefix(&self) -> Option<&[u16]> {
+        self.prefix.as_deref()
+    }
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
 }
 impl std::fmt::Debug for ClaudeErrorEvidence {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
