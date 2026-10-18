@@ -152,8 +152,8 @@ const withHttpFixture = async (run: (fixture: HttpFixture) => Promise<void>): Pr
   }
 };
 
-const dispatch = async (route: string, model: string): Promise<Response> => {
-  const body = route === "chat" ? { model, messages: [{ role: "user", content: "hi" }], stream: false } : { model, input: "hi", stream: false };
+const dispatch = async (route: string, model: string, stream = false): Promise<Response> => {
+  const body = route === "chat" ? { model, messages: [{ role: "user", content: "hi" }], stream } : { model, input: "hi", stream };
   const request = new Request(`https://ai.ubq.fi/v1/${route === "chat" ? "chat/completions" : "responses"}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -236,6 +236,28 @@ test("real Lithos HTTP transient failure does not fail over to another tier or p
     await response.text();
     assert.deepEqual(models, [ULTRA]);
   });
+});
+
+test("real Lithos HTTP deferred 504 is preserved in both streamed terminals", async () => {
+  for (const route of ["chat", "responses"]) {
+    await withHttpFixture(async ({ models, setHandler }) => {
+      setHandler((_model, index) =>
+        index <= 3
+          ? refusal(1)
+          : Response.json(
+              { error: { message: "provider gateway timed out", code: "provider_gateway_timeout" } },
+              { status: 504, headers: { "content-type": "application/json" } }
+            )
+      );
+      const response = await dispatch(route, ULTRA, true);
+      const text = await response.text();
+      assert.equal(response.status, 200, route);
+      assert.deepEqual(models, [ULTRA, FAST, BASE, ULTRA], route);
+      assert.match(text, /provider_gateway_timeout/, route);
+      assert.match(text, /provider gateway timed out/, route);
+      if (route === "responses") assert.match(text, /"type":"response\.failed"/, route);
+    });
+  }
 });
 
 test("619 abort reasons and existing bounded retry waits survive independent tier windows", async () => {

@@ -885,6 +885,10 @@ input[type="checkbox"]:focus {
   --key-accent: var(--warning);
 }
 
+[data-key][data-state="expired"] {
+  --key-accent: var(--warning);
+}
+
 [data-key][data-state="revoked"] {
   --key-accent: var(--danger);
 }

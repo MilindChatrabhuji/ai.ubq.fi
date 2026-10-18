@@ -3,6 +3,9 @@ import { isLoopbackHostname } from "../src/auth/local-admin.ts";
 const DEFAULT_BASE_URL = "http://localhost:8000";
 const SPARK_FLAG = "--spark";
 const MISSING_TOKEN_MESSAGE = "DENO_DEPLOY_TOKEN_UBIQUITY_DAO (or DENO_DEPLOY_TOKEN) is required for non-loopback admin endpoints.";
+const INVALID_TOKEN_MESSAGE = "DENO_DEPLOY_TOKEN_UBIQUITY_DAO (or DENO_DEPLOY_TOKEN) must contain only printable ASCII characters.";
+const VALID_TOKEN = /^[\x21-\x7e]+$/;
+const REDACTED_TOKEN = "…";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -16,6 +19,37 @@ type AdminModelsOptions = Readonly<{
 /** An empty variable counts as unset, as the shell `${VAR:-default}` expansions these tasks replaced treated it. */
 const firstSet = (...values: (string | undefined)[]): string | undefined => values.find((value) => value !== undefined && value !== "");
 
+const appendNoProxyHost = (current: string | undefined, hostname: string): string => {
+  const hosts = (current ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!hosts.includes("*") && !hosts.includes(hostname)) hosts.push(hostname);
+  return hosts.join(",");
+};
+
+const withLoopbackNoProxy = async <T>(url: URL, action: () => Promise<T>): Promise<T> => {
+  if (!isLoopbackHostname(url.hostname)) return action();
+  const hostname = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  const previousNoProxy = process.env.NO_PROXY;
+  const previousLowerNoProxy = process.env.no_proxy;
+  process.env.NO_PROXY = appendNoProxyHost(previousNoProxy, hostname);
+  process.env.no_proxy = appendNoProxyHost(previousLowerNoProxy, hostname);
+  try {
+    return await action();
+  } finally {
+    if (previousNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = previousNoProxy;
+    if (previousLowerNoProxy === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = previousLowerNoProxy;
+  }
+};
+
+const redactToken = (message: string, token: string): string => {
+  if (!token) return message;
+  return message.replaceAll(token, REDACTED_TOKEN);
+};
+
 /**
  * Parses BASE_URL once and classifies that parsed hostname by the server's own loopback rule (`isLoopbackHostname`),
  * never by a textual prefix such as `http://localhost*`. Only the path changes afterwards, so the requested host is
@@ -27,11 +61,18 @@ const resolveEndpoint = (env: Environment): Readonly<{ url: URL; token: string }
   try {
     url = new URL(baseUrl);
   } catch {
-    return { error: `BASE_URL is not a valid URL: ${baseUrl}` };
+    return { error: "BASE_URL is not a valid URL." };
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return { error: `BASE_URL must use http or https: ${baseUrl}` };
+  if (url.protocol !== "http:" && url.protocol !== "https:") return { error: `BASE_URL must use http or https: ${url.origin}` };
   const token = firstSet(env.DENO_DEPLOY_TOKEN_UBIQUITY_DAO, env.DENO_DEPLOY_TOKEN) ?? "";
-  if (!token && !isLoopbackHostname(url.hostname)) return { error: MISSING_TOKEN_MESSAGE };
+  const loopback = isLoopbackHostname(url.hostname);
+  if (token && !VALID_TOKEN.test(token)) return { error: INVALID_TOKEN_MESSAGE };
+  if (!token && !loopback) return { error: MISSING_TOKEN_MESSAGE };
+  if (token && !loopback && url.protocol === "http:") {
+    return { error: `BASE_URL must use https for non-loopback admin endpoints when an admin token is set: ${url.origin}` };
+  }
+  url.username = "";
+  url.password = "";
   const basePath = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
   url.pathname = `${basePath}/admin/codex/models`;
   url.search = "";
@@ -58,26 +99,34 @@ export const runAdminModels = async (args: readonly string[], options: AdminMode
     logError(`Unknown argument '${unknown}'. Supported arguments: ${SPARK_FLAG}`);
     return 1;
   }
-  const endpoint = resolveEndpoint(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const endpoint = resolveEndpoint(env);
   if ("error" in endpoint) {
-    logError(endpoint.error);
+    const token = firstSet(env.DENO_DEPLOY_TOKEN_UBIQUITY_DAO, env.DENO_DEPLOY_TOKEN) ?? "";
+    const safeError = redactToken(endpoint.error, token);
+    logError(safeError);
     return 1;
   }
 
   let response: Response;
   let body: string;
   try {
-    response = await (options.fetcher ?? fetch)(endpoint.url, {
-      headers: endpoint.token ? { Authorization: `Bearer ${endpoint.token}` } : {},
-      redirect: "manual",
-    });
+    response = await withLoopbackNoProxy(endpoint.url, () =>
+      (options.fetcher ?? fetch)(endpoint.url, {
+        headers: endpoint.token ? { Authorization: `Bearer ${endpoint.token}` } : {},
+        redirect: "manual",
+      })
+    );
     body = await response.text();
   } catch (error) {
-    logError(`Request failed: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    const safeMessage = redactToken(message, endpoint.token);
+    logError(`Request failed: ${safeMessage}`);
     return 1;
   }
   if (!response.ok) {
-    const detail = body ? `: ${body}` : "";
+    const safeBody = redactToken(body, endpoint.token);
+    const detail = safeBody ? `: ${safeBody}` : "";
     logError(`Admin models request failed with HTTP ${response.status}${detail}`);
     return 1;
   }

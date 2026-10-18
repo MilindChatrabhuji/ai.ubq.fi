@@ -33,6 +33,16 @@ const interrupted = (): Error => new Error("The client disconnected before its r
 const responseInterrupted = (outgoing: ServerResponse, signal: AbortSignal): boolean => signal.aborted || outgoing.destroyed;
 const requestBodies = new WeakMap<Request, IncomingBody>();
 
+const isAdminRequest = (request: Request | null): boolean => {
+  if (!request) return false;
+  try {
+    const path = new URL(request.url).pathname;
+    return path === "/admin" || path === "/admin.html" || path.startsWith("/admin/");
+  } catch {
+    return false;
+  }
+};
+
 const incomingHeaders = (incoming: IncomingMessage): Headers => {
   const headers = new Headers();
   for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
@@ -215,6 +225,7 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
           outgoing.destroy();
         } else {
           outgoing.statusCode = 500;
+          if (isAdminRequest(request)) outgoing.setHeader("cache-control", "no-store");
           outgoing.setHeader("content-type", "text/plain; charset=utf-8");
           outgoing.end("Internal Server Error");
         }

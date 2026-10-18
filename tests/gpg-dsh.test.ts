@@ -295,7 +295,10 @@ fi
 exec ${hostCommand("rm")} "$@"
 `;
 
-for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]])
+const lockShells = [["/bin/sh"], ["/bin/bash", "--posix"]];
+const availableDash = Bun.which("dash");
+if (availableDash) lockShells.push([availableDash]);
+for (const shell of lockShells)
   test(`concurrent stale-lock recovery rebuilds exactly once (${shell.join(" ")})`, async () => {
     await withFixture(async (fixture) => {
       await signed(fixture);
@@ -325,6 +328,53 @@ for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]])
       }
       await signed(fixture);
       assert.equal((await gpgconfCalls(fixture)).length, rounds, "the published manifest is current");
+    });
+  }, 60_000);
+
+for (const shell of lockShells)
+  test(`waiters leave the reap gate untouched while its lock owner is live (${shell.join(" ")})`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await writeFile(join(fixture.gnupg, "private-keys-v1.d", "AAAA.key"), "secret-a-live-owner");
+      process.kill(process.pid, 0);
+      const lock = `${fixture.seed}.lock`;
+      const gate = `${lock}.break`;
+      const waiting = join(fixture.tmp, "waiters-ready");
+      const released = join(fixture.tmp, "release-waiters");
+      const gateRemovals = join(fixture.tmp, "gate-removals");
+      await mkdir(lock, { mode: 0o700 });
+      const owner = `${process.pid} ${Math.floor(Date.now() / 1000) - 3600}\n`;
+      await writeFile(join(lock, "owner"), owner);
+      await executable(
+        join(fixture.bin, "rm"),
+        `#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = ${shellQuote(gate)} ]; then printf 'gate\\n' >>${shellQuote(gateRemovals)}; fi
+exec ${hostCommand("rm")} "$@"
+`
+      );
+      await executable(
+        join(fixture.bin, "sleep"),
+        `#!/bin/sh
+printf 'waiting\\n' >>${shellQuote(waiting)}
+while [ ! -e ${shellQuote(released)} ]; do ${hostCommand("sleep")} 0.01; done
+exec ${hostCommand("sleep")} "$@"
+`
+      );
+      const pending = Promise.all(Array.from({ length: 3 }, () => fixture.run("sandboxed", { shell })));
+      try {
+        await waitFor(async () => (await readFile(waiting, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).length === 3);
+        assert.equal(await readFile(join(lock, "owner"), "utf8"), owner);
+        assert.equal(await readFile(gateRemovals, "utf8").catch(() => ""), "", "live-owner waiters must not mutate the reap gate");
+      } finally {
+        await rm(lock, { recursive: true, force: true });
+        await writeFile(released, "released\n");
+        for (const result of await pending) {
+          assert.equal(result.code, 0, result.stderr);
+          assert.deepEqual(lines(result.stdout, "key="), ["AAAA.key:secret-a-live-owner", "BBBB.key:secret-b"]);
+        }
+      }
+      assert.equal((await gpgconfCalls(fixture)).length, 1, "one rebuild after the live holder releases its lock");
+      assert.deepEqual(await siblings(fixture), []);
     });
   }, 60_000);
 
@@ -508,7 +558,7 @@ exec ${hostCommand("cat")} "$@"
       assert.equal(settled, false, "negative held is live, not stale");
       assert.equal(await readFile(join(lock, "owner"), "utf8"), "222 101\n");
       assert.deepEqual(await gpgconfCalls(fixture), []);
-      assert.deepEqual((await readFile(log, "utf8")).trim().split("\n").slice(0, 3), ["clock", "owner", "clock"]);
+      assert.deepEqual((await readFile(log, "utf8")).trim().split("\n").slice(0, 4), ["clock", "owner", "owner", "clock"]);
     } finally {
       await rm(lock, { recursive: true, force: true });
       const result = await pending;
