@@ -19,7 +19,7 @@ import {
   recordStreamTerminalType,
   responseIncompleteFailureKind,
 } from "../openai-telemetry.ts";
-import { proxyResponsesStream, type ResponsesStreamEvent, withSseKeepalive } from "../responses-stream.ts";
+import { proxyResponsesStream, ResponsesStreamError, type ResponsesStreamEvent, withSseKeepalive } from "../responses-stream.ts";
 import { openRouterResponseHeaders } from "../upstream-wire.ts";
 import { isRecord } from "../utils.ts";
 import { recordOpenRouterProviderHealth } from "./health.ts";
@@ -73,7 +73,21 @@ export const recordOpenRouterResponseHealth = (status: number, providerRequestId
   void recordOpenRouterProviderHealth("success", status, Date.now, providerRequestId);
 };
 
-const failureKindForStreamError = (error: unknown): OpenRouterStreamFailureKind => (error instanceof OpenRouterStreamError ? error.kind : "read_error");
+const failureKindForStreamError = (error: unknown): OpenRouterStreamFailureKind => {
+  if (error instanceof OpenRouterStreamError) return error.kind;
+  if (error instanceof ResponsesStreamError) {
+    switch (error.kind) {
+      case "malformed_event":
+      case "premature_eof":
+      case "read_error":
+      case "inactivity_timeout":
+        return error.kind;
+      default:
+        return "read_error";
+    }
+  }
+  return "read_error";
+};
 
 const openRouterFinishReasonFailureKind = (finishReason: string | null): OpenRouterStreamFailureKind =>
   `openrouter_finish_reason:${finishReason !== null && /^[A-Za-z0-9_.:-]{1,64}$/.test(finishReason) ? finishReason : "unrecognized"}`;
@@ -81,6 +95,8 @@ const openRouterFinishReasonFailureKind = (finishReason: string | null): OpenRou
 const terminalTypeForStreamError = (error: unknown, downstreamSignal: AbortSignal): ResponseStreamTerminalType => {
   if (downstreamSignal.aborted) return "cancelled";
   if (error instanceof OpenRouterStreamError && error.kind === "inactivity_timeout") return "deadline";
+  if (error instanceof ResponsesStreamError && error.kind === "inactivity_timeout") return "deadline";
+  if (error instanceof ResponsesStreamError && error.kind === "premature_eof") return "eof";
   if (error instanceof Error && error.name === "TimeoutError") return "deadline";
   if (error instanceof Error && error.name === "AbortError") return "cancelled";
   return "error";

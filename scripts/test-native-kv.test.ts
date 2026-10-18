@@ -120,8 +120,16 @@ test("VPS discovery includes bound release and first-cutover suites exactly once
   assert.equal(result.code, 0, result.output);
   const groups = JSON.parse(result.output) as { files: string[] }[];
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].files.length, process.platform === "linux" ? 6 : 5);
-  for (const name of ["vps-release-driver.test.ts", "vps-release-recovery.test.ts", "vps-release-metrics.test.ts", "first-bun-cutover.test.ts"]) {
+  assert.equal(groups[0].files.length, process.platform === "linux" ? 9 : 8);
+  for (const name of [
+    "vps-release-driver.test.ts",
+    "vps-release-recovery.test.ts",
+    "vps-release-metrics.test.ts",
+    "vps-metrics-join.test.ts",
+    "vps-journal-reader.test.ts",
+    "vps-bridge-host.test.ts",
+    "first-bun-cutover.test.ts",
+  ]) {
     assert.equal(groups[0].files.filter((path) => path.endsWith(name)).length, 1);
     const focused = await run([process.execPath, "--no-env-file", "--no-install", join(ROOT, "scripts/test-runner.ts"), "vps", "ops/tests/" + name, "--list"]);
     assert.equal(focused.code, 0, focused.output);
@@ -148,7 +156,9 @@ test("one real parent build is reused across files and separate original profile
     mkdirSync(join(directory, "tests"));
     writeFileSync(join(directory, "bun.lock"), "{}\n");
     writeFileSync(join(directory, "scripts/test-runner.ts"), readFileSync(join(ROOT, "scripts/test-runner.ts")));
-    for (const name of ["test-network.ts", "test-native-kv.ts"]) symlinkSync(join(ROOT, "scripts", name), join(directory, "scripts", name));
+    for (const name of ["test-network.ts", "test-native-kv.ts", "test-scope.ts"]) {
+      symlinkSync(join(ROOT, "scripts", name), join(directory, "scripts", name));
+    }
     for (const name of ["one.test.ts", "two.test.ts", "usage-optimization-measurement.test.ts"]) {
       writeFileSync(
         join(directory, "tests", name),

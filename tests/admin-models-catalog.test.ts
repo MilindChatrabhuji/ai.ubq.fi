@@ -34,7 +34,7 @@ import { loadProviderSelection, PROVIDER_SELECTION_KV_KEY, resetProviderSelectio
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "../src/catalog/types.ts";
 import { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } from "../src/provider/metered.ts";
 import { resetSurplusModelsCacheForTest } from "../src/provider/surplus.ts";
-import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
+import { DEEPSEEK_WATERFALL_LEGACY_MODEL_ID, DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps these tests on the credential-gated providers they own, and keeps
@@ -602,6 +602,11 @@ test("the model picker rejects a selection it cannot store faithfully", async ()
 test("normalizeWhitelistModelIds keeps the first spelling of every identifier", () => {
   assert.deepEqual(normalizeWhitelistModelIds([" a ", "b", "a", "", "   ", 7, null, "c"]), ["a", "b", "c"]);
   assert.deepEqual(normalizeWhitelistModelIds([]), []);
+  assert.deepEqual(
+    normalizeWhitelistModelIds([DEEPSEEK_WATERFALL_LEGACY_MODEL_ID]),
+    [DEEPSEEK_WATERFALL_MODEL_ID],
+    "the pre-rename synthetic id keeps the new model selected"
+  );
 });
 
 test("whitelist filters hide unlisted models on every model surface, and an empty list hides none", () => {
@@ -743,6 +748,28 @@ test("provider roster completion rerenders Models after normalizing its filter",
   assert.ok(modelsRender > filterReset, "the Models picker must rerender after the filter reset");
 });
 
+test("provider picker edits invalidate an in-flight roster refresh", () => {
+  assert.match(adminScript, /const markProviderSelectionEdited = \(\) => \{\s*providerSelectionLoadId \+= 1;\s*\};/);
+  assert.match(adminScript, /const loadId = \+\+providerSelectionLoadId;[\s\S]*?if \(loadId !== providerSelectionLoadId\) return false;/);
+  const loadStart = adminScript.indexOf("const loadProviderSelection = async (options = {}) => {");
+  const staleGuard = adminScript.indexOf("if (loadId !== providerSelectionLoadId) return false;", loadStart);
+  const serverSelection = adminScript.indexOf("providerSelection = new Set(providersSavedSelection);", loadStart);
+  assert.ok(loadStart >= 0 && staleGuard >= 0 && serverSelection > staleGuard, "stale loads must be fenced before applying server selection");
+  const applyStart = adminScript.indexOf("const applyProvidersSelection = (mutate) => {");
+  const discardStart = adminScript.indexOf("const discardProviderChanges = () => {", applyStart);
+  const changeStart = adminScript.indexOf('providersList.addEventListener("change", (event) => {', discardStart);
+  const dropMissingStart = adminScript.indexOf('providersDropMissingBtn.addEventListener("click", () => {', changeStart);
+  assert.ok(
+    applyStart >= 0 && discardStart > applyStart && changeStart > discardStart && dropMissingStart > changeStart,
+    "provider picker handlers must stay discoverable"
+  );
+  const marker = /markProviderSelectionEdited\(\);/;
+  assert.match(adminScript.slice(applyStart, discardStart), marker);
+  assert.match(adminScript.slice(discardStart, changeStart), marker);
+  assert.match(adminScript.slice(changeStart, dropMissingStart), marker);
+  assert.match(adminScript.slice(dropMissingStart), marker);
+});
+
 test("the Providers tab renders a provider picker next to the Analytics tab", () => {
   assert.match(adminHtml, /id="providers-selection-list" data-provider-picker/);
   assert.match(adminHtml, /id="view-analytics"[\s\S]*?id="provider-capacity-chart"/, "the analytics view keeps the capacity chart");
@@ -786,10 +813,15 @@ test("the Providers tab renders a provider picker next to the Analytics tab", ()
   // The routing contract the panel has to explain: nothing checked is a removed
   // filter, not a gateway with every provider switched off.
   assert.match(adminHtml, /Saving an empty selection removes the filter/);
-  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| providersSelectionIsEmpty\(\)/);
+  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| !providersHasActiveTier\(\)/);
   assert.match(adminScript, /providersEmptyWarning/);
   // The waterfall order is fixed, so the picker must never claim to reorder it.
   assert.match(adminHtml, /The waterfall order itself never changes/);
+});
+
+test("stale Codex subscriptions do not promise paid fallback", () => {
+  const routingWarnings = /const providersRoutingWarnings = \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(routingWarnings, /if \(!isProviderChecked\("codex"\) && missing\.length === 0\)/);
 });
 
 test("each Codex subscription is selectable under the Codex provider", () => {
@@ -809,12 +841,21 @@ test("each Codex subscription is selectable under the Codex provider", () => {
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
 });
 
+test("admin metadata refresh does not announce an unchanged OpenRouter snapshot as success", () => {
+  const refreshHandler = /const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};/.exec(adminScript)?.[1] ?? "";
+  assert.match(
+    refreshHandler,
+    /if \(payload\?\.data\?\.openrouter\?\.refreshed === false\) \{[\s\S]*?toast\.error\("Metadata refresh failed", \{ description: "OpenRouter metadata was not refreshed" \}\);[\s\S]*?return;[\s\S]*?\}\s*toast\.success\("Model metadata refreshed"/
+  );
+});
+
 test("admin metadata refresh forces every upstream and reports what is cached", async () => {
   const calls: string[] = [];
   const enrichment: OpenRouterModelsSnapshot = {
     models: [
       { id: "openai/gpt-5.6-sol", context_window_tokens: 1_050_000, max_context_window_tokens: 1_050_000, reasoning: null },
       { id: "z-ai/glm-5.3", context_window_tokens: 1_310_720, max_context_window_tokens: 1_310_720, reasoning: null },
+      { id: "deepseek/deepseek-v4.1-flash-1017", context_window_tokens: 1_048_576, max_context_window_tokens: 1_048_576, reasoning: null },
     ],
     updated_at_ms: 1_789_000_000_000,
   };
@@ -830,9 +871,16 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
     refreshOpenlux: (options) => {
       calls.push(`openlux:${options?.force === true ? "force" : "plain"}`);
       return Promise.resolve({
-        models: [{ id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        models: [
+          { id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] },
+          { id: "deepseek-v4.1-flash-1017", object: "model", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] },
+        ],
         updated_at_ms: 1,
       });
+    },
+    refreshLithos: (options) => {
+      calls.push(`lithos:${options?.force === true ? "force" : "plain"}`);
+      return Promise.resolve({ models: [{ id: "deepseek-ai/DeepSeek-V4.1-Flash", created: 4 }], updated_at_ms: 4 });
     },
     refreshSurplus: (options) => {
       calls.push(`surplus:${options?.force === true ? "force" : "plain"}`);
@@ -840,6 +888,7 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
         models: [
           { id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "OpenAI", supported_endpoint_types: ["openai-response"] },
           { id: "hy3", object: "model", created: 0, owned_by: "Tencent", supported_endpoint_types: ["openai-response"] },
+          { id: "deepseek-v4.1-flash-1017", object: "model", created: 0, owned_by: "DeepSeek", supported_endpoint_types: ["openai-response"] },
         ],
         updated_at_ms: 2,
       });
@@ -850,13 +899,14 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
   const body = await response.json();
   assert.deepEqual(
     [...calls].sort((left, right) => left.localeCompare(right)),
-    ["claude:force", "openlux:force", "openrouter", "surplus:force"],
+    ["claude:force", "lithos:force", "openlux:force", "openrouter", "surplus:force"],
     "every upstream is force-refreshed"
   );
   assert.deepEqual(body.data, {
-    openrouter: { upstream_models: 2, updated_at_ms: 1_789_000_000_000, refreshed: true },
-    openlux: { models: 1, updated_at_ms: 1 },
-    surplus: { models: 2, updated_at_ms: 2 },
+    openrouter: { upstream_models: 3, updated_at_ms: 1_789_000_000_000, refreshed: true },
+    openlux: { models: 2, updated_at_ms: 1 },
+    surplus: { models: 3, updated_at_ms: 2 },
+    lithos: { models: 1, updated_at_ms: 4, refreshed: true },
     claude_code: { models: 1, updated_at_ms: 3, status: "available", stale: false },
   });
 });

@@ -16,8 +16,10 @@ import { handleTerminalRoute } from "../src/handler/terminal-route.ts";
 import { getOpenRouterProviderHealth, resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { openRouterUpstreamModelFor, resolveOpenRouterUpstreamModel } from "../src/provider/openrouter.ts";
 import { handleOpenRouterChatCompletions, handleOpenRouterResponses } from "../src/provider/openrouter-handlers.ts";
+import { streamOpenRouterResponses } from "../src/provider/openrouter-streams.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
+import { ResponsesStreamError } from "../src/responses-stream.ts";
 import type { ApiKeyHashRecord } from "../src/types.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
@@ -468,6 +470,46 @@ const streamUsageContext = (responseTelemetry: ResponseTelemetryState) => ({
   responseTelemetry,
 });
 
+test("openrouter buffered responses derives terminal telemetry from payload status", async () => {
+  await withServedCatalogue(async () => {
+    for (const [status, terminalType, completed] of [
+      ["completed", "response.completed", true],
+      ["incomplete", "response.incomplete", false],
+      ["failed", "response.failed", false],
+    ] as const) {
+      const telemetry = createResponseTelemetryState();
+      let callbackCompleted: boolean | null = null;
+      const response = await handleOpenRouterResponses(
+        new Request("https://ai.ubq.fi/v1/responses", { method: "POST" }),
+        { model: "vendor/beta", input: "hi" },
+        "vendor/beta",
+        {
+          ...streamUsageContext(telemetry),
+          onTerminalUsage: (_usage, value) => {
+            callbackCompleted = value;
+          },
+        },
+        {
+          fetchResponses: () =>
+            Promise.resolve(
+              jsonResponse({
+                id: "resp_status",
+                object: "response",
+                status,
+                output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "partial" }] }],
+                usage: { input_tokens: 4, output_tokens: 1, total_tokens: 5 },
+              })
+            ),
+        }
+      );
+      assert.equal(response.status, 200);
+      assert.equal(telemetry.streamTerminalType, terminalType);
+      assert.equal(telemetry.completed, completed);
+      assert.equal(callbackCompleted, completed);
+    }
+  });
+});
+
 test("openrouter chat relays validated stream frames and records usage", async () => {
   await withServedCatalogue(async () => {
     const telemetry = createResponseTelemetryState();
@@ -619,6 +661,39 @@ test("openrouter responses records a provider-fault incomplete terminal as upstr
       resetProviderHealthThrottleForTest();
     }
   });
+});
+
+test("openrouter responses records a shared inactivity timeout as a deadline", async () => {
+  const telemetry = createResponseTelemetryState();
+  const failure = new ResponsesStreamError("inactive", { kind: "inactivity_timeout" });
+  const upstream = new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(failure);
+      },
+    }),
+    { status: 200, headers: { "content-type": "text/event-stream" } }
+  );
+  const response = streamOpenRouterResponses(upstream, null, streamUsageContext(telemetry), new AbortController().signal, new AbortController().signal);
+
+  await response.text();
+  assert.equal(telemetry.streamTerminalType, "deadline");
+  assert.equal(telemetry.failureKind, "inactivity_timeout");
+});
+
+test("openrouter responses records a shared premature EOF as eof", async () => {
+  const telemetry = createResponseTelemetryState();
+  const response = streamOpenRouterResponses(
+    sseResponse([`event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1"}}\n\n`]),
+    null,
+    streamUsageContext(telemetry),
+    new AbortController().signal,
+    new AbortController().signal
+  );
+
+  await response.text();
+  assert.equal(telemetry.streamTerminalType, "eof");
+  assert.equal(telemetry.failureKind, "premature_eof");
 });
 
 test("openrouter resolves a served id from a cold catalogue and stays cache-authoritative once warm", async () => {
