@@ -38,7 +38,10 @@ const lithosCanonicalFailoverModelFor = (modelRaw: string): string => {
 };
 
 /** The ordered tiers to try after a request model refuses, or an empty list at the bottom. */
-export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => LITHOS_FAILOVER_LADDERS.get(lithosCanonicalFailoverModelFor(modelRaw)) ?? [];
+export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => {
+  const canonicalModel = lithosCanonicalFailoverModelFor(modelRaw);
+  return LITHOS_FAILOVER_LADDERS.get(canonicalModel) ?? [];
+};
 
 /** True when `target` is a legal failover destination for `modelRaw`. */
 export const lithosIsLadderTarget = (modelRaw: string, target: string): boolean =>
@@ -76,12 +79,14 @@ export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs
   const targetIndex = ladder.indexOf(lithosCanonicalFailoverModelFor(target));
   const deadlineMs = nowMs + waitMs;
   if (targetIndex === -1 || !Number.isFinite(nowMs) || !Number.isFinite(waitMs) || waitMs <= 0 || !Number.isFinite(deadlineMs)) return;
-  const refusedRung =
-    refusedRungOverride === undefined
-      ? targetIndex === 0
-        ? canonicalModel
-        : ladder[targetIndex - 1]
-      : lithosCanonicalFailoverModelFor(refusedRungOverride);
+  let refusedRung: string;
+  if (refusedRungOverride !== undefined) {
+    refusedRung = lithosCanonicalFailoverModelFor(refusedRungOverride);
+  } else if (targetIndex === 0) {
+    refusedRung = canonicalModel;
+  } else {
+    refusedRung = ladder[targetIndex - 1];
+  }
   const refusedIndex = refusedRung === canonicalModel ? -1 : ladder.indexOf(refusedRung);
   if (refusedRung !== canonicalModel && refusedIndex === -1) return;
   if (refusedIndex >= targetIndex) return;
