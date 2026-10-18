@@ -325,7 +325,7 @@ const refusalAdapter: ProviderStreamAdapter = {
   responseHeaders: () => ({}),
   frames: async function* () {
     await Promise.resolve();
-    yield* ([] as ProviderStreamFrame[]);
+    yield* [] as ProviderStreamFrame[];
   },
   recordResponseHealth: () => {},
   recordProviderError: () => {},
@@ -366,10 +366,9 @@ for (const wire of ["chat", "responses"] as const) {
 
     const localDeadline = new AbortController();
     localDeadline.abort(new DOMException("Gateway deadline fixture", "TimeoutError"));
-    const localResponse = new Response(
-      JSON.stringify({ error: { code: "gateway_timeout", message: "Upstream request exceeded the gateway deadline." } }),
-      { status: 504 }
-    );
+    const localResponse = new Response(JSON.stringify({ error: { code: "gateway_timeout", message: "Upstream request exceeded the gateway deadline." } }), {
+      status: 504,
+    });
     const localFailure =
       wire === "chat"
         ? relayChatCompletionStream(refusalAdapter, localResponse, null, undefined, downstream.signal, localDeadline.signal, "deepseek-flash")
