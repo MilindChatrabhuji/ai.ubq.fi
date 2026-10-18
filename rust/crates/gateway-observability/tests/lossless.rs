@@ -30,3 +30,9 @@ fn error_terminal_and_failure_use_profile_v2_without_changing_other_record_encod
 fn a_profile_v1_record_is_never_guessed_or_rewritten_as_a_source_record(){
     let row=StoredRecord::profile("fixture",PortableValue::String("private-profile".into()),None).unwrap();assert!(record_source_json(&row).is_err());assert_eq!(row.value_encoding,ValueEncoding::ProfileV1);
 }
+#[test]
+fn source_created_time_signed_zero_keeps_two_distinct_tuple_keys(){
+    let memory=Memory::default();let clock=Host::default();clock.at.set(1000);let runtime=ObservabilityRuntime::new(memory.clone(),clock);
+    for created in [0.0,-0.0]{run(runtime.record_request_log("fixture-key",&json!({"id":"same-id","created_at_ms":created,"route":"responses"}))).unwrap();}
+    assert_eq!(memory.rows.borrow().len(),2);let mut signs=Vec::new();for(key,record)in memory.rows.borrow().iter(){let parts=TupleKey::from_record_key(&gateway_core::state::RecordKey(key.clone())).unwrap().decoded_parts().unwrap();let DecodedKeyPart::Number(created)=parts[4]else{panic!("source timestamp")};signs.push(created.is_sign_negative());assert_eq!(record.expires_at_ms,Some(1001));}signs.sort();assert_eq!(signs,vec![false,true]);
+}

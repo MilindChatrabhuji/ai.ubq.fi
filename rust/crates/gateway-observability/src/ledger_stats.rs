@@ -122,7 +122,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(true);
             }
         }
-        Ok(true)
+        Ok(false)
     }
     pub async fn ledger_growth(&self, at: i64) -> Value {
         let base = empty_growth(at);
