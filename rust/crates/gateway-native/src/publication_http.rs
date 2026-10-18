@@ -24,18 +24,22 @@ impl HttpsPublicationCarrier {
         {
             return Err(unavailable());
         }
-        let config = ureq::Agent::config_builder()
-            .https_only(true)
-            .proxy(None)
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build();
         Ok(Self {
             target: url.into(),
-            agent: ureq::Agent::new_with_config(config),
+            agent: configured_agent(ureq::tls::RootCerts::WebPki),
         })
     }
+}
+fn configured_agent(roots: ureq::tls::RootCerts) -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .https_only(true)
+        .proxy(None)
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(15)))
+        .tls_config(ureq::tls::TlsConfig::builder().root_certs(roots).build())
+        .build();
+    ureq::Agent::new_with_config(config)
 }
 impl PublicationCarrier for HttpsPublicationCarrier {
     async fn send(&self, request: PublicationRequest) -> Result<PublicationResponse, GatewayError> {
@@ -92,3 +96,7 @@ fn unknown() -> GatewayError {
         "native_publication_outcome_unknown",
     )
 }
+
+#[cfg(test)]
+#[path = "publication_http_tests.rs"]
+mod tests;
