@@ -168,9 +168,17 @@ fn key_textencoder_fold_is_explicit_and_value_units_never_fold() {
 
 #[test]
 fn full_capture_refuses_a_partial_binary_view_before_writing() {
-    let value=SourceJson::parse(r#"{"type":"Array","value":[{"type":"Uint8Array","value":"AAECAw","byteLength":2}]}"#).unwrap();
-    let input=capture(vec![entry("partial-view",value)]);
-    let directory=Directory::new();let store=SqliteStore::open(&directory.file("partial-view.sqlite3"));
-    assert!(prepare(&input,&CanonicalDates).is_err());
-    assert!(run(store.read(&key(json!(["default","partial-view"])))).unwrap().is_none());
+    let value = SourceJson::parse(
+        r#"{"type":"Array","value":[{"type":"Uint8Array","value":"AAECAw","byteLength":2}]}"#,
+    )
+    .unwrap();
+    let input = capture(vec![entry("partial-view", value)]);
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("partial-view.sqlite3"));
+    assert!(prepare(&input, &CanonicalDates).is_err());
+    assert!(
+        run(store.read(&key(json!(["default", "partial-view"]))))
+            .unwrap()
+            .is_none()
+    );
 }
