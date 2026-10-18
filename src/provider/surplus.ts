@@ -380,6 +380,7 @@ const authenticatedHeaders = (apiKey: string): Headers => {
     Authorization: `Bearer ${apiKey}`,
     Accept: "text/event-stream",
     "Content-Type": "application/json",
+    "X-SI-Mask-Secrets": "on",
   });
   return headers;
 };

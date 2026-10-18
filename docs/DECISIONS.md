@@ -2192,3 +2192,11 @@ The isolated real-runtime fixture uses a dedicated ephemeral transport identity 
 The Rust port preserves SimpleWebAuthn server 13.2.2 certificate-path early termination after a provided self-signed issuer verifies, including an issuer that differs from the appended configured anchor. An accepted path therefore does not establish configured-anchor membership. Source-derived fixtures retain the positive unconfigured-root SafetyNet case and the negative issuer-omitted case in `rust/crates/gateway-auth/tests/fixtures/webauthn-source-golden.json`; the maintained verifier compatibility notes record the pinned source and its extension. A stricter terminal-anchor policy is a separately scoped owner decision, not an implicit change in this port.
 
 Certificate revocation-list URLs remain untrusted HTTP(S) inputs after path acceptance. Fetch them with ordinary unauthenticated transport and its default redirects, without provider/admin credentials, privileged headers or the native carrier. The pinned source imposes no application timeout or byte cap on that fetch; preserve actual platform and caller constraints without inventing a numeric source bound. Trusted registration time is injected internally from `AuthHost::now_ms`, and neither these compatibility rules nor passing verifier fixtures authorize a new ceremony origin, RP ID, relay audience or live credential enrollment.
+
+## Surplus inference enables provider secret masking - 2026-10-18
+
+Enable [Surplus Secret Masking](https://www.surplusintelligence.ai/docs/guides/secret-masking) for every Surplus inference POST with exactly one `X-SI-Mask-Secrets: on` header from the shared authenticated-header builder. This covers native Responses and native Claude Chat, streamed and buffered. The provider handles masking and restoration while the gateway retains its existing request and response contracts.
+
+Reason: the owner requested the announced feature. Surplus can globally pause masking and forward requests without protection or a receipt, so this opt-in does not guarantee that every request is masked. The gateway does not require or parse a masking receipt.
+
+Reversal risk: removing the header returns request-level enablement to the provider's defaults.
