@@ -1093,12 +1093,14 @@ fn explicit_provider_504_survives_late_abort_and_local_deadline_never_advances()
         let store = Store::new();
         seed_key(&store);
         let host = Host::new(&store);
+        let mut request = input(
+            "provider-504",
+            "ubiquity/deepseek-flash",
+            &["lithos", "deepseek"],
+        );
+        request.raw["reasoning"] = json!({"effort":"high"});
         let session = RoutingSession::begin(
-            input(
-                "provider-504",
-                "ubiquity/deepseek-flash",
-                &["lithos", "deepseek"],
-            ),
+            request,
             store.clone(),
             host.clone(),
             store.clone(),
@@ -1121,12 +1123,14 @@ fn explicit_provider_504_survives_late_abort_and_local_deadline_never_advances()
             .finish(TransportObservation::default())
             .await
             .unwrap();
+        let mut request = input(
+            "local-504",
+            "ubiquity/deepseek-flash",
+            &["lithos", "deepseek"],
+        );
+        request.raw["reasoning"] = json!({"effort":"high"});
         let session = RoutingSession::begin(
-            input(
-                "local-504",
-                "ubiquity/deepseek-flash",
-                &["lithos", "deepseek"],
-            ),
+            request,
             store.clone(),
             Host::new(&store),
             store.clone(),

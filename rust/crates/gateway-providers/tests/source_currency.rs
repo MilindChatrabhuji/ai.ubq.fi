@@ -1,6 +1,18 @@
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::{ChatProfile, ClientSurface, PrepareOptions, chat, prepare_request};
+use gateway_providers::{
+    AuthMaterial, ChatProfile, ClientSurface, PrepareOptions, chat, prepare_request,
+};
 use serde_json::{Value, json};
+
+fn options() -> PrepareOptions {
+    PrepareOptions {
+        auth: AuthMaterial {
+            secret: "fixture-secret".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
 
 #[test]
 fn ba5ef_source_projection_vectors_match() {
@@ -40,7 +52,7 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &raw,
-        &PrepareOptions::default(),
+        &options(),
     )
     .unwrap();
     assert_eq!(
@@ -54,7 +66,7 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
         &disabled,
-        &PrepareOptions::default(),
+        &options(),
     )
     .unwrap();
     assert_eq!(prepared.body["reasoning_effort"], "none");
@@ -68,7 +80,7 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
         UpstreamProvider::Lithos,
         ClientSurface::Responses,
         &lithos,
-        &PrepareOptions::default(),
+        &options(),
     )
     .unwrap();
     assert_eq!(prepared.body["temperature"], 0);
