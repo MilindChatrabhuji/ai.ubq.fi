@@ -2164,3 +2164,17 @@ Reversal risk: the provider-owned base ids must actually track the latest weight
 gateway cannot detect that from a dated row. OpenRouter's `~deepseek/deepseek-flash-latest` alias must remain routable.
 The paid hops use `deepseek-v4.1-flash`, so paid key policies keep their existing base model id rather than requiring a
 new dated snapshot.
+
+## Rust WASM migration starts with isolated shared contracts - 2026-10-18
+
+The owner requested the complete gateway in Rust/WASM on Cloudflare. The first milestone adds the separate `rust/` workspace, pinned dependencies, source-derived domain types, an atomic persistence interface and the actual workers-rs fetch export; it does not replace or activate the existing backend. The [foundation contract](research/rust-wasm-port-contract.md) records the exact boundaries, source references, gates and missing parity. All Rust compiles run on the isolated VPS build workspace unless its recorded failure requires the authorized Mac fallback.
+
+Keep operator provider IDs separate from transport/accounting IDs, preserve distinct administrative/routing account hashes and native-owner credential generations, and retain one original request identity across distinct paid hops. Semantic completion, API-key dispatch quota, kernel settlement, paid reconciliation and actual delivery remain independent; Workers EOF supplies no native delivery receipt and never invents success or a refund. The latest disabled-overage hard gate is unchanged. Hot coordination and retained history share atomic authority without forcing indefinite ledgers into an evicting snapshot.
+
+The foundation refuses every unfinished route with an explicit non-success response; health is only release liveness with validated full-source identity. Full authentication, routing, durable state, native boundaries, protocol/admin parity, migration, CI and live deployment acceptance remain required for the original goal. This scoped Rust decision does not change the existing Bun runtime, locks, production service, credentials, databases, DNS or Sentinel ownership.
+
+## Rust portable keys and queries share one source-compatible tuple codec - 2026-10-18
+
+Before any Rust persistence or deployment, retire provisional JSON-array key identity. Every read, write, query and future migration uses the core `tuple-v1:<lowercase hex>` codec and its exact binary sort bytes. Preserve current source bytes/string/bigint/number/boolean distinctions, signed zeros, infinities, positive NaN and the proven negative-NaN refusal. No per-module JSON comparator, dual-codec fallback or live migration is authorized. A shared typed builder and raw validator prevent different modules from naming or ordering the same source key differently.
+
+The additive query interface preserves pinned source selectors: prefix alone or prefix with one strict descendant start/end bound, and ranges with both bounds. Exact-prefix rows are excluded, start is inclusive and end exclusive; empty prefix is the whole-keyspace form. Pages filter absolute expiry before their limit and use opaque version/selector/direction-bound continuations. Changed limits are allowed on resume; malformed and cross-query tokens fail closed. This shared contract adds no new gateway scheduler or provider behavior, and source/runtime/deployment acceptance remains separate.
