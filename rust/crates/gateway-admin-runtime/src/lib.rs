@@ -374,8 +374,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .await
             }
             SupervisorSessions => {
-                self.capabilities
-                    .native(NativeRequest::SupervisorSessions, context)
+                self.native_response(NativeRequest::SupervisorSessions, context)
                     .await
             }
             SupervisorOutput | SupervisorBrief => {
@@ -415,15 +414,16 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     return Err(invalid("Invalid thread id"));
                 }
                 let request = if operation == SupervisorOutput {
+                    let cursor: String = parse::first(&input.query, "cursor")
+                        .unwrap_or("")
+                        .trim()
+                        .chars()
+                        .take(240)
+                        .collect();
                     NativeRequest::SupervisorOutput {
                         source_id,
                         thread_id,
-                        cursor: parse::first(&input.query, "cursor")
-                            .unwrap_or("")
-                            .trim()
-                            .chars()
-                            .take(240)
-                            .collect(),
+                        cursor: (!cursor.is_empty()).then_some(cursor),
                     }
                 } else {
                     NativeRequest::SupervisorBrief {
@@ -431,7 +431,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         thread_id,
                     }
                 };
-                self.capabilities.native(request, context).await
+                self.native_response(request, context).await
             }
             // AdminService owns these operations; never duplicate key/passkey/public-key writers.
             _ => Err(gateway_admin::missing_capability(operation)),
@@ -470,6 +470,28 @@ fn parse_int_prefix(value: Option<&str>) -> Option<i64> {
 }
 
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
+    async fn native_response(
+        &self,
+        request: NativeRequest,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        use gateway_auth::native::{NATIVE_WIRE_VERSION, NativeRpcEnvelope, NativeRpcResponse};
+        let envelope = NativeRpcEnvelope {
+            v: NATIVE_WIRE_VERSION,
+            request: request.clone(),
+        };
+        let response = self.capabilities.native(request, context).await?;
+        // The carrier validates its actual wire version. This shared validator also
+        // prevents an internal capability from substituting JSON or another follow target.
+        NativeRpcResponse {
+            v: NATIVE_WIRE_VERSION,
+            status: response.status,
+            body: response.body.clone(),
+            stream: response.stream.clone(),
+        }
+        .validate_for(&envelope)?;
+        Ok(response)
+    }
     async fn purge_prompts(&self, now: i64) -> Result<AuthResponse, GatewayError> {
         use gateway_auth::store::{check, commit};
         use gateway_core::state::RecordMutation;

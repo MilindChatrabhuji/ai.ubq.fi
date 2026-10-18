@@ -808,7 +808,7 @@ fn supervisor_follow_dispatches_only_validated_finite_identifiers() {
             else {
                 panic!("wrong finite operation")
             };
-            self.0.replace(Some((source_id, thread_id, cursor)));
+            self.0.replace(Some((source_id, thread_id, cursor.unwrap_or_default())));
             Err(GatewayError::unavailable(
                 "Native source is offline",
                 "fixture_native_source_offline",
@@ -1148,4 +1148,30 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
         401
     );
     assert_eq!(*store.rows.borrow(), before);
+}
+
+#[test]
+fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() {
+    use gateway_auth::native::AuthStream;
+    enum Reply { Prepared, JsonOnly, WrongSource }
+    struct Native(Reply);
+    impl RuntimeCapabilities for Native {
+        async fn native(&self,request:NativeRequest,_:Context)->Result<AuthResponse,GatewayError>{
+            let NativeRequest::SupervisorOutput{source_id,thread_id,cursor}=request else{panic!("wrong finite operation")};
+            let response=AuthResponse::json(200,Value::Null);
+            Ok(match self.0{
+                Reply::Prepared=>response.with_stream(AuthStream::SupervisorFollow{source_id,thread_id,cursor}),
+                Reply::JsonOnly=>response,
+                Reply::WrongSource=>response.with_stream(AuthStream::SupervisorFollow{source_id:"unselected-source".into(),thread_id,cursor}),
+            })
+        }
+    }
+    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();
+    for reply in [Reply::Prepared,Reply::JsonOnly,Reply::WrongSource]{
+        let prepared=matches!(reply,Reply::Prepared);let native=Native(reply);let service=AdminRuntime{store:&store,host:&host,capabilities:&native,config:&config};
+        let mut request=input(Value::Null);request.query.insert("source".into(),vec!["trusted-source".into()]);request.query.insert("id".into(),vec!["thread".into()]);
+        let result=run(service.execute(AdminOperation::SupervisorOutput,request));
+        if prepared{assert_eq!(result.unwrap().stream,Some(AuthStream::SupervisorFollow{source_id:"trusted-source".into(),thread_id:"thread".into(),cursor:None}));}
+        else{assert_eq!(result.unwrap_err().envelope.error.code.as_deref(),Some("native_protocol_invalid"));}
+    }
 }

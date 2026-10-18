@@ -4,6 +4,8 @@ use gateway_core::GatewayError;
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
+pub use gateway_auth::native::NativeReadRequest as NativeRequest;
+
 #[derive(Clone, Debug)]
 pub struct Context {
     pub request_id: String,
@@ -78,19 +80,6 @@ pub enum ClaudeRequest {
     ClearQuota {
         account_id: Option<String>,
         cohort_id: Option<String>,
-    },
-}
-
-pub enum NativeRequest {
-    SupervisorSessions,
-    SupervisorOutput {
-        source_id: String,
-        thread_id: String,
-        cursor: String,
-    },
-    SupervisorBrief {
-        source_id: String,
-        thread_id: String,
     },
 }
 
