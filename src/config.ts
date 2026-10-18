@@ -2,6 +2,12 @@ import { RELEASE_GIT_SHA } from "./release.ts";
 
 export type Config = Readonly<{
   isDeploy: boolean;
+  /**
+   * `DENO_TIMELINE=production`: the production VPS service, which never grants development auth bypasses:
+   * `--disable-admin-auth` fails at parse time, an enabled listener or Mac bypass grants nothing, and the
+   * loopback hostname fallback is off (#262).
+   */
+  isProductionTimeline: boolean;
   allowOrigin: string;
   authTokens: ReadonlySet<string>;
   adminTokens: ReadonlySet<string>;
@@ -36,6 +42,7 @@ const firstNonEmpty = (...values: readonly (string | undefined)[]): string | und
 
 const loadConfig = (): Config => {
   const isDeploy = Boolean(getEnv("DENO_DEPLOY") ?? getEnv("DENO_DEPLOYMENT_ID") ?? getEnv("DENO_REGION"));
+  const isProductionTimeline = getEnv("DENO_TIMELINE") === "production";
   const authTokens = parseTokens(getEnv("UOS_AI_TOKEN"));
   const adminTokens = parseTokens(getEnv("DENO_DEPLOY_TOKEN"));
   const allowOrigin = (getEnv("CORS_ALLOW_ORIGIN") ?? "*").trim() || "*";
@@ -45,6 +52,7 @@ const loadConfig = (): Config => {
 
   return {
     isDeploy,
+    isProductionTimeline,
     codexBaseUrl,
     codexAuthJsonB64,
     allowOrigin,

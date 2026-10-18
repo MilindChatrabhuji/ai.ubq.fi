@@ -170,6 +170,13 @@ export const persistInferenceExceptionReplay = async (
   if (!scheduleSentinelBackgroundTask(persistence, options.waitUntil)) await persistence;
 };
 
+/** Terminal UOS dispatch metadata; prefix paths are published as `{id}` routes by the contract test. */
+export const UOS_TERMINAL_ROUTES = [
+  { method: "POST", path: "/uos/embeddings", prefix: false, handler: "embeddings" },
+  { method: "POST", path: "/uos/embedding-jobs", prefix: false, handler: "embeddingJobCreate" },
+  { method: "GET", path: "/uos/embedding-jobs/", prefix: true, handler: "embeddingJobGet" },
+] as const;
+
 /**
  * Authenticates, admits, and dispatches one terminal inference request.  Every
  * response that leaves here already carries CORS headers, the request id, quota
@@ -551,11 +558,13 @@ const handleTerminalRoute = async (
   // Terminal routes in wire order. The conditions are pure, so the first match
   // owns the response exactly as the original if/else chain did.
   const dispatchTerminalRoute = async (): Promise<Response> => {
+    const uosHandlers = { embeddings: runEmbeddingsRoute, embeddingJobCreate: runEmbeddingJobCreateRoute, embeddingJobGet: runEmbeddingJobGetRoute };
     const terminalRoutes: readonly (readonly [boolean, () => Promise<Response>])[] = [
       [req.method === "GET" && path === "/v1/models", runModelsRoute],
-      [req.method === "POST" && path === "/uos/embeddings", runEmbeddingsRoute],
-      [req.method === "POST" && path === "/uos/embedding-jobs", runEmbeddingJobCreateRoute],
-      [req.method === "GET" && path.startsWith("/uos/embedding-jobs/"), runEmbeddingJobGetRoute],
+      ...UOS_TERMINAL_ROUTES.map((route): readonly [boolean, () => Promise<Response>] => [
+        req.method === route.method && (route.prefix ? path.startsWith(route.path) : path === route.path),
+        uosHandlers[route.handler],
+      ]),
       [req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits"), runImagesRoute],
       [req.method === "POST" && path === "/v1/chat/completions", runChatCompletionsRoute],
       [req.method === "POST" && path === "/v1/responses", runResponsesRoute],

@@ -46,8 +46,8 @@ import {
 import { SENTINEL_REPLAY_MAX_RECORDS, SENTINEL_REPLAY_MAX_STATUS_RECORDS, sentinelReplayReservationBytes } from "./replay-limits.ts";
 import { isSentinelReplayCaptureStatusRow } from "./replay-observation.ts";
 import { isSentinelReplayManifest } from "./replay-read.ts";
-import { bootstrapBeforeMutation, releaseLegacyReservation, runBootstrapBatch } from "./replay-retention-bootstrap.ts";
-import { metadataEntryMatches, reconcileSentinelReplayStatusMetadata } from "./replay-retention-metadata.ts";
+import { bootstrapBeforeMutation, forgetChunkOwnerIndex, releaseLegacyReservation, runBootstrapBatch } from "./replay-retention-bootstrap.ts";
+import { metadataEntryMatches, reconcileSentinelReplayStatusMetadata, reconcileSentinelReplayStatusMetadataIfDue } from "./replay-retention-metadata.ts";
 import {
   accountingKeyMatches,
   CAS_ATTEMPTS,
@@ -107,7 +107,8 @@ export const admitSentinelReplayStatusMetadata = async (
   for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt += 1) {
     // The sweep counts every in-scope row, so until it has finished no row may
     // also be counted by its own admission, or the same row is charged twice.
-    if ((await bootstrapBeforeMutation(kv, budgetBytes, input.now_ms)) === null) return false;
+    // Never wait for the background owner fill on this client-visible failure path.
+    if ((await bootstrapBeforeMutation(kv, budgetBytes, input.now_ms, 0)) === null) return false;
     await pruneCaptureOwnedStatusMetadata(kv, input.now_ms, 1, bytes, 1, budgetBytes);
     // The bound tracks the LIVE row set, so replacing the row already stored at
     // this key adds one record and the byte difference, never a second full
@@ -869,13 +870,16 @@ export const reserveSentinelReplayCapacity = async (
     }
     const ledger = withBudget(state.ledger, budgetBytes);
     if (!ledger.bootstrap_complete) {
-      const bootstrapped = await runBootstrapBatch(kv, ledger, state.versionstamp, budgetBytes, input.now_ms);
+      // VPS failure capture may be awaited before responding: start the owner fill without waiting.
+      const bootstrapped = await runBootstrapBatch(kv, ledger, state.versionstamp, budgetBytes, input.now_ms, 0);
       if (!bootstrapped.bootstrap_complete) {
         await recordSkipReason(kv, SENTINEL_REPLAY_ACCOUNTING_REASON, input.now_ms, budgetBytes);
         return { ok: false, reason: SENTINEL_REPLAY_ACCOUNTING_REASON };
       }
       continue;
     }
+    // Admissions may create owners from here on, so no earlier chunk owner index can be trusted again.
+    forgetChunkOwnerIndex(kv);
     const overBudget = ledger.stored_bytes + ledger.reserved_bytes + charge > payloadBudget || ledger.records + 1 > SENTINEL_REPLAY_MAX_RECORDS;
     if (overBudget) {
       if (!(await reclaimAdmissionCapacity(kv, budgetBytes, payloadBudget, charge, input.now_ms))) {
@@ -919,7 +923,7 @@ export const reserveSentinelReplayCapacity = async (
   return { ok: false, reason: SENTINEL_REPLAY_STORAGE_FULL_REASON };
 };
 
-/** Bounded maintenance: reap, bootstrap, reclaim expired payloads and metadata charges, evict if needed. */
+/** Bounded maintenance: reap, bootstrap, reclaim expired payloads, evict if needed, and recount metadata when due. */
 export const runSentinelReplayRetentionMaintenance = async (
   kv: Kv,
   options: Readonly<{ now_ms: number; budget_bytes?: number }>
@@ -942,7 +946,8 @@ export const runSentinelReplayRetentionMaintenance = async (
       budget_bytes: budgetBytes,
     });
   }
-  await reconcileSentinelReplayStatusMetadata(kv, budgetBytes);
+  // Throttled: a healthy admin poll inside the interval neither rescans metadata nor writes the ledger.
+  await reconcileSentinelReplayStatusMetadataIfDue(kv, budgetBytes, options.now_ms);
   return await readSentinelReplayRetentionStatus(kv, budgetBytes);
 };
 

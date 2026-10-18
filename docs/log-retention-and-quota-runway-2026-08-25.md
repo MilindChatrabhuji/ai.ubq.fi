@@ -21,8 +21,10 @@ research-grade history lives in these compact stores:
 | Admin error log               | `uos_ai/admin_error_log/v1/...`                                  | 7 days (unchanged)            | Failed inference terminals                                                                                                                                                                                                                                                   |
 | Prompt-cache analytics        | `uos_ai/prompt-cache-analytics/...`                              | 8 days (unchanged)            | Cache-token buckets                                                                                                                                                                                                                                                          |
 
-Why rollups are the right "kept forever" shape: a settled raw row is roughly 800 B, so ~0.8 GiB per 1M rows (Pro plan
-includes 5 GiB, then $0.75/GiB). The hourly rollups are ~25 KB per model-provider per day, so a year of history is about
+Why rollups are the right "kept forever" shape: a settled raw row is roughly 800 B, so ~0.8 GiB per 1M rows. This was
+first sized against the Deno Deploy KV plan (5 GiB included, then $0.75/GiB). That billing no longer applies: Deno
+Deploy hosting is retired, and production keeps its KV in a local SQLite file under `.data/` on the VPS, which is not
+billed per GiB. The hourly rollups are ~25 KB per model-provider per day, so a year of history is about
 10 MB per model. The rollup captures every number the research question needs (which model, which provider, how much
 quota, how many tokens, how much spend) while discarding the per-request noise.
 
@@ -173,9 +175,19 @@ accumulates.
 - Byte/count baseline: instrumented as of 2026-09-22 (`ledger_stats` counters exposed as `ledger_growth`); read the
   production rows-per-day, bytes-per-row, rollup and projection-read numbers from the Provider analytics card and record
   them here before re-tuning the raw-row horizon.
-- Oldest-first hard cap: not implemented. TTL gives a bounded horizon; a true byte budget would need timestamp-ordered
-  keys or a global age index — note the legacy analytics key shape `[keyId, createdAtMs, requestId]` as a precedent if
-  that becomes necessary.
+- Oldest-first hard cap: not implemented. The previously cited 2026-10-16 owner decline has no supporting owner record
+  in #139; owner confirmation and disposition remain [pending under #1176](DECISIONS.md#owner-only-follow-ups-from-1132-remain-pending---2026-10-18-1176).
+  The 365-day TTL bounds the raw rows, and the 5 GiB `budget_bytes` figure only sets the growth alert; nothing is evicted
+  when it is reached. If a byte budget ever becomes necessary, it would need timestamp-ordered keys or a global age
+  index — note the legacy analytics key shape `[keyId, createdAtMs, requestId]` as a precedent.
+- Imported raw rows have no expiry until the backfill rewrites them. The 2026-09-10 Deno export carries no expiry
+  (`ops/README.md`), so the generic import wrote those rows without one (`src/cache/kv-migration-base.ts`), and the
+  365-day TTL above does not bound them yet. The growth alert does not count them either, because its counters start
+  with live settlements; the whole store was under about 0.3 GiB at migration, so the total is small. Only the
+  quota-projection backfill re-applies the anchored TTL to them, and the automatic backfill may never run again once its
+  completion marker exists. Run `POST /admin/providers/quota-projection/backfill` until it reports `completed: true`,
+  and record the date it was done here. Any future generic KV export and import drops expiry the same way, so run the
+  backfill again after it.
 - The provider-capacity chart view stays at seven days on purpose. Long-run capacity research reads the separate
   forever-kept hourly rollups through `GET /admin/providers/capacity/rollups?window_days=N` (default 90, capped at 365):
   every persisted capacity sample folds its per-slot window summaries into the same atomic as the 15-minute history

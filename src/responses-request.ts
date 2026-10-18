@@ -10,7 +10,7 @@ import { fetchMeteredModels } from "./provider/metered.ts";
 import { loadProviderSelectionCached } from "./provider/selection.ts";
 import { validateOpenRouterPromptCacheRequestControl } from "./provider/openrouter-request-controls.ts";
 import { resolvePaidRoutingState } from "./paid-fallback/health.ts";
-import { DEEPSEEK_WATERFALL_PAID_MODEL_ID } from "./deepseek/waterfall.ts";
+import { isDeepSeekFlashPaidModel } from "./deepseek/flash-aliases.ts";
 import { isGatewayFailoverWarningItem } from "./responses-failover-stream.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { MessageContentItem, ResponseInputItem, ResponsesRequest } from "./types.ts";
@@ -244,7 +244,7 @@ export const resolveResponsesModel = async (
   // changes the public metadata nor authorizes a paid request by itself.
   const verifiedOpenLuxResponses =
     options?.deepSeekWaterfallPaidHop === "openlux" &&
-    model === DEEPSEEK_WATERFALL_PAID_MODEL_ID &&
+    isDeepSeekFlashPaidModel(model) &&
     resolvePaidRoutingState({
       meteredCatalog: await fetchMeteredModels({ cachedOnly: true }),
       surplusCatalog: null,
