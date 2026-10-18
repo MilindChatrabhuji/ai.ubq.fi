@@ -179,6 +179,7 @@ pub async fn run(
             .map_err(|_| invalid("Upstream stream is unavailable."))?;
         let relay = Relay {
             source,
+            plan: prepared.decode.clone(),
             decoder: StreamDecoder::new(prepared.decode),
             queue: VecDeque::new(),
             done: false,
@@ -187,6 +188,7 @@ pub async fn run(
             deadline: Some(deadline),
             cancellation: host.cancellation.clone(),
             lifecycle: lifecycle.clone(),
+            next_sequence: 0,
         };
         let source = Box::pin(futures_util::stream::unfold(
             relay,
@@ -200,10 +202,7 @@ pub async fn run(
                     }
                     let result = match state.source.next().await {
                         Some(Ok(bytes)) => state.decoder.push(&bytes),
-                        Some(Err(error)) => {
-                            state.done = true;
-                            return Some((Err(error), state));
-                        }
+                        Some(Err(_)) => Err(invalid("Upstream Chat Completions stream failed.")),
                         None => {
                             state.done = true;
                             state.decoder.finish()
@@ -213,10 +212,26 @@ pub async fn run(
                         Ok(events) => {
                             *state.usage.borrow_mut() = state.decoder.observed_usage().cloned();
                             if !events.is_empty() {
-                                state.deadline =
-                                    state.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS).ok();
+                                match state.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS) {
+                                    Ok(deadline) => state.deadline = Some(deadline),
+                                    Err(error) => {
+                                        state.cancellation.abort();
+                                        state.done = true;
+                                        return Some((
+                                            Err(worker::Error::RustError(
+                                                error.envelope.error.message,
+                                            )),
+                                            state,
+                                        ));
+                                    }
+                                }
                             }
                             for event in events {
+                                state.next_sequence = event
+                                    .data
+                                    .get("sequence_number")
+                                    .and_then(Value::as_u64)
+                                    .map_or(state.next_sequence + 1, |number| number + 1);
                                 observe_event(&state.observation, &event);
                                 state.queue.push_back(event.encode_sse().into_bytes());
                             }
@@ -234,12 +249,33 @@ pub async fn run(
                                 ));
                             }
                         }
-                        Err(error) => {
+                        Err(_) => {
                             state.done = true;
-                            return Some((
-                                Err(worker::Error::RustError(error.envelope.error.message)),
-                                state,
-                            ));
+                            if state.cancellation.client_aborted() {
+                                return None;
+                            }
+                            // Source stream-relay.failStream emits a declared
+                            // failure terminal for read/truncation errors.
+                            // A Rust stream exception alone tears down HTTP.
+                            let event = state.failure_event();
+                            state.observation.semantic_terminal(
+                                if state.plan.surface == ClientSurface::Chat {
+                                    SemanticTerminal::Error
+                                } else {
+                                    SemanticTerminal::Failed
+                                },
+                            );
+                            if let Err(error) = state
+                                .lifecycle
+                                .observe_terminal(state.observation.snapshot())
+                                .await
+                            {
+                                return Some((
+                                    Err(worker::Error::RustError(error.envelope.error.message)),
+                                    state,
+                                ));
+                            }
+                            return Some((Ok(event.encode_sse().into_bytes()), state));
                         }
                     }
                 }
@@ -335,6 +371,7 @@ pub async fn run(
 
 struct Relay {
     source: worker::ByteStream,
+    plan: gateway_providers::DecodePlan,
     decoder: StreamDecoder,
     queue: VecDeque<Vec<u8>>,
     done: bool,
@@ -343,6 +380,25 @@ struct Relay {
     deadline: Option<crate::transport::outbound::Deadline>,
     cancellation: Rc<crate::transport::outbound::Cancellation>,
     lifecycle: Rc<Lifecycle>,
+    next_sequence: u64,
+}
+
+impl Relay {
+    fn failure_event(&self) -> ProviderEvent {
+        let code = match self.plan.provider {
+            UpstreamProvider::Deepseek => "deepseek_upstream_stream_error",
+            UpstreamProvider::Lithos => "lithos_upstream_stream_error",
+            _ => "upstream_stream_error",
+        };
+        let error = json!({"code":code,"message":"Upstream Chat Completions stream failed."});
+        if self.plan.surface == ClientSurface::Chat {
+            ProviderEvent::chat(json!({"error":error}))
+        } else {
+            ProviderEvent::responses(
+                json!({"type":"response.failed","sequence_number":self.next_sequence,"response":{"id":self.plan.response_id,"object":"response","status":"failed","error":error}}),
+            )
+        }
+    }
 }
 
 fn observe_event(observation: &ObservationHandle, event: &ProviderEvent) {

@@ -105,7 +105,11 @@ where
         }
         match Pin::new(&mut self.source).poll_next(context) {
             Poll::Ready(None) => {
-                self.finalize(ReaderTermination::Eof, BodyOutcome::Drained);
+                if self.cancellation.client_aborted() {
+                    self.finalize(ReaderTermination::Cancelled, BodyOutcome::Interrupted);
+                } else {
+                    self.finalize(ReaderTermination::Eof, BodyOutcome::Drained);
+                }
                 Poll::Ready(None)
             }
             Poll::Ready(Some(Err(error))) => {
