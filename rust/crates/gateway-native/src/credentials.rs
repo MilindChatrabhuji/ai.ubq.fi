@@ -28,6 +28,17 @@ pub struct NativeCredentials {
 }
 
 impl NativeCredentials {
+    /// Source routing identity is salted and deliberately differs from the
+    /// administrative SHA-256(account_id) and the native generation fingerprint.
+    pub fn routing_account_hash(&self) -> String {
+        sha256_hex(format!("uos_ai\0codex_routing_account\0{}", self.account_id).as_bytes())
+    }
+    pub fn administrative_account_hash(&self) -> String {
+        sha256_hex(self.account_id.as_bytes())
+    }
+    pub fn routing_credential_version(&self) -> String {
+        sha256_hex(format!("{}\0{}\0{}", self.account_id, self.access_token.expose(), self.refresh_token.expose()).as_bytes())
+    }
     pub fn generation_hash(&self) -> String {
         sha256_hex(
             json!([

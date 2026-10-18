@@ -1,6 +1,7 @@
 //! Authentication policy and durable ceremonies. Host capabilities never decide authorization.
 
 pub mod api_keys;
+pub mod bootstrap;
 pub mod crypto;
 pub mod origin;
 pub mod passkeys;
