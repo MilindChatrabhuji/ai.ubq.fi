@@ -82,3 +82,31 @@ fn source_catalog_race_retries_without_overwriting_newer_catalog_metadata() {
     assert_eq!(result["future_source_metadata"], "retained");
     assert_eq!(result["unsupported"]["a"]["gpt-test"], NOW);
 }
+
+#[test]
+fn expanded_source_selection_cannot_use_a_partial_cohort_after_new_projection() {
+    let store=MemoryStore::default();let mut stale=pool();stale.accounts[1].enabled=false;seed_pool(&store,&stale);
+    store.seed(keys::provider_selection(),&json!({"provider_ids":[format!("codex:{}",admin_hash("a").0),"surplus".to_owned(),"openlux".to_owned()],"updated_at_ms":NOW}));
+    paid_setup(&store);let authority=authority(&store);let first=admitted(&authority);
+    run(authority.mark_credential_invalid(&first,NOW)).unwrap();
+    let RouteSelection::CredentialsInvalid{proof}=run(authority.select_account("gpt-test",CodexQuotaClass::Standard,NOW)).unwrap() else {panic!("missing single-source-selected proof")};
+    assert_eq!(proof.selected_count(),1);
+    store.seed(keys::provider_selection(),&json!({"provider_ids":["codex","surplus","openlux"],"updated_at_ms":NOW}));
+    super::paid_control_cases::republish(&store);
+    let mut input=paid_request("selection-expanded",PaidProvider::Surplus);input.model="gpt-test".into();
+    let receipt=run(authority.authorize_paid_route(&input,&super::paid_control_cases::context(&input),NOW)).unwrap();
+    assert!(run(authority.reserve_paid(&input,&PaidAuthorization::SubscriptionUnavailable(proof),&receipt,NOW)).is_err());
+    assert!(store.row(&keys::paid_attempt("key-a","selection-expanded")).is_none());
+    let current=admitted(&authority);assert_eq!(current.binding.account_id_hash,routing_hash("b"));
+}
+
+#[test]
+fn source_selection_shrink_and_empty_defaults_keep_sticky_active_identity() {
+    let store=MemoryStore::default();seed_pool(&store,&pool());let authority=authority(&store);let first=admitted(&authority);
+    store.seed(keys::provider_selection(),&json!({"provider_ids":[format!("codex:{}",admin_hash("a").0)],"updated_at_ms":NOW}));
+    let retained=admitted(&authority);assert_eq!(retained.binding.account_id_hash,first.binding.account_id_hash);assert_eq!(retained.active_generation,first.active_generation);
+    run(authority.mark_credential_invalid(&retained,NOW)).unwrap();
+    let RouteSelection::CredentialsInvalid{proof}=run(authority.select_account("gpt-test",CodexQuotaClass::Standard,NOW)).unwrap() else {panic!("missing selected single-account proof")};assert_eq!(proof.selected_count(),1);
+    store.seed(keys::provider_selection(),&json!({"provider_ids":[],"updated_at_ms":NOW}));
+    assert_eq!(admitted(&authority).binding.account_id_hash,routing_hash("b"));
+}

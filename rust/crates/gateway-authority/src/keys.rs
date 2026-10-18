@@ -44,6 +44,9 @@ pub fn capacity() -> RecordKey {
 pub fn models() -> RecordKey {
     key(&[Text("uos_ai"), Text("codex_account_models"), Text("v1")])
 }
+pub fn provider_selection() -> RecordKey {
+    key(&[Text("uos_ai"), Text("provider_selection"), Text("v1")])
+}
 pub fn overage(hash: &str) -> RecordKey {
     key(&[
         Text("uos_ai"),
