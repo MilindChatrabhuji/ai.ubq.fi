@@ -29,18 +29,18 @@ fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, Gateway
         return Ok(NativeValue::CounterLe64(value.to_le_bytes().to_vec()));
     }
     let origin = row.mapping.as_ref().and_then(|m| m.native_origin.as_ref());
-    if origin.is_none_or(|o| matches!(o.kind, NativeKind::Bytes)) {
-        if let PortableValue::Binary {
+    if origin.is_none_or(|o| matches!(o.kind, NativeKind::Bytes))
+        && let PortableValue::Binary {
             kind,
             bytes,
             byte_offset,
             byte_length,
         } = &value
-        {
-            if kind == "Uint8Array" && *byte_offset == 0 && *byte_length == bytes.len() as u64 {
-                return Ok(NativeValue::Bytes(bytes.clone()));
-            }
-        }
+        && kind == "Uint8Array"
+        && *byte_offset == 0
+        && *byte_length == bytes.len() as u64
+    {
+        return Ok(NativeValue::Bytes(bytes.clone()));
     }
     Ok(NativeValue::SourceGraphV1(
         crate::graph_transport::to_source_graph(&crate::graph_tree::from_tree(&value)?)?,

@@ -426,10 +426,10 @@ pub(crate) async fn export_rows<S: QueryStore>(
                 "Unknown normalized authority state cannot be silently omitted from inverse",
             ));
         }
-        if let Some(expected) = manifest.derived.get(k) {
-            if digest(record)? == *expected {
-                continue;
-            }
+        if let Some(expected) = manifest.derived.get(k)
+            && digest(record)? == *expected
+        {
+            continue;
         }
         if !crate::projection::known(&p) {
             return Err(unavailable(
