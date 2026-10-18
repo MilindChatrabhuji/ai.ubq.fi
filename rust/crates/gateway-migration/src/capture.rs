@@ -60,18 +60,19 @@ impl PrivateCapture {
                     .map_err(|_| invalid("Source profile row cannot be encoded"))?;
                 let decoded = normalize_source_import_line_with_host(&text, host)?
                     .ok_or_else(|| invalid("Empty source row"))?;
+                let source_parts = parts(&decoded.key)?;
                 validate_complete_binary_views(&entry.value)?;
                 if !keys.insert(decoded.key.0.clone()) {
                     return Err(invalid("Duplicate logical source key"));
                 }
-                if private_source_key(&decoded.parts) {
+                if private_source_key(&source_parts) {
                     return Err(invalid(
                         "Source capture cannot mint Rust authority or adoption metadata",
                     ));
                 }
                 let record = if let Some(value) = decoded.value.to_json_lossless() {
                     StoredRecord::json(&entry.versionstamp, value, entry.expires_at_ms)
-                } else if !crate::projection::quota_family(&decoded.parts)
+                } else if !crate::projection::quota_family(&source_parts)
                     && decoded.value.validate_for_storage().is_ok()
                 {
                     StoredRecord::profile(&entry.versionstamp, decoded.value, entry.expires_at_ms)?
@@ -84,7 +85,7 @@ impl PrivateCapture {
                 };
                 Ok(Row {
                     key: decoded.key,
-                    parts: decoded.parts,
+                    parts: source_parts,
                     record,
                     mapping: Mapping {
                         source: entry.clone(),
