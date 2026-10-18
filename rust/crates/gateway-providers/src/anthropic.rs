@@ -539,6 +539,7 @@ pub fn try_claude_chat(
         body,
         tool_names: names,
         elisions: vec![],
+        warnings: vec![],
     })
 }
 

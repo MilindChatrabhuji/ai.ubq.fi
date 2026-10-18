@@ -327,12 +327,14 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
 pub struct Host {
     pub store: Store,
     pub cancelled: Arc<AtomicBool>,
+    pub cancel_wait_after_ms: Option<i64>,
 }
 impl Host {
     pub fn new(store: &Store) -> Self {
         Self {
             store: store.clone(),
             cancelled: Arc::new(AtomicBool::new(false)),
+            cancel_wait_after_ms: None,
         }
     }
 }
@@ -343,9 +345,14 @@ impl RoutingHost for Host {
     fn cancellation_error(&self) -> GatewayError {
         GatewayError::new(499, "fixture cancelled", Some("fixture_cancelled"))
     }
-    async fn wait(&self, milliseconds: i64) -> Result<(), GatewayError> {
-        self.store.advance(milliseconds);
-        Ok(())
+    async fn wait(&self, milliseconds: i64) -> WaitOutcome {
+        let elapsed_ms = self.cancel_wait_after_ms.unwrap_or(milliseconds);
+        self.store.advance(elapsed_ms);
+        let result = if self.cancel_wait_after_ms.is_some() {
+            self.cancelled.store(true, Ordering::SeqCst);
+            Err(self.cancellation_error())
+        } else { Ok(()) };
+        WaitOutcome { elapsed_ms, result }
     }
     async fn credential(
         &self,
