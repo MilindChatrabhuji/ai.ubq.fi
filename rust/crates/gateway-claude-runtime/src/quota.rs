@@ -346,7 +346,7 @@ pub fn parse_record(record: &StoredRecord, now: i64) -> Result<Option<QuotaState
     match record.value_encoding {
         ValueEncoding::Json => Ok(parse_state(record.json_value()?)),
         ValueEncoding::ProfileV2 => Ok(parse_profile_state(&record.profile_v2_value()?)),
-        ValueEncoding::ProfileV1 => Err(GatewayError::unavailable(
+        ValueEncoding::ProfileV1 | ValueEncoding::SourceGraphV1 => Err(GatewayError::unavailable(
             "Claude quota requires JSON or explicit ProfileV2.",
             "incompatible_value_encoding",
         )),

@@ -83,6 +83,15 @@ impl Capabilities {
 }
 
 impl RuntimeCapabilities for Capabilities {
+    async fn native(
+        &self,
+        request: gateway_admin_runtime::capabilities::NativeRequest,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        self.measured_body_bytes(&context)?;
+        let platform = &self.catalog_host.platform;
+        platform.native.rpc(request, platform).await
+    }
     async fn catalog(
         &self,
         request: CatalogRequest,

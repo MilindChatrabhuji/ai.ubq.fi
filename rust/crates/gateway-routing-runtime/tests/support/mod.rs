@@ -325,6 +325,7 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
 }
 #[derive(Clone)]
 pub struct Host {
+    pub claude_internal_error: bool,
     pub store: Store,
     pub cancelled: Arc<AtomicBool>,
     pub cancel_wait_after_ms: Option<i64>,
@@ -342,6 +343,7 @@ pub struct Host {
 impl Host {
     pub fn new(store: &Store) -> Self {
         Self {
+            claude_internal_error: false,
             store: store.clone(),
             cancelled: Arc::new(AtomicBool::new(false)),
             cancel_wait_after_ms: None,
@@ -463,6 +465,9 @@ impl RoutingHost for Host {
         _model: &str,
         _raw: &Value,
     ) -> Result<ClaudeSelection, GatewayError> {
+        if self.claude_internal_error {
+            return Ok(ClaudeSelection::InternalServerError);
+        }
         if let Some((status, headers, body)) = &self.claude_refused {
             return Ok(ClaudeSelection::Refused {
                 status: *status,

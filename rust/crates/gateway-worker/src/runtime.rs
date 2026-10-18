@@ -23,6 +23,7 @@ pub async fn route(
     context: Rc<Context>,
     release: &str,
     request_id: RequestId,
+    native: crate::native_host::NativeBindings,
 ) -> Result<Response, GatewayError> {
     now_ms()?;
     let path = request.path();
@@ -42,6 +43,7 @@ pub async fn route(
         cancellation,
         store: store.clone(),
         env: env.clone(),
+        native,
     };
     let config = auth_config(&env);
     let mut auth_request = AuthRequest {
@@ -96,7 +98,7 @@ pub async fn route(
             release,
         };
         if let Some(response) = admin.handle_route(&auth_request, &request_id.0).await? {
-            return auth_response(response);
+            return auth_response_with_native(response, &host, context.clone()).await;
         }
         auth.authenticate_admin(&auth_request).await?;
         return Err(GatewayError::new(
@@ -248,6 +250,28 @@ pub fn auth_response(response: AuthResponse) -> Result<Response, GatewayError> {
             .map_err(|_| invalid_url())?;
     }
     Ok(wire)
+}
+
+async fn auth_response_with_native(
+    mut response: AuthResponse,
+    platform: &PlatformHost,
+    context: Rc<Context>,
+) -> Result<Response, GatewayError> {
+    if let Some(descriptor) = response.stream.take() {
+        let mut stream = platform
+            .native
+            .follow(descriptor, platform, context)
+            .await?;
+        for (name, value) in response.headers {
+            stream
+                .headers_mut()
+                .set(&name, &value)
+                .map_err(|_| invalid_url())?;
+        }
+        Ok(stream)
+    } else {
+        auth_response(response)
+    }
 }
 
 fn json_response(value: Value) -> Result<Response, GatewayError> {

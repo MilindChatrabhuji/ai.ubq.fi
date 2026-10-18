@@ -18,6 +18,10 @@ base64 = "=0.22.1"
 sha2 = "=0.10.9"
 hmac = "=0.12.1"
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "alloc"] }
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+hkdf = "=0.12.4"
+zeroize = "=1.9.1"
 
 [lints]
 workspace = true

@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 
 use gateway_core::GatewayError;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_core::value::PortableValue;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -238,6 +239,72 @@ fn applicable(value: &Value, binding: &Binding, model: &str, now: i64) -> bool {
     })
 }
 
+fn property<'a>(value: &'a PortableValue, name: &str) -> Option<&'a PortableValue> {
+    match value {
+        PortableValue::Object(items) => items
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value),
+        PortableValue::ObjectUtf16(items) => items
+            .iter()
+            .find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16()))
+            .map(|(_, value)| value),
+        _ => None,
+    }
+}
+
+fn proof_fields(value: &PortableValue, names: &[&str]) -> serde_json::Map<String, Value> {
+    names
+        .iter()
+        .filter_map(|&name| {
+            let scalar = match property(value, name)? {
+                PortableValue::Null => Value::Null,
+                PortableValue::String(value) => Value::String(value.clone()),
+                PortableValue::StringUtf16(value) => Value::String(value.try_utf8().ok()?),
+                value @ PortableValue::NumberBits(_) => {
+                    Value::Number(serde_json::Number::from_f64(value.number_value()?)?)
+                }
+                _ => return None,
+            };
+            Some((name.to_owned(), scalar))
+        })
+        .collect()
+}
+
+/// Project proof inputs only. Operator values and Object.values keys are not JSON inputs.
+pub(crate) fn quota_proof_metadata(value: &PortableValue) -> Value {
+    let mut row = proof_fields(value, &["updated_at_ms"]);
+    let fields = [
+        "kind",
+        "model_id",
+        "observed_at_ms",
+        "expires_at_ms",
+        "evidence_generation",
+    ];
+    let values: Vec<_> = match property(value, "pool_proofs") {
+        Some(PortableValue::Object(items)) => items
+            .iter()
+            .map(|(_, value)| Value::Object(proof_fields(value, &fields)))
+            .collect(),
+        Some(PortableValue::ObjectUtf16(items)) => items
+            .iter()
+            .map(|(_, value)| Value::Object(proof_fields(value, &fields)))
+            .collect(),
+        _ => return Value::Object(row),
+    };
+    row.insert(
+        "pool_proofs".to_owned(),
+        Value::Object(
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| (index.to_string(), value))
+                .collect(),
+        ),
+    );
+    Value::Object(row)
+}
+
 async fn read_view<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     model: &str,
@@ -251,10 +318,7 @@ async fn read_view<S: AuthorityStore, I: TokenSource>(
     let mut proven = !view.bindings.is_empty();
     for binding in &view.bindings {
         let raw = tx
-            .read::<Value>(&keys::claude_quota(
-                &binding.account_id,
-                &binding.account_cohort_id,
-            ))
+            .read_claude_quota(&binding.account_id, &binding.account_cohort_id)
             .await?;
         proven &= raw
             .as_ref()
@@ -312,13 +376,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             return Err(fail());
         }
         tx.now = self.fresh_time(tx.now.max(now))?;
+        let _ = read_view(tx, model).await?;
         for check in &proof.checks {
-            let _: Option<Value> = tx.read(&check.key).await?;
             if !tx.expect(&check.key, &check.expected_revision) {
                 return Err(fail());
             }
         }
-        let _ = read_view(tx, model).await?;
         tx.now = self.fresh_time(tx.now)?;
         let Some(view) = read_view(tx, model).await? else {
             return Err(fail());
