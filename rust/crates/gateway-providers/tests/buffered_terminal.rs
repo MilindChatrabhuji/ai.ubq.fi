@@ -75,8 +75,13 @@ fn streaming_flat_and_nested_errors_preserve_actual_events_and_original_status()
         json!({"type":"error","code":"capacity","message":"Capacity unavailable.","future":{"retained":true}}),
         json!({"type":"error","error":{"code":"upstream_error","message":"Nested failure.","type":"server_error"}}),
     ] {
-        let decoded =
-            decode_response(&plan(true), 200, &headers(), &frames(&[error.clone()])).unwrap();
+        let decoded = decode_response(
+            &plan(true),
+            200,
+            &headers(),
+            &frames(std::slice::from_ref(&error)),
+        )
+        .unwrap();
         assert_eq!(decoded.status, 200);
         assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
         assert_eq!(decoded.body, decoded.events[0].data);
@@ -90,8 +95,13 @@ fn streaming_flat_and_nested_errors_preserve_actual_events_and_original_status()
 #[test]
 fn source_default_error_fields_are_used_for_buffered_nested_terminal() {
     let error = json!({"type":"error","error":{"message":"nested","code":"nested"}});
-    let decoded =
-        decode_response(&plan(false), 200, &headers(), &frames(&[error.clone()])).unwrap();
+    let decoded = decode_response(
+        &plan(false),
+        200,
+        &headers(),
+        &frames(std::slice::from_ref(&error)),
+    )
+    .unwrap();
     assert_eq!(decoded.status, 502);
     assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
     assert_eq!(
