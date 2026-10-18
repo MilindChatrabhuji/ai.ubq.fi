@@ -40,17 +40,20 @@ import {
   scanPaidFallbackPendingMarkers,
   windowExpireIn,
 } from "./ledger-state.ts";
-import {
-  PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
-  PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
-  type PaidFallbackUsageRollup,
-  isPaidFallbackUsageRollup,
-  mergePaidFallbackUsageRollup,
-  paidFallbackUsageRollupKey,
-  paidFallbackUsageRollupShard,
-} from "./rollups.ts";
+import { PAID_FALLBACK_USAGE_ROLLUP_PREFIX, type PaidFallbackUsageRollup, isPaidFallbackUsageRollup, paidFallbackUsageRollupKey } from "./rollups.ts";
 import { type PaidFallbackProvider, type PaidFallbackRequestV3, type PaidFallbackWindowV3 } from "../types.ts";
-import { isRecord } from "../utils.ts";
+import {
+  paidFallbackRequestRollupIdentity,
+  paidFallbackBackfillRollupEligibleV3,
+  planPaidFallbackBackfillFoldV3,
+  paidFallbackRequestBackfillStateV3,
+  paidFallbackBackfillNeedsSweepV3,
+  isBackfillableSettledPaidFallbackRequest,
+  paidFallbackLeaseActiveV3,
+  paidFallbackBackfillLeaseV3,
+  paidFallbackLeaseOwnedV3,
+  paidFallbackGateAfterScanV3,
+} from "../authority/native-paid.ts";
 
 export type PaidFallbackRollupBackfillResult = Readonly<{
   scanned: number;
@@ -126,41 +129,16 @@ const foldRequestRowIntoRollupV3 = async (
   request: PaidFallbackRequestV3,
   nowMs: number
 ): Promise<RollupFoldOutcome> => {
-  const settled = request.billing_state === "settled" && request.provider_quota !== null && request.spend_microcredits !== null;
-  const model = request.model.trim();
-  const provider = request.provider ?? "metered";
-  const bucketStartAtMs = Math.floor(request.created_at_ms / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) * PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS;
-  const rollupKey = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider, paidFallbackUsageRollupShard(request.request_id));
-  const rollupEntry = settled && model ? await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" }) : null;
+  const { model, provider, bucketStartAtMs, shard } = paidFallbackRequestRollupIdentity(request);
+  const rollupKey = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider, shard);
+  const rollupEntry = paidFallbackBackfillRollupEligibleV3(request) ? await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" }) : null;
   const existingRollup = isPaidFallbackUsageRollup(rollupEntry?.value) ? rollupEntry.value : null;
-  const nextRollup =
-    settled && model
-      ? mergePaidFallbackUsageRollup(existingRollup, {
-          bucket_start_at_ms: bucketStartAtMs,
-          request_id: request.request_id,
-          model,
-          provider,
-          quota: request.provider_quota,
-          input_tokens: request.input_tokens ?? 0,
-          cached_input_tokens: request.cached_input_tokens ?? null,
-          output_tokens: request.output_tokens ?? 0,
-          spend_microcredits: request.spend_microcredits,
-          request_created_at_ms: request.created_at_ms,
-          updated_at_ms: nowMs,
-        })
-      : null;
-  // Every processed row is marked, including non-billable rows, so a bounded
-  // run always advances past them instead of consuming its budget on the same
-  // rows forever. This is safe for pending/unresolved rows: the live
-  // settlement path unconditionally folds and re-marks a row whenever it
-  // actually settles, so marking one early can never suppress a rollup.
-  const nextRow = { ...request, updated_at_ms: nowMs, usage_rollup_at_ms: nowMs };
-  let atomic = kv
-    .atomic()
-    .check(requestEntry)
-    .set(requestKey, nextRow, {
-      expireIn: requestRowExpireIn(request, nowMs),
-    });
+  const plan = planPaidFallbackBackfillFoldV3(request, existingRollup, nowMs);
+  const nextRollup = plan.rollup;
+  const nextRow = plan.request;
+  let atomic = kv.atomic().check(requestEntry).set(requestKey, nextRow, {
+    expireIn: plan.requestExpireIn,
+  });
   if (nextRollup && rollupEntry) {
     atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
   }
@@ -203,8 +181,9 @@ type BackfillProgress = {
 const advanceBackfillSweepV3 = async (kv: Kv, requestKey: KvKey, progress: BackfillProgress, nowMs: number): Promise<"continue" | RollupBackfillTruncation> => {
   const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
   const request = requestEntry.value;
-  if (!request) return "continue";
-  if (typeof request.usage_rollup_at_ms === "number") {
+  const rowState = paidFallbackRequestBackfillStateV3(request);
+  if (rowState === "missing" || !request) return "continue";
+  if (rowState === "retention") {
     // A previously processed row can lose its TTL (for example after a KV
     // export/import restores values without expiry). Re-apply the anchored
     // retention without touching the rollup or the row value; marked rows
@@ -470,24 +449,6 @@ export type PaidFallbackAutomaticBackfillResult = Readonly<{
   windows: PaidFallbackWindowTtlBackfillResult | null;
 }>;
 
-const isPaidFallbackBackfillState = (value: unknown): value is PaidFallbackBackfillStateV3 =>
-  isRecord(value) && value.v === 1 && typeof value.completed_at_ms === "number" && Number.isSafeInteger(value.completed_at_ms) && value.completed_at_ms >= 0;
-
-const isBackfillableSettledPaidFallbackRequest = (value: unknown): boolean => {
-  if (!isRecord(value)) return false;
-  return (
-    value.billing_state === "settled" &&
-    typeof value.model === "string" &&
-    value.model.trim().length > 0 &&
-    typeof value.provider_quota === "number" &&
-    Number.isFinite(value.provider_quota) &&
-    value.provider_quota >= 0 &&
-    typeof value.spend_microcredits === "number" &&
-    Number.isFinite(value.spend_microcredits) &&
-    value.spend_microcredits >= 0
-  );
-};
-
 const hasPaidFallbackUsageRollups = async (kv: Kv): Promise<boolean> => {
   const firstRollup = await readFirstKvEntry(kv, { prefix: PAID_FALLBACK_USAGE_ROLLUP_PREFIX });
   return firstRollup !== null;
@@ -506,7 +467,7 @@ const paidFallbackBackfillNeedsRun = async (kv: Kv): Promise<boolean> => {
     kv.get(paidFallbackBackfillCursorV3Key(), { consistency: "strong" }),
     kv.get(paidFallbackBackfillWindowCursorV3Key(), { consistency: "strong" }),
   ]);
-  if (!isPaidFallbackBackfillState(stateEntry.value) || requestCursorEntry.value !== null || windowCursorEntry.value !== null) {
+  if (paidFallbackBackfillNeedsSweepV3(stateEntry.value, requestCursorEntry.value, windowCursorEntry.value)) {
     return true;
   }
   if (await hasPaidFallbackUsageRollups(kv)) return false;
@@ -517,11 +478,8 @@ const acquirePaidFallbackBackfillLease = async (kv: Kv, nowMs: number): Promise<
   const leaseKey = paidFallbackBackfillLeaseV3Key();
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const entry = await kv.get<PaidFallbackBackfillLeaseV3>(leaseKey, { consistency: "strong" });
-    if (entry.value && entry.value.expires_at_ms > nowMs) return null;
-    const lease = {
-      token: crypto.randomUUID(),
-      expires_at_ms: nowMs + PAID_FALLBACK_BACKFILL_LEASE_MS,
-    } satisfies PaidFallbackBackfillLeaseV3;
+    if (paidFallbackLeaseActiveV3(entry.value, nowMs)) return null;
+    const lease = paidFallbackBackfillLeaseV3(crypto.randomUUID(), nowMs);
     const commit = await kv
       .atomic()
       .check(entry)
@@ -537,7 +495,7 @@ const acquirePaidFallbackBackfillLease = async (kv: Kv, nowMs: number): Promise<
 const releasePaidFallbackBackfillLease = async (kv: Kv, lease: PaidFallbackBackfillLeaseV3): Promise<void> => {
   try {
     const entry = await kv.get<PaidFallbackBackfillLeaseV3>(paidFallbackBackfillLeaseV3Key(), { consistency: "strong" });
-    if (entry.value?.token !== lease.token) return;
+    if (!paidFallbackLeaseOwnedV3(entry.value, lease.token)) return;
     await kv
       .atomic()
       .check(entry)
@@ -743,11 +701,7 @@ export const reconcileDuePaidFallbacksV3 = async (now = Date.now(), kvOverride?:
     gateEntry = await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" });
     if (isPaidFallbackReconciliationGate(gateEntry.value)) break;
     bootstrapScan = await scanPaidFallbackPendingMarkers(kv);
-    const commit = await kv
-      .atomic()
-      .check(gateEntry)
-      .set(gateKey, { next_due_at_ms: bootstrapScan.earliest_due_at_ms } satisfies PaidFallbackReconciliationGateV3)
-      .commit();
+    const commit = await kv.atomic().check(gateEntry).set(gateKey, paidFallbackGateAfterScanV3(bootstrapScan.earliest_due_at_ms)).commit();
     if (commit.ok) {
       gateEntry = {
         key: gateKey,

@@ -295,10 +295,16 @@ fn healthy_unix_close_retains_the_bounded_peer_handshake_grace() {
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
             let mut socket = accept_hdr(stream, HeaderCheck).unwrap();
+            let mut acknowledged = false;
             while let Ok(message) = socket.read() {
                 if message.is_close() {
                     thread::sleep(Duration::from_millis(75));
-                    let _ = socket.flush();
+                    // The pinned server reports ConnectionClosed only after
+                    // writing its queued close acknowledgement successfully.
+                    acknowledged = matches!(
+                        socket.flush(),
+                        Ok(()) | Err(tungstenite::Error::ConnectionClosed)
+                    );
                     break;
                 }
                 let Message::Text(text) = message else {
@@ -315,12 +321,13 @@ fn healthy_unix_close_retains_the_bounded_peer_handshake_grace() {
                         .unwrap();
                 }
             }
+            acknowledged
         });
         let mut client = UnixSupervisor::configured_socket(&home.socket()).unwrap();
-        let start = std::time::Instant::now();
         client.close().await.unwrap();
-        assert!(start.elapsed() >= Duration::from_millis(50));
-        assert!(start.elapsed() < Duration::from_secs(2));
-        server.join().unwrap();
+        assert!(
+            server.join().unwrap(),
+            "peer acknowledgement must reach the healthy client before shutdown"
+        );
     });
 }

@@ -62,12 +62,13 @@ pub fn seed_controls(store: &MemoryStore) {
     store.seed(
         keys::paid_control_config(),
         &PaidControlConfig {
-            v: 1,
+            v: PAID_CONTROL_CONFIG_VERSION,
             owner_id: "fixture-owner".into(),
             owner_epoch: "fixture-epoch".into(),
             generation: "fixture-config-generation".into(),
             configuration_fingerprint: "fixture-config-fingerprint".into(),
             surplus_binding: Some("fixture-surplus-binding".into()),
+            openlux_discovery_binding: Some("fixture-openlux-discovery-binding".into()),
             openlux_binding: Some("fixture-openlux-binding".into()),
             source_checks: vec![],
         },
@@ -86,7 +87,7 @@ pub fn seed_controls(store: &MemoryStore) {
                 credential_binding: if provider == PaidProvider::Surplus {
                     "fixture-surplus-binding"
                 } else {
-                    "fixture-openlux-binding"
+                    "fixture-openlux-discovery-binding"
                 }
                 .into(),
                 observed_at_ms: NOW,
@@ -443,4 +444,55 @@ fn malformed_missing_and_derived_source_fences_never_authorize() {
         store.seed(keys::paid_routing(), &raw);
         assert!(run(authority.authorize_paid_route(&input, &context(&input), NOW)).is_err());
     }
+}
+
+#[test]
+fn openlux_discovery_and_spend_bindings_are_distinct_current_facts() {
+    let store = MemoryStore::default();
+    paid_setup(&store);
+    let authority = authority(&store);
+    let input = paid_request("two-openlux-roles", PaidProvider::Metered);
+    let receipt = run(authority.authorize_paid_route(&input, &context(&input), NOW)).unwrap();
+    assert_eq!(receipt.credential_binding(), "fixture-openlux-binding");
+    let observation_key = keys::paid_control_observation(PaidProvider::Metered);
+    let mut observation = store.row(&observation_key).unwrap().value;
+    observation["credential_binding"] = json!("fixture-openlux-binding");
+    store.seed(observation_key, &observation);
+    republish(&store);
+    assert!(run(authority.authorize_paid_route(&input, &context(&input), NOW)).is_err());
+    no_attempt(&store, &input);
+}
+
+#[test]
+fn strict_v2_configuration_requires_explicit_nullable_roles() {
+    let store = MemoryStore::default();
+    paid_setup(&store);
+    let raw = store.row(&keys::paid_control_config()).unwrap().value;
+    for field in [
+        "surplus_binding",
+        "openlux_discovery_binding",
+        "openlux_binding",
+    ] {
+        let mut missing = raw.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<PaidControlConfig>(missing).is_err());
+    }
+    let mut unknown = raw.clone();
+    unknown["unknown_control"] = json!(true);
+    assert!(serde_json::from_value::<PaidControlConfig>(unknown).is_err());
+    let mut explicit_null = raw.clone();
+    explicit_null["openlux_discovery_binding"] = Value::Null;
+    assert!(
+        serde_json::from_value::<PaidControlConfig>(explicit_null)
+            .unwrap()
+            .openlux_discovery_binding
+            .is_none()
+    );
+    let mut legacy = raw;
+    legacy["v"] = json!(1);
+    store.seed(keys::paid_control_config(), &legacy);
+    republish(&store);
+    let authority = authority(&store);
+    let input = paid_request("legacy-config-version", PaidProvider::Metered);
+    assert!(run(authority.authorize_paid_route(&input, &context(&input), NOW)).is_err());
 }

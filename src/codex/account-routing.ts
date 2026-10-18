@@ -1,6 +1,10 @@
 import type { Kv } from "#kv";
 // Codex account routing: probes, recovery, serial selection (remainder of the original module), split out of src/codex_account_routing.ts.
 
+import * as routingDecisions from "../authority/native-codex-mutations.ts";
+import { nativeCodexAccountMetadata } from "./routing-state.ts";
+import { planCodexResetElection } from "../authority/native-codex.ts";
+
 import { getKv } from "../kv.ts";
 
 import { type CodexAuthPoolState, type CodexAuthState } from "../types.ts";
@@ -27,21 +31,13 @@ import {
   normalizeRoutingState,
   openRoutingKv,
   parseStoredCapacityObservationStore,
-  quotaBlockForClass,
-  quotaClass,
-  recheckQuotaClasses,
   reconcileCapacityRoutingState,
   routingAccountIdentity,
   withSlot,
 } from "./capacity-routing.ts";
 
 import { isCodexQuotaBlockFenceCurrent } from "./routing-mutations.ts";
-import {
-  accumulateCodexRoutingAccounts,
-  classifyCodexRouteSelection,
-  parseCodexAuthPoolSnapshot,
-  routingStateChangedByNormalization,
-} from "./routing-evaluation.ts";
+import { accumulateCodexRoutingAccounts, classifyCodexRouteSelection, parseCodexAuthPoolSnapshot } from "./routing-evaluation.ts";
 import type { CodexRoutingSlotIdentity } from "./routing-evaluation.ts";
 import {
   activeSelectionForAccount,
@@ -64,22 +60,8 @@ export {
   reconcileCodexRoutingAccount,
   releaseCodexRoutingProbe,
 } from "./routing-mutations.ts";
-export const isCodexActiveAccountSnapshotCurrent = (value: unknown, snapshot: CodexActiveAccountSnapshot): boolean => {
-  const current = parseCodexActiveAccountSelection(value);
-  const observed = snapshot.selection;
-  if (current === null || observed === null) return current === null && observed === null;
-  return (
-    current.account_id_hash === observed.account_id_hash &&
-    current.credential_version === observed.credential_version &&
-    current.pool_versionstamp === observed.pool_versionstamp &&
-    current.slot === observed.slot &&
-    current.routing_generation === observed.routing_generation &&
-    current.generation === observed.generation &&
-    current.transition_reason === observed.transition_reason &&
-    current.updated_at_ms === observed.updated_at_ms
-  );
-};
-
+export const isCodexActiveAccountSnapshotCurrent = (value: unknown, snapshot: CodexActiveAccountSnapshot): boolean =>
+  routingDecisions.isCodexActiveAccountSnapshotCurrent(value, snapshot);
 /**
  * Elect the account a verified banked reset selected. The original active
  * snapshot must still be current, the candidate's pool credential and quota
@@ -93,29 +75,11 @@ export const isCodexActiveAccountSnapshotCurrent = (value: unknown, snapshot: Co
  * exact current-generation fence; the same proof the stale reconciliation is
  * about to apply is sufficient here.
  */
-const staleResetRoutingIdentityCurrent = (value: unknown, account: RoutingAccount, quotaResetAtMs: number): boolean => {
-  const state = parseCodexAccountRoutingState(value);
-  const current = state?.slots.at(account.slot);
-  if (!current) return false;
-  const classBlock = quotaBlockForClass(current, quotaClass(account.requestedModel));
-  return (
-    current.account_id_hash === account.accountIdHash &&
-    current.credential_version === account.credentialVersion &&
-    current.generation === account.routingGeneration &&
-    current.invalid_credential_version !== account.credentialVersion &&
-    classBlock !== null &&
-    classBlock.observed_reset_at_ms === quotaResetAtMs &&
-    classBlock.observed_reset_at_is_stable
-  );
-};
-
+const staleResetRoutingIdentityCurrent = (value: unknown, account: RoutingAccount, quotaResetAtMs: number): boolean =>
+  routingDecisions.staleResetRoutingIdentityCurrent(value, nativeCodexAccountMetadata(account), quotaResetAtMs);
 /** The same account keeps its active generation; an account change advances it. */
-const nextResetElectionGeneration = (active: CodexActiveAccountSelection | null, candidate: RoutingAccount): number => {
-  if (active === null) return 1;
-  if (active.account_id_hash === candidate.accountIdHash && active.slot === candidate.slot) return active.generation;
-  return active.generation + 1;
-};
-
+const nextResetElectionGeneration = (active: CodexActiveAccountSelection | null, candidate: RoutingAccount): number =>
+  routingDecisions.nextResetElectionGeneration(active, nativeCodexAccountMetadata(candidate));
 /** The exact pool credential an elected slot must still carry. */
 const routingAuthMatchesAccount = (currentAuth: CodexAuthState, account: RoutingAccount): boolean =>
   currentAuth.account_id === account.auth.account_id &&
@@ -124,10 +88,7 @@ const routingAuthMatchesAccount = (currentAuth: CodexAuthState, account: Routing
 
 /** The normalized slot an election candidate must still own, including its quota fence. */
 const resetCandidateSlotMatches = (currentSlot: CodexRoutingSlot, account: RoutingAccount, routingIdentityCurrent: boolean): boolean =>
-  currentSlot.account_id_hash === account.accountIdHash &&
-  currentSlot.credential_version === account.credentialVersion &&
-  currentSlot.generation === account.routingGeneration &&
-  routingIdentityCurrent;
+  routingDecisions.resetCandidateSlotMatches(currentSlot, nativeCodexAccountMetadata(account), routingIdentityCurrent);
 
 type CodexResetElectionPreparation = Readonly<{
   normalized: CodexAccountRoutingState;
@@ -197,10 +158,21 @@ const commitCodexResetRecoveryElection = async (
   rows: Awaited<ReturnType<typeof readStrongCodexRoutingRows>>,
   prepared: CodexResetElectionPreparation
 ): Promise<RoutingAccount | "conflict"> => {
-  const routingChanged = routingStateChangedByNormalization(prepared.routing, prepared.normalized);
+  const plan = planCodexResetElection(
+    {
+      active: rows.activeEntry.versionstamp,
+      pool: rows.authEntry.versionstamp,
+      routing: rows.routingEntry.versionstamp,
+      capacity: rows.capacityEntry.versionstamp,
+    },
+    prepared.routing,
+    prepared.normalized,
+    prepared.next
+  );
+  const routingChanged = plan.writes.routing !== null;
   let operation = kv.atomic().check(rows.activeEntry).check(rows.authEntry).check(rows.routingEntry).check(rows.capacityEntry);
-  if (routingChanged) operation = operation.set(CODEX_ACCOUNT_ROUTING_KV_KEY, prepared.normalized);
-  const committed = await operation.set(CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, prepared.next).commit();
+  if (plan.writes.routing !== null) operation = operation.set(CODEX_ACCOUNT_ROUTING_KV_KEY, plan.writes.routing);
+  const committed = await operation.set(CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, plan.writes.active).commit();
   if (!committed.ok) return "conflict";
   setRoutingStateCache(prepared.normalized, routingChanged ? committed.versionstamp : rows.routingEntry.versionstamp);
   return {
@@ -241,16 +213,7 @@ const resolveAdmissionRefreshGeneration = async (account: RoutingAccount, pool: 
   const routing = parseCodexAccountRoutingState(routingValue);
   if (routingValue !== null && routing === null) return null;
   const normalized = routing === null ? null : await normalizeRoutingState(routing, pool, Date.now(), true);
-  const currentSlot = normalized?.slots.at(account.slot) ?? null;
-  if (normalized !== null && currentSlot === null) return null;
-  if (
-    currentSlot !== null &&
-    (currentSlot.account_id_hash !== account.accountIdHash ||
-      currentSlot.credential_version !== account.credentialVersion ||
-      currentSlot.invalid_credential_version === account.credentialVersion)
-  )
-    return null;
-  return currentSlot?.generation ?? 0;
+  return routingDecisions.admissionRefreshRoutingGeneration(normalized, nativeCodexAccountMetadata(account));
 };
 
 type CodexAdmissionRefreshPreparation =
@@ -276,23 +239,8 @@ const prepareCodexActiveAccountAdmissionRefresh = async (
   if (!currentAuth || !routingAuthMatchesAccount(currentAuth, account)) return { kind: "reject" };
   const routingGeneration = await resolveAdmissionRefreshGeneration(account, pool, rows.routingEntry.value);
   if (routingGeneration === null) return { kind: "reject" };
-  if (
-    active.credential_version === account.credentialVersion &&
-    active.pool_versionstamp === poolVersionstamp &&
-    active.routing_generation === routingGeneration
-  ) {
-    return { kind: "current" };
-  }
-  return {
-    kind: "refresh",
-    next: {
-      ...active,
-      credential_version: account.credentialVersion,
-      pool_versionstamp: poolVersionstamp,
-      routing_generation: routingGeneration,
-      updated_at_ms: Date.now(),
-    },
-  };
+  const prepared = routingDecisions.prepareCodexAdmissionRefresh(active, nativeCodexAccountMetadata(account), poolVersionstamp, routingGeneration);
+  return prepared.kind === "refresh" ? { ...prepared, next: { ...prepared.next, updated_at_ms: Date.now() } } : prepared;
 };
 
 /**
@@ -384,29 +332,11 @@ export const selectCodexRoutingAccountsStrong = async (
  * the same quota generation, so a later recovery probe is required before a
  * stable identity may authorize a banked claim again.
  */
-const recheckSlotTransition = (current: CodexRoutingSlot, recheckAtMs: number): CodexRoutingSlot => {
-  const rechecked = recheckQuotaClasses(current, recheckAtMs);
-  return {
-    ...rechecked,
-    quota_signal_observed_at_ms: recheckAtMs,
-    banked_reset_generation_ambiguous:
-      rechecked.banked_reset_generation_ambiguous ||
-      rechecked.quota_blocked_until_ms !== null ||
-      current.banked_reset_generation_ambiguous ||
-      (current.observed_reset_at_ms !== null && current.observed_reset_at_is_stable),
-    generation: current.generation + 1,
-    probe_lease: null,
-  };
-};
-
+const recheckSlotTransition = (current: CodexRoutingSlot, recheckAtMs: number): CodexRoutingSlot =>
+  routingDecisions.recheckSlotTransition(current, recheckAtMs);
 /** Resolve a 1-based administrative slot number against the state's slots. */
-const locateRoutingSlot = (state: CodexAccountRoutingState, slotNumber: number): Readonly<{ index: number; slot: CodexRoutingSlot }> | null => {
-  if (slotNumber > state.slots.length) return null;
-  const index = slotNumber - 1;
-  const slot = state.slots.at(index);
-  return slot === undefined ? null : { index, slot };
-};
-
+const locateRoutingSlot = (state: CodexAccountRoutingState, slotNumber: number): Readonly<{ index: number; slot: CodexRoutingSlot }> | null =>
+  routingDecisions.locateRoutingSlot(state, slotNumber);
 /** Strong-read recheck loop: three compare-and-set attempts, then give up. */
 const recheckCodexRoutingSlotFromKv = async (kv: Kv, slotNumber: number, recheckAtMs: number): Promise<boolean> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
