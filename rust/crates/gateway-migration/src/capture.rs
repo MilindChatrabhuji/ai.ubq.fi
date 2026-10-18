@@ -64,16 +64,16 @@ impl PrivateCapture {
                 if !keys.insert(decoded.key.0.clone()) {
                     return Err(invalid("Duplicate logical source key"));
                 }
-                if starts(&decoded.parts, &["uos_ai", "migration"])
-                    || starts(&decoded.parts, &["uos_ai", "authority"])
-                {
+                if private_source_key(&decoded.parts) {
                     return Err(invalid(
                         "Source capture cannot mint Rust authority or adoption metadata",
                     ));
                 }
                 let record = if let Some(value) = decoded.value.to_json_lossless() {
                     StoredRecord::json(&entry.versionstamp, value, entry.expires_at_ms)
-                } else if decoded.value.validate_for_storage().is_ok() {
+                } else if !crate::projection::quota_family(&decoded.parts)
+                    && decoded.value.validate_for_storage().is_ok()
+                {
                     StoredRecord::profile(&entry.versionstamp, decoded.value, entry.expires_at_ms)?
                 } else {
                     StoredRecord::profile_v2(
@@ -90,6 +90,7 @@ impl PrivateCapture {
                         source: entry.clone(),
                         transform: Transform::Identity,
                         baseline_digest: String::new(),
+                        native_origin: None,
                     },
                 })
             })

@@ -88,6 +88,18 @@ pub(crate) fn bind(
             if !user.credential_ids.contains(&credential.credential_id) {
                 return Err(invalid("Passkey user omits credential index"));
             }
+        } else if starts(&row.parts, &["uos_ai", "auth", "sessions"]) {
+            let session: gateway_auth::passkeys::PasskeySession = decode(row.record.json_value()?)?;
+            derived.push((
+                gateway_auth::session_index::index_key(&gateway_auth::session_index::digest(
+                    &session.token,
+                ))?,
+                gateway_auth::session_index::record_for_session(
+                    &session,
+                    &row.record.revision,
+                    row.record.expires_at_ms,
+                )?,
+            ));
         }
     }
     let mut api: BTreeMap<String, BTreeMap<String, i64>> = BTreeMap::new();

@@ -74,7 +74,7 @@ fn remove(value: &mut Value, fields: &[&str]) {
         }
     }
 }
-fn inverse_value(
+pub(crate) fn inverse_value(
     transform: Transform,
     record: &StoredRecord,
     source: Option<&SourceEntry>,
@@ -159,7 +159,7 @@ fn inverse_value(
     }
     Ok(PortableValue::from_json(&out))
 }
-fn transform_for_new(parts: &[Value]) -> Transform {
+pub(crate) fn transform_for_new(parts: &[Value]) -> Transform {
     if starts(parts, &["uos_ai", "api_key_usage", "v3", "window"]) {
         Transform::ApiWindow
     } else if starts(parts, &["uos_ai", "api_key_usage", "v3", "request"]) {
@@ -193,16 +193,21 @@ fn transform_for_new(parts: &[Value]) -> Transform {
 }
 /// Export only after the current target owner has actually stopped its writers.
 /// QueryStore pages are not a cross-page snapshot; no stale backup is read or restored.
-async fn export_internal<S: QueryStore>(
+pub(crate) struct LatestRow {
+    pub key: RecordKey,
+    pub record: StoredRecord,
+    pub mapping: Option<Mapping>,
+}
+pub(crate) async fn export_rows<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<(PrivateCapture, Vec<CustodyRecord>), GatewayError> {
+) -> Result<(Manifest, Vec<LatestRow>, Vec<CustodyRecord>), GatewayError> {
     let manifest = store
         .read(&manifest_key())
         .await?
         .ok_or_else(|| invalid("No adopted capture manifest"))?;
     let manifest: Manifest = decode(manifest.json_value()?)?;
-    if manifest.v != 3 || now_ms < manifest.captured_at_ms {
+    if manifest.v != 4 || now_ms < manifest.captured_at_ms {
         return Err(invalid("Inverse capture clock/version invalid"));
     }
     let mut all = BTreeMap::new();
@@ -262,27 +267,74 @@ async fn export_internal<S: QueryStore>(
     let mut controls = Vec::new();
     for (k, record) in &all {
         let key = RecordKey(k.clone());
-        if let Some(mapping) = all.get(&mapping_key(&manifest.capture_id, k).0) {
-            let mapping: Mapping = decode(mapping.json_value()?)?;
-            let mut source = mapping.source.clone();
-            if mapping.transform == Transform::Identity {
-                source.key = source_profile_key(&key)?;
-            }
-            if mapping.transform != Transform::Identity
-                && digest(record)? == mapping.baseline_digest
-            {
-                // Exact untouched non-secret source transform retains all source-only fields.
-            } else {
-                source.value =
-                    to_profile(&inverse_value(mapping.transform, record, Some(&source))?)?;
-            }
-            source.versionstamp = record.revision.clone();
-            source.expires_at_ms = record.expires_at_ms;
-            entries.push(source);
+        let p = parts(&key)?;
+        // A legacy reader does not understand pending retirement. Retain the
+        // suppressed mapping only in private custody, never as a joinable Bun row.
+        if p.len() == 4
+            && starts(&p, &["uos_ai", "codex_live_calls", "v1"])
+            && all.contains_key(
+                &crate::key(json!([
+                    "uos_ai",
+                    "codex_live_calls",
+                    "v1",
+                    "pending_retirement",
+                    p[3]
+                ]))
+                .0,
+            )
+        {
+            controls.push(CustodyRecord {
+                key: k.clone(),
+                record: record.clone(),
+            });
             continue;
         }
-        let p = parts(&key)?;
+        if let Some(mapping) = all.get(&mapping_key(&manifest.capture_id, k).0) {
+            let mapping: Mapping = decode(mapping.json_value()?)?;
+            entries.push(LatestRow {
+                key,
+                record: record.clone(),
+                mapping: Some(mapping),
+            });
+            continue;
+        }
         if starts(&p, &["uos_ai", "migration"]) {
+            continue;
+        }
+        if starts(
+            &p,
+            &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
+        ) || starts(&p, &["uos_ai", "auth", "session_revision_index"])
+        {
+            record.validate_version()?;
+            if starts(
+                &p,
+                &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
+            ) {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Retirement {
+                    schema_version: u8,
+                    call_id: String,
+                    upstream_status: u16,
+                    created_at_ms: i64,
+                }
+                let marker: Retirement = decode(record.json_value()?)?;
+                if p.len() != 5
+                    || p[4] != marker.call_id
+                    || marker.schema_version != 1
+                    || ![404, 410].contains(&marker.upstream_status)
+                    || !(0..=gateway_core::identity::MAX_SAFE_INTEGER)
+                        .contains(&marker.created_at_ms)
+                    || record.expires_at_ms.is_some()
+                {
+                    return Err(invalid("Pending live-call retirement custody is malformed"));
+                }
+            }
+            controls.push(CustodyRecord {
+                key: k.clone(),
+                record: record.clone(),
+            });
             continue;
         }
         if key == gateway_auth::native_replay::native_nonce_key() {
@@ -384,13 +436,58 @@ async fn export_internal<S: QueryStore>(
                 "Latest target includes an unmapped source key family",
             ));
         }
-        let transform = transform_for_new(&p);
-        entries.push(SourceEntry {
-            key: source_profile_key(&key)?,
-            value: to_profile(&inverse_value(transform, record, None)?)?,
-            versionstamp: record.revision.clone(),
-            expires_at_ms: record.expires_at_ms,
+        entries.push(LatestRow {
+            key,
+            record: record.clone(),
+            mapping: None,
         });
+    }
+    Ok((manifest, entries, controls))
+}
+
+async fn export_internal<S: QueryStore>(
+    store: &S,
+    now_ms: i64,
+) -> Result<(PrivateCapture, Vec<CustodyRecord>), GatewayError> {
+    let (manifest, rows, controls) = export_rows(store, now_ms).await?;
+    if manifest.native_revision.is_some() {
+        return Err(unavailable(
+            "A native graph capture requires explicit native latest-state export",
+        ));
+    }
+    let mut entries = Vec::new();
+    for row in rows {
+        let mut source = if let Some(mapping) = &row.mapping {
+            mapping.source.clone()
+        } else {
+            SourceEntry {
+                key: vec![],
+                value: SourceJson::parse("null")?,
+                versionstamp: String::new(),
+                expires_at_ms: None,
+            }
+        };
+        let transform = row
+            .mapping
+            .as_ref()
+            .map(|m| m.transform)
+            .unwrap_or(transform_for_new(&parts(&row.key)?));
+        if transform == Transform::Identity || row.mapping.is_none() {
+            source.key = source_profile_key(&row.key)?;
+        }
+        if !row.mapping.as_ref().is_some_and(|m| {
+            m.transform != Transform::Identity
+                && digest(&row.record).is_ok_and(|d| d == m.baseline_digest)
+        }) {
+            source.value = to_profile(&inverse_value(
+                transform,
+                &row.record,
+                row.mapping.as_ref().map(|m| &m.source),
+            )?)?;
+        }
+        source.versionstamp = row.record.revision;
+        source.expires_at_ms = row.record.expires_at_ms;
+        entries.push(source);
     }
     let result = PrivateCapture {
         v: 1,
@@ -446,6 +543,16 @@ pub async fn export_rollback_bundle<S: QueryStore>(
     now_ms: i64,
     artifacts: ArtifactContext,
 ) -> Result<PrivateRollbackBundle, GatewayError> {
+    validate_artifacts(&artifacts)?;
+    let (source, rust_controls) = export_internal(store, now_ms).await?;
+    Ok(PrivateRollbackBundle {
+        v: 1,
+        source,
+        rust_controls,
+        artifacts,
+    })
+}
+pub(crate) fn validate_artifacts(artifacts: &ArtifactContext) -> Result<(), GatewayError> {
     let hash = |value: &str, len: usize| {
         value.len() == len
             && value
@@ -463,11 +570,5 @@ pub async fn export_rollback_bundle<S: QueryStore>(
     {
         return Err(invalid("Rollback artifact identity is malformed"));
     }
-    let (source, rust_controls) = export_internal(store, now_ms).await?;
-    Ok(PrivateRollbackBundle {
-        v: 1,
-        source,
-        rust_controls,
-        artifacts,
-    })
+    Ok(())
 }
