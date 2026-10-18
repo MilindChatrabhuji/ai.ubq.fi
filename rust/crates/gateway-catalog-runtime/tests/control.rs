@@ -60,12 +60,13 @@ impl Store {
             keys::paid_control_config(),
             revision,
             json!(PaidControlConfig {
-                v: 1,
+                v: PAID_CONTROL_CONFIG_VERSION,
                 owner_id: "fixture-owner".into(),
                 owner_epoch: "epoch-1".into(),
                 generation: generation.into(),
                 configuration_fingerprint: format!("configuration-{generation}"),
                 surplus_binding: surplus.then(|| "surplus-credential".into()),
+                openlux_discovery_binding: openlux.then(|| "openlux-discovery-credential".into()),
                 openlux_binding: openlux.then(|| "openlux-credential".into()),
                 source_checks: Vec::new()
             }),
@@ -180,7 +181,7 @@ impl Host {
             providers.insert(
                 CatalogProvider::Openlux,
                 ProviderBinding {
-                    identity: "openlux-credential".into(),
+                    identity: "openlux-discovery-credential".into(),
                 },
             );
         }
@@ -274,6 +275,37 @@ fn missing_authenticated_control_owner_refuses_without_fetch_or_policy_write() {
     assert!(store.get(&keys::paid_routing()).is_none());
 }
 #[test]
+fn openlux_spend_identity_cannot_substitute_for_discovery_identity() {
+    let store = Store::new();
+    store.install(false, true);
+    let host = Host::new(&store, false, true);
+    host.publication
+        .borrow_mut()
+        .providers
+        .get_mut(&CatalogProvider::Openlux)
+        .unwrap()
+        .identity = "openlux-credential".into();
+    assert!(run(CatalogRuntime::new().publish_paid_routing(&store, &host)).is_err());
+    assert!(host.requests.borrow().is_empty());
+    assert!(store.get(&keys::paid_routing()).is_none());
+}
+#[test]
+fn one_fact_legacy_configuration_is_rejected_before_discovery() {
+    let store = Store::new();
+    store.install(false, true);
+    let mut record = store.get(&keys::paid_control_config()).unwrap();
+    record.value["v"] = json!(1);
+    record
+        .value
+        .as_object_mut()
+        .unwrap()
+        .remove("openlux_discovery_binding");
+    store.put(keys::paid_control_config(), "legacy-config", record.value);
+    let host = Host::new(&store, false, true);
+    assert!(run(CatalogRuntime::new().publish_paid_routing(&store, &host)).is_err());
+    assert!(host.requests.borrow().is_empty());
+}
+#[test]
 fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     let store = Store::new();
     store.install(true, true);
@@ -311,6 +343,14 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     assert_eq!(observation.models[0]["input_price_per_token"], 0.001);
     assert_eq!(observation.models[0]["supports_tools"], true);
     assert!(observation.source_checks.is_empty());
+    let openlux: PaidProviderObservation = serde_json::from_value(
+        store
+            .get(&keys::paid_control_observation(PaidProvider::Metered))
+            .unwrap()
+            .value,
+    )
+    .unwrap();
+    assert_eq!(openlux.credential_binding, "openlux-discovery-credential");
 }
 #[test]
 fn retained_stale_catalog_is_usable_without_invented_refresh_expiry() {
@@ -981,6 +1021,7 @@ mod native_configuration {
             let inputs = ConfiguredPaidInputs::new(
                 Some(Secret::new("fixture-actual-surplus-secret".into())),
                 None,
+                None,
                 json!({"candidate":"controlled-fixture"}),
             )
             .unwrap();
@@ -1020,6 +1061,7 @@ mod native_configuration {
             assert!(!retained.contains("fixture-actual-surplus-secret"));
             let next = ConfiguredPaidInputs::new(
                 Some(Secret::new("fixture-rotated-surplus-secret".into())),
+                None,
                 None,
                 json!({"candidate":"controlled-fixture"}),
             )

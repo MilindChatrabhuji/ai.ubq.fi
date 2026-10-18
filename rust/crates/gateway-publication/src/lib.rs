@@ -10,4 +10,7 @@ pub use access_publication::{
 pub use control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, configured_paid_binding,
 };
-pub use wire::{PreparedPublicationCommand, PublicationDisposition, PublicationReceipt};
+pub use wire::{
+    ExpectedAccessPublication, PreparedPublicationCommand, PublicationDisposition,
+    PublicationReceipt,
+};

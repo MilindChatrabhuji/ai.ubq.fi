@@ -2,6 +2,8 @@
 //! The store must atomically commit every check and mutation, durably, before returning.
 //! Independent records preserve history without a bounded whole-ledger snapshot.
 
+pub mod capacity;
+mod capacity_rules;
 pub mod claude;
 mod kernel;
 pub mod keys;
@@ -14,6 +16,8 @@ pub mod reset;
 mod reset_recovery;
 mod reset_types;
 pub mod routing;
+mod routing_codec;
+mod routing_rules;
 mod routing_types;
 mod source_models;
 mod store;

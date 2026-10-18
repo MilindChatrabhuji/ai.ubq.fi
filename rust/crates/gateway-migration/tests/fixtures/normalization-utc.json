@@ -1,0 +1,81 @@
+{
+  "runtime": "bun@1.4.0",
+  "sourceGitSha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "timeZone": "UTC",
+  "locale": "en-US",
+  "dates": [
+    {
+      "input": "01/02/2024",
+      "epochMs": 1704153600000
+    },
+    {
+      "input": "2024-01-02T03:04:05",
+      "epochMs": 1704164645000
+    },
+    {
+      "input": "2024-03-10T02:30:00",
+      "epochMs": 1710037800000
+    },
+    {
+      "input": "2024-11-03T01:30:00",
+      "epochMs": 1730597400000
+    },
+    {
+      "input": "Tue, 02 Jan 2024 03:04:05 GMT",
+      "epochMs": 1704164645000
+    },
+    {
+      "input": "December 17, 1995 03:24:00",
+      "epochMs": 819170640000
+    },
+    {
+      "input": "0",
+      "epochMs": 946684800000
+    },
+    {
+      "input": "13/40/2024",
+      "epochMs": null
+    },
+    {
+      "input": "+275760-09-13T00:00:00.000Z",
+      "epochMs": 8640000000000000
+    }
+  ],
+  "collation": [
+    {
+      "left": "ä",
+      "right": "z",
+      "sign": -1
+    },
+    {
+      "left": "a",
+      "right": "A",
+      "sign": -1
+    },
+    {
+      "left": "é",
+      "right": "é",
+      "sign": 0
+    },
+    {
+      "left": "Å",
+      "right": "Z",
+      "sign": -1
+    },
+    {
+      "left": "İ",
+      "right": "i",
+      "sign": 1
+    },
+    {
+      "left": "ß",
+      "right": "ss",
+      "sign": 1
+    },
+    {
+      "left": "10",
+      "right": "2",
+      "sign": -1
+    }
+  ]
+}
