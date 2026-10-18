@@ -25,7 +25,10 @@ fn retry_after(headers: &Headers, at: i64) -> Option<u64> {
         .find(|(k, _)| k.eq_ignore_ascii_case("Retry-After"))?
         .1
         .trim();
-    if let Ok(seconds) = value.parse::<f64>() && seconds.is_finite() && seconds > 0.0 {
+    if let Ok(seconds) = value.parse::<f64>()
+        && seconds.is_finite()
+        && seconds > 0.0
+    {
         return Some((seconds * 1000.0).trunc().min(60_000.0) as u64);
     }
     let when = DateTime::parse_from_rfc2822(value)
