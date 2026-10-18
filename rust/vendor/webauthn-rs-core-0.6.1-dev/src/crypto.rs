@@ -35,7 +35,9 @@ pub fn verify_signature(
     verification_data: &[u8],
 ) -> Result<bool, WebauthnError> {
     let alg = crate::source_compat::key_algorithm(certificate)?;
-    COSEKey::try_from((alg, certificate))?.verify_signature(signature, verification_data)
+    let mut key = COSEKey::try_from((alg, certificate))?;
+    key.type_ = crate::source_compat::certificate_signature_algorithm(certificate)?;
+    key.verify_signature(signature, verification_data)
 }
 
 pub(crate) struct TpmSanData<'a> {
@@ -141,6 +143,15 @@ pub(crate) fn only_hash_from_type(
     }
 }
 
+// RustCrypto requires a minimum input width. Leading zero extension of a
+// shorter digest preserves the ECDSA message integer; the verifier still owns
+// curve validation, scalar parsing and signature verification.
+fn prehash_for_curve(alg: COSEAlgorithm, data: &[u8], minimum: usize) -> Result<Vec<u8>, WebauthnError> {
+    let digest = only_hash_from_type(alg, data)?;
+    if digest.len() >= minimum { return Ok(digest); }
+    let mut padded = vec![0; minimum - digest.len()]; padded.extend(digest); Ok(padded)
+}
+
 impl TryFrom<&serde_cbor_2::Value> for COSEKey {
     type Error = WebauthnError;
     fn try_from(d: &serde_cbor_2::Value) -> Result<COSEKey, Self::Error> {
@@ -194,9 +205,7 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
         // match key_type {
         // 1 => {} OctetKey
         if key_type == (COSEKeyTypeId::EC_EC2 as i128)
-            && (type_ == COSEAlgorithm::ES256
-                || type_ == COSEAlgorithm::ES384
-                || type_ == COSEAlgorithm::ES521)
+            && !matches!(type_, COSEAlgorithm::EDDSA | COSEAlgorithm::PinUvProtocol)
         {
             // This indicates this is an EC2 key consisting of crv, x, y, which are stored in
             // crv (-1), x (-2) and y (-3)
@@ -512,19 +521,19 @@ impl COSEKey {
                 let signature = EcdsaP256Signature::from_der(signature)
                     .map_err(|_err| WebauthnError::SignatureInvalid)?;
                 let verifier = EcdsaP256VerifyingKey::from(&pub_key);
-                Ok(verifier.verify_prehash(&only_hash_from_type(self.type_, verification_data)?, &signature).is_ok())
+                Ok(verifier.verify_prehash(&prehash_for_curve(self.type_, verification_data, 16)?, &signature).is_ok())
             }
             COSEKeyPublic::EcdsaP384(pub_key) => {
                 let signature = EcdsaP384Signature::from_der(signature)
                     .map_err(|_err| WebauthnError::SignatureInvalid)?;
                 let verifier = EcdsaP384VerifyingKey::from(&pub_key);
-                Ok(verifier.verify_prehash(&only_hash_from_type(self.type_, verification_data)?, &signature).is_ok())
+                Ok(verifier.verify_prehash(&prehash_for_curve(self.type_, verification_data, 24)?, &signature).is_ok())
             }
             COSEKeyPublic::EcdsaP521 => {
                 let raw = self.get_alg_key_ecc_x962_raw()?;
                 let verifier = p521::ecdsa::VerifyingKey::from_sec1_bytes(&raw).map_err(|_| WebauthnError::EcdsaPointInvalid)?;
                 let signature = p521::ecdsa::Signature::from_der(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
-                Ok(verifier.verify_prehash(&only_hash_from_type(self.type_, verification_data)?, &signature).is_ok())
+                Ok(verifier.verify_prehash(&prehash_for_curve(self.type_, verification_data, 33)?, &signature).is_ok())
             }
             COSEKeyPublic::Ed25519(verifier) => {
                 let signature = ed25519_dalek::Signature::from_slice(signature).map_err(|_| WebauthnError::SignatureInvalid)?;

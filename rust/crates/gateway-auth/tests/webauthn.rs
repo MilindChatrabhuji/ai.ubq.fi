@@ -153,7 +153,7 @@ fn counter_replay_and_malformed_algorithm_or_key_are_refused() {
                 .iter_mut()
                 .find(|(key, _)| *key == integer(3))
                 .unwrap()
-                .1 = integer(-257);
+                .1 = integer(-8);
         }
         assert!(parse_cose_key(&cbor(&cose)).is_err());
         assert!(parse_cose_key(&[0xa1, 1, 2]).is_err());
@@ -199,7 +199,11 @@ fn none_registration_validates_real_key_and_retains_exact_cose() {
         assert_eq!(verified.transports, vec!["internal"]);
         let mut wrong = registration("none");
         wrong.rp_id = "other.example".into();
-        assert!(verify_registration(&RealP256, wrong, 1_792_336_000_000).await.is_err());
+        assert!(
+            verify_registration(&RealP256, wrong, 1_792_336_000_000)
+                .await
+                .is_err()
+        );
     });
 }
 

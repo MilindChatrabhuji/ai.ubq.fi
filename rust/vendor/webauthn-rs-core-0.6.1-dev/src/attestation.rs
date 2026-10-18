@@ -719,7 +719,9 @@ pub(crate) fn verify_fidou2f_attestation(
         .collect();
 
     // Verify the sig using verificationData and certificate public key per [SEC1].
-    let verified = verify_signature(cerificate_public_key, sig, &verification_data)?;
+    let mut certificate_key = COSEKey::try_from((crate::source_compat::key_algorithm(cerificate_public_key)?, cerificate_public_key))?;
+    certificate_key.type_ = COSEAlgorithm::ES256;
+    let verified = certificate_key.verify_signature(sig, &verification_data)?;
 
     if !verified {
         error!("signature verification failed!");
@@ -949,7 +951,7 @@ pub(crate) fn verify_tpm_attestation(
                     v
                 }
                 TpmAlgId::Sha384 | TpmAlgId::Sha512 => {
-                    let (id, alg) = if pubarea.name_alg == TpmAlgId::Sha384 { (12, COSEAlgorithm::ES384) } else { (13, COSEAlgorithm::ES521) };
+                    let (id, alg) = if matches!(pubarea.name_alg, TpmAlgId::Sha384) { (12, COSEAlgorithm::ES384) } else { (13, COSEAlgorithm::ES521) };
                     let mut v = vec![0, id];
                     v.extend(only_hash_from_type(alg, pubarea_bytes)?); v
                 }
