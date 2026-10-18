@@ -110,6 +110,17 @@ const completedPartRepeatsEmittedContent = (emittedParts: ReadonlyMap<string, st
   return emitted === completed || emitted.startsWith(completed) ? emitted : null;
 };
 
+const completedPartRepeatForUnidentified = (
+  emittedParts: ReadonlyMap<string, string>,
+  key: string,
+  event: Record<string, unknown>,
+  completed: string,
+  identified: boolean
+): string | null => {
+  if (identified || emittedParts.has(key)) return null;
+  return completedPartRepeatsEmittedContent(emittedParts, event, completed);
+};
+
 export const reconcileChatContentPart = (
   outputTextParts: Map<string, string>,
   refusalParts: Map<string, string>,
@@ -128,7 +139,7 @@ export const reconcileChatContentPart = (
     if (completedText === null) {
       return malformedFunctionCallStream("Upstream completed content part is missing string output text.");
     }
-    const repeatedText = !identified && !outputTextParts.has(key) ? completedPartRepeatsEmittedContent(outputTextParts, event, completedText) : null;
+    const repeatedText = completedPartRepeatForUnidentified(outputTextParts, key, event, completedText, identified);
     if (repeatedText !== null) {
       outputTextParts.set(key, repeatedText);
       return { outputText: "", refusal: "" };
@@ -143,7 +154,7 @@ export const reconcileChatContentPart = (
     if (completedRefusal === null) {
       return malformedFunctionCallStream("Upstream completed content part is missing string refusal text.");
     }
-    const repeatedRefusal = !identified && !refusalParts.has(key) ? completedPartRepeatsEmittedContent(refusalParts, event, completedRefusal) : null;
+    const repeatedRefusal = completedPartRepeatForUnidentified(refusalParts, key, event, completedRefusal, identified);
     if (repeatedRefusal !== null) {
       refusalParts.set(key, repeatedRefusal);
       return { outputText: "", refusal: "" };
