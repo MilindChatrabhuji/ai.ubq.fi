@@ -44,13 +44,13 @@ const backlogFindings = (markdown: string): ReadonlyMap<string, string> => {
   const entries = new Map<string, string>();
   for (const line of markdown.split("\n")) {
     if (!line.startsWith("| `")) continue;
-    const cells = line.slice(1, -1).split("|").map((cell) => cell.trim());
+    const cells = line
+      .slice(1, -1)
+      .split("|")
+      .map((cell) => cell.trim());
     if (cells.length !== 8) throw new Error("Sentinel review backlog row has the wrong number of columns");
     const fingerprintCell = cells[0];
     const findingCell = cells[6];
-    if (fingerprintCell === undefined || findingCell === undefined) {
-      throw new Error("Sentinel review backlog row is missing required cells");
-    }
     const fingerprint = fingerprintCell.slice(1, -1);
     if (entries.has(fingerprint)) throw new Error(`Duplicate Sentinel review backlog fingerprint ${fingerprint}`);
     entries.set(fingerprint, decodeCell(findingCell));
@@ -60,17 +60,7 @@ const backlogFindings = (markdown: string): ReadonlyMap<string, string> => {
 
 const normalizedFinding = (finding: ReviewFinding): string => `${finding.title} — ${finding.body}`.trim().replace(/\s+/gu, " ");
 
-const archives = [
-  d465107dLocal,
-  pr244Github,
-  pr246Github,
-  pr247Github,
-  pr247Local,
-  pr248Github,
-  pr249Github,
-  pr250Github,
-  pr250Local,
-];
+const archives = [d465107dLocal, pr244Github, pr246Github, pr247Github, pr247Local, pr248Github, pr249Github, pr250Github, pr250Local];
 
 test("Sentinel backlog retains the complete archived finding text", () => {
   const backlog = backlogFindings(backlogText);
