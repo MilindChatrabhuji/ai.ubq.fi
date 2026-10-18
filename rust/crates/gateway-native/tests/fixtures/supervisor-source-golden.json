@@ -10,9 +10,7 @@
       "provider": null,
       "effort": "high",
       "state": "active",
-      "activeFlags": [
-        "needsInput"
-      ],
+      "activeFlags": ["needsInput"],
       "updatedAtMs": 1700000002000,
       "rolloutPath": "/fixture/home/sessions/rollout-thread-a.jsonl",
       "turns": [
@@ -795,10 +793,7 @@
   ],
   "parts": [
     {
-      "input": [
-        "password: \"zqfirst",
-        "zqsecond\" done"
-      ],
+      "input": ["password: \"zqfirst", "zqsecond\" done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -811,10 +806,7 @@
       ]
     },
     {
-      "input": [
-        "password: 'zqfirst",
-        "zqsecond' done"
-      ],
+      "input": ["password: 'zqfirst", "zqsecond' done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -827,10 +819,7 @@
       ]
     },
     {
-      "input": [
-        "password: `zqfirst",
-        "zqsecond` done"
-      ],
+      "input": ["password: `zqfirst", "zqsecond` done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -843,10 +832,7 @@
       ]
     },
     {
-      "input": [
-        "api_keys:[\"zqfirst\",",
-        "\"zqsecond\"] done"
-      ],
+      "input": ["api_keys:[\"zqfirst\",", "\"zqsecond\"] done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -859,10 +845,7 @@
       ]
     },
     {
-      "input": [
-        "tokens: [ api_keys:[\"zqfirst\",",
-        "\"zqsecond\"] done"
-      ],
+      "input": ["tokens: [ api_keys:[\"zqfirst\",", "\"zqsecond\"] done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -875,10 +858,7 @@
       ]
     },
     {
-      "input": [
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nzqfirst",
-        "zqsecond\n-----END OPENSSH PRIVATE KEY----- done"
-      ],
+      "input": ["-----BEGIN OPENSSH PRIVATE KEY-----\nzqfirst", "zqsecond\n-----END OPENSSH PRIVATE KEY----- done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -891,10 +871,7 @@
       ]
     },
     {
-      "input": [
-        "password:\"zqunclosed",
-        "Working on the refresh loop"
-      ],
+      "input": ["password:\"zqunclosed", "Working on the refresh loop"],
       "expected": [
         {
           "text": "[redacted]",
@@ -907,10 +884,7 @@
       ]
     },
     {
-      "input": [
-        "api_keys:[\"zqunclosed",
-        "Working on the refresh loop"
-      ],
+      "input": ["api_keys:[\"zqunclosed", "Working on the refresh loop"],
       "expected": [
         {
           "text": "[redacted]",
@@ -923,10 +897,7 @@
       ]
     },
     {
-      "input": [
-        "token=Bearer abcdefghijklmnop",
-        "done"
-      ],
+      "input": ["token=Bearer abcdefghijklmnop", "done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -939,10 +910,7 @@
       ]
     },
     {
-      "input": [
-        "password:\"zqvalue\"zqtailrun",
-        "done"
-      ],
+      "input": ["password:\"zqvalue\"zqtailrun", "done"],
       "expected": [
         {
           "text": "[redacted]",
@@ -1643,10 +1611,7 @@
         },
         "probe": {
           "runtimeStatus": "active",
-          "activeFlags": [
-            "waitingOnApproval",
-            "needsInput"
-          ],
+          "activeFlags": ["waitingOnApproval", "needsInput"],
           "turnStatus": "inProgress",
           "thread": {
             "id": "thread-a",
@@ -1664,9 +1629,7 @@
         },
         "loaded": true,
         "sampledAtMs": 1700000002000,
-        "childIds": [
-          "child"
-        ],
+        "childIds": ["child"],
         "unavailable": []
       },
       "expected": {
@@ -1686,16 +1649,11 @@
         "tokensUsed": 12345,
         "usageSource": "state_db",
         "state": "active",
-        "activeFlags": [
-          "waitingOnApproval",
-          "needsInput"
-        ],
+        "activeFlags": ["waitingOnApproval", "needsInput"],
         "loaded": true,
         "waitingOnApproval": true,
         "waitingOnUserInput": true,
-        "childIds": [
-          "child"
-        ],
+        "childIds": ["child"],
         "lastSampledAtMs": 1700000002000,
         "sampled": true,
         "unavailable": []
@@ -1729,9 +1687,7 @@
         "loaded": false,
         "sampledAtMs": 1700000002000,
         "childIds": null,
-        "unavailable": [
-          "persisted metadata shown; it may be stale"
-        ]
+        "unavailable": ["persisted metadata shown; it may be stale"]
       },
       "expected": {
         "id": "thread-a",
@@ -1757,9 +1713,7 @@
         "childIds": null,
         "lastSampledAtMs": 1700000002000,
         "sampled": false,
-        "unavailable": [
-          "persisted metadata shown; it may be stale"
-        ]
+        "unavailable": ["persisted metadata shown; it may be stale"]
       }
     }
   ],
@@ -1768,18 +1722,14 @@
       "input": null,
       "expected": {
         "sources": [],
-        "notes": [
-          "configuration must be a JSON object"
-        ]
+        "notes": ["configuration must be a JSON object"]
       }
     },
     {
       "input": {},
       "expected": {
         "sources": [],
-        "notes": [
-          "configuration lists no sources"
-        ]
+        "notes": ["configuration lists no sources"]
       }
     },
     {
@@ -1952,9 +1902,7 @@
             "codexHome": "/fixture/home"
           }
         ],
-        "notes": [
-          "only the first 8 sources are used"
-        ]
+        "notes": ["only the first 8 sources are used"]
       }
     }
   ],
@@ -3467,10 +3415,7 @@
       "provider": "p",
       "effort": "high",
       "state": "active",
-      "activeFlags": [
-        "password:\"zqfirst",
-        "zqsecond\""
-      ],
+      "activeFlags": ["password:\"zqfirst", "zqsecond\""],
       "updatedAtMs": 1700000000000,
       "rolloutPath": null,
       "turns": [
@@ -3513,9 +3458,7 @@
       "provider": "p",
       "effort": "high",
       "state": "active",
-      "activeFlags": [
-        "[redacted]"
-      ],
+      "activeFlags": ["[redacted]"],
       "updatedAtMs": 1700000000000,
       "rolloutPath": null,
       "turns": [
