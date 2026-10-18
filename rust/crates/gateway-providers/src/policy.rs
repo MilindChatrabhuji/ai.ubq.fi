@@ -55,3 +55,34 @@ impl LithosWindows {
 pub struct WaitBudget { pub waits:u8,pub waited_ms:i64,pub streamed:bool }
 impl WaitBudget { pub fn claim(&mut self,wait_ms:i64,retry_prohibited:bool)->bool { let(max_waits,total)=if self.streamed{(5,300_000)}else{(2,120_000)}; if retry_prohibited||wait_ms<=0||wait_ms>75_000||self.waits>=max_waits||self.waited_ms.saturating_add(wait_ms)>total{return false};self.waits+=1;self.waited_ms+=wait_ms;true } }
 pub fn direct_provider_label(provider:UpstreamProvider)->&'static str {match provider {UpstreamProvider::ChatgptCodex=>"chatgpt_codex",UpstreamProvider::ClaudeCode=>"claude_code",UpstreamProvider::Deepseek=>"deepseek",UpstreamProvider::Cerebras=>"cerebras",UpstreamProvider::Lithos=>"lithos",UpstreamProvider::Openrouter=>"openrouter",UpstreamProvider::RemovedProvider=>"removed_provider",UpstreamProvider::Metered=>"metered",UpstreamProvider::Surplus=>"surplus",UpstreamProvider::Voyage=>"voyage"} }
+/// Catalog/capability evidence used by the existing paid router, before authority admission.
+#[derive(Clone,Debug)]
+pub struct PaidRoutingInput {
+    pub model:String,pub endpoint_type:String,pub request_uses_tools:bool,pub codex_model_known:bool,
+    pub codex_enabled:bool,pub surplus_enabled:bool,pub openlux_enabled:bool,
+    pub surplus_configured:bool,pub openlux_configured:bool,
+    pub surplus_catalog:Option<Vec<Value>>,pub openlux_catalog:Option<Vec<Value>>,
+    pub allowed_paid_providers:Option<Vec<PaidProvider>>,
+    /// Server-owned scope; never derive this from a client JSON field.
+    pub synthetic_hop:Option<DeepseekHop>,pub ubiquity_enabled:bool,
+}
+#[derive(Clone,Debug,PartialEq)]
+pub struct PaidRoutingPlan {pub providers:Vec<PaidProvider>,pub paid_model_known:bool,pub metered_only:bool,pub codex_enabled:bool,pub surplus_billing:Option<Value>}
+fn supports_endpoint(row:Option<&Value>,endpoint:&str)->bool{row.and_then(|r|r["supported_endpoint_types"].as_array()).is_some_and(|a|a.iter().any(|e|e==endpoint))}
+fn valid_price(value:&Value)->Option<f64>{value.as_f64().filter(|v|v.is_finite()&&*v>=0.0)}
+fn flash_paid_id(model:&str)->bool{let slug=model.rsplit('/').next().unwrap_or(model).to_lowercase();let Some(rest)=slug.strip_prefix("deepseek-v")else{return false};let Some((version,tail))=rest.split_once("-flash")else{return false};!version.is_empty()&&version.chars().all(|c|c.is_ascii_digit()||c=='.')&&(tail.is_empty()||tail.strip_prefix('-').is_some_and(|d|(d.len()==4||d.len()==8)&&d.chars().all(|c|c.is_ascii_digit())))}
+pub fn resolve_paid_route(input:&PaidRoutingInput)->PaidRoutingPlan {
+    let surplus=input.surplus_catalog.as_ref().and_then(|a|a.iter().find(|r|r["id"]==input.model));let openlux=input.openlux_catalog.as_ref().and_then(|a|a.iter().find(|r|r["id"]==input.model));
+    let pinned=match input.synthetic_hop{Some(DeepseekHop::Surplus)=>Some(PaidProvider::Surplus),Some(DeepseekHop::Openlux)=>Some(PaidProvider::Metered),_=>None};
+    let verified_hop=flash_paid_id(&input.model)&&input.endpoint_type=="openai-response"&&input.ubiquity_enabled&&pinned.is_some()&&input.allowed_paid_providers.as_ref().is_some_and(|a|a.len()==1&&a.first()==pinned.as_ref());
+    let openlux_route=supports_endpoint(openlux,&input.endpoint_type)||(verified_hop&&pinned==Some(PaidProvider::Metered)&&supports_endpoint(openlux,"openai"));let surplus_route=supports_endpoint(surplus,&input.endpoint_type);
+    let surplus_billing=surplus.and_then(|row|{let input_price=valid_price(&row["input_price_per_token"])?;let output_price=valid_price(&row["output_price_per_token"])?;let mut value=serde_json::json!({"input_price_per_token":input_price,"output_price_per_token":output_price});for key in ["cache_read_price_per_token","cache_write_price_per_token"]{if let Some(price)=row.get(key){value[key]=price.clone();}}Some(value)});
+    let surplus_ok=(input.surplus_enabled||(verified_hop&&pinned==Some(PaidProvider::Surplus)))&&input.surplus_configured&&surplus_route&&surplus_billing.is_some()&&(!input.request_uses_tools||surplus.is_some_and(|r|r["supports_tools"]==true));
+    let openlux_ok=(input.openlux_enabled||(verified_hop&&pinned==Some(PaidProvider::Metered)))&&input.openlux_configured&&if input.openlux_catalog.is_none(){input.codex_model_known}else{openlux_route};
+    let providers=paid_order(surplus_ok,openlux_ok).into_iter().filter(|p|input.allowed_paid_providers.as_ref().is_none_or(|a|a.contains(p))).collect::<Vec<_>>();PaidRoutingPlan{metered_only:!providers.is_empty()&&!input.codex_model_known,providers,paid_model_known:openlux_route||surplus_route,codex_enabled:input.codex_enabled,surplus_billing}
+}
+#[derive(Clone,Debug,Eq,PartialEq)]
+pub enum PaidEntry { CodexPrimary, Direct(PaidProvider), Disabled }
+pub fn paid_entry(plan:&PaidRoutingPlan)->PaidEntry{if plan.metered_only||!plan.codex_enabled{plan.providers.first().copied().map(PaidEntry::Direct).unwrap_or(PaidEntry::Disabled)}else{PaidEntry::CodexPrimary}}
+pub fn validate_flash_effort(raw:&Value)->Result<(),gateway_core::GatewayError>{let effort=raw["reasoning"]["effort"].as_str().filter(|s|!s.trim().is_empty()).or_else(||raw["reasoning_effort"].as_str().filter(|s|!s.trim().is_empty()));if let Some(effort)=effort{if !["low","high","max"].contains(&effort.trim()){return Err(gateway_core::GatewayError::new(400,format!("The model 'ubiquity/deepseek-flash' supports reasoning efforts low, high, max; '{effort}' is not supported."),Some("unsupported_reasoning_effort")).with_param(Some("reasoning.effort")))}}Ok(())}
+pub fn deepseek_plan(configured:&[DeepseekHop],ubiquity_enabled:bool)->Vec<DeepseekHop>{if !ubiquity_enabled{return vec![]}DEEPSEEK_ORDER.into_iter().filter(|p|configured.contains(p)).collect()}

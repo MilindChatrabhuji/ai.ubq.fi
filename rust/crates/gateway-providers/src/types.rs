@@ -76,4 +76,3 @@ pub struct Elision { pub path: String, pub call_id: Option<String>, pub kind: St
 pub(crate) fn invalid(message: impl Into<String>, param: &str) -> gateway_core::GatewayError { gateway_core::GatewayError::new(400,message,Some("invalid_request_error")).with_param(Some(param)) }
 pub(crate) fn malformed(message: impl Into<String>) -> gateway_core::GatewayError { gateway_core::GatewayError::new(502,message,Some("upstream_stream_error")).with_type("server_error") }
 pub(crate) fn header<'a>(headers: &'a Headers, name: &str) -> Option<&'a str> { headers.iter().find(|(key,_)| key.eq_ignore_ascii_case(name)).map(|(_,v)|v.as_str()) }
-pub(crate) fn object(value: &Value) -> Result<serde_json::Map<String,Value>,gateway_core::GatewayError> { value.as_object().cloned().ok_or_else(|| invalid("Invalid JSON body", "")) }

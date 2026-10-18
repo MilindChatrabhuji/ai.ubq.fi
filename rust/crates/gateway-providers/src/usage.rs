@@ -3,7 +3,7 @@ use serde_json::{json,Value};
 use crate::types::ChatProfile;
 fn count(value:Option<&Value>)->Option<u64>{value.and_then(Value::as_u64).filter(|v|*v<=9_007_199_254_740_991)}
 pub fn chat_to_responses(value:&Value,profile:ChatProfile)->Option<Value>{
-    let input=count(value.get("prompt_tokens"))?;let output=count(value.get("completion_tokens"))?;let total=count(value.get("total_tokens")).unwrap_or(input.saturating_add(output));
+    if profile==ChatProfile::Claude{if !value.is_object(){return None}let mut result=json!({});for(source,target)in [("prompt_tokens","input_tokens"),("prompt_tokens_details","input_tokens_details"),("completion_tokens","output_tokens"),("completion_tokens_details","output_tokens_details"),("total_tokens","total_tokens"),("buyer_cost_micro","buyer_cost_micro"),("cost","cost"),("cost_details","cost_details")]{if let Some(value)=value.get(source){result[target]=value.clone();}}return Some(result)}let input=count(value.get("prompt_tokens"))?;let output=count(value.get("completion_tokens"))?;let total=count(value.get("total_tokens")).unwrap_or(input.saturating_add(output));
     let cached=if profile==ChatProfile::Deepseek{count(value.get("prompt_cache_hit_tokens")).or_else(||count(value["prompt_tokens_details"].get("cached_tokens")))}else{count(value["prompt_tokens_details"].get("cached_tokens"))}.filter(|v|*v<=input);
     let reasoning=count(value["completion_tokens_details"].get("reasoning_tokens")).filter(|v|*v<=output);
     let mut result=json!({"input_tokens":input,"output_tokens":output,"total_tokens":total});if let Some(cached)=cached{result["input_tokens_details"]=json!({"cached_tokens":cached});}if let Some(reasoning)=reasoning{result["output_tokens_details"]=json!({"reasoning_tokens":reasoning});}
