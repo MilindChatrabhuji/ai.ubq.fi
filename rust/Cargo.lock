@@ -1006,6 +1006,7 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-publication",
+ "getrandom 0.4.3",
  "httparse",
  "landlock",
  "libc",
