@@ -123,7 +123,7 @@ const config :Workerd.Config = (
       modules = [(name = "index.js", esModule = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"))})],
       compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
       globalOutbound = "driver",
-      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret")],
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret")],
       durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
       durableObjectStorage = (localDisk = "state")
     )),
@@ -420,6 +420,86 @@ async function observationCases(url: (path: string) => string, cases: string[]):
   cases.push("authenticated_prompt_analytics_reads_actual_authority");
 }
 
+async function extrasCases(input: {
+  url: (path: string) => string;
+  post: (path: string, body: unknown) => Promise<Response>;
+  rpc: (body: unknown) => Promise<Record<string, unknown>>;
+  events: () => Promise<unknown[]>;
+  lifecycle: (id: string) => Promise<Record<string, unknown>>;
+  cases: string[];
+}): Promise<void> {
+  const { url, post, rpc, events, lifecycle, cases } = input;
+  const requestBody = { model: "voyage-4-large", input: "fixture:embedding", dimensions: 256 };
+  const embedding = await post("/uos/embeddings", requestBody);
+  assert.equal(embedding.status, 200);
+  assert.equal(embedding.headers.get("x-uos-upstream"), "voyage");
+  const vectors = await objectBody(embedding);
+  assert(Array.isArray(vectors.data) && isObject(vectors.data[0]) && Array.isArray(vectors.data[0].embedding));
+  assert.equal(vectors.data[0].embedding.length, 256);
+  assert.equal(vectors.data[0].embedding[0], 0.125);
+  const embeddingId = embedding.headers.get("x-uos-request-id");
+  assert(embeddingId);
+  const committed = await lifecycle(embeddingId);
+  assert(isObject(committed.extras_dispatch));
+  assert.equal(committed.extras_dispatch.provider, "voyage");
+  assert(isObject(committed.kernel_override));
+  assert.equal(committed.kernel_override.terminal, "committed");
+  const dispatchCount = (await events()).filter((event) => isObject(event) && event.kind === "extras_dispatch").length;
+  assert.deepEqual(await objectBody(await post("/uos/embeddings", requestBody)), vectors);
+  assert.equal((await events()).filter((event) => isObject(event) && event.kind === "extras_dispatch").length, dispatchCount);
+  cases.push("actual_voyage_embedding_fixed_transport_cache_and_one_original_admission");
+
+  const queued = await post("/uos/embedding-jobs", { ...requestBody, input: "fixture:job-retry-secret", input_type: "document" });
+  assert.equal(queued.status, 202);
+  const job = await objectBody(queued);
+  assert.equal(typeof job.id, "string");
+  const encrypted = await rpc({
+    operation: "query",
+    selector: { kind: "prefix", prefix: tuple("embeddings", "jobs", "v2", "input"), start: null, end: null },
+    reverse: false,
+    limit: 10,
+    cursor: null,
+    now_ms: Date.now(),
+  });
+  assert(Array.isArray(encrypted.entries) && encrypted.entries.length > 0);
+  for (const entry of encrypted.entries) {
+    assert(isObject(entry) && isObject(entry.record) && isObject(entry.record.value));
+    const value = entry.record.value;
+    assert.equal(typeof value.iv_b64, "string");
+    assert.equal(typeof value.data_b64, "string");
+    assert.equal(Buffer.from(String(value.iv_b64), "base64").byteLength, 12);
+    assert.equal(Buffer.from(String(value.data_b64), "base64").byteLength, Buffer.byteLength("fixture:job-retry-secret") + 16);
+    assert(!JSON.stringify(value).includes("fixture:job-retry-secret"));
+  }
+  const recovered = await fetch(url(`/uos/embedding-jobs/${String(job.id)}`), { headers: { authorization: "Bearer fixture-access" } });
+  assert.equal(recovered.status, 200);
+  const completed = await objectBody(recovered);
+  assert.equal(completed.status, "succeeded");
+  assert(isObject(completed.result) && Array.isArray(completed.result.data) && completed.result.data.length === 1);
+  const pollId = recovered.headers.get("x-uos-request-id");
+  assert(pollId);
+  const poll = await lifecycle(pollId);
+  assert(isObject(poll.kernel_override));
+  assert.equal(poll.kernel_override.terminal, "released");
+  assert(isObject(poll.extras_dispatch));
+  assert.equal(poll.extras_dispatch.provider, "voyage");
+  assert.equal(poll.extras_dispatch.transport_started, true);
+  cases.push("actual_worker_aes_gcm_encrypted_job_poll_retry_and_released_kernel");
+
+  const decision = await post("/v1/systemone", { state: { ready: true }, questions: { proceed: { type: "noul", prompt: "Proceed?" } } });
+  assert.equal(decision.status, 200);
+  const answer = await objectBody(decision);
+  assert(isObject(answer.answers) && isObject(answer.answers.proceed));
+  assert.equal(answer.answers.proceed.probability, 0.75);
+  const decisionId = decision.headers.get("x-uos-request-id");
+  assert(decisionId);
+  const systemone = await lifecycle(decisionId);
+  assert(isObject(systemone.extras_dispatch));
+  assert.equal(systemone.extras_dispatch.provider, "openrouter");
+  assert.equal(systemone.extras_dispatch.transport_started, true);
+  cases.push("actual_systemone_fixed_openrouter_transport_and_dispatch_attribution");
+}
+
 async function inner(): Promise<void> {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
@@ -502,6 +582,7 @@ async function inner(): Promise<void> {
     cases.push("invalid_and_duplicate_client_versions_refused");
     await refusalCases(post, lifecycle, cases);
     await observationCases(url, cases);
+    await extrasCases({ url, post, rpc, events, lifecycle, cases });
     const response = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:json", stream: false });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-provider-request-id"), "provider-fixture-id");

@@ -120,6 +120,32 @@ async function upstream(request, env, context) {
   return new Response(stream, { headers: { "content-type": "text/event-stream", "x-request-id": "provider-fixture-id" } });
 }
 
+async function extrasUpstream(request, env) {
+  const url = new URL(request.url);
+  if (request.headers.get("authorization") !== "Bearer fixture-provider-secret") return new Response("Unexpected credential", { status: 401 });
+  if (url.hostname === "openrouter.ai" && url.pathname === "/api/v1/models" && request.method === "GET") {
+    return Response.json({ data: [{ id: "typesafe/jev-fast", name: "Fixture Jev" }] });
+  }
+  const body = await request.json();
+  await log(env, { kind: "extras_dispatch", hostname: url.hostname, path: url.pathname, body });
+  if (url.hostname === "api.voyageai.com" && url.pathname === "/v1/embeddings") {
+    const inputs = Array.isArray(body.input) ? body.input : [body.input];
+    if (inputs.some((input) => input.includes("fixture:job-retry"))) {
+      const prior = await env.CONTROL.getByName("runtime-control-v1").fetch("https://control.internal/events");
+      const calls = (await prior.json()).filter((event) => event.kind === "extras_dispatch" && JSON.stringify(event.body.input).includes("fixture:job-retry"));
+      if (calls.length === 1) return Response.json({ error: "Controlled retry" }, { status: 429, headers: { "retry-after": "0.01" } });
+    }
+    return Response.json({ data: inputs.map((_, index) => ({ index, embedding: Array(body.output_dimension).fill(0.125) })), usage: { total_tokens: 7 } });
+  }
+  if (url.hostname === "openrouter.ai" && url.pathname === "/api/v1/systemone") {
+    return Response.json({
+      answers: Object.fromEntries(Object.keys(body.questions).map((name) => [name, { probability: 0.75 }])),
+      usage: { input_tokens: 3, output_tokens: 1 },
+    });
+  }
+  return new Response("Unexpected extras upstream path", { status: 400 });
+}
+
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
@@ -130,6 +156,7 @@ export default {
       return Response.json({ full_name: "fixture-owner/fixture-repo" });
     }
     if (["api.deepseek.com", "api.cerebras.ai"].includes(url.hostname)) return upstream(request, env, context);
+    if (["api.voyageai.com", "openrouter.ai"].includes(url.hostname)) return extrasUpstream(request, env);
     if (url.pathname.startsWith("/public/")) {
       if (request.headers.get("x-fixture-disconnect") === "1") {
         request.signal.addEventListener("abort", () => console.error(JSON.stringify({ event: "fixture_incoming_abort", at_ms: Date.now() })), { once: true });
