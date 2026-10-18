@@ -1,5 +1,5 @@
 import { NativeAuthorityClient } from "../../../src/authority/native-authority-rpc.ts";
-import type { NativeCommand } from "../../../src/authority/native-authority-contracts.ts";
+import { NativeAuthorityError, type NativeCommand } from "../../../src/authority/native-authority-contracts.ts";
 const task: {
   url: string;
   principal: string;
@@ -21,5 +21,12 @@ const client = new NativeAuthorityClient(
   task.epoch
 );
 const results: unknown[] = [];
-for (const operation of task.operations) results.push(await client.call(operation.method, operation.args, operation.operationId));
+for (const operation of task.operations) {
+  try {
+    results.push(await client.call(operation.method, operation.args, operation.operationId));
+  } catch (error) {
+    if (!(error instanceof NativeAuthorityError)) throw error;
+    results.push({ fixtureError: { code: error.code } });
+  }
+}
 console.log(JSON.stringify({ runtime: Bun.version, results }));

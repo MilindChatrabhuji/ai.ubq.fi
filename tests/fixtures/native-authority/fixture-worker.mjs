@@ -1,6 +1,39 @@
 import { DurableObject } from "cloudflare:workers";
 import { NativeAuthority } from "../../../src/authority/native-authority.ts";
 import { NativeAuthorityClient, NativeAuthorityRpcServer } from "../../../src/authority/native-authority-rpc.ts";
+import { NativeAuthorityError } from "../../../src/authority/native-authority-contracts.ts";
+import { NativeAuthoritySql } from "../../../src/authority/native-authority-sql.ts";
+import {
+  CODEX_AUTH_POOL_KV_KEY,
+  CODEX_ACCOUNT_ROUTING_KV_KEY,
+  CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
+  CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY,
+} from "../../../src/authority/native-codex-contracts.ts";
+import { PAID_FALLBACK_REQUEST_LOG_RETENTION_MS } from "../../../src/authority/native-paid.ts";
+const reviewScenarios = [
+  "F01",
+  "F02-terminal",
+  "F02-delivery",
+  "F02-start",
+  "F02-provider",
+  "F03",
+  "F04",
+  "F05",
+  "F06",
+  "F07",
+  "F08",
+  "F09",
+  "F10",
+  "F11",
+  "F12",
+  "F13",
+  "transport-tuple",
+  "R2-paid-start",
+  "R2-shared-pagination",
+  "R2-provider-usage",
+  "R2-prefetch-release",
+  "R2-refresh-revision",
+];
 const epoch = "synthetic-native-do-epoch";
 const fixedNow = 18e11;
 const roles = ["inference", "transport", "terminal", "billing", "reconcile", "quota_admin", "reset", "observer"];
@@ -107,11 +140,139 @@ class SharedNativeAuthority extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.incarnation = crypto.randomUUID();
-    this.authority = new NativeAuthority(ctx.storage, initial(), () => fixedNow);
+    this.fixtureOwner = env.FIXTURE_OWNER;
+    this.ctx.storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS uos_fixture_review (id INTEGER PRIMARY KEY CHECK(id=1), scenario TEXT NOT NULL, now_ms INTEGER NOT NULL)"
+    );
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO uos_fixture_review VALUES(1,'main',?)", fixedNow);
+    const seed = initial();
+    seed.namespace += ":" + ctx.id.toString();
+    this.authority = new NativeAuthority(ctx.storage, seed, () => this.fixtureClock());
+    this.fixtureSql = new NativeAuthoritySql(ctx.storage, seed.namespace, seed.epoch);
   }
   execute(capabilityId, command) {
     return new NativeAuthorityRpcServer(this.authority, capabilityId).execute(command);
   }
+  fixtureClock() {
+    return this.ctx.storage.sql.exec("SELECT now_ms FROM uos_fixture_review WHERE id=1").one().now_ms;
+  }
+  fixtureReviewAuth(token, scenario) {
+    if (token !== this.fixtureOwner || !reviewScenarios.includes(scenario)) throw new Error("fixture review owner denied");
+    const state = this.ctx.storage.sql.exec("SELECT scenario FROM uos_fixture_review WHERE id=1").one();
+    if (state.scenario !== scenario) throw new Error("fixture review namespace mismatch");
+  }
+  fixtureReviewSetup(token, scenario) {
+    if (token !== this.fixtureOwner || !reviewScenarios.includes(scenario)) throw new Error("fixture review owner denied");
+    const state = this.ctx.storage.sql.exec("SELECT scenario FROM uos_fixture_review WHERE id=1").one();
+    if (state.scenario !== "main" && state.scenario !== scenario) throw new Error("fixture review namespace mismatch");
+    if (state.scenario === scenario) return { scenario, arrangement: "existing fixed synthetic fixture" };
+    this.ctx.storage.sql.exec("UPDATE uos_fixture_review SET scenario=? WHERE id=1", scenario);
+    if (scenario === "F08")
+      this.fixtureSql.transaction(() => {
+        const pool = this.fixtureSql.read("codex_pool", CODEX_AUTH_POOL_KV_KEY, fixedNow).value;
+        this.fixtureSql.write("codex_pool", CODEX_AUTH_POOL_KV_KEY, { ...pool, identities: [pool.identities[0]], selectedAccountHashes: ["a".repeat(64)] });
+      });
+    return { scenario, arrangement: "fixed synthetic owner/pool/time setup; not live publisher acceptance" };
+  }
+  fixtureReviewControl(token, scenario, action) {
+    this.fixtureReviewAuth(token, scenario);
+    const sql = this.fixtureSql,
+      now = this.fixtureClock();
+    if (action === "rotate" && ["F05", "F08"].includes(scenario)) {
+      sql.transaction(() => {
+        const pool = sql.read("codex_pool", CODEX_AUTH_POOL_KV_KEY, now).value;
+        const owner = sql.read("codex_owner", ["a".repeat(64)], now).value;
+        const credentialVersion = "e".repeat(64);
+        sql.write("codex_pool", CODEX_AUTH_POOL_KV_KEY, {
+          ...pool,
+          identities: pool.identities.map((identity) => (identity.slot === 0 ? { ...identity, credentialVersion } : identity)),
+        });
+        sql.write("codex_owner", ["a".repeat(64)], {
+          ...owner,
+          credentialVersion,
+          nativeGenerationHash: "generation-" + credentialVersion,
+          publicationRevision: "publication-" + credentialVersion,
+        });
+      });
+    } else if (action === "advance" && ["F08", "F11", "F12", "F13"].includes(scenario)) {
+      const delta = { F08: 1001, F11: 1, F12: 3600001, F13: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS + 1 }[scenario];
+      this.ctx.storage.sql.exec("UPDATE uos_fixture_review SET now_ms=? WHERE id=1", fixedNow + delta);
+    } else if (action === "install-reset" && scenario === "F09") {
+      const request = sql.page("request_lifetime", now, "", 100).find((entry) => entry.row.value.requestId === "proof-blocked").row.value;
+      if (request.selection?.kind !== "quota_blocked") throw new Error("fixture reset requires actual quota cohort");
+      const account = request.selection.blockedAccounts[0];
+      sql.transaction(() =>
+        sql.write("codex_reset", ["review-proof"], {
+          id: "review-proof",
+          account,
+          quotaResetAtMs: account.quotaResetAtMs,
+          routingGeneration: account.routingGeneration,
+          activeSnapshot: sql.read("codex_active", CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, now).value,
+          poolRevision: sql.read("codex_pool", CODEX_AUTH_POOL_KV_KEY, now).revision,
+          capacityRevision: sql.read("codex_capacity", CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, now).revision,
+          verified: true,
+        })
+      );
+    } else throw new Error("fixture review action denied");
+    return { scenario, action, now: this.fixtureClock(), arrangement: "fixed trusted test setup only" };
+  }
+  async fixtureReviewEvidence(token, scenario) {
+    this.fixtureReviewAuth(token, scenario);
+    const sql = this.fixtureSql,
+      now = this.fixtureClock();
+    const values = (family) => sql.page(family, now, "", 100).map((entry) => entry.row.value);
+    const requests = values("request_lifetime");
+    const request =
+      requests.find((row) =>
+        ["own-refresh-receipt", "current-invalid", "owned-probe", "kernel-lifetime", "retention-tombstone", "nonpaid", "responding-paid"].includes(
+          row.requestId
+        )
+      ) ?? requests[0];
+    const windows = values("api_window"),
+      paidWindows = values("paid_window"),
+      routing = sql.read("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, now);
+    const routingValueSha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(routing.value))))]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    return {
+      scenario,
+      incarnation: this.incarnation,
+      now,
+      routingValueSha256,
+      apiCommitted: windows.reduce((sum, row) => sum + row.committed_requests, 0),
+      apiReserved: windows.reduce((sum, row) => sum + row.reserved_requests, 0),
+      apiStates: values("api_request").map((row) => row.state),
+      paidReserved: paidWindows.reduce((sum, row) => sum + row.reserved_microcredits, 0),
+      paidSettled: paidWindows.reduce((sum, row) => sum + row.settled_microcredits, 0),
+      paidWindowIdentity: JSON.stringify(paidWindows),
+      paidCount: values("paid_request").length,
+      paidStates: values("paid_request").map((row) => ({ terminal: row.terminal_state, billing: row.billing_state })),
+      attemptCount: values("attempt_lifetime").length,
+      pendingDue: values("paid_pending").map((row) => row.next_reconciliation_at_ms),
+      gateRevision: values("paid_gate").length ? sql.page("paid_gate", now, "", 100)[0].row.revision : null,
+      kernelCount: values("kernel_reservation").length,
+      kernelBinding: JSON.stringify(request?.kernel ?? null),
+      credentialVersion: request?.codex?.credentialVersion ?? null,
+      requestedModel: request?.codex?.requestedModel ?? null,
+      probeToken: request?.codex?.probeToken ?? null,
+      probeGeneration: request?.codex?.probeGeneration ?? null,
+      routingGeneration: request?.codex?.routingGeneration ?? null,
+      routingRevision: routing.revision,
+      slotGeneration: routing.value?.slots[0]?.generation ?? null,
+      proofVerified: sql.read("codex_reset", ["review-proof"], now).value?.verified ?? null,
+      providerObserved: request?.providerObserved === true,
+      transport: request?.transport ? { provider: request.transport.provider, attemptHandle: request.transport.attemptHandle } : null,
+      responding: request?.responding ?? null,
+      rollups: values("paid_rollup").map((row) => ({
+        provider: row.provider,
+        request_count: row.request_count,
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+        spend_microcredits: row.spend_microcredits,
+      })),
+    };
+  }
+
   fixtureInspect() {
     const projection = {
       incarnation: this.incarnation,
@@ -164,23 +325,42 @@ class SharedNativeAuthority extends DurableObject {
 const boundClient = (stub, principal) => new NativeAuthorityClient({ execute: (command) => stub.execute(principal, command) }, epoch);
 var stdin_default = {
   async fetch(request, env) {
-    const url = new URL(request.url),
-      stub = env.AUTHORITY.getByName("one-native-gateway-coordination-atom");
-    if (url.pathname.startsWith("/__fixture/")) {
+    const url = new URL(request.url);
+    const review = /^\/review\/([^/]+)(\/.*)$/.exec(url.pathname);
+    const scenario = review?.[1] ?? null;
+    if (scenario !== null && !reviewScenarios.includes(scenario)) return new Response(null, { status: 403 });
+    const path = review?.[2] ?? url.pathname;
+    const stub = env.AUTHORITY.getByName(scenario ? "native-review-" + scenario : "one-native-gateway-coordination-atom");
+    if (path.startsWith("/__fixture/")) {
       if (request.headers.get("x-fixture-owner") !== env.FIXTURE_OWNER) return new Response(null, { status: 403 });
-      if (url.pathname === "/__fixture/inspect") return Response.json(await stub.fixtureInspect());
-      if (url.pathname === "/__fixture/crash") {
+      if (scenario && path === "/__fixture/setup") return Response.json(await stub.fixtureReviewSetup(env.FIXTURE_OWNER, scenario));
+      if (scenario && path === "/__fixture/control")
+        return Response.json(await stub.fixtureReviewControl(env.FIXTURE_OWNER, scenario, (await request.json()).action));
+      if (scenario && path === "/__fixture/evidence") return Response.json(await stub.fixtureReviewEvidence(env.FIXTURE_OWNER, scenario));
+      if (path === "/__fixture/inspect") return Response.json(await stub.fixtureInspect());
+      if (path === "/__fixture/crash") {
         await stub.fixtureCrash();
         return new Response(null, { status: 500 });
       }
       return new Response(null, { status: 404 });
     }
-    if (url.pathname.startsWith("/rpc/")) {
-      const principal = url.pathname.slice(5);
+    if (scenario && path.startsWith("/client/")) {
+      const principal = path.slice(8),
+        command = await request.json();
+      if (!initial().capabilities.some((cap) => cap.id === principal)) return new Response(null, { status: 403 });
+      try {
+        return Response.json({ result: await boundClient(stub, principal).call(command.method, command.args, command.operationId) });
+      } catch (error) {
+        if (!(error instanceof NativeAuthorityError)) throw error;
+        return Response.json({ error: { code: error.code } });
+      }
+    }
+    if (path.startsWith("/rpc/")) {
+      const principal = path.slice(5);
       if (!initial().capabilities.some((cap) => cap.id === principal)) return new Response(null, { status: 403 });
       return Response.json(await stub.execute(principal, await request.json()));
     }
-    if (url.pathname !== "/workflow") return new Response(null, { status: 404 });
+    if (path !== "/workflow") return new Response(null, { status: 404 });
     if (!env.SYNTHETIC_UPSTREAM) return new Response("Linux mixed transport fixture is not enabled", { status: 503 });
     const body = await request.json(),
       client = boundClient(stub, "workflow");
@@ -201,6 +381,7 @@ var stdin_default = {
     if (selection.kind !== "eligible") return Response.json(selection, { status: 503 });
     await client.call("refreshCodexAdmission", { handle });
     await client.call("markApiDispatch", { handle, provider: "chatgpt_codex" });
+    await client.call("recordTransportStarted", { handle, provider: "chatgpt_codex" });
     const upstream = await fetch(env.SYNTHETIC_UPSTREAM + (body.stream ? "/sse" : "/json"), {
       method: "POST",
       body: JSON.stringify({ requestId: body.requestId }),

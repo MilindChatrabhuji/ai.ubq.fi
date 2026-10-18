@@ -29,6 +29,8 @@ type MixedReport = {
   actualBunHttpClients: number;
   actualWorkerClients: boolean;
   providerCalls: number;
+  originalProviderCalls: number;
+  reviews: { id: string; clients: { bun: number; worker: number } }[];
   children: number;
   assertions: string[];
   phases: { name: string }[];
@@ -73,14 +75,44 @@ test("real mixed Bun HTTP and Worker clients preserve native authority contentio
     expect(report.mixedAcceptance).toBe("passed");
     expect(report.versions).toEqual({ node: "v24.21.0", miniflare: "5.20261012.1-beta", workerd: "1.20261012.1", esbuild: "0.28.2" });
     expect(report.fixtureImports).toEqual([
+      "../../../src/authority/native-authority-contracts.ts",
       "../../../src/authority/native-authority-rpc.ts",
+      "../../../src/authority/native-authority-sql.ts",
       "../../../src/authority/native-authority.ts",
+      "../../../src/authority/native-codex-contracts.ts",
+      "../../../src/authority/native-paid.ts",
       "cloudflare:workers",
     ]);
     expect(report.actualSQLiteDurableObject).toBe(true);
     expect(report.actualWorkerClients).toBe(true);
     expect(report.actualBunHttpClients).toBeGreaterThanOrEqual(12);
-    expect(report.providerCalls).toBe(3);
+    expect(report.originalProviderCalls).toBe(3);
+    expect(report.providerCalls).toBe(5);
+    expect(report.reviews.map((item) => item.id)).toEqual([
+      "F01",
+      "F02-terminal",
+      "F02-delivery",
+      "F02-start",
+      "F02-provider",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F08",
+      "F09",
+      "F10",
+      "F11",
+      "F12",
+      "F13",
+      "transport-tuple",
+      "R2-paid-start",
+      "R2-shared-pagination",
+      "R2-provider-usage",
+      "R2-prefetch-release",
+      "R2-refresh-revision",
+    ]);
+    expect(report.reviews.every((item) => item.clients.bun > 0 && item.clients.worker > 0)).toBe(true);
     expect(report.children).toBe(0);
     expect(report.assertions).toEqual(ASSERTIONS);
     expect(report.phases.map((phase) => phase.name)).toEqual(PHASES);
