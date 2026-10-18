@@ -876,6 +876,11 @@ pub fn parse_multipart_image(raw: &Value, files: &[MultipartFile]) -> Result<Par
     let raw = raw.as_object().ok_or_else(|| image_invalid("Image edits must include valid multipart form data.", ""))?;
     let allowed = ["model","prompt","n","size","quality","background","output_format","output_compression","stream","partial_images","user","input_fidelity","response_format"];
     let mut body = Value::Object(raw.clone());
+    for file in files {
+        if !["image", "image[]", "mask"].contains(&file.name.as_str()) {
+            return Err(image_invalid(format!("Unsupported image edit field: {}.", file.name), &file.name));
+        }
+    }
     for (key, value) in raw {
         if !allowed.contains(&key.as_str()) { return Err(image_invalid(format!("Unsupported image edit field: {key}."), key)); }
         if let Some(text) = value.as_str() {
