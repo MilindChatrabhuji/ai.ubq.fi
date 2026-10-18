@@ -21,7 +21,7 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
-    async fn observed_attempt(
+    pub(crate) async fn observed_attempt(
         &self,
         attempt: &PreparedAttempt,
     ) -> Result<(Journal, AttemptRecord), GatewayError> {
@@ -305,6 +305,14 @@ impl<
         failure: AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let (row, record) = self.observed_attempt(attempt).await?;
+        if matches!(record.fence, CredentialFence::Claude { .. })
+            && failure.origin == FailureOrigin::Provider
+        {
+            return Err(journal::unavailable(
+                "Claude refusals require the consumed actual response-head capability.",
+            )
+            .into());
+        }
         if failure.transport == TransportState::NotStarted && record.transport_started {
             return Err(journal::unavailable(
                 "NotStarted report conflicts with durable transport intent.",
@@ -334,7 +342,8 @@ impl<
                 },
             );
         }
-        if failure.origin == FailureOrigin::GatewayDeadline
+        if failure.origin == FailureOrigin::Gateway
+            || failure.origin == FailureOrigin::GatewayDeadline
             || (failure.origin != FailureOrigin::Provider
                 && failure.failure == HopFailure::Deadline)
         {
@@ -425,16 +434,6 @@ impl<
                     )
                     .into());
                 }
-            }
-        } else if matches!(record.fence, CredentialFence::Claude { .. })
-            && failure.origin == FailureOrigin::Provider
-        {
-            if self
-                .host
-                .record_claude_refusal(&record.fence, &record.model, &failure)
-                .await?
-            {
-                decision = RefusalDecision::Continue;
             }
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
             if gateway_providers::policy::paid_should_advance(

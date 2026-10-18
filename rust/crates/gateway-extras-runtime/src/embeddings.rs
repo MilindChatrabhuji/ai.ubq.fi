@@ -57,6 +57,7 @@ pub(crate) async fn fetch_chunk<H: ExtrasHost>(
         .await?;
     if !(200..300).contains(&response.status) {
         return Err(DispatchFailure {
+            origin: DispatchFailureOrigin::Upstream,
             error: Box::new(server(
                 format!("Voyage embeddings failed ({}).", response.status),
                 "upstream_error",
