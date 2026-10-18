@@ -170,7 +170,7 @@ pub fn verify_attestation_at_time(encoded: &[u8], hash: &[u8; 32], now: SystemTi
             trusted_chain(&certificates(&att.att_stmt)?, &roots(&[include_str!("../source-roots/Apple_WebAuthn_Root_CA.pem")])?, now)
         }
         "android-key" => {
-            verify_android_key_attestation(acd, &att, hash)?;
+            verify_source_android_key_attestation(acd, &att, hash)?;
             let chain = certificates(&att.att_stmt)?;
             let anchors = roots(&[include_str!("../source-roots/Google_Hardware_Attestation_Root_1.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_2.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_3.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_4.pem")])?;
             let root = chain.last().ok_or_else(failure)?;
@@ -180,4 +180,15 @@ pub fn verify_attestation_at_time(encoded: &[u8], hash: &[u8; 32], now: SystemTi
         "android-safetynet" => safetynet(&att, hash, now),
         _ => Err(WebauthnError::AttestationNotSupported),
     }
+}
+
+/// Parse and validate a complete COSE public key with the maintained key importer.
+pub fn validate_public_key(encoded: &[u8]) -> Result<(), WebauthnError> {
+    let key: Value = serde_cbor_2::from_slice(encoded).map_err(WebauthnError::ParseCBORFailure)?;
+    COSEKey::try_from(&key).map(|_| ())
+}
+/// Verify a DER ECDSA or native RSA/Ed25519 signature with maintained primitives.
+pub fn verify_public_key_signature(encoded: &[u8], signature: &[u8], data: &[u8]) -> Result<bool, WebauthnError> {
+    let key: Value = serde_cbor_2::from_slice(encoded).map_err(WebauthnError::ParseCBORFailure)?;
+    COSEKey::try_from(&key)?.verify_signature(signature, data)
 }

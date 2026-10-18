@@ -24,8 +24,8 @@ use crypto_glue::{
     },
     rsa::{BigUint, RS256PublicKey},
     s256,
-    traits::{Digest, OwnedToRef, Verifier},
-    x509::{self, Certificate, GeneralName, ObjectIdentifier, OtherName, SubjectAltName},
+    traits::{Digest, OwnedToRef, Verifier, hazmat::PrehashVerifier},
+    x509::{Certificate, GeneralName, ObjectIdentifier, OtherName, SubjectAltName},
 };
 
 /// Validate an x509 signature is valid for the supplied data
@@ -512,19 +512,19 @@ impl COSEKey {
                 let signature = EcdsaP256Signature::from_der(signature)
                     .map_err(|_err| WebauthnError::SignatureInvalid)?;
                 let verifier = EcdsaP256VerifyingKey::from(&pub_key);
-                Ok(verifier.verify(verification_data, &signature).is_ok())
+                Ok(verifier.verify_prehash(&only_hash_from_type(self.type_, verification_data)?, &signature).is_ok())
             }
             COSEKeyPublic::EcdsaP384(pub_key) => {
                 let signature = EcdsaP384Signature::from_der(signature)
                     .map_err(|_err| WebauthnError::SignatureInvalid)?;
                 let verifier = EcdsaP384VerifyingKey::from(&pub_key);
-                Ok(verifier.verify(verification_data, &signature).is_ok())
+                Ok(verifier.verify_prehash(&only_hash_from_type(self.type_, verification_data)?, &signature).is_ok())
             }
             COSEKeyPublic::EcdsaP521 => {
                 let raw = self.get_alg_key_ecc_x962_raw()?;
                 let verifier = p521::ecdsa::VerifyingKey::from_sec1_bytes(&raw).map_err(|_| WebauthnError::EcdsaPointInvalid)?;
                 let signature = p521::ecdsa::Signature::from_der(signature).map_err(|_| WebauthnError::SignatureInvalid)?;
-                Ok(verifier.verify(verification_data, &signature).is_ok())
+                Ok(verifier.verify_prehash(&only_hash_from_type(self.type_, verification_data)?, &signature).is_ok())
             }
             COSEKeyPublic::Ed25519(verifier) => {
                 let signature = ed25519_dalek::Signature::from_slice(signature).map_err(|_| WebauthnError::SignatureInvalid)?;

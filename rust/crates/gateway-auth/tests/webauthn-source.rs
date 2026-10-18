@@ -1,0 +1,45 @@
+//! Executed SimpleWebAuthn 13.2.2 goldens. Fixture clocks are historical test
+//! inputs; the product service supplies only its actual AuthHost clock.
+use std::{future::Future, task::{Context, Poll, Waker}};
+use ciborium::value::Value as Cbor;
+use gateway_auth::{GatewayError, crypto::{base64url, decode_base64url}, passkeys::RegistrationVerification, webauthn::*};
+use serde_json::Value;
+fn run<F: Future>(future: F) -> F::Output {
+    let mut cx = Context::from_waker(Waker::noop()); let mut future = std::pin::pin!(future);
+    loop { if let Poll::Ready(value) = future.as_mut().poll(&mut cx) { return value; } std::thread::yield_now(); }
+}
+fn integer(n: i64) -> Cbor { Cbor::Integer(n.into()) }
+fn cose(key: &CosePublicKey) -> Vec<u8> {
+    let value = |name: &str| Cbor::Bytes(decode_base64url(key.jwk[name].as_str().unwrap()).unwrap());
+    let fields = match key.jwk["kty"].as_str().unwrap() {
+        "EC" => vec![(integer(1),integer(2)),(integer(3),integer(key.algorithm.cose_id())),(integer(-1),integer(match key.jwk["crv"].as_str().unwrap() { "P-256"=>1,"P-384"=>2,_=>3 })),(integer(-2),value("x")),(integer(-3),value("y"))],
+        "RSA" => vec![(integer(1),integer(3)),(integer(3),integer(key.algorithm.cose_id())),(integer(-1),value("n")),(integer(-2),value("e"))],
+        _ => vec![(integer(1),integer(1)),(integer(3),integer(-8)),(integer(-1),integer(6)),(integer(-2),value("x"))],
+    };
+    let mut bytes = vec![]; ciborium::into_writer(&Cbor::Map(fields), &mut bytes).unwrap(); bytes
+}
+struct MaintainedCrypto;
+impl WebAuthnCrypto for MaintainedCrypto {
+    async fn validate_key(&self, key: &CosePublicKey) -> Result<(), GatewayError> {
+        webauthn_rs_core::source_compat::validate_public_key(&cose(key)).map_err(|_| gateway_auth::invalid("Invalid real COSE key"))
+    }
+    async fn verify_signature(&self, input: SignatureInput) -> Result<bool, GatewayError> {
+        let signature = match input.key.algorithm {
+            SignatureAlgorithm::Es256 => p256::ecdsa::Signature::from_slice(&input.signature).unwrap().to_der().as_bytes().to_vec(),
+            SignatureAlgorithm::Es384 => p384::ecdsa::Signature::from_slice(&input.signature).unwrap().to_der().as_bytes().to_vec(),
+            SignatureAlgorithm::Es512 => p521::ecdsa::Signature::from_slice(&input.signature).unwrap().to_der().as_bytes().to_vec(),
+            _ => input.signature,
+        };
+        webauthn_rs_core::source_compat::verify_public_key_signature(&cose(&input.key), &signature, &input.data).map_err(|_| gateway_auth::invalid("Invalid real signature"))
+    }
+}
+#[test]
+fn source_golden_registration_formats_and_exact_storage_bytes() {
+    let data: Value = serde_json::from_str(include_str!("fixtures/webauthn-source-golden.json")).unwrap();
+    for case in data["cases"].as_array().unwrap() {
+        let input = RegistrationVerification { response: case["response"].clone(),challenge:case["challenge"].as_str().unwrap().into(),origin:case["origin"].as_str().unwrap().into(),rp_id:case["rp_id"].as_str().unwrap().into(),require_user_verification:case["require_user_verification"].as_bool().unwrap() };
+        let result = run(verify_registration(&MaintainedCrypto,input,case["now_ms"].as_i64().unwrap()));
+        assert_eq!(result.is_ok(), case["expected_success"].as_bool().unwrap(), "{}: {result:?}",case["name"]);
+        if let Ok(result) = result { assert_eq!(base64url(&result.public_key),case["public_key"].as_str().unwrap(),"{}",case["name"]); }
+    }
+}
