@@ -144,9 +144,9 @@ export const lithosRefusalWait = (
   return planned;
 };
 
-/** Records the absorbed wait total so a terminal can report it. */
-export const recordLithosRateLimitWaitMs = (usageContext: UsageContext | undefined, waitedMs: number): void => {
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitWaitMs = waitedMs;
+/** Records the elapsed absorbed wait total so a terminal can report it. */
+export const recordLithosRateLimitWaitMs = (usageContext: UsageContext | undefined, elapsedMs: number): void => {
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitWaitMs = elapsedMs;
 };
 
 /** One absorbed pause, logged with the header it came from. */
@@ -167,19 +167,29 @@ const lithosRetryAbortError = (signal: AbortSignal): Error => {
   return error;
 };
 
-/** Abort-aware sleep: an abandoned request never keeps waiting for a provider window. */
-export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): Promise<void> => {
-  if (milliseconds <= 0) return Promise.resolve();
+/** Abort-aware sleep: an abandoned request never keeps waiting for a provider window; the observer sees elapsed time on either outcome. */
+export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal, onElapsed?: (elapsedMs: number) => void): Promise<void> => {
+  if (milliseconds <= 0) {
+    onElapsed?.(0);
+    return Promise.resolve();
+  }
   if (signal.aborted) {
+    onElapsed?.(0);
     return Promise.reject(lithosRetryAbortError(signal));
   }
+  const startedAt = performance.now();
+  const reportElapsed = (): void => {
+    onElapsed?.(Math.max(0, Math.round(performance.now() - startedAt)));
+  };
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
+      reportElapsed();
       resolve();
     }, milliseconds);
     function onAbort(): void {
       clearTimeout(timer);
+      reportElapsed();
       reject(lithosRetryAbortError(signal));
     }
     signal.addEventListener("abort", onAbort, { once: true });

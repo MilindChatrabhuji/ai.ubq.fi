@@ -2,7 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { DEEPSEEK_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
 import { iterateDeepSeekChatCompletionStream } from "../src/deepseek/stream.ts";
-import { createResponseTelemetryState, type UsageTokens } from "../src/openai-telemetry.ts";
+import { createResponseTelemetryState, getResponseTelemetry, type UsageTokens } from "../src/openai-telemetry.ts";
 import { relayChatCompletionStream, relayResponsesStream, type ProviderStreamAdapter, type ProviderStreamFrame } from "../src/provider/stream-relay.ts";
 import {
   appendResponsesPrecommitEvent,
@@ -392,6 +392,76 @@ test("Provider relays cancel a late deferred response without reading it", async
       await reader.cancel("test cleanup").catch(() => {});
       await releaseProbe(lateUpstream);
     }
+  }
+});
+
+test("Lithos handlers cancel deferred waits and report elapsed time through both stream relays", async () => {
+  const { handleChatCompletions } = await import("../src/chat/envelope.ts");
+  const { handleResponses } = await import("../src/responses-handler.ts");
+  const { setKvForTest, resetKvForTest } = await import("../src/kv.ts");
+  const { clearLithosFailoverWindows } = await import("../src/provider/lithos-rate-limits.ts");
+  const { SentinelKvStub } = await import("./helpers/sentinel-kv-stub.ts");
+  const { createFetchMock } = await import("./helpers/fetch-mock.ts");
+  const originalFetch = globalThis.fetch;
+  const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+  const originalKey = process.env.LITHOSAI_API_KEY;
+  let now = 100;
+  setKvForTest(new SentinelKvStub());
+  process.env.LITHOSAI_API_KEY = "lith_sk_fixture";
+  Object.defineProperty(performance, "now", { configurable: true, value: () => now });
+  try {
+    for (const route of ["chat", "responses"] as const) {
+      clearLithosFailoverWindows();
+      now = 100;
+      let calls = 0;
+      globalThis.fetch = createFetchMock(() => {
+        calls += 1;
+        return Promise.resolve(Response.json({ error: { message: "rate limit exceeded" } }, { status: 429, headers: { "retry-after-ms": "5000" } }));
+      });
+      const controller = new AbortController();
+      try {
+        const body = {
+          model: "deepseek-ai/DeepSeek-V4.1-Flash",
+          stream: true,
+          ...(route === "chat" ? { messages: [{ role: "user", content: "hi" }] } : { input: "hi" }),
+        };
+        const request = new Request(`https://ai.ubq.fi/v1/${route === "chat" ? "chat/completions" : "responses"}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const context = {
+          keyId: null,
+          kernelRepo: null,
+          kernelOrg: null,
+          requestId: `lithos-deferred-cancel-${route}`,
+          responseTelemetry: createResponseTelemetryState(),
+        };
+        const response = await (route === "chat" ? handleChatCompletions(request, context) : handleResponses(request, context));
+        assert.equal(response.status, 200);
+        assert.equal(calls, 1);
+        assert.equal(getResponseTelemetry(response)?.rateLimitWaitMs, null, "the pending window has not elapsed");
+        now = 125;
+        assert.ok(response.body);
+        await response.body.cancel("client disconnected");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(getResponseTelemetry(response)?.rateLimitWaitMs, 25, "stream cancellation records the elapsed wait, not the planned 5000ms");
+        assert.equal(getResponseTelemetry(response)?.streamTerminalType, "cancelled");
+        assert.equal(calls, 1, "cancelling the deferred stream must not dispatch again");
+      } finally {
+        controller.abort("test cleanup");
+        await Promise.resolve();
+      }
+    }
+  } finally {
+    clearLithosFailoverWindows();
+    resetKvForTest();
+    globalThis.fetch = originalFetch;
+    if (originalNow === undefined) Reflect.deleteProperty(performance, "now");
+    else Object.defineProperty(performance, "now", originalNow);
+    if (originalKey === undefined) Reflect.deleteProperty(process.env, "LITHOSAI_API_KEY");
+    else process.env.LITHOSAI_API_KEY = originalKey;
   }
 });
 

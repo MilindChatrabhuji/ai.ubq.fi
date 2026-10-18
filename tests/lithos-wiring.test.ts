@@ -163,6 +163,11 @@ const usageContext = (requestId: string) => ({
   startedAtMonotonicMs: performance.now(),
 });
 
+const assertElapsedRateLimitWait = (actualMs: number | null, plannedMs: number, message: string): void => {
+  if (actualMs === null) throw new Error(`${message}: no wait was recorded`);
+  assert.ok(actualMs >= plannedMs, `${message}: expected at least ${plannedMs}ms, observed ${actualMs}ms`);
+};
+
 /** The vendor's own refusal shape for a saturated budget, with its retry hint. */
 const lithosRateLimitRefusal = (retryAfterMs: string): Response =>
   Response.json(
@@ -971,7 +976,6 @@ test("lithos wiring: a refusal on both tiers is relayed without waiting", async 
     assert.equal(telemetry.streamTerminalType, "response.failed");
   });
 });
-
 test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own window, then the requested tier answers", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
@@ -994,14 +998,13 @@ test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own win
       assert.equal(chat.result.status, 200);
       const telemetry = getResponseTelemetry(chat.result);
       if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 120, "the absorbed window is reported");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 120, "the elapsed absorbed window is reported");
       assert.equal(telemetry.rateLimitFailoverModel, null, "the requested tier served after the absorbed window");
     } finally {
       clearLithosFailoverWindows();
     }
   });
 });
-
 test("lithos wiring: retry waits preserve deadline and caller cancellation without dispatching again", async () =>
   runSequence(async (step) => {
     await withLithosKey(async () => {
@@ -1027,8 +1030,8 @@ test("lithos wiring: retry waits preserve deadline and caller cancellation witho
                 const { result, calls } = await withUpstream(
                   () => {
                     if (timing === "already") abort();
-                    else setTimeout(abort, 0);
-                    return lithosRateLimitRefusal("10000");
+                    else setTimeout(abort, 20);
+                    return lithosRateLimitRefusal("5000");
                   },
                   () =>
                     route === "chat"
@@ -1044,7 +1047,12 @@ test("lithos wiring: retry waits preserve deadline and caller cancellation witho
                 if (telemetry === null) throw new Error("The retry-wait terminal carries no telemetry.");
                 assert.equal(telemetry.failureKind, kind);
                 assert.equal(telemetry.streamTerminalType, kind === "deadline" ? "deadline" : "cancelled");
-                assert.equal(telemetry.rateLimitWaitMs, 10_000, "the handler reached the vendor retry wait");
+                if (telemetry.rateLimitWaitMs === null) throw new Error("the handler did not record the interrupted retry wait");
+                assert.ok(
+                  telemetry.rateLimitWaitMs < 1_000,
+                  `the interrupted wait must report elapsed time, observed ${telemetry.rateLimitWaitMs}ms instead of roughly 20ms`
+                );
+                if (timing === "during") assert.ok(telemetry.rateLimitWaitMs > 0, "a wait interrupted after 20ms must report positive elapsed time");
                 await assert.rejects(waitForLithosRetry(10_000, controller.signal), (error) => error === reason);
               } finally {
                 if (originalTimeout !== undefined) Object.defineProperty(AbortSignal, "timeout", originalTimeout);
@@ -1055,7 +1063,6 @@ test("lithos wiring: retry waits preserve deadline and caller cancellation witho
       }
     });
   }));
-
 test("lithos wiring: a window beyond the wait cap is relayed instead of absorbed", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
@@ -1124,7 +1131,7 @@ test("lithos wiring: a streamed absorb spends the wider stream budget beyond two
       assert.match(streamed.result.text, /event: response\.completed/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 180, "three vendor windows are absorbed behind the open stream");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 180, "three elapsed vendor windows are absorbed behind the open stream");
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
       clearLithosFailoverWindows();
@@ -1157,7 +1164,7 @@ test("lithos wiring: a streamed absorb that outlives the stream budget reports t
       assert.doesNotMatch(streamed.result.text, /event: response\.completed/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 300, "the full streamed budget is reported");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 300, "the full elapsed streamed budget is reported");
       assert.equal(telemetry.streamTerminalType, "response.failed");
     } finally {
       clearLithosFailoverWindows();
@@ -1206,7 +1213,7 @@ test("lithos wiring: a streamed Chat absorb spends the wider stream budget beyon
       assert.match(streamed.result.text, /\[DONE\]/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 180, "three vendor windows are absorbed behind the open stream");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 180, "three elapsed vendor windows are absorbed behind the open stream");
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
       clearLithosFailoverWindows();
@@ -1235,7 +1242,7 @@ test("lithos wiring: a streamed Chat absorb that outlives the stream budget repo
       assert.doesNotMatch(streamed.result.text, /\[DONE\]/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 300, "the full streamed budget is reported");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 300, "the full elapsed streamed budget is reported");
       assert.equal(telemetry.streamTerminalType, "response.failed");
     } finally {
       clearLithosFailoverWindows();
@@ -1397,7 +1404,7 @@ test("lithos wiring: a streamed refusal on both tiers is absorbed by the vendor'
       assert.match(streamed.result.text, /event: response\.completed/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(telemetry.rateLimitWaitMs, 60, "the absorbed window is reported on the streamed terminal");
+      assertElapsedRateLimitWait(telemetry.rateLimitWaitMs, 60, "the elapsed absorbed window is reported on the streamed terminal");
       assert.equal(telemetry.rateLimitFailoverModel, null, "the requested tier served after the absorbed window");
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
