@@ -19,10 +19,12 @@ pub struct SourceEntry {
     pub value: Value,
     pub versionstamp: String,
     /// Explicit absolute source expiry; never reconstructed as now + TTL.
-    #[serde(deserialize_with="required_expiry")]
+    #[serde(deserialize_with = "required_expiry")]
     pub expires_at_ms: Option<i64>,
 }
-fn required_expiry<'de,D:serde::Deserializer<'de>>(input:D)->Result<Option<i64>,D::Error>{Option::<i64>::deserialize(input)}
+fn required_expiry<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<i64>, D::Error> {
+    Option::<i64>::deserialize(input)
+}
 impl std::fmt::Debug for PrivateCapture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PrivateCapture")

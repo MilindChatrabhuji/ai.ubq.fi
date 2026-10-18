@@ -17,14 +17,24 @@ pub(crate) fn bind(
         .map(|r| (r.key.0.clone(), r.record.clone()))
         .collect();
     let mut derived = Vec::new();
-    let mut defaults=KernelDefaults::default();let mut explicit_defaults=false;
-    if let Some(row)=snapshot.get(&key(json!(["default","kernel_policy_limit_requests"])).0) {
-        defaults.usage_limit_requests=gateway_admin_runtime::parse::limit(row.json_value()?).unwrap_or(-1);explicit_defaults=true;
+    let mut defaults = KernelDefaults::default();
+    let mut explicit_defaults = false;
+    if let Some(row) = snapshot.get(&key(json!(["default", "kernel_policy_limit_requests"])).0) {
+        defaults.usage_limit_requests =
+            gateway_admin_runtime::parse::limit(row.json_value()?).unwrap_or(-1);
+        explicit_defaults = true;
     }
-    if let Some(row)=snapshot.get(&key(json!(["default","kernel_policy_window_ms"])).0) {
-        defaults.window_ms=gateway_admin_runtime::parse::positive(row.json_value()?).unwrap_or(604800000);explicit_defaults=true;
+    if let Some(row) = snapshot.get(&key(json!(["default", "kernel_policy_window_ms"])).0) {
+        defaults.window_ms =
+            gateway_admin_runtime::parse::positive(row.json_value()?).unwrap_or(604800000);
+        explicit_defaults = true;
     }
-    if explicit_defaults {derived.push((keys::kernel_defaults(),StoredRecord::json(revision,json(&defaults)?,None)));}
+    if explicit_defaults {
+        derived.push((
+            keys::kernel_defaults(),
+            StoredRecord::json(revision, json(&defaults)?, None),
+        ));
+    }
     for row in rows.iter().filter(|r| live(r)) {
         if starts(&row.parts, &["ubq_ai", "api_keys", "id"]) {
             let id: gateway_admin::keys::ApiKeyRecord = decode(row.record.json_value()?)?;

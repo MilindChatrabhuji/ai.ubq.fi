@@ -33,29 +33,72 @@ pub(crate) fn manifest_key() -> RecordKey {
     key(json!(["uos_ai", "migration", "v2", "manifest"]))
 }
 pub(crate) fn mapping_key(id: &str, source: &str) -> RecordKey {
-    key(json!(["uos_ai", "migration", "v2", "row", id, gateway_auth::crypto::sha256_hex(source.as_bytes())]))
+    key(json!([
+        "uos_ai",
+        "migration",
+        "v2",
+        "row",
+        id,
+        gateway_auth::crypto::sha256_hex(source.as_bytes())
+    ]))
 }
 
-pub(crate) fn mapping_record(row:&Row,capture_id:&str)->Result<StoredRecord,GatewayError>{
-    Ok(StoredRecord::json(format!("capture:{capture_id}"),json(&row.mapping)?,None))
+pub(crate) fn mapping_record(row: &Row, capture_id: &str) -> Result<StoredRecord, GatewayError> {
+    Ok(StoredRecord::json(
+        format!("capture:{capture_id}"),
+        json(&row.mapping)?,
+        None,
+    ))
 }
-pub(crate) fn mapping_checksum(records:impl IntoIterator<Item=(String,StoredRecord)>)->Result<String,GatewayError>{
-    let mut entries=records.into_iter().map(|(key,record)|Ok((key,digest(&record)?))).collect::<Result<Vec<_>,GatewayError>>()?;entries.sort_by(|a,b|a.0.cmp(&b.0));
-    Ok(gateway_auth::crypto::sha256_hex(&serde_json::to_vec(&entries).map_err(|_|invalid("Mapping checksum cannot be encoded"))?))
+pub(crate) fn mapping_checksum(
+    records: impl IntoIterator<Item = (String, StoredRecord)>,
+) -> Result<String, GatewayError> {
+    let mut entries = records
+        .into_iter()
+        .map(|(key, record)| Ok((key, digest(&record)?)))
+        .collect::<Result<Vec<_>, GatewayError>>()?;
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(gateway_auth::crypto::sha256_hex(
+        &serde_json::to_vec(&entries).map_err(|_| invalid("Mapping checksum cannot be encoded"))?,
+    ))
 }
 
-fn validate_source_inventories(rows:&[Row],now:i64)->Result<(),GatewayError>{
-    use gateway_admin_data::migration::{ObservedRow,audit};
-    let observed:Vec<_>=rows.iter().filter(|r|r.record.expires_at_ms.is_none_or(|e|e>now)).map(|r|ObservedRow{key:r.key.clone(),parts:r.parts.clone(),record:r.record.clone()}).collect();
-    let (pairs,mut findings)=audit::inspect_key_pairs(&observed)?;
-    let known=pairs.iter().filter_map(|(id,_)|id.get("id").and_then(Value::as_str).map(str::to_owned)).collect();
-    let unlimited=pairs.iter().filter(|(id,_)|id["paid_fallback_limit_microcredits"]==-1).filter_map(|(id,_)|id["id"].as_str().map(str::to_owned)).collect();
-    findings.merge(audit::inspect_api_usage(&observed,&known)?);
+fn validate_source_inventories(rows: &[Row], now: i64) -> Result<(), GatewayError> {
+    use gateway_admin_data::migration::{ObservedRow, audit};
+    let observed: Vec<_> = rows
+        .iter()
+        .filter(|r| r.record.expires_at_ms.is_none_or(|e| e > now))
+        .map(|r| ObservedRow {
+            key: r.key.clone(),
+            parts: r.parts.clone(),
+            record: r.record.clone(),
+        })
+        .collect();
+    let (pairs, mut findings) = audit::inspect_key_pairs(&observed)?;
+    let known = pairs
+        .iter()
+        .filter_map(|(id, _)| id.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect();
+    let unlimited = pairs
+        .iter()
+        .filter(|(id, _)| id["paid_fallback_limit_microcredits"] == -1)
+        .filter_map(|(id, _)| id["id"].as_str().map(str::to_owned))
+        .collect();
+    findings.merge(audit::inspect_api_usage(&observed, &known)?);
     findings.merge(audit::inspect_kernel(&observed)?);
-    findings.merge(audit::inspect_paid(&observed,&known,&unlimited,now)?);
+    findings.merge(audit::inspect_paid(&observed, &known, &unlimited, now)?);
     findings.merge(audit::inspect_reset_usage(&observed)?);
-    findings.errors.extend(audit::inspect_model_snapshot(&observed)?);
-    if findings.errors.is_empty(){Ok(())}else{Err(invalid(format!("Complete source inventory validation failed: {}",findings.errors.join("; "))))}
+    findings
+        .errors
+        .extend(audit::inspect_model_snapshot(&observed)?);
+    if findings.errors.is_empty() {
+        Ok(())
+    } else {
+        Err(invalid(format!(
+            "Complete source inventory validation failed: {}",
+            findings.errors.join("; ")
+        )))
+    }
 }
 
 pub fn prepare(
@@ -66,7 +109,7 @@ pub fn prepare(
         &serde_json::to_vec(capture).map_err(|_| invalid("Capture cannot be encoded"))?,
     );
     let mut rows = capture.validate(host)?;
-    validate_source_inventories(&rows,capture.captured_at_ms)?;
+    validate_source_inventories(&rows, capture.captured_at_ms)?;
     for row in &mut rows {
         crate::projection::forward(row)?;
     }
@@ -97,7 +140,16 @@ pub fn prepare(
         source_git_sha: capture.source_git_sha.clone(),
         captured_at_ms: capture.captured_at_ms,
         source_rows: rows.len(),
-        mapping_checksum: mapping_checksum(rows.iter().map(|row|Ok((mapping_key(&capture_id,&row.key.0).0,mapping_record(row,&capture_id)?))).collect::<Result<Vec<_>,GatewayError>>()?)?,
+        mapping_checksum: mapping_checksum(
+            rows.iter()
+                .map(|row| {
+                    Ok((
+                        mapping_key(&capture_id, &row.key.0).0,
+                        mapping_record(row, &capture_id)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, GatewayError>>()?,
+        )?,
         derived: derived_digests,
     };
     Ok(PreparedAdoption {
@@ -135,7 +187,7 @@ pub async fn adopt_empty<S: QueryStore>(
         writes.push((row.key.clone(), row.record.clone()));
         writes.push((
             mapping_key(&prepared.manifest.capture_id, &row.key.0),
-            mapping_record(row,&prepared.manifest.capture_id)?,
+            mapping_record(row, &prepared.manifest.capture_id)?,
         ));
     }
     writes.extend(prepared.derived.clone());

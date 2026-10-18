@@ -13,66 +13,42 @@
     {
       "namespace": "default",
       "family": "*",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts"]
     },
     {
       "namespace": "default",
       "family": "kernel_policy_limit_requests",
-      "source_paths": [
-        "src/cache/kv-migration-validation.ts",
-        "src/defaults.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-validation.ts", "src/defaults.ts"]
     },
     {
       "namespace": "default",
       "family": "kernel_policy_window_ms",
-      "source_paths": [
-        "src/cache/kv-migration-validation.ts",
-        "src/defaults.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-validation.ts", "src/defaults.ts"]
     },
     {
       "namespace": "default",
       "family": "model",
-      "source_paths": [
-        "src/cache/kv-migration-validation.ts",
-        "src/cache/kv-migration.ts",
-        "src/defaults.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-validation.ts", "src/cache/kv-migration.ts", "src/defaults.ts"]
     },
     {
       "namespace": "default",
       "family": "reasoning_effort",
-      "source_paths": [
-        "src/cache/kv-migration-validation.ts",
-        "src/cache/kv-migration.ts",
-        "src/defaults.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-validation.ts", "src/cache/kv-migration.ts", "src/defaults.ts"]
     },
     {
       "namespace": "embeddings",
       "family": "idempotency",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts"]
     },
     {
       "namespace": "embeddings",
       "family": "jobs",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts",
-        "src/embeddings/ledger.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts", "src/embeddings/ledger.ts"]
     },
     {
       "namespace": "embeddings",
       "family": "v1",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts",
-        "src/embeddings/ledger.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts", "src/embeddings/ledger.ts"]
     },
     {
       "namespace": "embeddings",
@@ -86,25 +62,17 @@
     {
       "namespace": "key",
       "family": "config",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts",
-        "src/cache/kv-migration-validation.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts", "src/cache/kv-migration-validation.ts"]
     },
     {
       "namespace": "key",
       "family": "health",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts",
-        "src/cache/kv-migration-validation.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts", "src/cache/kv-migration-validation.ts"]
     },
     {
       "namespace": "key",
       "family": "implicit",
-      "source_paths": [
-        "src/models/codex-models.ts"
-      ]
+      "source_paths": ["src/models/codex-models.ts"]
     },
     {
       "namespace": "ubq_ai",
@@ -120,23 +88,17 @@
     {
       "namespace": "ubq_ai",
       "family": "claude_code_auth",
-      "source_paths": [
-        "src/provider/claude-code-credentials.ts"
-      ]
+      "source_paths": ["src/provider/claude-code-credentials.ts"]
     },
     {
       "namespace": "ubq_ai",
       "family": "claude_code_quota",
-      "source_paths": [
-        "src/provider/claude-code-quota.ts"
-      ]
+      "source_paths": ["src/provider/claude-code-quota.ts"]
     },
     {
       "namespace": "ubq_ai",
       "family": "claude_code_workspace",
-      "source_paths": [
-        "src/provider/claude-code-credentials.ts"
-      ]
+      "source_paths": ["src/provider/claude-code-credentials.ts"]
     },
     {
       "namespace": "ubq_ai",
@@ -151,37 +113,27 @@
     {
       "namespace": "ubq_ai",
       "family": "codex_catalog",
-      "source_paths": [
-        "src/catalog/types.ts"
-      ]
+      "source_paths": ["src/catalog/types.ts"]
     },
     {
       "namespace": "ubq_ai",
       "family": "codex_catalog_auth_generation",
-      "source_paths": [
-        "src/catalog/types.ts"
-      ]
+      "source_paths": ["src/catalog/types.ts"]
     },
     {
       "namespace": "ubq_ai",
       "family": "codex_catalog_chunk",
-      "source_paths": [
-        "src/catalog/types.ts"
-      ]
+      "source_paths": ["src/catalog/types.ts"]
     },
     {
       "namespace": "ubq_ai",
       "family": "codex_catalog_refresh_lease",
-      "source_paths": [
-        "src/catalog/types.ts"
-      ]
+      "source_paths": ["src/catalog/types.ts"]
     },
     {
       "namespace": "ubq_ai",
       "family": "codex_catalog_source_chunk",
-      "source_paths": [
-        "src/catalog/types.ts"
-      ]
+      "source_paths": ["src/catalog/types.ts"]
     },
     {
       "namespace": "ubq_ai",
@@ -206,9 +158,7 @@
     {
       "namespace": "uos_ai",
       "family": "admin_error_log",
-      "source_paths": [
-        "src/admin/error-log.ts"
-      ]
+      "source_paths": ["src/admin/error-log.ts"]
     },
     {
       "namespace": "uos_ai",
@@ -222,161 +172,112 @@
     {
       "namespace": "uos_ai",
       "family": "api_keys",
-      "source_paths": [
-        "src/admin/api-key-audit.ts"
-      ]
+      "source_paths": ["src/admin/api-key-audit.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "auth",
-      "source_paths": [
-        "src/auth/passkeys.ts",
-        "src/cache/kv-migration-base.ts",
-        "src/cache/kv-migration-validation.ts"
-      ]
+      "source_paths": ["src/auth/passkeys.ts", "src/cache/kv-migration-base.ts", "src/cache/kv-migration-validation.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "claude_code_access",
-      "source_paths": [
-        "src/provider/claude-code-access.ts"
-      ]
+      "source_paths": ["src/provider/claude-code-access.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "claude_code_accounts",
-      "source_paths": [
-        "src/provider/claude-code-accounts.ts"
-      ]
+      "source_paths": ["src/provider/claude-code-accounts.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "claude_code_quota",
-      "source_paths": [
-        "src/provider/claude-code-quota.ts"
-      ]
+      "source_paths": ["src/provider/claude-code-quota.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_account_models",
-      "source_paths": [
-        "src/models/codex-models-availability.ts"
-      ]
+      "source_paths": ["src/models/codex-models-availability.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_account_routing",
-      "source_paths": [
-        "src/authority/native-codex-contracts.ts"
-      ]
+      "source_paths": ["src/authority/native-codex-contracts.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_active_account",
-      "source_paths": [
-        "src/authority/native-codex-contracts.ts"
-      ]
+      "source_paths": ["src/authority/native-codex-contracts.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_auth_refresh",
-      "source_paths": [
-        "src/codex/auth.ts"
-      ]
+      "source_paths": ["src/codex/auth.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_banked_reset_usage",
-      "source_paths": [
-        "src/codex/reset-settings.ts"
-      ]
+      "source_paths": ["src/codex/reset-settings.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_capacity_routing",
-      "source_paths": [
-        "src/authority/native-codex-contracts.ts"
-      ]
+      "source_paths": ["src/authority/native-codex-contracts.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_instructions",
-      "source_paths": [
-        "src/admin/codex.ts",
-        "src/cache/kv-migration-base.ts"
-      ]
+      "source_paths": ["src/admin/codex.ts", "src/cache/kv-migration-base.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_instructions_chunk",
-      "source_paths": [
-        "src/admin/codex.ts",
-        "src/cache/kv-migration-base.ts"
-      ]
+      "source_paths": ["src/admin/codex.ts", "src/cache/kv-migration-base.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_live_calls",
-      "source_paths": [
-        "src/live/upstream.ts"
-      ]
+      "source_paths": ["src/live/upstream.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_models_whitelist",
-      "source_paths": [
-        "src/models/codex-models-whitelist.ts"
-      ]
+      "source_paths": ["src/models/codex-models-whitelist.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_overage_usage",
-      "source_paths": [
-        "src/codex/overage-settings.ts"
-      ]
+      "source_paths": ["src/codex/overage-settings.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_reset_redemption",
-      "source_paths": [
-        "src/codex/banked-reset.ts"
-      ]
+      "source_paths": ["src/codex/banked-reset.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_reset_shadow_decision",
-      "source_paths": [
-        "src/codex/banked-reset.ts"
-      ]
+      "source_paths": ["src/codex/banked-reset.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_reset_usage",
-      "source_paths": [
-        "src/codex/reset-settings.ts"
-      ]
+      "source_paths": ["src/codex/reset-settings.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "codex_session_activity",
-      "source_paths": [
-        "src/codex/session.ts"
-      ]
+      "source_paths": ["src/codex/session.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "debug_routing",
-      "source_paths": [
-        "src/debug-routing.ts"
-      ]
+      "source_paths": ["src/debug-routing.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "kernel_policy_queue",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts",
-        "src/kernel/policy-queue.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts", "src/kernel/policy-queue.ts"]
     },
     {
       "namespace": "uos_ai",
@@ -391,18 +292,12 @@
     {
       "namespace": "uos_ai",
       "family": "kernel_quota",
-      "source_paths": [
-        "src/authority/native-kernel.ts",
-        "src/cache/kv-migration-base.ts"
-      ]
+      "source_paths": ["src/authority/native-kernel.ts", "src/cache/kv-migration-base.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "metered_quota",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts",
-        "src/metered-quota.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts", "src/metered-quota.ts"]
     },
     {
       "namespace": "uos_ai",
@@ -428,23 +323,17 @@
     {
       "namespace": "uos_ai",
       "family": "prompt_cache_analytics",
-      "source_paths": [
-        "src/cache/prompt-analytics-core.ts"
-      ]
+      "source_paths": ["src/cache/prompt-analytics-core.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "prompt_cache_scope_experiment",
-      "source_paths": [
-        "src/cache/scope-experiment-model.ts"
-      ]
+      "source_paths": ["src/cache/scope-experiment-model.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "prompt_cache_telemetry_gate",
-      "source_paths": [
-        "src/cache/telemetry-gate.ts"
-      ]
+      "source_paths": ["src/cache/telemetry-gate.ts"]
     },
     {
       "namespace": "uos_ai",
@@ -462,31 +351,22 @@
     {
       "namespace": "uos_ai",
       "family": "provider_health",
-      "source_paths": [
-        "src/provider/health.ts"
-      ]
+      "source_paths": ["src/provider/health.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "provider_selection",
-      "source_paths": [
-        "src/provider/selection.ts"
-      ]
+      "source_paths": ["src/provider/selection.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "runtime_config",
-      "source_paths": [
-        "src/cache/kv-migration-base.ts",
-        "src/runtime-config.ts"
-      ]
+      "source_paths": ["src/cache/kv-migration-base.ts", "src/runtime-config.ts"]
     },
     {
       "namespace": "uos_ai",
       "family": "sentinel_incident",
-      "source_paths": [
-        "src/sentinel/incident-outbox.ts"
-      ]
+      "source_paths": ["src/sentinel/incident-outbox.ts"]
     },
     {
       "namespace": "uos_ai",

@@ -397,8 +397,9 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
             None,
         ),
     ]);
-    let mut input=input;
-    let (keys,_)=fixture();input.entries.extend(keys.entries.into_iter().take(2));
+    let mut input = input;
+    let (keys, _) = fixture();
+    input.entries.extend(keys.entries.into_iter().take(2));
     let store = SqliteStore::open(&path);
     run(adopt_empty(
         &store,
@@ -783,74 +784,311 @@ fn source_shaped_routing_capacity_keep_timeout_legacy_probe_and_named_limits_as_
 }
 
 #[test]
-fn reviewed_complete_source_key_inventory_has_no_silent_unknown_omissions(){
-    let inventory:Value=serde_json::from_str(include_str!("../source-key-inventory.json")).unwrap();assert_eq!(inventory["source_git_sha"],SOURCE);
-    for family in inventory["families"].as_array().unwrap(){let mut parts=vec![family["namespace"].clone()];if family["family"]!="*"{parts.push(family["family"].clone());}assert!(known_source_family(&parts),"unmapped reviewed source family {parts:?}");}
-    assert!(!known_source_family(&[json!("uos_ai"),json!("invented_new_authority")]));
+fn reviewed_complete_source_key_inventory_has_no_silent_unknown_omissions() {
+    let inventory: Value =
+        serde_json::from_str(include_str!("../source-key-inventory.json")).unwrap();
+    assert_eq!(inventory["source_git_sha"], SOURCE);
+    for family in inventory["families"].as_array().unwrap() {
+        let mut parts = vec![family["namespace"].clone()];
+        if family["family"] != "*" {
+            parts.push(family["family"].clone());
+        }
+        assert!(
+            known_source_family(&parts),
+            "unmapped reviewed source family {parts:?}"
+        );
+    }
+    assert!(!known_source_family(&[
+        json!("uos_ai"),
+        json!("invented_new_authority")
+    ]));
 }
 
 #[test]
-fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret(){
+fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() {
     use gateway_core::query::QueryStore;
-    let directory=Directory::new();let store=SqliteStore::open(&directory.file("private-sidecars.sqlite3"));let token="synthetic-session-secret-do-not-retain";
-    let input=capture(vec![source(json!(["uos_ai","auth","users","user-fixture"]),json!({"id":"user-fixture","handle":"fixture","is_admin":true,"credential_ids":[],"created_at_ms":1000,"updated_at_ms":2000}),"user-source",None),source(json!(["uos_ai","auth","handles","fixture"]),json!("user-fixture"),"handle-source",None),source(json!(["uos_ai","auth","sessions",token]),json!({"token":token,"user_id":"user-fixture","created_at_ms":2000,"expires_at_ms":9000}),"session-source",Some(9000))]);
-    run(adopt_empty(&store,&prepare(&input,&CanonicalDates).unwrap())).unwrap();
-    let session=key(json!(["uos_ai","auth","sessions",token]));run(store.commit(AtomicTransition{checks:vec![RevisionCheck{key:session.clone(),expected_revision:Some("session-source".into())}],mutations:vec![RecordMutation::Delete{key:session}]})).unwrap();
-    let metadata=run(store.query(gateway_core::query::QueryRequest{selector:gateway_core::query::QuerySelector::Prefix{prefix:key(json!(["uos_ai","migration"])),start:None,end:None},reverse:false,limit:100,cursor:None,now_ms:2300})).unwrap();
-    for row in metadata.entries{assert!(!serde_json::to_string(&row.record).unwrap().contains(token));assert!(!row.key.0.contains(&token.bytes().map(|b|format!("{b:02x}")).collect::<String>()));}
-    let inverse=run(export_latest(&store,2300)).unwrap();assert_eq!(inverse.entries.len(),2);assert!(!serde_json::to_string(&inverse).unwrap().contains(token));
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("private-sidecars.sqlite3"));
+    let token = "synthetic-session-secret-do-not-retain";
+    let input = capture(vec![
+        source(
+            json!(["uos_ai", "auth", "users", "user-fixture"]),
+            json!({"id":"user-fixture","handle":"fixture","is_admin":true,"credential_ids":[],"created_at_ms":1000,"updated_at_ms":2000}),
+            "user-source",
+            None,
+        ),
+        source(
+            json!(["uos_ai", "auth", "handles", "fixture"]),
+            json!("user-fixture"),
+            "handle-source",
+            None,
+        ),
+        source(
+            json!(["uos_ai", "auth", "sessions", token]),
+            json!({"token":token,"user_id":"user-fixture","created_at_ms":2000,"expires_at_ms":9000}),
+            "session-source",
+            Some(9000),
+        ),
+    ]);
+    run(adopt_empty(
+        &store,
+        &prepare(&input, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    let session = key(json!(["uos_ai", "auth", "sessions", token]));
+    run(store.commit(AtomicTransition {
+        checks: vec![RevisionCheck {
+            key: session.clone(),
+            expected_revision: Some("session-source".into()),
+        }],
+        mutations: vec![RecordMutation::Delete { key: session }],
+    }))
+    .unwrap();
+    let metadata = run(store.query(gateway_core::query::QueryRequest {
+        selector: gateway_core::query::QuerySelector::Prefix {
+            prefix: key(json!(["uos_ai", "migration"])),
+            start: None,
+            end: None,
+        },
+        reverse: false,
+        limit: 100,
+        cursor: None,
+        now_ms: 2300,
+    }))
+    .unwrap();
+    for row in metadata.entries {
+        assert!(!serde_json::to_string(&row.record).unwrap().contains(token));
+        assert!(
+            !row.key.0.contains(
+                &token
+                    .bytes()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            )
+        );
+    }
+    let inverse = run(export_latest(&store, 2300)).unwrap();
+    assert_eq!(inverse.entries.len(), 2);
+    assert!(!serde_json::to_string(&inverse).unwrap().contains(token));
 }
 
 #[test]
-fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert(){
-    let directory=Directory::new();let store=SqliteStore::open(&directory.file("kernel-defaults.sqlite3"));let input=capture(vec![source(json!(["default","kernel_policy_limit_requests"]),json!(1),"default-limit",None),source(json!(["default","kernel_policy_window_ms"]),json!(1000),"default-window",None)]);
-    run(adopt_empty(&store,&prepare(&input,&CanonicalDates).unwrap())).unwrap();
-    let authority=gateway_authority::Authority::with_clock(store.clone(),Tokens(AtomicU64::new(1)),Clock);
-    let reservation=run(authority.reserve_kernel("fixture-owner","fixture-repo",&RequestId("one-kernel-request".into()),"responses",2300)).unwrap();assert!(reservation.repo.is_none());
-    assert_eq!(run(authority.reserve_kernel("fixture-owner","fixture-repo",&RequestId("two-kernel-request".into()),"responses",2300)).unwrap_err().status,429);
-    let inverse=run(export_latest(&store,2300)).unwrap();let window=inverse.entries.iter().find(|e|e.key.get(3)==Some(&json!({"type":"string","value":"org_window"}))).unwrap();let value=from_profile(&window.value).unwrap().to_json_lossless().unwrap();assert_eq!(value["scope"],"org");assert!(value.get("repo").is_none());
-    let rollback=SqliteStore::open(&directory.file("kernel-inverse-new.sqlite3"));run(adopt_empty(&rollback,&prepare(&inverse,&CanonicalDates).unwrap())).unwrap();
+fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("kernel-defaults.sqlite3"));
+    let input = capture(vec![
+        source(
+            json!(["default", "kernel_policy_limit_requests"]),
+            json!(1),
+            "default-limit",
+            None,
+        ),
+        source(
+            json!(["default", "kernel_policy_window_ms"]),
+            json!(1000),
+            "default-window",
+            None,
+        ),
+    ]);
+    run(adopt_empty(
+        &store,
+        &prepare(&input, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    let authority =
+        gateway_authority::Authority::with_clock(store.clone(), Tokens(AtomicU64::new(1)), Clock);
+    let reservation = run(authority.reserve_kernel(
+        "fixture-owner",
+        "fixture-repo",
+        &RequestId("one-kernel-request".into()),
+        "responses",
+        2300,
+    ))
+    .unwrap();
+    assert!(reservation.repo.is_none());
+    assert_eq!(
+        run(authority.reserve_kernel(
+            "fixture-owner",
+            "fixture-repo",
+            &RequestId("two-kernel-request".into()),
+            "responses",
+            2300
+        ))
+        .unwrap_err()
+        .status,
+        429
+    );
+    let inverse = run(export_latest(&store, 2300)).unwrap();
+    let window = inverse
+        .entries
+        .iter()
+        .find(|e| e.key.get(3) == Some(&json!({"type":"string","value":"org_window"})))
+        .unwrap();
+    let value = from_profile(&window.value)
+        .unwrap()
+        .to_json_lossless()
+        .unwrap();
+    assert_eq!(value["scope"], "org");
+    assert!(value.get("repo").is_none());
+    let rollback = SqliteStore::open(&directory.file("kernel-inverse-new.sqlite3"));
+    run(adopt_empty(
+        &rollback,
+        &prepare(&inverse, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
 }
 
 #[test]
-fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts(){
-    let directory=Directory::new();let store=SqliteStore::open(&directory.file("typed-key.sqlite3"));let entry=SourceEntry{key:vec![json!({"type":"string","value":"default"}),json!({"type":"string","value":"typed-key"}),json!({"type":"boolean","value":true}),json!({"type":"bigint","value":"-123456789012345678901234567890"}),json!({"type":"Uint8Array","value":"AAH_AA","byteLength":4}),json!({"type":"number","value":"-0"})],value:json!({"type":"string","value":"typed tuple payload"}),versionstamp:"typed-key-source".into(),expires_at_ms:Some(9000)};let input=capture(vec![entry]);run(adopt_empty(&store,&prepare(&input,&CanonicalDates).unwrap())).unwrap();let output=run(export_latest(&store,2300)).unwrap();
-    let before=gateway_admin_data::profile::normalize_import_line(&serde_json::to_string(&input.entries[0]).unwrap()).unwrap().unwrap();let after=gateway_admin_data::profile::normalize_import_line(&serde_json::to_string(&output.entries[0]).unwrap()).unwrap().unwrap();assert_eq!(before.key,after.key);assert_eq!(before.value,after.value);assert_eq!(output.entries[0].versionstamp,"typed-key-source");
+fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts() {
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("typed-key.sqlite3"));
+    let entry = SourceEntry {
+        key: vec![
+            json!({"type":"string","value":"default"}),
+            json!({"type":"string","value":"typed-key"}),
+            json!({"type":"boolean","value":true}),
+            json!({"type":"bigint","value":"-123456789012345678901234567890"}),
+            json!({"type":"Uint8Array","value":"AAH_AA","byteLength":4}),
+            json!({"type":"number","value":"-0"}),
+        ],
+        value: json!({"type":"string","value":"typed tuple payload"}),
+        versionstamp: "typed-key-source".into(),
+        expires_at_ms: Some(9000),
+    };
+    let input = capture(vec![entry]);
+    run(adopt_empty(
+        &store,
+        &prepare(&input, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    let output = run(export_latest(&store, 2300)).unwrap();
+    let before = gateway_admin_data::profile::normalize_import_line(
+        &serde_json::to_string(&input.entries[0]).unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    let after = gateway_admin_data::profile::normalize_import_line(
+        &serde_json::to_string(&output.entries[0]).unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(before.key, after.key);
+    assert_eq!(before.value, after.value);
+    assert_eq!(output.entries[0].versionstamp, "typed-key-source");
 }
 
 #[test]
-fn a_profile_row_without_explicit_expiry_is_not_a_full_capture(){
-    let (capture,_)=fixture();let mut json=serde_json::to_value(&capture).unwrap();json["entries"][0].as_object_mut().unwrap().remove("expires_at_ms");assert!(serde_json::from_value::<PrivateCapture>(json).is_err());
+fn a_profile_row_without_explicit_expiry_is_not_a_full_capture() {
+    let (capture, _) = fixture();
+    let mut json = serde_json::to_value(&capture).unwrap();
+    json["entries"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("expires_at_ms");
+    assert!(serde_json::from_value::<PrivateCapture>(json).is_err());
 }
 
 #[test]
-fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it(){
-    let directory=Directory::new();let store=SqliteStore::open(&directory.file("control-custody.sqlite3"));let (input,_)=fixture();run(adopt_empty(&store,&prepare(&input,&CanonicalDates).unwrap())).unwrap();
-    let nonce=gateway_auth::native_replay::native_nonce_key();let nonce_value=json!({"v":1,"nonces":{"fixture-key:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA":9000}});store.put(nonce.clone(),StoredRecord::json("current-replay-fence",nonce_value.clone(),None));
-    let owner=gateway_authority::keys::paid_control_owner();store.put(owner.clone(),StoredRecord::json("current-owner-revision",json!({"v":1,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"f".repeat(64)}),None));
-    assert_eq!(run(export_latest(&store,2300)).unwrap_err().envelope.error.code.as_deref(),Some("migration_control_custody_required"));
-    let context=ArtifactContext{rust_git_sha:"a".repeat(40),rust_git_tree:"b".repeat(40),wasm_sha256:"c".repeat(64),native_sha256:"d".repeat(64),native_nonce_capture_sha256:Some("e".repeat(64))};
-    let bundle=run(export_rollback_bundle(&store,2300,context)).unwrap();assert_eq!(bundle.rust_controls.len(),2);let replay=bundle.rust_controls.iter().find(|r|r.key==nonce.0).unwrap();assert_eq!(replay.record.revision,"current-replay-fence");assert_eq!(replay.record.value,nonce_value);assert!(replay.record.expires_at_ms.is_none());
-    assert!(!bundle.source.entries.iter().any(|e|e.key.get(1)==Some(&json!({"type":"string","value":"native_nonce_registry"}))));
+fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it() {
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("control-custody.sqlite3"));
+    let (input, _) = fixture();
+    run(adopt_empty(
+        &store,
+        &prepare(&input, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    let nonce = gateway_auth::native_replay::native_nonce_key();
+    let nonce_value =
+        json!({"v":1,"nonces":{"fixture-key:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA":9000}});
+    store.put(
+        nonce.clone(),
+        StoredRecord::json("current-replay-fence", nonce_value.clone(), None),
+    );
+    let owner = gateway_authority::keys::paid_control_owner();
+    store.put(owner.clone(),StoredRecord::json("current-owner-revision",json!({"v":1,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"f".repeat(64)}),None));
+    assert_eq!(
+        run(export_latest(&store, 2300))
+            .unwrap_err()
+            .envelope
+            .error
+            .code
+            .as_deref(),
+        Some("migration_control_custody_required")
+    );
+    let context = ArtifactContext {
+        rust_git_sha: "a".repeat(40),
+        rust_git_tree: "b".repeat(40),
+        wasm_sha256: "c".repeat(64),
+        native_sha256: "d".repeat(64),
+        native_nonce_capture_sha256: Some("e".repeat(64)),
+    };
+    let bundle = run(export_rollback_bundle(&store, 2300, context)).unwrap();
+    assert_eq!(bundle.rust_controls.len(), 2);
+    let replay = bundle
+        .rust_controls
+        .iter()
+        .find(|r| r.key == nonce.0)
+        .unwrap();
+    assert_eq!(replay.record.revision, "current-replay-fence");
+    assert_eq!(replay.record.value, nonce_value);
+    assert!(replay.record.expires_at_ms.is_none());
+    assert!(
+        !bundle.source.entries.iter().any(
+            |e| e.key.get(1) == Some(&json!({"type":"string","value":"native_nonce_registry"}))
+        )
+    );
     // No restore API consumes these rows. Current transport ownership/replay must be reconciled externally.
-    let rollback=SqliteStore::open(&directory.file("source-only-new-destination.sqlite3"));run(adopt_empty(&rollback,&prepare(&bundle.source,&CanonicalDates).unwrap())).unwrap();assert!(run(rollback.read(&nonce)).unwrap().is_none());assert!(run(rollback.read(&owner)).unwrap().is_none());
+    let rollback = SqliteStore::open(&directory.file("source-only-new-destination.sqlite3"));
+    run(adopt_empty(
+        &rollback,
+        &prepare(&bundle.source, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    assert!(run(rollback.read(&nonce)).unwrap().is_none());
+    assert!(run(rollback.read(&owner)).unwrap().is_none());
 }
 
 #[test]
 fn inverse_refuses_to_drop_derived_kernel_policy_without_matching_source_defaults() {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("kernel-defaults-drift.sqlite3"));
-    let input = capture(vec![source(json!(["default", "kernel_policy_limit_requests"]), json!(1), "source-limit", None)]);
-    run(adopt_empty(&store, &prepare(&input, &CanonicalDates).unwrap())).unwrap();
+    let input = capture(vec![source(
+        json!(["default", "kernel_policy_limit_requests"]),
+        json!(1),
+        "source-limit",
+        None,
+    )]);
+    run(adopt_empty(
+        &store,
+        &prepare(&input, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
     let key = gateway_authority::keys::kernel_defaults();
     let mut changed = run(store.read(&key)).unwrap().unwrap();
     changed.revision = "independent-runtime-write".into();
     changed.value["usage_limit_requests"] = json!(17);
     store.put(key, changed);
-    assert_eq!(run(export_latest(&store, 2300)).unwrap_err().envelope.error.code.as_deref(), Some("migration_state_invalid"));
-    store.put(crate::key(json!(["default", "kernel_policy_limit_requests"])), StoredRecord::json("matching-current-source", json!(17), None));
+    assert_eq!(
+        run(export_latest(&store, 2300))
+            .unwrap_err()
+            .envelope
+            .error
+            .code
+            .as_deref(),
+        Some("migration_state_invalid")
+    );
+    store.put(
+        crate::key(json!(["default", "kernel_policy_limit_requests"])),
+        StoredRecord::json("matching-current-source", json!(17), None),
+    );
     let result = run(export_latest(&store, 2300)).unwrap();
-    assert_eq!(from_profile(&result.entries[0].value).unwrap().to_json_lossless(), Some(json!(17)));
+    assert_eq!(
+        from_profile(&result.entries[0].value)
+            .unwrap()
+            .to_json_lossless(),
+        Some(json!(17))
+    );
     assert_eq!(result.entries[0].versionstamp, "matching-current-source");
 }
 
@@ -859,12 +1097,29 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() {
     use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("mapping-integrity.sqlite3"));
-    let input = capture(vec![source(json!(["default", "fixture"]), json!("retained current data"), "original", None)]);
-    run(adopt_empty(&store, &prepare(&input, &CanonicalDates).unwrap())).unwrap();
+    let input = capture(vec![source(
+        json!(["default", "fixture"]),
+        json!("retained current data"),
+        "original",
+        None,
+    )]);
+    run(adopt_empty(
+        &store,
+        &prepare(&input, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
     let page = run(store.query(QueryRequest {
-        selector: QuerySelector::Prefix {prefix: key(json!(["uos_ai", "migration", "v2", "row"])), start: None, end: None},
-        reverse: false, limit: 10, cursor: None, now_ms: 2300,
-    })).unwrap();
+        selector: QuerySelector::Prefix {
+            prefix: key(json!(["uos_ai", "migration", "v2", "row"])),
+            start: None,
+            end: None,
+        },
+        reverse: false,
+        limit: 10,
+        cursor: None,
+        now_ms: 2300,
+    }))
+    .unwrap();
     let mapping = page.entries.first().unwrap();
     let mut corrupt = mapping.record.clone();
     corrupt.value["baseline_digest"] = json!("tampered baseline");
@@ -873,9 +1128,21 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() {
     store.put(mapping.key.clone(), mapping.record.clone());
     assert!(run(export_latest(&store, 2300)).is_ok());
     run(store.commit(AtomicTransition {
-        checks: vec![RevisionCheck {key: mapping.key.clone(), expected_revision: Some(mapping.record.revision.clone())}],
-        mutations: vec![RecordMutation::Delete {key: mapping.key.clone()}],
-    })).unwrap();
+        checks: vec![RevisionCheck {
+            key: mapping.key.clone(),
+            expected_revision: Some(mapping.record.revision.clone()),
+        }],
+        mutations: vec![RecordMutation::Delete {
+            key: mapping.key.clone(),
+        }],
+    }))
+    .unwrap();
     assert!(run(export_latest(&store, 2300)).is_err());
-    assert_eq!(run(store.read(&key(json!(["default", "fixture"])))).unwrap().unwrap().value, "retained current data");
+    assert_eq!(
+        run(store.read(&key(json!(["default", "fixture"]))))
+            .unwrap()
+            .unwrap()
+            .value,
+        "retained current data"
+    );
 }

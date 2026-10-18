@@ -20,19 +20,36 @@ fn source_profile_key(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
             DecodedKeyPart::Number(n) => to_profile(&PortableValue::number(n)),
             DecodedKeyPart::Boolean(v) => Ok(json!({"type":"boolean","value":v})),
             DecodedKeyPart::Bytes(v) => Ok(json!({"type":"Uint8Array","value":encode_base64(&v)})),
-            DecodedKeyPart::BigInt { negative, magnitude } => Ok(json!({"type":"bigint","value":decimal_key(negative,&magnitude)})),
+            DecodedKeyPart::BigInt {
+                negative,
+                magnitude,
+            } => Ok(json!({"type":"bigint","value":decimal_key(negative,&magnitude)})),
         })
         .collect()
 }
-pub(crate) fn decimal_key(negative:bool,magnitude:&[u8])->String {
-    let mut digits=vec![0_u32];
+pub(crate) fn decimal_key(negative: bool, magnitude: &[u8]) -> String {
+    let mut digits = vec![0_u32];
     for byte in magnitude {
-        let mut carry=u32::from(*byte);
-        for digit in &mut digits {let value=*digit*256+carry;*digit=value%10;carry=value/10;}
-        while carry>0 {digits.push(carry%10);carry/=10;}
+        let mut carry = u32::from(*byte);
+        for digit in &mut digits {
+            let value = *digit * 256 + carry;
+            *digit = value % 10;
+            carry = value / 10;
+        }
+        while carry > 0 {
+            digits.push(carry % 10);
+            carry /= 10;
+        }
     }
-    let mut decimal=digits.into_iter().rev().map(|d|char::from_digit(d,10).expect("decimal digit")).collect::<String>();
-    if negative && decimal!="0" {decimal.insert(0,'-');} decimal
+    let mut decimal = digits
+        .into_iter()
+        .rev()
+        .map(|d| char::from_digit(d, 10).expect("decimal digit"))
+        .collect::<String>();
+    if negative && decimal != "0" {
+        decimal.insert(0, '-');
+    }
+    decimal
 }
 fn overlay(original: &Value, current: &Value) -> Result<Value, GatewayError> {
     let mut out = original.as_object().cloned().unwrap_or_default();
@@ -117,8 +134,15 @@ fn inverse_value(
         Transform::PaidGate => remove(&mut out, &["pending"]),
         Transform::Identity | Transform::CatalogBytes => {}
     }
-    if matches!(transform,Transform::KernelWindow|Transform::KernelRequest) {
-        out["scope"]=json!(if out.get("repo").is_some_and(Value::is_string){"repo"}else{"org"});
+    if matches!(
+        transform,
+        Transform::KernelWindow | Transform::KernelRequest
+    ) {
+        out["scope"] = json!(if out.get("repo").is_some_and(Value::is_string) {
+            "repo"
+        } else {
+            "org"
+        });
     }
     if matches!(
         transform,
@@ -166,7 +190,7 @@ fn transform_for_new(parts: &[Value]) -> Transform {
 async fn export_internal<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<(PrivateCapture,Vec<CustodyRecord>), GatewayError> {
+) -> Result<(PrivateCapture, Vec<CustodyRecord>), GatewayError> {
     let manifest = store
         .read(&manifest_key())
         .await?
@@ -206,23 +230,38 @@ async fn export_internal<S: QueryStore>(
             break;
         }
     }
-    let mapping_prefix=key(json!(["uos_ai","migration","v2","row",manifest.capture_id]));
-    let prefix=TupleKey::from_record_key(&mapping_prefix)?;
-    let mappings=all.iter().filter_map(|(key,record)|{
-        let tuple=TupleKey::from_record_key(&RecordKey(key.clone())).ok()?;
-        tuple.is_strict_descendant_of(&prefix).then_some((key.clone(),record.clone()))
-    }).collect::<Vec<_>>();
-    if mappings.len()!=manifest.source_rows || crate::engine::mapping_checksum(mappings)?!=manifest.mapping_checksum {
+    let mapping_prefix = key(json!([
+        "uos_ai",
+        "migration",
+        "v2",
+        "row",
+        manifest.capture_id
+    ]));
+    let prefix = TupleKey::from_record_key(&mapping_prefix)?;
+    let mappings = all
+        .iter()
+        .filter_map(|(key, record)| {
+            let tuple = TupleKey::from_record_key(&RecordKey(key.clone())).ok()?;
+            tuple
+                .is_strict_descendant_of(&prefix)
+                .then_some((key.clone(), record.clone()))
+        })
+        .collect::<Vec<_>>();
+    if mappings.len() != manifest.source_rows
+        || crate::engine::mapping_checksum(mappings)? != manifest.mapping_checksum
+    {
         return Err(invalid("Inverse mapping inventory is missing or modified"));
     }
     let mut entries = Vec::new();
-    let mut controls=Vec::new();
+    let mut controls = Vec::new();
     for (k, record) in &all {
         let key = RecordKey(k.clone());
-        if let Some(mapping) = all.get(&mapping_key(&manifest.capture_id,k).0) {
+        if let Some(mapping) = all.get(&mapping_key(&manifest.capture_id, k).0) {
             let mapping: Mapping = decode(mapping.json_value()?)?;
             let mut source = mapping.source.clone();
-            if mapping.transform==Transform::Identity {source.key=source_profile_key(&key)?;}
+            if mapping.transform == Transform::Identity {
+                source.key = source_profile_key(&key)?;
+            }
             if mapping.transform != Transform::Identity
                 && digest(record)? == mapping.baseline_digest
             {
@@ -240,22 +279,36 @@ async fn export_internal<S: QueryStore>(
         if starts(&p, &["uos_ai", "migration"]) {
             continue;
         }
-        if key==gateway_auth::native_replay::native_nonce_key() {
+        if key == gateway_auth::native_replay::native_nonce_key() {
             record.validate_version()?;
-            controls.push(CustodyRecord{key:k.clone(),record:record.clone()});continue;
+            controls.push(CustodyRecord {
+                key: k.clone(),
+                record: record.clone(),
+            });
+            continue;
         }
         if starts(&p, &["uos_ai", "authority"]) {
             if key == gateway_authority::keys::kernel_defaults() {
                 let mut expected = gateway_authority::quota::KernelDefaults::default();
-                if let Some(source) = all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0) {
-                    expected.usage_limit_requests = gateway_admin_runtime::parse::limit(source.json_value()?).unwrap_or(-1);
+                if let Some(source) =
+                    all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)
+                {
+                    expected.usage_limit_requests =
+                        gateway_admin_runtime::parse::limit(source.json_value()?).unwrap_or(-1);
                 }
-                if let Some(source) = all.get(&crate::key(json!(["default", "kernel_policy_window_ms"])).0) {
-                    expected.window_ms = gateway_admin_runtime::parse::positive(source.json_value()?).unwrap_or(604800000);
+                if let Some(source) =
+                    all.get(&crate::key(json!(["default", "kernel_policy_window_ms"])).0)
+                {
+                    expected.window_ms =
+                        gateway_admin_runtime::parse::positive(source.json_value()?)
+                            .unwrap_or(604800000);
                 }
-                let actual: gateway_authority::quota::KernelDefaults = decode(record.json_value()?)?;
+                let actual: gateway_authority::quota::KernelDefaults =
+                    decode(record.json_value()?)?;
                 if actual != expected {
-                    return Err(invalid("Latest derived Kernel defaults differ from source defaults; inverse would lose policy"));
+                    return Err(invalid(
+                        "Latest derived Kernel defaults differ from source defaults; inverse would lose policy",
+                    ));
                 }
             }
             if p.get(3).and_then(Value::as_str) == Some("api_policy") {
@@ -278,8 +331,23 @@ async fn export_internal<S: QueryStore>(
                     ));
                 }
             }
-            if p.get(3).and_then(Value::as_str).is_some_and(|s|["codex_pool","paid_routing","paid_control_owner","paid_control_config","paid_control_observation","codex_reset_config"].contains(&s)) {
-                record.validate_version()?;controls.push(CustodyRecord{key:k.clone(),record:record.clone()});continue;
+            if p.get(3).and_then(Value::as_str).is_some_and(|s| {
+                [
+                    "codex_pool",
+                    "paid_routing",
+                    "paid_control_owner",
+                    "paid_control_config",
+                    "paid_control_observation",
+                    "codex_reset_config",
+                ]
+                .contains(&s)
+            }) {
+                record.validate_version()?;
+                controls.push(CustodyRecord {
+                    key: k.clone(),
+                    record: record.clone(),
+                });
+                continue;
             }
             if p.get(3).and_then(Value::as_str).is_some_and(|s| {
                 [
@@ -327,32 +395,73 @@ async fn export_internal<S: QueryStore>(
     // A private export is not a successful rollback until every latest source/index
     // invariant can be re-adopted. This reads no old database or backup.
     crate::prepare(&result, &CanonicalDates)?;
-    Ok((result,controls))
+    Ok((result, controls))
 }
 
 /// Source data alone is insufficient once a Rust transport/control owner exists.
-pub async fn export_latest<S:QueryStore>(store:&S,now_ms:i64)->Result<PrivateCapture,GatewayError>{
-    let (source,controls)=export_internal(store,now_ms).await?;
-    if !controls.is_empty(){return Err(GatewayError::unavailable("Rust-only control/replay custody requires export_rollback_bundle; source-only export would omit it","migration_control_custody_required"));}
+pub async fn export_latest<S: QueryStore>(
+    store: &S,
+    now_ms: i64,
+) -> Result<PrivateCapture, GatewayError> {
+    let (source, controls) = export_internal(store, now_ms).await?;
+    if !controls.is_empty() {
+        return Err(GatewayError::unavailable(
+            "Rust-only control/replay custody requires export_rollback_bundle; source-only export would omit it",
+            "migration_control_custody_required",
+        ));
+    }
     Ok(source)
 }
 
 /// Private current operational evidence; this type has no restore/authorization constructor.
-#[derive(Clone,serde::Serialize)]
-pub struct CustodyRecord{pub key:String,pub record:StoredRecord}
-#[derive(Clone,serde::Serialize)]
-pub struct ArtifactContext{
-    pub rust_git_sha:String,pub rust_git_tree:String,pub wasm_sha256:String,pub native_sha256:String,
+#[derive(Clone, serde::Serialize)]
+pub struct CustodyRecord {
+    pub key: String,
+    pub record: StoredRecord,
+}
+#[derive(Clone, serde::Serialize)]
+pub struct ArtifactContext {
+    pub rust_git_sha: String,
+    pub rust_git_tree: String,
+    pub wasm_sha256: String,
+    pub native_sha256: String,
     /// Separately retained stopped native nonce SQLite+WAL/SHM custody, never opened here.
-    pub native_nonce_capture_sha256:Option<String>,
+    pub native_nonce_capture_sha256: Option<String>,
 }
-#[derive(Clone,serde::Serialize)]
-pub struct PrivateRollbackBundle{
-    pub v:u32,pub source:PrivateCapture,pub rust_controls:Vec<CustodyRecord>,pub artifacts:ArtifactContext,
+#[derive(Clone, serde::Serialize)]
+pub struct PrivateRollbackBundle {
+    pub v: u32,
+    pub source: PrivateCapture,
+    pub rust_controls: Vec<CustodyRecord>,
+    pub artifacts: ArtifactContext,
 }
-pub async fn export_rollback_bundle<S:QueryStore>(store:&S,now_ms:i64,artifacts:ArtifactContext)->Result<PrivateRollbackBundle,GatewayError>{
-    let hash=|value:&str,len:usize|value.len()==len&&value.bytes().all(|c|c.is_ascii_digit()||(b'a'..=b'f').contains(&c));
-    if !hash(&artifacts.rust_git_sha,40)||!hash(&artifacts.rust_git_tree,40)||!hash(&artifacts.wasm_sha256,64)||!hash(&artifacts.native_sha256,64)||artifacts.native_nonce_capture_sha256.as_deref().is_some_and(|s|!hash(s,64)){return Err(invalid("Rollback artifact identity is malformed"));}
-    let (source,rust_controls)=export_internal(store,now_ms).await?;
-    Ok(PrivateRollbackBundle{v:1,source,rust_controls,artifacts})
+pub async fn export_rollback_bundle<S: QueryStore>(
+    store: &S,
+    now_ms: i64,
+    artifacts: ArtifactContext,
+) -> Result<PrivateRollbackBundle, GatewayError> {
+    let hash = |value: &str, len: usize| {
+        value.len() == len
+            && value
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    };
+    if !hash(&artifacts.rust_git_sha, 40)
+        || !hash(&artifacts.rust_git_tree, 40)
+        || !hash(&artifacts.wasm_sha256, 64)
+        || !hash(&artifacts.native_sha256, 64)
+        || artifacts
+            .native_nonce_capture_sha256
+            .as_deref()
+            .is_some_and(|s| !hash(s, 64))
+    {
+        return Err(invalid("Rollback artifact identity is malformed"));
+    }
+    let (source, rust_controls) = export_internal(store, now_ms).await?;
+    Ok(PrivateRollbackBundle {
+        v: 1,
+        source,
+        rust_controls,
+        artifacts,
+    })
 }

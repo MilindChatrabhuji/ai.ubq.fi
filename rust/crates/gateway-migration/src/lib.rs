@@ -9,7 +9,9 @@ mod projection;
 pub use capture::{PrivateCapture, SourceEntry};
 pub use engine::{AdoptionReceipt, PreparedAdoption, adopt_empty, prepare};
 pub use gateway_admin_data::profile::{CanonicalDates, SourceDateHost};
-pub use inverse::{export_latest,export_rollback_bundle,ArtifactContext,CustodyRecord,PrivateRollbackBundle};
+pub use inverse::{
+    ArtifactContext, CustodyRecord, PrivateRollbackBundle, export_latest, export_rollback_bundle,
+};
 pub use projection::known_source_family;
 
 use gateway_core::{
