@@ -13,13 +13,28 @@ pub trait TokenSource {
     fn next_token(&self) -> Result<String, GatewayError>;
 }
 
+/// A live reset must recheck time after awaited reads and before its spend boundary.
+pub trait AuthorityClock: Send + Sync {
+    fn now_ms(&self) -> Result<i64, GatewayError>;
+}
+
 pub struct Authority<S, I> {
     pub(crate) store: S,
     pub(crate) tokens: I,
+    clock: Option<Box<dyn AuthorityClock>>,
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
-    pub fn new(store: S, tokens: I) -> Self { Self { store, tokens } }
+    pub fn new(store: S, tokens: I) -> Self { Self { store, tokens, clock: None } }
+
+    pub fn with_clock(store:S,tokens:I,clock:impl AuthorityClock+'static)->Self{Self{store,tokens,clock:Some(Box::new(clock))}}
+
+    pub(crate) fn fresh_time(&self,started_at:i64)->Result<i64,GatewayError>{
+        let now=self.clock.as_ref().ok_or_else(|| crate::unavailable("authority_clock_unavailable","Live reset submission requires a trusted current clock."))?.now_ms()?;
+        validate_time(now)?;
+        if now<started_at{return Err(crate::unavailable("invalid_clock","Authority clock moved backwards."));}
+        Ok(now)
+    }
 
     pub fn store(&self) -> &S { &self.store }
 

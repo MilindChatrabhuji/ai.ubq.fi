@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
-use gateway_authority::{Authority, TokenSource};
+use gateway_authority::{Authority, AuthorityClock, TokenSource};
 use gateway_authority::quota::ApiKeyPolicy;
 use gateway_authority::routing::{AdmittedAccount, PoolAccount, QuotaBlock, QuotaBlockSource, RouteSelection, SubscriptionPool};
 use gateway_core::GatewayError;
@@ -24,10 +24,11 @@ pub struct MemoryStore{
     pub conflicts:Arc<AtomicUsize>,
     sequence:Arc<AtomicU64>,
     race:Arc<Mutex<Option<(RecordKey,serde_json::Value)>>>,
+    jump:Arc<Mutex<Option<(RecordKey,i64)>>>,
 }
 
 impl Default for MemoryStore{
-    fn default()->Self{Self{rows:Arc::new(Mutex::new(BTreeMap::new())),now:Arc::new(AtomicI64::new(NOW)),conflicts:Arc::new(AtomicUsize::new(0)),sequence:Arc::new(AtomicU64::new(1)),race:Arc::new(Mutex::new(None))}}
+    fn default()->Self{Self{rows:Arc::new(Mutex::new(BTreeMap::new())),now:Arc::new(AtomicI64::new(NOW)),conflicts:Arc::new(AtomicUsize::new(0)),sequence:Arc::new(AtomicU64::new(1)),race:Arc::new(Mutex::new(None)),jump:Arc::new(Mutex::new(None))}}
 }
 
 impl MemoryStore{
@@ -38,10 +39,14 @@ impl MemoryStore{
     pub fn clock(&self,now:i64){self.now.store(now,Ordering::SeqCst);}
     pub fn race<T:Serialize>(&self,key:RecordKey,value:&T){*self.race.lock().unwrap()=Some((key,serde_json::to_value(value).unwrap()));}
     pub fn len(&self)->usize{self.rows.lock().unwrap().len()}
+    pub fn jump_on_read(&self,key:RecordKey,now:i64){*self.jump.lock().unwrap()=Some((key,now));}
 }
+
+impl AuthorityClock for MemoryStore{fn now_ms(&self)->Result<i64,GatewayError>{Ok(self.now.load(Ordering::SeqCst))}}
 
 impl AuthorityStore for MemoryStore{
     fn read(&self,key:&RecordKey)->impl Future<Output=Result<Option<StoredRecord>,GatewayError>>{
+        let mut jump=self.jump.lock().unwrap();if jump.as_ref().is_some_and(|(target,_)|target==key){if let Some((_,now))=jump.take(){self.clock(now);}}drop(jump);
         let key_valid=TupleKey::from_record_key(key).and_then(|key|key.validate_stored_key());
         let row=self.rows.lock().unwrap().get(&key.0).cloned();let now=self.now.load(Ordering::SeqCst);
         async move{
@@ -76,7 +81,7 @@ impl AuthorityStore for MemoryStore{
 pub struct Tokens(Arc<AtomicU64>);
 impl TokenSource for Tokens{fn next_token(&self)->Result<String,GatewayError>{Ok(format!("fixture-opaque-{}",self.0.fetch_add(1,Ordering::SeqCst)))}}
 pub type TestAuthority=Authority<MemoryStore,Tokens>;
-pub fn authority(store:&MemoryStore)->TestAuthority{Authority::new(store.clone(),Tokens::default())}
+pub fn authority(store:&MemoryStore)->TestAuthority{Authority::with_clock(store.clone(),Tokens::default(),store.clone())}
 
 struct WakeNow;
 impl Wake for WakeNow{fn wake(self:Arc<Self>){}}

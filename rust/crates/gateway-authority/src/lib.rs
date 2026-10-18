@@ -12,8 +12,10 @@ mod kernel;
 mod paid_types;
 mod probes;
 mod routing_types;
+mod reset_types;
+mod reset_recovery;
 
-pub use store::{Authority, TokenSource};
+pub use store::{Authority, AuthorityClock, TokenSource};
 
 use gateway_core::GatewayError;
 use gateway_core::identity::{MAX_SAFE_INTEGER, UnixMillis};

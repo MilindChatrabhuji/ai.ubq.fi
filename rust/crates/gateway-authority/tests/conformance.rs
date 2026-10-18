@@ -124,14 +124,14 @@ fn reset_candidate(store:&MemoryStore,authority:&TestAuthority)->ResetCandidate{
     ResetCandidate{binding:proof.account_bindings()[0].clone(),quota_reset_at_ms:NOW+60_000,request_started_at_ms:NOW+10,proof}
 }
 fn armed_reset(store:&MemoryStore,authority:&TestAuthority)->(ResetCandidate,gateway_authority::reset::ResetRecord){
-    let candidate=reset_candidate(store,authority);let credit=ResetCredit{credit_id:"synthetic-credit".to_owned(),expires_at_ms:Some(NOW+DAY_MS),observed_at_ms:NOW,eligible:true};run(authority.record_reset_shadow(&candidate,&credit,NOW+1)).unwrap();assert!(run(authority.arm_reset_live(&candidate,NOW+2)).unwrap());
-    let ResetClaim::Submit{record,..}=run(authority.claim_reset(&candidate,NOW+11)).unwrap()else{panic!("claim missing")};(candidate,record)
+    let candidate=reset_candidate(store,authority);let credit=ResetCredit{credit_id:"synthetic-credit".to_owned(),expires_at_ms:Some(NOW+DAY_MS),observed_at_ms:NOW,eligible:true};store.clock(NOW+1);run(authority.record_reset_shadow(&candidate,&credit,NOW+1)).unwrap();store.clock(NOW+2);assert!(run(authority.arm_reset_live(&candidate,NOW+2)).unwrap());
+    store.clock(NOW+11);let ResetClaim::Submit{record,..}=run(authority.claim_reset(&candidate,NOW+11)).unwrap()else{panic!("claim missing")};(candidate,record)
 }
 
 #[test]
 fn reset_unknown_is_lookup_only_after_owner_takeover_even_when_disabled(){
     let store=MemoryStore::default();store.seed(keys::pool(),&pool());let authority=authority(&store);let(candidate,claimed)=armed_reset(&store,&authority);
-    let submitted=run(authority.prepare_reset_submission(&candidate,&claimed,NOW+12)).unwrap();let unknown=run(authority.record_reset_outcome(&submitted,ResetState::Unknown,None,Some("provider_timeout"),NOW+13)).unwrap();store.seed(keys::reset_config(),&ResetConfig{enabled:false,..ResetConfig::default()});store.clock(NOW+40_000);
+    store.clock(NOW+12);let submitted=run(authority.prepare_reset_submission(&candidate,&claimed,NOW+12)).unwrap();let unknown=run(authority.record_reset_outcome(&submitted,ResetState::Unknown,None,Some("provider_timeout"),NOW+13)).unwrap();store.seed(keys::reset_config(),&ResetConfig{enabled:false,..ResetConfig::default()});store.clock(NOW+40_000);
     let ResetClaim::Reconcile{record,..}=run(authority.claim_reset(&candidate,NOW+40_000)).unwrap()else{panic!("lookup-only recovery missing")};assert!(record.fence>unknown.fence);assert!(run(authority.record_reset_outcome(&unknown,ResetState::Verified,None,None,NOW+40_000)).is_err());
     let budget:AccountDayBudget=serde_json::from_value(store.row(&keys::reset_day(&record.identity.account_id_hash,&utc_day(NOW).unwrap())).unwrap().value).unwrap();assert_eq!(budget.submission_count,1);
 }
@@ -164,4 +164,12 @@ fn reset_identity_deduplicates_refresh_and_utc_days_and_expiry_remain_absolute()
 fn bad_stored_versions_are_not_replaced_with_empty_state(){
     let store=MemoryStore::default();store.seed(keys::pool(),&pool());let authority=authority(&store);let mut bad=store.row(&keys::pool()).unwrap();bad.schema_version=99;
     run(store.commit(gateway_core::state::AtomicTransition{checks:vec![gateway_core::state::RevisionCheck{key:keys::pool(),expected_revision:Some(bad.revision.clone())}],mutations:vec![gateway_core::state::RecordMutation::Put{key:keys::pool(),record:bad}]})).unwrap_err();assert!(store.len()>0);
+}
+
+#[test]
+fn reset_deadline_crossing_during_async_fence_reads_consumes_no_daily_budget(){
+    let store=MemoryStore::default();store.seed(keys::pool(),&pool());let authority=authority(&store);let(candidate,claimed)=armed_reset(&store,&authority);let day=utc_day(NOW).unwrap();
+    store.jump_on_read(keys::reset_day(&claimed.identity.account_id_hash,&day),candidate.quota_reset_at_ms);
+    let error=run(authority.prepare_reset_submission(&candidate,&claimed,NOW+12)).unwrap_err();assert_eq!(error.envelope.error.code.as_deref(),Some("quota_window_expired"));
+    assert!(store.row(&keys::reset_day(&claimed.identity.account_id_hash,&day)).is_none());assert_eq!(store.row(&keys::reset_redemption(&claimed.identity.account_id_hash,&claimed.identity.quota_generation)).unwrap().value["state"],"claimed");
 }
