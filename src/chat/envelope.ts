@@ -468,7 +468,8 @@ const dispatchAndPreflightChatCompletions = async (
     routed.paidFallbackProviderRequestId ?? null,
     routed.paidFallbackBilling ?? null,
     options.model,
-    routed.providerHealthOnly === true
+    routed.providerHealthOnly === true,
+    routed.paidFallbackErrorHealth ?? null
   );
   let codexTerminalResolved = false;
   const resolveCodexProbe = (terminalType: ResponseStreamTerminalType): void => {

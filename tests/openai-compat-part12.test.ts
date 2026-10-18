@@ -18,6 +18,7 @@ import {
   fetchMeteredModels,
   getMeteredProviderHealth,
   getSurplusProviderHealth,
+  handleChatCompletions,
   handleResponses,
   keyToString,
   kvStore,
@@ -61,6 +62,34 @@ test("openai: paid-provider health classification follows the provider body, not
             requestId: `request-${keyId}`,
             startedAtMs: Date.now(),
           })
+      );
+    };
+
+    const runChatRequest = async (keyId: string, handler: (url: string, signal: AbortSignal | undefined) => Response): Promise<Response> => {
+      keyIds.push(keyId);
+      seedPaidFallbackKey(keyId);
+      return await withFetchMock(
+        (url, _bodyText, init) => {
+          if (url === "https://api.surplusintelligence.ai/v1/responses" || url === "https://api.openlux.ai/v1/responses") {
+            return handler(url, init?.signal ?? undefined);
+          }
+          return authoritativeCodexQuotaResponse();
+        },
+        () =>
+          handleChatCompletions(
+            new Request("https://ai.ubq.fi/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, messages: [{ role: "user", content: "ping" }], stream: false }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: `request-${keyId}`,
+              startedAtMs: Date.now(),
+            }
+          )
       );
     };
 
@@ -208,6 +237,35 @@ test("openai: paid-provider health classification follows the provider body, not
         assert.equal(surplusHealth.last_status, 402);
         assert.equal(surplusHealth.last_provider_request_id, "surplus-402-credit-request");
         assert.equal(surplusHealth.state, "exhausted");
+      });
+
+      await step("a final Surplus 402 through Chat preserves quota exhaustion", async () => {
+        const previousMeteredApiKey = process.env.METERED_API_KEY;
+        Reflect.deleteProperty(process.env, "METERED_API_KEY");
+        try {
+          clearMeteredAndSurplusProviderHealth();
+          resetProviderHealthThrottleForTest();
+          await seedPaidFallthroughProviders();
+          const response = await runChatRequest("surplus-402-chat-credit", (url) => {
+            assert.equal(url, "https://api.surplusintelligence.ai/v1/responses");
+            return new Response(JSON.stringify({ error: { message: "insufficient balance", code: "insufficient_credit" } }), {
+              status: 402,
+              headers: { "Content-Type": "application/json", "X-Oneapi-Request-Id": "surplus-402-chat-credit-request" },
+            });
+          });
+          assert.equal(response.status, 402);
+          assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+          await response.text();
+          await delayBy(20);
+          const surplusHealth = await getSurplusProviderHealth();
+          assert.equal(surplusHealth.last_event, "quota_exhausted");
+          assert.equal(surplusHealth.last_status, 402);
+          assert.equal(surplusHealth.last_provider_request_id, "surplus-402-chat-credit-request");
+          assert.equal(surplusHealth.state, "exhausted");
+        } finally {
+          if (previousMeteredApiKey === undefined) Reflect.deleteProperty(process.env, "METERED_API_KEY");
+          else process.env.METERED_API_KEY = previousMeteredApiKey;
+        }
       });
     } finally {
       atomicCommitObservation.observer = previousAtomicObserver;
