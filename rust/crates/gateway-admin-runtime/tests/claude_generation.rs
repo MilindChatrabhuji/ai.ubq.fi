@@ -38,7 +38,11 @@ fn successful_same_value_writes_clear_and_workspace_events_invalidate_inflight_r
         clone.record_success(event);
         assert!(!before_read.is_current());
         assert_eq!(owner.snapshot().number(), index as u64 + 1);
-        assert!(owner.catalog_identity(&before_read, None, &credential(), None).is_none());
+        assert!(
+            owner
+                .catalog_identity(&before_read, None, &credential(), None)
+                .is_none()
+        );
     }
     assert_eq!(other.snapshot().number(), 0);
     assert_eq!(StateGeneration::default().snapshot().number(), 0);
@@ -50,7 +54,9 @@ fn identity_uses_source_json_numeric_generation_and_null_environment_ids() {
     let snapshot = owner.snapshot();
     assert_eq!(
         owner.catalog_identity(&snapshot, None, &credential(), Some("wrkspc_fixture")),
-        Some(sha256_hex(br#"[null,null,"api_key","synthetic-key","wrkspc_fixture",0]"#))
+        Some(sha256_hex(
+            br#"[null,null,"api_key","synthetic-key","wrkspc_fixture",0]"#
+        ))
     );
     // Reads and roster selection alone have no generation operation and retain the identity.
     assert!(snapshot.is_current());
