@@ -188,7 +188,7 @@ export const detectTestSelection = (): TestSelection => {
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
 
-export const ciScopeForSelection = (selection: TestSelection, environment: NodeJS.ProcessEnv = process.env): CiScope => {
+export const ciScopeForSelection = (selection: TestSelection, root = ROOT, environment: NodeJS.ProcessEnv = process.env): CiScope => {
   // Sentinel compares head failures with same-name base checks. Exercise every
   // real job for its heads, development baselines and CI-policy changes without
   // changing the dependency-scoped test selection.
@@ -200,7 +200,10 @@ export const ciScopeForSelection = (selection: TestSelection, environment: NodeJ
       (environment.GITHUB_BASE_REF === "queue-canary" ||
         (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));
   const docsOnly = selection.reason === "documentation-only";
-  const needsNativeKv = selection.runAll || selection.paths.some((path) => NATIVE_PATH.test(path));
+  const needsNativeKv =
+    selection.runAll ||
+    selection.paths.some((path) => NATIVE_PATH.test(path)) ||
+    (!docsOnly && selection.affectedTests.some((path) => testRequiresNativeKv(path, root)));
   const needsArtifact = completeCheckSet || (!docsOnly && selection.paths.some((path) => RELEASE_PATH.test(path)));
   const needsDarwinTests = !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path)));
   return {

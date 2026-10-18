@@ -27,7 +27,8 @@ writeFileSync(join(fixture, "src/consumer.ts"), "import { a } from './a.ts';\nex
 writeFileSync(join(fixture, "tests/a.test.ts"), "import '../src/consumer.ts';\n");
 writeFileSync(join(fixture, "tests/b.test.ts"), "import '../src/b.ts';\n");
 writeFileSync(join(fixture, "src/storage/kv.ts"), "export const kv = 1;\n");
-writeFileSync(join(fixture, "tests/storage.test.ts"), "import '../src/storage/kv.ts';\n");
+writeFileSync(join(fixture, "src/storage-consumer.ts"), "import './storage/kv.ts';\n");
+writeFileSync(join(fixture, "tests/storage.test.ts"), "import '../src/storage-consumer.ts';\n");
 
 afterAll(() => {
   rmSync(fixture, { recursive: true, force: true });
@@ -76,7 +77,7 @@ describe("Sentinel complete CI check set", () => {
   test("admits all real jobs without widening documentation or source test selection", () => {
     for (const context of protectedContexts) {
       for (const selection of [docsSelection, sourceSelection]) {
-        expect(ciScopeForSelection(selection, context)).toMatchObject({
+        expect(ciScopeForSelection(selection, ROOT, context)).toMatchObject({
           ...selection,
           completeCheckSet: true,
           docsOnly: selection.documentationOnly,
@@ -90,6 +91,30 @@ describe("Sentinel complete CI check set", () => {
           needsArtifact: true,
         });
       }
+    }
+  });
+
+  test("protected complete jobs retain transitive selected-test native admission", () => {
+    const selection: TestSelection = {
+      paths: ["tests/storage.test.ts"],
+      documentationOnly: false,
+      affectedTests: selectAffectedTestFiles(["tests/storage.test.ts"], ["tests/a.test.ts", "tests/storage.test.ts"], fixture),
+      runAll: false,
+      reason: "selected",
+    };
+    for (const context of protectedContexts) {
+      expect(ciScopeForSelection(selection, fixture, context)).toMatchObject({
+        ...selection,
+        completeCheckSet: true,
+        needsDocs: true,
+        needsValidate: true,
+        needsNativeKv: true,
+        needsNativeBuild: true,
+        needsMacContainment: true,
+        needsDarwinNative: true,
+        needsDarwinTests: false,
+        needsArtifact: true,
+      });
     }
   });
 
@@ -112,21 +137,22 @@ describe("Sentinel complete CI check set", () => {
       { ...ciContext("pull_request", "development", "owner"), GITHUB_ACTOR: "ubiquity-sentinel[bot]", GITHUB_HEAD_REF: "queue-canary" },
     ];
     for (const context of ordinaryContexts) {
-      expect(ciScopeForSelection(docsSelection, context)).toEqual(ciScopeForSelection(docsSelection, {}));
-      expect(ciScopeForSelection(sourceSelection, context)).toEqual(ciScopeForSelection(sourceSelection, {}));
-      expect(ciScopeForSelection(docsSelection, context)).toMatchObject({ completeCheckSet: false, needsDocs: true, needsValidate: false });
-      expect(ciScopeForSelection(sourceSelection, context)).toMatchObject({ completeCheckSet: false, needsDocs: false, needsDarwinNative: false });
+      expect(ciScopeForSelection(docsSelection, ROOT, context)).toEqual(ciScopeForSelection(docsSelection, ROOT, {}));
+      expect(ciScopeForSelection(sourceSelection, ROOT, context)).toEqual(ciScopeForSelection(sourceSelection, ROOT, {}));
+      expect(ciScopeForSelection(docsSelection, ROOT, context)).toMatchObject({ completeCheckSet: false, needsDocs: true, needsValidate: false });
+      expect(ciScopeForSelection(sourceSelection, ROOT, context)).toMatchObject({ completeCheckSet: false, needsDocs: false, needsDarwinNative: false });
     }
     expect(
-      ciScopeForSelection(sourceSelection, { ...ciContext("pull_request", "development", "ubiquity-sentinel[bot]"), GITHUB_ACTOR: "owner" }).completeCheckSet
+      ciScopeForSelection(sourceSelection, ROOT, { ...ciContext("pull_request", "development", "ubiquity-sentinel[bot]"), GITHUB_ACTOR: "owner" })
+        .completeCheckSet
     ).toBe(true);
   });
 
   test("still builds artifacts for protected no-base and no-changes selections", () => {
     for (const reason of ["no-base", "no-changes"] as const) {
       const selection = { paths: [], documentationOnly: false, affectedTests: [], runAll: true, reason };
-      expect(ciScopeForSelection(selection, protectedContexts[0])).toMatchObject({ needsDocs: true, needsArtifact: true, runAll: true, reason });
-      expect(ciScopeForSelection(selection, {})).toMatchObject({ needsDocs: false, needsArtifact: false });
+      expect(ciScopeForSelection(selection, ROOT, protectedContexts[0])).toMatchObject({ needsDocs: true, needsArtifact: true, runAll: true, reason });
+      expect(ciScopeForSelection(selection, ROOT, {})).toMatchObject({ needsDocs: false, needsArtifact: false });
     }
   });
 
@@ -134,13 +160,13 @@ describe("Sentinel complete CI check set", () => {
     const owner = ciContext("pull_request", "development", "owner");
     for (const path of [".github/workflows/deno-deploy.yml", "scripts/test-scope.ts"]) {
       const selection = { ...sourceSelection, paths: [path] };
-      expect(ciScopeForSelection(selection, owner)).toMatchObject({ ...selection, completeCheckSet: true, needsDocs: true, needsArtifact: true });
+      expect(ciScopeForSelection(selection, ROOT, owner)).toMatchObject({ ...selection, completeCheckSet: true, needsDocs: true, needsArtifact: true });
       for (const context of [
         ciContext("pull_request", "development-extra", "owner"),
         ciContext("push", "development", "owner"),
         ciContext("unknown", "development", "owner"),
       ]) {
-        expect(ciScopeForSelection(selection, context).completeCheckSet).toBe(false);
+        expect(ciScopeForSelection(selection, ROOT, context).completeCheckSet).toBe(false);
       }
     }
     for (const path of [
@@ -151,15 +177,15 @@ describe("Sentinel complete CI check set", () => {
       "nested/scripts/test-scope.ts",
       "scripts/test-scope.test.ts",
     ]) {
-      expect(ciScopeForSelection({ ...sourceSelection, paths: [path] }, owner).completeCheckSet).toBe(false);
+      expect(ciScopeForSelection({ ...sourceSelection, paths: [path] }, ROOT, owner).completeCheckSet).toBe(false);
     }
   });
 
   test("retains native and Darwin explicit-test eligibility only for the original capability paths", () => {
     const native = { ...sourceSelection, paths: ["src/storage/kv.ts"] };
     const darwin = { ...sourceSelection, paths: ["tests/gpg-dsh.test.ts"] };
-    expect(ciScopeForSelection(native, protectedContexts[0])).toMatchObject({ needsNativeKv: true, needsDarwinTests: false });
-    expect(ciScopeForSelection(darwin, protectedContexts[0])).toMatchObject({ needsDarwinTests: true });
+    expect(ciScopeForSelection(native, ROOT, protectedContexts[0])).toMatchObject({ needsNativeKv: true, needsDarwinTests: false });
+    expect(ciScopeForSelection(darwin, ROOT, protectedContexts[0])).toMatchObject({ needsDarwinTests: true });
   });
 
   test("real CI JSON and wrappers keep protected docs scoped to zero tests", () => {
@@ -204,7 +230,9 @@ describe("Sentinel complete CI check set", () => {
       const complete = scopeCommand(["scripts/test-scope.ts", "--ci-json"], owner, path);
       expect(baseline.status).toBe(0);
       expect(complete.status).toBe(0);
-      const { paths, documentationOnly, affectedTests, runAll, reason } = JSON.parse(baseline.stdout) as TestSelection;
+      const { paths, documentationOnly, affectedTests, runAll, reason, needsNativeKv } = JSON.parse(baseline.stdout) as TestSelection & {
+        needsNativeKv: boolean;
+      };
       expect(JSON.parse(complete.stdout)).toMatchObject({
         paths,
         documentationOnly,
@@ -212,7 +240,7 @@ describe("Sentinel complete CI check set", () => {
         runAll,
         reason,
         completeCheckSet: true,
-        needsNativeKv: false,
+        needsNativeKv,
         needsDarwinTests: false,
         needsArtifact: true,
       });
@@ -378,23 +406,26 @@ describe("test scope", () => {
 
   test("derives CI capability flags from the same selection", () => {
     const base = { paths: ["src/http.ts"], documentationOnly: false, runAll: false, reason: "selected" as const };
-    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/a.test.ts"] })).toMatchObject({
+    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/a.test.ts"] }, fixture)).toMatchObject({
       docsOnly: false,
       needsValidate: true,
       needsNativeKv: false,
       needsNativeBuild: true,
       needsArtifact: true,
     });
-    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/storage.test.ts"] }).needsNativeKv).toBe(false);
-    expect(ciScopeForSelection({ ...base, paths: ["src/storage/kv.ts"], affectedTests: ["tests/storage.test.ts"] }).needsNativeKv).toBe(true);
+    expect(ciScopeForSelection({ ...base, affectedTests: ["tests/storage.test.ts"] }, fixture).needsNativeKv).toBe(true);
+    expect(ciScopeForSelection({ ...base, paths: ["src/storage/kv.ts"], affectedTests: ["tests/storage.test.ts"] }, fixture).needsNativeKv).toBe(true);
     expect(
-      ciScopeForSelection({
-        paths: ["AGENTS.md"],
-        documentationOnly: true,
-        affectedTests: [],
-        runAll: false,
-        reason: "documentation-only",
-      })
+      ciScopeForSelection(
+        {
+          paths: ["AGENTS.md"],
+          documentationOnly: true,
+          affectedTests: [],
+          runAll: false,
+          reason: "documentation-only",
+        },
+        fixture
+      )
     ).toMatchObject({
       docsOnly: true,
       needsValidate: false,
@@ -402,5 +433,32 @@ describe("test scope", () => {
       needsNativeBuild: false,
       needsArtifact: false,
     });
+  });
+
+  test("a test-only change schedules native CI for its transitive KV imports without producing an artifact", () => {
+    const paths = ["tests/storage.test.ts"];
+    const selected = selectAffectedTestFiles(paths, ["tests/a.test.ts", "tests/storage.test.ts"], fixture);
+    expect(selected).toEqual(paths);
+    expect(ciScopeForSelection({ paths, affectedTests: selected, documentationOnly: false, runAll: false, reason: "selected" }, fixture)).toMatchObject({
+      needsValidate: true,
+      needsNativeKv: true,
+      needsNativeBuild: true,
+      needsArtifact: false,
+      needsMacContainment: false,
+      needsDarwinNative: false,
+    });
+  });
+
+  test("portable test and documentation changes do not inherit native requirements from unselected tests", () => {
+    const paths = ["tests/a.test.ts"];
+    const selected = selectAffectedTestFiles(paths, ["tests/a.test.ts", "tests/storage.test.ts"], fixture);
+    expect(selected).toEqual(paths);
+    const portable = ciScopeForSelection({ paths, affectedTests: selected, documentationOnly: false, runAll: false, reason: "selected" }, fixture);
+    expect(portable).toMatchObject({ needsNativeKv: false, needsNativeBuild: false, needsArtifact: false });
+    const docs = ciScopeForSelection(
+      { paths: ["docs/runtime.md"], affectedTests: [], documentationOnly: true, runAll: false, reason: "documentation-only" },
+      fixture
+    );
+    expect(docs).toMatchObject({ docsOnly: true, needsValidate: false, needsNativeKv: false, needsNativeBuild: false, needsArtifact: false });
   });
 });
