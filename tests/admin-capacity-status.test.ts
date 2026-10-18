@@ -868,7 +868,9 @@ const providerPicker = (selection: string[], { tier = "all", onlyActive = false 
     providersSearchInput: { value: "" },
     providersSortSelect: { value: "roster" },
     providersList,
-    renderProvidersMessage: () => providersList.replaceChildren(),
+    renderProvidersMessage: () => {
+      providersList.replaceChildren();
+    },
     buildProviderEntry: (entry: { id: string }) => {
       const row = new TestElement();
       row.dataset.providerId = entry.id;
@@ -922,7 +924,10 @@ test("a narrowed Codex tier filtered alone keeps Check shown enabled, and checki
 test("Only active keeps a narrowed Codex row shown and rerenders after Uncheck shown clears its subscription", () => {
   const picker = providerPicker(["sub-a"], { onlyActive: true, tier: "all" });
   assert.deepEqual(picker.visibleIds(), ["codex"]);
-  assert.deepEqual(picker.list.children.map((entry) => entry.dataset.providerId), ["codex"]);
+  assert.deepEqual(
+    picker.list.children.map((entry) => entry.dataset.providerId),
+    ["codex"]
+  );
   assert.equal(picker.providersUncheckAllBtn.disabled, false);
   assert.equal(picker.providersUncheckAllBtn.textContent, "Uncheck 1 shown");
 
