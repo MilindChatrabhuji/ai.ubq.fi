@@ -1,11 +1,11 @@
-// Request handler for the `ubiquity/deepseek-v4.1-flash` synthetic model:
-// dispatch each hop of the cost-first provider order and advance only on
-// infrastructure or serving failures. The two paid hops (Surplus, OpenLux)
-// re-enter the ordinary Responses pipeline (admission, reservation and ledger
-// settlement included) each pinned to its own paid tier, so a paid hop can
-// never silently advance to the other paid provider; streaming hops are gated
-// on their first semantic output so a stream that dies before any output still
-// advances the chain. See docs/deepseek-waterfall-model-plan.md.
+// Request handler for the `ubiquity/deepseek-flash` synthetic model: resolve the
+// newest provider snapshots, dispatch each hop of the cost-first order, and
+// advance only on infrastructure or serving failures. The two paid hops
+// (Surplus, OpenLux) re-enter the ordinary Responses pipeline (admission,
+// reservation and ledger settlement included) each pinned to its own paid tier,
+// so a paid hop can never silently advance to the other paid provider; streaming
+// hops are gated on their first semantic output so a stream that dies before any
+// output still advances the chain. See docs/deepseek-waterfall-model-plan.md.
 
 import { openaiError } from "../http.ts";
 import { recordAttemptedProvider, type DeepSeekWaterfallFallbackReason, type UsageContext } from "../openai-telemetry.ts";
@@ -18,11 +18,10 @@ import { runOrdinaryResponsesTail } from "../responses-handler.ts";
 import { readResponsesStream } from "../responses-stream.ts";
 import type { ResponsesRequest } from "../types.ts";
 import { handleDeepSeekResponses } from "./handlers.ts";
+import { currentDeepSeekFlashAliases, warmDeepSeekFlashCatalogs } from "./flash-aliases.ts";
 import {
   DEEPSEEK_WATERFALL_MODEL_ID,
-  DEEPSEEK_WATERFALL_PAID_MODEL_ID,
   DEEPSEEK_WATERFALL_PAID_PIN,
-  DEEPSEEK_WATERFALL_PROVIDER_MODEL,
   DEEPSEEK_WATERFALL_REASONING_LEVELS,
   type DeepSeekWaterfallProvider,
   deepSeekWaterfallFailureReason,
@@ -93,7 +92,7 @@ const streamFailureResponse = (provider: DeepSeekWaterfallProvider): Response =>
   });
 
 const dispatchPaidHop = async (paidTail: DeepSeekWaterfallPaidTail, input: Parameters<DeepSeekWaterfallDispatch>[0]): Promise<Response> => {
-  const paidBody: ResponsesRequest = { ...input.rawBody, model: DEEPSEEK_WATERFALL_PAID_MODEL_ID };
+  const paidBody: ResponsesRequest = { ...input.rawBody, model: input.model };
   const headers = new Headers(input.req.headers);
   // The rewritten body has its own length; the constructor recomputes it.
   headers.delete("content-length");
@@ -173,12 +172,12 @@ type HopResult = Readonly<{ delivered: boolean; response: Response; failure: Hop
 const attemptHop = async (
   dispatch: DeepSeekWaterfallDispatch,
   provider: DeepSeekWaterfallProvider,
+  model: string,
   req: Request,
   rawRecord: Record<string, unknown>,
   rawBody: ResponsesRequest,
   usageContext: UsageContext | undefined
 ): Promise<HopResult> => {
-  const model = DEEPSEEK_WATERFALL_PROVIDER_MODEL[provider];
   try {
     const response = await dispatch({ provider, req, rawRecord: { ...rawRecord, model }, rawBody, model, usageContext });
     if (isDeepSeekWaterfallRetryStatus(response.status)) return { delivered: false, response, failure: response.status };
@@ -203,6 +202,8 @@ export const handleDeepSeekWaterfallResponses = async (
   const effort = deepSeekWaterfallRequestedEffort(rawRecord);
   if (effort !== null && !isDeepSeekWaterfallReasoningLevel(effort)) return unsupportedEffortResponse(effort);
 
+  warmDeepSeekFlashCatalogs();
+  const aliases = currentDeepSeekFlashAliases();
   const selection = options.selection === undefined ? await loadProviderSelectionCached() : options.selection;
   // The hop plan is the model's fixed definition: while the Ubiquity provider
   // is enabled every configured hop serves in order, and an active selection
@@ -218,7 +219,7 @@ export const handleDeepSeekWaterfallResponses = async (
   let finalResponse = unavailableResponse();
   for (const provider of plan) {
     if (req.signal.aborted) break;
-    const result = await attemptHop(dispatch, provider, req, rawRecord, rawBody, usageContext);
+    const result = await attemptHop(dispatch, provider, aliases.models[provider], req, rawRecord, rawBody, usageContext);
     attempted.push(provider);
     recordAttemptedProvider(usageContext, provider);
     finalResponse = result.response;

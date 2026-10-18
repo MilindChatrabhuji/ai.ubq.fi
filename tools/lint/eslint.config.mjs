@@ -297,12 +297,15 @@ export default tsEslint.config(
     },
   },
   {
-    // DIVERGENCE: this presenter regression executes only bounded functions
+    // DIVERGENCE: these admin regressions execute only bounded functions
     // from the tracked static/admin.js text in a fixture VM. No user input,
     // application bootstrap, credentials or network enter that context.
     // Measured 2026-10-03: the shipped status/DOM cases pass; code-eval alone
-    // flags this intentional execution. Keep the exception to this one test.
-    files: ["tests/admin-capacity-status.test.ts"],
+    // flags this intentional execution. Measured 2026-10-17: the Models
+    // save-pending cases (#669), which run the shipped whitelist save handler
+    // and checkbox listener the same way, pass; code-eval alone flags their
+    // VM call. Keep the exception to these named tests.
+    files: ["tests/admin-capacity-status.test.ts", "tests/admin-models-save-pending.test.ts"],
     rules: { "sonarjs/code-eval": "off" },
   },
   {

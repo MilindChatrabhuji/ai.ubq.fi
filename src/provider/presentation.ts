@@ -27,7 +27,7 @@ export type ProviderPresentation = Readonly<{
 
 /**
  * The gateway-owned provider identity behind the synthetic
- * `ubiquity/deepseek-v4.1-flash` model. It is an ordinary selectable provider:
+ * `ubiquity/deepseek-flash` model. It is an ordinary selectable provider:
  * checking it allows the route, and an active selection without it switches the
  * route off.
  */
@@ -36,7 +36,8 @@ export const GATEWAY_PROVIDER_ID = "ubiquity" as const;
 export const GATEWAY_PROVIDER_PRESENTATION: ProviderPresentation = {
   label: "Ubiquity",
   tier: "gateway",
-  detail: "Gateway-owned DeepSeek V4.1 Flash waterfall: LithosAI, then DeepSeek, then OpenRouter, then Surplus, then OpenLux.",
+  detail:
+    "Gateway-owned, always-current DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux when they advertise the current release.",
   endpoints: ["/v1/responses"],
   health_key: "ubiquity",
 };

@@ -46,7 +46,7 @@ import {
 import { SENTINEL_REPLAY_MAX_RECORDS, SENTINEL_REPLAY_MAX_STATUS_RECORDS, sentinelReplayReservationBytes } from "./replay-limits.ts";
 import { isSentinelReplayCaptureStatusRow } from "./replay-observation.ts";
 import { isSentinelReplayManifest } from "./replay-read.ts";
-import { bootstrapBeforeMutation, releaseLegacyReservation, runBootstrapBatch } from "./replay-retention-bootstrap.ts";
+import { bootstrapBeforeMutation, forgetChunkOwnerIndex, releaseLegacyReservation, runBootstrapBatch } from "./replay-retention-bootstrap.ts";
 import { metadataEntryMatches, reconcileSentinelReplayStatusMetadata, reconcileSentinelReplayStatusMetadataIfDue } from "./replay-retention-metadata.ts";
 import {
   accountingKeyMatches,
@@ -876,6 +876,8 @@ export const reserveSentinelReplayCapacity = async (
       }
       continue;
     }
+    // Admissions may create owners from here on, so no earlier chunk owner index can be trusted again.
+    forgetChunkOwnerIndex(kv);
     const overBudget = ledger.stored_bytes + ledger.reserved_bytes + charge > payloadBudget || ledger.records + 1 > SENTINEL_REPLAY_MAX_RECORDS;
     if (overBudget) {
       if (!(await reclaimAdmissionCapacity(kv, budgetBytes, payloadBudget, charge, input.now_ms))) {
