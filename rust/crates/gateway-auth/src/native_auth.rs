@@ -87,6 +87,38 @@ impl NativeTransportIdentity {
     pub fn key_fingerprint(&self) -> &str {
         &self.key_fingerprint
     }
+    pub fn sign_publication_response(
+        &self,
+        nonce: &str,
+        request_body: &[u8],
+        status: u16,
+        response_body: &[u8],
+    ) -> Result<String, GatewayError> {
+        let message =
+            publication_response_input(&self.key_id, nonce, request_body, status, response_body)?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).map_err(|_| unauthorized())?;
+        mac.update(&message);
+        Ok(base64url(&mac.finalize().into_bytes()))
+    }
+    pub fn verify_publication_response(
+        &self,
+        nonce: &str,
+        request_body: &[u8],
+        status: u16,
+        response_body: &[u8],
+        signature: &str,
+    ) -> Result<(), GatewayError> {
+        let message =
+            publication_response_input(&self.key_id, nonce, request_body, status, response_body)?;
+        let signature_bytes = decode_base64url(signature).map_err(|_| unauthorized())?;
+        if signature_bytes.len() != 32 || base64url(&signature_bytes) != signature {
+            return Err(unauthorized());
+        }
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).map_err(|_| unauthorized())?;
+        mac.update(&message);
+        mac.verify_slice(&signature_bytes)
+            .map_err(|_| unauthorized())
+    }
     /// Used by a constructor-owned sender, never an HTTP signing oracle.
     pub fn sign(
         &self,

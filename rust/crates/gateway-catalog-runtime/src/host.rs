@@ -165,6 +165,10 @@ pub struct CatalogFetchResponse {
     /// True only after a cloned single-account observation completed within the
     /// source 4-MiB / 1-second limit. This never caps the main catalog body.
     pub single_account_observation_complete: bool,
+    /// Source response headers and access-token expiry, supplied by the exact fetch capability.
+    pub provider_request_id: Option<String>,
+    pub access_token_expired: Option<bool>,
+    pub observed_at_ms: Option<i64>,
 }
 impl CatalogFetchResponse {
     pub fn json(status: u16, body: impl Into<String>) -> Self {
@@ -174,6 +178,9 @@ impl CatalogFetchResponse {
             content_type: Some("application/json".into()),
             etag: None,
             single_account_observation_complete: false,
+            provider_request_id: None,
+            access_token_expired: None,
+            observed_at_ms: None,
         }
     }
     pub fn is_json(&self) -> bool {
@@ -187,6 +194,9 @@ pub enum CatalogObservation {
     CodexResponse {
         account: CodexAccount,
         status: u16,
+        provider_request_id: Option<String>,
+        access_token_expired: Option<bool>,
+        observed_at_ms: Option<i64>,
     },
     CodexTransportFailure {
         account: CodexAccount,
@@ -217,7 +227,8 @@ pub trait CatalogHost {
         request: CatalogFetch,
     ) -> impl Future<Output = Result<CatalogFetchResponse, GatewayError>>;
     /// Apply the existing provider-health/capacity sampling or standalone degradation seam.
-    /// An unimplemented persistence capability is explicit and never becomes success evidence.
+    /// Optional telemetry never gates catalog serving or becomes quota/capacity proof.
+    /// The default explicitly reports missing persistence; adapters may log it.
     fn observe(
         &self,
         _observation: CatalogObservation,

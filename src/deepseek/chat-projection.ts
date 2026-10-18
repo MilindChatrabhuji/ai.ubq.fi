@@ -9,6 +9,7 @@ import {
   failure,
   originalToolName,
 } from "./responses.ts";
+import { deepSeekThinkingModeActive } from "./index.ts";
 import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
 import { getString, isRecord } from "../utils.ts";
 
@@ -351,6 +352,9 @@ const appendMessageItem = (
   if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
     return failure("input.role", `input role '${role}' is not supported`);
   }
+  // A user turn starts a new reasoning scope; do not carry reasoning without a
+  // message across it to a later assistant or tool turn.
+  if (role === "user") pending.reasoning = "";
   const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
@@ -441,6 +445,7 @@ const appendInputItem = (
     const content = boundedForwardedText(rawItem, path, reduction, elisions);
     if (!content.ok) return content;
     messages.push({ role: "user", content: content.value });
+    pending.reasoning = "";
     return { ok: true, value: undefined };
   }
   if (!isRecord(rawItem) || Array.isArray(rawItem)) return failure("input", "input items must be objects");
@@ -469,6 +474,7 @@ const appendInputItem = (
       const agentMessage = chatAgentMessageItem(rawItem, reduction, `${path}.content`, elisions);
       if (!agentMessage.ok) return agentMessage;
       messages.push(agentMessage.value);
+      pending.reasoning = "";
       return { ok: true, value: undefined };
     }
     case "message":
@@ -656,6 +662,24 @@ const toChatTools = (
   return { ok: true, value: { tools: collector.tools, toolNames: collector.toolNames, customToolNames: collector.customNames } };
 };
 
+const chatToolName = (name: string, namespace: string | null, toolNames: ReadonlyMap<string, OriginalToolName>): string => {
+  // Preserve the compatibility form's existing reverse lookup when it already
+  // supplies a flattened Chat name. A namespace-aware choice below is the
+  // forward lookup from the original Responses identity to that Chat name.
+  if (namespace === null) {
+    for (const [chatName, original] of toolNames) {
+      if (original.name === name && original.namespace === null) return chatName;
+    }
+    return originalToolName(name, toolNames);
+  }
+  // A namespace-aware choice must be resolved from the original identity so
+  // a colliding namespaced function gets its synthesized Chat name.
+  for (const [chatName, original] of toolNames) {
+    if (original.name === name && original.namespace === namespace) return chatName;
+  }
+  return name;
+};
+
 const toChatToolChoice = (value: unknown, toolNames: ReadonlyMap<string, OriginalToolName>): DeepSeekResponsesResult<unknown> => {
   if (value === undefined || value === null) return { ok: true, value: undefined };
   if (typeof value === "string") {
@@ -663,9 +687,11 @@ const toChatToolChoice = (value: unknown, toolNames: ReadonlyMap<string, Origina
     return failure("tool_choice", `tool_choice '${value}' is not supported`);
   }
   if (!isRecord(value) || Array.isArray(value)) return failure("tool_choice", "tool_choice must be a string or an object");
-  const name = getString(value.name) ?? (isRecord(value.function) ? getString(value.function.name) : null);
+  const nestedFunction = isRecord(value.function) && !Array.isArray(value.function) ? value.function : null;
+  const name = getString(value.name) ?? getString(nestedFunction?.name);
   if (!name) return failure("tool_choice.name", "a named tool_choice requires a name");
-  return { ok: true, value: { type: "function", function: { name: originalToolName(name, toolNames) } } };
+  const namespace = value.namespace === undefined ? getString(nestedFunction?.namespace) : getString(value.namespace);
+  return { ok: true, value: { type: "function", function: { name: chatToolName(name, namespace, toolNames) } } };
 };
 
 /** Responses nests the output format under `text.format`; Chat has one flat field. */
@@ -697,15 +723,41 @@ const applyReasoning = (
   rawRecord: Record<string, unknown>,
   profile: ChatOnlyResponsesProfile
 ): DeepSeekResponsesResult<void> => {
+  // Keep the provider's wire mode aligned with the mode used below to decide
+  // whether sampling controls are effective.
+  const thinkingDisabled = profile.id === "deepseek" && !deepSeekThinkingModeActive(undefined, rawRecord.thinking);
   const raw = rawRecord.reasoning;
-  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (raw === undefined || raw === null) {
+    if (thinkingDisabled) body.reasoning_effort = "none";
+    return { ok: true, value: undefined };
+  }
   if (!isRecord(raw) || Array.isArray(raw)) return failure("reasoning", "reasoning must be an object");
   const effort = getString(raw.effort);
-  if (!effort) return { ok: true, value: undefined };
+  if (!effort) {
+    if (thinkingDisabled) body.reasoning_effort = "none";
+    return { ok: true, value: undefined };
+  }
   const wireEffort = profile.projectReasoningEffort(effort);
   if (wireEffort === null) return failure("reasoning.effort", `reasoning.effort '${effort}' is not supported by ${profile.label}`);
   body.reasoning_effort = wireEffort;
   return { ok: true, value: undefined };
+};
+
+const SAMPLING_CONTROL_KEYS = ["temperature", "top_p"] as const;
+
+const applySamplingControls = (body: Record<string, unknown>, rawRecord: Record<string, unknown>, profile: ChatOnlyResponsesProfile): string[] => {
+  const thinkingActive = profile.id === "deepseek" && deepSeekThinkingModeActive(body.reasoning_effort, rawRecord.thinking);
+  const warnings: string[] = [];
+  for (const key of SAMPLING_CONTROL_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(rawRecord, key)) continue;
+    if (thinkingActive) {
+      warnings.push(`${key}_ignored`);
+      continue;
+    }
+    // Check presence rather than truthiness so valid values such as temperature 0 survive.
+    body[key] = rawRecord[key];
+  }
+  return warnings;
 };
 
 const applyTools = (
@@ -819,6 +871,7 @@ export const toDeepSeekResponsesChatBody = (
     toolNames: ReadonlyMap<string, OriginalToolName>;
     customToolNames: ReadonlySet<string>;
     elisions: readonly ForwardedPayloadElision[];
+    warnings: string[];
   }>
 > => {
   const canonical = profile.upstreamModelFor(requestedModel);
@@ -847,12 +900,13 @@ export const toDeepSeekResponsesChatBody = (
   if (!outputLimit.ok) return outputLimit;
   const reasoning = applyReasoning(body, rawRecord, profile);
   if (!reasoning.ok) return reasoning;
+  const warnings = applySamplingControls(body, rawRecord, profile);
   const toolNames = applyTools(body, rawRecord, profile);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
   const continuationFailure = prepareExecutableToolMessages(body, rawRecord, messages.value, reduction.value, elisions);
   if (continuationFailure) return continuationFailure;
-  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions } };
+  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions, warnings } };
 };
 
 /**
