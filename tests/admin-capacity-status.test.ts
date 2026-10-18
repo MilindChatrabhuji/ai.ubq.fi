@@ -137,9 +137,20 @@ test("provider selection save ignores a response after the gateway target change
   const saveSource = /const saveProviderSelection = async \(\) => \{[\s\S]*?\n\};/.exec(sourceText)?.[0] ?? "";
   assert.notEqual(saveSource, "", "the provider-selection saver must stay discoverable");
 
+  const invalidateSource = /const invalidateProviderSelection = \(message\) => \{[\s\S]*?\n\};/.exec(sourceText)?.[0] ?? "";
+  assert.notEqual(invalidateSource, "");
   type TestResponse = { ok: boolean; json: () => Promise<unknown> };
   let resolveResponse!: (response: TestResponse) => void;
   const context = {
+    ...Object.fromEntries(["claudeAccessInput", "claudeAccountLabel", "claudeCredentialInput", "claudeWorkspaceInput"].map((name) => [name, { value: "" }])),
+    claudeAccountDrafts: new Map(),
+    claudeSubscriptionStatus: { textContent: "" },
+    claudeSubscriptionControls: { querySelector: () => ({ open: false }) },
+    renderClaudeSubscriptionControls: () => {},
+    renderProvidersMessage: () => {},
+    renderModelProviderFilters: () => {},
+    renderProviderTierFilters: () => {},
+    setProvidersSelectionBadge: () => {},
     getAdminToken: () => "old-token",
     hasAdminCredential: () => true,
     providerSelectionSaving: false,
@@ -147,6 +158,7 @@ test("provider selection save ignores a response after the gateway target change
     providersSelectionIsEmpty: () => false,
     providersHasActiveTier: () => true,
     providerSelectionLoadId: 0,
+    providerSelectionContextId: 0,
     providerSelectionSaveError: "",
     providerSelection: new Set(["old-provider"]),
     providersSavedSelection: new Set<string>(),
@@ -164,13 +176,15 @@ test("provider selection save ignores a response after the gateway target change
     toast: { error: () => {}, success: () => {} },
     console,
   };
-  runInNewContext(`${saveSource}\nglobalThis.saveProviderSelection = saveProviderSelection;`, context);
+  runInNewContext(
+    `${invalidateSource}\n${saveSource}\nglobalThis.saveProviderSelection = saveProviderSelection; globalThis.invalidate = invalidateProviderSelection;`,
+    context
+  );
   const save = (context as typeof context & { saveProviderSelection: () => Promise<void> }).saveProviderSelection;
   const savePromise = save();
 
-  // This is the generation bump performed by invalidateProviderSelection when
-  // the base gateway changes, followed by the new target's loaded selection.
-  context.providerSelectionLoadId += 1;
+  // Run the shipped target invalidation before the new target is loaded.
+  (context as typeof context & { invalidate: (message: string) => void }).invalidate("Target changed");
   context.providerSelectionSaving = false;
   context.providerSelection = new Set(["new-provider"]);
   context.providersSavedSelection = new Set(["new-provider"]);

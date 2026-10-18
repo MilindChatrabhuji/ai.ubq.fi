@@ -216,40 +216,55 @@ class ProviderCheckbox {
 type ProviderHarness = {
   save: () => Promise<void>;
   unsaved: () => boolean;
-  seed: (saved: readonly string[], staged: readonly string[]) => void;
-  state: () => { saved: Iterable<string>; staged: Iterable<string>; saving: boolean };
+  seed: (saved: readonly string[], staged: readonly string[], saving?: boolean) => void;
+  invalidate: (message: string) => void;
+  state: () => { saved: Iterable<string>; staged: Iterable<string>; saving: boolean; error: string };
 };
 
 /** Runs the shipped selection state, helpers, save handler and checkbox listener; only I/O and rendering are faked. */
 const loadProviderHarness = (roster: Provider[] = [{ id: "a" }, { id: "b" }, { id: "c" }]) => {
   const requests: unknown[] = [];
   const successes: string[] = [];
+  const errors: string[] = [];
   let respond: ((response: SaveResponse) => void) | null = null;
+  let reject: ((error: Error) => void) | null = null;
   let changeListener: ((event: { target: ProviderCheckbox }) => void) | null = null;
   const context = {
+    ...Object.fromEntries(["claudeAccessInput", "claudeAccountLabel", "claudeCredentialInput", "claudeWorkspaceInput"].map((name) => [name, { value: "" }])),
+    claudeAccountDrafts: new Map(),
+    claudeSubscriptionStatus: { textContent: "" },
+    claudeSubscriptionControls: { querySelector: () => ({ open: false }) },
+    renderClaudeSubscriptionControls: () => {},
+    renderProvidersMessage: () => {},
+    renderModelProviderFilters: () => {},
+    renderProviderTierFilters: () => {},
     HTMLInputElement: ProviderCheckbox,
     apiUrl: (path: string) => path,
-    applyProvidersSelection: () => {},
     console,
     fetch: (_url: string, init: { body: string }) => {
       requests.push(JSON.parse(init.body));
-      return new Promise<SaveResponse>((resolve) => {
+      return new Promise<SaveResponse>((resolve, fail) => {
         respond = resolve;
+        reject = fail;
       });
     },
     formatNumber: (value: number) => String(value),
     getAdminToken: () => "admin-token",
     hasAdminCredential: () => true,
     providerRoster: roster,
+    loadedRoster: roster,
     providersList: {
+      querySelectorAll: () => [],
       addEventListener: (type: string, listener: (event: { target: ProviderCheckbox }) => void) => {
         if (type === "change") changeListener = listener;
       },
     },
+    providersSearchInput: { value: "" },
+    providersSortSelect: { value: "models" },
     providersOnlyActiveInput: { checked: false },
     renderProvidersPicker: () => {},
     setProvidersSelectionBadge: () => {},
-    toast: { error: () => {}, success: (message: string) => successes.push(message) },
+    toast: { error: (message: string) => errors.push(message), success: (message: string) => successes.push(message) },
     updateProvidersStatus: () => {},
   };
   runInNewContext(
@@ -257,17 +272,23 @@ const loadProviderHarness = (roster: Provider[] = [{ id: "a" }, { id: "b" }, { i
       shippedSlice("let providerSelection = new Set();", "const setProvidersSelectionBadge"),
       shippedSlice("const providerRosterEntry", "const buildProviderTierFilterChip"),
       shippedSlice("const providersSubscriptionsFor", "const providersTierCounts"),
+      shippedSlice("const providersEntryMatchesQuery", "const providerHealthFor"),
+      shippedSlice("const applyProvidersSelection", "const loadProviderSelection"),
+      shippedSlice("const invalidateProviderSelection", "const providersEmptyWarning"),
       shippedSlice("const saveProviderSelection = async () => {", "const discardProviderChanges"),
       shippedSlice("const setProviderChecked", 'providersCheckAllBtn.addEventListener("click"'),
       "globalThis.harness = {",
       "  save: saveProviderSelection,",
+      "  invalidate: invalidateProviderSelection,",
       "  unsaved: providersHasUnsavedChanges,",
-      "  seed: (saved, staged) => {",
+      "  seed: (saved, staged, saving = false) => {",
+      "    providerRoster = loadedRoster;",
+      "    providerSelectionSaving = saving;",
       "    providersSavedSelection = providersSelectionFromIds(saved);",
       "    providerSelection = new Set(staged);",
       "    providerSelectionLoadedAt = 1;",
       "  },",
-      "  state: () => ({ saved: providersSavedSelection, staged: providerSelection, saving: providerSelectionSaving }),",
+      "  state: () => ({ saved: providersSavedSelection, staged: providerSelection, saving: providerSelectionSaving, error: providerSelectionSaveError }),",
       "};",
     ].join("\n"),
     context
@@ -277,11 +298,15 @@ const loadProviderHarness = (roster: Provider[] = [{ id: "a" }, { id: "b" }, { i
     assert.ok(changeListener, "the Providers list change listener must be registered");
     changeListener({ target: new ProviderCheckbox(id, checked, subscription) });
   };
-  const succeed = (body: unknown) => {
+  const succeed = (body: unknown, ok = true) => {
     assert.ok(respond, "a provider selection save request must be pending");
-    respond({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    respond({ ok, status: ok ? 200 : 500, json: () => Promise.resolve(body) });
   };
-  return { harness, requests, successes, toggle, succeed };
+  const fail = () => {
+    assert.ok(reject);
+    reject(new Error("offline"));
+  };
+  return { harness, requests, successes, errors, toggle, succeed, fail };
 };
 
 test("a provider checked while a save is pending stays staged and unsaved", async () => {
@@ -348,6 +373,7 @@ for (const checking of [false, true]) {
 
     assert.deepEqual(requests, [{ provider_ids: submitted }]);
     const state = harness.state();
+    assert.equal(state.saving, false);
     assert.deepEqual(sorted(state.saved), submitted);
     assert.deepEqual(sorted(state.staged), checking ? ["codex"] : ["codex:one"]);
     assert.equal(harness.unsaved(), true);
@@ -407,3 +433,23 @@ test("unchecking Codex during a pending provider save removes missing subscripti
   assert.equal(harness.unsaved(), false);
   assert.deepEqual(successes, ["2 providers active", "1 provider active"]);
 });
+
+for (const outcome of ["success", "http-error", "transport-error"]) {
+  test(`a provider context switch away and back fences a pending save's ${outcome}`, async () => {
+    const { harness, successes, errors, succeed, fail } = loadProviderHarness();
+    harness.seed(["a"], ["b"]);
+    const pending = harness.save();
+    harness.invalidate("Target B");
+    harness.invalidate("Target A again");
+    harness.seed(["c"], ["c"], true);
+    if (outcome === "transport-error") fail();
+    else succeed({ provider_ids: ["b"] }, outcome === "success");
+    await pending;
+    assert.deepEqual(sorted(harness.state().saved), ["c"]);
+    assert.deepEqual(sorted(harness.state().staged), ["c"]);
+    assert.equal(harness.state().saving, true, "the old completion must not settle a new context's save");
+    assert.equal(harness.state().error, "");
+    assert.deepEqual(successes, []);
+    assert.deepEqual(errors, []);
+  });
+}

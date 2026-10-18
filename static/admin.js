@@ -9776,6 +9776,7 @@ let providerTierFilter = "all";
 let providersVisibleIds = new Set();
 let providerSelectionLoadedAt = 0;
 let providerSelectionLoadId = 0;
+let providerSelectionContextId = 0;
 let providerSelectionSaving = false;
 let providerSelectionSaveError = "";
 
@@ -10107,6 +10108,7 @@ const renderProvidersMessage = (message) => {
 
 /** Drop the loaded roster and both selections, e.g. after the token or target changes. */
 const invalidateProviderSelection = (message) => {
+  providerSelectionContextId += 1;
   providerSelectionLoadId += 1;
   providerSelectionSaving = false;
   providerRoster = [];
@@ -10387,7 +10389,7 @@ const saveProviderSelection = async () => {
     return;
   }
   if (providerSelectionSaving || !providersHasUnsavedChanges() || !providersHasActiveTier()) return;
-  const saveLoadId = providerSelectionLoadId;
+  const saveContextId = providerSelectionContextId;
   const submittedSelection = new Set(providerSelection);
   const submittedIds = providersSelectedIds();
   providerSelectionSaving = true;
@@ -10400,7 +10402,7 @@ const saveProviderSelection = async () => {
       body: JSON.stringify({ provider_ids: submittedIds }),
     });
     const payload = await response.json().catch(() => null);
-    if (saveLoadId !== providerSelectionLoadId) return;
+    if (saveContextId !== providerSelectionContextId) return;
     if (!response.ok) {
       providerSelectionSaving = false;
       providerSelectionSaveError = "Failed to save";
@@ -10437,6 +10439,7 @@ const saveProviderSelection = async () => {
       }
     );
   } catch (error) {
+    if (saveContextId !== providerSelectionContextId) return;
     providerSelectionSaving = false;
     providerSelectionSaveError = "Save error";
     toast.error("Save failed", { description: "Offline" });
