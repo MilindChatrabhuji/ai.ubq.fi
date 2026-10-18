@@ -210,8 +210,7 @@ pub async fn run(
                         )
                         .await
                         {
-                            futures_util::future::Either::Left((incoming, remaining)) => {
-                                drop(remaining);
+                            futures_util::future::Either::Left((incoming, _remaining)) => {
                                 Some(incoming)
                             }
                             futures_util::future::Either::Right(((), remaining)) => {
