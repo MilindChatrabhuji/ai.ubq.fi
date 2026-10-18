@@ -1,4 +1,4 @@
-import type { PortableAuthority } from "../authority/admission-state.ts";
+import type { AuthorityOperations } from "../authority/authority-rpc.ts";
 import { AuthorityError, type AdmissionHandle, type AuthorityScope, type DeliveryOutcome, type GatewayRoute } from "../authority/contracts.ts";
 import { DeliveryOutbox } from "../authority/delivery-outbox.ts";
 import type { UpstreamResult, UpstreamTransport } from "./transport.ts";
@@ -8,7 +8,7 @@ export type BoundaryLifetime = Readonly<{ waitUntil(task: Promise<unknown>): voi
 export type BoundaryDelivery = Readonly<{ completed: Promise<DeliveryOutcome> }>;
 export type WorkerBoundaryDependencies = Readonly<{
   scope: AuthorityScope;
-  authority: PortableAuthority;
+  authority: AuthorityOperations;
   upstream: UpstreamTransport;
   authenticate(request: Request): Promise<BoundaryPrincipal | null>;
   now(): number;
@@ -148,7 +148,7 @@ const refuseRequest = async ({
   abortFromRequest: () => void;
   handle: AdmissionHandle | null;
   dispatchState: { intent: boolean };
-  authority: PortableAuthority;
+  authority: AuthorityOperations;
 }>): Promise<Response> => {
   request.signal.removeEventListener("abort", abortFromRequest);
   try {
@@ -168,7 +168,7 @@ export const createWorkerBoundary = (dependencies: WorkerBoundaryDependencies) =
     if (path !== "/v1/responses" && path !== "/v1/chat/completions") return errorResponse("route_not_implemented", 501);
     if (request.method !== "POST") return errorResponse("method_not_allowed", 405);
     const route: GatewayRoute = path;
-    let handle: Awaited<ReturnType<PortableAuthority["admit"]>> | null = null;
+    let handle: Awaited<ReturnType<AuthorityOperations["admit"]>> | null = null;
     const dispatchState = { intent: false };
     const abort = new AbortController();
     const abortFromRequest = (): void => {
