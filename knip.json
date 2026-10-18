@@ -30,6 +30,7 @@
     "tests/helpers/codex-auth-cache-harness.ts": ["exports"],
     "tests/helpers/embeddings-harness.ts": ["exports"],
     "tests/helpers/kv-budget-harness.ts": ["exports"],
-    "tests/helpers/sentinel-kv-stub.ts": ["exports"]
+    "tests/helpers/sentinel-kv-stub.ts": ["exports"],
+    "tests/fixtures/native-authority/fixture-worker.mjs": ["unlisted"]
   }
 }
