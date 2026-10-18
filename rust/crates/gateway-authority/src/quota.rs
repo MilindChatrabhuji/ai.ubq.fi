@@ -75,12 +75,26 @@ pub struct ApiReservation {
 }
 
 fn api_row_matches(row: &ApiUsageRequest, reservation: &ApiReservation) -> bool {
-    row.v == 3 && row.key_id == reservation.key_id && row.request_id == reservation.request_id && row.route == reservation.route
+    row.validate().is_ok()&&row.v == 3 && row.key_id == reservation.key_id && row.request_id == reservation.request_id && row.route == reservation.route
+}
+
+impl ApiUsageRequest{
+    pub fn validate(&self)->Result<(),GatewayError>{
+        if self.v!=3{return Err(invalid("API request version is invalid."));}text(&self.key_id.0)?;text(&self.request_id.0)?;text(&self.route)?;nonnegative(self.reserved_at_ms)?;nonnegative(self.lease_expires_at_ms)?;
+        if let Some(at)=self.dispatched_at_ms{nonnegative(at)?;}if let Some(at)=self.released_at_ms{nonnegative(at)?;}
+        match self.state{
+            ApiUsageState::Reserved if self.provider.is_some()||self.dispatched_at_ms.is_some()||self.released_at_ms.is_some()||self.release_reason.is_some()=>Err(invalid("Reserved API request has terminal fields.")),
+            ApiUsageState::Dispatched if self.provider.is_none()||self.dispatched_at_ms.is_none()||self.released_at_ms.is_some()||self.release_reason.is_some()=>Err(invalid("Dispatched API request is malformed.")),
+            ApiUsageState::Released if self.provider.is_some()||self.dispatched_at_ms.is_some()||self.released_at_ms.is_none()||self.release_reason.is_none()=>Err(invalid("Released API request is malformed.")),
+            _=>Ok(())
+        }
+    }
 }
 
 fn validate_window(window: &ApiUsageWindow, reservation: &ApiReservation) -> Result<(), GatewayError> {
     if window.v != 3 || window.key_id != reservation.key_id || window.policy_version != reservation.policy_version || window.window_start_ms != reservation.window_start_ms || window.window_reset_at_ms != reservation.window_reset_at_ms { return Err(invalid("API key quota aggregate identity is malformed.")); }
     nonnegative(window.committed_requests)?; nonnegative(window.reserved_requests)?;
+    nonnegative(window.window_start_ms)?;nonnegative(window.window_reset_at_ms)?;nonnegative(window.updated_at_ms)?;if window.window_reset_at_ms<=window.window_start_ms{return Err(invalid("API window reset must follow its start."));}
     if window.reserved_requests != window.reservations.len() as i64 { return Err(invalid("API quota reservation index disagrees with the aggregate.")); }
     Ok(())
 }

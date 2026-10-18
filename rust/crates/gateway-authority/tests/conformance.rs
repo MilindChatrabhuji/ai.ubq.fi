@@ -173,3 +173,13 @@ fn reset_deadline_crossing_during_async_fence_reads_consumes_no_daily_budget(){
     let error=run(authority.prepare_reset_submission(&candidate,&claimed,NOW+12)).unwrap_err();assert_eq!(error.envelope.error.code.as_deref(),Some("quota_window_expired"));
     assert!(store.row(&keys::reset_day(&claimed.identity.account_id_hash,&day)).is_none());assert_eq!(store.row(&keys::reset_redemption(&claimed.identity.account_id_hash,&claimed.identity.quota_generation)).unwrap().value["state"],"claimed");
 }
+
+#[test]
+fn kernel_source_drift_rejects_temporal_contradictions_and_cross_window_reservations(){
+    let store=MemoryStore::default();let authority=authority(&store);let valid=run(authority.reserve_kernel("owner","repo",&id("strict"),"responses",NOW)).unwrap();
+    let mut bad=valid.clone();bad.lease_expires_at_ms=bad.reserved_at_ms;assert!(bad.validate().is_err());
+    bad=valid.clone();bad.window_reset_at_ms=bad.window_created_at_ms;assert!(bad.validate().is_err());
+    bad=valid.clone();bad.state=Some(KernelTerminal::Released);bad.terminal_at_ms=Some(NOW);bad.terminal_intent=Some(KernelTerminal::Released);bad.release_reason=Some("   ".to_owned());assert!(bad.validate().is_err());
+    let mut mismatched=valid.clone();mismatched.window_reset_at_ms+=1;store.seed(keys::kernel_request(&valid.owner,valid.repo.as_deref(),valid.window_created_at_ms,&valid.request_id.0),&mismatched);
+    let window=store.row(&keys::kernel_window(&valid.owner,valid.repo.as_deref())).unwrap();assert!(run(authority.reserve_kernel("owner","repo",&id("must-not-admit"),"responses",NOW)).is_err());assert_eq!(store.row(&keys::kernel_window(&valid.owner,valid.repo.as_deref())).unwrap(),window);
+}
