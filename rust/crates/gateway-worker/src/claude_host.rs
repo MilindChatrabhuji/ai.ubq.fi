@@ -151,15 +151,24 @@ impl Binding {
                     replay_scope: principal_id.clone(),
                 };
                 let request = Rc::new(RequestState {
-                    principal: principal_id,
+                    principal: principal_id.clone(),
                     key_id: key_id.clone(),
                     model: model.into(),
                     raw: raw.clone(),
                     session: ClaudePoolSession::new(config),
                     selected: RefCell::default(),
                 });
-                *self.state.borrow_mut() = Some(request.clone());
-                request
+                // Bootstrap can await; another callback must not replace a session
+                // already established by this request while that read was pending.
+                let chosen = self.state.borrow_mut().get_or_insert(request).clone();
+                if chosen.principal != principal_id
+                    || chosen.key_id != *key_id
+                    || chosen.model != model
+                    || &chosen.raw != raw
+                {
+                    return Err(invalid("Concurrent Claude selection inputs changed."));
+                }
+                chosen
             }
         };
         match request
