@@ -9,6 +9,7 @@ import {
   failure,
   originalToolName,
 } from "./responses.ts";
+import { deepSeekThinkingModeActive } from "./index.ts";
 import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
 import { getString, isRecord } from "../utils.ts";
 
@@ -697,15 +698,41 @@ const applyReasoning = (
   rawRecord: Record<string, unknown>,
   profile: ChatOnlyResponsesProfile
 ): DeepSeekResponsesResult<void> => {
+  // Keep the provider's wire mode aligned with the mode used below to decide
+  // whether sampling controls are effective.
+  const thinkingDisabled = profile.id === "deepseek" && !deepSeekThinkingModeActive(undefined, rawRecord.thinking);
   const raw = rawRecord.reasoning;
-  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (raw === undefined || raw === null) {
+    if (thinkingDisabled) body.reasoning_effort = "none";
+    return { ok: true, value: undefined };
+  }
   if (!isRecord(raw) || Array.isArray(raw)) return failure("reasoning", "reasoning must be an object");
   const effort = getString(raw.effort);
-  if (!effort) return { ok: true, value: undefined };
+  if (!effort) {
+    if (thinkingDisabled) body.reasoning_effort = "none";
+    return { ok: true, value: undefined };
+  }
   const wireEffort = profile.projectReasoningEffort(effort);
   if (wireEffort === null) return failure("reasoning.effort", `reasoning.effort '${effort}' is not supported by ${profile.label}`);
   body.reasoning_effort = wireEffort;
   return { ok: true, value: undefined };
+};
+
+const SAMPLING_CONTROL_KEYS = ["temperature", "top_p"] as const;
+
+const applySamplingControls = (body: Record<string, unknown>, rawRecord: Record<string, unknown>, profile: ChatOnlyResponsesProfile): string[] => {
+  const thinkingActive = profile.id === "deepseek" && deepSeekThinkingModeActive(body.reasoning_effort, rawRecord.thinking);
+  const warnings: string[] = [];
+  for (const key of SAMPLING_CONTROL_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(rawRecord, key)) continue;
+    if (thinkingActive) {
+      warnings.push(`${key}_ignored`);
+      continue;
+    }
+    // Check presence rather than truthiness so valid values such as temperature 0 survive.
+    body[key] = rawRecord[key];
+  }
+  return warnings;
 };
 
 const applyTools = (
@@ -819,6 +846,7 @@ export const toDeepSeekResponsesChatBody = (
     toolNames: ReadonlyMap<string, OriginalToolName>;
     customToolNames: ReadonlySet<string>;
     elisions: readonly ForwardedPayloadElision[];
+    warnings: string[];
   }>
 > => {
   const canonical = profile.upstreamModelFor(requestedModel);
@@ -847,12 +875,13 @@ export const toDeepSeekResponsesChatBody = (
   if (!outputLimit.ok) return outputLimit;
   const reasoning = applyReasoning(body, rawRecord, profile);
   if (!reasoning.ok) return reasoning;
+  const warnings = applySamplingControls(body, rawRecord, profile);
   const toolNames = applyTools(body, rawRecord, profile);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
   const continuationFailure = prepareExecutableToolMessages(body, rawRecord, messages.value, reduction.value, elisions);
   if (continuationFailure) return continuationFailure;
-  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions } };
+  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions, warnings } };
 };
 
 /**
