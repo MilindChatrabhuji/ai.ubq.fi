@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Allow overage spending false refuses all overage - 2026-10-18
+
+The per-account `Allow overage spending` setting is a hard gate. With the setting off, the gateway may redeem a banked reset, but it must never dispatch an overage probe, including after the reset preflight returns `no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or `account_day_limit_reached`. That case returns the ordinary `codex_quota_blocked` response. With the setting on, the existing resets-first flow and one bounded overage fallback remain unchanged.
+
+Reason: the previous implementation treated off as "try resets first" and still spent overage when no reset was redeemable, which contradicts the operator-facing switch. This change governs gateway-routed inference only; a native Codex client that authenticates directly to ChatGPT is outside the gateway and must be configured or authenticated separately.
+
+Reversal risk: turning the setting off now stops serving an exhausted subscription instead of silently drawing paid overage. That is the requested safe behavior, and re-enabling the setting restores the bounded fallback.
+
 ## Real CI checks for Sentinel and merge groups - 2026-10-18
 
 Issue #1206 preserves real successful checks for Sentinel's delivery and base-failure attribution. Run the complete job set for merge groups, PRs targeting exactly `queue-canary`, Sentinel-authored PRs targeting exactly `development`, development pushes, and development PRs changing the CI workflow or selector itself. Use the PR author, not the actor who reruns a workflow. Ordinary owner PRs retain changed-path job selection.
