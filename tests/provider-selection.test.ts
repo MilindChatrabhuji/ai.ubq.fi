@@ -125,12 +125,12 @@ class SelectionKv {
 }
 
 class DeferredSelectionKv extends SelectionKv {
-  readonly readStarted = Promise.withResolvers<void>();
-  readonly releaseRead = Promise.withResolvers<void>();
+  readonly readStarted = Promise.withResolvers<undefined>();
+  readonly releaseRead = Promise.withResolvers<undefined>();
 
   override async get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     const entry = await super.get<T>(key, options);
-    this.readStarted.resolve();
+    this.readStarted.resolve(undefined);
     await this.releaseRead.promise;
     return entry;
   }
@@ -316,7 +316,7 @@ test("an in-flight selection read cannot replace a cache primed by an admin save
       updated_at_ms: savedBody.updated_at_ms,
     });
 
-    kv.releaseRead.resolve();
+    kv.releaseRead.resolve(undefined);
     assert.deepEqual(await inFlightRead, { provider_ids: ["openlux"], updated_at_ms: 1_700_000_000_000 });
     assert.deepEqual(await loadProviderSelectionCached(), {
       provider_ids: ["cerebras"],
