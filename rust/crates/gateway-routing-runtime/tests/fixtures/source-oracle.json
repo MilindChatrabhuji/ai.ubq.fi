@@ -1,0 +1,39 @@
+{
+  "source_sha": "7cc83d404adf4dda7e7e842b38b07548c2262dce",
+  "argv": [
+    "bwrap",
+    "--die-with-parent",
+    "--unshare-net",
+    "--ro-bind",
+    "/",
+    "/",
+    "--bind",
+    "/var/tmp/ai-rust-wasm-20261018",
+    "/var/tmp/ai-rust-wasm-20261018",
+    "--bind",
+    "/var/tmp/ai-rust-wasm-20261018/tmp",
+    "/tmp",
+    "--proc",
+    "/proc",
+    "--dev",
+    "/dev",
+    "--chdir",
+    "/var/tmp/ai-rust-wasm-20261018/artifacts/m14-oracle-v2",
+    "--",
+    "env",
+    "-i",
+    "HOME=/home/codex",
+    "PATH=/usr/local/bin:/usr/bin:/bin",
+    "/usr/local/bin/bun",
+    "--no-env-file",
+    "--no-install",
+    "source.ts"
+  ],
+  "exit": 0,
+  "stdout": "{\"classes\":9,\"statuses\":12,\"quota\":16}\n",
+  "stderr": "",
+  "files": {
+    "source-golden.json": "12b89454cbed1666b0cf798dc7b742e384f515a1a6d23fa0e28740b6f912283f",
+    "source.ts": "0e29643e28af5f802a056fa18350bb63661876c214fbe17a5fe9dd0e322c5b9c"
+  }
+}

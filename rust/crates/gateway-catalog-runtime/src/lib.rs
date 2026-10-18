@@ -1,4 +1,5 @@
 //! Request-owned catalog runtime. Network and credential ownership are typed host capabilities.
+pub mod control;
 pub mod host;
 pub mod providers;
 pub mod state;

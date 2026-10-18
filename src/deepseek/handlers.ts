@@ -18,7 +18,7 @@ import { isRecord } from "../utils.ts";
 import { type UsageContext, extractChatUsageTokens, recordCompletionUsage, recordRequestUsage, recordStreamTerminalType } from "../openai-telemetry.ts";
 import { markChatSemanticOutput } from "../chat/stream-translation.ts";
 import { chatCompletionHasAnswerBearingOutput, deepseekResponseHeaders } from "../upstream-wire.ts";
-import { parseStreamField } from "../request-policy.ts";
+import { parseStreamField, withUosWarning } from "../request-policy.ts";
 import { relayResponsesStream } from "../provider/stream-relay.ts";
 import { downstreamSignalFor, inferenceSignal } from "../openai.ts";
 import {
@@ -435,7 +435,11 @@ export const dispatchDeepSeekUpstream = async (
   usageContext: UsageContext | undefined
 ): Promise<DeepSeekDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
-  const requestSignal = inferenceSignal(req, usageContext);
+  // Streaming owns a renewable first-event/inactivity deadline in the stream
+  // reader, while the DeepSeek transport separately bounds dispatch and
+  // response headers. The buffered signal would remain attached for the entire
+  // stream and cut off a healthy generation at its absolute wall-clock limit.
+  const requestSignal = body.stream === true ? downstreamSignal : inferenceSignal(req, usageContext);
   let upstream: Response;
   let bodyDiagnostic: Record<string, unknown> | undefined;
   try {
@@ -652,7 +656,7 @@ export const handleDeepSeekResponses = async (
   const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, clientWantsStream);
   const upstreamModel = deepSeekUpstreamModelFor(modelRaw) ?? DEEPSEEK_FLASH_MODEL;
   if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
-  const { body: chatBody, toolNames, customToolNames } = translated.value;
+  const { body: chatBody, toolNames, customToolNames, warnings } = translated.value;
   if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
 
   const echo: DeepSeekResponsesEcho = {
@@ -681,14 +685,14 @@ export const handleDeepSeekResponses = async (
   });
 
   const dispatched = await dispatchDeepSeekUpstream(req, chatBody, modelRaw, usageContext);
-  if (!dispatched.ok) return dispatched.response;
+  if (!dispatched.ok) return withUosWarning(dispatched.response, warnings);
   const { upstream, requestSignal, downstreamSignal } = dispatched;
   const providerRequestId = dispatched.providerRequestId;
   const responseId = `resp_${(providerRequestId ?? crypto.randomUUID()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40)}`;
   const createdAtSeconds = Math.floor(Date.now() / 1000);
 
   if (clientWantsStream) {
-    return streamDeepSeekResponses(
+    const response = streamDeepSeekResponses(
       upstream,
       modelRaw,
       responseId,
@@ -702,9 +706,10 @@ export const handleDeepSeekResponses = async (
       requestSignal,
       upstreamModel
     );
+    return withUosWarning(response, warnings);
   }
 
-  return finalizeBufferedDeepSeekResponses({
+  const response = await finalizeBufferedDeepSeekResponses({
     upstream,
     modelRaw,
     responseId,
@@ -717,6 +722,7 @@ export const handleDeepSeekResponses = async (
     downstreamSignal,
     usageContext,
   });
+  return withUosWarning(response, warnings);
 };
 
 /**

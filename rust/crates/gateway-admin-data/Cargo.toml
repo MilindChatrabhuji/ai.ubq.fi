@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-core.workspace = true
+gateway-schema = { path = "../gateway-schema" }
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }

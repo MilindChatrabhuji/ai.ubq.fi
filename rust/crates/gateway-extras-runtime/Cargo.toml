@@ -1,0 +1,24 @@
+[package]
+name = "gateway-extras-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core = { path = "../gateway-core" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-schema = { path = "../gateway-schema" }
+gateway-providers = { path = "../gateway-providers" }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "=0.10.9"
+base64 = "=0.22.1"
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "alloc"] }
+
+[lints]
+workspace = true

@@ -17,6 +17,7 @@ import {
   recordFirstUpstreamSseEvent,
   recordStreamTerminal,
   recordStreamTerminalType,
+  responseIncompleteFailureKind,
 } from "../openai-telemetry.ts";
 import { proxyResponsesStream, ResponsesStreamError, type ResponsesStreamEvent, withSseKeepalive } from "../responses-stream.ts";
 import { openRouterResponseHeaders } from "../upstream-wire.ts";
@@ -358,7 +359,13 @@ export const streamOpenRouterResponses = (
       recordResponsesTerminal(event, usageContext);
       if (event.terminal) {
         recordStreamTerminal(usageContext);
-        recordOpenRouterResponseHealth(200, providerRequestId);
+        const explicitProviderFault = event.type === "error" || event.type === "response.failed";
+        const incompleteProviderFault = event.type === "response.incomplete" && responseIncompleteFailureKind(event) !== null;
+        if (explicitProviderFault || incompleteProviderFault) {
+          void recordOpenRouterProviderHealth("upstream_error", 200, Date.now, providerRequestId);
+        } else if (event.type === "response.completed" || event.type === "response.incomplete") {
+          recordOpenRouterResponseHealth(200, providerRequestId);
+        }
         return;
       }
       if (openRouterResponsesEventIsSemantic(event)) {

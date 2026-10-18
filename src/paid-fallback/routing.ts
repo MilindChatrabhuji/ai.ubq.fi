@@ -52,6 +52,7 @@ import {
   loadPaidResponsesCatalogs,
   logPaidProviderSelected,
   meteredForbiddenIndicatesQuotaExhaustion,
+  surplus402IndicatesQuotaExhaustion,
   paidCatalogNeedsRefresh,
   paidFallbackAbortReason,
   paidProviderErrorStatus,
@@ -471,8 +472,9 @@ const runSinglePaidProviderAttempt = async (
     attemptDeadline.clear();
     recordFirstProviderHeaders(options.usageContext);
     const meteredQuotaExhausted = provider === "metered" ? await meteredForbiddenIndicatesQuotaExhaustion(candidate.response, fallbackSignal) : false;
-    const classification = paidProviderHealthClassification(provider, candidate.response.status, meteredQuotaExhausted);
-    await recordPaidProviderResponseHealth(provider, candidate.response.status, candidate.request_id, meteredQuotaExhausted);
+    const surplusQuotaExhausted = provider === "surplus" ? await surplus402IndicatesQuotaExhaustion(candidate.response, fallbackSignal) : false;
+    const classification = paidProviderHealthClassification(provider, candidate.response.status, meteredQuotaExhausted, surplusQuotaExhausted);
+    await recordPaidProviderResponseHealth(provider, candidate.response.status, candidate.request_id, meteredQuotaExhausted, surplusQuotaExhausted);
     return { candidate, classification };
   } finally {
     attemptDeadline.clear();

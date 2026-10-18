@@ -12,7 +12,7 @@ use gateway_authority::routing::{
 use gateway_authority::{Authority, AuthorityClock, TokenSource};
 use gateway_core::GatewayError;
 use gateway_core::identity::{
-    ApiKeyId, CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash,
+    ApiKeyId, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash,
 };
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::{
