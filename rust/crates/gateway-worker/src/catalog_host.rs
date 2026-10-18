@@ -193,10 +193,25 @@ impl CatalogHost for Host {
                     .insert(provider, binding(&name, &secret));
             }
         }
+        if let Some(claude) = crate::claude_host::publication(&self.store, &self.platform).await? {
+            publication
+                .providers
+                .insert(CatalogProvider::ClaudeCode, claude.binding);
+            publication.source_checks.extend(claude.checks);
+        }
         publication.validate()?;
         Ok(publication)
     }
     async fn fetch(&self, request: CatalogFetch) -> Result<CatalogFetchResponse, GatewayError> {
+        if matches!(
+            &request,
+            CatalogFetch::Provider {
+                provider: CatalogProvider::ClaudeCode,
+                ..
+            }
+        ) {
+            return crate::claude_host::fetch_catalog(&self.store, &self.platform, request).await;
+        }
         let timeout = request.remaining_timeout_ms(now_ms()?)?;
         let body_limit = request.max_body_bytes();
         let mut headers = BTreeMap::from([("Accept".into(), "application/json".into())]);

@@ -200,12 +200,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
             return Ok(None);
         };
         if session.expires_at_ms <= self.host.now_ms() {
-            store::commit(
-                self.store,
-                vec![store::check(&session_key, record.as_ref())],
-                vec![RecordMutation::Delete { key: session_key }],
-            )
-            .await?;
+            self.delete_session(token, record.as_ref()).await?;
             return Ok(None);
         }
         if session.audience_origin.as_ref().is_some_and(|audience| {
@@ -221,6 +216,20 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
             self.host.now_ms(),
         )?;
         Ok(user.map(|user| SessionView { session, user }))
+    }
+    async fn delete_session(
+        &self,
+        token: &str,
+        record: Option<&gateway_core::state::StoredRecord>,
+    ) -> Result<bool, GatewayError> {
+        let session_key = key("sessions", token);
+        let index_key = crate::session_index::index_key(&crate::session_index::digest(token))?;
+        let index = self.store.read(&index_key).await?;
+        store::commit(
+            self.store,
+            vec![store::check(&session_key, record), store::check(&index_key, index.as_ref())],
+            vec![RecordMutation::Delete { key: session_key }, RecordMutation::Delete { key: index_key }],
+        ).await
     }
     async fn user_by_handle(&self, handle: &str) -> Result<Option<PasskeyUser>, GatewayError> {
         let id: Option<String> = store::decode(
@@ -294,15 +303,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
             audience_origin,
         };
         let k = key("sessions", &session.token);
+        let revision = self.revision()?;
+        let index = crate::session_index::record_for_session(&session, &revision, Some(session.expires_at_ms))?;
+        let index_key = crate::session_index::index_key(&crate::session_index::digest(&session.token))?;
         if !store::commit(
             self.store,
-            vec![store::check(&k, None)],
+            vec![store::check(&k, None), store::check(&index_key, None)],
             vec![store::put(
                 k,
                 &session,
                 Some(session.expires_at_ms),
-                &self.revision()?,
-            )?],
+                &revision,
+            )?, RecordMutation::Put { key: index_key, record: index }],
         )
         .await?
         {
@@ -694,12 +706,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         if let Some(view) = self.session(request, override_token).await? {
             let k = key("sessions", &view.session.token);
             let row = self.store.read(&k).await?;
-            store::commit(
-                self.store,
-                vec![store::check(&k, row.as_ref())],
-                vec![RecordMutation::Delete { key: k }],
-            )
-            .await?;
+            if !self.delete_session(&view.session.token, row.as_ref()).await? {
+                return Err(conflict("Passkey session was modified concurrently; retry logout"));
+            }
         }
         let mut response = AuthResponse::json(204, Value::Null);
         response.headers.insert(

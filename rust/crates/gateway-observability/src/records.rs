@@ -89,7 +89,7 @@ fn text(
     let value = values
         .get(name)
         .and_then(|v| v.deserialize::<JsString16>().ok());
-    bounded_text(value.as_ref(), max, &JsString16::from_str(fallback))
+    bounded_text(value.as_ref(), max, &JsString16::from_utf8(fallback))
 }
 fn optional_text(values: &BTreeMap<String, SourceJson>, name: &str) -> Option<JsString16> {
     let v = text(values, name, 120, "");
@@ -199,7 +199,7 @@ pub fn record_source_json(row: &StoredRecord) -> Result<SourceJson, GatewayError
     match row.value_encoding {
         ValueEncoding::Json => SourceJson::from_serializable(row.json_value()?),
         ValueEncoding::ProfileV2 => row.profile_v2_source_json(),
-        ValueEncoding::ProfileV1 => Err(store::error(
+        ValueEncoding::ProfileV1 | ValueEncoding::SourceGraphV1 => Err(store::error(
             "Request/error record requires explicit Json or ProfileV2 encoding",
         )),
     }
@@ -278,22 +278,22 @@ pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayErr
         deno_revision: &'a Option<String>,
         version: u8,
     }
-    let terminal = input.terminal_type.as_deref().map(JsString16::from_str);
+    let terminal = input.terminal_type.as_deref().map(JsString16::from_utf8);
     let terminal = bounded_text(
         terminal.as_ref(),
         160,
-        &JsString16::from_str(if input.status >= 400 {
+        &JsString16::from_utf8(if input.status >= 400 {
             "http.error"
         } else {
             "error"
         }),
     );
     let fallback = if input.status >= 400 {
-        JsString16::from_str(&format!("http_{}", input.status))
+        JsString16::from_utf8(&format!("http_{}", input.status))
     } else {
         terminal.clone()
     };
-    let failure = input.failure_kind.as_deref().map(JsString16::from_str);
+    let failure = input.failure_kind.as_deref().map(JsString16::from_utf8);
     let failure = bounded_text(failure.as_ref(), 160, &fallback);
     SourceJson::from_serializable(&ErrorRecord {
         request_id: &input.request_id,

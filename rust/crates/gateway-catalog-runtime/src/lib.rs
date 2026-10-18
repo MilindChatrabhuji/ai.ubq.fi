@@ -251,10 +251,10 @@ impl CatalogRuntime {
                 break;
             }
             host.wait(25).await?;
-            if let MemoIdentity::Credential(binding) = &identity {
-                if host.publication().await?.binding(provider).as_ref() != Some(binding) {
-                    return Ok(None);
-                }
+            if let MemoIdentity::Credential(binding) = &identity
+                && host.publication().await?.binding(provider).as_ref() != Some(binding)
+            {
+                return Ok(None);
             }
             if self
                 .memo

@@ -21,6 +21,7 @@ gateway-providers.workspace = true
 gateway-admin.workspace = true
 gateway-admission.workspace = true
 gateway-catalog-runtime.workspace = true
+gateway-claude-runtime.workspace = true
 gateway-admin-runtime.workspace = true
 gateway-routing-runtime.workspace = true
 gateway-extras-runtime.workspace = true
