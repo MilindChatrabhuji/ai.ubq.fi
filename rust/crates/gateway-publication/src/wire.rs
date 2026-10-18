@@ -11,6 +11,62 @@ use serde_json::json;
 /// authority capability. Debug and generic secret-bearing serialization omitted.
 pub struct PreparedPublicationCommand(pub(crate) WireCommand);
 
+/// Nonsecret expected revisions supplied by the separately reviewed current
+/// state adoption or a prior authenticated receipt. No authority read endpoint
+/// or second native ledger is created to obtain them.
+pub struct ExpectedAccessPublication {
+    pub native_owner_id: String,
+    pub owner_revision: String,
+    pub source_revision: String,
+    pub normalized_revision: Option<String>,
+    pub account_id_hash: String,
+    pub user_id: String,
+    pub publication_revision: String,
+}
+impl PreparedPublicationCommand {
+    pub fn configuration_from_expected(
+        config: PaidControlConfig,
+        owner_revision: String,
+        previous_config_revision: Option<String>,
+        publication_revision: String,
+    ) -> Result<Self, GatewayError> {
+        let command = WireCommand::ConfigPublish(ConfigWire {
+            v: 1,
+            config,
+            owner_revision,
+            previous_config_revision,
+            publication_revision,
+        });
+        WireCommand::parse(&command.bytes()?)?;
+        Ok(Self(command))
+    }
+    pub fn access_from_registered(
+        expected: ExpectedAccessPublication,
+        observed: &NativeCredentials,
+    ) -> Result<Self, GatewayError> {
+        if observed.external_user_id.as_deref() != Some(&expected.user_id)
+            || observed.routing_account_hash() != expected.account_id_hash
+            || !observed.refresh_token.expose().is_empty()
+        {
+            return Err(invalid());
+        }
+        let command = WireCommand::AccessPublish(AccessWire {
+            v: 1,
+            native_owner_id: expected.native_owner_id,
+            owner_revision: expected.owner_revision,
+            source_revision: expected.source_revision,
+            normalized_revision: expected.normalized_revision,
+            publication_revision: expected.publication_revision,
+            account_id_hash: observed.routing_account_hash(),
+            credential_version: observed.routing_credential_version(),
+            native_generation: observed.generation_hash(),
+            document: AccessDocument::from_native(observed)?,
+        });
+        WireCommand::parse(&command.bytes()?)?;
+        Ok(Self(command))
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub(crate) enum WireCommand {
