@@ -25,13 +25,20 @@ old=
 
 # All lock-directory mutations, including mkdir + owner write, share the breaker gate. Otherwise a
 # stale blank-owner observation or a delayed holder's cleanup could still delete a fresh lock.
+take_breaker() {
+  # Some mkdir implementations report success after a concurrent EEXIST. Shell noclobber creates a
+  # regular gate file exclusively instead. Reject existing special nodes before opening anything.
+  [ ! -e "$lock.break" ] && [ ! -L "$lock.break" ] || return 1
+  (set -C; : > "$lock.break") 2>/dev/null
+}
+
 release_breaker() {
   [ -n "$breaker" ] || return 0
-  # A signal after rmdir may run cleanup after another caller has acquired the path. Relinquish
+  # A signal after removal may run cleanup after another caller has acquired the path. Relinquish
   # ownership first so cleanup cannot remove that caller's gate. Failed removal stays fail-closed.
   set -- "$breaker"
   breaker=
-  rmdir "$1"
+  rm "$1"
 }
 
 release_lock() {
@@ -40,7 +47,7 @@ release_lock() {
   lock_token=
   release_start=$(date +%s) || return 1
   while [ -z "$breaker" ]; do
-    if mkdir "$lock.break" 2>/dev/null; then
+    if take_breaker; then
       breaker=$lock.break
       break
     fi
@@ -203,7 +210,7 @@ take_lock() {
   blank_since=
   trap 'die "interrupted"' HUP INT TERM
   while :; do
-    if mkdir "$lock.break" 2>/dev/null; then
+    if take_breaker; then
       breaker=$lock.break
       if mkdir "$lock" 2>/dev/null; then
         lock_token="$$ $(date +%s)" || die "cannot read the clock"

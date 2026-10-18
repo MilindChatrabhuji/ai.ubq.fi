@@ -351,26 +351,26 @@ for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]])
       const firstRelease = join(fixture.tmp, "first-release");
       const interruptedRelease = join(fixture.tmp, "interrupted-release");
       await executable(
-        join(fixture.bin, "rmdir"),
+        join(fixture.bin, "rm"),
         `#!/bin/sh
 if [ "$1" = ${shellQuote(gate)} ] && [ ! -d ${shellQuote(interruptedRelease)} ]; then
   if ${hostCommand("mkdir")} ${shellQuote(firstRelease)} 2>/dev/null; then
-    exec ${hostCommand("rmdir")} "$@"
+    exec ${hostCommand("rm")} "$@"
   fi
-  ${hostCommand("rmdir")} "$@" || exit 1
-  ${hostCommand("mkdir")} ${shellQuote(gate)} || exit 1
+  ${hostCommand("rm")} "$@" || exit 1
+  printf 'competing gate\\n' >${shellQuote(gate)} || exit 1
   ${hostCommand("mkdir")} ${shellQuote(interruptedRelease)} || exit 1
   kill -TERM "$PPID" || exit 1
   exit 0
 fi
-exec ${hostCommand("rmdir")} "$@"
+exec ${hostCommand("rm")} "$@"
 `
       );
       const result = await fixture.run("sandboxed", { shell });
       assert.equal(result.code, 2, result.stderr);
       assert.equal(result.stdout, "", "an interrupted signing never invokes gpg");
       assert.match(result.stderr, /gpg-dsh: interrupted/);
-      assert.deepEqual(await readdir(gate), [], "cleanup must preserve the competing caller's gate");
+      assert.equal(await readFile(gate, "utf8"), "competing gate\n", "cleanup must preserve the competing caller's gate");
       await assert.rejects(stat(`${fixture.seed}.lock`), "the completed rebuild released its own lock");
       assert.deepEqual(await gpgconfCalls(fixture), [`--homedir ${fixture.seed} --kill gpg-agent`]);
     });
@@ -383,22 +383,90 @@ test("a failed gate release remains fatal and leaves the gate closed", async () 
     const gate = `${fixture.seed}.lock.break`;
     const firstRelease = join(fixture.tmp, "first-release");
     await executable(
-      join(fixture.bin, "rmdir"),
+      join(fixture.bin, "rm"),
       `#!/bin/sh
 if [ "$1" = ${shellQuote(gate)} ]; then
   if ! ${hostCommand("mkdir")} ${shellQuote(firstRelease)} 2>/dev/null; then exit 1; fi
 fi
-exec ${hostCommand("rmdir")} "$@"
+exec ${hostCommand("rm")} "$@"
 `
     );
     const result = await fixture.run("sandboxed");
     assert.equal(result.code, 2, result.stderr);
     assert.equal(result.stdout, "", "gpg must not run after an unsuccessful gate release");
     assert.match(result.stderr, /cannot release the rebuild lock/);
-    assert.deepEqual(await readdir(gate), [], "failed removal must remain fail-closed");
+    assert.equal(await readFile(gate, "utf8"), "", "failed removal must remain fail-closed");
     await assert.rejects(stat(`${fixture.seed}.lock`));
   });
 });
+
+const advancingClock = async (fixture: Fixture): Promise<void> => {
+  const clock = join(fixture.tmp, "clock");
+  await writeFile(clock, "100\n");
+  await executable(
+    join(fixture.bin, "date"),
+    `#!/bin/sh
+now=$(${hostCommand("cat")} ${shellQuote(clock)})
+printf '%s\\n' "$((now + 20))" >${shellQuote(clock)}
+printf '%s\\n' "$now"
+`
+  );
+};
+
+for (const shell of [["/bin/sh"], ["/bin/bash", "--posix"]]) {
+  test(`an EEXIST success from mkdir cannot grant ownership of another caller's gate (${shell.join(" ")})`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+      const gate = `${fixture.seed}.lock.break`;
+      await mkdir(gate, { mode: 0o700 });
+      await advancingClock(fixture);
+      // uutils mkdir 0.10.0 can return success after its initial absent-path check races with another
+      // creator: create_dir returns EEXIST, then path.is_dir() converts that failure into success.
+      // Start at that failed syscall with the competing caller's gate already present.
+      await executable(
+        join(fixture.bin, "mkdir"),
+        `#!/bin/sh
+if [ "$1" = ${shellQuote(gate)} ]; then
+  ${hostCommand("mkdir")} "$@" 2>/dev/null || [ -d "$1" ]
+  exit "$?"
+fi
+exec ${hostCommand("mkdir")} "$@"
+`
+      );
+      const result = await fixture.run("sandboxed", { shell });
+      assert.equal(result.code, 2, result.stderr);
+      assert.equal(result.stdout, "", "a contender cannot sign through another caller's gate");
+      assert.match(result.stderr, /timed out waiting for the rebuild lock/);
+      assert.deepEqual(await readdir(gate), [], "the competing gate remains untouched");
+      assert.deepEqual(await gpgconfCalls(fixture), [], "the contender never rebuilt the seed");
+    });
+  });
+
+  for (const kind of ["directory", "file", "FIFO", "dangling symlink", "device symlink"])
+    test(`an existing ${kind} blocks gate acquisition without being opened (${shell.join(" ")})`, async () => {
+      await withFixture(async (fixture) => {
+        await signed(fixture);
+        await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+        const gate = `${fixture.seed}.lock.break`;
+        if (kind === "directory") await mkdir(gate, { mode: 0o700 });
+        else if (kind === "file") await writeFile(gate, "another caller's gate", { mode: 0o600 });
+        else if (kind === "FIFO") {
+          const result = await runFixture("/bin/sh", { args: ["-c", `${hostCommand("mkfifo")} ${shellQuote(gate)}`] });
+          assert.equal(result.code, 0, decoder.decode(result.stderr));
+        } else await symlink(kind === "device symlink" ? "/dev/null" : join(fixture.tmp, "missing"), gate);
+        const before = await lstat(gate);
+        await advancingClock(fixture);
+        const result = await fixture.run("sandboxed", { shell });
+        assert.equal(result.code, 2, result.stderr);
+        assert.equal(result.stdout, "", "gpg cannot run while a foreign gate exists");
+        assert.match(result.stderr, /timed out waiting for the rebuild lock/);
+        assert.equal((await lstat(gate)).ino, before.ino, "the foreign gate is preserved");
+        if (kind === "file") assert.equal(await readFile(gate, "utf8"), "another caller's gate");
+        assert.deepEqual(await gpgconfCalls(fixture), []);
+      });
+    });
+}
 
 const waitFor = async (condition: () => Promise<boolean>): Promise<void> => {
   const deadline = Date.now() + 5000;
