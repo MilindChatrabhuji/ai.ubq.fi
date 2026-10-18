@@ -579,7 +579,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         NativeRpcResponse {
             v: NATIVE_WIRE_VERSION,
             status: response.status,
-            body: response.body.clone(),
+            body: response.body.as_json().cloned().ok_or_else(|| {
+                GatewayError::unavailable(
+                    "Native protocol response is invalid",
+                    "native_protocol_invalid",
+                )
+            })?,
             stream: response.stream.clone(),
         }
         .validate_for(&envelope)?;
