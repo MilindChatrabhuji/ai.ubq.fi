@@ -69,10 +69,12 @@ impl ProviderEvent {
     pub fn chat(data: Value) -> Self { Self { event: None, data } }
     pub fn encode_sse(&self) -> String { if self.data == Value::String("[DONE]".into()) { return "data: [DONE]\n\n".into(); } let event = self.event.as_ref().map(|s| format!("event: {s}\n")).unwrap_or_default(); format!("{event}data: {}\n\n", self.data) }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DecodedResponse { pub status: u16, pub headers: Headers, pub body: Value, pub events: Vec<ProviderEvent>, pub terminal: Option<gateway_core::lifecycle::SemanticTerminal>, pub usage: Option<Value>, pub native_replay: Option<Value> }
+#[derive(Clone)]
+pub struct DecodedResponse { pub status: u16, pub headers: Headers, pub body: Value, pub events: Vec<ProviderEvent>, pub terminal: Option<gateway_core::lifecycle::SemanticTerminal>, pub usage: Option<Value>, pub native_replay: Option<Value>, pub raw_body: Option<Vec<u8>> }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Elision { pub path: String, pub call_id: Option<String>, pub kind: String, pub original_bytes: usize, pub forwarded_bytes: usize, pub omitted_bytes: usize }
 pub(crate) fn invalid(message: impl Into<String>, param: &str) -> gateway_core::GatewayError { gateway_core::GatewayError::new(400,message,Some("invalid_request_error")).with_param(Some(param)) }
 pub(crate) fn malformed(message: impl Into<String>) -> gateway_core::GatewayError { gateway_core::GatewayError::new(502,message,Some("upstream_stream_error")).with_type("server_error") }
 pub(crate) fn header<'a>(headers: &'a Headers, name: &str) -> Option<&'a str> { headers.iter().find(|(key,_)| key.eq_ignore_ascii_case(name)).map(|(_,v)|v.as_str()) }
+
+impl std::fmt::Debug for DecodedResponse { fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("DecodedResponse").field("status",&self.status).field("terminal",&self.terminal).field("event_count",&self.events.len()).field("native_replay",&self.native_replay.is_some()).finish_non_exhaustive()} }

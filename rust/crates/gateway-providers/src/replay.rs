@@ -5,7 +5,7 @@ use serde_json::{json,Value};
 pub struct ReplayContext{pub scope:String,pub provider:String,pub model:String}
 #[derive(Clone,Copy,Debug,Eq,PartialEq)]
 pub enum ReplayTransport{Messages,Chat}
-#[derive(Clone,Debug,PartialEq)]
+#[derive(Clone,PartialEq)]
 pub enum ReplayEntry{Original(Value),NativeAssistant{transport:ReplayTransport,payload:Value}}
 #[derive(Clone)]
 struct Receipt{context:ReplayContext,ids:Vec<String>,fingerprints:Vec<Value>,native:Value,transport:ReplayTransport,expires:i64,bytes:usize}
@@ -41,3 +41,5 @@ impl ReplayStore{
 }
 
 impl std::fmt::Debug for ReplayStore{fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.debug_struct("ReplayStore").field("receipt_count",&self.rows.len()).finish_non_exhaustive()}}
+
+impl std::fmt::Debug for ReplayEntry { fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{match self{Self::Original(_)=>f.write_str("Original([private conversation item])"),Self::NativeAssistant{transport,..}=>f.debug_struct("NativeAssistant").field("transport",transport).field("payload",&"[private signed blocks]").finish()}} }
