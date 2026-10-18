@@ -22,7 +22,10 @@ pub trait AdminHost {
         operation: AdminOperation,
         input: AdminInput,
     ) -> impl Future<Output = Result<AuthResponse, GatewayError>>;
-    /// Inspect and fence unsettled billing before deletion. This must use the same authority, never a local ledger.
+    /// Claim the common paid-deletion guard before inspecting unsettled billing,
+    /// and return its new nonempty revision plus every required ledger fence.
+    /// Refuse pending/unknown billing and release only the caller's claim on failure.
+    /// The final key/hash/policy/audit transaction checks these exact revisions.
     fn prepare_key_deletion(
         &self,
         key_id: &str,

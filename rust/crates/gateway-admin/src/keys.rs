@@ -196,15 +196,7 @@ async fn paid_fields<A: AdminHost>(
             "paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled",
         ));
     }
-    if !enabled {
-        let mut fields = PaidKeyFields::disabled();
-        fields.limit_microcredits = limit;
-        return Ok(fields);
-    }
-    if let Some(old) = old.filter(|_| {
-        raw.get("paid_fallback_enabled").is_none()
-            && raw.get("paid_fallback_limit_credits").is_none()
-    }) {
+    if let Some(old) = old.filter(|old| old.policy.paid_fallback_enabled || !enabled) {
         return Ok(PaidKeyFields {
             enabled,
             limit_microcredits: limit,
@@ -214,7 +206,19 @@ async fn paid_fields<A: AdminHost>(
             pricing_checked_at_ms: old.paid_fallback_pricing_checked_at_ms,
         });
     }
-    let fields = host.paid_key_policy(raw).await?;
+    if !enabled {
+        let mut fields = PaidKeyFields::disabled();
+        fields.limit_microcredits = limit;
+        return Ok(fields);
+    }
+    let mut effective = raw.clone();
+    effective["paid_fallback_enabled"] = Value::Bool(true);
+    effective["paid_fallback_limit_credits"] = json!(if limit == -1 {
+        -1.0
+    } else {
+        limit as f64 / 1_000_000.0
+    });
+    let fields = host.paid_key_policy(&effective).await?;
     if !fields.enabled
         || fields.limit_microcredits != limit
         || fields.quota_per_credit <= 0
@@ -376,15 +380,30 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
             store::check(&ik, ir.as_ref()),
             store::check(&hk, hr.as_ref()),
             store::check(&pk, pr.as_ref()),
-            store::check(&dk, dr.as_ref()),
         ];
+        if operation != AdminOperation::ApiKeysDelete {
+            checks.push(store::check(&dk, dr.as_ref()));
+        }
         let mut writes = Vec::new();
         let action = match operation {
             AdminOperation::ApiKeysDelete => {
                 if record.policy.revoked_at_ms.is_none() {
                     return Err(invalid("Only revoked keys can be deleted"));
                 }
-                checks.extend(self.capabilities.prepare_key_deletion(id).await?);
+                let prepared = self.capabilities.prepare_key_deletion(id).await?;
+                if !prepared.iter().any(|check| {
+                    check.key == dk
+                        && check
+                            .expected_revision
+                            .as_ref()
+                            .is_some_and(|revision| !revision.is_empty())
+                }) {
+                    return Err(GatewayError::unavailable(
+                        "API key deletion requires its claimed paid-ledger guard",
+                        "paid_fallback_billing_unavailable",
+                    ));
+                }
+                checks.extend(prepared);
                 writes.extend([
                     RecordMutation::Delete { key: ik.clone() },
                     RecordMutation::Delete { key: hk.clone() },
