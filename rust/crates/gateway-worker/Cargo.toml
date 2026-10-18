@@ -10,6 +10,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 gateway-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 worker.workspace = true
 wasm-bindgen.workspace = true
 

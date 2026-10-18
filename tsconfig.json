@@ -29,6 +29,9 @@
     ".codex-worktrees",
     ".cleanup-evidence",
     ".tmp",
-    ".deno-types.d.ts"
+    ".deno-types.d.ts",
+    "cloudflare.config.ts",
+    "wrangler.config.ts",
+    "tools/cloudflare/runtime.generated.d.ts"
   ]
 }
