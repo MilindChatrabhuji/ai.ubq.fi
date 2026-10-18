@@ -22,7 +22,8 @@ impl CatalogInput{
     pub fn synthetic_configured(&self)->bool{FLASH_ORDER.iter().any(|p|self.configured(p))}
     pub fn synthetic_enabled(&self)->bool{self.enabled("ubiquity")&&self.synthetic_configured()}
 }
-pub fn endpoint_paths(model:&Value)->Vec<String>{let types=model.get("supported_endpoint_types").and_then(Value::as_array);let has=|key|types.is_some_and(|t|t.iter().any(|v|v.as_str()==Some(key)));let mut paths=Vec::new();if has("openai-response"){paths.push("/v1/responses".into());}if has("openai"){paths.push("/v1/chat/completions".into());}paths}
+pub fn endpoint_paths(model:&Value)->Vec<String>{let types=model.get("supported_endpoint_types").and_then(Value::as_array);let has=|key|types.is_some_and(|t|t.iter().any(|v|v.as_str()==Some(key)));let mut paths=Vec::new();if has("openai-response"){paths.push("/v1/responses".into());}
+if has("openai"){paths.push("/v1/chat/completions".into());}paths}
 pub fn endpoint_supports(model:&Value,endpoint:&str)->bool{model.get("supported_endpoint_types").and_then(Value::as_array).is_some_and(|types|types.iter().any(|v|v.as_str()==Some(endpoint)))}
 pub fn model_list_row(record:&Value,fallback_created:i64)->Option<Value>{
     let id=["id","slug","model","name"].iter().find_map(|key|record.get(key).and_then(Value::as_str))?;if id.is_empty(){return None;}
@@ -34,13 +35,14 @@ pub fn normalize_model_list(payload:&Value)->Option<Value>{
 }
 pub fn append_unique(rows:&mut Vec<Value>,new_rows:impl IntoIterator<Item=Value>,key:&str){for row in new_rows{let id=row.get(key);if !rows.iter().any(|r|r.get(key)==id){rows.push(row);}}}
 pub fn filter_whitelist(rows:Vec<Value>,whitelist:Option<&ModelWhitelist>,native:bool)->Vec<Value>{rows.into_iter().filter(|r|{let id=if native{identifier(r)}else{r.get("id").and_then(Value::as_str)};id.is_some_and(|id|ModelWhitelist::permits(whitelist,if native{id.trim_matches(crate::util::js_whitespace)}else{id}))}).collect()}
-pub fn claude_levels(model:&Value)->Vec<String>{let mut levels=Vec::new();if model.get("supports_disabled_thinking")==Some(&Value::Bool(true)){levels.push("none".into());}if let Some(raw)=model.get("supported_reasoning_levels").and_then(Value::as_array){levels.extend(raw.iter().filter_map(|v|v.as_str().map(str::to_owned)));}levels}
+pub fn claude_levels(model:&Value)->Vec<String>{let mut levels=Vec::new();if model.get("supports_disabled_thinking")==Some(&Value::Bool(true)){levels.push("none".into());}
+if let Some(raw)=model.get("supported_reasoning_levels").and_then(Value::as_array){levels.extend(raw.iter().filter_map(|v|v.as_str().map(str::to_owned)));}levels}
 #[derive(Clone,Debug,PartialEq)]
 pub struct RequestModelMetadata{pub snapshot:Option<ModelSnapshot>,pub record:Option<Value>,pub reasoning:ModelReasoning,pub supported_endpoints:Option<Vec<String>>}
 pub fn request_model_metadata(input:&CatalogInput,model:&str,responses:bool,now_ms:i64)->RequestModelMetadata{
     if model=="glm-5.2"{let record=json!({"slug":"glm-5.2"});return RequestModelMetadata{snapshot:None,reasoning:ModelReasoning::from_record(Some(&record)),record:Some(record),supported_endpoints:Some(vec!["openai".into(),"openai-response".into()])};}
     let snapshot=input.snapshot.clone();if let Some(record)=snapshot.as_ref().and_then(|s|s.find(model)).cloned(){return RequestModelMetadata{snapshot,reasoning:ModelReasoning::from_record(Some(&record)),record:Some(record),supported_endpoints:None};}
-    if input.enabled("claude_code"){if let Some(model)=input.rows("claude_code").iter().find(|r|r.get("id").and_then(Value::as_str)==Some(model)){let mut record=json!({"slug":model["id"],"supported_reasoning_levels":claude_levels(model)});if model.get("supports_disabled_thinking")==Some(&Value::Bool(true)){record["default_reasoning_level"]=json!("none");}return RequestModelMetadata{snapshot,reasoning:ModelReasoning::from_record(Some(&record)),record:Some(record),supported_endpoints:Some(vec!["openai".into(),"openai-response".into()])};}}
+    if input.enabled("claude_code") && let Some(model)=input.rows("claude_code").iter().find(|r|r.get("id").and_then(Value::as_str)==Some(model)){let mut record=json!({"slug":model["id"],"supported_reasoning_levels":claude_levels(model)});if model.get("supports_disabled_thinking")==Some(&Value::Bool(true)){record["default_reasoning_level"]=json!("none");}return RequestModelMetadata{snapshot,reasoning:ModelReasoning::from_record(Some(&record)),record:Some(record),supported_endpoints:Some(vec!["openai".into(),"openai-response".into()])};}
     let endpoint=if responses{"openai-response"}else{"openai"};let candidates:Vec<_>=["openlux","surplus"].iter().filter_map(|provider|input.rows(provider).iter().find(|r|r.get("id").and_then(Value::as_str)==Some(model)).map(|r|(*provider,r))).collect();
     if let Some((provider,paid))=candidates.iter().find(|(_,m)|endpoint_supports(m,endpoint)).or_else(||candidates.first()){
         let record=json!({"slug":model,"supported_reasoning_levels":["none"],"default_reasoning_level":"none"});let snapshot=snapshot.or_else(||Some(ModelSnapshot{models:Vec::new(),source:if *provider=="openlux"{"metered"}else{"surplus"}.into(),updated_at_ms:input.providers.get(*provider).and_then(|p|p.updated_at_ms).unwrap_or(now_ms),client_version:None}));

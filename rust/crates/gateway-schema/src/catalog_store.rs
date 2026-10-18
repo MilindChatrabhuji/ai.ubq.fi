@@ -22,7 +22,8 @@ pub async fn load_catalog<S:AuthorityStore>(store:&S,version:&str,auth_generatio
     Ok(Some(LoadedCatalog{metadata,body,parsed,source_body}))
 }
 pub async fn delete_catalog_chunks<S:AuthorityStore>(store:&S,metadata:&CatalogMetadata)->Result<(),GatewayError>{
-    let mut checks=Vec::new();let mut mutations=Vec::new();for(source,count)in[(false,metadata.chunk_count),(true,metadata.source_chunk_count.unwrap_or(0))]{for index in 0..count{let key=chunk_key(&metadata.client_version,&metadata.body_generation,index,source);let record=read(store,&key).await?;if record.as_ref().is_some_and(|r|r.revision==metadata.body_generation){checks.push(check(key.clone(),record.as_ref()));mutations.push(RecordMutation::Delete{key});}}}if !mutations.is_empty(){store.commit(AtomicTransition{checks,mutations}).await?;}Ok(())
+    let mut checks=Vec::new();let mut mutations=Vec::new();for(source,count)in[(false,metadata.chunk_count),(true,metadata.source_chunk_count.unwrap_or(0))]{for index in 0..count{let key=chunk_key(&metadata.client_version,&metadata.body_generation,index,source);let record=read(store,&key).await?;if record.as_ref().is_some_and(|r|r.revision==metadata.body_generation){checks.push(check(key.clone(),record.as_ref()));mutations.push(RecordMutation::Delete{key});}}}
+if !mutations.is_empty(){store.commit(AtomicTransition{checks,mutations}).await?;}Ok(())
 }
 pub async fn publish_catalog<S:AuthorityStore>(store:&S,prepared:&PreparedCatalog)->Result<bool,GatewayError>{
     let m=&prepared.metadata;let mut checks=Vec::new();let mut mutations=Vec::new();for(source,chunks)in[(false,&prepared.chunks),(true,&prepared.source_chunks)]{for(index,bytes)in chunks.iter().enumerate(){let key=chunk_key(&m.client_version,&m.body_generation,index,source);checks.push(check(key.clone(),None));mutations.push(put(key,json!(bytes),&m.body_generation,Some(prepared.expires_at_ms)));}}
@@ -30,10 +31,12 @@ pub async fn publish_catalog<S:AuthorityStore>(store:&S,prepared:&PreparedCatalo
     let key=metadata_key(&m.client_version);let previous=read(store,&key).await?;let generation=read(store,&auth_generation_key()).await?;
     if generation.as_ref().and_then(|r|r.value.as_str())!=Some(&m.auth_generation){delete_catalog_chunks(store,m).await?;return Ok(false);}
     let committed=store.commit(AtomicTransition{checks:vec![check(auth_generation_key(),generation.as_ref()),check(key.clone(),previous.as_ref())],mutations:vec![put(key,serde_json::to_value(m).map_err(|_|cache_error("Codex model catalog metadata could not be encoded"))?,&m.body_generation,Some(prepared.expires_at_ms))]}).await?==CommitOutcome::Committed;
-    if !committed{delete_catalog_chunks(store,m).await?;return Ok(false);}if let Some(old)=previous.and_then(|r|serde_json::from_value::<CatalogMetadata>(r.value).ok()).filter(|old|old.body_generation!=m.body_generation){delete_catalog_chunks(store,&old).await?;}Ok(true)
+    if !committed{delete_catalog_chunks(store,m).await?;return Ok(false);}
+if let Some(old)=previous.and_then(|r|serde_json::from_value::<CatalogMetadata>(r.value).ok()).filter(|old|old.body_generation!=m.body_generation){delete_catalog_chunks(store,&old).await?;}Ok(true)
 }
 pub async fn get_auth_generation<S:AuthorityStore>(store:&S,candidate:&str)->Result<String,GatewayError>{
-    for _ in 0..3{let existing=read(store,&auth_generation_key()).await?;if let Some(value)=existing.as_ref().and_then(|r|r.value.as_str()).filter(|s|!s.is_empty()){return Ok(value.into());}if store.commit(AtomicTransition{checks:vec![check(auth_generation_key(),existing.as_ref())],mutations:vec![put(auth_generation_key(),json!(candidate),candidate,None)]}).await?==CommitOutcome::Committed{return Ok(candidate.into());}}
+    for _ in 0..3{let existing=read(store,&auth_generation_key()).await?;if let Some(value)=existing.as_ref().and_then(|r|r.value.as_str()).filter(|s|!s.is_empty()){return Ok(value.into());}
+if store.commit(AtomicTransition{checks:vec![check(auth_generation_key(),existing.as_ref())],mutations:vec![put(auth_generation_key(),json!(candidate),candidate,None)]}).await?==CommitOutcome::Committed{return Ok(candidate.into());}}
     read(store,&auth_generation_key()).await?.and_then(|r|r.value.as_str().map(str::to_owned)).ok_or_else(||cache_error("Codex model catalog cache is unavailable"))
 }
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
@@ -49,11 +52,12 @@ pub async fn renew_refresh_lease<S:AuthorityStore>(store:&S,version:&str,owner:&
 pub async fn release_refresh_lease<S:AuthorityStore>(store:&S,version:&str,owner:&str)->Result<bool,GatewayError>{let key=lease_key(version);let existing=read(store,&key).await?;if existing.as_ref().and_then(|r|r.value.get("owner")).and_then(Value::as_str)!=Some(owner){return Ok(false);}Ok(store.commit(AtomicTransition{checks:vec![check(key.clone(),existing.as_ref())],mutations:vec![RecordMutation::Delete{key}]}).await?==CommitOutcome::Committed)}
 /// Full listing is an explicit authority input: never infer absence from a partial page.
 pub async fn prune_catalog_versions<S:AuthorityStore>(store:&S,all_metadata:&[CatalogMetadata],current_version:&str)->Result<(),GatewayError>{
-    for metadata in prune_versions(all_metadata,current_version){let key=metadata_key(&metadata.client_version);let existing=read(store,&key).await?;if existing.as_ref().and_then(|r|r.value.get("body_generation")).and_then(Value::as_str)!=Some(&metadata.body_generation){continue;}if store.commit(AtomicTransition{checks:vec![check(key.clone(),existing.as_ref())],mutations:vec![RecordMutation::Delete{key}]}).await?==CommitOutcome::Committed{delete_catalog_chunks(store,&metadata).await?;}}Ok(())
+    for metadata in prune_versions(all_metadata,current_version){let key=metadata_key(&metadata.client_version);let existing=read(store,&key).await?;if existing.as_ref().and_then(|r|r.value.get("body_generation")).and_then(Value::as_str)!=Some(&metadata.body_generation){continue;}
+if store.commit(AtomicTransition{checks:vec![check(key.clone(),existing.as_ref())],mutations:vec![RecordMutation::Delete{key}]}).await?==CommitOutcome::Committed{delete_catalog_chunks(store,&metadata).await?;}}Ok(())
 }
 /// Normalized publication plan must be committed with generation, snapshot and runtime revision checks.
 pub fn normalized_snapshot_plan(parsed:&Value,version:&str,current:Option<&ModelSnapshot>,runtime:&Value,updated_at_ms:i64)->Option<(ModelSnapshot,Value)>{
-    if let Some(current_version)=current.and_then(|s|s.client_version.as_deref()){if compare_client_versions(version,current_version).is_none_or(|c|c.is_lt()){return None;}}
+    if let Some(current_version)=current.and_then(|s|s.client_version.as_deref()).filter(|s|!s.is_empty()) && compare_client_versions(version,current_version).is_none_or(|c|c.is_lt()){return None;}
     let next=normalize_snapshot(parsed,&SnapshotOverrides{source:Some("chatgpt_codex".into()),client_version:Some(version.into()),updated_at_ms:Some(updated_at_ms)},updated_at_ms)?.merge_prompt_cache(current);
     let current_runtime=crate::runtime_config::normalize_runtime_config(runtime);let default=next.preserve_default(current_runtime.as_ref().and_then(|r|r.get("default_model")).and_then(Value::as_str));let runtime=crate::runtime_config::build_runtime_config(&next,default.as_deref(),current_runtime.as_ref().and_then(|r|r.get("default_reasoning_effort")).and_then(Value::as_str),updated_at_ms).ok()?;Some((next,runtime))
 }

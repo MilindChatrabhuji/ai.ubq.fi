@@ -28,7 +28,8 @@ pub fn configured_capabilities(input:&CatalogInput,provider:&str)->Vec<Value>{
         if provider=="ubiquity"{resolved=resolve_metadata(&MetadataSources{provider:Some(hint.clone()),..MetadataSources::default()});}
         let endpoints=if provider=="cerebras"{vec!["/v1/chat/completions"]}else if provider=="ubiquity"{vec!["/v1/responses"]}else{vec!["/v1/chat/completions","/v1/responses"]};
         let mut row=json!({"id":id,"object":"uos.model_capabilities","owned_by":provider,"display_name":display_name(provider,id),"upstream_provider":provider,"supported_endpoints":endpoints,"supported_reasoning_levels":hint.supported_reasoning_levels.as_ref().unwrap_or(&Vec::new()),"default_reasoning_effort":hint.default_reasoning_effort,"reasoning_effort_wire_map":{}});
-        apply_resolved_fields(&mut row,&resolved,false,true);row["context_source"]=json!(resolved.context_source);if provider=="deepseek"{row["reasoning_effort_wire_map"]=json!({"ultra":"max"});}if provider=="ubiquity"{row["context_source"]=json!("openrouter");row["reasoning_source"]=json!("provider_discovery");}Some(row)
+        apply_resolved_fields(&mut row,&resolved,false,true);row["context_source"]=json!(resolved.context_source);if provider=="deepseek"{row["reasoning_effort_wire_map"]=json!({"ultra":"max"});}
+if provider=="ubiquity"{row["context_source"]=json!("openrouter");row["reasoning_source"]=json!("provider_discovery");}Some(row)
     }).collect()
 }
 pub fn openrouter_models(input:&CatalogInput)->Vec<Value>{

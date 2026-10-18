@@ -33,7 +33,8 @@ pub fn decode_chunks(chunks:&[Vec<u8>],compressed_bytes:usize,body_bytes:usize,d
 }
 pub fn widen_catalog_windows(body:&str,enrichment:&std::collections::BTreeMap<String,MetadataHint>)->Option<String>{
     let mut parsed=parse_catalog(body)?;let mut changed=false;
-    for model in parsed.get_mut("models")?.as_array_mut()?{let Some(id)=identifier(model)else{continue};let Some(hint)=enrichment.get(id)else{continue};let endpoint=positive_integer(model.get("context_window"));let ceiling=positive_integer(model.get("max_context_window"));let widest=[endpoint,ceiling,hint.context_window_tokens,hint.max_context_window_tokens].into_iter().flatten().filter(|n|*n>0).max();let Some(widest)=widest else{continue};if endpoint.is_none_or(|n|widest>n){model["context_window"]=serde_json::json!(widest);changed=true;}if ceiling.is_none_or(|n|widest>n){model["max_context_window"]=serde_json::json!(widest);changed=true;}}
+    for model in parsed.get_mut("models")?.as_array_mut()?{let Some(id)=identifier(model)else{continue};let Some(hint)=enrichment.get(id)else{continue};let endpoint=positive_integer(model.get("context_window"));let ceiling=positive_integer(model.get("max_context_window"));let widest=[endpoint,ceiling,hint.context_window_tokens,hint.max_context_window_tokens].into_iter().flatten().filter(|n|*n>0).max();let Some(widest)=widest else{continue};if endpoint.is_none_or(|n|widest>n){model["context_window"]=serde_json::json!(widest);changed=true;}
+if ceiling.is_none_or(|n|widest>n){model["max_context_window"]=serde_json::json!(widest);changed=true;}}
     changed.then(||json_stringify(&parsed))
 }
 #[allow(clippy::too_many_arguments)]

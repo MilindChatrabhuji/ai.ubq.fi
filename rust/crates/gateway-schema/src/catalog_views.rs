@@ -29,10 +29,11 @@ pub fn capabilities(input:&CatalogInput)->Value{
 }
 fn public_entry(id:&str,provider:Value,created:Option<i64>,resolved:&ResolvedMetadata)->Value{
     let mut row=json!({"id":id,"providers":[provider]});if let Some(created)=created.filter(|n|*n>0){row["created"]=json!(created);}apply_resolved_fields(&mut row,resolved,false,false);
-    if let Some(levels)=&resolved.supported_reasoning_levels{row["supported_reasoning_levels"]=json!(levels);}if let Some(default)=&resolved.default_reasoning_effort{row["default_reasoning_effort"]=json!(default);}row["context_source"]=json!(resolved.context_source);row["reasoning_source"]=json!(resolved.reasoning_source);row
+    if let Some(levels)=&resolved.supported_reasoning_levels{row["supported_reasoning_levels"]=json!(levels);}
+if let Some(default)=&resolved.default_reasoning_effort{row["default_reasoning_effort"]=json!(default);}row["context_source"]=json!(resolved.context_source);row["reasoning_source"]=json!(resolved.reasoning_source);row
 }
 fn add_public(rows:&mut Vec<Value>,id:&str,provider:Value,created:Option<i64>,resolved:&ResolvedMetadata){
-    if let Some(existing)=rows.iter_mut().find(|r|r["id"].as_str()==Some(id)){existing["providers"].as_array_mut().expect("constructed providers").push(provider);if existing.get("created").is_none(){if let Some(n)=created.filter(|n|*n>0){existing["created"]=json!(n);}}}else{rows.push(public_entry(id,provider,created,resolved));}
+    if let Some(existing)=rows.iter_mut().find(|r|r["id"].as_str()==Some(id)){existing["providers"].as_array_mut().expect("constructed providers").push(provider);if existing.get("created").is_none() && let Some(n)=created.filter(|n|*n>0){existing["created"]=json!(n);}}else{rows.push(public_entry(id,provider,created,resolved));}
 }
 pub fn build_catalog_snapshot(input:&CatalogInput)->Value{
     let mut rows=Vec::new();let codex=snapshot_models(input,true);
@@ -44,7 +45,8 @@ pub fn build_catalog_snapshot(input:&CatalogInput)->Value{
     rows.sort_by(|a,b|a["id"].as_str().cmp(&b["id"].as_str()));let mut sources=serde_json::Map::new();sources.insert("codex".into(),json!({"status":if input.codex().is_some_and(|s|!s.models.is_empty()){"available"}else{"unavailable"},"count":codex.len(),"updated_at_ms":input.codex().map(|s|s.updated_at_ms)}));
     for provider in ["claude_code","openlux","surplus","deepseek","cerebras","lithos","openrouter"]{
         let snapshot=input.providers.get(provider);let configured=input.configured(provider);let gated=["deepseek","cerebras","lithos","openrouter"].contains(&provider);let count=if gated{if configured{if provider=="openrouter"{input.rows(provider).len()+1}else{provider_ids(provider).len()}}else{0}}else{input.rows(provider).len()};
-        let available=if gated{configured}else{snapshot.is_some_and(|s|s.available&&(provider!="claude_code"||!s.stale))};let mut source=json!({"status":if available{"available"}else{"unavailable"},"count":count,"updated_at_ms":if gated&&provider!="openrouter"{None}else{snapshot.and_then(|p|p.updated_at_ms)}});if gated||provider=="claude_code"{source["configured"]=json!(configured);}if provider=="claude_code"&&snapshot.is_some_and(|s|s.stale){source["stale"]=json!(true);}sources.insert(provider.into(),source);
+        let available=if gated{configured}else{snapshot.is_some_and(|s|s.available&&(provider!="claude_code"||!s.stale))};let mut source=json!({"status":if available{"available"}else{"unavailable"},"count":count,"updated_at_ms":if gated&&provider!="openrouter"{None}else{snapshot.and_then(|p|p.updated_at_ms)}});if gated||provider=="claude_code"{source["configured"]=json!(configured);}
+if provider=="claude_code"&&snapshot.is_some_and(|s|s.stale){source["stale"]=json!(true);}sources.insert(provider.into(),source);
     }json!({"models":rows,"sources":sources})
 }
 pub fn public_catalog(input:&CatalogInput)->Value{

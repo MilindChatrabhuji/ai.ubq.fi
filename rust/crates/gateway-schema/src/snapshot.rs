@@ -25,7 +25,8 @@ pub fn normalize_snapshot(value:&Value,overrides:&SnapshotOverrides,now_ms:i64)-
         if let Some(v)=item.get("default_reasoning_level"){if v.is_null(){model["default_reasoning_level"]=json!("none");}else if let Some(level)=normalized_string(Some(v)){model["default_reasoning_level"]=json!(level);}}
         if let Some(raw_levels)=item.get("supported_reasoning_levels").and_then(Value::as_array){
             let levels:Vec<_>=raw_levels.iter().filter_map(advertised_effort).collect();if !levels.is_empty(){model["supported_reasoning_levels"]=json!(levels);}
-            let mut wire=serde_json::Map::new();for level in raw_levels{if let Some(effort)=advertised_effort(level){let upstream=if effort=="ultra"{Some("max".to_owned())}else{normalized_string(level.get("wire_effort"))};if let Some(upstream)=upstream.filter(|s|s!=&effort){wire.insert(effort,json!(upstream));}}}if !wire.is_empty(){model["reasoning_effort_wire_map"]=Value::Object(wire);}
+            let mut wire=serde_json::Map::new();for level in raw_levels{if let Some(effort)=advertised_effort(level){let upstream=if effort=="ultra"{Some("max".to_owned())}else{normalized_string(level.get("wire_effort"))};if let Some(upstream)=upstream.filter(|s|s!=&effort){wire.insert(effort,json!(upstream));}}}
+if !wire.is_empty(){model["reasoning_effort_wire_map"]=Value::Object(wire);}
         }
         if let Some(cache)=prompt_cache::normalize_capabilities(item.get("prompt_cache")){model["prompt_cache"]=cache;}
         models.push(model);
@@ -56,9 +57,12 @@ impl ModelSnapshot{
     }
 }
 /// Pool order and first row are authoritative; unknown top-level metadata stays verbatim.
-pub fn union_account_catalogs(catalogs:&[(String,Value)])->Option<(Value,Vec<(String,Vec<String>)>)>{
+pub type AccountCatalogEvidence=Vec<(String,Vec<String>)>;
+pub type AccountCatalogUnion=(Value,AccountCatalogEvidence);
+pub fn union_account_catalogs(catalogs:&[(String,Value)])->Option<AccountCatalogUnion>{
     let mut envelope=None;let mut models=Vec::new();let mut seen=Vec::new();let mut accounts=Vec::new();
-    for(account,catalog)in catalogs{let Some(rows)=catalog.get("models").and_then(Value::as_array)else{continue;};if !catalog.is_object(){continue;}if envelope.is_none(){envelope=Some(catalog.clone());}let mut slugs=Vec::new();
+    for(account,catalog)in catalogs{let Some(rows)=catalog.get("models").and_then(Value::as_array)else{continue;};if !catalog.is_object(){continue;}
+if envelope.is_none(){envelope=Some(catalog.clone());}let mut slugs=Vec::new();
         for row in rows{let Some(slug)=identifier(row).map(crate::util::js_trim).filter(|s|!s.is_empty())else{continue;};push_unique(&mut slugs,slug.to_owned());if !seen.contains(&slug.to_owned()){models.push(row.clone());seen.push(slug.to_owned());}}
         accounts.push((account.clone(),slugs));
     }let mut envelope=envelope?;envelope["models"]=json!(models);Some((envelope,accounts))

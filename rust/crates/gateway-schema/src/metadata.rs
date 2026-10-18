@@ -17,7 +17,8 @@ pub struct MetadataSources{pub codex:Option<MetadataHint>,pub subscription:Optio
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
 pub struct ResolvedMetadata{pub context_window_tokens:Option<i64>,pub max_context_window_tokens:Option<i64>,pub auto_compact_token_limit_tokens:Option<i64>,pub effective_context_window_percent:Option<i64>,pub supported_reasoning_levels:Option<Vec<String>>,pub default_reasoning_effort:Option<String>,pub context_source:String,pub reasoning_source:String}
 pub fn resolved_auto_compact(window:i64,configured:Option<i64>)->i64{
-    if let Some(n)=configured.filter(|n|*n>0&&*n<=window){return n;}if window>50_000{((window as f64*0.85).floor() as i64).min(window-50_000)}else{1.max((window-1).min((window as f64*0.85).floor() as i64))}
+    if let Some(n)=configured.filter(|n|*n>0&&*n<=window){return n;}
+if window>50_000{((window as f64*0.85).floor() as i64).min(window-50_000)}else{1.max((window-1).min((window as f64*0.85).floor() as i64))}
 }
 fn first_positive(values:impl IntoIterator<Item=Option<i64>>)->Option<i64>{values.into_iter().flatten().find(|n|*n>0&&(*n as f64)<=MAX_SAFE_INTEGER)}
 fn window(hint:Option<&MetadataHint>)->Option<i64>{hint.and_then(|h|first_positive([h.context_window_tokens,h.max_context_window_tokens]))}
@@ -25,7 +26,8 @@ pub fn resolve_metadata(sources:&MetadataSources)->ResolvedMetadata{
     let subscription=if window(sources.codex.as_ref()).is_none(){sources.subscription.as_ref()}else{None};
     let candidates=[("openrouter",sources.openrouter.as_ref()),("codex_upload",sources.codex.as_ref()),("provider_discovery",sources.provider.as_ref()),("codex_subscription",subscription)];
     let mut context=None;let mut context_source="unknown";let mut maximum=None;
-    for(source,hint)in candidates{if let Some(count)=window(hint){if context.is_none_or(|n|count>n){context=Some(count);context_source=source;}}if let Some(count)=hint.and_then(|h|h.max_context_window_tokens).filter(|n|*n>0&&(*n as f64)<=MAX_SAFE_INTEGER){maximum=Some(maximum.map_or(count,|n:i64|n.max(count)));}}
+    for(source,hint)in candidates{if let Some(count)=window(hint) && context.is_none_or(|n|count>n){context=Some(count);context_source=source;}
+if let Some(count)=hint.and_then(|h|h.max_context_window_tokens).filter(|n|*n>0&&(*n as f64)<=MAX_SAFE_INTEGER){maximum=Some(maximum.map_or(count,|n:i64|n.max(count)));}}
     if let Some(context)=context{maximum=Some(maximum.map_or(context,|n|n.max(context)));}
     let mut levels=None;let mut default=None;let mut reasoning_source="unknown";
     for(source,hint)in[("codex_upload",sources.codex.as_ref()),("provider_discovery",sources.provider.as_ref()),("openrouter",sources.openrouter.as_ref())]{

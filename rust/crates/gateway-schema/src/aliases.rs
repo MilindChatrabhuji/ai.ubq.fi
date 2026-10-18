@@ -29,7 +29,7 @@ fn latest_alias_id(id:&str)->bool{
 fn simple_unversioned_alias(id:&str)->bool{id.strip_prefix('~').and_then(|s|s.split_once('/')).is_some_and(|(owner,slug)|!owner.is_empty()&&owner.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_')&&slug.eq_ignore_ascii_case("deepseek-flash-latest"))}
 fn provider_alias(models:&[Value],year:u32)->Option<String>{
     let ids:Vec<_>=models.iter().filter_map(|v|v.get("id").and_then(Value::as_str)).map(crate::util::js_trim).collect();let mut latest:Vec<_>=ids.iter().filter(|id|latest_alias_id(id)).copied().collect();latest.sort_by_key(|id|(!simple_unversioned_alias(id),*id));if let Some(id)=latest.first(){return Some((*id).to_owned());}
-    let mut newest:Option<(&str,FlashCandidate)>=None;for id in &ids{if let Some(candidate)=candidate(id,year){if newest.as_ref().is_none_or(|(_,n)|compare_candidates(&candidate,n)>0.0){newest=Some((id,candidate));}}}
+    let mut newest:Option<(&str,FlashCandidate)>=None;for id in &ids{if let Some(candidate)=candidate(id,year) && newest.as_ref().is_none_or(|(_,n)|compare_candidates(&candidate,n)>0.0){newest=Some((id,candidate));}}
     let(id,newest)=newest?;let mut base=None;for entry in &ids{if candidate(entry,year).is_some_and(|c|c.version==newest.version&&c.date==0){base=Some((*entry).to_owned());}}base.or_else(||Some(id.to_owned()))
 }
 pub fn resolve_flash_aliases(lithos:Option<&[Value]>,openrouter:Option<&[Value]>,surplus:Option<&[Value]>,openlux:Option<&[Value]>,utc_year:u32)->FlashAliases{

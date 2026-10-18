@@ -18,7 +18,8 @@ pub fn paid_native_record(model:&Value,input:&CatalogInput)->Value{
 pub fn claude_native_record(model:&Value)->Value{
     let mut row=json!({"slug":model["id"],"display_name":model.get("display_name").unwrap_or(&model["id"]),"owned_by":"anthropic","supported_endpoint_types":["openai-response","openai"],"supported_reasoning_levels":claude_levels(model).iter().map(|e|json!({"effort":e,"description":if e=="none"{"No reasoning"}else{e.as_str()}})).collect::<Vec<_>>()});
     if model.get("supports_disabled_thinking")==Some(&Value::Bool(true)){row["default_reasoning_level"]=json!("none");}
-    if let Some(window)=positive_integer(model.get("context_window_tokens")){row["context_window"]=json!(window);row["max_context_window"]=json!(window);}if let Some(max)=positive_integer(model.get("max_output_tokens")){row["max_output_tokens"]=json!(max);}common_fields(&mut row,1000,false);row
+    if let Some(window)=positive_integer(model.get("context_window_tokens")){row["context_window"]=json!(window);row["max_context_window"]=json!(window);}
+if let Some(max)=positive_integer(model.get("max_output_tokens")){row["max_output_tokens"]=json!(max);}common_fields(&mut row,1000,false);row
 }
 pub fn configured_native_records(input:&CatalogInput,provider:&str)->Vec<Value>{
     if !input.enabled(provider)||(provider=="ubiquity"&&!input.synthetic_configured())||(provider!="ubiquity"&&!input.configured(provider)){return Vec::new();}

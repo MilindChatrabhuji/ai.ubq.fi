@@ -5,9 +5,12 @@ use crate::{snapshot::ModelSnapshot,reasoning::ModelReasoning,prompt_cache::comp
 fn error(message:impl Into<String>)->GatewayError{GatewayError::new(503,message,Some("runtime_config_invalid"))}
 pub fn compact_snapshot(snapshot:&ModelSnapshot)->Result<Value,GatewayError>{
     let mut models=Vec::new();let mut seen=Vec::new();for record in &snapshot.models{let Some(slug)=identifier(record).map(crate::util::js_trim).filter(|s|!s.is_empty())else{continue};if seen.contains(&slug){continue;}seen.push(slug);
-        let reasoning=ModelReasoning::from_record(Some(record));let mut row=json!({"slug":slug});if let Some(default)=reasoning.default_level{row["default_reasoning_level"]=json!(default);}row["supported_reasoning_levels"]=json!(reasoning.levels);let mut wires=reasoning.wire_efforts;if reasoning.levels.iter().any(|s|s=="ultra"){wires.insert("ultra".into(),json!("max"));}if !wires.is_empty(){row["reasoning_effort_wire_map"]=Value::Object(wires);}if let Some(cache)=compact_capabilities(record.get("prompt_cache")){row["prompt_cache"]=cache;}models.push(row);
+        let reasoning=ModelReasoning::from_record(Some(record));let mut row=json!({"slug":slug});if let Some(default)=reasoning.default_level{row["default_reasoning_level"]=json!(default);}row["supported_reasoning_levels"]=json!(reasoning.levels);let mut wires=reasoning.wire_efforts;if reasoning.levels.iter().any(|s|s=="ultra"){wires.insert("ultra".into(),json!("max"));}
+if !wires.is_empty(){row["reasoning_effort_wire_map"]=Value::Object(wires);}
+if let Some(cache)=compact_capabilities(record.get("prompt_cache")){row["prompt_cache"]=cache;}models.push(row);
     }
-    if models.is_empty(){return Err(error("runtime config requires a non-empty Codex model catalog"));}if snapshot.source.trim_matches(crate::util::js_whitespace).is_empty()||snapshot.updated_at_ms<=0{return Err(error("runtime config requires valid Codex catalog metadata"));}
+    if models.is_empty(){return Err(error("runtime config requires a non-empty Codex model catalog"));}
+if snapshot.source.trim_matches(crate::util::js_whitespace).is_empty()||snapshot.updated_at_ms<=0{return Err(error("runtime config requires valid Codex catalog metadata"));}
     let mut value=json!({"models":models,"source":snapshot.source.trim_matches(crate::util::js_whitespace),"updated_at_ms":snapshot.updated_at_ms});if let Some(version)=snapshot.client_version.as_deref().map(crate::util::js_trim).filter(|s|!s.is_empty()){value["client_version"]=json!(version);}Ok(value)
 }
 pub fn build_runtime_config(snapshot:&ModelSnapshot,default_model:Option<&str>,default_effort:Option<&str>,now_ms:i64)->Result<Value,GatewayError>{

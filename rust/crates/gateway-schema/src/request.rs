@@ -16,16 +16,12 @@ pub fn validate_request_fields(body: &Value, surface: RequestSurface, extensions
     if extensions.openrouter_cache_control && body.get("cache_control").is_some() { validate_cache_control(&body["cache_control"])?; }
     if surface==RequestSurface::Responses {
         for field in ["max_output_tokens","max_tool_calls"] {
-            if let Some(value)=body.get(field).filter(|v| !v.is_null()) { if positive_integer(Some(value)).is_none() { return Err(invalid(format!("{field} must be a positive integer"),Some(field))); } }
+            if let Some(value)=body.get(field).filter(|v| !v.is_null()) && positive_integer(Some(value)).is_none() { return Err(invalid(format!("{field} must be a positive integer"),Some(field))); }
         }
         if body.get("parallel_tool_calls").is_some_and(|v| !v.is_boolean()) { return Err(invalid("parallel_tool_calls must be a boolean",Some("parallel_tool_calls"))); }
     }
     validate_prompt_cache_controls(body)?;
-    if surface==RequestSurface::Responses {
-        if let Some(metadata)=body.get("client_metadata") {
-            if !metadata.as_object().is_some_and(|m| m.values().all(Value::is_string)) { return Err(invalid("client_metadata must be an object with string values",Some("client_metadata"))); }
-        }
-    }
+    if surface==RequestSurface::Responses && let Some(metadata)=body.get("client_metadata") && !metadata.as_object().is_some_and(|m| m.values().all(Value::is_string)) { return Err(invalid("client_metadata must be an object with string values",Some("client_metadata"))); }
     Ok(())
 }
 pub fn parse_stream(value: Option<&Value>) -> Result<bool,GatewayError> {
@@ -75,11 +71,14 @@ pub fn normalize_tools_for_codex(value:&Value)->Value{
     let Some(tools)=value.as_array()else{return value.clone()};Value::Array(tools.iter().map(|tool|{
         if tool.get("type").and_then(Value::as_str)!=Some("function"){return tool.clone();}let Some(function)=tool.get("function").filter(|v|is_record(v))else{return tool.clone()};
         let top=tool.get("name").and_then(Value::as_str).filter(|s|!s.is_empty());let nested=function.get("name").and_then(Value::as_str).filter(|s|!s.is_empty());if top.is_none()&&nested.is_none(){return tool.clone();}
-        let mut next=tool.clone();if top.is_none(){next["name"]=json!(nested);}if let Some(fields)=function.as_object(){for key in js_keys(function){if next.get(&key).is_none(){next[&key]=fields[&key].clone();}}}if let Some(record)=next.as_object_mut(){record.shift_remove("function");}next
+        let mut next=tool.clone();if top.is_none(){next["name"]=json!(nested);}
+if let Some(fields)=function.as_object(){for key in js_keys(function){if next.get(&key).is_none(){next[&key]=fields[&key].clone();}}}
+if let Some(record)=next.as_object_mut(){record.shift_remove("function");}next
     }).collect())
 }
 pub fn normalize_tool_choice_for_codex(value:&Value)->Value{
-    if value.get("type").and_then(Value::as_str)!=Some("function"){return value.clone();}let top=value.get("name").and_then(Value::as_str).filter(|s|!s.is_empty());let nested=value.get("function").and_then(|f|f.get("name")).and_then(Value::as_str).filter(|s|!s.is_empty());if top.is_none()&&nested.is_none(){return value.clone();}let mut next=value.clone();if top.is_none(){next["name"]=json!(nested);}if let Some(record)=next.as_object_mut(){record.shift_remove("function");}next
+    if value.get("type").and_then(Value::as_str)!=Some("function"){return value.clone();}let top=value.get("name").and_then(Value::as_str).filter(|s|!s.is_empty());let nested=value.get("function").and_then(|f|f.get("name")).and_then(Value::as_str).filter(|s|!s.is_empty());if top.is_none()&&nested.is_none(){return value.clone();}let mut next=value.clone();if top.is_none(){next["name"]=json!(nested);}
+if let Some(record)=next.as_object_mut(){record.shift_remove("function");}next
 }
 
 /// TextDecoder's lossy UTF-8 and initial BOM handling precede JSON.parse in src/request.ts.

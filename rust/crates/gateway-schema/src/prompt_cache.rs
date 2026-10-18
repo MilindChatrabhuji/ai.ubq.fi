@@ -26,7 +26,7 @@ fn enum_list(value:&Value,allowed:Option<&[&str]>,filter:bool)->Option<Vec<Value
     let values=value.as_array()?;let mut result=Vec::new();
     for value in values{
         let text=if filter{value.as_str()?.trim_matches(crate::util::js_whitespace)}else{value.as_str()?};if text.is_empty(){return None;}
-        if let Some(allowed)=allowed{if !allowed.contains(&text){if filter{continue;}return None;}}
+        if let Some(allowed)=allowed && !allowed.contains(&text){if filter{continue;}return None;}
         let item=Value::String(text.to_owned());if !result.contains(&item){result.push(item);}
     }Some(result)
 }
@@ -116,9 +116,9 @@ pub fn validate_known_unsupported(model:&str,record:Option<&Value>,body:&Value,i
     if body.get("prompt_cache_key").is_some()&&controls.get("key")==Some(&Value::Bool(false)){return Err(unsupported("prompt_cache_key"));}
     let options=body.get("prompt_cache_options").filter(|v|v.is_object());
     let requested=options.map(|o|if o.get("mode").and_then(Value::as_str)==Some("explicit"){("explicit","prompt_cache_options.mode")}else{("implicit",if o.get("mode").is_some(){"prompt_cache_options.mode"}else{"prompt_cache_options"})});
-    if let Some(("implicit",param))=requested{if controls.get("implicit")==Some(&Value::Bool(false))||mode_unsupported("implicit"){return Err(unsupported(param));}}
-    for(raw,allowed,param)in[(options.and_then(|o|o.get("ttl")),controls.get("ttls"),"prompt_cache_options.ttl"),(body.get("prompt_cache_retention"),controls.get("legacy_retentions"),"prompt_cache_retention")]{if let (Some(value),Some(allowed))=(raw.and_then(Value::as_str),allowed.and_then(Value::as_array)){if !allowed.iter().any(|v|v.as_str()==Some(value)){return Err(unsupported(param));}}}
-    for(param,kind)in markers{if controls.get("explicit_breakpoints")==Some(&Value::Bool(false))||mode_unsupported("explicit"){return Err(unsupported(&param));}let endpoint=if input_key=="input"{"responses"}else{"chat_completions"};if let Some(allowed)=controls.get("breakpoint_block_types").and_then(|v|v.get(endpoint)).and_then(Value::as_array){if !kind.is_some_and(|k|allowed.iter().any(|v|v.as_str()==Some(k.as_str()))){return Err(unsupported(&param));}}}
-    if let Some(("explicit",param))=requested{if controls.get("explicit_breakpoints")==Some(&Value::Bool(false))||mode_unsupported("explicit"){return Err(unsupported(param));}}
+    if let Some(("implicit",param))=requested && (controls.get("implicit")==Some(&Value::Bool(false))||mode_unsupported("implicit")){return Err(unsupported(param));}
+    for(raw,allowed,param)in[(options.and_then(|o|o.get("ttl")),controls.get("ttls"),"prompt_cache_options.ttl"),(body.get("prompt_cache_retention"),controls.get("legacy_retentions"),"prompt_cache_retention")]{if let (Some(value),Some(allowed))=(raw.and_then(Value::as_str),allowed.and_then(Value::as_array)) && !allowed.iter().any(|v|v.as_str()==Some(value)){return Err(unsupported(param));}}
+    for(param,kind)in markers{if controls.get("explicit_breakpoints")==Some(&Value::Bool(false))||mode_unsupported("explicit"){return Err(unsupported(&param));}let endpoint=if input_key=="input"{"responses"}else{"chat_completions"};if let Some(allowed)=controls.get("breakpoint_block_types").and_then(|v|v.get(endpoint)).and_then(Value::as_array) && !kind.is_some_and(|k|allowed.iter().any(|v|v.as_str()==Some(k.as_str()))){return Err(unsupported(&param));}}
+    if let Some(("explicit",param))=requested && (controls.get("explicit_breakpoints")==Some(&Value::Bool(false))||mode_unsupported("explicit")){return Err(unsupported(param));}
     Ok(())
 }
