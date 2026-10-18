@@ -54,8 +54,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         }
     } else if starts(p, &["ubq_ai", "api_keys", "hash"]) {
         let _: gateway_auth::api_keys::ApiKeyHashRecord = decode(&v)?;
-        if p.len() != 4 || !gateway_admin_data::migration::audit::valid_key_policy(&v, false)
-        {
+        if p.len() != 4 || !gateway_admin_data::migration::audit::valid_key_policy(&v, false) {
             return Err(invalid("API key hash policy is malformed"));
         }
     } else if starts(p, &["uos_ai", "api_key_usage", "v3", "window"]) {
