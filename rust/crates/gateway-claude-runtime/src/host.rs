@@ -1,14 +1,20 @@
 //! Fixed owner capabilities; none accepts a URL, caller proof, environment name or refresh token.
-use crate::{quota::{QuotaObservation,QuotaState},response::Classification};
-use gateway_admin_runtime::{claude::{AccountBinding,Bootstrap},claude_generation::{StateGeneration,StateSnapshot}};
+use crate::{
+    quota::{QuotaObservation, QuotaState},
+    response::Classification,
+};
+use gateway_admin_runtime::{
+    claude::{AccountBinding, Bootstrap},
+    claude_generation::{StateGeneration, StateSnapshot},
+};
 use gateway_auth::AuthHost;
 use gateway_catalog_runtime::ProviderBinding;
-use gateway_core::{GatewayError,state::RevisionCheck};
-use gateway_providers::{AuthMaterial,Headers,PrepareOptions};
-use gateway_schema::{catalog::ProviderCatalog,selection::ProviderSelection};
-use serde_json::Value;
+use gateway_core::{GatewayError, state::RevisionCheck};
+use gateway_providers::{AuthMaterial, Headers, PrepareOptions};
+use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
 use serde::Serialize;
-use std::{cmp::Ordering,future::Future};
+use serde_json::Value;
+use std::{cmp::Ordering, future::Future};
 
 #[derive(Clone, Debug, Default)]
 pub struct PoolConfig {
@@ -33,26 +39,49 @@ pub struct SelectedAccount {
     pub(crate) raw: Value,
     pub(crate) disabled: bool,
     pub(crate) native_checks: Vec<RevisionCheck>,
+    pub(crate) workspace_continuation: bool,
 }
 impl std::fmt::Debug for SelectedAccount {
-    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { f.debug_struct("SelectedAccount").field("account_id",&self.binding.account_id).field("cohort_id",&self.binding.account_cohort_id).field("catalog_identity",&self.catalog_identity).finish_non_exhaustive() }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SelectedAccount")
+            .field("account_id", &self.binding.account_id)
+            .field("cohort_id", &self.binding.account_cohort_id)
+            .field("catalog_identity", &self.catalog_identity)
+            .finish_non_exhaustive()
+    }
 }
 impl SelectedAccount {
-    pub fn binding(&self) -> &AccountBinding { &self.binding }
-    pub fn checks(&self) -> &[RevisionCheck] { &self.checks }
-    pub fn catalog_identity(&self) -> &str { &self.catalog_identity }
-    pub fn replay_scope(&self) -> &str { &self.replay_scope }
+    pub fn binding(&self) -> &AccountBinding {
+        &self.binding
+    }
+    pub fn checks(&self) -> &[RevisionCheck] {
+        &self.checks
+    }
+    pub fn catalog_identity(&self) -> &str {
+        &self.catalog_identity
+    }
+    pub fn replay_scope(&self) -> &str {
+        &self.replay_scope
+    }
     /// Base transport identity/client fields remain adapter-owned; Claude credentials and proven flags do not.
     pub fn prepare_options(&self, mut base: PrepareOptions) -> PrepareOptions {
-        base.auth=self.options.auth.clone(); base.supports_native_effort=self.options.supports_native_effort;
-        base.supports_disabled_thinking=self.options.supports_disabled_thinking;
-        base.native_reasoning_efforts=self.options.native_reasoning_efforts.clone(); base
+        base.auth = self.options.auth.clone();
+        base.supports_native_effort = self.options.supports_native_effort;
+        base.supports_disabled_thinking = self.options.supports_disabled_thinking;
+        base.native_reasoning_efforts = self.options.native_reasoning_efforts.clone();
+        base
     }
-    pub fn auth_material(&self) -> AuthMaterial { self.options.auth.clone() }
+    pub fn auth_material(&self) -> AuthMaterial {
+        self.options.auth.clone()
+    }
 }
 
 #[derive(Clone, Debug)]
-pub enum PoolSelection { NotApplicable, Eligible(Box<SelectedAccount>), Unavailable }
+pub enum PoolSelection {
+    NotApplicable,
+    Eligible(Box<SelectedAccount>),
+    Unavailable,
+}
 
 pub struct SelectionInput<'a> {
     pub key_id: &'a str,
@@ -105,6 +134,12 @@ pub struct AcceptedObservation {
     pub state: String,
     pub observation: QuotaObservation,
 }
+impl AcceptedObservation {
+    /// Source JSON number spelling also supports m19's integer timestamp DTO.
+    pub fn source_value(&self) -> Value {
+        crate::quota::source_value(self)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct HealthObservation {
@@ -123,18 +158,34 @@ pub struct WorkspaceResponse {
 
 pub trait ClaudePoolHost: AuthHost {
     /// The real source localeCompare primitive, not byte ordering.
-    fn compare_principals(&self,left:&str,right:&str)->Result<Ordering,GatewayError>;
+    fn compare_principals(&self, left: &str, right: &str) -> Result<Ordering, GatewayError>;
     /// Source Date.parse for Retry-After's date form; invalid text returns None.
-    fn parse_retry_after_date(&self,raw:&str)->Option<i64>;
+    fn parse_retry_after_date(&self, raw: &str) -> Option<i64>;
     /// Bind the existing source/native owner. Missing enforcement is explicit unavailability.
-    fn credential_checks(&self,binding:&AccountBinding)->impl Future<Output=Result<Vec<RevisionCheck>,GatewayError>>;
+    fn credential_checks(
+        &self,
+        binding: &AccountBinding,
+    ) -> impl Future<Output = Result<Vec<RevisionCheck>, GatewayError>>;
     /// Reuse m11's fixed Claude discovery with this exact m20 binding identity.
-    fn catalog(&self,binding:&AccountBinding,identity:&ProviderBinding)->impl Future<Output=Result<ProviderCatalog,GatewayError>>;
+    fn catalog(
+        &self,
+        binding: &AccountBinding,
+        identity: &ProviderBinding,
+    ) -> impl Future<Output = Result<ProviderCatalog, GatewayError>>;
     /// Fixed GET https://api.anthropic.com/v1/organizations/workspaces, manual redirects,
     /// current account headers and cancellation. Parsing and owner update remain Rust below.
-    fn workspace_list(&self,binding:&AccountBinding)->impl Future<Output=Result<WorkspaceResponse,GatewayError>>;
-    fn accepted_observation(&self,event:&AcceptedObservation)->impl Future<Output=Result<(),GatewayError>>;
-    fn health_observation(&self,event:&HealthObservation)->impl Future<Output=Result<(),GatewayError>>;
+    fn workspace_list(
+        &self,
+        binding: &AccountBinding,
+    ) -> impl Future<Output = Result<WorkspaceResponse, GatewayError>>;
+    fn accepted_observation(
+        &self,
+        event: &AcceptedObservation,
+    ) -> impl Future<Output = Result<(), GatewayError>>;
+    fn health_observation(
+        &self,
+        event: &HealthObservation,
+    ) -> impl Future<Output = Result<(), GatewayError>>;
 }
 
 pub(crate) struct CommittedOutcome {
