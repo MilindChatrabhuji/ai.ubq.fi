@@ -399,3 +399,43 @@ fn malformed_stored_claude_status_keeps_exact_plain_internal_error_without_dispa
         assert_eq!(host.claude_heads.load(Ordering::SeqCst), 0);
     });
 }
+
+#[test]
+fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch() {
+    run(async {
+        let store = Store::new();
+        seed_key(&store);
+        let session = RoutingSession::begin_extras(
+            input("image-empty-plan", "unused", &["codex"]),
+            store.clone(),
+            Host::new(&store),
+            store.clone(),
+            store.clone(),
+            ExtrasFamily::ImageEdits,
+        )
+        .await
+        .unwrap();
+        let handle = session.admission_handle();
+        assert!(handle.children(0).await.unwrap().is_empty());
+        assert!(
+            handle
+                .finish(
+                    TransportObservation::default(),
+                    gateway_authority::quota::KernelTerminal::Committed,
+                    "invalid-image"
+                )
+                .await
+                .is_err()
+        );
+        let finished = handle
+            .finish(
+                TransportObservation::default(),
+                gateway_authority::quota::KernelTerminal::Released,
+                "invalid-image",
+            )
+            .await
+            .unwrap();
+        assert!(finished.settled);
+        assert_eq!(window(&store)["committed_requests"], 0);
+    });
+}

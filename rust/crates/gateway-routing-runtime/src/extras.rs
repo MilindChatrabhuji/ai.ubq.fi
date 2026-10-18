@@ -436,7 +436,7 @@ impl<
         if matches!(
             family,
             ExtrasFamily::ImageGenerations | ExtrasFamily::ImageEdits
-        ) && !(1..=10).contains(&count)
+        ) && count > 10
         {
             return Err(GatewayError::new(
                 400,
@@ -711,6 +711,12 @@ impl<
         {
             return Err(journal::unavailable(
                 "Embedding job reads never count as a completed kernel request.",
+            )
+            .into());
+        }
+        if row.extras_child_count == Some(0) && kernel != KernelTerminal::Released {
+            return Err(journal::unavailable(
+                "An empty source child plan cannot commit kernel usage.",
             )
             .into());
         }

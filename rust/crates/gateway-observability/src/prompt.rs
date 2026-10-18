@@ -9,7 +9,7 @@ use gateway_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-type StoredPromptBucket=(i64,Option<Value>,BTreeMap<String,u64>);
+type StoredPromptBucket = (i64, Option<Value>, BTreeMap<String, u64>);
 
 pub const BUCKET_MS: i64 = 900_000;
 pub const WINDOW_MS: i64 = 7 * store::DAY;
@@ -82,22 +82,22 @@ fn usage(event: &PromptEvent) -> (&'static str, BTreeMap<&'static str, u64>) {
     if event.usage_telemetry_status == "reported" {
         if let (Some(input), Some(cached)) = (event.input_tokens, event.cached_input_tokens)
             && input <= 9_007_199_254_740_991
-                && cached <= input
-                && event
-                    .cache_write_input_tokens
-                    .is_none_or(|v| v <= 9_007_199_254_740_991)
-            {
-                deltas.insert("input_tokens", input);
-                deltas.insert("cached_input_tokens", cached);
-                deltas.insert("usage_reported_sample_count", 1);
-                if cached > 0 {
-                    deltas.insert("request_cache_hit_sample_count", 1);
-                }
-                if let Some(write) = event.cache_write_input_tokens {
-                    deltas.insert("cache_write_input_tokens", write);
-                    deltas.insert("cache_write_reported_sample_count", 1);
-                }
-                return ("recorded", deltas);
+            && cached <= input
+            && event
+                .cache_write_input_tokens
+                .is_none_or(|v| v <= 9_007_199_254_740_991)
+        {
+            deltas.insert("input_tokens", input);
+            deltas.insert("cached_input_tokens", cached);
+            deltas.insert("usage_reported_sample_count", 1);
+            if cached > 0 {
+                deltas.insert("request_cache_hit_sample_count", 1);
+            }
+            if let Some(write) = event.cache_write_input_tokens {
+                deltas.insert("cache_write_input_tokens", write);
+                deltas.insert("cache_write_reported_sample_count", 1);
+            }
+            return ("recorded", deltas);
         }
         deltas.insert("usage_invalid_sample_count", 1);
         return ("recorded_invalid_usage", deltas);
@@ -116,7 +116,16 @@ fn cohort(event: &PromptEvent) -> Vec<Value> {
     let hash = model_text(event.model.as_deref())
         .map(|m| sha256_hex(format!("uos-prompt-cache-analytics-model-v2\0{m}").as_bytes()))
         .unwrap_or_else(|| "unknown".into());
-    let mode = event.prompt_cache_mode.as_deref().filter(|v|matches!(*v,"implicit"|"explicit"|"legacy_retention"|"unspecified")).unwrap_or("unspecified");
+    let mode = event
+        .prompt_cache_mode
+        .as_deref()
+        .filter(|v| {
+            matches!(
+                *v,
+                "implicit" | "explicit" | "legacy_retention" | "unspecified"
+            )
+        })
+        .unwrap_or("unspecified");
     let fallback = match event.fallback_reason.as_deref() {
         Some(v @ ("none" | "primary_429" | "primary_quota_blocked" | "other")) => v,
         Some(v) if !store::trim(v).is_empty() => "other",
@@ -349,14 +358,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let start = end - WINDOW_MS;
         let max = if group_by.is_empty() { 672 } else { 512 };
         let base = json!({"status":"unavailable","bucket_ms":BUCKET_MS,"window_start_at_ms":start,"window_end_at_ms":end,"group_by":group_by,"max_buckets":max,"cardinality_limited":false,"truncated":false,"buckets":[]});
-        let read:Result<Value,GatewayError> = async {
+        let read: Result<Value, GatewayError> = async {
             let names = if group_by.is_empty() {
                 vec!["all"]
             } else {
                 vec!["dimension", "overflow"]
             };
-            let mut buckets: BTreeMap<String, StoredPromptBucket> =
-                BTreeMap::new();
+            let mut buckets: BTreeMap<String, StoredPromptBucket> = BTreeMap::new();
             let mut limited = false;
             for name in names {
                 for entry in

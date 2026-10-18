@@ -29,28 +29,50 @@ pub type Handle =
 pub struct Host {
     pub platform: PlatformHost,
     pub admission: Handle,
-    pub child: ChildScope,
+    pub child: Option<ChildScope>,
     transport: Cell<TransportState>,
+    images: Option<crate::image_host::Images>,
 }
 
 impl Host {
-    pub async fn new(platform: PlatformHost, admission: Handle) -> Result<Self, GatewayError> {
-        let child = admission
-            .children(1)
-            .await
-            .map_err(|error| *error.error)?
-            .pop()
-            .ok_or_else(invalid)?;
+    pub async fn new(
+        platform: PlatformHost,
+        admission: Handle,
+        images: bool,
+        default_model: Option<String>,
+    ) -> Result<Self, GatewayError> {
+        let child = if images {
+            None
+        } else {
+            Some(
+                admission
+                    .children(1)
+                    .await
+                    .map_err(|error| *error.error)?
+                    .pop()
+                    .ok_or_else(invalid)?,
+            )
+        };
+        let images = images.then(|| {
+            crate::image_host::Images::new(admission.clone(), platform.clone(), default_model)
+        });
         Ok(Self {
             platform,
             admission,
             child,
             transport: Cell::new(TransportState::NotStarted),
+            images,
         })
     }
     pub async fn settle_child(&self) -> Result<(), GatewayError> {
+        if let Some(images) = &self.images {
+            return images.ensure_settled().await;
+        }
         self.admission
-            .child_finished(&self.child, self.transport.get())
+            .child_finished(
+                self.child.as_ref().ok_or_else(invalid)?,
+                self.transport.get(),
+            )
             .await
             .map_err(|error| *error.error)
     }
@@ -60,7 +82,12 @@ impl Host {
         self.transport.set(TransportState::Unknown);
         let ticket = ticket.ok_or_else(|| DispatchFailure::gateway(invalid(), false))?;
         self.admission
-            .transport_started(&self.child, &ticket)
+            .transport_started(
+                self.child
+                    .as_ref()
+                    .ok_or_else(|| DispatchFailure::gateway(invalid(), false))?,
+                &ticket,
+            )
             .await
             .map_err(|error| DispatchFailure::gateway(*error.error, false))?;
         self.transport.set(TransportState::Started);
@@ -95,7 +122,7 @@ impl Host {
             || async {
                 let actual = self
                     .admission
-                    .before_dispatch(&self.child)
+                    .before_dispatch(self.child.as_ref().ok_or_else(invalid)?)
                     .await
                     .map_err(|error| *error.error)?;
                 ticket.replace(Some(actual));
@@ -220,7 +247,10 @@ impl ExtrasHost for Host {
         }))
     }
     async fn image_base_model(&self) -> Result<Option<String>, GatewayError> {
-        Err(image_unavailable())
+        self.images
+            .as_ref()
+            .map(crate::image_host::Images::model)
+            .ok_or_else(invalid)
     }
     async fn dispatch(
         &self,
@@ -228,24 +258,45 @@ impl ExtrasHost for Host {
     ) -> Result<UpstreamResponse, DispatchFailure> {
         match operation {
             ExtrasDispatch::Voyage(call) | ExtrasDispatch::SystemOne(call) => self.http(call).await,
-            ExtrasDispatch::ImageChild { .. } => {
-                Err(DispatchFailure::gateway(image_unavailable(), true))
+            ExtrasDispatch::ImageChild {
+                index,
+                kind,
+                request_id,
+                body,
+            } => {
+                self.images
+                    .as_ref()
+                    .ok_or_else(|| DispatchFailure::gateway(invalid(), true))?
+                    .dispatch(index, kind, request_id, body)
+                    .await
             }
         }
     }
-    async fn begin_image_fanout(
-        &self,
-        _kind: ImageKind,
-        _count: usize,
-    ) -> Result<(), GatewayError> {
-        Err(image_unavailable())
+    async fn begin_image_fanout(&self, kind: ImageKind, count: usize) -> Result<(), GatewayError> {
+        self.images
+            .as_ref()
+            .ok_or_else(invalid)?
+            .begin(kind, count)
+            .await
     }
-    fn abort_image_siblings(&self) {}
-    async fn image_child_finished(&self, _index: usize) -> Result<(), GatewayError> {
-        Err(image_unavailable())
+    fn abort_image_siblings(&self) {
+        if let Some(images) = &self.images {
+            images.abort();
+        }
+    }
+    async fn image_child_finished(&self, index: usize) -> Result<(), GatewayError> {
+        self.images
+            .as_ref()
+            .ok_or_else(invalid)?
+            .child_finished(index)
+            .await
     }
     async fn finish_image_fanout(&self) -> Result<(), GatewayError> {
-        Err(image_unavailable())
+        self.images
+            .as_ref()
+            .ok_or_else(invalid)?
+            .ensure_settled()
+            .await
     }
     async fn aes_gcm_encrypt(
         &self,
@@ -274,12 +325,6 @@ fn configured(platform: &PlatformHost, name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-}
-fn image_unavailable() -> GatewayError {
-    GatewayError::unavailable(
-        "Image fanout is not yet integrated with this HTTP adapter.",
-        "rust_port_route_unavailable",
-    )
 }
 fn invalid() -> GatewayError {
     GatewayError::unavailable(

@@ -1,6 +1,6 @@
 //! Fixed secretless receipts from native publication and the actual Worker transport.
 use crate::{HealthProvider, HealthTarget};
-use gateway_core::{GatewayError, state::RevisionCheck};
+use gateway_core::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -135,20 +135,42 @@ pub struct UpstreamHealthEvidence {
 pub struct CapacityAccountRef {
     pub slot: u8,
     pub account_id: String,
-    pub credential_fingerprint: String,
     pub label: Option<String>,
-    pub source_checks: Vec<RevisionCheck>,
 }
 #[derive(Clone, Debug)]
 pub enum CapacityProbe {
     Http { status: u16, json: Option<Value> },
     Unreachable,
 }
+#[derive(Clone, Debug, Serialize)]
+pub struct ResetCreditDiagnostic {
+    pub status: String,
+    pub expires_at_ms: Option<i64>,
+}
+/// The fixed experiment chooses its target; no request body may supply these fields.
 #[derive(Clone, Debug)]
-pub struct CapacityRoutingObservation {
-    pub account: CapacityAccountRef,
-    /// Exact parsed source row, with only routing's unanchored additional windows removed.
-    pub source: Value,
+pub struct CacheExperimentTarget {
+    pub provider: String,
+    pub model: String,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct PaidRequestBackfill {
+    pub scanned: u32,
+    pub processed: u32,
+    pub rollups_written: u32,
+    pub failed: u32,
+    pub truncated: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct PaidWindowBackfill {
+    pub scanned: u32,
+    pub rewritten: u32,
+    pub truncated: bool,
+}
+#[derive(Clone, Debug)]
+pub struct PaidBackfillReceipt {
+    pub requests: PaidRequestBackfill,
+    pub windows: PaidWindowBackfill,
 }
 /// Source ClaudeCodeAcceptedObservation, emitted only after its current-binding quota CAS.
 /// History/health subscribers never write quota or credential state from this event.

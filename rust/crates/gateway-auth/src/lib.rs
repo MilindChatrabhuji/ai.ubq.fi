@@ -3,6 +3,7 @@
 pub mod api_keys;
 pub mod bootstrap;
 pub mod crypto;
+pub mod managed_access;
 pub mod native;
 pub mod native_auth;
 pub mod native_control;
