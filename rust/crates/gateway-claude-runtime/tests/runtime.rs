@@ -1,10 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod oracle;
 mod support;
-use gateway_admin_runtime::{
-    claude::{self, AccountUpdate},
-    claude_access,
-};
+use gateway_admin_runtime::claude::{self, AccountUpdate};
 use gateway_claude_runtime::*;
 use gateway_providers::Headers;
 use serde_json::{Value, json};
