@@ -16,8 +16,7 @@ use gateway_core::identity::{
 };
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey,
-    RecordMutation, StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
 use gateway_core::tuple_key::TupleKey;
 use serde::Serialize;

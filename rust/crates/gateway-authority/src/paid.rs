@@ -66,7 +66,10 @@ async fn clear_nonbillable_marker<S: AuthorityStore, I: TokenSource>(
     let pending_key = keys::paid_pending(&key_id.0, &attempt_id.0);
     let pending: Option<PendingPaid> = tx.read(&pending_key).await?;
     let mut gate = read_gate(tx).await?;
-    let indexed = gate.pending.remove(&pending_id(key_id, attempt_id)).is_some();
+    let indexed = gate
+        .pending
+        .remove(&pending_id(key_id, attempt_id))
+        .is_some();
     if pending.is_some() {
         tx.delete(&pending_key)?;
     }
@@ -497,7 +500,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(now)?;
             let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
             let Some(mut row) = tx.read::<PaidAttempt>(&key).await? else {
-                clear_nonbillable_marker(&mut tx, &reservation.key_id, &reservation.attempt_id).await?;
+                clear_nonbillable_marker(&mut tx, &reservation.key_id, &reservation.attempt_id)
+                    .await?;
                 if tx.commit().await? {
                     return Ok(false);
                 }
@@ -677,7 +681,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(now)?;
             let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
             let Some(mut row) = tx.read::<PaidAttempt>(&key).await? else {
-                clear_nonbillable_marker(&mut tx, &reservation.key_id, &reservation.attempt_id).await?;
+                clear_nonbillable_marker(&mut tx, &reservation.key_id, &reservation.attempt_id)
+                    .await?;
                 if tx.commit().await? {
                     return Ok(None);
                 }
@@ -737,8 +742,15 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         text(&attempt_id.0)?;
         for _ in 0..128 {
             let mut tx = self.transaction(now)?;
-            let row: Option<PaidAttempt> = tx.read(&keys::paid_attempt(&key_id.0, &attempt_id.0)).await?;
-            if row.is_some_and(|row| !matches!(row.billing_state, BillingState::Settled | BillingState::NotBilled)) {
+            let row: Option<PaidAttempt> = tx
+                .read(&keys::paid_attempt(&key_id.0, &attempt_id.0))
+                .await?;
+            if row.is_some_and(|row| {
+                !matches!(
+                    row.billing_state,
+                    BillingState::Settled | BillingState::NotBilled
+                )
+            }) {
                 return Ok(false);
             }
             clear_nonbillable_marker(&mut tx, key_id, attempt_id).await?;
@@ -746,7 +758,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(true);
             }
         }
-        Err(unavailable("paid_fallback_unavailable", "Paid marker reconciliation changed concurrently."))
+        Err(unavailable(
+            "paid_fallback_unavailable",
+            "Paid marker reconciliation changed concurrently.",
+        ))
     }
 
     pub async fn claim_paid_reconciliation(

@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey,
-    RecordMutation, RevisionCheck, StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
+    StoredRecord,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -178,8 +178,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         }
         let record = StoredRecord::json(
             revision,
-            serde_json::to_value(value)
-                .map_err(|_| invalid("Authority serialization failed."))?,
+            serde_json::to_value(value).map_err(|_| invalid("Authority serialization failed."))?,
             expiry,
         );
         self.writes.insert(

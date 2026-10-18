@@ -164,8 +164,8 @@ fn unavailable_model(
         .get(&account.0)
         .and_then(|row| row.get(model))
         && learned.observed_at_ms > 0
-            && learned.observed_at_ms <= now
-            && now - learned.observed_at_ms <= 7 * crate::DAY_MS
+        && learned.observed_at_ms <= now
+        && now - learned.observed_at_ms <= 7 * crate::DAY_MS
     {
         return Some(Some(learned.detail.clone()));
     }
@@ -310,7 +310,8 @@ fn evaluate(
     );
     let override_positive = observed.is_some_and(|(_, available)| available > 0.0);
     if let Some(block) = block
-        && block.blocked_until_ms > now && !override_positive
+        && block.blocked_until_ms > now
+        && !override_positive
     {
         result.reason = Some(ActiveTransitionReason::QuotaExhausted);
         result.retry = Some(block.blocked_until_ms);
