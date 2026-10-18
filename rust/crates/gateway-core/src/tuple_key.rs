@@ -233,7 +233,10 @@ fn validate_source_bytes(bytes: &[u8]) -> Result<(), GatewayError> {
     walk_source_bytes(bytes, None)
 }
 
-fn walk_source_bytes(bytes: &[u8], mut output: Option<&mut Vec<DecodedKeyPart>>) -> Result<(), GatewayError> {
+fn walk_source_bytes(
+    bytes: &[u8],
+    mut output: Option<&mut Vec<DecodedKeyPart>>,
+) -> Result<(), GatewayError> {
     let mut offset = 0;
     while offset < bytes.len() {
         let tag = bytes[offset];
@@ -242,47 +245,90 @@ fn walk_source_bytes(bytes: &[u8], mut output: Option<&mut Vec<DecodedKeyPart>>)
             0x01 | 0x02 => {
                 let mut value = output.as_ref().map(|_| Vec::new());
                 loop {
-                    let byte = *bytes.get(offset).ok_or_else(|| invalid_key("A tuple string/bytes part is truncated."))?;
+                    let byte = *bytes
+                        .get(offset)
+                        .ok_or_else(|| invalid_key("A tuple string/bytes part is truncated."))?;
                     offset += 1;
                     if byte == 0 {
-                        if bytes.get(offset) == Some(&0xff) { offset += 1; }
-                        else { break; }
+                        if bytes.get(offset) == Some(&0xff) {
+                            offset += 1;
+                        } else {
+                            break;
+                        }
                     }
-                    if let Some(value) = &mut value { value.push(byte); }
+                    if let Some(value) = &mut value {
+                        value.push(byte);
+                    }
                 }
                 if let Some(parts) = &mut output {
                     let value = value.unwrap_or_default();
-                    parts.push(if tag == 0x01 { DecodedKeyPart::Bytes(value) } else { DecodedKeyPart::String(value) });
+                    parts.push(if tag == 0x01 {
+                        DecodedKeyPart::Bytes(value)
+                    } else {
+                        DecodedKeyPart::String(value)
+                    });
                 }
             }
             0x0b..=0x1d => {
                 let negative = tag < 0x14;
                 let length = if tag == 0x0b || tag == 0x1d {
-                    let length = *bytes.get(offset).ok_or_else(|| invalid_key("A tuple bigint length is truncated."))?;
+                    let length = *bytes
+                        .get(offset)
+                        .ok_or_else(|| invalid_key("A tuple bigint length is truncated."))?;
                     offset += 1;
-                    if tag == 0x0b { usize::from(!length) } else { usize::from(length) }
-                } else { tag.abs_diff(0x14) as usize };
-                let magnitude = bytes.get(offset..offset + length).ok_or_else(|| invalid_key("A tuple key part is truncated."))?;
+                    if tag == 0x0b {
+                        usize::from(!length)
+                    } else {
+                        usize::from(length)
+                    }
+                } else {
+                    tag.abs_diff(0x14) as usize
+                };
+                let magnitude = bytes
+                    .get(offset..offset + length)
+                    .ok_or_else(|| invalid_key("A tuple key part is truncated."))?;
                 if let Some(parts) = &mut output {
-                    parts.push(DecodedKeyPart::BigInt { negative,
-                        magnitude: magnitude.iter().map(|byte| if negative { !*byte } else { *byte }).collect() });
+                    parts.push(DecodedKeyPart::BigInt {
+                        negative,
+                        magnitude: magnitude
+                            .iter()
+                            .map(|byte| if negative { !*byte } else { *byte })
+                            .collect(),
+                    });
                 }
                 offset += length;
             }
             0x21 => {
-                let value = bytes.get(offset..offset + 8).ok_or_else(|| invalid_key("A tuple number is truncated."))?;
-                let mut raw = [0; 8]; raw.copy_from_slice(value);
+                let value = bytes
+                    .get(offset..offset + 8)
+                    .ok_or_else(|| invalid_key("A tuple number is truncated."))?;
+                let mut raw = [0; 8];
+                raw.copy_from_slice(value);
                 let ordered = u64::from_be_bytes(raw);
-                let bits = if ordered & SIGN_BIT != 0 { ordered ^ SIGN_BIT } else { !ordered };
+                let bits = if ordered & SIGN_BIT != 0 {
+                    ordered ^ SIGN_BIT
+                } else {
+                    !ordered
+                };
                 let value = f64::from_bits(bits);
-                if value.is_nan() && value.is_sign_negative() { return Err(invalid_key("Negative NaN tuple keys are not portable.")); }
-                if let Some(parts) = &mut output { parts.push(DecodedKeyPart::Number(value)); }
+                if value.is_nan() && value.is_sign_negative() {
+                    return Err(invalid_key("Negative NaN tuple keys are not portable."));
+                }
+                if let Some(parts) = &mut output {
+                    parts.push(DecodedKeyPart::Number(value));
+                }
                 offset += 8;
             }
-            0x26 | 0x27 => if let Some(parts) = &mut output { parts.push(DecodedKeyPart::Boolean(tag == 0x27)); },
+            0x26 | 0x27 => {
+                if let Some(parts) = &mut output {
+                    parts.push(DecodedKeyPart::Boolean(tag == 0x27));
+                }
+            }
             _ => return Err(invalid_key("A tuple key contains an unsupported part tag.")),
         }
-        if offset > bytes.len() { return Err(invalid_key("A tuple key part is truncated.")); }
+        if offset > bytes.len() {
+            return Err(invalid_key("A tuple key part is truncated."));
+        }
     }
     Ok(())
 }
