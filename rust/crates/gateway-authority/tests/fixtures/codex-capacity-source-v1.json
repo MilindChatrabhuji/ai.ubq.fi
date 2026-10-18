@@ -122,9 +122,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -162,9 +160,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -204,9 +200,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -244,9 +238,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -387,9 +379,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -433,9 +423,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -547,9 +535,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -601,9 +587,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -643,9 +627,7 @@
             "credential_version": "credential-old",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -720,9 +702,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -768,9 +748,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -810,9 +788,7 @@
             "credential_version": "unknown-credential",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1002,9 +978,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1107,9 +1081,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1183,9 +1155,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1225,9 +1195,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1342,9 +1310,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1418,9 +1384,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1460,9 +1424,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1539,9 +1501,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard"
-            ],
+            "quota_blocked_classes": ["standard"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,
@@ -1618,11 +1578,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard",
-              "spark",
-              "reserve"
-            ],
+            "quota_blocked_classes": ["standard", "spark", "reserve"],
             "quota_blocks_by_class": {},
             "invalid_credential_version": null,
             "primary_used_percent": null,
@@ -1685,10 +1641,7 @@
             "credential_version": "credential-a",
             "quota_blocked_until_ms": 1060000,
             "quota_block_source": "body_resets_at",
-            "quota_blocked_classes": [
-              "standard",
-              "reserve"
-            ],
+            "quota_blocked_classes": ["standard", "reserve"],
             "quota_blocks_by_class": {
               "standard": {
                 "blocked_until_ms": 1060000,

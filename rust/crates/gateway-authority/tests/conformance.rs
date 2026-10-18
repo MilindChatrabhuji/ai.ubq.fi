@@ -1,5 +1,7 @@
+mod capacity_cases;
 mod claude_cases;
 mod paid_control_cases;
+mod routing_source_cases;
 mod source_model_cases;
 mod support;
 use std::sync::atomic::Ordering;
