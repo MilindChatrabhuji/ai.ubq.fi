@@ -60,6 +60,34 @@ test("package-local changes stay scoped while lock/tooling changes select every 
   assert.throws(() => planRustVerification(root, ["rust/crates/unregistered/src/lib.rs"], "native"), /no registered Cargo member/);
 });
 
+test("portable runtime crates outside the Worker closure receive scoped native tests and WASM checks", () => {
+  const root = fixture();
+  const runtimes = ["gateway-admin-runtime", "gateway-routing-runtime"];
+  const members = ["gateway-core", "gateway-worker", "gateway-native", ...runtimes];
+  writeFileSync(join(root, "rust/Cargo.toml"), `[workspace]\nmembers=${JSON.stringify(members.map((name) => `crates/${name}`))}\n`);
+  for (const name of runtimes) {
+    const directory = join(root, "rust/crates", name);
+    mkdirSync(join(directory, "tests"), { recursive: true });
+    writeFileSync(join(directory, "Cargo.toml"), `[package]\nname="${name}"\n[dependencies]\ngateway-core={path="../gateway-core"}\n`);
+    writeFileSync(join(directory, "tests/contracts.rs"), "#[test]\nfn runtime_contract() {}\n");
+  }
+  for (const name of runtimes) {
+    const paths = [`rust/crates/${name}/src/lib.rs`];
+    const native = planRustVerification(root, paths, "native");
+    assert.deepEqual(native.packages, [name]);
+    assert.deepEqual(native.testPackages, [name]);
+    const wasm = planRustVerification(root, paths, "wasm");
+    assert.deepEqual(wasm.packages, [name]);
+    assert.deepEqual(wasm.testPackages, []);
+    for (const command of wasm.commands.filter((command) => ["check", "clippy"].includes(command.argv[1] ?? ""))) {
+      assert.ok(command.argv.includes(name));
+      assert.ok(!command.argv.includes("gateway-native"));
+    }
+  }
+  const wasm = planRustVerification(root, ["rust/Cargo.lock"], "wasm");
+  assert.deepEqual(wasm.packages, ["gateway-admin-runtime", "gateway-core", "gateway-routing-runtime", "gateway-worker"]);
+});
+
 test("ordinary documentation is not Rust execution and complete documentation jobs retain zero selected tests", () => {
   const root = fixture();
   assert.throws(() => planRustVerification(root, ["rust/README.md"], "native"), /No Rust work selected/);

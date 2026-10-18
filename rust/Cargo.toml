@@ -9,6 +9,8 @@ members = [
   "crates/gateway-auth",
   "crates/gateway-admin",
   "crates/gateway-admin-data",
+  "crates/gateway-admin-runtime",
+  "crates/gateway-routing-runtime",
   "crates/gateway-native",
   "crates/gateway-worker",
 ]
@@ -35,6 +37,8 @@ gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
+gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
+gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
 gateway-native = { path = "crates/gateway-native" }
 
 [profile.release]
