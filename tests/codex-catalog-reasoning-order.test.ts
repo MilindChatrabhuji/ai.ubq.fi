@@ -1,12 +1,39 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
-import { meteredCodexModelRecord, openRouterCodexModels } from "../src/catalog/models.ts";
+import { meteredCodexModelRecord, openRouterCodexModels, withDeepSeekOfficialModels } from "../src/catalog/models.ts";
 import { fetchOpenRouterModels, openRouterModelsSnapshot, resetOpenRouterModelsCacheForTest } from "../src/models/openrouter-models.ts";
 
 const modelId = "~anthropic/claude-opus-latest";
 const paidModel = { id: modelId, owned_by: "anthropic", supported_endpoint_types: ["openai-response"] };
 const nativeEfforts = (model: Record<string, unknown>): string[] => (model.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort);
+
+test("official DeepSeek rows replace a paid discovery duplicate", () => {
+  const previousKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
+  try {
+    const paidRow = {
+      slug: "deepseek-v4-pro",
+      owned_by: "metered",
+      supported_reasoning_levels: [{ effort: "none" }],
+      default_reasoning_level: "none",
+    };
+    const models = withDeepSeekOfficialModels([paidRow]);
+    const pro = models.find((model) => model.slug === "deepseek-v4-pro");
+
+    assert.ok(pro);
+    assert.equal(models.filter((model) => model.slug === "deepseek-v4-pro").length, 1);
+    assert.equal(pro.owned_by, "deepseek");
+    assert.deepEqual(
+      (pro.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
+      ["none", "low", "high", "max"]
+    );
+    assert.equal(pro.default_reasoning_level, "high");
+  } finally {
+    if (previousKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = previousKey;
+  }
+});
 
 const withExternalReasoning = async (levels: readonly string[], defaultEffort: string, check: () => void): Promise<void> => {
   const originalKey = process.env.OPENROUTER_API_KEY;

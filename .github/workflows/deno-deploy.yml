@@ -178,6 +178,8 @@ jobs:
         run: bun --no-env-file run check
       - name: OpenAI request-schema drift against the verified, pinned official specification
         if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bun --no-env-file --no-install run spec:drift --verify-source
       - name: Prepare the Linux sandbox on the ephemeral runner
         if: ${{ needs.scope.outputs.needs_typescript_validate == 'true' }}

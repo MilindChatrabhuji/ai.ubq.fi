@@ -719,7 +719,8 @@ the same way; `bun run admin:models` (and its `:spark` variant) use `DENO_DEPLOY
 is `http://localhost:8000`), but an exported token is still sent as `Authorization: Bearer ...`; unset both variables
 if the listener must receive no deployment credential. A non-loopback `BASE_URL`, including a lookalike such as
 `http://localhost.example.com`, requires one, exactly like the loopback server itself, which has admin authentication
-disabled. Both tasks exit non-zero on an HTTP error rather than printing an empty result.
+disabled. Both tasks now exit non-zero on an HTTP error (previously `:spark` printed an empty list and `admin:models`
+printed the error body, both with exit 0).
 
 The dev wrappers explicitly source `.env` before invoking Bun with `--no-env-file`; `dev:local` retains its existing optional native-auth seed. Direct commands below do not discover dotenv files, so export their intended credentials first. The named `application` export and explicit entry point use the receipt-preserving `node:http` server, not Bun's automatic default-export server startup.
 
