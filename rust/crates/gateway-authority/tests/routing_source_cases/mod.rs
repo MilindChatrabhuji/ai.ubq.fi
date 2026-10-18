@@ -1,12 +1,11 @@
-mod support;
+use super::support::*;
 use gateway_authority::routing::*;
 use gateway_core::identity::{
     CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash,
 };
 use serde_json::{Value, json};
-use support::*;
 fn packet() -> Value {
-    serde_json::from_str(include_str!("fixtures/codex-capacity-source-v1.json")).unwrap()
+    serde_json::from_str(include_str!("../fixtures/codex-capacity-source-v1.json")).unwrap()
 }
 fn equivalent(actual: &Value, expected: &Value) -> bool {
     match (actual, expected) {

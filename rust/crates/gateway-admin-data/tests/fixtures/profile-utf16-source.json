@@ -1,0 +1,91 @@
+{
+  "runtime": "bun@1.4.0",
+  "sourceGitSha": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "cases": [
+    {
+      "name": "lone-high",
+      "input": "{\"type\":\"string\",\"value\":\"\\ud83d\"}",
+      "expected": "{\"type\":\"string\",\"value\":\"\\ud83d\"}"
+    },
+    {
+      "name": "lone-low",
+      "input": "{\"type\":\"string\",\"value\":\"\\ude00\"}",
+      "expected": "{\"type\":\"string\",\"value\":\"\\ude00\"}"
+    },
+    {
+      "name": "paired",
+      "input": "{\"type\":\"string\",\"value\":\"😀\"}",
+      "expected": "{\"type\":\"string\",\"value\":\"😀\"}"
+    },
+    {
+      "name": "literal-backslash",
+      "input": "{\"type\":\"string\",\"value\":\"\\\\ud83d\"}",
+      "expected": "{\"type\":\"string\",\"value\":\"\\\\ud83d\"}"
+    },
+    {
+      "name": "embedded",
+      "input": "{\"type\":\"string\",\"value\":\"a\\ud83db\\ude00\"}",
+      "expected": "{\"type\":\"string\",\"value\":\"a\\ud83db\\ude00\"}"
+    },
+    {
+      "name": "boolean-tag-returns-value",
+      "input": "{\"type\":\"boolean\",\"value\":\"\\ud83d\"}",
+      "expected": "{\"type\":\"string\",\"value\":\"\\ud83d\"}"
+    },
+    {
+      "name": "object-key-high",
+      "input": "{\"type\":\"object\",\"value\":{\"\\ud83d\":{\"type\":\"string\",\"value\":\"value\\ude00\"},\"normal\":{\"type\":\"string\",\"value\":\"\\ud83d\"}}}",
+      "expected": "{\"type\":\"object\",\"value\":{\"\\ud83d\":{\"type\":\"string\",\"value\":\"value\\ude00\"},\"normal\":{\"type\":\"string\",\"value\":\"\\ud83d\"}}}"
+    },
+    {
+      "name": "array-nested",
+      "input": "{\"type\":\"Array\",\"value\":[{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"object\",\"value\":{\"field\":{\"type\":\"Array\",\"value\":[{\"type\":\"string\",\"value\":\"\\ude00\"}]}}}]}",
+      "expected": "{\"type\":\"Array\",\"value\":[{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"object\",\"value\":{\"field\":{\"type\":\"Array\",\"value\":[{\"type\":\"string\",\"value\":\"\\ude00\"}]}}}]}"
+    },
+    {
+      "name": "map-string-dedup",
+      "input": "{\"type\":\"Map\",\"value\":[[{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"string\",\"value\":\"first\"}],[{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"string\",\"value\":\"\\ude00\"}],[{\"type\":\"string\",\"value\":\"\\ude00\"},{\"type\":\"string\",\"value\":\"\\ud83d\"}]]}",
+      "expected": "{\"type\":\"Map\",\"value\":[[{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"string\",\"value\":\"\\ude00\"}],[{\"type\":\"string\",\"value\":\"\\ude00\"},{\"type\":\"string\",\"value\":\"\\ud83d\"}]]}"
+    },
+    {
+      "name": "set-string-dedup",
+      "input": "{\"type\":\"Set\",\"value\":[{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"string\",\"value\":\"\\ude00\"},{\"type\":\"string\",\"value\":\"😀\"}]}",
+      "expected": "{\"type\":\"Set\",\"value\":[{\"type\":\"string\",\"value\":\"\\ud83d\"},{\"type\":\"string\",\"value\":\"\\ude00\"},{\"type\":\"string\",\"value\":\"😀\"}]}"
+    },
+    {
+      "name": "error-text",
+      "input": "{\"type\":\"TypeError\",\"value\":{\"message\":\"message\\ud83d\",\"stack\":\"stack\\ude00\"}}",
+      "expected": "{\"type\":\"TypeError\",\"value\":{\"message\":\"message\\ud83d\",\"stack\":\"stack\\ude00\"}}"
+    },
+    {
+      "name": "regexp-high",
+      "input": "{\"type\":\"RegExp\",\"value\":\"/\\ud83d/\"}",
+      "expected": "{\"type\":\"RegExp\",\"value\":\"/\\ud83d/\"}"
+    },
+    {
+      "name": "regexp-unicode-high",
+      "input": "{\"type\":\"RegExp\",\"value\":\"/\\ud83d/u\"}",
+      "expected": "{\"type\":\"RegExp\",\"value\":\"/\\ud83d/u\"}"
+    },
+    {
+      "name": "regexp-low",
+      "input": "{\"type\":\"RegExp\",\"value\":\"/\\ude00/g\"}",
+      "expected": "{\"type\":\"RegExp\",\"value\":\"/\\ude00/g\"}"
+    },
+    {
+      "name": "date-string-surrogate",
+      "input": "{\"type\":\"Date\",\"value\":\"2024-01-02\\ud83d\"}",
+      "expected": "{\"type\":\"Date\",\"value\":null}"
+    },
+    {
+      "name": "number-overflow",
+      "input": "{\"type\":\"number\",\"value\":1e400}",
+      "expected": "{\"type\":\"number\",\"value\":\"Infinity\"}"
+    },
+    {
+      "name": "duplicate-object-key",
+      "input": "{\"type\":\"object\",\"value\":{\"\\ud83d\":{\"type\":\"string\",\"value\":\"first\"},\"\\ud83d\":{\"type\":\"string\",\"value\":\"last\\ude00\"}}}",
+      "expected": "{\"type\":\"object\",\"value\":{\"\\ud83d\":{\"type\":\"string\",\"value\":\"last\\ude00\"}}}"
+    }
+  ]
+}

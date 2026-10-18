@@ -1,4 +1,4 @@
-mod support;
+use super::support::*;
 use gateway_auth::provider_credentials::{CodexSourcePool, codex_source_pool_key};
 use gateway_authority::{
     Authority, AuthorityClock, capacity::*, keys, paid_control::PaidControlOwner, routing::*,
@@ -14,7 +14,6 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use support::*;
 
 #[derive(Clone, Default)]
 struct CapturedStore {
