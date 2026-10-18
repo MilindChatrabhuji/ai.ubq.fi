@@ -292,15 +292,16 @@ it on every route that translates an upstream stream.
 
 Target mapping, subject to the specification check in Open Question Q1:
 
-| Upstream stop reason   | Gateway terminal                                                        | Notes                                                                                                                                                              |
-| ---------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `stop` (or absent)     | `response.completed`                                                    | Unchanged behavior.                                                                                                                                                |
-| `tool_calls`           | `response.completed`                                                    | A tool call is a normal turn continuation, not an incompletion.                                                                                                    |
-| `length`               | `response.incomplete`, `incomplete_details.reason: "max_output_tokens"` | The new behavior. Carries the truth that the upstream stopped early. Note the reason string also covers context-window exhaustion, so it under-describes one case. |
-| `content_filter`       | `response.incomplete`, `incomplete_details.reason: "content_filter"`    | Research-supported. Preserve the filtering outcome; do not disguise it as a successful empty answer.                                                               |
-| any unrecognized value | Not silently `completed`                                                | An unrecognized stop reason must be visible in telemetry and must not be reported as a normal finish.                                                              |
+| Upstream stop reason             | Gateway terminal                                                        | Notes                                                                                                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `stop`                           | `response.completed`                                                    | A normal stop, subject to G2's output-validity check.                                                                                                              |
+| `tool_calls`                     | `response.completed`                                                    | A tool call is a normal turn continuation, not an incompletion.                                                                                                    |
+| `length`                         | `response.incomplete`, `incomplete_details.reason: "max_output_tokens"` | The new behavior. Carries the truth that the upstream stopped early. Note the reason string also covers context-window exhaustion, so it under-describes one case. |
+| `content_filter`                 | `response.incomplete`, `incomplete_details.reason: "content_filter"`    | Research-supported. Preserve the filtering outcome; do not disguise it as a successful empty answer.                                                               |
+| absent or any unrecognized value | Fail closed (`error`), not `response.completed`                         | Absence is unknown, not proof of a normal stop. Preserve the value (or its absence) in telemetry.                                                                  |
 
-Signal that triggers it: the upstream `finish_reason` string on the terminal chunk of the translated stream.
+Signal that triggers it: the upstream `finish_reason` string, including its absence, on the terminal chunk of the
+translated stream. An absent reason is handled as unknown rather than inferred to be `stop`.
 
 Failure mode prevented: a client and an operator cannot distinguish "the model finished" from "the model was cut off",
 so a truncation is indistinguishable from a natural stop in both the UI and the telemetry.
@@ -316,15 +317,28 @@ Change: separate the two questions the current predicate conflates. "Did the cli
 progress question. "Is this a usable completion" is a terminal-validity question. Only the second should gate the
 terminal event.
 
+Apply G1's stop-reason mapping before this validity check. A mapped stop reason takes precedence over output shape: in
+particular, `length` remains `response.incomplete` even when the stream already contains a message or tool call, and an
+absent or unrecognized reason remains fail-closed. Only a reason whose G1 mapping permits a completed terminal reaches
+the output-validity rules below; G2 and G3 must not relabel a mapped incomplete or fail-closed terminal based on its
+output items.
+
 Decision rule for the terminal event, evaluated in order:
 
-| Condition                                                         | Terminal                 | Rationale                                                                                                                                                                                        |
-| ----------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| At least one tool call                                            | completed                | The turn continues.                                                                                                                                                                              |
-| A non-empty assistant message                                     | completed                | The model produced an answer.                                                                                                                                                                    |
-| Only reasoning, no message and no tool call, stop reason `length` | incomplete               | Reasoning consumed the entire budget before the answer started.                                                                                                                                  |
-| Only reasoning, no message and no tool call, stop reason `stop`   | **unspecified — see Q2** | This is the interesting case: the model spent budget thinking and then stopped. Whether that is a completion or a degenerate stop is a specification question, not an implementation preference. |
-| Zero output items                                                 | Not completed            | See G3.                                                                                                                                                                                          |
+| Condition                                                   | Terminal                 | Rationale                                                                                                                                                                                        |
+| ----------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Stop reason `length`                                        | incomplete               | G1 owns this mapping even when other output items were emitted.                                                                                                                                  |
+| Stop reason `content_filter`                                | incomplete               | G1 preserves the filtering outcome instead of allowing output shape to relabel it.                                                                                                               |
+| Absent or unrecognized stop reason                          | Fail closed              | G1 treats an unknown reason as an adapter error, never as a normal stop.                                                                                                                         |
+| Stop reason `tool_calls`, with at least one tool call       | completed                | The turn continues.                                                                                                                                                                              |
+| Stop reason `stop`, with a non-empty assistant message      | completed                | The model produced an answer.                                                                                                                                                                    |
+| Stop reason `stop`, only reasoning, no message or tool call | **unspecified — see Q2** | This is the interesting case: the model spent budget thinking and then stopped. Whether that is a completion or a degenerate stop is a specification question, not an implementation preference. |
+| Stop reason `stop`, with zero output items                  | Not completed            | See G3.                                                                                                                                                                                          |
+
+Reasoning-only output remains in the G1/G2 decision path: G1 controls a `length`
+stop, while G2 leaves a `stop` reason to Q2. G3 never applies because the reasoning
+item counts as an output item; the Cerebras reasoning-only policy therefore remains
+fail-closed rather than being relabeled as an empty completion.
 
 Signal that triggers it: the presence and kind of terminal output items together with the stop reason from G1.
 
@@ -350,8 +364,9 @@ The gateway already fails closed when a stream reached a completed terminal with
 validity check at its own terminal seam, and to classify the outcome with the same failure kind the rest of the gateway
 already uses, so telemetry stays comparable across providers.
 
-Signal that triggers it: a stream that is about to emit its terminal event while its accumulated answer-bearing output
-is empty and no tool call was emitted.
+Signal that triggers it: only after G1 and G2 have handled the stop reason, when a stream is about to emit its terminal
+event with exactly zero output items. Do not trigger G3 merely because answer-bearing output is empty: a reasoning item
+is still an output item, so reasoning-only outcomes remain with G1/G2 rather than triggering G3.
 
 Failure mode prevented: the gateway reports success for a response that gives the client nothing to act on.
 
