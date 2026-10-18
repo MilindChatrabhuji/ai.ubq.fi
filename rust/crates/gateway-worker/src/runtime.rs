@@ -14,7 +14,7 @@ use crate::{
     host::{PlatformHost, auth_config},
     inference,
     storage::now_ms,
-    transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation, random},
+    transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation},
 };
 
 pub async fn route(
