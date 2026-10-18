@@ -1,5 +1,9 @@
 //! Profile NDJSON conversion; never loads a VM-specific value codec or executes JavaScript.
 use crate::migration::NormalizedEntry;
+pub use crate::profile_source::{
+    SourceNormalizedEntry, from_source_profile, from_source_profile_with_host,
+    normalize_source_import_line_with_host, to_source_profile,
+};
 use crate::{error, json_number};
 use chrono::{DateTime, NaiveDate};
 use gateway_core::{
@@ -199,7 +203,7 @@ pub fn encode_base64(value: &[u8]) -> String {
     }
     out
 }
-fn binary_alignment(kind: &str) -> Option<usize> {
+pub(crate) fn binary_alignment(kind: &str) -> Option<usize> {
     match kind {
         "ArrayBuffer" | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray" => Some(1),
         "Int16Array" | "Uint16Array" => Some(2),
@@ -258,7 +262,7 @@ fn date(value: Option<&Value>) -> Result<Option<i64>, GatewayError> {
         "Noncanonical Date input requires explicit source-compatible date normalization; no timezone is guessed.",
     ))
 }
-fn regexp(raw: &str) -> Result<(String, String), GatewayError> {
+pub(crate) fn regexp(raw: &str) -> Result<(String, String), GatewayError> {
     let split = raw.rfind('/');
     let flags = split.map(|p| &raw[p + 1..]).unwrap_or(raw);
     let source = if let Some(p) = split {
@@ -311,7 +315,7 @@ fn regexp(raw: &str) -> Result<(String, String), GatewayError> {
     let flags = "dgimsuvy".chars().filter(|f| seen.contains(f)).collect();
     Ok((canonical, flags))
 }
-fn same_primitive(a: &PortableValue, b: &PortableValue) -> bool {
+pub(crate) fn same_primitive(a: &PortableValue, b: &PortableValue) -> bool {
     match (a, b) {
         (PortableValue::Undefined, PortableValue::Undefined)
         | (PortableValue::Null, PortableValue::Null) => true,
@@ -325,7 +329,7 @@ fn same_primitive(a: &PortableValue, b: &PortableValue) -> bool {
         _ => false,
     }
 }
-fn collection_key(value: PortableValue) -> PortableValue {
+pub(crate) fn collection_key(value: PortableValue) -> PortableValue {
     if value.number_value() == Some(0.0) {
         PortableValue::number(0.0)
     } else {
@@ -337,6 +341,23 @@ fn collection_key(value: PortableValue) -> PortableValue {
 /// Inputs are data, never JavaScript code, a timezone guess or an arbitrary evaluation capability.
 pub trait SourceDateHost {
     fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError>;
+    /// Raw source Date inputs require a host realm capable of parsing their original JSON.
+    fn source_date_value(
+        &self,
+        input: Option<&gateway_core::source_json::SourceJson>,
+    ) -> Result<Option<i64>, GatewayError> {
+        let input = input
+            .map(|value| {
+                value.deserialize::<Value>().map_err(|_| {
+                    GatewayError::unavailable(
+                        "Raw source Date input requires its source-compatible realm",
+                        "source_date_host_missing",
+                    )
+                })
+            })
+            .transpose()?;
+        self.date_value(input.as_ref())
+    }
 }
 /// Retains the existing deterministic codec for canonical inputs; noncanonical inputs fail closed.
 pub struct CanonicalDates;
@@ -560,6 +581,14 @@ pub fn to_profile(value: &PortableValue) -> Result<Value, GatewayError> {
                     .collect::<Result<_, GatewayError>>()?,
             ),
         ),
+        PortableValue::StringUtf16(_)
+        | PortableValue::ObjectUtf16(_)
+        | PortableValue::RegExpUtf16 { .. }
+        | PortableValue::ErrorUtf16 { .. } => {
+            return Err(error(
+                "ProfileV2 strings require the raw source-profile writer; Value cannot preserve them.",
+            ));
+        }
         PortableValue::Error {
             kind,
             message,

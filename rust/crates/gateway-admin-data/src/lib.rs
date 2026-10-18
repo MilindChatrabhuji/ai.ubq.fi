@@ -2,6 +2,7 @@
 pub mod migration;
 pub mod profile;
 mod profile_date;
+mod profile_source;
 pub mod projection;
 
 use gateway_core::GatewayError;

@@ -303,7 +303,8 @@ pub fn block() -> QuotaBlock {
     QuotaBlock {
         blocked_until_ms: NOW + 60_000,
         source: QuotaBlockSource::BodyResetsAt,
-        observed_at_ms: NOW,
+        observed_at_ms: Some(NOW),
+        legacy_fallback: false,
         reset_at_ms: Some(NOW + 60_000),
         reset_is_stable: true,
         reset_ambiguous: false,

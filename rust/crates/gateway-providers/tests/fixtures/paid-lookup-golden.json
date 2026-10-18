@@ -1,0 +1,642 @@
+{
+  "logs": [
+    {
+      "name": "ordinary",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "explicit-zero",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "negative-quota",
+      "raw": {
+        "request_id": "wanted",
+        "quota": -1,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": null
+    },
+    {
+      "name": "fractional-quota",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 0.5,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": null
+    },
+    {
+      "name": "unsafe-quota",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 9007199254740992,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": null
+    },
+    {
+      "name": "numeric-string-quota",
+      "raw": {
+        "request_id": "wanted",
+        "quota": "3",
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": null
+    },
+    {
+      "name": "boolean-quota",
+      "raw": {
+        "request_id": "wanted",
+        "quota": true,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": null
+    },
+    {
+      "name": "missing-model",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "created_at": 123
+      },
+      "expected": null
+    },
+    {
+      "name": "other-object-id",
+      "raw": {
+        "request_id": " ﻿  ",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123,
+        "other": {
+          "request_id": " other-id "
+        }
+      },
+      "expected": {
+        "request_id": "other-id",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "other-string-id",
+      "raw": {
+        "request_id": null,
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123,
+        "other": "{\"request_id\": \"nested-id\"}"
+      },
+      "expected": {
+        "request_id": "nested-id",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "malformed-other-retains-quota",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123,
+        "other": "{bad",
+        "cached_prompt_tokens": 4
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "cached_prompt_tokens": 4,
+        "completion_tokens": 2,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "native-claude",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "anthropic/claude-opus",
+        "created_at": 123,
+        "other": {
+          "claude": true,
+          "cache_tokens": 4,
+          "cache_creation_tokens": 2
+        }
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 16,
+        "cached_prompt_tokens": 4,
+        "cache_write_prompt_tokens": 2,
+        "completion_tokens": 2,
+        "model": "anthropic/claude-opus",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "tilde-native-claude",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "~anthropic/claude-opus",
+        "created_at": 123,
+        "other": "{\"claude\": true, \"cache_tokens\": 4}"
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 14,
+        "cached_prompt_tokens": 4,
+        "completion_tokens": 2,
+        "model": "~anthropic/claude-opus",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "non-native-flag",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "claude-opus",
+        "created_at": 123,
+        "other": {
+          "claude": false,
+          "cache_tokens": 4
+        }
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "claude-opus",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "non-claude",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123,
+        "other": {
+          "claude": true,
+          "cache_tokens": 4
+        }
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "invalid-cache-write-fallback",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "claude-opus",
+        "created_at": 123,
+        "cached_prompt_tokens": 1,
+        "other": {
+          "claude": true,
+          "cache_tokens": 4,
+          "cache_creation_tokens": null
+        }
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "cached_prompt_tokens": 1,
+        "completion_tokens": 2,
+        "model": "claude-opus",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "gross-overflow-fallback",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 9007199254740991,
+        "completion_tokens": 2,
+        "model_name": "claude-opus",
+        "created_at": 123,
+        "other": {
+          "claude": true,
+          "cache_tokens": 1
+        }
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 9007199254740991,
+        "completion_tokens": 2,
+        "model": "claude-opus",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "invalid-cache-count-omitted",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123,
+        "cached_prompt_tokens": -1
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "fractional-created",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 1.5
+      },
+      "expected": null
+    },
+    {
+      "name": "missing-prompt",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123
+      },
+      "expected": null
+    },
+    {
+      "name": "invalid-direct-and-other-id",
+      "raw": {
+        "request_id": null,
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123,
+        "other": {
+          "request_id": 4
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "array-other-ignored",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "gpt-test",
+        "created_at": 123,
+        "other": []
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "gpt-test",
+        "created_at": 123
+      }
+    },
+    {
+      "name": "case-sensitive-claude",
+      "raw": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model_name": "CLAUDE-opus",
+        "created_at": 123,
+        "other": {
+          "claude": true,
+          "cache_tokens": 4
+        }
+      },
+      "expected": {
+        "request_id": "wanted",
+        "quota": 3,
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "model": "CLAUDE-opus",
+        "created_at": 123
+      }
+    }
+  ],
+  "queries": [
+    {
+      "created_at_ms": 0,
+      "now_ms": 0,
+      "key": " billing-fixture +&/值 ",
+      "expected_url": "https://api.openlux.ai/api/log/token?key=billing-fixture+%2B%26%2F%E5%80%BC&page=1&page_size=100&start_timestamp=0&end_timestamp=60"
+    },
+    {
+      "created_at_ms": 123456,
+      "now_ms": 200001,
+      "key": "billing-fixture",
+      "expected_url": "https://api.openlux.ai/api/log/token?key=billing-fixture&page=1&page_size=100&start_timestamp=63&end_timestamp=261"
+    },
+    {
+      "created_at_ms": 9007199254740991,
+      "now_ms": 9007199254740991,
+      "key": "billing-fixture",
+      "expected_url": "https://api.openlux.ai/api/log/token?key=billing-fixture&page=1&page_size=100&start_timestamp=9007199254680&end_timestamp=9007199254801"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "last-valid-match",
+      "pages": [
+        {
+          "success": true,
+          "data": [
+            {
+              "request_id": "wanted",
+              "quota": 0,
+              "prompt_tokens": 10,
+              "completion_tokens": 2,
+              "model_name": "gpt-test",
+              "created_at": 123
+            },
+            {
+              "request_id": "wanted",
+              "quota": 7,
+              "prompt_tokens": 10,
+              "completion_tokens": 2,
+              "model_name": "gpt-test",
+              "created_at": 123
+            },
+            {
+              "request_id": "wanted",
+              "quota": -1,
+              "prompt_tokens": 10,
+              "completion_tokens": 2,
+              "model_name": "gpt-test",
+              "created_at": 123
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "calls": 1,
+        "selected": {
+          "request_id": "wanted",
+          "quota": 7,
+          "prompt_tokens": 10,
+          "completion_tokens": 2,
+          "model": "gpt-test",
+          "created_at": 123
+        },
+        "error": null,
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "missing-match",
+      "pages": [
+        {
+          "success": true,
+          "data": [
+            {
+              "request_id": "other",
+              "quota": 3,
+              "prompt_tokens": 10,
+              "completion_tokens": 2,
+              "model_name": "gpt-test",
+              "created_at": 123
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "calls": 1,
+        "selected": null,
+        "error": null,
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "invalid-total-fallback",
+      "pages": [
+        {
+          "success": true,
+          "data": {
+            "items": [
+              {
+                "request_id": "other",
+                "quota": 3,
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+                "model_name": "gpt-test",
+                "created_at": 123
+              }
+            ],
+            "total": "1000"
+          }
+        }
+      ],
+      "expected": {
+        "calls": 1,
+        "selected": null,
+        "error": null,
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "invalid-rows-then-empty",
+      "pages": [
+        {
+          "success": true,
+          "data": {
+            "items": [{}],
+            "total": 1000
+          }
+        },
+        {
+          "success": true,
+          "data": {
+            "items": [],
+            "total": 1000
+          }
+        }
+      ],
+      "expected": {
+        "calls": 2,
+        "selected": null,
+        "error": null,
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "page-cap",
+      "repeat": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "request_id": "other",
+              "quota": 3,
+              "prompt_tokens": 10,
+              "completion_tokens": 2,
+              "model_name": "gpt-test",
+              "created_at": 123
+            }
+          ],
+          "total": 1000000
+        }
+      },
+      "expected": {
+        "calls": 100,
+        "selected": null,
+        "error": null,
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "http-error",
+      "pages": [
+        {
+          "success": true,
+          "data": []
+        }
+      ],
+      "status": 403,
+      "expected": {
+        "calls": 1,
+        "selected": null,
+        "error": "metered_logs_unavailable",
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "invalid-json",
+      "raw": "{bad",
+      "expected": {
+        "calls": 1,
+        "selected": null,
+        "error": "metered_logs_invalid",
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "null-envelope",
+      "pages": [null],
+      "expected": {
+        "calls": 1,
+        "selected": null,
+        "error": "metered_logs_invalid",
+        "signal_count": 1
+      }
+    },
+    {
+      "name": "false-success",
+      "pages": [
+        {
+          "success": false,
+          "data": []
+        }
+      ],
+      "expected": {
+        "calls": 1,
+        "selected": null,
+        "error": "metered_logs_invalid",
+        "signal_count": 1
+      }
+    }
+  ],
+  "overall_timeout_ms": 10000
+}

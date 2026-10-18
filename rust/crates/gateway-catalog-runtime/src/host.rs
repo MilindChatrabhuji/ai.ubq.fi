@@ -96,6 +96,8 @@ impl CredentialPublication {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CatalogFetch {
+    /// Fixed public Surplus model discovery. Never resolves a spend credential.
+    AnonymousSurplus,
     /// Resolve the configured Codex base's /models endpoint; append this exact version
     /// iff that base ends in /codex. Use source originator/user-agent and manual redirects.
     Codex {
@@ -129,6 +131,7 @@ impl CatalogFetch {
     pub fn timeout_ms(&self) -> Option<u32> {
         match self {
             Self::Codex { .. } => None,
+            Self::AnonymousSurplus => Some(10_000),
             Self::Provider {
                 provider: CatalogProvider::ClaudeCode,
                 ..

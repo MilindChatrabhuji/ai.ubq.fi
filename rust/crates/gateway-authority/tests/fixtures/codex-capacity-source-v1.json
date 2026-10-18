@@ -1,0 +1,2185 @@
+{
+  "source": "6d4d4790a7c06514b92938ff677dbfd52764461d",
+  "now": 1000000,
+  "parseCases": [
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": null
+          }
+        ]
+      },
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": null
+          }
+        ]
+      },
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": null,
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": null,
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": null,
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": true,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 1,
+            "probe_lease": null
+          }
+        ]
+      },
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 1,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": {
+              "token": "p",
+              "generation": -1,
+              "expires_at_ms": 1000100
+            }
+          }
+        ]
+      },
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": {
+              "token": "p",
+              "expires_at_ms": 1000100,
+              "generation": -1,
+              "circuit": "quota",
+              "quota_class": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": {
+              "token": "probe",
+              "generation": 2,
+              "expires_at_ms": 1000100,
+              "circuit": "future"
+            }
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": 1000100,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": {
+              "token": "probe",
+              "generation": 2,
+              "expires_at_ms": 1000100,
+              "circuit": "upstream_timeout",
+              "quota_class": null
+            }
+          }
+        ]
+      },
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": 1000100,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": {
+              "token": "probe",
+              "expires_at_ms": 1000100,
+              "generation": 2,
+              "circuit": "upstream_timeout",
+              "quota_class": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "normCases": [
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": null
+          }
+        ]
+      },
+      "identities": [
+        {
+          "slot": 0,
+          "accountIdHash": "account-a",
+          "credentialVersion": "credential-a"
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000000,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": 1000100,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": {
+              "token": "probe",
+              "generation": 2,
+              "expires_at_ms": 1000100,
+              "circuit": "upstream_timeout",
+              "quota_class": null
+            }
+          }
+        ]
+      },
+      "identities": [
+        {
+          "slot": 0,
+          "accountIdHash": "account-a",
+          "credentialVersion": "credential-a"
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000000,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 3,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-old",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "identities": [
+        {
+          "slot": 0,
+          "accountIdHash": "account-a",
+          "credentialVersion": "credential-a"
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000000,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": true,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 3,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": null,
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "identities": [
+        {
+          "slot": 0,
+          "accountIdHash": "account-a",
+          "credentialVersion": "credential-a"
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000000,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": true,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "raw": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": null,
+            "credential_version": "unknown-credential",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "identities": [
+        {
+          "slot": 0,
+          "accountIdHash": "account-a",
+          "credentialVersion": "credential-a"
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000000,
+        "banked_reset_legacy_identity_unresolved": true,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": null,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 0,
+            "probe_lease": null
+          }
+        ]
+      }
+    }
+  ],
+  "headroomCases": [
+    {
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": null,
+      "expected": 75
+    },
+    {
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-test",
+      "expected": 20
+    },
+    {
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "OTHER",
+      "expected": 75
+    }
+  ],
+  "applies": [
+    {
+      "state": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-test",
+      "now": 1000000,
+      "updated_at_ms": 1000001,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000001,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": 0,
+            "secondary_used_percent": 25,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": 1000000,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": null,
+            "observed_reset_at_is_stable": false,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 3,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "state": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 1000001,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 1000001,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-test",
+      "now": 1000000,
+      "updated_at_ms": 1000001,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000001,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 1000001,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": 0,
+            "secondary_used_percent": 25,
+            "quota_signal_observed_at_ms": 1000001,
+            "capacity_observed_at_ms": 1000000,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "state": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": true,
+                "banked_reset_recovery_probe_pending": true
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": true,
+            "banked_reset_recovery_probe_pending": true,
+            "generation": 2,
+            "probe_lease": {
+              "token": "quota-p",
+              "expires_at_ms": 1000100,
+              "generation": 2,
+              "circuit": "quota",
+              "quota_class": "standard"
+            }
+          }
+        ]
+      },
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-test",
+      "now": 1000000,
+      "updated_at_ms": 1000001,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000001,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": null,
+            "quota_block_source": null,
+            "quota_blocked_classes": [],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": 0,
+            "secondary_used_percent": 25,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": 1000000,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": true,
+            "banked_reset_recovery_probe_pending": true,
+            "generation": 2,
+            "probe_lease": {
+              "token": "quota-p",
+              "expires_at_ms": 1000100,
+              "generation": 2,
+              "circuit": "quota",
+              "quota_class": "standard"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "state": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "unavailable",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-test",
+      "now": 1000000,
+      "updated_at_ms": 1000001,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000001,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": 0,
+            "secondary_used_percent": 25,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": 1000000,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      }
+    },
+    {
+      "state": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000100,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-test",
+      "now": 1000000,
+      "updated_at_ms": 1000001,
+      "expected": null
+    },
+    {
+      "state": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": false,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "wrong-account",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-test",
+      "now": 1000000,
+      "updated_at_ms": 1000001,
+      "expected": null
+    },
+    {
+      "state": {
+        "v": 2,
+        "updated_at_ms": 999980,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard", "spark", "reserve"],
+            "quota_blocks_by_class": {},
+            "invalid_credential_version": null,
+            "primary_used_percent": null,
+            "secondary_used_percent": null,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": null,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      },
+      "observation": {
+        "slot": 0,
+        "account_id_hash": "account-a",
+        "state": "available",
+        "source_observed_at_ms": 1000000,
+        "snapshot_at_ms": 1000000,
+        "windows": {
+          "primary": {
+            "limit_window_seconds": 300,
+            "used_percent": 0,
+            "reset_at_ms": 1060000
+          },
+          "secondary": {
+            "limit_window_seconds": 300,
+            "used_percent": 25,
+            "reset_at_ms": 1060000
+          }
+        },
+        "additional_rate_limits": [
+          {
+            "limit_name": " GPT_Test ",
+            "metered_feature": "test",
+            "windows": {
+              "primary": {
+                "limit_window_seconds": 300,
+                "used_percent": 80,
+                "reset_at_ms": 1060000
+              },
+              "secondary": null
+            }
+          }
+        ]
+      },
+      "model": "gpt-5.3-codex-spark",
+      "now": 1000000,
+      "updated_at_ms": 1000001,
+      "expected": {
+        "v": 2,
+        "updated_at_ms": 1000001,
+        "banked_reset_legacy_identity_unresolved": false,
+        "slots": [
+          {
+            "account_id_hash": "account-a",
+            "credential_version": "credential-a",
+            "quota_blocked_until_ms": 1060000,
+            "quota_block_source": "body_resets_at",
+            "quota_blocked_classes": ["standard", "reserve"],
+            "quota_blocks_by_class": {
+              "standard": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": true,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              },
+              "reserve": {
+                "blocked_until_ms": 1060000,
+                "source": "body_resets_at",
+                "legacy_fallback": true,
+                "quota_signal_observed_at_ms": 999990,
+                "observed_reset_at_ms": 1060000,
+                "observed_reset_at_is_stable": true,
+                "banked_reset_generation_ambiguous": false,
+                "banked_reset_recovery_probe_pending": false
+              }
+            },
+            "invalid_credential_version": null,
+            "primary_used_percent": 0,
+            "secondary_used_percent": 25,
+            "quota_signal_observed_at_ms": 999990,
+            "capacity_observed_at_ms": 1000000,
+            "upstream_timeout_blocked_until_ms": null,
+            "observed_reset_at_ms": 1060000,
+            "observed_reset_at_is_stable": true,
+            "banked_reset_generation_ambiguous": false,
+            "banked_reset_recovery_probe_pending": false,
+            "generation": 2,
+            "probe_lease": null
+          }
+        ]
+      }
+    }
+  ],
+  "storeCases": [
+    {
+      "revision": null,
+      "current": [],
+      "inputs": [
+        {
+          "slot": 0,
+          "account_id_hash": "account-a",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "kind": "capacity_observations",
+        "checks": {
+          "capacity": null
+        },
+        "writes": {
+          "capacity": {
+            "v": 1,
+            "updated_at_ms": 1000000,
+            "observations": [
+              {
+                "slot": 0,
+                "account_id_hash": "account-a",
+                "state": "available",
+                "source_observed_at_ms": 1000000,
+                "snapshot_at_ms": 1000000,
+                "windows": {
+                  "primary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 0,
+                    "reset_at_ms": 1060000
+                  },
+                  "secondary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 25,
+                    "reset_at_ms": 1060000
+                  }
+                },
+                "additional_rate_limits": [
+                  {
+                    "limit_name": " GPT_Test ",
+                    "metered_feature": "test",
+                    "windows": {
+                      "primary": {
+                        "limit_window_seconds": 300,
+                        "used_percent": 80,
+                        "reset_at_ms": 1060000
+                      },
+                      "secondary": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "revision": "current-c",
+      "current": [
+        {
+          "slot": 0,
+          "account_id_hash": "account-a",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "account_id_hash": "account-a",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000001,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "now": 1000001,
+      "expected": {
+        "kind": "capacity_observations",
+        "checks": {
+          "capacity": "current-c"
+        },
+        "writes": {
+          "capacity": {
+            "v": 1,
+            "updated_at_ms": 1000001,
+            "observations": [
+              {
+                "slot": 0,
+                "account_id_hash": "account-a",
+                "state": "available",
+                "source_observed_at_ms": 1000000,
+                "snapshot_at_ms": 1000001,
+                "windows": {
+                  "primary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 0,
+                    "reset_at_ms": 1060000
+                  },
+                  "secondary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 25,
+                    "reset_at_ms": 1060000
+                  }
+                },
+                "additional_rate_limits": [
+                  {
+                    "limit_name": " GPT_Test ",
+                    "metered_feature": "test",
+                    "windows": {
+                      "primary": {
+                        "limit_window_seconds": 300,
+                        "used_percent": 80,
+                        "reset_at_ms": 1060000
+                      },
+                      "secondary": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "revision": "future-winner",
+      "current": [
+        {
+          "slot": 0,
+          "account_id_hash": "account-a",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "account_id_hash": "account-a",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000100,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "kind": "capacity_observations",
+        "checks": {
+          "capacity": "future-winner"
+        },
+        "writes": {
+          "capacity": {
+            "v": 1,
+            "updated_at_ms": 1000000,
+            "observations": []
+          }
+        }
+      }
+    },
+    {
+      "revision": "stable-slot-order",
+      "current": [
+        {
+          "slot": 0,
+          "account_id_hash": "z-account",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "account_id_hash": "a-account",
+          "state": "available",
+          "source_observed_at_ms": 1000000,
+          "snapshot_at_ms": 1000000,
+          "windows": {
+            "primary": {
+              "limit_window_seconds": 300,
+              "used_percent": 0,
+              "reset_at_ms": 1060000
+            },
+            "secondary": {
+              "limit_window_seconds": 300,
+              "used_percent": 25,
+              "reset_at_ms": 1060000
+            }
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": " GPT_Test ",
+              "metered_feature": "test",
+              "windows": {
+                "primary": {
+                  "limit_window_seconds": 300,
+                  "used_percent": 80,
+                  "reset_at_ms": 1060000
+                },
+                "secondary": null
+              }
+            }
+          ]
+        }
+      ],
+      "now": 1000000,
+      "expected": {
+        "kind": "capacity_observations",
+        "checks": {
+          "capacity": "stable-slot-order"
+        },
+        "writes": {
+          "capacity": {
+            "v": 1,
+            "updated_at_ms": 1000000,
+            "observations": [
+              {
+                "slot": 0,
+                "account_id_hash": "z-account",
+                "state": "available",
+                "source_observed_at_ms": 1000000,
+                "snapshot_at_ms": 1000000,
+                "windows": {
+                  "primary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 0,
+                    "reset_at_ms": 1060000
+                  },
+                  "secondary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 25,
+                    "reset_at_ms": 1060000
+                  }
+                },
+                "additional_rate_limits": [
+                  {
+                    "limit_name": " GPT_Test ",
+                    "metered_feature": "test",
+                    "windows": {
+                      "primary": {
+                        "limit_window_seconds": 300,
+                        "used_percent": 80,
+                        "reset_at_ms": 1060000
+                      },
+                      "secondary": null
+                    }
+                  }
+                ]
+              },
+              {
+                "slot": 0,
+                "account_id_hash": "a-account",
+                "state": "available",
+                "source_observed_at_ms": 1000000,
+                "snapshot_at_ms": 1000000,
+                "windows": {
+                  "primary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 0,
+                    "reset_at_ms": 1060000
+                  },
+                  "secondary": {
+                    "limit_window_seconds": 300,
+                    "used_percent": 25,
+                    "reset_at_ms": 1060000
+                  }
+                },
+                "additional_rate_limits": [
+                  {
+                    "limit_name": " GPT_Test ",
+                    "metered_feature": "test",
+                    "windows": {
+                      "primary": {
+                        "limit_window_seconds": 300,
+                        "used_percent": 80,
+                        "reset_at_ms": 1060000
+                      },
+                      "secondary": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "windows": [
+    {
+      "raw": null,
+      "expected": null
+    },
+    {
+      "raw": {},
+      "expected": {
+        "limit_window_seconds": null,
+        "used_percent": null,
+        "reset_at_ms": null
+      }
+    },
+    {
+      "raw": {
+        "limit_window_seconds": 300,
+        "used_percent": 0,
+        "reset_at_ms": 1060000
+      },
+      "expected": {
+        "limit_window_seconds": 300,
+        "used_percent": 0,
+        "reset_at_ms": 1060000
+      }
+    },
+    {
+      "raw": {
+        "limit_window_seconds": 1.5,
+        "used_percent": 101,
+        "reset_at_ms": -1
+      },
+      "expected": {
+        "limit_window_seconds": null,
+        "used_percent": null,
+        "reset_at_ms": null
+      }
+    },
+    {
+      "raw": {
+        "limit_window_seconds": 0,
+        "used_percent": 100,
+        "reset_at_ms": 0
+      },
+      "expected": {
+        "limit_window_seconds": 0,
+        "used_percent": 100,
+        "reset_at_ms": 0
+      }
+    }
+  ]
+}
