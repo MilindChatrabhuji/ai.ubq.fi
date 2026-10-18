@@ -120,13 +120,14 @@ test("VPS discovery includes bound release and first-cutover suites exactly once
   assert.equal(result.code, 0, result.output);
   const groups = JSON.parse(result.output) as { files: string[] }[];
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].files.length, process.platform === "linux" ? 8 : 7);
+  assert.equal(groups[0].files.length, process.platform === "linux" ? 9 : 8);
   for (const name of [
     "vps-release-driver.test.ts",
     "vps-release-recovery.test.ts",
     "vps-release-metrics.test.ts",
     "vps-metrics-join.test.ts",
     "vps-journal-reader.test.ts",
+    "vps-bridge-host.test.ts",
     "first-bun-cutover.test.ts",
   ]) {
     assert.equal(groups[0].files.filter((path) => path.endsWith(name)).length, 1);

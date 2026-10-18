@@ -88,7 +88,7 @@ const relocateDeployScript = async (root: string): Promise<string> => {
  */
 const relocateRetentionModule = async (root: string): Promise<void> => {
   await copyOps(root);
-  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts"])
+  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts", "vps-ingress.ts"])
     await writeFile(`${root}/${name}`, await readFile(new URL("../ops/" + name, import.meta.url)));
 };
 
