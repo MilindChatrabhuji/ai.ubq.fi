@@ -793,16 +793,53 @@ fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
 
 #[test]
 fn supervisor_follow_dispatches_only_validated_finite_identifiers() {
-    struct Follow(RefCell<Option<(String,String,String)>>);
+    struct Follow(RefCell<Option<(String, String, String)>>);
     impl RuntimeCapabilities for Follow {
-        async fn native(&self,request:NativeRequest,_:Context)->Result<AuthResponse,GatewayError>{
-            let NativeRequest::SupervisorOutput{source_id,thread_id,cursor}=request else{panic!("wrong finite operation")};
-            self.0.replace(Some((source_id,thread_id,cursor)));
-            Err(GatewayError::unavailable("Native source is offline","fixture_native_source_offline"))
+        async fn native(
+            &self,
+            request: NativeRequest,
+            _: Context,
+        ) -> Result<AuthResponse, GatewayError> {
+            let NativeRequest::SupervisorOutput {
+                source_id,
+                thread_id,
+                cursor,
+            } = request
+            else {
+                panic!("wrong finite operation")
+            };
+            self.0.replace(Some((source_id, thread_id, cursor)));
+            Err(GatewayError::unavailable(
+                "Native source is offline",
+                "fixture_native_source_offline",
+            ))
         }
     }
-    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let follow=Follow(RefCell::new(None));let service=AdminRuntime{store:&store,host:&host,capabilities:&follow,config:&config};
-    let mut request=input(Value::Null);request.query.insert("source".into(),vec![" trusted-source ".into()]);request.query.insert("id".into(),vec!["thread-1".into()]);request.query.insert("cursor".into(),vec![format!(" {} ","a".repeat(250))]);
-    let error=run(service.execute(AdminOperation::SupervisorOutput,request)).unwrap_err();assert_eq!(error.envelope.error.code.as_deref(),Some("fixture_native_source_offline"));
-    assert_eq!(*follow.0.borrow(),Some(("trusted-source".into(),"thread-1".into(),"a".repeat(240))));
+    let store = Store::default();
+    let host = Host::default();
+    let config = RuntimeConfig::default();
+    let follow = Follow(RefCell::new(None));
+    let service = AdminRuntime {
+        store: &store,
+        host: &host,
+        capabilities: &follow,
+        config: &config,
+    };
+    let mut request = input(Value::Null);
+    request
+        .query
+        .insert("source".into(), vec![" trusted-source ".into()]);
+    request.query.insert("id".into(), vec!["thread-1".into()]);
+    request
+        .query
+        .insert("cursor".into(), vec![format!(" {} ", "a".repeat(250))]);
+    let error = run(service.execute(AdminOperation::SupervisorOutput, request)).unwrap_err();
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("fixture_native_source_offline")
+    );
+    assert_eq!(
+        *follow.0.borrow(),
+        Some(("trusted-source".into(), "thread-1".into(), "a".repeat(240)))
+    );
 }

@@ -431,9 +431,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         thread_id,
                     }
                 };
-                self.capabilities
-                    .native(request, context)
-                    .await
+                self.capabilities.native(request, context).await
             }
             // AdminService owns these operations; never duplicate key/passkey/public-key writers.
             _ => Err(gateway_admin::missing_capability(operation)),
