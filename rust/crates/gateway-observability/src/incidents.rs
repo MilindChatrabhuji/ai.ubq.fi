@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 const MESSAGE: &str = "Gateway observed a provider failure for this incident group.";
-const TTL: i64 = model::PAYLOAD_TTL;
 const FIELDS: &[&str] = &[
     "version",
     "incident_id",

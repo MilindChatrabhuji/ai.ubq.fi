@@ -14,6 +14,7 @@ pub mod host_types;
 pub mod incidents;
 pub mod ledger;
 pub mod ledger_stats;
+pub mod metered;
 pub mod prompt;
 pub mod prompt_gate;
 pub mod providers;

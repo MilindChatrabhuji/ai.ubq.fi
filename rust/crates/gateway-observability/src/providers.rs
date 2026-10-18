@@ -12,7 +12,7 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Clone)]
 struct ActiveResponseData {
     status: u16,
-    body: Value,
+    body: gateway_core::source_json::SourceJson,
     identity: BuildIdentity,
 }
 type ActiveResult = Result<ActiveResponseData, GatewayError>;
@@ -57,7 +57,7 @@ fn auth_view(meta: &CodexAuthMetadata, now: i64) -> Value {
     json!({"source":meta.source,"updated_at_ms":meta.updated_at_ms,"access_token_exp_ms":meta.access_token_exp_ms,"account_count":accounts.len(),"access_token_expired":expired(meta.access_token_exp_ms),"refresh_recommended":refresh(meta.access_token_exp_ms),"accounts":accounts})
 }
 fn active_response(data: ActiveResponseData) -> Result<AuthResponse, GatewayError> {
-    let mut response = AuthResponse::json(data.status, data.body);
+    let mut response = AuthResponse::source_json(data.status, data.body);
     identity_headers(&mut response, data.identity)?;
     Ok(response)
 }
@@ -104,9 +104,10 @@ fn credential_view(credential: &CredentialMetadata) -> Value {
     v["refresh_material_present"] = json!(false);
     v
 }
-fn safe_quota(quota: &Value) -> Value {
-    let mut out = json!({});
-    for field in [
+fn safe_quota(
+    quota: &gateway_core::source_json::SourceJson,
+) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
+    crate::replay_values::SourceObject::parse(quota)?.select(&[
         "windows",
         "standard",
         "representative_claim",
@@ -115,10 +116,7 @@ fn safe_quota(quota: &Value) -> Value {
         "cooldown_until_ms",
         "last_error",
         "updated_at_ms",
-    ] {
-        out[field] = quota[field].clone()
-    }
-    out
+    ])
 }
 fn identity_headers(
     response: &mut AuthResponse,
@@ -197,6 +195,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         body["ubiquity"] =
             json!({"configured":inventory.ubiquity_configured,"health":gateway_health});
         let mut accounts = Vec::new();
+        let mut source_accounts = Vec::new();
+        let mut active_quota = None;
         for account in &inventory.claude.accounts {
             if account.target.provider != HealthProvider::ClaudeCode {
                 return Err(store::error("Claude health target provider mismatch"));
@@ -211,14 +211,38 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             } else {
                 unknown_health()
             };
-            accounts.push(json!({"account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"label":account.label,"credential":credential_view(&account.credential),"workspace":account.workspace,"active":inventory.claude.active_account_id.as_ref()==Some(&account.account_id),"stale":!current,"quota":if current{account.quota.as_ref().map(safe_quota)}else{None},"health":health,"capabilities":{"identity_verified":false,"can_refresh":false,"can_reset_upstream_quota":false}}));
+            accounts.push(json!({"account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"label":account.label,"credential":credential_view(&account.credential),"workspace":account.workspace,"active":inventory.claude.active_account_id.as_ref()==Some(&account.account_id),"stale":!current,"quota":null,"health":health,"capabilities":{"identity_verified":false,"can_refresh":false,"can_reset_upstream_quota":false}}));
+            let quota = if current {
+                account.quota.as_ref().map(safe_quota).transpose()?
+            } else {
+                None
+            };
+            if current && inventory.claude.active_account_id.as_ref() == Some(&account.account_id) {
+                active_quota = quota.clone();
+            }
+            let mut source = crate::replay_values::SourceObject::parse(
+                &gateway_core::source_json::SourceJson::from_serializable(
+                    accounts.last().expect("pushed account"),
+                )?,
+            )?;
+            source.set("quota", &quota)?;
+            source_accounts.push(source.source_json()?);
         }
         let active = accounts.iter().find(|a| {
             a["account_id"].as_str() == inventory.claude.active_account_id.as_deref()
                 && a["stale"] != true
         });
         body["claude_code"] = json!({"configured":active.is_some(),"credential":active.map(|a|a["credential"].clone()),"workspace":active.map(|a|a["workspace"].clone()),"account_id":active.map(|a|a["account_id"].clone()),"account_cohort_id":active.map(|a|a["account_cohort_id"].clone()),"accounts":accounts,"active_account_id":inventory.claude.active_account_id,"active_reason":inventory.claude.active_reason,"account_scan":"ok","access":inventory.claude.access,"principal_allowlist_configured":inventory.claude.access.as_ref().is_some_and(|a|!a.allowed_key_ids.is_empty()),"enabled":inventory.claude.enabled,"quota":active.map(|a|a["quota"].clone()),"health":active.map(|a|a["health"].clone()).unwrap_or_else(unknown_health)});
-        let mut response = AuthResponse::json(200, body);
+        let mut claude = crate::replay_values::SourceObject::parse(
+            &gateway_core::source_json::SourceJson::from_serializable(&body["claude_code"])?,
+        )?;
+        claude.set("accounts", &source_accounts)?;
+        claude.set("quota", &active_quota)?;
+        let mut source = crate::replay_values::SourceObject::parse(
+            &gateway_core::source_json::SourceJson::from_serializable(&body)?,
+        )?;
+        source.set("claude_code", &claude.source_json()?)?;
+        let mut response = AuthResponse::source_json(200, source.source_json()?);
         identity_headers(&mut response, self.host.build_identity()?)?;
         Ok(response)
     }
@@ -236,13 +260,69 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             receipt,
             finished: false,
         };
-        let response=async{
-            let at=store::now(self.host.as_ref())?;let evidence=self.host.probe_upstream_health(at+3000).await?;
-            if !matches!(evidence.codex.provider,ProbeProvider::ChatgptCodex)||evidence.metered_quota.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::MeteredQuota))||evidence.claude_subscription.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::ClaudeSubscription)){return Err(store::error("Active health probe identity mismatch"))}
-            let failures:Vec<u16>=[Some(evidence.codex.status),evidence.metered_quota.as_ref().map(|p|p.status)].into_iter().flatten().filter(|s|*s>=400).collect();let status=if failures.is_empty(){200}else if failures.contains(&401){401}else{503};
-            let body=json!({"status":status,"auth":evidence.auth.as_ref().map(|a|auth_view(a,self.host.now_ms())),"probes":{"codex":evidence.codex,"metered_quota":evidence.metered_quota,"claude_subscription":evidence.claude_subscription,"claude_workspace":evidence.claude_workspace}});
-            Ok(ActiveResponseData{status,body,identity:self.host.build_identity()?})
-        }.await;
+        let response = async {
+            let at = store::now(self.host.as_ref())?;
+            let evidence = self.host.probe_upstream_health(at + 3000).await?;
+            if !matches!(evidence.codex.provider, ProbeProvider::ChatgptCodex)
+                || evidence
+                    .metered_quota
+                    .as_ref()
+                    .is_some_and(|p| !matches!(p.provider, ProbeProvider::MeteredQuota))
+                || evidence
+                    .claude_subscription
+                    .as_ref()
+                    .is_some_and(|p| !matches!(p.provider, ProbeProvider::ClaudeSubscription))
+            {
+                return Err(store::error("Active health probe identity mismatch"));
+            }
+            let failures: Vec<u16> = [
+                Some(evidence.codex.status),
+                evidence.metered_quota.as_ref().map(|p| p.status),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|s| *s >= 400)
+            .collect();
+            let status = if failures.is_empty() {
+                200
+            } else if failures.contains(&401) {
+                401
+            } else {
+                503
+            };
+            #[derive(serde::Serialize)]
+            struct Probes<'a> {
+                codex: &'a ActiveProbe,
+                metered_quota: &'a Option<ActiveProbe>,
+                claude_subscription: &'a Option<ActiveProbe>,
+                claude_workspace: &'a Option<Value>,
+            }
+            #[derive(serde::Serialize)]
+            struct Body<'a> {
+                status: u16,
+                auth: Option<Value>,
+                probes: Probes<'a>,
+            }
+            let body = gateway_core::source_json::SourceJson::from_serializable(&Body {
+                status,
+                auth: evidence
+                    .auth
+                    .as_ref()
+                    .map(|a| auth_view(a, self.host.now_ms())),
+                probes: Probes {
+                    codex: &evidence.codex,
+                    metered_quota: &evidence.metered_quota,
+                    claude_subscription: &evidence.claude_subscription,
+                    claude_workspace: &evidence.claude_workspace,
+                },
+            })?;
+            Ok(ActiveResponseData {
+                status,
+                body,
+                identity: self.host.build_identity()?,
+            })
+        }
+        .await;
         completion.finish(response).and_then(active_response)
     }
 }
