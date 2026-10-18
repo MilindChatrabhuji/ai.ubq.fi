@@ -221,9 +221,9 @@ const startSidebandFixture = async (options: SidebandFixtureOptions = {}): Promi
   const upstreamUpgrade: ServeUpgradeHandler = async (request) => {
     const url = new URL(request.url);
     if (url.pathname !== `/v1/live/${CALL_ID}`) return new Response("not found", { status: 404 });
-    if (options.upstreamRejectionStatus !== undefined) return new Response("upstream call is gone", { status: options.upstreamRejectionStatus });
     upstreamHandshakeStarted = true;
     await upstreamHandshake.promise;
+    if (options.upstreamRejectionStatus !== undefined) return new Response("upstream call is gone", { status: options.upstreamRejectionStatus });
     if (closing || request.signal.aborted) return new Response(null, { status: 503 });
     return {
       maxPayloadBytes: LIVE_SIDEBAND_MAX_PAYLOAD_BYTES,
@@ -725,12 +725,12 @@ test("GET /v1/live/<call_id> retires a terminal upstream mapping before closing 
     await fixture.waitForUpstreamHandshake();
     const { setKvForTest } = await import("../src/kv.ts");
     let kvUnavailable = true;
-    setKvForTest(null, async () => {
+    setKvForTest(null, () => {
       if (kvUnavailable) {
         kvUnavailable = false;
-        return null;
+        return Promise.resolve(null);
       }
-      return fixture.kv as unknown as Kv;
+      return Promise.resolve(fixture.kv as unknown as Kv);
     });
     fixture.releaseUpstreamHandshake();
     const closed = await nextClose(client);
