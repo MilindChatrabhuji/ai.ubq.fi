@@ -48,9 +48,9 @@ const backlogFindings = (markdown: string): ReadonlyMap<string, string> => {
       .slice(1, -1)
       .split("|")
       .map((cell) => cell.trim());
-    if (cells.length !== 8) throw new Error("Sentinel review backlog row has the wrong number of columns");
+    if (cells.length !== 9) throw new Error("Sentinel review backlog row has the wrong number of columns");
     const fingerprintCell = cells[0];
-    const findingCell = cells[6];
+    const findingCell = cells[7];
     const fingerprint = fingerprintCell.slice(1, -1);
     if (entries.has(fingerprint)) throw new Error(`Duplicate Sentinel review backlog fingerprint ${fingerprint}`);
     entries.set(fingerprint, decodeCell(findingCell));
