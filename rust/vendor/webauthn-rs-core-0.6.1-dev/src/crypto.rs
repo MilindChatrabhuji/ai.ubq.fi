@@ -358,6 +358,10 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
     }
 }
 
+// The source bounds ceremony requests to 64 KiB. Keep safe RustCrypto
+// parameter validation while admitting source-valid RSA keys above 4096 bits.
+const MAX_SOURCE_RSA_BITS: usize = 65_536 * 8;
+
 impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
     type Error = WebauthnError;
 
@@ -432,9 +436,14 @@ impl TryFrom<(COSEAlgorithm, &Certificate)> for COSEKey {
 
             COSEAlgorithm::RS256 | COSEAlgorithm::RS384 | COSEAlgorithm::RS512
             | COSEAlgorithm::PS256 | COSEAlgorithm::PS384 | COSEAlgorithm::PS512 | COSEAlgorithm::INSECURE_RS1 => {
-                use rsa::{pkcs1::DecodeRsaPublicKey, traits::PublicKeyParts};
+                use rsa::{pkcs1::der::Decode, traits::PublicKeyParts};
                 let raw = certificate.tbs_certificate.subject_public_key_info.subject_public_key.as_bytes().ok_or(WebauthnError::COSEKeyInvalidType)?;
-                let key = rsa::RsaPublicKey::from_pkcs1_der(raw).map_err(|_| WebauthnError::COSEKeyInvalidType)?;
+                let parsed = rsa::pkcs1::RsaPublicKey::from_der(raw).map_err(|_| WebauthnError::COSEKeyInvalidType)?;
+                let key = rsa::RsaPublicKey::new_with_max_size(
+                    BigUint::from_bytes_be(parsed.modulus.as_bytes()),
+                    BigUint::from_bytes_be(parsed.public_exponent.as_bytes()),
+                    MAX_SOURCE_RSA_BITS,
+                ).map_err(|_| WebauthnError::RsaParametersInvalid)?;
                 Ok(COSEKeyType::RSA(COSERSAKey { n: key.n().to_bytes_be(), e: key.e().to_bytes_be() }))
             }
             COSEAlgorithm::EDDSA => {
@@ -506,7 +515,7 @@ impl COSEKey {
                 let n = BigUint::from_bytes_be(&rsak.n);
                 let e = BigUint::from_bytes_be(&rsak.e);
 
-                RS256PublicKey::new(n, e)
+                RS256PublicKey::new_with_max_size(n, e, MAX_SOURCE_RSA_BITS)
                     .map(COSEKeyPublic::RsaS256)
                     .map_err(|_err| WebauthnError::RsaParametersInvalid)
             }
