@@ -10,14 +10,14 @@ class ChatAuthElement extends EventTarget {
   hidden = false;
   isConnected = true;
   style = {};
-  private text = "";
+  private _text = "";
 
   get textContent(): string {
-    return this.text + this.children.map((child) => child.textContent).join("");
+    return this._text + this.children.map((child) => child.textContent).join("");
   }
 
   set textContent(value: string) {
-    this.text = value;
+    this._text = value;
     this.children = [];
   }
 
@@ -54,12 +54,12 @@ class ChatAuthElement extends EventTarget {
 class ChatAuthDocument extends EventTarget {
   visibilityState = "visible";
   body = new ChatAuthElement();
-  private elements = new Map<string, ChatAuthElement>();
-  private chatStats = new ChatAuthElement();
+  private _elements = new Map<string, ChatAuthElement>();
+  private _chatStats = new ChatAuthElement();
 
   getElementById(id: string): ChatAuthElement {
-    const element = this.elements.get(id) ?? new ChatAuthElement();
-    this.elements.set(id, element);
+    const element = this._elements.get(id) ?? new ChatAuthElement();
+    this._elements.set(id, element);
     return element;
   }
 
@@ -72,7 +72,7 @@ class ChatAuthDocument extends EventTarget {
   }
 
   querySelector(selector: string): ChatAuthElement | null {
-    return selector === "[data-chat-stats]" ? this.chatStats : null;
+    return selector === "[data-chat-stats]" ? this._chatStats : null;
   }
 
   querySelectorAll(): ChatAuthElement[] {
@@ -108,16 +108,17 @@ test("empty-token local auth cancels a pending token check", async () => {
   };
   const localStorageItems = new Map<string, string>();
   const authRequests: string[] = [];
-  const fetchMock = async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
+  const fetchMock = (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.endsWith("/uos/auth")) {
       authRequests.push(new Headers(options?.headers).get("Authorization") ?? "");
-      return new Response(
-        JSON.stringify({ auth: { mode: "disabled", is_admin: true, is_super_admin: true } }),
-        { headers: { "Content-Type": "application/json" } }
+      return Promise.resolve(
+        new Response(JSON.stringify({ auth: { mode: "disabled", is_admin: true, is_super_admin: true } }), {
+          headers: { "Content-Type": "application/json" },
+        })
       );
     }
-    return new Response(JSON.stringify({ data: [] }), { headers: { "Content-Type": "application/json" } });
+    return Promise.resolve(new Response(JSON.stringify({ data: [] }), { headers: { "Content-Type": "application/json" } }));
   };
   const restore = [
     setGlobal("document", documentTarget),
@@ -158,7 +159,9 @@ test("empty-token local auth cancels a pending token check", async () => {
 
     const pendingTimers = [...timers.values()];
     timers.clear();
-    pendingTimers.forEach(({ callback }) => callback());
+    pendingTimers.forEach(({ callback }) => {
+      callback();
+    });
     assert.equal(authBadge.textContent, "Local super admin");
     assert.equal(authBadge.dataset.state, "ok", "a stale token check must not report Missing token");
   } finally {
