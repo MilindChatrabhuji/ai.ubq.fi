@@ -2,140 +2,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
-use gateway_core::identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash};
+use gateway_core::identity::{AccountBinding, ActiveSelection, ActiveTransitionReason};
 use gateway_core::provider::{CodexQuotaClass, OveragePermission};
-use gateway_core::state::{AuthorityStore, RevisionCheck};
-use serde::{Deserialize, Serialize};
+use gateway_core::state::AuthorityStore;
 
 use crate::store::Transaction;
-use crate::{Authority, TokenSource, PROBE_LEASE_MS, add, generation, invalid, keys, next_generation, nonnegative, text, unavailable};
+use crate::{Authority, TokenSource, generation, invalid, keys, next_generation, nonnegative, text, unavailable};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct PoolAccount {
-    pub account_id_hash: RoutingAccountHash,
-    pub admin_account_hash: SubscriptionSelectionHash,
-    pub credential_version: CredentialVersion,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct SubscriptionPool {
-    pub v: u32,
-    pub pool_versionstamp: PoolVersionstamp,
-    pub accounts: Vec<PoolAccount>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct QuotaBlock {
-    pub blocked_until_ms: i64,
-    pub source: QuotaBlockSource,
-    pub observed_at_ms: i64,
-    pub reset_at_ms: Option<i64>,
-    pub reset_is_stable: bool,
-    pub reset_ambiguous: bool,
-    pub recovery_pending: bool,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum QuotaBlockSource { BodyResetsAt, HeaderRetryAfter }
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ProbeLease {
-    pub token: String,
-    pub generation: u64,
-    pub quota_class: CodexQuotaClass,
-    pub expires_at_ms: i64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct RoutingSlot {
-    pub account_id_hash: RoutingAccountHash,
-    pub credential_version: CredentialVersion,
-    pub generation: u64,
-    pub invalid_credential_version: Option<CredentialVersion>,
-    pub quota_blocks: BTreeMap<String, QuotaBlock>,
-    pub probe_lease: Option<ProbeLease>,
-    pub retained_reset_at_ms: Option<i64>,
-    pub reset_identity_ambiguous: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct RoutingState {
-    pub v: u32,
-    pub updated_at_ms: i64,
-    pub legacy_identity_unresolved: bool,
-    pub slots: Vec<RoutingSlot>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-pub struct CapacityStore { pub observations: Vec<CapacityObservation> }
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CapacityWindow { pub used_percent: Option<f64>, pub reset_at_ms: Option<i64> }
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ModelCapacity { pub model: String, pub windows: Vec<CapacityWindow> }
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CapacityObservation {
-    pub account_id_hash: RoutingAccountHash,
-    pub available: bool,
-    pub snapshot_at_ms: i64,
-    pub windows: Vec<CapacityWindow>,
-    pub additional: Vec<ModelCapacity>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct AccountCatalog { pub client_version: String, pub models: Vec<String> }
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct UnsupportedModel { pub observed_at_ms: i64, pub detail: String }
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ModelAvailability {
-    pub catalogs: BTreeMap<String, AccountCatalog>,
-    pub unsupported: BTreeMap<String, BTreeMap<String, UnsupportedModel>>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct AdmittedAccount {
-    pub binding: AccountBinding,
-    pub active_generation: u64,
-    pub requested_model: String,
-    pub quota_class: CodexQuotaClass,
-    pub probe_required: bool,
-    pub probe: Option<ProbeLease>,
-}
-
-/// Constructed only by a successful strong selection. Never deserialize an external proof.
-#[derive(Clone, Debug)]
-pub struct CohortProof {
-    pub(crate) checks: Vec<RevisionCheck>,
-    pub(crate) model: String,
-    pub(crate) quota_class: CodexQuotaClass,
-    pub(crate) exhausted: bool,
-    pub(crate) unavailable: bool,
-    pub(crate) bindings: Vec<AccountBinding>,
-}
-
-impl CohortProof {
-    pub fn full_cohort_exhausted(&self) -> bool { self.exhausted }
-    pub fn full_cohort_unavailable(&self) -> bool { self.unavailable }
-    pub fn selected_count(&self) -> usize { self.bindings.len() }
-    pub fn model(&self) -> &str { &self.model }
-    pub fn account_bindings(&self) -> &[AccountBinding] { &self.bindings }
-    pub fn quota_class(&self) -> CodexQuotaClass { self.quota_class }
-}
-
-#[derive(Clone, Debug)]
-pub enum RouteSelection {
-    Eligible(AdmittedAccount),
-    QuotaBlocked { retry_at_ms: Option<i64>, proof: CohortProof },
-    CredentialsInvalid { proof: CohortProof },
-    ModelUnavailable { model: String, detail: Option<String> },
-    RoutingUnavailable,
-}
+pub use crate::routing_types::*;
 
 pub fn class_name(class: CodexQuotaClass) -> &'static str {
     match class { CodexQuotaClass::Spark => "spark", CodexQuotaClass::GptOss120b => "gpt_oss_120b", CodexQuotaClass::Reserve => "reserve", CodexQuotaClass::Standard => "standard", CodexQuotaClass::Unknown => "unknown" }
@@ -219,7 +93,7 @@ pub(crate) struct RoutingView {
     pub active: Option<ActiveSelection>,
     models: ModelAvailability,
     capacity: CapacityStore,
-    overage: BTreeMap<String, bool>,
+    pub(crate) overage: BTreeMap<String, bool>,
 }
 
 pub(crate) async fn read_view<S: AuthorityStore, I: TokenSource>(tx: &mut Transaction<'_, S, I>) -> Result<RoutingView, GatewayError> {
@@ -246,6 +120,10 @@ impl RoutingView {
     pub(crate) fn matches(&self, admission: &AdmittedAccount) -> bool {
         let Ok(slot) = usize::try_from(admission.binding.slot) else { return false; };
         self.pool.accounts.get(slot).is_some_and(|account| account.enabled) && slot < self.state.slots.len() && self.binding(slot) == admission.binding && self.active.as_ref().is_some_and(|active| active.generation == admission.active_generation && active.binding == admission.binding)
+    }
+
+    pub(crate) fn current_binding(&self,binding:&AccountBinding)->bool{
+        usize::try_from(binding.slot).ok().is_some_and(|slot|slot<self.state.slots.len()&&self.binding(slot)==*binding)
     }
 }
 
@@ -301,7 +179,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 let Some(reset)=observation.windows.first().and_then(|window|window.reset_at_ms).filter(|reset|*reset>now) else {continue;};
                 let prior=view.state.slots[slot].quota_blocks.get(class_name(class));
                 if prior.is_some_and(|block|block.blocked_until_ms>now||block.observed_at_ms>=observation.snapshot_at_ms){continue;}
-                view.state.slots[slot].quota_blocks.insert(class_name(class).to_owned(),QuotaBlock{blocked_until_ms:reset,source:QuotaBlockSource::HeaderRetryAfter,observed_at_ms:observation.snapshot_at_ms,reset_at_ms:Some(reset),reset_is_stable:true,reset_ambiguous:false,recovery_pending:false});changed=true;
+                view.state.slots[slot].quota_blocks.insert(class_name(class).to_owned(),QuotaBlock{blocked_until_ms:reset,source:QuotaBlockSource::HeaderRetryAfter,observed_at_ms:observation.snapshot_at_ms,reset_at_ms:Some(reset),reset_is_stable:true,reset_ambiguous:false,recovery_pending:false});view.state.slots[slot].generation=next_generation(view.state.slots[slot].generation)?;changed=true;
             }
             if changed{view.state.updated_at_ms=now;tx.put(&keys::routing(),&view.state,None)?;}
             if tx.commit().await?{return Ok(changed);}
@@ -316,6 +194,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let prior: Option<RoutingState> = tx.read(&keys::routing()).await?;
             let evaluated: Vec<_> = view.pool.accounts.iter().enumerate().filter(|(_, account)| account.enabled).map(|(slot, _)| evaluate(&view, slot, model, class, now)).collect();
             let active_slot = view.active.as_ref().and_then(|active| evaluated.iter().find(|evaluation| view.pool.accounts[evaluation.slot].account_id_hash == active.binding.account_id_hash));
+            if prior.as_ref() != Some(&view.state) { view.state.updated_at_ms = now; tx.put(&keys::routing(), &view.state, None)?; }
             let chosen = match (&view.active, active_slot) {
                 (None, _) => evaluated.iter().find(|evaluation| evaluation.eligible),
                 (Some(_), Some(active)) if active.eligible => Some(active),
@@ -324,7 +203,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 }
                 _ => evaluated.iter().find(|evaluation| evaluation.eligible),
             };
-            if prior.as_ref() != Some(&view.state) { view.state.updated_at_ms = now; tx.put(&keys::routing(), &view.state, None)?; }
             let result = if let Some(chosen) = chosen {
                 let binding = view.binding(chosen.slot);
                 let changed_identity = view.active.as_ref().is_some_and(|active| active.binding.account_id_hash != binding.account_id_hash);
@@ -371,7 +249,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         nonnegative(block.blocked_until_ms)?; nonnegative(block.observed_at_ms)?;
         for _ in 0..3 {
             let mut tx = self.transaction(now)?; let mut view = read_view(&mut tx).await?;
-            if !view.matches(admission) { return Ok(false); }
+            let slot_index=admission.binding.slot as usize;
+            let foreign_probe=view.state.slots.get(slot_index).is_some_and(|slot|slot.account_id_hash==admission.binding.account_id_hash&&slot.credential_version==admission.binding.credential_version&&view.pool.pool_versionstamp==admission.binding.pool_versionstamp&&slot.probe_lease.as_ref().is_some_and(|lease|lease.quota_class!=admission.quota_class)&&admission.probe.is_none());
+            if !view.current_binding(&admission.binding)&&!foreign_probe { return Ok(false); }
             let slot = &mut view.state.slots[admission.binding.slot as usize];
             let prior = slot.quota_blocks.get(class_name(admission.quota_class));
             if prior.is_some_and(|prior| prior.observed_at_ms > block.observed_at_ms) { return Ok(false); }
@@ -380,7 +260,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 next.blocked_until_ms = next.blocked_until_ms.max(prior.blocked_until_ms);
                 next.reset_ambiguous |= prior.reset_ambiguous || (prior.reset_is_stable && prior.reset_at_ms != next.reset_at_ms);
             }
-            slot.quota_blocks.insert(class_name(admission.quota_class).to_owned(), next); slot.probe_lease = None; view.state.updated_at_ms = now;
+            slot.quota_blocks.insert(class_name(admission.quota_class).to_owned(), next); if !foreign_probe{slot.probe_lease = None; slot.generation=next_generation(slot.generation)?;} view.state.updated_at_ms = now;
             tx.put(&keys::routing(), &view.state, None)?;
             if tx.commit().await? { return Ok(true); }
         }
@@ -390,9 +270,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub async fn mark_credential_invalid(&self, admission: &AdmittedAccount, now: i64) -> Result<bool, GatewayError> {
         for _ in 0..3 {
             let mut tx = self.transaction(now)?; let mut view = read_view(&mut tx).await?;
-            if !view.matches(admission) { return Ok(false); }
+            if !view.current_binding(&admission.binding) { return Ok(false); }
             let slot = &mut view.state.slots[admission.binding.slot as usize];
-            slot.invalid_credential_version = Some(admission.binding.credential_version.clone()); slot.quota_blocks.clear(); slot.probe_lease = None;
+            slot.invalid_credential_version = Some(admission.binding.credential_version.clone()); slot.retained_reset_at_ms=slot.quota_blocks.values().filter_map(|block|block.reset_at_ms).max().or(slot.retained_reset_at_ms); slot.quota_blocks.clear(); slot.probe_lease = None;
             tx.put(&keys::routing(), &view.state, None)?;
             if tx.commit().await? { return Ok(true); }
         }
@@ -416,41 +296,4 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         Err(unavailable("codex_routing_unavailable", "Model evidence changed concurrently."))
     }
 
-    /// Called only by the bounded probe/overage route; permission is strongly checked here.
-    pub async fn claim_probe(&self, admission: &AdmittedAccount, overage_reason: Option<&str>, now: i64) -> Result<Option<AdmittedAccount>, GatewayError> {
-        for _ in 0..3 {
-            let mut tx = self.transaction(now)?; let mut view = read_view(&mut tx).await?;
-            if !view.matches(admission) { return Ok(None); }
-            let allowed = view.overage.get(&admission.binding.account_id_hash.0).copied().unwrap_or(false);
-            if let Some(reason) = overage_reason {
-                if !allowed || !matches!(reason, "no_eligible_credit" | "inventory_empty" | "inventory_no_eligible_codex_credit" | "inventory_response_invalid_or_expired" | "inventory_unavailable" | "account_day_limit_reached") { return Ok(None); }
-            }
-            let slot = &mut view.state.slots[admission.binding.slot as usize];
-            if slot.probe_lease.as_ref().is_some_and(|lease| lease.expires_at_ms > now) { return Ok(None); }
-            if overage_reason.is_none() && slot.quota_blocks.get(class_name(admission.quota_class)).is_some_and(|block| block.blocked_until_ms > now) && !allowed { return Ok(None); }
-            let next_generation = next_generation(slot.generation)?;
-            let lease = ProbeLease { token: self.tokens.next_token()?, generation: next_generation, quota_class: admission.quota_class, expires_at_ms: add(now, PROBE_LEASE_MS)? };
-            text(&lease.token)?; slot.generation = next_generation; slot.probe_lease = Some(lease.clone());
-            let mut admitted = admission.clone(); admitted.binding.routing_generation = next_generation; admitted.probe = Some(lease); admitted.probe_required = false;
-            let mut active = view.active.ok_or_else(|| invalid("Probe is missing its active selection."))?; active.binding = admitted.binding.clone(); active.updated_at_ms = now;
-            tx.put(&keys::routing(), &view.state, None)?; tx.put(&keys::active(), &active, None)?;
-            if tx.commit().await? { return Ok(Some(admitted)); }
-        }
-        Err(unavailable("codex_routing_unavailable", "Probe claim changed concurrently."))
-    }
-
-    pub async fn finish_probe(&self, admission: &AdmittedAccount, recovered: bool, now: i64) -> Result<bool, GatewayError> {
-        let Some(expected) = &admission.probe else { return Ok(false); };
-        for _ in 0..3 {
-            let mut tx = self.transaction(now)?; let mut view = read_view(&mut tx).await?;
-            if !view.matches(admission) { return Ok(false); }
-            let slot = &mut view.state.slots[admission.binding.slot as usize];
-            if slot.probe_lease.as_ref() != Some(expected) { return Ok(false); }
-            slot.probe_lease = None;
-            if recovered { slot.quota_blocks.remove(class_name(admission.quota_class)); if slot.quota_blocks.is_empty() { slot.retained_reset_at_ms = None; slot.reset_identity_ambiguous = false; } }
-            tx.put(&keys::routing(), &view.state, None)?;
-            if tx.commit().await? { return Ok(true); }
-        }
-        Err(unavailable("codex_routing_unavailable", "Probe completion changed concurrently."))
-    }
 }

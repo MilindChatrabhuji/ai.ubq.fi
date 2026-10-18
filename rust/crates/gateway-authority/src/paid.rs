@@ -1,86 +1,16 @@
 //! Paid ledger v3: exposure, terminal evidence and correlated billing are independent.
-use std::collections::BTreeMap;
-
 use gateway_core::GatewayError;
-use gateway_core::identity::{ApiKeyId, MicrocreditLimit, PaidAttemptId, RequestId};
+use gateway_core::identity::{ApiKeyId, MicrocreditLimit, PaidAttemptId};
 use gateway_core::lifecycle::{BillingState, DispatchState, PaidTerminalState};
 use gateway_core::provider::PaidProvider;
 use gateway_core::state::AuthorityStore;
-use serde::{Deserialize, Serialize};
 
 use crate::quota::ApiKeyPolicy;
-use crate::routing::{CohortProof, validate_cohort};
+use crate::routing::validate_cohort;
 use crate::store::Transaction;
 use crate::{Authority, TokenSource, DAY_MS, PAID_RETENTION_MS, add, invalid, keys, nonnegative, positive, quota_error, retention, text, unavailable};
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct PaidRoutingPolicy { pub v: u32, pub codex_enabled: bool, pub codex_models: Vec<String>, pub models: BTreeMap<String, Vec<PaidProvider>> }
-
-#[derive(Clone, Debug)]
-pub enum PaidAuthorization { SubscriptionUnavailable(CohortProof), DirectPaidModel }
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct PaidReservation {
-    pub key_id: ApiKeyId, pub request_id: RequestId, pub attempt_id: PaidAttemptId, pub provider: PaidProvider,
-    pub window_reset_at_ms: i64, pub created_at_ms: i64, pub reserved_microcredits: i64,
-}
-
-#[derive(Clone, Debug)]
-pub enum PaidAdmission { Reserved(PaidReservation), Existing(PaidReservation) }
-
-#[derive(Clone, Debug)]
-pub struct PaidRequest {
-    pub key_id: ApiKeyId, pub request_id: RequestId, pub attempt_id: PaidAttemptId, pub provider: PaidProvider,
-    pub model: String, pub route: String, pub path: String, pub stream: bool, pub reasoning: Option<String>, pub created_at_ms: i64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct PaidAttempt {
-    pub v: u32, pub reservation: PaidReservation, pub policy_version: String, pub model: String, pub route: String, pub path: String,
-    pub stream: bool, pub reasoning: Option<String>, pub quota_per_credit: i64, pub provider_request_id: Option<String>,
-    pub dispatch_state: DispatchState, pub terminal_state: PaidTerminalState, pub billing_state: BillingState,
-    pub provider_quota: Option<f64>, pub input_tokens: Option<i64>, pub cached_input_tokens: Option<i64>, pub output_tokens: Option<i64>, pub spend_microcredits: Option<i64>,
-    pub transport_started: bool, pub reconciliation_attempts: i64, pub last_reconciliation_at_ms: Option<i64>,
-    pub dispatched_at_ms: Option<i64>, pub terminal_at_ms: Option<i64>, pub settled_at_ms: Option<i64>, pub updated_at_ms: i64, pub usage_rollup_at_ms: Option<i64>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct PaidWindow {
-    pub v: u32, pub key_id: ApiKeyId, pub policy_version: String, pub window_reset_at_ms: i64, pub limit_microcredits: i64,
-    pub settled_microcredits: i64, pub reserved_microcredits: i64, pub pending_count: i64, pub updated_at_ms: i64,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct PendingPaid { pub key_id: ApiKeyId, pub attempt_id: PaidAttemptId, pub created_at_ms: i64, pub next_reconciliation_at_ms: i64 }
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ReconciliationGate {
-    pub next_due_at_ms: Option<i64>,
-    /// Only outstanding work, never settled history. Event owners enumerate due keys.
-    pub pending: BTreeMap<String, PendingPaid>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ReconciliationLease { pub token: String, pub expires_at_ms: i64 }
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct PaidRollup {
-    pub v: u32, pub bucket_start_at_ms: i64, pub model: String, pub provider: PaidProvider, pub request_count: i64,
-    pub provider_quota: f64, pub input_tokens: i64, pub cached_input_tokens: i64, pub output_tokens: i64, pub spend_microcredits: i64,
-    pub first_request_at_ms: i64, pub last_request_at_ms: i64, pub updated_at_ms: i64,
-}
-
-#[derive(Clone, Debug)]
-pub struct PaidUsage {
-    pub provider_quota: f64, pub input_tokens: i64, pub cached_input_tokens: Option<i64>, pub output_tokens: i64,
-    pub correlation: PaidCorrelation,
-}
-
-#[derive(Clone, Debug)]
-pub enum PaidCorrelation {
-    ProviderRequestId(String),
-    SurplusReservation { attempt_id: PaidAttemptId, buyer_cost_micro: Option<i64> },
-}
+pub use crate::paid_types::*;
 
 fn pending_id(key: &ApiKeyId, attempt: &PaidAttemptId) -> String { serde_json::json!([key.0,attempt.0]).to_string() }
 
@@ -215,7 +145,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut gate = read_gate(&mut tx).await?; gate.pending.remove(&pending_id(&reservation.key_id, &reservation.attempt_id)); arm_gate(&mut gate);
             row.dispatch_state = DispatchState::NotDispatched; row.terminal_state = PaidTerminalState::Cancelled; row.billing_state = BillingState::NotBilled; row.spend_microcredits = Some(0); row.terminal_at_ms.get_or_insert(now); row.updated_at_ms = now;
             tx.put(&key, &row, Some(retention(reservation.created_at_ms, PAID_RETENTION_MS)?))?; tx.delete(&pending_key)?; tx.put(&keys::paid_gate(), &gate, None)?;
-            if let Some(mut window) = window { validate_paid_window(&window, &reservation.key_id, reservation.window_reset_at_ms)?; if window.reserved_microcredits < reservation.reserved_microcredits || window.pending_count < 1 { return Err(invalid("Paid exposure aggregate is inconsistent.")); } window.reserved_microcredits -= reservation.reserved_microcredits; window.pending_count -= 1; window.updated_at_ms = now; tx.put(&window_key, &window, Some(retention(window.window_reset_at_ms, PAID_RETENTION_MS)?))?; }
+            if let Some(mut window) = window { validate_paid_window(&window, &reservation.key_id, reservation.window_reset_at_ms)?; window.reserved_microcredits=(window.reserved_microcredits-reservation.reserved_microcredits).max(0); window.pending_count=(window.pending_count-1).max(0); window.updated_at_ms = now; tx.put(&window_key, &window, Some(retention(window.window_reset_at_ms, PAID_RETENTION_MS)?))?; }
             if tx.commit().await? { return Ok(true); }
         }
         Err(unavailable("paid_fallback_unavailable", "Paid release changed concurrently."))
@@ -254,7 +184,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             row.billing_state = BillingState::Settled; row.provider_quota = Some(usage.provider_quota); row.input_tokens = Some(usage.input_tokens); row.cached_input_tokens = usage.cached_input_tokens; row.output_tokens = Some(usage.output_tokens); row.spend_microcredits = Some(spend); row.settled_at_ms.get_or_insert(now); row.last_reconciliation_at_ms = Some(now); row.updated_at_ms = now; row.usage_rollup_at_ms = Some(now);
             gate.pending.remove(&pending_id(&reservation.key_id, &reservation.attempt_id)); arm_gate(&mut gate);
             tx.put(&key, &row, Some(retention(reservation.created_at_ms, PAID_RETENTION_MS)?))?; tx.delete(&pending_key)?; tx.put(&keys::paid_gate(), &gate, None)?; tx.put(&rollup_key, &rollup, None)?;
-            if let Some(mut window) = window { validate_paid_window(&window, &reservation.key_id, reservation.window_reset_at_ms)?; if window.reserved_microcredits < reservation.reserved_microcredits || window.pending_count < 1 { return Err(invalid("Paid exposure aggregate is inconsistent.")); } window.settled_microcredits = add(window.settled_microcredits, spend)?; window.reserved_microcredits -= reservation.reserved_microcredits; window.pending_count -= 1; window.updated_at_ms = now; tx.put(&window_key, &window, Some(retention(window.window_reset_at_ms, PAID_RETENTION_MS)?))?; }
+            if let Some(mut window) = window { validate_paid_window(&window, &reservation.key_id, reservation.window_reset_at_ms)?; window.settled_microcredits = add(window.settled_microcredits, spend)?; window.reserved_microcredits=(window.reserved_microcredits-reservation.reserved_microcredits).max(0); window.pending_count=(window.pending_count-1).max(0); window.updated_at_ms = now; tx.put(&window_key, &window, Some(retention(window.window_reset_at_ms, PAID_RETENTION_MS)?))?; }
             if tx.commit().await? { return Ok(true); }
         }
         Err(unavailable("paid_fallback_unavailable", "Paid settlement changed concurrently."))

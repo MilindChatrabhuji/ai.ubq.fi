@@ -9,7 +9,12 @@ use crate::routing::{AdmittedAccount, CohortProof, ProbeLease, class_name, read_
 use crate::store::Transaction;
 use crate::{Authority, TokenSource, DAY_MS, PROBE_LEASE_MS, add, invalid, keys, next_generation, nonnegative, text, unavailable};
 
-fn hash(value: &str) -> String { format!("{:x}", Sha256::digest(value.as_bytes())) }
+fn hash(value: &str) -> String {
+    const HEX: &[u8;16]=b"0123456789abcdef";
+    let mut encoded=String::with_capacity(64);
+    for byte in Sha256::digest(value.as_bytes()).iter().copied(){encoded.push(HEX[(byte>>4)as usize]as char);encoded.push(HEX[(byte&15)as usize]as char);}
+    encoded
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,12 +85,33 @@ pub enum ResetClaim { Submit { record: ResetRecord, invocation: ResetInvocation 
 pub struct AccountDayBudget { pub v: u32, pub day: String, pub submission_count: i64, pub updated_at_ms: i64 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ResetCredit { pub credit_id: String, pub expires_at_ms: i64, pub observed_at_ms: i64, pub eligible: bool }
+pub struct ResetCredit { pub credit_id: String, pub expires_at_ms: Option<i64>, pub observed_at_ms: i64, pub eligible: bool }
+
+#[derive(Clone,Debug)]
+pub struct AccountResetInventory{pub binding:AccountBinding,pub observed_at_ms:i64,pub credits:Vec<ResetCredit>}
+
+#[derive(Clone,Debug)]
+pub struct SelectedResetCredit{pub binding:AccountBinding,pub credit:ResetCredit}
+
+/// Complete typed inventory observations come from the approved native provider boundary.
+/// Any malformed/stale observation invalidates this pool decision; no credit is fabricated.
+pub fn select_reset_credit(inventories:&[AccountResetInventory],now:i64)->Result<Option<SelectedResetCredit>,GatewayError>{
+    nonnegative(now)?;let mut candidates=Vec::new();
+    for inventory in inventories{
+        if inventory.observed_at_ms<0||inventory.observed_at_ms>now||now-inventory.observed_at_ms>30_000{return Err(unavailable("inventory_response_invalid_or_expired","Reset pool inventory is stale."));}
+        for credit in &inventory.credits{
+            text(&credit.credit_id)?;
+            if credit.eligible&&credit.observed_at_ms<=now&&now-credit.observed_at_ms<=30_000&&credit.expires_at_ms.is_none_or(|expiry|expiry>now){candidates.push(SelectedResetCredit{binding:inventory.binding.clone(),credit:credit.clone()});}
+        }
+    }
+    candidates.sort_by(|left,right|left.credit.expires_at_ms.unwrap_or(i64::MAX).cmp(&right.credit.expires_at_ms.unwrap_or(i64::MAX)).then_with(||left.binding.slot.cmp(&right.binding.slot)).then_with(||left.credit.credit_id.cmp(&right.credit.credit_id)));
+    Ok(candidates.into_iter().next())
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ResetShadow {
     pub v: u32, pub episode_hash: String, pub account_id_hash: String, pub quota_generation: String,
-    pub selected_credit_id_hash: String, pub credit_expires_at_ms: i64, pub observed_at_ms: i64,
+    pub selected_credit_id_hash: String, pub credit_expires_at_ms: Option<i64>, pub observed_at_ms: i64,
     pub created_at_ms: i64, pub expires_at_ms: i64, pub armed_at_ms: Option<i64>,
 }
 
@@ -140,15 +166,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Persist the complete observed shadow selection before a later live request may consume.
     pub async fn record_reset_shadow(&self, candidate: &ResetCandidate, credit: &ResetCredit, now: i64) -> Result<ResetShadow, GatewayError> {
         text(&credit.credit_id)?;
-        if !credit.eligible || credit.observed_at_ms > now || now - credit.observed_at_ms > 30_000 || credit.expires_at_ms <= now { return Err(unavailable("inventory_response_invalid_or_expired", "Reset credit inventory is not current.")); }
+        if !credit.eligible || credit.observed_at_ms > now || now - credit.observed_at_ms > 30_000 || credit.expires_at_ms.is_some_and(|expiry|expiry<=now) { return Err(unavailable("inventory_response_invalid_or_expired", "Reset credit inventory is not current.")); }
         for _ in 0..4 {
             let mut tx = self.transaction(now)?; let invocation = reset_fences(&mut tx, candidate).await?;
             let config: ResetConfig = tx.read(&keys::reset_config()).await?.unwrap_or_default();
             if !config.enabled || config.mode == ResetMode::Disabled { return Err(unavailable("feature_disabled", "Reset feature is disabled.")); }
             let episode_hash = shadow_episode(candidate); let key = keys::reset_shadow(&episode_hash);
             let prior: Option<ResetShadow> = tx.read(&key).await?;
-            let same = prior.as_ref().filter(|row| row.expires_at_ms > now && row.selected_credit_id_hash == hash(&credit.credit_id) && row.account_id_hash == invocation.identity.account_id_hash);
-            let row = ResetShadow { v: 1, episode_hash, account_id_hash: invocation.identity.account_id_hash, quota_generation: invocation.identity.quota_generation, selected_credit_id_hash: hash(&credit.credit_id), credit_expires_at_ms: credit.expires_at_ms, observed_at_ms: credit.observed_at_ms, created_at_ms: same.map_or(now, |row| row.created_at_ms), expires_at_ms: add(now,30_000)?.min(credit.expires_at_ms), armed_at_ms: same.and_then(|row| row.armed_at_ms) };
+            let credit_hash=hash(&format!("uos_ai\0codex_reset_credit\0{}",credit.credit_id));
+            let same = prior.as_ref().filter(|row| row.expires_at_ms > now && row.selected_credit_id_hash == credit_hash && row.account_id_hash == invocation.identity.account_id_hash);
+            let row = ResetShadow { v: 1, episode_hash, account_id_hash: invocation.identity.account_id_hash, quota_generation: invocation.identity.quota_generation, selected_credit_id_hash: credit_hash, credit_expires_at_ms: credit.expires_at_ms, observed_at_ms: credit.observed_at_ms, created_at_ms: same.map_or(now, |row| row.created_at_ms), expires_at_ms: add(now,30_000)?.min(credit.expires_at_ms.unwrap_or(i64::MAX)), armed_at_ms: same.and_then(|row| row.armed_at_ms) };
             tx.put(&key, &row, None)?; if tx.commit().await? { return Ok(row); }
         }
         Err(unavailable("routing_fence_stale", "Shadow selection changed concurrently."))
@@ -159,7 +186,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(now)?; let _ = reset_fences(&mut tx,candidate).await?;
             let config: ResetConfig = tx.read(&keys::reset_config()).await?.unwrap_or_default(); if let Some(reason) = config.live_reason() { return Err(unavailable(reason, "Reset live policy is not authorized.")); }
             let key = keys::reset_shadow(&shadow_episode(candidate)); let mut row: ResetShadow = tx.read(&key).await?.ok_or_else(|| unavailable("shadow_decision_missing", "A prior shadow decision is required."))?;
-            if row.expires_at_ms <= now || row.credit_expires_at_ms <= now { return Err(unavailable("shadow_decision_stale", "Reset shadow decision expired.")); }
+            if row.expires_at_ms <= now || row.credit_expires_at_ms.is_some_and(|expiry|expiry<=now) { return Err(unavailable("shadow_decision_stale", "Reset shadow decision expired.")); }
             let newly_armed = row.armed_at_ms.is_none(); row.armed_at_ms.get_or_insert(now); tx.put(&key,&row,None)?;
             if tx.commit().await? { return Ok(newly_armed); }
         }
@@ -252,7 +279,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..4{
             let mut tx=self.transaction(now)?;let invocation=reset_fences(&mut tx,candidate).await?;
             let key=keys::reset_redemption(&invocation.identity.account_id_hash,&invocation.identity.quota_generation);let row:ResetRecord=tx.read(&key).await?.ok_or_else(|| invalid("Verified reset record is missing."))?;check_record(&row,expected)?;
-            if row.state!=ResetState::Verified||row.verified_at_ms.is_none(){return Ok(None);}
+            if row.state!=ResetState::Verified||row.verified_at_ms.is_none()||row.routing_generation!=candidate.binding.routing_generation{return Ok(None);}
             let mut view=read_view(&mut tx).await?;let slot_index=candidate.binding.slot as usize;let slot=&mut view.state.slots[slot_index];
             slot.quota_blocks.remove(class_name(candidate.proof.quota_class));slot.generation=next_generation(slot.generation)?;
             let lease=ProbeLease{token:self.tokens.next_token()?,generation:slot.generation,quota_class:candidate.proof.quota_class,expires_at_ms:add(now,PROBE_LEASE_MS)?};text(&lease.token)?;slot.probe_lease=Some(lease.clone());
@@ -264,5 +291,25 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if tx.commit().await?{return Ok(Some(admitted));}
         }
         Err(unavailable("routing_fence_stale","Verified reset election changed concurrently."))
+    }
+
+    /// A stale verified ledger permits one current-generation recovery probe, never another spend.
+    /// It retains the reset identity as ambiguous and releases only this class's deadline.
+    pub async fn claim_verified_reset_recovery(&self,candidate:&ResetCandidate,expected:&ResetRecord,now:i64)->Result<Option<AdmittedAccount>,GatewayError>{
+        for _ in 0..4{
+            let mut tx=self.transaction(now)?;let invocation=reset_fences(&mut tx,candidate).await?;
+            let key=keys::reset_redemption(&invocation.identity.account_id_hash,&invocation.identity.quota_generation);let record:ResetRecord=tx.read(&key).await?.ok_or_else(|| invalid("Verified reset ledger is missing."))?;
+            if record.identity!=expected.identity||record.state!=ResetState::Verified||record.verified_at_ms.is_none(){return Ok(None);}
+            let mut view=read_view(&mut tx).await?;let slot_index=candidate.binding.slot as usize;let slot=&mut view.state.slots[slot_index];
+            if slot.probe_lease.as_ref().is_some_and(|lease|lease.expires_at_ms>now){return Ok(None);}
+            let block=slot.quota_blocks.get_mut(class_name(candidate.proof.quota_class)).ok_or_else(|| unavailable("routing_fence_stale","Reset quota class changed."))?;
+            block.blocked_until_ms=now;block.recovery_pending=true;block.reset_ambiguous=true;slot.reset_identity_ambiguous=true;slot.generation=next_generation(slot.generation)?;
+            let lease=ProbeLease{token:self.tokens.next_token()?,generation:slot.generation,quota_class:candidate.proof.quota_class,expires_at_ms:add(now,PROBE_LEASE_MS)?};text(&lease.token)?;slot.probe_lease=Some(lease.clone());
+            let binding=view.binding(slot_index);let changed=view.active.as_ref().is_some_and(|active|active.binding.account_id_hash!=binding.account_id_hash);let previous=view.active.as_ref().map_or(0,|active|active.generation);let active_generation=if changed||previous==0{next_generation(previous)?}else{previous};
+            let active=ActiveSelection{v:1,binding:binding.clone(),generation:active_generation,transition_reason:view.active.as_ref().and_then(|active|active.transition_reason),updated_at_ms:now};
+            tx.put(&keys::routing(),&view.state,None)?;tx.put(&keys::active(),&active,None)?;
+            let admitted=AdmittedAccount{binding,active_generation,requested_model:candidate.proof.model.clone(),quota_class:candidate.proof.quota_class,probe_required:false,probe:Some(lease)};if tx.commit().await?{return Ok(Some(admitted));}
+        }
+        Err(unavailable("routing_fence_stale","Verified reset recovery changed concurrently."))
     }
 }

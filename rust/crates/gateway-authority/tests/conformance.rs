@@ -6,7 +6,7 @@ use gateway_authority::{DAY_MS,PAID_RETENTION_MS,QUOTA_RETENTION_MS,keys};
 use gateway_authority::paid::{PaidAdmission,PaidAuthorization,PaidCorrelation,PaidRequest,PaidRoutingPolicy,PaidUsage,PaidWindow};
 use gateway_authority::quota::{ApiUsageWindow,KernelPolicy,KernelTerminal,KernelWindow};
 use gateway_authority::reset::{AccountDayBudget,ResetCandidate,ResetClaim,ResetConfig,ResetCredit,ResetMode,ResetState,reset_invocation,utc_day};
-use gateway_authority::routing::{AccountCatalog,ModelAvailability,RouteSelection,RoutingState};
+use gateway_authority::routing::{AccountCatalog,ModelAvailability,RouteSelection};
 use gateway_core::identity::{ApiKeyId,CredentialVersion,PaidAttemptId,PoolVersionstamp,RequestId};
 use gateway_core::lifecycle::{BillingState,PaidTerminalState};
 use gateway_core::provider::{CodexQuotaClass,PaidProvider,UpstreamProvider};
@@ -124,7 +124,7 @@ fn reset_candidate(store:&MemoryStore,authority:&TestAuthority)->ResetCandidate{
     ResetCandidate{binding:proof.account_bindings()[0].clone(),quota_reset_at_ms:NOW+60_000,request_started_at_ms:NOW+10,proof}
 }
 fn armed_reset(store:&MemoryStore,authority:&TestAuthority)->(ResetCandidate,gateway_authority::reset::ResetRecord){
-    let candidate=reset_candidate(store,authority);let credit=ResetCredit{credit_id:"synthetic-credit".to_owned(),expires_at_ms:NOW+DAY_MS,observed_at_ms:NOW,eligible:true};run(authority.record_reset_shadow(&candidate,&credit,NOW+1)).unwrap();assert!(run(authority.arm_reset_live(&candidate,NOW+2)).unwrap());
+    let candidate=reset_candidate(store,authority);let credit=ResetCredit{credit_id:"synthetic-credit".to_owned(),expires_at_ms:Some(NOW+DAY_MS),observed_at_ms:NOW,eligible:true};run(authority.record_reset_shadow(&candidate,&credit,NOW+1)).unwrap();assert!(run(authority.arm_reset_live(&candidate,NOW+2)).unwrap());
     let ResetClaim::Submit{record,..}=run(authority.claim_reset(&candidate,NOW+11)).unwrap()else{panic!("claim missing")};(candidate,record)
 }
 
@@ -147,8 +147,10 @@ fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim(){
 #[test]
 fn overage_off_is_a_hard_gate_and_enabled_probe_blocks_other_requests(){
     let store=MemoryStore::default();store.seed(keys::pool(),&pool());let authority=authority(&store);let first=admitted(&authority);run(authority.record_quota_block(&first,block(),NOW)).unwrap();let second=admitted(&authority);run(authority.record_quota_block(&second,block(),NOW)).unwrap();
-    assert!(run(authority.claim_probe(&second,Some("inventory_unavailable"),NOW)).unwrap().is_none());store.seed(keys::overage("admin-b"),&serde_json::json!({"allow":true}));let claimed=run(authority.claim_probe(&second,Some("inventory_unavailable"),NOW)).unwrap().unwrap();
-    assert!(matches!(run(authority.select_account("gpt-test",CodexQuotaClass::Standard,NOW)).unwrap(),RouteSelection::QuotaBlocked{..}|RouteSelection::RoutingUnavailable));assert!(run(authority.claim_probe(&claimed,Some("live_armed"),NOW)).unwrap().is_none());assert!(run(authority.finish_probe(&claimed,true,NOW)).unwrap());
+    let RouteSelection::QuotaBlocked{proof,..}=run(authority.select_account("gpt-test",CodexQuotaClass::Standard,NOW)).unwrap()else{panic!("quota proof missing")};
+    assert!(run(authority.claim_overage_probe(&proof,None,"inventory_unavailable",NOW)).unwrap().is_none());store.seed(keys::overage("admin-a"),&serde_json::json!({"allow":true}));
+    let RouteSelection::QuotaBlocked{proof,..}=run(authority.select_account("gpt-test",CodexQuotaClass::Standard,NOW)).unwrap()else{panic!("quota proof missing")};let active_before=store.row(&keys::active()).unwrap().value;
+    let claimed=run(authority.claim_overage_probe(&proof,Some(&first.binding.account_id_hash),"inventory_unavailable",NOW)).unwrap().unwrap();assert_eq!(store.row(&keys::active()).unwrap().value,active_before);run(authority.ensure_overage_probe_current(&claimed,NOW)).unwrap();assert!(run(authority.finish_overage_probe(&claimed,true,NOW)).unwrap());
 }
 
 #[test]
@@ -162,5 +164,4 @@ fn reset_identity_deduplicates_refresh_and_utc_days_and_expiry_remain_absolute()
 fn bad_stored_versions_are_not_replaced_with_empty_state(){
     let store=MemoryStore::default();store.seed(keys::pool(),&pool());let authority=authority(&store);let mut bad=store.row(&keys::pool()).unwrap();bad.schema_version=99;
     run(store.commit(gateway_core::state::AtomicTransition{checks:vec![gateway_core::state::RevisionCheck{key:keys::pool(),expected_revision:Some(bad.revision.clone())}],mutations:vec![gateway_core::state::RecordMutation::Put{key:keys::pool(),record:bad}]})).unwrap_err();assert!(store.len()>0);
-    let _=std::mem::size_of::<RoutingState>();
 }

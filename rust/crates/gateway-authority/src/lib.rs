@@ -8,6 +8,10 @@ pub mod quota;
 pub mod reset;
 pub mod routing;
 mod store;
+mod kernel;
+mod paid_types;
+mod probes;
+mod routing_types;
 
 pub use store::{Authority, TokenSource};
 
