@@ -3,8 +3,10 @@
 pub mod api_keys;
 pub mod bootstrap;
 pub mod crypto;
+pub mod native;
 pub mod origin;
 pub mod passkeys;
+pub mod provider_credentials;
 pub mod resolve;
 pub mod store;
 pub mod types;

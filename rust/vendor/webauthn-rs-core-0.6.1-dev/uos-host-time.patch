@@ -1,0 +1,30 @@
+--- a/src/core.rs
++++ b/src/core.rs
+@@ -380,6 +380,19 @@
+         attestation_cas: Option<&AttestationCaList>,
+         // does_exist_fn: impl Fn(&CredentialID) -> Result<bool, ()>,
+     ) -> Result<Credential, WebauthnError> {
++        self.register_credential_at_time(reg, state, attestation_cas, SystemTime::now())
++    }
++
++    /// Verify registration with a caller-validated current time, retaining the
++    /// same ceremony state, protocol checks, attestation and cryptographic path.
++    /// WASM hosts must pass their real clock; fixed or guessed time is invalid.
++    pub fn register_credential_at_time(
++        &self,
++        reg: &RegisterPublicKeyCredential,
++        state: &RegistrationState,
++        attestation_cas: Option<&AttestationCaList>,
++        current_time: SystemTime,
++    ) -> Result<Credential, WebauthnError> {
+         // Decompose our registration state which contains everything we need to proceed.
+         trace!(?state);
+         trace!(?reg);
+@@ -395,7 +408,6 @@
+             allow_synchronised_authenticators,
+         } = state;
+         let chal: ChallengeRef = challenge;
+-        let current_time = SystemTime::now();
+ 
+         // send to register_credential_internal
+         let credential = self.register_credential_internal(

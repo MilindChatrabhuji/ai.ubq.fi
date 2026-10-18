@@ -9,6 +9,7 @@ publish.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
+gateway-admin-data = { path = "../gateway-admin-data" }
 serde.workspace = true
 serde_json.workspace = true
 url = "=2.5.8"

@@ -42,6 +42,32 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
         let actor = auth.authenticate_admin(request).await?;
         let body = if matches!(request.method.as_str(), "GET" | "HEAD") {
             Value::Null
+        } else if route.operation == AdminOperation::KvMigrationImport {
+            const MAX_MIGRATION_BYTES: usize = 5 * 1024 * 1024;
+            let announced = request
+                .header("content-length")
+                .and_then(|value| value.trim().parse::<f64>().ok());
+            let text = request_text(&request.body);
+            if announced
+                .is_some_and(|length| length.is_finite() && length > MAX_MIGRATION_BYTES as f64)
+                || text.len() > MAX_MIGRATION_BYTES
+            {
+                return Err(GatewayError::new(
+                    413,
+                    "Migration body is too large",
+                    Some("invalid_request_error"),
+                ));
+            }
+            Value::String(text)
+        } else if route.operation == AdminOperation::CacheExperimentSet {
+            let text = request_text(&request.body);
+            let whitespace = |value: char| matches!(value, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}');
+            if !text.trim_matches(whitespace).is_empty() {
+                return Err(invalid(
+                    "Prompt-cache scope experiment does not accept request fields",
+                ));
+            }
+            Value::String(text)
         } else if request.body.is_empty() {
             json!({})
         } else {
@@ -151,6 +177,13 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
         };
         Ok(Some(response))
     }
+}
+
+fn request_text(body: &[u8]) -> String {
+    // WHATWG Request.text()/TextDecoder replaces malformed UTF-8 and consumes
+    // one leading UTF-8 BOM; migration size is measured after this conversion.
+    let body = body.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(body);
+    String::from_utf8_lossy(body).into_owned()
 }
 
 fn decode_parameter(value: &str) -> Result<String, GatewayError> {
