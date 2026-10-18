@@ -1,24 +1,57 @@
-use std::collections::BTreeMap;
 use gateway_core::provider::UpstreamProvider;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub type Headers = BTreeMap<String, String>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ClientSurface { Responses, Chat, SystemOne, Embeddings }
+pub enum ClientSurface {
+    Responses,
+    Chat,
+    SystemOne,
+    Embeddings,
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ChatProfile { Deepseek, Lithos, Cerebras, Claude }
+pub enum ChatProfile {
+    Deepseek,
+    Lithos,
+    Cerebras,
+    Claude,
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ResponseDecode { Responses, Chat, ChatToResponses(ChatProfile), ResponsesToChat, AnthropicToResponses, AnthropicChatToResponses, Voyage, SystemOne }
+pub enum ResponseDecode {
+    Responses,
+    Chat,
+    ChatToResponses(ChatProfile),
+    ResponsesToChat,
+    AnthropicToResponses,
+    AnthropicChatToResponses,
+    Voyage,
+    SystemOne,
+}
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ToolIdentity { pub name: String, pub namespace: Option<String>, pub custom: bool }
+pub struct ToolIdentity {
+    pub name: String,
+    pub namespace: Option<String>,
+    pub custom: bool,
+}
 pub type ToolMap = BTreeMap<String, ToolIdentity>;
 
 /// Secrets are supplied by the host-owned credential capability; never discovered here.
 #[derive(Clone, Default)]
-pub struct AuthMaterial { pub secret: String, pub account_id: Option<String>, pub api_key: bool, pub workspace_id: Option<String> }
+pub struct AuthMaterial {
+    pub secret: String,
+    pub account_id: Option<String>,
+    pub api_key: bool,
+    pub workspace_id: Option<String>,
+}
 impl std::fmt::Debug for AuthMaterial {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.debug_struct("AuthMaterial").field("secret", &"[redacted]").field("api_key", &self.api_key).finish_non_exhaustive() }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthMaterial")
+            .field("secret", &"[redacted]")
+            .field("api_key", &self.api_key)
+            .finish_non_exhaustive()
+    }
 }
 #[derive(Clone, Debug)]
 pub struct PrepareOptions {
@@ -41,7 +74,24 @@ pub struct PrepareOptions {
     pub restored_native_messages: Option<Vec<Value>>,
 }
 impl Default for PrepareOptions {
-    fn default() -> Self { Self { auth: AuthMaterial::default(), client_version: "0.100.0".into(), native_session_id: None, response_id: "resp_gateway".into(), created_at: 0, allowed_models: Vec::new(), catalog_max_output_tokens: None, native_reasoning_efforts: None, supports_native_effort: false, supports_disabled_thinking: false, supports_parallel_tools: None, conversation_id: None, reasoning_summary: None, restored_native_messages: None } }
+    fn default() -> Self {
+        Self {
+            auth: AuthMaterial::default(),
+            client_version: "0.100.0".into(),
+            native_session_id: None,
+            response_id: "resp_gateway".into(),
+            created_at: 0,
+            allowed_models: Vec::new(),
+            catalog_max_output_tokens: None,
+            native_reasoning_efforts: None,
+            supports_native_effort: false,
+            supports_disabled_thinking: false,
+            supports_parallel_tools: None,
+            conversation_id: None,
+            reasoning_summary: None,
+            restored_native_messages: None,
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecodePlan {
@@ -58,23 +108,96 @@ pub struct DecodePlan {
     pub reasoning_summary: Option<String>,
 }
 #[derive(Clone)]
-pub struct PreparedRequest { pub provider: UpstreamProvider, pub url: String, pub method: String, pub headers: Headers, pub body: Value, pub decode: DecodePlan, pub warnings: Vec<String> }
+pub struct PreparedRequest {
+    pub provider: UpstreamProvider,
+    pub url: String,
+    pub method: String,
+    pub headers: Headers,
+    pub body: Value,
+    pub decode: DecodePlan,
+    pub warnings: Vec<String>,
+}
 impl std::fmt::Debug for PreparedRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.debug_struct("PreparedRequest").field("provider", &self.provider).field("url", &self.url).field("method", &self.method).field("header_names", &self.headers.keys().collect::<Vec<_>>()).field("body", &"[request body omitted]").field("decode", &self.decode.decode).finish() }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedRequest")
+            .field("provider", &self.provider)
+            .field("url", &self.url)
+            .field("method", &self.method)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("body", &"[request body omitted]")
+            .field("decode", &self.decode.decode)
+            .finish()
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ProviderEvent { pub event: Option<String>, pub data: Value }
+pub struct ProviderEvent {
+    pub event: Option<String>,
+    pub data: Value,
+}
 impl ProviderEvent {
-    pub fn responses(data: Value) -> Self { Self { event: data.get("type").and_then(Value::as_str).map(str::to_owned), data } }
-    pub fn chat(data: Value) -> Self { Self { event: None, data } }
-    pub fn encode_sse(&self) -> String { if self.data == Value::String("[DONE]".into()) { return "data: [DONE]\n\n".into(); } let event = self.event.as_ref().map(|s| format!("event: {s}\n")).unwrap_or_default(); format!("{event}data: {}\n\n", self.data) }
+    pub fn responses(data: Value) -> Self {
+        Self {
+            event: data.get("type").and_then(Value::as_str).map(str::to_owned),
+            data,
+        }
+    }
+    pub fn chat(data: Value) -> Self {
+        Self { event: None, data }
+    }
+    pub fn encode_sse(&self) -> String {
+        if self.data == Value::String("[DONE]".into()) {
+            return "data: [DONE]\n\n".into();
+        }
+        let event = self
+            .event
+            .as_ref()
+            .map(|s| format!("event: {s}\n"))
+            .unwrap_or_default();
+        format!("{event}data: {}\n\n", self.data)
+    }
 }
 #[derive(Clone)]
-pub struct DecodedResponse { pub status: u16, pub headers: Headers, pub body: Value, pub events: Vec<ProviderEvent>, pub terminal: Option<gateway_core::lifecycle::SemanticTerminal>, pub usage: Option<Value>, pub native_replay: Option<Value>, pub raw_body: Option<Vec<u8>> }
+pub struct DecodedResponse {
+    pub status: u16,
+    pub headers: Headers,
+    pub body: Value,
+    pub events: Vec<ProviderEvent>,
+    pub terminal: Option<gateway_core::lifecycle::SemanticTerminal>,
+    pub usage: Option<Value>,
+    pub native_replay: Option<Value>,
+    pub raw_body: Option<Vec<u8>>,
+}
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Elision { pub path: String, pub call_id: Option<String>, pub kind: String, pub original_bytes: usize, pub forwarded_bytes: usize, pub omitted_bytes: usize }
-pub(crate) fn invalid(message: impl Into<String>, param: &str) -> gateway_core::GatewayError { gateway_core::GatewayError::new(400,message,Some("invalid_request_error")).with_param(Some(param)) }
-pub(crate) fn malformed(message: impl Into<String>) -> gateway_core::GatewayError { gateway_core::GatewayError::new(502,message,Some("upstream_stream_error")).with_type("server_error") }
-pub(crate) fn header<'a>(headers: &'a Headers, name: &str) -> Option<&'a str> { headers.iter().find(|(key,_)| key.eq_ignore_ascii_case(name)).map(|(_,v)|v.as_str()) }
+pub struct Elision {
+    pub path: String,
+    pub call_id: Option<String>,
+    pub kind: String,
+    pub original_bytes: usize,
+    pub forwarded_bytes: usize,
+    pub omitted_bytes: usize,
+}
+pub(crate) fn invalid(message: impl Into<String>, param: &str) -> gateway_core::GatewayError {
+    gateway_core::GatewayError::new(400, message, Some("invalid_request_error"))
+        .with_param(Some(param))
+}
+pub(crate) fn malformed(message: impl Into<String>) -> gateway_core::GatewayError {
+    gateway_core::GatewayError::new(502, message, Some("upstream_stream_error"))
+        .with_type("server_error")
+}
+pub(crate) fn header<'a>(headers: &'a Headers, name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
 
-impl std::fmt::Debug for DecodedResponse { fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("DecodedResponse").field("status",&self.status).field("terminal",&self.terminal).field("event_count",&self.events.len()).field("native_replay",&self.native_replay.is_some()).finish_non_exhaustive()} }
+impl std::fmt::Debug for DecodedResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DecodedResponse")
+            .field("status", &self.status)
+            .field("terminal", &self.terminal)
+            .field("event_count", &self.events.len())
+            .field("native_replay", &self.native_replay.is_some())
+            .finish_non_exhaustive()
+    }
+}

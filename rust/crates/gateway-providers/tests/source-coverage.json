@@ -56,7 +56,8 @@
       ],
       "rust_tests": [
         "codex_replay_repair_is_exact_and_does_not_damage_provider_history",
-        "codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope"
+        "codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope",
+        "codex_error_bytes_are_available_unchanged_before_authority_classification"
       ],
       "coverage": "partial",
       "unported_vectors_or_runtime_gaps": "Full real Codex 0.163.0 replay fixture and model-switch threaded transport remain runtime vectors."
@@ -118,7 +119,10 @@
       "rust_tests": [
         "transport_profiles_cerebras_and_openrouter_preserve_actual_wires",
         "cerebras_schema_preserves_property_names_and_collapses_root_union",
-        "lithos_rung_windows_recover_independently"
+        "lithos_rung_windows_recover_independently",
+        "explicit_null_reasoning_length_cerebras_is502_not_an_incompletion",
+        "buffered_cerebras_chat_client_stream_replays_real_finish_and_usage",
+        "lithos_header_precedence_and_streamed_final_refusal_stay_in_band"
       ],
       "coverage": "partial",
       "unported_vectors_or_runtime_gaps": "Full HTTP retry ladder/wait budgets, dates/reset header precedence, final streamed refusal, OpenRouter catalog refresh/cache policy and all direct provider normalization errors are not individually ported."
@@ -135,7 +139,8 @@
       "rust_tests": [
         "native_disabled_thinking_requires_exact_independent_proof",
         "signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning",
-        "native_messages_unclosed_blocks_fail_before_terminal"
+        "native_messages_unclosed_blocks_fail_before_terminal",
+        "claude_oauth_has_native_attribution_and_console_key_does_not"
       ],
       "coverage": "partial",
       "unported_vectors_or_runtime_gaps": "Every Messages block/index/error transition, native attribution/auth lanes, malformed or repeated signed details, cache policy fallback and full lossless controls matrix need remaining vectors."
@@ -162,7 +167,8 @@
         "tests/provider-stream-usage-failure.test.ts"
       ],
       "rust_tests": [
-        "usage_preserves_missingness_and_native_cache_gross_input"
+        "usage_preserves_missingness_and_native_cache_gross_input",
+        "buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk"
       ],
       "coverage": "partial",
       "unported_vectors_or_runtime_gaps": "Cost provenance/invalid authoritative billing, streamed partial usage and postfailure/cancel accounting require m03+m05 integration; no transport-delivered inference from EOF."
@@ -177,7 +183,8 @@
         "tests/systemone.test.ts"
       ],
       "rust_tests": [
-        "additional_inference_routes_have_provider_payloads_and_image_billing_boundary"
+        "additional_inference_routes_have_provider_payloads_and_image_billing_boundary",
+        "image_fanout_measures_every_replayed_input_byte"
       ],
       "coverage": "partial",
       "unported_vectors_or_runtime_gaps": "Image multipart/fanout atomic dispatch and every scalar/byte validation vector, Voyage cache/job encryption/idempotency/budgets, and all SystemOne malformed/output/error cases require additional vectors and runtime/state integration."
@@ -190,5 +197,6 @@
     "complete_differential_runtime_matrix_and_delivery": "m07 verification"
   },
   "provider_source_base_commit": "72f3d349e8ed6e86f9a51269ae7ed3a5d314e652",
-  "final_source_binding": "This tracked manifest is bound by its containing final Git commit and tree; final VPS receipt records that exact commit/tree."
+  "final_source_binding": "This tracked manifest is bound by its containing final Git commit and tree; final VPS receipt records that exact commit/tree.",
+  "canonical_foundation_ancestor": "74ece9749e4cce81b577030c0a4b08ad68ae9f91"
 }
