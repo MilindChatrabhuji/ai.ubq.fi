@@ -33,6 +33,7 @@ class FakeCheckbox {
 type Harness = {
   save: () => Promise<void>;
   unsaved: () => boolean;
+  switchTarget: () => void;
   seed: (saved: readonly string[], staged: readonly string[]) => void;
   state: () => { saved: Iterable<string>; staged: Iterable<string>; saving: boolean };
 };
@@ -44,7 +45,9 @@ type Harness = {
  */
 const loadHarness = () => {
   const requests: unknown[] = [];
+  const notifications: string[] = [];
   let respond: ((response: SaveResponse) => void) | null = null;
+  let rejectSave: ((error: Error) => void) | null = null;
   let changeListener: ((event: { target: FakeCheckbox }) => void) | null = null;
   const context = {
     HTMLInputElement: FakeCheckbox,
@@ -52,8 +55,9 @@ const loadHarness = () => {
     console,
     fetch: (_url: string, init: { body: string }) => {
       requests.push(JSON.parse(init.body));
-      return new Promise<SaveResponse>((resolve) => {
+      return new Promise<SaveResponse>((resolve, reject) => {
         respond = resolve;
+        rejectSave = reject;
       });
     },
     formatNumber: (value: number) => String(value),
@@ -65,18 +69,30 @@ const loadHarness = () => {
       },
     },
     modelsOnlySelectedInput: { checked: false },
+    setBadge: () => {},
+    modelsWhitelistBadge: {},
+    renderModelsMessage: () => {},
     renderModelsPicker: () => {},
-    toast: { error: () => {}, success: () => {} },
+    toast: {
+      error: (message: string) => {
+        notifications.push(message);
+      },
+      success: (message: string) => {
+        notifications.push(message);
+      },
+    },
     updateModelsStatus: () => {},
   };
   runInNewContext(
     [
       shippedSlice("let modelsCatalog = [];", "const modelsPositiveTokenCount"),
+      shippedSlice("const invalidateAdminModels =", "const modelsCatalogWarning ="),
       shippedSlice("const saveModelsWhitelist = async () => {", "const discardModelsChanges"),
       shippedSlice('modelsList.addEventListener("change"', 'modelsCheckAllBtn.addEventListener("click"'),
       "globalThis.harness = {",
       "  save: saveModelsWhitelist,",
       "  unsaved: modelsHasUnsavedChanges,",
+      '  switchTarget: () => invalidateAdminModels("Target changed"),',
       "  seed: (saved, staged) => {",
       "    modelsSavedSelection = new Set(saved);",
       "    modelsSelection = new Set(staged);",
@@ -96,7 +112,12 @@ const loadHarness = () => {
     assert.ok(respond, "a whitelist save request must be pending");
     respond({ ok: true, status: 200, json: () => Promise.resolve(body) });
   };
-  return { harness, requests, toggle, succeed };
+  const fail = (transport: boolean) => {
+    assert.ok(respond && rejectSave, "a whitelist save request must be pending");
+    if (transport) rejectSave(new Error("offline"));
+    else respond({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: "failed" } }) });
+  };
+  return { harness, requests, notifications, toggle, succeed, fail };
 };
 
 test("a model checked while the whitelist save is pending stays staged and unsaved", async () => {
@@ -157,3 +178,25 @@ test("a whitelist save with no later edit adopts the server's canonical ids and 
   assert.deepEqual(sorted(state.staged), ["a", "b"]);
   assert.equal(harness.unsaved(), false);
 });
+
+for (const outcome of ["success", "http-error", "transport-error"]) {
+  test(`a target switch fences a pending whitelist save's ${outcome} completion`, async () => {
+    const { harness, requests, notifications, succeed, fail } = loadHarness();
+    harness.seed(["old-saved"], ["old-staged"]);
+    const saving = harness.save();
+    assert.equal(harness.state().saving, true);
+    harness.switchTarget();
+    assert.equal(harness.unsaved(), false, "invalidating the target clears both selections");
+    harness.seed(["new-saved"], ["new-saved", "new-staged"]);
+    if (outcome === "success") succeed({ model_ids: ["foreign-model"] });
+    else fail(outcome === "transport-error");
+    await saving;
+    assert.deepEqual(requests, [{ model_ids: ["old-staged"] }]);
+    const state = harness.state();
+    assert.deepEqual(sorted(state.saved), ["new-saved"]);
+    assert.deepEqual(sorted(state.staged), ["new-saved", "new-staged"]);
+    assert.equal(state.saving, false);
+    assert.equal(harness.unsaved(), true, "new-target edits retain their own unsaved status");
+    assert.deepEqual(notifications, [], "the old target cannot publish save notifications to the new target");
+  });
+}
