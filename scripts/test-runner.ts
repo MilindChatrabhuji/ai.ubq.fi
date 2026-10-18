@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LIVE_E2E_DEFAULT_BASE_URL, liveDestination, testNetworkArgv, type TestNetworkPolicy } from "./test-network.ts";
 import { createTestNativeKvPreload, prepareTestNativeKv, verifiedTestNativeKvBinding, type TestNativeKvBinding } from "./test-native-kv.ts";
+import { detectTestSelection, formatScopeMessage, testRequiresNativeKv } from "./test-scope.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let interrupted = false;
@@ -45,6 +46,11 @@ const SENTINEL_FILES = [
   "sentinel-replay-staging",
   "sentinel-replay-deletion-budget",
 ];
+const TEST_SELECTION = detectTestSelection();
+if (!TEST_SELECTION.runAll && TEST_SELECTION.affectedTests.length === 0) {
+  console.log(formatScopeMessage(TEST_SELECTION, "bun run test"));
+  process.exit(0);
+}
 type Group = Readonly<{ profile: string; files: readonly string[]; environment: readonly string[]; network?: "live" }>;
 const filesBelow = (directory: string): string[] => {
   const found: string[] = [];
@@ -57,7 +63,7 @@ const filesBelow = (directory: string): string[] => {
 };
 const group = (profile: string, files: readonly string[], environment: readonly string[] = []): Group => ({ profile, files, environment });
 const measurement = (): Group => group("measurement", ["tests/usage-optimization-measurement.test.ts"], ["UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"]);
-const quality = (): Group => group("quality", ["scripts/quality-contract.test.ts", "scripts/test-native-kv.test.ts"], ["PATH"]);
+const quality = (): Group => group("quality", ["scripts/quality-contract.test.ts", "scripts/test-native-kv.test.ts", "scripts/test-scope.test.ts"], ["PATH"]);
 const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
   switch (segment) {
     case "main":
@@ -132,6 +138,10 @@ const segmentHints = new Map([
 ]);
 export const groupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
   const groups = allGroupsFor(segment, explicitFiles);
+  if (explicitFiles.length === 0 && !TEST_SELECTION.runAll) {
+    const affected = new Set(TEST_SELECTION.affectedTests);
+    return groups.map((item) => ({ ...item, files: item.files.filter((path) => affected.has(path)) })).filter((item) => item.files.length !== 0);
+  }
   if (explicitFiles.length === 0 || segment === "files") return groups;
   const requested = new Set(explicitFiles.map((path) => relative(ROOT, resolve(ROOT, path)).split(sep).join("/")));
   const available = new Set(groups.flatMap((item) => item.files));
@@ -181,7 +191,11 @@ export const withLiveRelayParent = async <T>(policy: TestNetworkPolicy, run: (po
   }
 };
 const childEnvironment = (selected: Pick<Group, "profile" | "environment">): Record<string, string> => {
-  const environment: Record<string, string> = { UOS_TEST_PROFILE: selected.profile, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
+  const environment: Record<string, string> = {
+    UOS_TEST_PROFILE: selected.profile,
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+    TEST_SCOPE_ACTIVE: "1",
+  };
   // Keep only transport necessities and this segment's existing named inputs.
   for (const name of new Set(["PATH", "TMPDIR", "SYSTEMROOT", ...selected.environment])) {
     const value = process.env[name];
@@ -210,27 +224,15 @@ const runFile = async (
   path: string,
   selected: Pick<Group, "profile" | "environment"> & Readonly<{ policy: TestNetworkPolicy }>,
   wallTimeMs: number,
-  binding: TestNativeKvBinding,
-  preload: string
+  binding: TestNativeKvBinding | null,
+  preload: string | null
 ): Promise<number> => {
   if (interrupted) throw new Error("Test runner interrupted; no further files were started");
-  const argv = testNetworkArgv(
-    [
-      process.execPath,
-      "--no-env-file",
-      "--no-install",
-      "test",
-      "--define",
-      "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(binding),
-      "--preload",
-      preload,
-      "--no-orphans",
-      "--max-concurrency=1",
-      "--timeout=300000",
-      path,
-    ],
-    selected.policy
-  );
+  const command = [process.execPath, "--no-env-file", "--no-install", "test"];
+  if (binding) command.push("--define", "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(binding));
+  if (preload) command.push("--preload", preload);
+  command.push("--no-orphans", "--max-concurrency=1", "--timeout=300000", path);
+  const argv = testNetworkArgv(command, selected.policy);
   const child = Bun.spawn(argv, {
     cwd: ROOT,
     detached: true,
@@ -286,20 +288,32 @@ const invocation = (args: readonly string[]): Readonly<{ files: string[]; list: 
   }
   return { files, list, wallTimeMs, nativeBinding };
 };
+const resolveNativeTestArtifacts = async (needsNativeKv: boolean, nativeBinding?: string) => {
+  if (nativeBinding !== undefined) {
+    return { binding: verifiedTestNativeKvBinding(nativeBinding), preload: createTestNativeKvPreload(ROOT) };
+  }
+  if (!needsNativeKv) return { binding: null, preload: null };
+  return { binding: await prepareTestNativeKv(ROOT), preload: createTestNativeKvPreload(ROOT) };
+};
 const main = async (): Promise<void> => {
   if (Bun.version !== "1.4.0") throw new Error("The test runner requires Bun 1.4.0");
   if (!existsSync(join(ROOT, "bun.lock"))) throw new Error("Restore bun.lock before running tests");
   const [segment = "main", ...args] = process.argv.slice(2);
   const options = invocation(args);
   const selected = groupsFor(segment, options.files);
+  if (selected.length === 0) {
+    console.log(formatScopeMessage(TEST_SELECTION, `bun run test:${segment}`));
+    return;
+  }
   if (options.list) {
     console.log(JSON.stringify(selected, null, 2));
     return;
   }
   // Resolve every requested file before an expensive parent build can start.
   const resolved = validatedGroups(selected);
-  const binding = options.nativeBinding === undefined ? await prepareTestNativeKv(ROOT) : verifiedTestNativeKvBinding(options.nativeBinding);
-  const preload = createTestNativeKvPreload(ROOT);
+  const needsNativeKv =
+    options.nativeBinding !== undefined || TEST_SELECTION.runAll || resolved.some((item) => item.files.some((file) => testRequiresNativeKv(file.label)));
+  const { binding, preload } = await resolveNativeTestArtifacts(needsNativeKv, options.nativeBinding);
   let files = 0;
   let failures = 0;
   for (const item of resolved) {
