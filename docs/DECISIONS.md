@@ -6,6 +6,13 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Owner-only follow-ups from #1132 remain pending - 2026-10-18 (#1176)
+
+PR #1156 closed #1132 on 2026-10-18 without resolving the two owner-only actions below. #1176 tracks both; this entry records pending work, not an owner decision or authorization to change runtime behavior. Keep #1176 open until the owner resolves these actions or each is transferred to a linked open owner task.
+
+- **#1073 item 2 / #139 — hard-cap disposition.** Oldest-first eviction has not been implemented. The retention document previously attributed a decline to the owner on 2026-10-16 in #139, but no supporting owner record is available in #139 or this journal. The owner must confirm and record that reported decline in a comment on #139 or a dated decision here, or correct the attribution. If declined, consider changing #139's close reason from "completed" to "not planned"; its current close reason does not prove eviction exists. The 5 GiB figure remains a growth-alert threshold, not an eviction limit.
+- **#1077 item 2 — non-loopback macOS live e2e.** Darwin live e2e accepts only a host-loopback `BASE_URL`; the default `https://ai.ubq.fi` fails closed. The owner must explicitly accept that limit or open a task for a destination-scoped CONNECT relay (or equivalent). No relay implementation or broader network permission is authorized while that decision is pending.
+
 ## VPS join lifecycle bounds and conservative orphan handling - 2026-10-18
 
 For issue #1165, keep PID 1 rows about `ai-ubq-fi.service` out of request counts, but retain completed exit/restart timestamps as lifecycle evidence. Once a fully covered window has an unmatched admission before such a marker, persist `unavailable` / `terminal_lost`, stop its forward scan and release its slice pin. A startup notice, a mere stopping/starting notice or unrelated manager output is not evidence that an admitted request was lost. With `Type=simple`, a `Started` row can follow a live admission from the new process, so it never establishes this cutoff. Matched requests remain countable. Checkpoint schema 3 includes lifecycle markers and terminal-lost state; older schemas fail closed rather than silently discarding that evidence. This does not impose a new maximum stream lifetime or activate the standalone release bridge.

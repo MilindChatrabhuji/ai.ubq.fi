@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { groupsFor, testNetworkPolicy, validatedGroups, withLiveRelayParent } from "../scripts/test-runner.ts";
+import { basename, join } from "node:path";
+import { groupsFor, runGroups, testNetworkPolicy, validatedGroups, withLiveRelayParent } from "../scripts/test-runner.ts";
 import { LIVE_E2E_DEFAULT_BASE_URL, liveDestination, liveNetworkPlan, systemTool, testNetworkArgv, type TestNetworkPolicy } from "../scripts/test-network.ts";
 
 const linuxTest = process.platform === "linux" ? test : test.skip;
@@ -73,6 +74,53 @@ test("the runner builds every group's network boundary before the native build",
   expect(resolved).toEqual([{ live: { hostname: "127.0.0.1", port: 8123 } }]);
   expect(validated.policy).toEqual({ live: { hostname: "127.0.0.1", port: 8123 } });
   expect(validated.files.map((file) => file.label)).toEqual(["tests/live-default-model.e2e.ts"]);
+});
+
+test("the runner loop gives each live file its own relay parent and cleans it before the next file", async () => {
+  const live = { ...groupsFor("e2e", ["tests/live-default-model.e2e.ts"])[0], files: ["tests/live-default-model.e2e.ts", "tests/live-network-policy.test.ts"] };
+  const groups = validatedGroups([live, ...groupsFor("files", ["tests/live-network-policy.test.ts"])], { BASE_URL: "http://127.0.0.1:8123" }, () => []);
+  const parents: string[] = [];
+  const paths: string[] = [];
+  const result = await runGroups(groups, async (path, selected) => {
+    for (const parent of parents) expect(existsSync(parent)).toBe(false);
+    paths.push(path);
+    if (selected.policy.live === undefined) {
+      expect(selected.policy.relayParent).toBeUndefined();
+      return 0;
+    }
+    expect(selected.profile).toBe(live.profile);
+    expect(selected.environment).toEqual(live.environment);
+    expect(selected.policy.live).toEqual({ hostname: "127.0.0.1", port: 8123 });
+    const parent = selected.policy.relayParent ?? "";
+    expect(basename(parent).startsWith("uos-live-run-")).toBe(true);
+    expect(existsSync(parent)).toBe(true);
+    parents.push(parent);
+    // Model the nested directory a SIGKILLed relay cannot remove itself.
+    await mkdir(join(parent, "uos-live-orphan"));
+    await writeFile(join(parent, "uos-live-orphan", "relay.sock"), "fixture");
+    return parents.length === 1 ? 0 : 7;
+  });
+  expect(result).toEqual({ files: 3, failures: 1 });
+  expect(paths).toEqual(groups.flatMap((item) => item.files.map((file) => file.path)));
+  expect(parents).toHaveLength(2);
+  expect(new Set(parents).size).toBe(2);
+  for (const parent of parents) expect(existsSync(parent)).toBe(false);
+});
+
+test("the runner loop removes the live relay parent when running a file throws", async () => {
+  const groups = validatedGroups(groupsFor("e2e", ["tests/live-default-model.e2e.ts"]), { BASE_URL: "http://127.0.0.1:8123" }, () => []);
+  let parent = "";
+  await assert.rejects(
+    runGroups(groups, (_path, selected) => {
+      parent = selected.policy.relayParent ?? "";
+      expect(basename(parent).startsWith("uos-live-run-")).toBe(true);
+      expect(existsSync(parent)).toBe(true);
+      return Promise.reject(new Error("fixture run failed"));
+    }),
+    /fixture run failed/
+  );
+  expect(parent).not.toBe("");
+  expect(existsSync(parent)).toBe(false);
 });
 
 linuxTest("live argv keeps the deterministic namespace and only adds the scoped relay and forwarder", () => {
