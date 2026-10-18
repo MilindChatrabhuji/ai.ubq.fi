@@ -1,12 +1,14 @@
 //! Finite, already-authorized administrator catalog operations; no HTTP or credential ownership.
-use crate::{CatalogRuntime, host::*, state};
+use crate::{CatalogRuntime, CatalogState, host::*, state};
 use gateway_core::{
     GatewayError,
     query::QueryStore,
     state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_schema::{
-    catalog::{ProviderCatalog, build_catalog_snapshot},
+    catalog::{
+        ProviderCatalog, build_catalog_snapshot, public_catalog as public_catalog_projection,
+    },
     catalog_store,
     runtime_config::{build_runtime_config, normalize_runtime_config},
     selection::{ModelWhitelist, normalize_whitelist_ids},
@@ -27,6 +29,9 @@ const MAX_KV_BYTES: usize = 65_536;
 /// Source String.localeCompare is supplied by the existing host, never byte-order emulated.
 pub trait AdminCatalogHost: CatalogHost {
     fn compare_model_ids(&self, left: &str, right: &str) -> Result<Ordering, GatewayError>;
+    /// Schedule the fixed optional OpenRouter refresh on the current request's lifetime.
+    /// This must return immediately; the existing discovery deadline remains in force.
+    fn warm_openrouter(&self);
 }
 
 pub enum AdminCatalogOperation {
@@ -87,7 +92,66 @@ fn provider_summary(snapshot: Option<&ProviderCatalog>) -> Value {
     json!({"models":snapshot.map(|s|s.models.len()).unwrap_or(0),"updated_at_ms":snapshot.and_then(|s|s.updated_at_ms)})
 }
 
+fn order_rows<H: AdminCatalogHost>(host: &H, rows: &mut [Value]) -> Result<(), GatewayError> {
+    let mut failed = None;
+    rows.sort_by(|left, right| {
+        if failed.is_some() {
+            return Ordering::Equal;
+        }
+        match host.compare_model_ids(
+            left["id"].as_str().unwrap_or(""),
+            right["id"].as_str().unwrap_or(""),
+        ) {
+            Ok(order) => order,
+            Err(error) => {
+                failed = Some(error);
+                Ordering::Equal
+            }
+        }
+    });
+    match failed {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 impl CatalogRuntime {
+    /// Public catalog projection only; administrator operations retain separate authorization.
+    pub async fn public_catalog<S: QueryStore, H: AdminCatalogHost>(
+        &self,
+        store: &S,
+        host: &H,
+    ) -> Result<AdminCatalogResponse, GatewayError> {
+        let loaded = self.admin_catalog_view(store, host).await?;
+        let mut catalog = public_catalog_projection(&loaded.input);
+        if let Some(models) = catalog["data"].as_array_mut() {
+            order_rows(host, models)?;
+        }
+        Ok(AdminCatalogResponse::json(catalog, true))
+    }
+
+    async fn admin_catalog_view<S: QueryStore, H: AdminCatalogHost>(
+        &self,
+        store: &S,
+        host: &H,
+    ) -> Result<CatalogState, GatewayError> {
+        host.warm_openrouter();
+        self.admin_discover(
+            store,
+            host,
+            [
+                CatalogProvider::Openlux,
+                CatalogProvider::Surplus,
+                CatalogProvider::ClaudeCode,
+            ],
+            false,
+        )
+        .await?;
+        let publication = host.publication().await?;
+        self.load_public_state(store, &publication, host.now_ms())
+            .await
+    }
+
     /// Call only after the application's existing administrator authorization succeeds.
     pub async fn admin_catalog<S: QueryStore, H: AdminCatalogHost>(
         &self,
@@ -123,26 +187,10 @@ impl CatalogRuntime {
                 self.admin_save_whitelist(store, host, &document).await
             }
             AdminCatalogOperation::Catalog => {
-                let publication = host.publication().await?;
-                let loaded = self.load_state(store, &publication, host.now_ms()).await?;
+                let loaded = self.admin_catalog_view(store, host).await?;
                 let mut catalog = build_catalog_snapshot(&loaded.input);
-                let mut failed = None;
                 if let Some(models) = catalog["models"].as_array_mut() {
-                    models.sort_by(|left, right| {
-                        match host.compare_model_ids(
-                            left["id"].as_str().unwrap_or(""),
-                            right["id"].as_str().unwrap_or(""),
-                        ) {
-                            Ok(order) => order,
-                            Err(error) => {
-                                failed = Some(error);
-                                Ordering::Equal
-                            }
-                        }
-                    });
-                }
-                if let Some(error) = failed {
-                    return Err(error);
+                    order_rows(host, models)?;
                 }
                 let whitelist = loaded
                     .input
@@ -302,35 +350,20 @@ impl CatalogRuntime {
         let old_lithos = self
             .cached_provider(&before, CatalogProvider::Lithos)
             .and_then(|s| s.updated_at_ms);
-        let providers = [
-            CatalogProvider::Openrouter,
-            CatalogProvider::Openlux,
-            CatalogProvider::Surplus,
-            CatalogProvider::Lithos,
-            CatalogProvider::ClaudeCode,
-        ];
-        let mut futures = providers
-            .iter()
-            .map(|provider| Box::pin(self.refresh_provider(store, host, *provider, true)))
-            .collect::<Vec<_>>();
-        let mut done = [false; 5];
-        poll_fn(|context| {
-            for (index, future) in futures.iter_mut().enumerate() {
-                if !done[index] {
-                    match future.as_mut().poll(context) {
-                        Poll::Ready(Ok(_)) => done[index] = true,
-                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                        Poll::Pending => {}
-                    }
-                }
-            }
-            if done.iter().all(|done| *done) {
-                Poll::Ready(Ok(()))
-            } else {
-                Poll::Pending
-            }
-        })
-        .await?;
+        let surplus = self
+            .admin_discover(
+                store,
+                host,
+                [
+                    CatalogProvider::Openrouter,
+                    CatalogProvider::Openlux,
+                    CatalogProvider::Surplus,
+                    CatalogProvider::Lithos,
+                    CatalogProvider::ClaudeCode,
+                ],
+                true,
+            )
+            .await?;
         let current = host.publication().await?;
         let router = self.cached_provider(&current, CatalogProvider::Openrouter);
         let lithos = self.cached_provider(&current, CatalogProvider::Lithos);
@@ -342,11 +375,56 @@ impl CatalogRuntime {
             json!({"ok":true,"data":{
                 "openrouter":{"upstream_models":router.as_ref().map(|s|s.models.len()).unwrap_or(0),"updated_at_ms":router.as_ref().and_then(|s|s.updated_at_ms),"refreshed":router.as_ref().and_then(|s|s.updated_at_ms) != old_router},
                 "openlux":provider_summary(self.cached_provider(&current,CatalogProvider::Openlux).as_ref()),
-                "surplus":provider_summary(self.cached_provider(&current,CatalogProvider::Surplus).as_ref()),
+                "surplus":provider_summary(surplus.as_ref()),
                 "lithos":lithos_value,
                 "claude_code":{"models":claude.as_ref().map(|s|s.models.len()).unwrap_or(0),"updated_at_ms":claude.as_ref().and_then(|s|s.updated_at_ms),"status":if claude.as_ref().is_some_and(|s|!s.stale){"available"}else{"unavailable"},"stale":claude.as_ref().is_some_and(|s|s.stale)}
             }}),
             true,
         ))
+    }
+
+    async fn admin_discover<S: QueryStore, H: CatalogHost, const N: usize>(
+        &self,
+        store: &S,
+        host: &H,
+        providers: [CatalogProvider; N],
+        force: bool,
+    ) -> Result<Option<ProviderCatalog>, GatewayError> {
+        let mut futures = providers
+            .iter()
+            .map(|provider| {
+                Box::pin(async move {
+                    if *provider == CatalogProvider::Surplus {
+                        self.refresh_anonymous_surplus(store, host, force).await
+                    } else {
+                        self.refresh_provider(store, host, *provider, force).await
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut done = [false; N];
+        let mut surplus = None;
+        poll_fn(|context| {
+            for (index, future) in futures.iter_mut().enumerate() {
+                if !done[index] {
+                    match future.as_mut().poll(context) {
+                        Poll::Ready(Ok(snapshot)) => {
+                            if providers[index] == CatalogProvider::Surplus {
+                                surplus = snapshot;
+                            }
+                            done[index] = true;
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Pending => {}
+                    }
+                }
+            }
+            if done.iter().all(|done| *done) {
+                Poll::Ready(Ok(surplus.take()))
+            } else {
+                Poll::Pending
+            }
+        })
+        .await
     }
 }

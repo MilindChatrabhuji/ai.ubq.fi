@@ -152,6 +152,7 @@ struct Host {
     order: Vec<String>,
     fail_compare: Cell<bool>,
     fail_publication: Cell<bool>,
+    warmed: Cell<u32>,
 }
 impl Host {
     fn new() -> Self {
@@ -172,6 +173,7 @@ impl Host {
                 .collect(),
             fail_compare: Cell::new(false),
             fail_publication: Cell::new(false),
+            warmed: Cell::new(0),
         }
     }
     fn configure(&self, provider: CatalogProvider, identity: &str) {
@@ -239,6 +241,11 @@ impl CatalogHost for Host {
                 .get_mut(provider)
                 .and_then(VecDeque::pop_front),
             CatalogFetch::Codex { .. } => self.codex.borrow_mut().pop_front(),
+            CatalogFetch::AnonymousSurplus => self
+                .responses
+                .borrow_mut()
+                .get_mut(&CatalogProvider::Surplus)
+                .and_then(VecDeque::pop_front),
         }
         .expect("unexpected metadata fetch");
         self.requests.borrow_mut().push(request);
@@ -260,6 +267,9 @@ impl CatalogHost for Host {
     }
 }
 impl AdminCatalogHost for Host {
+    fn warm_openrouter(&self) {
+        self.warmed.set(self.warmed.get() + 1);
+    }
     fn compare_model_ids(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
         if self.fail_compare.get() {
             return Err(GatewayError::unavailable(
@@ -521,6 +531,7 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
     let runtime = CatalogRuntime::new();
     let store = Store::default();
     let host = Host::new();
+    host.queue(CatalogProvider::Surplus, json!({"data":[]}));
     invoke(
         &runtime,
         &store,
@@ -664,6 +675,7 @@ fn replacement_during_pending_refresh_cannot_return_old_identity_snapshot() {
     host.configure(CatalogProvider::Openlux, "first");
     let gate = Rc::new(Cell::new(false));
     host.queue(CatalogProvider::Openrouter, json!({"data":[]}));
+    host.queue(CatalogProvider::Surplus, json!({"data":[]}));
     host.responses
         .borrow_mut()
         .entry(CatalogProvider::Openlux)
@@ -678,7 +690,7 @@ fn replacement_during_pending_refresh_cannot_return_old_identity_snapshot() {
     let waker = Waker::noop();
     let mut context = Context::from_waker(waker);
     assert!(pending.as_mut().poll(&mut context).is_pending());
-    assert_eq!(host.requests.borrow().len(), 2);
+    assert_eq!(host.requests.borrow().len(), 3);
     host.configure(CatalogProvider::Openlux, "replacement");
     gate.set(true);
     let result = run(pending).unwrap();
@@ -686,6 +698,118 @@ fn replacement_during_pending_refresh_cannot_return_old_identity_snapshot() {
         result.body["data"]["openlux"],
         json!({"models":0,"updated_at_ms":null})
     );
+}
+
+#[test]
+fn cold_picker_starts_three_normal_discoveries_concurrently_and_only_schedules_enrichment() {
+    let runtime = CatalogRuntime::new();
+    let store = Store::default();
+    let host = Host::new();
+    let gate = Rc::new(Cell::new(false));
+    store.put(
+        state::selection_key(),
+        "disabled",
+        json!({"provider_ids":["codex"],"updated_at_ms":1}),
+    );
+    for (provider, body) in [
+        (
+            CatalogProvider::Openlux,
+            json!({"data":[{"id":"z","supported_endpoint_types":["openai"]}]}),
+        ),
+        (CatalogProvider::Surplus, json!({"data":[{"id":"a"}]})),
+        (
+            CatalogProvider::ClaudeCode,
+            json!({"data":[{"id":"A","type":"model","created_at":"2026-01-01T00:00:00Z"}],"has_more":false}),
+        ),
+    ] {
+        host.configure(provider, provider.id());
+        host.responses
+            .borrow_mut()
+            .entry(provider)
+            .or_default()
+            .push_back(Outcome {
+                body: Ok(body),
+                gate: Some(gate.clone()),
+                hook: None,
+            });
+    }
+    let mut pending =
+        std::pin::pin!(runtime.admin_catalog(&store, &host, AdminCatalogOperation::Catalog));
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    assert!(pending.as_mut().poll(&mut context).is_pending());
+    assert_eq!(host.warmed.get(), 1);
+    assert_eq!(host.requests.borrow().len(), 3);
+    assert!(host.requests.borrow().iter().all(|request| !matches!(
+        request,
+        CatalogFetch::Provider {
+            provider: CatalogProvider::Openrouter,
+            ..
+        }
+    )));
+    gate.set(true);
+    let result = run(pending).unwrap();
+    let ids = result.body["data"]["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["a", "A", "ubiquity/deepseek-flash", "z"]);
+    invoke(&runtime, &store, &host, AdminCatalogOperation::Catalog);
+    assert_eq!(host.warmed.get(), 2);
+    assert_eq!(host.requests.borrow().len(), 3);
+}
+
+#[test]
+fn anonymous_surplus_is_publicly_visible_without_enabling_ordinary_or_paid_routing() {
+    let runtime = CatalogRuntime::new();
+    let store = Store::default();
+    let host = Host::new();
+    host.queue(
+        CatalogProvider::Surplus,
+        json!({"data":[{"id":"a"},{"id":"z"}]}),
+    );
+    let admin = invoke(&runtime, &store, &host, AdminCatalogOperation::Catalog);
+    assert_eq!(admin.body["data"]["models"].as_array().unwrap().len(), 2);
+    assert!(matches!(
+        host.requests.borrow()[0],
+        CatalogFetch::AnonymousSurplus
+    ));
+    let publication = host.publication.borrow();
+    assert!(publication.providers.is_empty());
+    let public_state =
+        run(runtime.load_public_state(&store, &publication, host.now.get())).unwrap();
+    assert!(!public_state.input.configured("surplus"));
+    assert_eq!(public_state.input.rows("surplus").len(), 2);
+    let ordinary = run(runtime.load_state(&store, &publication, host.now.get())).unwrap();
+    assert!(ordinary.input.rows("surplus").is_empty());
+    assert!(
+        ordinary_models(&ordinary.input)["data"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    drop(publication);
+    store.put(
+        state::whitelist_key(),
+        "only-z",
+        json!({"model_ids":["z"],"updated_at_ms":1}),
+    );
+    let public = run(runtime.public_catalog(&store, &host)).unwrap();
+    assert_eq!(public.body["object"], "uos.model_catalog");
+    assert_eq!(public.body["data"].as_array().unwrap().len(), 1);
+    assert_eq!(public.body["data"][0]["id"], "z");
+    assert!(public.body.get("ok").is_none());
+    assert!(public.body.get("whitelist").is_none());
+    store.put(
+        state::selection_key(),
+        "disabled",
+        json!({"provider_ids":["codex"],"updated_at_ms":1}),
+    );
+    let disabled = run(runtime.public_catalog(&store, &host)).unwrap();
+    assert!(disabled.body["data"].as_array().unwrap().is_empty());
+    assert_eq!(host.requests.borrow().len(), 1);
 }
 
 #[test]

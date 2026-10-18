@@ -1,5 +1,5 @@
 {
-  "locale_order": ["a", "A", "ä", "z"],
+  "locale_order": ["a", "A", "ä", "ubiquity/deepseek-flash", "z"],
   "operations": [
     {
       "name": "null",
@@ -902,14 +902,23 @@
       "name": "whitelist-normal",
       "operation": "whitelist",
       "input": {
-        "model_ids": [" a ", "a", "", "missing", " deepseek/deepseek-v3.2 ", "﻿z﻿"]
+        "model_ids": [
+          " a ",
+          "a",
+          "",
+          "missing",
+          " deepseek/deepseek-v3.2 ",
+          "﻿z﻿",
+          "ubiquity/deepseek-v4.1-flash",
+          "ubiquity/deepseek-flash"
+        ]
       },
       "expected": {
         "status": 200,
         "body": {
           "ok": true,
           "stored": true,
-          "model_ids": ["a", "missing", "deepseek/deepseek-v3.2", "z"],
+          "model_ids": ["a", "missing", "deepseek/deepseek-v3.2", "z", "ubiquity/deepseek-flash"],
           "updated_at_ms": 1800000000000
         }
       }
