@@ -749,10 +749,7 @@ test("provider roster completion rerenders Models after normalizing its filter",
 });
 
 test("provider picker edits invalidate an in-flight roster refresh", () => {
-  assert.match(
-    adminScript,
-    /const markProviderSelectionEdited = \(\) => \{\s*providerSelectionLoadId \+= 1;\s*\};/
-  );
+  assert.match(adminScript, /const markProviderSelectionEdited = \(\) => \{\s*providerSelectionLoadId \+= 1;\s*\};/);
   assert.match(adminScript, /const loadId = \+\+providerSelectionLoadId;[\s\S]*?if \(loadId !== providerSelectionLoadId\) return false;/);
   const loadStart = adminScript.indexOf("const loadProviderSelection = async (options = {}) => {");
   const staleGuard = adminScript.indexOf("if (loadId !== providerSelectionLoadId) return false;", loadStart);
