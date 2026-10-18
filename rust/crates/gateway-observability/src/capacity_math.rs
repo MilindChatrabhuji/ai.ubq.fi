@@ -133,7 +133,7 @@ pub fn merge_rollup(previous: Option<&Value>, point: &Value) -> Value {
     }
     json!({"v":1,"bucket_start_at_ms":bucket,"sample_count":previous.and_then(|p|p["sample_count"].as_u64()).unwrap_or(0)+1,"first_sampled_at_ms":previous.and_then(|p|p["first_sampled_at_ms"].as_i64()).map(|p|p.min(at)).unwrap_or(at),"last_sampled_at_ms":previous.and_then(|p|p["last_sampled_at_ms"].as_i64()).map(|p|p.max(at)).unwrap_or(at),"slots":slots})
 }
-pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)]) -> Vec<Value> {
+pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)],compare:impl Fn(&str,&str)->Result<std::cmp::Ordering,gateway_core::GatewayError>) -> Result<Vec<Value>,gateway_core::GatewayError> {
     let mut ordered = local.to_vec();
     ordered.sort_by_key(|p| {
         (
@@ -143,7 +143,7 @@ pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)]) -> Vec<
     });
     let local_buckets: std::collections::BTreeSet<i64> = ordered
         .iter()
-        .filter_map(|p| p["bucket_start_at_ms"].as_i64())
+        .filter_map(|p| crate::store::safe_i64(&p["bucket_start_at_ms"]))
         .collect();
     let mut gaps: std::collections::BTreeMap<
         i64,
@@ -151,8 +151,8 @@ pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)]) -> Vec<
     > = std::collections::BTreeMap::new();
     for (host, point) in remote {
         let (Some(bucket), Some(sample)) = (
-            point["bucket_start_at_ms"].as_i64(),
-            point["sampled_at_ms"].as_i64(),
+            crate::store::safe_i64(&point["bucket_start_at_ms"]),
+            crate::store::safe_i64(&point["sampled_at_ms"]),
         ) else {
             continue;
         };
@@ -173,7 +173,7 @@ pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)]) -> Vec<
         if !available || configured == 0 {
             continue;
         }
-        let i = ordered.partition_point(|p| p["sampled_at_ms"].as_i64().unwrap_or(0) < sample);
+        let i = ordered.partition_point(|p| crate::store::safe_i64(&p["sampled_at_ms"]).unwrap_or(0) < sample);
         let matches = |p: &Value| {
             [1, 2].into_iter().all(|slot| {
                 let identity = |p: &Value| {
@@ -204,6 +204,7 @@ pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)]) -> Vec<
             .insert(sample, point.clone());
     }
     for hosts in gaps.into_values() {
+        let mut hosts:Vec<_>=hosts.into_iter().collect();let mut error=None;hosts.sort_by(|(a,_),(b,_)|match compare(a,b){Ok(order)=>order,Err(e)=>{error=Some(e);std::cmp::Ordering::Equal}});if let Some(error)=error{return Err(error)}
         if let Some((_, points)) = hosts.into_iter().next() {
             ordered.extend(points.into_values())
         }
@@ -214,11 +215,10 @@ pub fn merge_remote_history(local: &[Value], remote: &[(String, Value)]) -> Vec<
             p["bucket_start_at_ms"].as_i64(),
         )
     });
-    ordered
+    Ok(ordered)
 }
 pub fn bucketed(point: &Value) -> bool {
-    point["bucket_start_at_ms"]
-        .as_i64()
-        .zip(point["sampled_at_ms"].as_i64())
+    crate::store::safe_i64(&point["bucket_start_at_ms"])
+        .zip(crate::store::safe_i64(&point["sampled_at_ms"]))
         .is_some_and(|(b, t)| b % BUCKET_MS == 0 && t >= b && t < b + BUCKET_MS)
 }
