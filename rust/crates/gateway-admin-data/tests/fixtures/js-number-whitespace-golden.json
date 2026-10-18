@@ -50,9 +50,7 @@
     },
     {
       "name": "feff_array",
-      "input": [
-        "﻿16﻿"
-      ],
+      "input": ["﻿16﻿"],
       "expected": {
         "kind": "finite",
         "value": 16
@@ -60,9 +58,7 @@
     },
     {
       "name": "nel_array",
-      "input": [
-        "16"
-      ],
+      "input": ["16"],
       "expected": {
         "kind": "nan"
       }
