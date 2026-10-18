@@ -3,10 +3,9 @@ use serde_json::Value;
 
 #[test]
 fn number_coercion_matches_pinned_source_whitespace_vectors() {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "fixtures/js-number-whitespace-golden.json"
-    ))
-    .expect("source oracle JSON");
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/js-number-whitespace-golden.json"))
+            .expect("source oracle JSON");
     assert_eq!(fixture["runtime"], "Bun 1.4.0");
     for case in fixture["cases"].as_array().expect("source cases") {
         let actual = js_number(&case["input"]);
