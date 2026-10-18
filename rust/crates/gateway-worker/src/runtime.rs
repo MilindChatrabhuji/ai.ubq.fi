@@ -26,6 +26,16 @@ pub async fn route(
 ) -> Result<Response, GatewayError> {
     now_ms()?;
     let path = request.path();
+    if let Some(response) = crate::assets::handle(&request, &env, &path).await? {
+        return Ok(response);
+    }
+    if path == "/uos/agent-messages" && !matches!(request.method(), Method::Get | Method::Post) {
+        return Err(GatewayError::new(
+            405,
+            "Method not allowed",
+            Some("method_not_allowed"),
+        ));
+    }
     let store = RemoteAuthorityStore::from_env(&env)?;
     let cancellation = Rc::new(Cancellation::from_request(&request)?);
     let host = PlatformHost { cancellation };
@@ -89,6 +99,7 @@ pub async fn route(
     }
     let principal = if path.starts_with("/v1/")
         || path == "/uos/models/capabilities"
+        || path == "/uos/agent-messages"
         || path.starts_with("/uos/embedding")
     {
         Some(auth.authenticate_client(&auth_request).await?)
@@ -121,6 +132,14 @@ pub async fn route(
     if path == "/uos/models/capabilities" && request.method() == Method::Get {
         let state = CatalogState::load(&store, &env, now_ms()?).await?;
         return json_response(catalog::capabilities(&state.input));
+    }
+    if path == "/uos/agent-messages" {
+        return crate::agent_messages::handle(
+            request,
+            &principal.ok_or_else(gateway_auth::unauthorized)?,
+            &store,
+        )
+        .await;
     }
     if ["/v1/responses", "/v1/chat/completions"].contains(&path.as_str()) {
         if request.method() != Method::Post {

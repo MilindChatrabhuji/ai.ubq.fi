@@ -3,6 +3,8 @@ use gateway_core::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, HealthResponse,
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response, Result, event};
 
+mod agent_messages;
+mod assets;
 pub mod authority;
 mod catalog;
 mod host;

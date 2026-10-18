@@ -118,11 +118,12 @@ const config :Workerd.Config = (
   services = [
     (name = "internet", network = (allow = [])),
     (name = "state", disk = (path = ${quoted(join(workspace, "state"))}, writable = true)),
+    (name = "assets", disk = (path = ${quoted(join(root, "static"))})),
     (name = "gateway", worker = (
       modules = [(name = "index.js", esModule = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(root, "rust/crates/gateway-worker/build/index_bg.wasm"))})],
       compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
       globalOutbound = "driver",
-      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret")],
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret")],
       durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
       durableObjectStorage = (localDisk = "state")
     )),
@@ -134,26 +135,43 @@ const config :Workerd.Config = (
       durableObjectStorage = (localDisk = "state")
     ))
   ],
-  sockets = [(name = "main", http = (), service = "driver")]
+  sockets = [(name = "main", http = (), service = "driver"), (name = "public", http = (), service = "gateway")]
 );`;
   await writeFile(path, config);
   return path;
 }
 
-type Running = { origin: string; stop: () => Promise<void> };
+type Running = { origin: string; publicOrigin: string; stop: () => Promise<void> };
 async function start(config: string, workspace: string): Promise<Running> {
   const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 503 }) });
   const port = reservation.port;
-  await reservation.stop(true);
+  const publicReservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 503 }) });
+  const publicPort = publicReservation.port;
+  await Promise.all([reservation.stop(true), publicReservation.stop(true)]);
   const runId = Date.now();
   const output = Bun.file(join(workspace, `workerd-${runId}.stdout.log`));
   const errors = Bun.file(join(workspace, `workerd-${runId}.stderr.log`));
-  const child = Bun.spawn([workerdBinary, "serve", config, "--experimental", "--import-path", "/", "--socket-addr", `main=127.0.0.1:${port}`], {
-    cwd: workspace,
-    stdout: output,
-    stderr: errors,
-  });
+  const child = Bun.spawn(
+    [
+      workerdBinary,
+      "serve",
+      config,
+      "--experimental",
+      "--import-path",
+      "/",
+      "--socket-addr",
+      `main=127.0.0.1:${port}`,
+      "--socket-addr",
+      `public=127.0.0.1:${publicPort}`,
+    ],
+    {
+      cwd: workspace,
+      stdout: output,
+      stderr: errors,
+    }
+  );
   const origin = `http://127.0.0.1:${port}`;
+  const publicOrigin = `http://127.0.0.1:${publicPort}`;
   const stop = async (): Promise<void> => {
     if (child.exitCode !== null) return;
     child.kill("SIGTERM");
@@ -171,8 +189,8 @@ async function start(config: string, workspace: string): Promise<Running> {
     while (Date.now() < deadline) {
       if (child.exitCode !== null) throw new Error("workerd exited during startup.");
       try {
-        const ready = await fetch(`${origin}/public/health`);
-        if (ready.status === 200) return { origin, stop };
+        const ready = await fetch(`${publicOrigin}/health`);
+        if (ready.status === 200) return { origin, publicOrigin, stop };
       } catch {
         /* process startup */
       }
@@ -249,6 +267,46 @@ async function disconnectAfterFirstChunk(url: string, body: unknown, workspace: 
   return id;
 }
 
+async function staticRouteCases(url: (path: string) => string, cases: string[]): Promise<void> {
+  const sourceStatic = await readFile(join(root, "src/static.ts"), "utf8");
+  for (const match of sourceStatic.matchAll(/textAsset\(\[([^\]]+)\], "([^"]+)", "([^"]+)"(, "html")?/g)) {
+    const routes: unknown = JSON.parse(`[${match[1]}]`);
+    assert(Array.isArray(routes));
+    const expected = await readFile(join(root, "static", match[2]));
+    for (const route of routes) {
+      assert.equal(typeof route, "string");
+      const served = await fetch(url(String(route)));
+      assert.equal(served.status, 200, String(route));
+      assert.equal(served.headers.get("content-type"), match[3]);
+      assert.equal(served.headers.get("cache-control"), "public, max-age=300");
+      assert.equal(served.headers.get("x-content-type-options"), "nosniff");
+      if (match[4]) {
+        assert(served.headers.get("content-security-policy")?.includes("frame-ancestors 'none'"));
+        assert.equal(served.headers.get("referrer-policy"), "no-referrer");
+      }
+      assert.deepEqual(new Uint8Array(await served.arrayBuffer()), new Uint8Array(expected));
+      const head = await fetch(url(String(route)), { method: "HEAD" });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.get("content-type"), match[3]);
+      assert.equal((await head.arrayBuffer()).byteLength, 0);
+    }
+  }
+  cases.push("source_static_route_bytes_head_and_security_parity");
+  for (const [accept, status, contentType] of [
+    ["text/markdown", 200, "text/markdown; charset=utf-8"],
+    ["application/json", 200, "application/json"],
+    ["text/html;q=0, */*;q=1", 200, "text/markdown; charset=utf-8"],
+    ["image/png", 406, "application/json"],
+  ] as const) {
+    const served = await fetch(url("/"), { headers: { Accept: accept } });
+    assert.equal(served.status, status);
+    assert(served.headers.get("content-type")?.startsWith(contentType));
+    assert.equal(served.headers.get("vary"), "Accept, Accept-Encoding");
+    await served.arrayBuffer();
+  }
+  cases.push("source_root_media_negotiation");
+}
+
 async function inner(): Promise<void> {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
@@ -259,7 +317,7 @@ async function inner(): Promise<void> {
   const cases = ["os_external_tcp_denied"];
   const config = await fixtureConfig(workspace);
   let running = await start(config, workspace);
-  const url = (path: string): string => `${running.origin}/public${path}`;
+  const url = (path: string): string => `${running.publicOrigin}${path}`;
   const post = (path: string, body: unknown, token = "fixture-access", signal?: AbortSignal): Promise<Response> =>
     fetch(url(path), {
       method: "POST",
@@ -302,6 +360,11 @@ async function inner(): Promise<void> {
     assert.equal(identity.release.git_sha, expectedSha);
     assert.equal(health.headers.get("x-uos-git-sha"), expectedSha);
     cases.push("exact_rust_source_identity");
+    await staticRouteCases(url, cases);
+    assert.equal((await post("/uos/agent-messages", { agent_id: "fixture", body: "fixture" })).status, 403);
+    assert.equal((await fetch(url("/uos/agent-messages"))).status, 401);
+    assert.equal((await fetch(url("/uos/agent-messages"), { method: "PATCH" })).status, 405);
+    cases.push("agent_messages_require_github_scope_and_source_methods");
     assert.equal((await fetch(url("/v1/models"))).status, 401);
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:unauthorized" }, "bad-token")).status, 401);
     assert.equal((await events()).length, 0);
@@ -407,7 +470,7 @@ async function inner(): Promise<void> {
     assert.equal((await post("/v1/responses", { model: "deepseek-flash", input: "fixture:still-blocked" }, key.token)).status, 429);
     assert.equal((await events()).length, before);
     cases.push("actual_sqlite_restart_preserves_key_and_quota");
-    const explicitSignal = await fetch(url("/v1/responses"), {
+    const explicitSignal = await fetch(`${running.origin}/public/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: "Bearer fixture-access", "x-fixture-explicit-signal": "1", connection: "close" },
       body: JSON.stringify({ model: "deepseek-flash", input: "fixture:abort-explicit", stream: true }),
@@ -441,6 +504,7 @@ async function inner(): Promise<void> {
           .digest("hex"),
         workerd: "1.20261012.1",
         platform: process.platform,
+        publicEntry: "direct-workerd-http-socket",
         harnessSha256: createHash("sha256")
           .update(await readFile(fileURLToPath(import.meta.url)))
           .digest("hex"),
