@@ -9,16 +9,19 @@ use gateway_auth::AuthResponse;
 use gateway_core::{GatewayError, query::QueryStore};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
-type ActiveReceipt = Completion<Result<AuthResponse, GatewayError>>;
+#[derive(Clone)]
+struct ActiveResponseData{status:u16,body:Value,identity:BuildIdentity}
+type ActiveResult=Result<ActiveResponseData,GatewayError>;
+type ActiveReceipt = Completion<ActiveResult>;
 #[derive(Clone, Default)]
 pub(crate) struct ActiveHealth(Rc<RefCell<Option<ActiveReceipt>>>);
 struct ActiveCompletion {state:ActiveHealth,receipt:ActiveReceipt,finished:bool}
 impl ActiveCompletion {
-    fn complete(&self,result:Result<AuthResponse,GatewayError>){
+    fn complete(&self,result:ActiveResult){
         {let mut current=self.state.0.borrow_mut();if current.as_ref().is_some_and(|c|c.same(&self.receipt)){current.take();}}
         self.receipt.finish(result);
     }
-    fn finish(mut self,result:Result<AuthResponse,GatewayError>)->Result<AuthResponse,GatewayError>{self.complete(result.clone());self.finished=true;result}
+    fn finish(mut self,result:ActiveResult)->ActiveResult{self.complete(result.clone());self.finished=true;result}
 }
 impl Drop for ActiveCompletion {fn drop(&mut self){if !self.finished{self.complete(Err(GatewayError::unavailable("Active upstream health probe was interrupted.","active_upstream_health_interrupted")))}}}
 fn auth_view(meta: &CodexAuthMetadata, now: i64) -> Value {
@@ -27,6 +30,7 @@ fn auth_view(meta: &CodexAuthMetadata, now: i64) -> Value {
     let accounts:Vec<Value>=meta.accounts.iter().map(|a|json!({"slot":a.slot,"updated_at_ms":a.updated_at_ms,"access_token_exp_ms":a.access_token_exp_ms,"refresh_sha256":a.refresh_sha256,"native_owner_codex_home":a.native_owner_codex_home,"access_token_expired":expired(a.access_token_exp_ms),"refresh_recommended":refresh(a.access_token_exp_ms)})).collect();
     json!({"source":meta.source,"updated_at_ms":meta.updated_at_ms,"access_token_exp_ms":meta.access_token_exp_ms,"account_count":accounts.len(),"access_token_expired":expired(meta.access_token_exp_ms),"refresh_recommended":refresh(meta.access_token_exp_ms),"accounts":accounts})
 }
+fn active_response(data:ActiveResponseData)->Result<AuthResponse,GatewayError>{let mut response=AuthResponse::json(data.status,data.body);identity_headers(&mut response,data.identity)?;Ok(response)}
 fn quota_view(snapshot: Option<&Value>) -> Value {
     let mut out = json!({"available":snapshot.is_some()});
     let fields = [
@@ -193,7 +197,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub async fn upstream_health_response(&self) -> Result<AuthResponse, GatewayError> {
         let pending = self.active_health.0.borrow().clone();
         if let Some(pending) = pending {
-            return pending.await;
+            return pending.await.and_then(active_response);
         }
         let receipt=Completion::new();
         *self.active_health.0.borrow_mut()=Some(receipt.clone());
@@ -203,8 +207,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if !matches!(evidence.codex.provider,ProbeProvider::ChatgptCodex)||evidence.metered_quota.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::MeteredQuota))||evidence.claude_subscription.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::ClaudeSubscription)){return Err(store::error("Active health probe identity mismatch"))}
             let failures:Vec<u16>=[Some(evidence.codex.status),evidence.metered_quota.as_ref().map(|p|p.status)].into_iter().flatten().filter(|s|*s>=400).collect();let status=if failures.is_empty(){200}else if failures.contains(&401){401}else{503};
             let body=json!({"status":status,"auth":evidence.auth.as_ref().map(|a|auth_view(a,self.host.now_ms())),"probes":{"codex":evidence.codex,"metered_quota":evidence.metered_quota,"claude_subscription":evidence.claude_subscription,"claude_workspace":evidence.claude_workspace}});
-            let mut response=AuthResponse::json(status,body);identity_headers(&mut response,self.host.build_identity()?)?;Ok(response)
+            Ok(ActiveResponseData{status,body,identity:self.host.build_identity()?})
         }.await;
-        completion.finish(response)
+        completion.finish(response).and_then(active_response)
     }
 }
