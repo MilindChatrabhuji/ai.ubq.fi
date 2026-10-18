@@ -11,23 +11,23 @@ import { getString, isRecord } from "../utils.ts";
 import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, MeteredError, readMeteredApiKey } from "../provider/metered.ts";
 import { fetchSurplusModels, fetchSurplusResponses, readSurplusApiKey, SURPLUS_MODELS_CACHE_TTL_MS, SurplusError } from "../provider/surplus.ts";
 import {
-  InferenceFallbackReason,
-  PaidProviderHealthClassification,
-  PaidProviderHealthEvent,
-  ResponseTelemetryState,
-  RoutedResponsesUpstream,
-  UpstreamProvider,
-  UsageContext,
-  UsageTokens,
+  type InferenceFallbackReason,
+  type PaidProviderHealthClassification,
+  type PaidProviderHealthEvent,
+  type ResponseTelemetryState,
+  type RoutedResponsesUpstream,
+  type UpstreamProvider,
+  type UsageContext,
+  type UsageTokens,
   isTimeoutFailure,
   recordAttemptedProvider,
   recordFirstProviderDispatch,
   recordFirstProviderHeaders,
-  MeteredTransportLifecycle,
+  type MeteredTransportLifecycle,
 } from "../openai-telemetry.ts";
 import { normalizeProviderRequestId } from "../upstream-wire.ts";
 import { isAdditionalTrustedCodexModel } from "../request-policy.ts";
-import { DEEPSEEK_WATERFALL_PAID_MODEL_ID } from "../deepseek/waterfall.ts";
+import { isDeepSeekFlashPaidModel } from "../deepseek/flash-aliases.ts";
 
 export const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): void => {
   console.warn(`[ai.ubq.fi] Paid fallback ${operation} failed; leaving the reservation pending:`, error instanceof Error ? error.message : String(error));
@@ -333,7 +333,7 @@ export const resolvePaidRoutingState = (
 }> => {
   const waterfallPinnedProvider = input.deepSeekWaterfallPaidHop === "openlux" ? "metered" : "surplus";
   const waterfallPaidHop =
-    input.model === DEEPSEEK_WATERFALL_PAID_MODEL_ID &&
+    isDeepSeekFlashPaidModel(input.model) &&
     input.endpointType === "openai-response" &&
     isProviderEnabled("ubiquity", input.selection) &&
     input.allowedPaidProviders?.length === 1 &&

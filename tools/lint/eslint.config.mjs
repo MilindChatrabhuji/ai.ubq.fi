@@ -6,6 +6,7 @@ import eslint from "@eslint/js";
 import tsEslint from "typescript-eslint";
 import sonarjs from "eslint-plugin-sonarjs";
 import checkFile from "eslint-plugin-check-file";
+import globals from "globals";
 import path from "node:path";
 
 // DIVERGENCE: the stock template's boolean-variable naming rule is disabled in
@@ -24,6 +25,8 @@ export default tsEslint.config(
     // thousands of duplicate files.
     ignores: [
       "node_modules/**",
+      ".bun-cache/**",
+      ".tmp/**",
       "**/*.d.ts", // Trap 2.4: .deno-types.d.ts is generated and ~23k lines
       "eslint.config.mjs",
       "lib/**",
@@ -39,6 +42,17 @@ export default tsEslint.config(
       "logs/**",
       "benchmark-runs/**",
     ],
+  },
+  {
+    // Preserve first-party browser JavaScript checks after removing deno lint.
+    files: ["static/**/*.js"],
+    extends: [eslint.configs.recommended],
+    languageOptions: {
+      globals: globals.browser,
+    },
+    rules: {
+      "no-empty": ["error", { allowEmptyCatch: true }],
+    },
   },
   {
     files: ["**/*.ts"],
@@ -283,12 +297,26 @@ export default tsEslint.config(
     },
   },
   {
-    // DIVERGENCE: this presenter regression executes only bounded functions
+    // DIVERGENCE: these admin regressions execute only bounded functions
     // from the tracked static/admin.js text in a fixture VM. No user input,
     // application bootstrap, credentials or network enter that context.
     // Measured 2026-10-03: the shipped status/DOM cases pass; code-eval alone
-    // flags this intentional execution. Keep the exception to this one test.
-    files: ["tests/admin-capacity-status.test.ts"],
+    // flags this intentional execution. Measured 2026-10-17: the Models
+    // save-pending cases (#669), which run the shipped whitelist save handler
+    // and checkbox listener the same way, pass; code-eval alone flags their
+    // VM call. Keep the exception to these named tests.
+    files: ["tests/admin-capacity-status.test.ts", "tests/admin-models-save-pending.test.ts"],
+    rules: { "sonarjs/code-eval": "off" },
+  },
+  {
+    // DIVERGENCE: the bridge regression evaluates only its tracked, transpiled
+    // driver graph in a fixture VM with Bun absent and fake command/runtime
+    // capabilities. The real OS fixture network boundary remains in force;
+    // no user source, credentials or provider calls enter the realm.
+    // Measured 2026-10-18: all 10 bridge cases pass, including verified-runtime
+    // preparation and corrupt-runtime/archive refusal. code-eval flags the
+    // intentional SourceTextModule construction; keep this one-file exception.
+    files: ["ops/tests/vps-bridge-host.test.ts"],
     rules: { "sonarjs/code-eval": "off" },
   },
   {
@@ -342,5 +370,43 @@ export default tsEslint.config(
     // -- both would delete the case under test.
     files: ["tests/codex-banked-reset-provider.test.ts"],
     rules: { "sonarjs/no-clear-text-protocols": "off" },
+  },
+  {
+    // DIVERGENCE: these compatibility decoders intentionally validate each
+    // legacy tag and container shape in one auditable dispatch function.
+    // Measured after the Bun migration: one complexity finding in each file;
+    // splitting the state machines would obscure the byte-ordering contract.
+    files: ["src/storage/key-compatibility.ts", "src/storage/value-compatibility.ts"],
+    rules: { "sonarjs/cognitive-complexity": "off" },
+  },
+  {
+    // DIVERGENCE: the native KV facade implements the generic SDK list method
+    // and Bun's synchronous close/dispose surface. Measured: one generic API
+    // finding here and 22 await/unbound-method findings in its contract test.
+    files: ["src/storage/native-kv.ts"],
+    rules: { "@typescript-eslint/no-unnecessary-type-parameters": "off" },
+  },
+  {
+    // DIVERGENCE: passkey responses cross an untrusted JSON boundary. The
+    // WebAuthn library's declaration narrows nested response fields more than
+    // malformed request bodies permit at runtime. Measured: three guards,
+    // each covered by rejection tests for unusable responses/attestations.
+    files: ["src/auth/passkeys.ts"],
+    rules: { "@typescript-eslint/no-unnecessary-condition": "off" },
+  },
+  {
+    files: ["tests/storage-bun-kv.test.ts"],
+    rules: {
+      "@typescript-eslint/await-thenable": "off",
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "@typescript-eslint/unbound-method": "off",
+    },
+  },
+  {
+    // DIVERGENCE: the upgrade callback depth is imposed by ws's event API.
+    // Measured: exactly two findings, both cleanup callbacks scoped to one
+    // accepted socket; extracting them would widen mutable socket ownership.
+    files: ["src/runtime/http-upgrade.ts"],
+    rules: { "sonarjs/no-nested-functions": "off" },
   }
 );

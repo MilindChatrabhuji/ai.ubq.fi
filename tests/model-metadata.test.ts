@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import type { Kv } from "#kv";
 import assert from "node:assert/strict";
 
 import { CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT } from "../src/recent-model-context.ts";
@@ -17,7 +19,7 @@ const enrichment = (overrides: Partial<OpenRouterModelMetadata> = {}): OpenRoute
   ...overrides,
 });
 
-Deno.test("an id no source describes resolves to unknown instead of a curated guess", () => {
+test("an id no source describes resolves to unknown instead of a curated guess", () => {
   // These ids were previously answered by the curated tables, which are now
   // disabled: with no source, the honest answer is "nothing is known".
   for (const id of ["glm-5.3", "claude-sonnet-5", "deepseek-v4-pro", "gpt-5.6-terra"]) {
@@ -33,7 +35,7 @@ Deno.test("an id no source describes resolves to unknown instead of a curated gu
   }
 });
 
-Deno.test("reasoning stays Codex-authoritative while the window follows the widest source", () => {
+test("reasoning stays Codex-authoritative while the window follows the widest source", () => {
   const resolved = resolveModelMetadata("gpt-5.6-sol", {
     codex: {
       context_window_tokens: 272_000,
@@ -52,7 +54,7 @@ Deno.test("reasoning stays Codex-authoritative while the window follows the wide
   assert.equal(resolved.reasoning_source, "codex_upload");
 });
 
-Deno.test("a serving provider's own declaration outranks a narrower enrichment entry", () => {
+test("a serving provider's own declaration outranks a narrower enrichment entry", () => {
   const resolved = resolveModelMetadata("deepseek-flash", {
     provider: { context_window_tokens: 1_000_000, max_context_window_tokens: 1_000_000 },
     openRouter: enrichment({ id: "~deepseek/deepseek-flash-latest", context_window_tokens: 65_536, max_context_window_tokens: 65_536 }),
@@ -64,7 +66,7 @@ Deno.test("a serving provider's own declaration outranks a narrower enrichment e
   assert.deepEqual(resolved.supported_reasoning_levels, ["max", "high", "medium"]);
 });
 
-Deno.test("enrichment is the last resort, and the resolved context derives the auto-compact limit", () => {
+test("enrichment is the last resort, and the resolved context derives the auto-compact limit", () => {
   const resolved = resolveModelMetadata("gpt-5.6-sol", { openRouter: enrichment() });
   assert.equal(resolved.context_window_tokens, 1_050_000);
   assert.equal(resolved.max_context_window_tokens, 1_050_000);
@@ -74,7 +76,7 @@ Deno.test("enrichment is the last resort, and the resolved context derives the a
   assert.equal(resolved.default_reasoning_effort, "medium");
 });
 
-Deno.test("a declared auto-compact limit is preserved inside the resolved window", () => {
+test("a declared auto-compact limit is preserved inside the resolved window", () => {
   const narrow = resolveModelMetadata("gpt-5.6-sol", {
     codex: { context_window_tokens: 272_000, auto_compact_token_limit_tokens: 200_000 },
     openRouter: null,
@@ -92,7 +94,7 @@ Deno.test("a declared auto-compact limit is preserved inside the resolved window
   assert.equal(widened.auto_compact_token_limit_tokens, 200_000);
 });
 
-Deno.test("OpenRouter's window wins when it knows the id, so the gateway advertises the real capability", () => {
+test("OpenRouter's window wins when it knows the id, so the gateway advertises the real capability", () => {
   // The Codex catalog understates what the endpoint accepts (916k verified), so a
   // wider third-party window is advertised and the client chooses its own budget.
   const resolved = resolveModelMetadata("gpt-5.6-sol", {
@@ -108,7 +110,7 @@ Deno.test("OpenRouter's window wins when it knows the id, so the gateway adverti
   assert.equal(resolved.reasoning_source, "codex_upload");
 });
 
-Deno.test("first-party windows fill ids OpenRouter does not know, and the subscription bound fills the rest", () => {
+test("first-party windows fill ids OpenRouter does not know, and the subscription bound fills the rest", () => {
   const firstParty = resolveModelMetadata("codex-only-model", {
     codex: { context_window_tokens: 8_000 },
     openRouter: null,
@@ -122,17 +124,18 @@ Deno.test("first-party windows fill ids OpenRouter does not know, and the subscr
   assert.equal(silent.context_source, "codex_subscription");
 });
 
-Deno.test("a narrower third-party entry never shrinks a first-party window", () => {
+test("a narrower third-party entry never shrinks a first-party window", () => {
   const resolved = resolveModelMetadata("gpt-5.6-sol", {
     codex: { context_window_tokens: 400_000, max_context_window_tokens: 400_000 },
     codexSubscription: codexSubscriptionMetadataHint(),
     openRouter: enrichment({ context_window_tokens: 300_000, max_context_window_tokens: 300_000 }),
   });
   assert.equal(resolved.context_window_tokens, 400_000);
+  assert.equal(resolved.max_context_window_tokens, 400_000);
   assert.equal(resolved.context_source, "codex_upload");
 });
 
-Deno.test("OpenRouter breaks ties, keeping capability provenance when widths agree", () => {
+test("OpenRouter breaks ties, keeping capability provenance when widths agree", () => {
   const tied = resolveModelMetadata("gpt-5.6-sol", {
     codex: { context_window_tokens: 1_050_000 },
     openRouter: enrichment({ context_window_tokens: 1_050_000, max_context_window_tokens: 1_050_000 }),
@@ -141,7 +144,7 @@ Deno.test("OpenRouter breaks ties, keeping capability provenance when widths agr
   assert.equal(tied.context_source, "openrouter");
 });
 
-Deno.test("ids Codex does not serve keep their provider or enrichment window", () => {
+test("ids Codex does not serve keep their provider or enrichment window", () => {
   const resolved = resolveModelMetadata("glm-5.3", {
     openRouter: enrichment({ id: "z-ai/glm-5.3", context_window_tokens: 1_310_720, max_context_window_tokens: 1_310_720 }),
   });
@@ -149,7 +152,7 @@ Deno.test("ids Codex does not serve keep their provider or enrichment window", (
   assert.equal(resolved.context_source, "openrouter");
 });
 
-Deno.test("a mandatory-reasoning model does not gain a none tier it does not advertise", () => {
+test("a mandatory-reasoning model does not gain a none tier it does not advertise", () => {
   const resolved = resolveModelMetadata("glm-5.3", {
     openRouter: enrichment({
       id: "z-ai/glm-5.3",
@@ -160,7 +163,7 @@ Deno.test("a mandatory-reasoning model does not gain a none tier it does not adv
   assert.equal(resolved.default_reasoning_effort, "max");
 });
 
-Deno.test("every advertised tier survives, including ones the gateway does not know", () => {
+test("every advertised tier survives, including ones the gateway does not know", () => {
   const resolved = resolveModelMetadata("qwen3.8", {
     openRouter: enrichment({
       id: "qwen/qwen3.8",
@@ -170,7 +173,7 @@ Deno.test("every advertised tier survives, including ones the gateway does not k
   assert.deepEqual(resolved.supported_reasoning_levels, ["none", "thinking", "hyper"]);
 });
 
-Deno.test("the Codex snapshot adapter maps explicit null defaults to none", () => {
+test("the Codex snapshot adapter maps explicit null defaults to none", () => {
   assert.deepEqual(codexSnapshotMetadataHint(null), null);
   const hint = codexSnapshotMetadataHint({
     context_window: 400_000,
@@ -188,7 +191,7 @@ Deno.test("the Codex snapshot adapter maps explicit null defaults to none", () =
   assert.equal(resolved.context_source, "codex_upload");
 });
 
-Deno.test("a Codex record without an explicit default keeps no default effort", () => {
+test("a Codex record without an explicit default keeps no default effort", () => {
   const hint = codexSnapshotMetadataHint({ context_window: 100_000, supported_reasoning_levels: ["low", "high"] });
   assert.ok(hint, "the adapter returns a hint for a real record");
   assert.equal(hint.default_reasoning_effort, undefined);
@@ -197,7 +200,7 @@ Deno.test("a Codex record without an explicit default keeps no default effort", 
   assert.deepEqual(resolved.supported_reasoning_levels, ["low", "high"]);
 });
 
-Deno.test("a default-only source advertises only its own effort and retains precedence", () => {
+test("a default-only source advertises only its own effort and retains precedence", () => {
   const codex = resolveModelMetadata("default-only-model", {
     codex: { default_reasoning_effort: "high" },
     provider: { supported_reasoning_levels: ["low"], default_reasoning_effort: "low" },
@@ -224,7 +227,7 @@ Deno.test("a default-only source advertises only its own effort and retains prec
   assert.equal(openRouter.reasoning_source, "openrouter");
 });
 
-Deno.test("a default-only Codex null remains explicit none while an omitted default stays unknown", () => {
+test("a default-only Codex null remains explicit none while an omitted default stays unknown", () => {
   const explicitNone = resolveModelMetadata("default-only-model", {
     codex: codexSnapshotMetadataHint({ default_reasoning_level: null }),
     provider: { supported_reasoning_levels: ["high"] },
@@ -242,18 +245,19 @@ Deno.test("a default-only Codex null remains explicit none while an omitted defa
   }
 });
 
-Deno.test("the versioned catalog publishes a default-only source and keeps an unknown model none-only", async () => {
-  const { handleModels } = await import("../src/models/catalog.ts");
+test("catalogs do not publish none for a source with only low and high tiers", async () => {
+  const { handleModelCapabilities, handleModels } = await import("../src/models/catalog.ts");
   const { setKvForTest } = await import("../src/kv.ts");
   const { CountingKv } = await import("./helpers/counting-kv.ts");
   const { resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
+  const { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/provider/metered.ts");
   const { resetProviderSelectionCacheForTest } = await import("../src/provider/selection.ts");
   const keys = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY", "METERED_API_KEY", "SURPLUS_API_KEY", "OPENROUTER_API_KEY"];
-  const originals = keys.map((key) => Deno.env.get(key));
-  for (const key of keys) Deno.env.delete(key);
-  Deno.env.set("OPENROUTER_API_KEY", "synthetic-catalog-key");
+  const originals = keys.map((key) => process.env[key]);
+  for (const key of keys) Reflect.deleteProperty(process.env, key);
+  process.env.OPENROUTER_API_KEY = "synthetic-catalog-key";
   const kv = new CountingKv();
-  setKvForTest(kv as unknown as Deno.Kv);
+  setKvForTest(kv as unknown as Kv);
   resetCodexAuthCacheForTest();
   resetProviderSelectionCacheForTest();
   resetOpenRouterModelsCacheForTest();
@@ -261,7 +265,16 @@ Deno.test("the versioned catalog publishes a default-only source and keeps an un
     await fetchOpenRouterModels({
       force: true,
       fetcher: () =>
-        Promise.resolve(Response.json({ data: [{ id: "synthetic/default-only", reasoning: { default_effort: "high" } }, { id: "synthetic/unknown" }] })),
+        Promise.resolve(
+          Response.json({
+            data: [
+              { id: "synthetic/default-only", reasoning: { default_effort: "high" } },
+              { id: "synthetic/tiers-only", reasoning: { supported_efforts: ["low", "high"] } },
+              { id: "synthetic/paid-tiers-only", reasoning: { supported_efforts: ["low", "high"] } },
+              { id: "synthetic/unknown" },
+            ],
+          })
+        ),
     });
     const response = await handleModels(new Request("https://ai.ubq.fi/v1/models?client_version=0.200.0"));
     assert.equal(response.status, 200);
@@ -270,11 +283,41 @@ Deno.test("the versioned catalog publishes a default-only source and keeps an un
     assert.equal(declared?.default_reasoning_level, "high");
     assert.deepEqual(declared.supported_reasoning_levels, [{ effort: "high", description: "Reasoning effort: high" }]);
     assert.equal(resolveModelMetadata("synthetic/default-only").reasoning_source, "openrouter");
+    const tiersOnly = payload.models.find((model) => model.slug === "synthetic/tiers-only");
+    assert.ok(tiersOnly);
+    assert.deepEqual(tiersOnly.supported_reasoning_levels, [
+      { effort: "low", description: "Reasoning effort: low" },
+      { effort: "high", description: "Reasoning effort: high" },
+    ]);
+    assert.equal("default_reasoning_level" in tiersOnly, false);
     const unknown = payload.models.find((model) => model.slug === "synthetic/unknown");
     assert.equal(unknown?.default_reasoning_level, "none");
     assert.deepEqual(unknown.supported_reasoning_levels, [{ effort: "none", description: "No reasoning" }]);
     assert.equal(resolveModelMetadata("synthetic/unknown").reasoning_source, "unknown");
+
+    process.env.METERED_API_KEY = "synthetic-metered-key";
+    resetMeteredModelsCacheForTest();
+    setMeteredModelsFetchForTest(() =>
+      Promise.resolve(
+        Response.json({
+          data: [{ id: "synthetic/paid-tiers-only", created: 0, owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        })
+      )
+    );
+    const capabilitiesResponse = await handleModelCapabilities();
+    assert.equal(capabilitiesResponse.status, 200);
+    const capabilities = (await capabilitiesResponse.json()) as { data: Record<string, unknown>[] };
+    const tiersOnlyCapabilities = capabilities.data.find((model) => model.id === "synthetic/tiers-only");
+    assert.ok(tiersOnlyCapabilities);
+    assert.deepEqual(tiersOnlyCapabilities.supported_reasoning_levels, ["low", "high"]);
+    assert.equal("default_reasoning_effort" in tiersOnlyCapabilities, false);
+    const paidTiersOnlyCapabilities = capabilities.data.find((model) => model.id === "synthetic/paid-tiers-only");
+    assert.ok(paidTiersOnlyCapabilities);
+    assert.deepEqual(paidTiersOnlyCapabilities.supported_reasoning_levels, ["low", "high"]);
+    assert.equal("default_reasoning_effort" in paidTiersOnlyCapabilities, false);
   } finally {
+    setMeteredModelsFetchForTest(null);
+    resetMeteredModelsCacheForTest();
     setKvForTest(null);
     resetCodexAuthCacheForTest();
     resetProviderSelectionCacheForTest();
@@ -282,8 +325,8 @@ Deno.test("the versioned catalog publishes a default-only source and keeps an un
     kv.close();
     for (const [index, key] of keys.entries()) {
       const original = originals[index];
-      if (original === undefined) Deno.env.delete(key);
-      else Deno.env.set(key, original);
+      if (original === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = original;
     }
   }
 });

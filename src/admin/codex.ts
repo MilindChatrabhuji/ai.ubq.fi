@@ -1,3 +1,4 @@
+import type { Kv, KvEntryMaybe } from "#kv";
 // Admin Codex auth, model and provider handlers, split out of src/admin.ts.
 
 import {
@@ -36,6 +37,7 @@ import { GATEWAY_PROVIDER_ID, GATEWAY_PROVIDER_PRESENTATION, PROVIDER_TIERS, pro
 import { deepSeekWaterfallCatalogEnabled } from "../deepseek/waterfall.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { buildModelCatalogSnapshot, type ModelCatalogSource } from "../models/catalog.ts";
+import { fetchClaudeCodeModels } from "../provider/claude-code-models.ts";
 import { listCodexResetShadowDecisions } from "../codex/banked-reset-pool.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,
@@ -57,6 +59,7 @@ import { getString, isRecord } from "../utils.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../types.ts";
 import { fetchMeteredModels } from "../provider/metered.ts";
 import { fetchSurplusModels } from "../provider/surplus.ts";
+import { fetchLithosModels, lithosModelsSnapshot } from "../provider/lithos-models.ts";
 import { fetchOpenRouterModels, openRouterModelsSnapshot, type OpenRouterModelsSnapshot } from "../models/openrouter-models.ts";
 import { DEBUG_ROUTING_MAX_DURATION_MS, type DebugRoutingScenario, loadDebugRoutingConfig, setDebugRoutingConfig } from "../debug-routing.ts";
 import { MAX_KV_BYTES, SAFE_KV_BYTES, estimateJsonSize } from "./api-keys.ts";
@@ -282,11 +285,11 @@ const buildCodexAuthRuntimeConfig = (
 
 /** Commits the account pool, and — only for a full snapshot — the catalog keys. */
 const commitCodexAuthState = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{
-    poolEntry: Deno.KvEntryMaybe<CodexAuthPoolState>;
-    snapshotEntry: Deno.KvEntryMaybe<CodexModelsSnapshot>;
-    runtimeEntry: Deno.KvEntryMaybe<unknown>;
+    poolEntry: KvEntryMaybe<CodexAuthPoolState>;
+    snapshotEntry: KvEntryMaybe<CodexModelsSnapshot>;
+    runtimeEntry: KvEntryMaybe<unknown>;
     pool: CodexAuthPoolState;
     snapshot: CodexModelsSnapshot;
     runtime: ReturnType<typeof buildRuntimeConfig> | null;
@@ -311,7 +314,7 @@ type CodexAuthPersistAttempt =
   | { kind: "response"; response: Response };
 
 const persistCodexAuthStateAttempt = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{ validatedAuth: CodexAuthState; snapshot: CodexModelsSnapshot | null; authGeneration: string | null }>
 ): Promise<CodexAuthPersistAttempt> => {
   const [existingPoolEntry, existingSnapshot, existingRuntimeEntry] = await Promise.all([
@@ -352,7 +355,7 @@ const persistCodexAuthStateAttempt = async (
 };
 
 const persistCodexAuthState = async (
-  kv: Deno.Kv,
+  kv: Kv,
   input: Readonly<{ validatedAuth: CodexAuthState; snapshot: CodexModelsSnapshot | null; authGeneration: string | null }>
 ): Promise<
   | { ok: true; pool: CodexAuthPoolState; snapshot: CodexModelsSnapshot; runtimeConfig: ReturnType<typeof buildRuntimeConfig> | null }
@@ -377,7 +380,7 @@ const persistCodexAuthState = async (
  * Seeds the versioned upstream catalog. A seed failure is reported as `false`
  * and never fails the upload itself.
  */
-const seedCodexAuthCatalog = async (kv: Deno.Kv, validated: CodexAuthValidation, authGeneration: string | null): Promise<boolean> => {
+const seedCodexAuthCatalog = async (kv: Kv, validated: CodexAuthValidation, authGeneration: string | null): Promise<boolean> => {
   if (!validated.ok || !authGeneration) return false;
   return await storeCodexCatalog(kv, {
     clientVersion: validated.clientVersion,
@@ -596,14 +599,25 @@ export const handleAdminModelsRefresh = async (
     refreshEnrichment?: () => Promise<OpenRouterModelsSnapshot | null>;
     refreshOpenlux?: typeof fetchMeteredModels;
     refreshSurplus?: typeof fetchSurplusModels;
+    refreshLithos?: typeof fetchLithosModels;
+    refreshClaude?: typeof fetchClaudeCodeModels;
   }> = {}
 ): Promise<Response> => {
   const before = openRouterModelsSnapshot();
+  const beforeLithos = lithosModelsSnapshot();
   const refreshEnrichment = dependencies.refreshEnrichment ?? (() => fetchOpenRouterModels({ force: true }));
   const refreshOpenlux = dependencies.refreshOpenlux ?? fetchMeteredModels;
   const refreshSurplus = dependencies.refreshSurplus ?? fetchSurplusModels;
-  const [enrichment, openlux, surplus] = await Promise.all([refreshEnrichment(), refreshOpenlux({ force: true }), refreshSurplus({ force: true })]);
+  const refreshLithos = dependencies.refreshLithos ?? fetchLithosModels;
+  const [enrichment, openlux, surplus, lithos, claude] = await Promise.all([
+    refreshEnrichment(),
+    refreshOpenlux({ force: true }),
+    refreshSurplus({ force: true, requireApiKey: false }),
+    refreshLithos({ force: true }),
+    (dependencies.refreshClaude ?? fetchClaudeCodeModels)({ force: true }),
+  ]);
   const enrichmentUpdatedAt = enrichment?.updated_at_ms ?? null;
+  const lithosUpdatedAt = lithos?.updated_at_ms ?? null;
   return json(
     200,
     {
@@ -618,6 +632,17 @@ export const handleAdminModelsRefresh = async (
         },
         openlux: { models: openlux?.models.length ?? 0, updated_at_ms: openlux?.updated_at_ms ?? null },
         surplus: { models: surplus?.models.length ?? 0, updated_at_ms: surplus?.updated_at_ms ?? null },
+        lithos: {
+          models: lithos?.models.length ?? 0,
+          updated_at_ms: lithosUpdatedAt,
+          refreshed: lithosUpdatedAt !== (beforeLithos?.updated_at_ms ?? null),
+        },
+        claude_code: {
+          models: claude?.models.length ?? 0,
+          updated_at_ms: claude?.updated_at_ms ?? null,
+          status: claude && !claude.stale ? "available" : "unavailable",
+          stale: claude?.stale ?? false,
+        },
       },
     },
     { "Cache-Control": "no-store" }

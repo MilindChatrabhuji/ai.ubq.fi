@@ -51,16 +51,16 @@ what a DeepSeek response _means_, and do we agree."
 
 ## Summary of deltas
 
-| # | Delta                                                             | Verdict                                          | Client-visible today?                             |
-| - | ----------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------- |
-| 1 | `finish_reason` interpreted by the vendor, discarded by us        | Fix via generalized G1                           | Yes — `length` and `insufficient_system_resource` |
-| 2 | Degenerate completion fails closed in the vendor, succeeds for us | Fix via generalized G3                           | Yes, when reachable                               |
-| 3 | Vendor always sends an output cap; we never do                    | Fix via generalized G5                           | Indirectly — it is why Delta 1 bites              |
-| 4 | `reasoning_content` replay scope differs                          | **Keep ours**; record the empirical boundary     | No — our rule matches all four probe outcomes     |
-| 5 | Vendor sends `thinking.type`, we send `reasoning_effort: none`    | **Keep ours**; re-probe on provider change       | No — measured equivalent                          |
-| 6 | Vendor subtracts cache reads; we relay them                       | **Keep ours**; do not "fix" toward the vendor    | No — different contracts by design                |
-| 7 | Request-shape differences with no behavioral delta                | Record only                                      | No                                                |
-| 8 | Thinking mode rejects `tool_choice` values we forward             | **Fix** — new finding, not in the original scope | Yes — HTTP 400                                    |
+| #   | Delta                                                             | Verdict                                          | Client-visible today?                             |
+| --- | ----------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------- |
+| 1   | `finish_reason` interpreted by the vendor, discarded by us        | Fix via generalized G1                           | Yes — `length` and `insufficient_system_resource` |
+| 2   | Degenerate completion fails closed in the vendor, succeeds for us | Fix via generalized G3                           | Yes, when reachable                               |
+| 3   | Vendor always sends an output cap; we never do                    | Fix via generalized G5                           | Indirectly — it is why Delta 1 bites              |
+| 4   | `reasoning_content` replay scope differs                          | **Keep ours**; record the empirical boundary     | No — our rule matches all four probe outcomes     |
+| 5   | Vendor sends `thinking.type`, we send `reasoning_effort: none`    | **Keep ours**; re-probe on provider change       | No — measured equivalent                          |
+| 6   | Vendor subtracts cache reads; we relay them                       | **Keep ours**; do not "fix" toward the vendor    | No — different contracts by design                |
+| 7   | Request-shape differences with no behavioral delta                | Record only                                      | No                                                |
+| 8   | Thinking mode rejects `tool_choice` values we forward             | **Fix** — new finding, not in the original scope | Yes — HTTP 400                                    |
 
 ## Delta 1 — `finish_reason` is interpreted by the vendor client and discarded by us
 
@@ -462,8 +462,9 @@ expensive to re-derive.
 
 1. Answer Q5 and Q6. Q5 gates the Delta 1 mapping table; Q6 gates whether the original symptom has any
    provider-sanctioned remedy at all.
-2. Adopt generalized G5's observability half so the effective allowance and the provider default are recorded (Delta 3).
-   No behavior change; makes every later measurement attributable.
+2. Adopt generalized G5's observability half so the effective allowance and an explicit provider-default/omitted flag are
+   recorded (Delta 3); keep the provider-default value `null` until an authoritative value exists. No behavior change;
+   makes every later measurement attributable.
 3. Adopt generalized G3 on the DeepSeek responses route, classified as `empty_upstream_completion`, and resolve Q7
    before shipping.
 4. Adopt the Delta 1 `length` mapping via generalized G1, then the unrecognized-reason handling

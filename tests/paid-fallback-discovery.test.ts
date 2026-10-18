@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, test } from "bun:test";
+import { cleanupHarness, resetHarness } from "./helpers/openai-compat-harness.ts";
 // Focused regression for paid-catalog discovery under a switched-off Codex
 // tier: an enabled paid catalog must be discovered before the request can be
 // rejected as provider_disabled, only enabled providers are discovered, and an
@@ -27,17 +29,17 @@ const PAID_URLS: readonly string[] = [SURPLUS_MODELS_URL, SURPLUS_RESPONSES_URL,
 
 /** Keeps only the Surplus credential so its enabled catalog has to be discovered. */
 const withSurplusOnlyCredentials = async <T>(run: () => Promise<T>): Promise<T> => {
-  const previousSurplus = Deno.env.get("SURPLUS_API_KEY");
-  const previousMetered = Deno.env.get("METERED_API_KEY");
-  Deno.env.set("SURPLUS_API_KEY", "surplus-discovery-test-key");
-  Deno.env.delete("METERED_API_KEY");
+  const previousSurplus = process.env.SURPLUS_API_KEY;
+  const previousMetered = process.env.METERED_API_KEY;
+  process.env.SURPLUS_API_KEY = "surplus-discovery-test-key";
+  delete process.env.METERED_API_KEY;
   try {
     return await run();
   } finally {
-    if (previousSurplus === undefined) Deno.env.delete("SURPLUS_API_KEY");
-    else Deno.env.set("SURPLUS_API_KEY", previousSurplus);
-    if (previousMetered === undefined) Deno.env.delete("METERED_API_KEY");
-    else Deno.env.set("METERED_API_KEY", previousMetered);
+    if (previousSurplus === undefined) delete process.env.SURPLUS_API_KEY;
+    else process.env.SURPLUS_API_KEY = previousSurplus;
+    if (previousMetered === undefined) delete process.env.METERED_API_KEY;
+    else process.env.METERED_API_KEY = previousMetered;
   }
 };
 
@@ -57,7 +59,10 @@ const deletePaidKeyRecords = (keyId: string): void => {
   kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
 };
 
-Deno.test("openai: a switched-off Codex tier discovers a cold enabled paid catalog before rejecting provider_disabled", async () => {
+beforeEach(resetHarness);
+afterEach(cleanupHarness);
+
+test("openai: a switched-off Codex tier discovers a cold enabled paid catalog before rejecting provider_disabled", async () => {
   const keyId = "paid-discovery-surplus";
   const requestId = `request-${keyId}`;
   const calls: string[] = [];
@@ -103,7 +108,7 @@ Deno.test("openai: a switched-off Codex tier discovers a cold enabled paid catal
   }
 });
 
-Deno.test("openai: a discovered enabled paid catalog that cannot serve the model still fails closed", async () => {
+test("openai: a discovered enabled paid catalog that cannot serve the model still fails closed", async () => {
   const keyId = "paid-discovery-unroutable";
   const requestId = `request-${keyId}`;
   const calls: string[] = [];
@@ -149,7 +154,7 @@ Deno.test("openai: a discovered enabled paid catalog that cannot serve the model
   }
 });
 
-Deno.test("openai: an enabled Codex tier keeps cached-first paid catalogs", async () => {
+test("openai: an enabled Codex tier keeps cached-first paid catalogs", async () => {
   const calls: string[] = [];
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();

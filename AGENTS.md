@@ -1,5 +1,14 @@
 # Project Guidance
 
+## Runtime and Migration Scope
+
+- Run first-party TypeScript directly with pinned Bun 1.4.0, using root `package.json` dependencies and frozen `bun.lock` installs. Strict no-emit TypeScript checking is a separate required gate; Bun execution alone does not type-check the program. The 2026-10-14 decision in `docs/DECISIONS.md` supersedes Deno-only runtime, dependency-location, and gate commands only for this repository.
+- Preserve the `node:http` transport delivery receipt and the actual pinned `ws@8.18.3` custom-header, payload-limit, and Unix-domain-socket contracts. Use the `#http` WebSocket loader rather than Bun's bare-`ws` substitute. Quota and paid-accounting settlement require the existing semantic terminal and actual delivery outcome, with one admission lifetime and exactly one settlement; durable request writes must drain before telemetry and KV closure.
+- Disable automatic dotenv discovery for isolated checks and runtime launchers. Immutable launchers use `--no-env-file --no-install`, explicitly load only the repository-root `.env`, and refuse missing or corrupt runtime, dependency, or native artifacts. Prepare and bind artifacts before immutable publication; never download, install, or compile at application startup. Auxiliary native guard or KV builds do not compile application TypeScript.
+- Treat legacy Deno V8 and Bun JavaScriptCore storage value codecs as incompatible. Open only a correctly codec-marked Bun database at `.data/kv-bun.sqlite3`; retain the legacy `.data/kv.sqlite3` untouched. Conversion requires a stopped source, consistent backup, explicit new destination, and validation of raw keys, revisions, absolute expiry, and typed values. Returning to Deno after Bun writes requires reverse conversion of the latest stopped Bun state, a verified private rollback receipt, and the supported legacy release/profile; restoring a stale backup loses writes. Never convert a live database during startup or deployment.
+- Pinned Deno is permitted only for the explicit offline legacy V8 codec and reverse-conversion helper, plus the external tool-owned evidence helper. It is not the application runtime or an ordinary build, test, or CI dependency. Preserve real OS read/write/network/process confinement; unsupported platform enforcement must fail closed rather than use a JavaScript permission facade.
+- The Bun migration PR does not authorize production or Mac service activation, live database conversion, credential changes, or provider-credit spend. Retain every credential, routing, accounting, review, ownership, immutable-release, and client-acceptance rule below.
+
 ## Local Credential Recovery Safety
 
 - A request to repair one invalid local provider account does not authorize invalidating, revoking, rotating, or
@@ -36,19 +45,21 @@
 - Mirror Codex CLI wire translation for advanced presets: send `ultra` upstream as `max`. Treat Codex's automatic
   multi-agent delegation for `ultra` as client-side orchestration, not as a distinct upstream reasoning effort.
 - Use this fixed inference waterfall, in cost order: eligible Codex subscription capacity first, Surplus Intelligence
-  second, and OpenLux last. Advance to the next paid tier only after an authoritative quota or capacity signal; do not
-  treat a transient timeout, stalled stream, network or read error, or upstream 5xx as quota exhaustion.
+  second, and OpenLux last. Advance past subscriptions only after authoritative full-pool unavailability as defined
+  below; advance between paid tiers only after authoritative quota or capacity signals. Do not treat a transient
+  timeout, stalled stream, network or read error, or upstream 5xx as quota exhaustion.
 - Route ordinary Codex inference through one durable global active subscription shared by every principal, key, and
   model: bootstrap the first eligible configured account, keep it despite headroom, idle time, restarts, old per-key
   affinities, reorder, or successful same-identity credential refresh, and move it only for authoritative
   model-applicable quota or capacity exhaustion, a classified current-credential invalidity, or removal/replacement of
   the account in the auth pool. Never restore a retired per-key affinity override or a capacity-balancing order, and
-  advance the provider waterfall only after a fresh strong proof that every current pool account is exhausted.
+  advance the provider waterfall only after fresh strong proof that every selected pool account has applicable quota or
+  capacity exhaustion or invalid credentials matching its current credential fingerprint. Keep quota-only proof separate
+  for reset eligibility and redemption; preserve the existing paid limits and provider selection.
 - Production runs on `codex@vps.pavlovcik.com` in `/home/codex/repos/ubiquity/ai.ubq.fi`. Deno Deploy hosting is
   retired; do not deploy this service there.
-- Keep the service configuration in `ops/` and link its systemd files from `/etc/systemd/system/`. Keep secrets in the
-  repository-root `.env`, KV in `.data/kv.sqlite3`, and immutable releases in `.data/releases/<full-git-sha>`.
-- Serialize VPS deployment writers with `.data/deploy.lock`. Run `deno task deploy:vps` from the clean VPS checkout
+- Keep the service configuration in `ops/` and link its systemd files from `/etc/systemd/system/`. Keep secrets in the repository-root `.env`, the marked Bun KV in `.data/kv-bun.sqlite3`, the retained legacy Deno KV in `.data/kv.sqlite3`, and immutable releases in `.data/releases/<full-git-sha>`.
+- Serialize VPS deployment writers with `.data/deploy.lock`. Run `bun run deploy:vps` from the clean VPS checkout
   after required CI passes. The launcher resolves `.data/current` once so live code and assets stay on the selected
   release.
 - A deployment is accepted only when a direct Mac-to-VPS authenticated inference request succeeds and `/health` returns
@@ -76,6 +87,7 @@
 - The owner approved authenticated failure capture/export, bounded upstream replay data, and exact-build receipts on
   2026-09-07 for the standalone Sentinel integration. Keep scheduling and agents standalone; live activation and
   promotion ownership transfer remain separate from this integration.
+- Before production Bun cutover, the standalone Sentinel integration owner must authorize and accept its frozen-source causal reader against the captured Bun source and trusted offline runtime/dependency artifacts, with frozen hashes, no dotenv or automatic installs, equivalent OS isolation, and proven process-execution denial. This migration transfers no Sentinel checkout or caller-write authority. Legacy captures remain bound to their recorded source SHA; source PR or gateway tests do not prove that external reader gate.
 
 ## Rolling Local Code Review Workflow
 
@@ -115,22 +127,32 @@
 
 ## Lint, Format and Type Gates
 
-- Run `sh scripts/verify.sh` (or `deno task verify`) before declaring any change ready. It runs every gate and reports
-  all failures rather than stopping at the first: `deno types`, Prettier, ESLint, knip, the file-size ratchet
-  (`deno task size:check`), `deno fmt --check`, `deno lint`, `deno check` and the full test suite.
-- Prettier owns `*.ts` and `*.mjs` (`printWidth: 160`); `deno fmt` owns JSON, Markdown, CSS, HTML and `static/*.js`.
-  Never let both format a file; `deno.json`'s `fmt.exclude` and `.prettierignore` enforce the split.
-- Run `deno task build` and `deno task test` after any `--fix` run. This lint project's type environment is close to,
-  but not identical with, Deno's checker, so a type-aware autofix can disagree with `deno check`; Deno is the authority.
-- `deno check` and the test suite are the only gates that decide whether a lint fix is correct. Never add
-  `eslint-disable`, `@ts-ignore` or `as any` to silence a finding: if a finding is deliberate-by-design, narrow it in
-  `tools/lint/eslint.config.mjs` with the measurement recorded in a comment, the way the existing DIVERGENCE entries do.
+- Select verification from the changed surface. Before running a gate, list the changed paths and map them to the smallest checks that can detect a regression in that change. Do not run unrelated repository tests merely because they are available.
+- A documentation-only change requires formatting of the changed documents and `git diff --check`. Do not run `verify`, repository-wide ESLint, Knip, TypeScript, native compilation, test profiles, or deployment tests for a documentation-only change.
+- A source change starts with the tests for the changed module, changed-file lint, and typechecking when types or imports changed. Add the file-size ratchet only when a changed source or test file is near a limit. Run the full `bun --no-env-file run verify` aggregate only when the change crosses a shared runtime, schema, migration, release, or deployment boundary that focused checks cannot prove.
+- The repository test entrypoints intentionally enforce dependency scope. A changed TypeScript or JavaScript path runs only test files whose transitive imports reach that path; unrelated tests must not execute. A documentation-only change, or a source change that reaches no test, prints `TEST EXECUTION INTENTIONALLY SKIPPED` and exits `0`. `bun test`, `bun run test`, and `bun run verify` use this selection; use `TEST_SCOPE_FORCE=1` only for an explicitly requested full test run.
+- GitHub Actions consumes the same selector before installing dependencies or compiling native artifacts. Documentation-only changes run only changed-document formatting; source changes run affected tests; native, macOS, and release-artifact jobs run only when the selected paths and tests require them.
+- Platform-specific tests run on the matching platform. A macOS host uses focused local checks and the configured Darwin jobs; it must not run Linux-only fixtures that require `/usr/bin/unshare` or another unavailable platform facility. A failed or skipped incompatible local check is not evidence to rerun the whole suite.
+- Preserve the frozen dependency rule: both root and `tools/lint/bun.lock` must exist before a frozen install, and neither lockfile may be regenerated to make verification pass. Never fall back to another package manager.
+- Prettier owns every supported first-party format through `.prettierrc`, `.prettierignore`, and `scripts/format.sh`: TypeScript and `.mjs` retain 160 columns, supported non-TypeScript formats retain 120, and Markdown preserves paragraph wrapping. Use `bun --no-env-file run format:check`; do not add a Deno formatter fallback or apply a whole-repository autofix.
+- Run `bun --no-env-file run build` and `bun --no-env-file run test` after any `--fix` run. `build` delegates to the strict no-emit `check` task; the explicit TypeScript checker is the type authority, and successful execution or transpilation cannot replace it. Isolated test children disable dotenv and auto-install, retain their original named environment profiles, and run behind the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected.
+- The TypeScript check and test suite decide whether a lint fix is correct. Never add `eslint-disable`, `@ts-ignore` or `as any` to silence a finding: if a finding is deliberate-by-design, narrow it in `tools/lint/eslint.config.mjs` with the measurement recorded in a comment, the way the existing DIVERGENCE entries do.
 - File-size no-growth is enforced by `scripts/file-size-ratchet.ts`: source files cap at 1000 lines and tests at 1500,
   and `file-size-baseline.json` records a per-file ceiling for every grandfathered oversized file. Never raise a
-  recorded ceiling or hand-add an entry; after shrinking a recorded file run `deno task size:update`, which only lowers
+  recorded ceiling or hand-add an entry; after shrinking a recorded file run `bun run size:update`, which only lowers
   or drops ceilings and refuses to record new debt.
-- Do not add a `package.json` dependency to the repository root. Deno resolves its JSR/npm graph from the global cache
-  only while the root manifest declares no dependencies; adding one breaks `deno task build` on a fresh checkout. Put
-  dev tooling in `tools/lint/`. See `tools/lint/README.md` for the measurements.
-- Keep `.deno-types.d.ts` generated rather than committed: `deno task types` writes it, and without it the type-aware
-  rules silently lose findings instead of failing.
+- Declare first-party runtime and development dependencies in the root `package.json` and pin the install graph in `bun.lock`. Preserve the selected dependency versions and repository import/type contracts; a runtime migration is not permission for unrelated upgrades.
+- Use the committed TypeScript configuration with explicit Bun and Node types for the application and typed lint environment. Do not restore a blanket Deno global shim or the retired `.deno-types.d.ts` generation step.
+
+## Codex Orchestration
+
+- Treat each implementation and delivery unit as a versioned work contract. Before editing, state the objective, non-goals, invariants, provider or behavior matrix, owned and prohibited paths, acceptance surface and commands, unknowns, and stop condition. Material requirement changes increment the contract version and mark affected code, tests, and evidence stale before further implementation.
+- Resolve material assumptions before implementation. Provider, catalog, schema, and host semantics must come from a current observation or an explicitly named fallback behavior; do not implement a guess that a later answer may replace. For multi-provider routing, collect the provider matrix once during discovery and derive one implementation strategy before code.
+- For work spanning discovery, implementation, verification, and deployment, separate controller, research, implementation, verification, and delivery responsibilities when delegation is enabled and authorized. Discovery returns a compact matrix; one worker owns writes; verification returns exact gates and evidence; delivery returns health and inference receipts. The controller integrates summaries, paths, hashes, and receipts rather than replaying raw logs.
+- Define a long operation's result, expected runtime, observable progress, recovery action, and call and output budget before starting it. Batch independent reads and commands, request only the output needed, and stop a phase with a compact checkpoint when it exceeds its expected time or produces no new evidence.
+- Do not re-enter the model only to ask whether external work has finished. Use one persistent execution handle or delivery watcher, emit state changes only, and return once with the terminal result. A poll is justified only by changed external state or a confirmed-live handle.
+- Make delivery a bounded pipeline after an authorized push: identify the exact CI run for the pushed SHA, wait for terminal success, run Mac and VPS deployment concurrently because their hosts and deployment locks are independent, then collect both health and authenticated inference receipts before acceptance. A failed CI run stops deployment, and every claim remains bound to the exact green SHA.
+- Preserve the rule that CI contains no automatic deployment. A local delivery watcher may wait for CI and then invoke the separately authorized deployment commands; it must not add a hosted automatic deployment trigger.
+- Bind pre-push evidence to the exact commit tree. After all writers stop, run the change-scoped gates selected by the rule above once on the final tree and record the full commit SHA, tree hash, commands, and results. Any subsequent source edit invalidates that receipt. Do not expand to `bun --no-env-file run verify` by default.
+- Run `bun --no-env-file run size:check` immediately after a large source edit as an early signal. It does not by itself require the full `verify` aggregate.
+- Before declaring readiness, reconcile the contract version, changed paths, exact commit and tree, CI run, deployment identities, and live acceptance evidence. Reject stale or partially matching receipts.

@@ -1,3 +1,4 @@
+import type { Kv } from "#kv";
 import { fetchCodexModels, loadFullCodexModelsSnapshot } from "../codex/index.ts";
 import { type CodexModelsWhitelist, filterWhitelistedCatalogModels, loadCodexModelsWhitelist } from "../models/codex-models-whitelist.ts";
 import { parseCodexClientVersion } from "../models/codex-models.ts";
@@ -10,6 +11,7 @@ import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "../provider/met
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "../sentinel/incident-outbox.ts";
 import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "../provider/surplus.ts";
+import { fetchClaudeCodeModels } from "../provider/claude-code-models.ts";
 
 import { warmOpenRouterModels } from "../models/openrouter-models.ts";
 import { isProviderEnabled, loadProviderSelectionCached, type ProviderSelection } from "../provider/selection.ts";
@@ -31,6 +33,7 @@ import {
 } from "./store.ts";
 import {
   catalogModelIds,
+  claudeCodeCodexModels,
   cerebrasCodexModels,
   codexSnapshotRecords,
   deepSeekOfficialCodexModels,
@@ -41,6 +44,7 @@ import {
   openRouterCodexModels,
   uniqueResponsesModels,
   withCerebrasModels,
+  withClaudeCodeModels,
   withDeepSeekOfficialModels,
   withDeepSeekWaterfallModel,
   withLithosModels,
@@ -48,6 +52,8 @@ import {
 } from "./models.ts";
 
 const catalogBodyEtag = async (body: string): Promise<string> => `"uos-catalog-${(await sha256Hex(body)).slice(0, 32)}"`;
+const enabledClaudeCatalog = (selection: ProviderSelection | null) =>
+  isProviderEnabled("claude_code", selection) ? fetchClaudeCodeModels() : Promise.resolve(null);
 
 /** Answer with the stored catalog alone, honoring the request's conditional headers. */
 const catalogOnlyResponse = async (catalog: LoadedCodexCatalog, req: Request, headers: Headers): Promise<Response> => {
@@ -126,7 +132,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   // read stays one statement and keeps this handler's measured complexity at
   // the level it had before the whitelist correction.
   const catalogWhitelist = await loadCodexModelsWhitelist(await getKv());
-  const [metered, surplus] = await enabledPaidCatalogSources(selection);
+  const [[metered, surplus], claude] = await Promise.all([enabledPaidCatalogSources(selection), enabledClaudeCatalog(selection)]);
   const nowMs = Date.now();
   if (metered) refreshExpiredModelList(nowMs, metered.updated_at_ms, METERED_MODELS_CACHE_TTL_MS, fetchMeteredModels);
   if (surplus) refreshExpiredModelList(nowMs, surplus.updated_at_ms, SURPLUS_MODELS_CACHE_TTL_MS, fetchSurplusModels);
@@ -140,6 +146,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   if (
     !catalogWhitelistIsActive(catalogWhitelist) &&
     !paidModels.length &&
+    !claude?.models.length &&
     !deepSeekEnabled &&
     !deepSeekWaterfallEnabled &&
     !lithosEnabled &&
@@ -159,6 +166,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     parsed.models.push(meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null));
     seen.add(model.id);
   }
+  parsed.models = withClaudeCodeModels(parsed.models, claude?.models ?? []);
   // The official ids are appended first so an operator whitelist still has the
   // final say over every advertised model, this route included.
   parsed.models = deepSeekEnabled ? withDeepSeekOfficialModels(parsed.models) : parsed.models;
@@ -176,27 +184,38 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
 };
 
 const meteredCatalogResponse = async (selection: ProviderSelection | null): Promise<Response | null> => {
-  const [metered, surplus] = await enabledPaidCatalogSources(selection, { force: true });
+  warmOpenRouterModels();
+  const [[metered, surplus], claude] = await Promise.all([enabledPaidCatalogSources(selection, { force: true }), enabledClaudeCatalog(selection)]);
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
-  const openRouterModels = isProviderEnabled("openrouter", selection) ? openRouterCodexModels() : [];
+  const deepSeekEnabled = isProviderEnabled("deepseek", selection);
+  const lithosEnabled = isProviderEnabled("lithos", selection);
+  const cerebrasEnabled = isProviderEnabled("cerebras", selection);
+  const openRouterEnabled = isProviderEnabled("openrouter", selection);
+  const openRouterConfigured = openRouterEnabled && readOpenRouterApiKey() !== null;
+  const deepSeekWaterfallEnabled = deepSeekWaterfallCatalogEnabled(selection);
+  const openRouterModels = openRouterConfigured ? openRouterCodexModels() : [];
   const configured = [
-    ...(deepSeekWaterfallCatalogEnabled(selection) ? withDeepSeekWaterfallModel([]) : []),
-    ...(isProviderEnabled("deepseek", selection) ? deepSeekOfficialCodexModels() : []),
-    ...(isProviderEnabled("lithos", selection) ? lithosCodexModels() : []),
-    ...(isProviderEnabled("cerebras", selection) ? cerebrasCodexModels() : []),
+    ...claudeCodeCodexModels(claude?.models ?? []),
+    ...(deepSeekWaterfallEnabled ? withDeepSeekWaterfallModel([]) : []),
+    ...(deepSeekEnabled ? deepSeekOfficialCodexModels() : []),
+    ...(lithosEnabled ? lithosCodexModels() : []),
+    ...(cerebrasEnabled ? cerebrasCodexModels() : []),
     ...openRouterModels,
   ];
   if (!paidModels.length && !configured.length) return null;
   // This path answers without a stored catalog, so the Codex snapshot is the only
   // place a Codex-served id's real window can come from.
   const codexRecords = codexSnapshotRecords(await loadFullCodexModelsSnapshot());
-  const rows = withOpenRouterModels(
-    withCerebrasModels(
-      withLithosModels(
-        withDeepSeekWaterfallModel(withDeepSeekOfficialModels(paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null))))
-      )
-    )
-  );
+  let rows: Record<string, unknown>[] = [
+    ...claudeCodeCodexModels(claude?.models ?? []),
+    ...paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null)),
+  ];
+  if (deepSeekEnabled) rows = withDeepSeekOfficialModels(rows);
+  if (deepSeekWaterfallEnabled) rows = withDeepSeekWaterfallModel(rows);
+  if (lithosEnabled) rows = withLithosModels(rows);
+  if (cerebrasEnabled) rows = withCerebrasModels(rows);
+  if (openRouterEnabled) rows = withOpenRouterModels(rows);
+  rows = rows.filter((model, index, models) => models.findIndex((candidate) => candidate.slug === model.slug) === index);
   // Without a stored body this route still answers the versioned catalog a
   // Codex client selects from, so the operator whitelist narrows it here too.
   const kv = await getKv();
@@ -231,7 +250,7 @@ const recordCatalogDegradation = async (version: string, dependencies: CodexCata
 
 /** State shared by the helpers of one lease-holding catalog refresh. */
 type CodexCatalogRefreshContext = Readonly<{
-  kv: Deno.Kv;
+  kv: Kv;
   req: Request;
   version: string;
   authGeneration: string;
@@ -258,7 +277,7 @@ const meteredCatalogOrError = async (message: string): Promise<Response> =>
   (await meteredCatalogResponse(await loadProviderSelectionCached())) ?? openaiError(502, message, "codex_catalog_unavailable");
 
 /** Serve the catalog of the current authentication generation after a rotation. */
-const rotatedCatalogResponse = async (kv: Deno.Kv, req: Request, version: string): Promise<Response> => {
+const rotatedCatalogResponse = async (kv: Kv, req: Request, version: string): Promise<Response> => {
   const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
   if (replacement) return catalogResponse(replacement, req, "rotated");
   return openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
@@ -285,15 +304,21 @@ const readUpstreamCatalogBody = async (upstream: Response, version: string): Pro
   return { body, readFailed };
 };
 
-/** Re-store the catalog the upstream confirmed with a 304, or fall back to a replacement. */
+/** Revalidate the upstream body without treating the previously enriched body as its declaration. */
 const revalidateCachedCatalog = async (context: CodexCatalogRefreshContext, cached: LoadedCodexCatalog): Promise<Response> => {
   if (context.leaseLost() || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
     return rotatedCatalogResponse(context.kv, context.req, context.version);
   }
+  // A legacy cache has no trustworthy endpoint declaration to re-enrich. Do
+  // not renew its already-enriched bytes on a 304; the next refresh is
+  // deliberately unconditional and must obtain the source body.
+  if (cached.source_body === undefined) {
+    return staleOrRotatedOrUnavailable(context, "Codex catalog source body is unavailable for revalidation");
+  }
   const revalidated = await storeCodexCatalog(context.kv, {
     clientVersion: context.version,
     authGeneration: context.authGeneration,
-    body: cached.body,
+    body: cached.source_body,
     etag: cached.metadata.etag,
     contentType: cached.metadata.content_type,
     fetchedAtMs: context.nowMs,
@@ -334,7 +359,9 @@ const storeRefreshedCatalog = async (context: CodexCatalogRefreshContext, payloa
 const refreshCodexCatalog = async (context: CodexCatalogRefreshContext): Promise<Response> => {
   const upstream = await fetchCodexModels({
     clientVersion: context.version,
-    ifNoneMatch: context.cached?.metadata.etag ?? null,
+    // Caches written before source-body retention cannot safely be re-enriched
+    // from their served bytes, so make their first refresh fetch the body again.
+    ifNoneMatch: context.cached?.source_body === undefined ? null : context.cached.metadata.etag,
     onProviderTransportFailure: () => {
       context.observeProviderDegradation();
     },

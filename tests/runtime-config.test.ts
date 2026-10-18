@@ -1,3 +1,5 @@
+import type { Kv, KvKey } from "#kv";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { CodexModelsSnapshot } from "../src/models/codex-models.ts";
 import { loadFullCodexModelsSnapshot } from "../src/codex/index.ts";
@@ -5,7 +7,7 @@ import { buildRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_MAX_BYTES, R
 
 const jsonBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length;
 
-Deno.test("runtime config compacts a near-limit full catalog into one 4 KiB read unit", () => {
+test("runtime config compacts a near-limit full catalog into one 4 KiB read unit", () => {
   const fullSnapshot: CodexModelsSnapshot = {
     models: [
       {
@@ -47,7 +49,7 @@ Deno.test("runtime config compacts a near-limit full catalog into one 4 KiB read
   assert.deepEqual(normalizeRuntimeConfig(runtime), runtime);
 });
 
-Deno.test("runtime config rejects an extreme model inventory instead of crossing one read unit", () => {
+test("runtime config rejects an extreme model inventory instead of crossing one read unit", () => {
   const fullSnapshot: CodexModelsSnapshot = {
     models: Array.from({ length: 200 }, (_, index) => ({
       slug: `gpt-runtime-model-${String(index).padStart(3, "0")}`,
@@ -65,7 +67,7 @@ Deno.test("runtime config rejects an extreme model inventory instead of crossing
   );
 });
 
-Deno.test("runtime config keeps prompt-cache controls compact and excludes probe scope evidence", () => {
+test("runtime config keeps prompt-cache controls compact and excludes probe scope evidence", () => {
   const promptCache = {
     version: 1,
     providers: [
@@ -119,7 +121,7 @@ Deno.test("runtime config keeps prompt-cache controls compact and excludes probe
   assert.deepEqual(normalizeRuntimeConfig(runtime), runtime);
 });
 
-Deno.test("full Codex model loader preserves catalog fields outside the inference runtime record", async () => {
+test("full Codex model loader preserves catalog fields outside the inference runtime record", async () => {
   const fullSnapshot: CodexModelsSnapshot = {
     models: [
       {
@@ -134,8 +136,8 @@ Deno.test("full Codex model loader preserves catalog fields outside the inferenc
     updated_at_ms: 1_000_000,
   };
   const kv = {
-    get: (key: Deno.KvKey) => Promise.resolve({ key, value: fullSnapshot, versionstamp: "00000000000000000001" }),
-  } as unknown as Deno.Kv;
+    get: (key: KvKey) => Promise.resolve({ key, value: fullSnapshot, versionstamp: "00000000000000000001" }),
+  } as unknown as Kv;
 
   assert.deepEqual(await loadFullCodexModelsSnapshot(kv), fullSnapshot);
   const runtime = buildRuntimeConfig(fullSnapshot, { nowMs: 1_000_001 });

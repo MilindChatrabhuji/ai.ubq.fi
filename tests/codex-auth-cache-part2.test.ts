@@ -1,11 +1,17 @@
+import { createFetchMock } from "./helpers/fetch-mock.ts";
+import { test, beforeEach, afterEach } from "bun:test";
+import { type Kv } from "#kv";
+import { runSequence } from "./helpers/sequence.ts";
 // codex-auth-cache suite, part 2 of 4: tests moved out of tests/codex-auth-cache.test.ts.
 
 import assert from "node:assert/strict";
 import {
+  installHarness,
+  cleanupHarness,
   AUTH_KEY,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
-  CodexBankedResetConfig,
+  type CodexBankedResetConfig,
   CodexError,
   abortReasonError,
   accessToken,
@@ -36,7 +42,7 @@ import {
   staleAuth,
 } from "./helpers/codex-auth-cache-harness.ts";
 
-Deno.test("a malformed successful refresh is transient and does not quarantine the credential", async () => {
+test("a malformed successful refresh is transient and does not quarantine the credential", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -47,7 +53,7 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
   kv.auth = pool(auth("one"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
@@ -68,7 +74,7 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
     }
     inferenceCalls += 1;
     return Promise.resolve(new Response("{}", { status: inferenceCalls <= 2 ? 401 : 200 }));
-  };
+  });
 
   try {
     await assert.rejects(
@@ -87,92 +93,93 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
   }
 });
 
-Deno.test("direct failures release quota probes and timeouts do not gate the next request", async (t) => {
-  const originalFetch = globalThis.fetch;
-  const originalNow = Date.now;
-  const originalDeployFlag = config.isDeploy;
-  let now = fixedStartMs;
-  Date.now = () => now;
-  (config as { isDeploy: boolean }).isDeploy = true;
-  try {
-    for (const testCase of [
-      { name: "403", status: 403 },
-      { name: "invalid 400", status: 400 },
-      { name: "500", status: 500 },
-      { name: "network", status: null },
-      { name: "timeout", status: null, timeout: true },
-    ] as const) {
-      await t.step(testCase.name, async () => {
-        now = fixedStartMs;
-        kv.auth = pool(auth("one"));
-        kv.extra.clear();
-        resetCodexAuthCacheForTest();
-        const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
-        assert.equal(initial.kind, "eligible");
+test("direct failures release quota probes and timeouts do not gate the next request", () =>
+  runSequence(async (step) => {
+    const originalFetch = globalThis.fetch;
+    const originalNow = Date.now;
+    const originalDeployFlag = config.isDeploy;
+    let now = fixedStartMs;
+    Date.now = () => now;
+    (config as { isDeploy: boolean }).isDeploy = true;
+    try {
+      for (const testCase of [
+        { name: "403", status: 403 },
+        { name: "invalid 400", status: 400 },
+        { name: "500", status: 500 },
+        { name: "network", status: null },
+        { name: "timeout", status: null, timeout: true },
+      ] as const) {
+        await step(testCase.name, async () => {
+          now = fixedStartMs;
+          kv.auth = pool(auth("one"));
+          kv.extra.clear();
+          resetCodexAuthCacheForTest();
+          const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
+          assert.equal(initial.kind, "eligible");
 
-        await markCodexQuotaBlocked(
-          initial.accounts[0],
-          new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json", "Retry-After": "1" },
-          }),
-          now
-        );
+          await markCodexQuotaBlocked(
+            initial.accounts[0],
+            new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+              status: 429,
+              headers: { "Content-Type": "application/json", "Retry-After": "1" },
+            }),
+            now
+          );
 
-        now += 1_001;
-        let codexCalls = 0;
-        let timeoutController: AbortController | null = null;
-        globalThis.fetch = (_input, init) => {
-          codexCalls += 1;
-          if (codexCalls > 1) return Promise.resolve(new Response("{}", { status: 200 }));
+          now += 1_001;
+          let codexCalls = 0;
+          let timeoutController: AbortController | null = null;
+          globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            codexCalls += 1;
+            if (codexCalls > 1) return Promise.resolve(new Response("{}", { status: 200 }));
+            if (testCase.timeout) {
+              const reason = new DOMException("timed out", "TimeoutError");
+              timeoutController?.abort(reason);
+              return Promise.reject(abortReasonError(init?.signal?.reason ?? reason));
+            }
+            if (testCase.status === null) return Promise.reject(new TypeError("network fixture"));
+            return Promise.resolve(new Response("{}", { status: testCase.status }));
+          });
+
           if (testCase.timeout) {
-            const reason = new DOMException("timed out", "TimeoutError");
-            timeoutController?.abort(reason);
-            return Promise.reject(abortReasonError(init?.signal?.reason ?? reason));
+            const abortController = new AbortController();
+            timeoutController = abortController;
+            await assert.rejects(
+              () => fetchCodexResponses({ input: testCase.name }, { signal: abortController.signal }),
+              (error: unknown) => error instanceof Error && "status" in error && error.status === 504
+            );
+          } else if (testCase.status === null) {
+            await assert.rejects(
+              () => fetchCodexResponses({ input: testCase.name }),
+              (error: unknown) => error instanceof Error && "status" in error && error.status === 502
+            );
+          } else {
+            const direct = await fetchCodexResponses({ input: testCase.name });
+            assert.equal(direct.status, testCase.status);
           }
-          if (testCase.status === null) return Promise.reject(new TypeError("network fixture"));
-          return Promise.resolve(new Response("{}", { status: testCase.status }));
-        };
 
-        if (testCase.timeout) {
-          const abortController = new AbortController();
-          timeoutController = abortController;
-          await assert.rejects(
-            () => fetchCodexResponses({ input: testCase.name }, { signal: abortController.signal }),
-            (error: unknown) => error instanceof Error && "status" in error && error.status === 504
-          );
-        } else if (testCase.status === null) {
-          await assert.rejects(
-            () => fetchCodexResponses({ input: testCase.name }),
-            (error: unknown) => error instanceof Error && "status" in error && error.status === 502
-          );
-        } else {
-          const direct = await fetchCodexResponses({ input: testCase.name });
-          assert.equal(direct.status, testCase.status);
-        }
-
-        const second = await fetchCodexResponses({ input: `${testCase.name}-second` });
-        if (testCase.timeout) {
-          // An in-flight timeout keeps the active account and its half-open
-          // lease: the next admission is retryable and never dispatches a
-          // speculative sibling or a paid provider.
-          assert.equal(second.status, 503);
-          assert.equal(codexCalls, 1);
-        } else {
-          assert.equal(second.status, 200);
-          assert.equal(codexCalls, 2);
-        }
-      });
+          const second = await fetchCodexResponses({ input: `${testCase.name}-second` });
+          if (testCase.timeout) {
+            // An in-flight timeout keeps the active account and its half-open
+            // lease: the next admission is retryable and never dispatches a
+            // speculative sibling or a paid provider.
+            assert.equal(second.status, 503);
+            assert.equal(codexCalls, 1);
+          } else {
+            assert.equal(second.status, 200);
+            assert.equal(codexCalls, 2);
+          }
+        });
+      }
+    } finally {
+      resetCodexAuthCacheForTest();
+      globalThis.fetch = originalFetch;
+      Date.now = originalNow;
+      (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
     }
-  } finally {
-    resetCodexAuthCacheForTest();
-    globalThis.fetch = originalFetch;
-    Date.now = originalNow;
-    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
-  }
-});
+  }));
 
-Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
+test("cache-scope dispatch timeouts remain request-scoped", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -185,11 +192,11 @@ Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   const session = await beginCodexCacheScopeExperiment();
-  globalThis.fetch = (_input, init) => {
+  globalThis.fetch = createFetchMock((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     inferenceCalls += 1;
     controller.abort(new DOMException("cache-scope timeout", "TimeoutError"));
     return Promise.reject(abortReasonError(init?.signal?.reason ?? controller.signal.reason));
-  };
+  });
 
   try {
     await assert.rejects(
@@ -220,7 +227,7 @@ Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
   }
 });
 
-Deno.test("a legacy timeout probe cannot block provider transport", async () => {
+test("a legacy timeout probe cannot block provider transport", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -235,10 +242,10 @@ Deno.test("a legacy timeout probe cannot block provider transport", async () => 
   assert.equal(initial.kind, "eligible");
 
   await markCodexUpstreamTimeout(initial.accounts[0], fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(new Response("transport proceeds", { status: 200 }));
-  };
+  });
 
   try {
     // The normalized read discards the legacy timeout circuit, so transport
@@ -270,7 +277,7 @@ Deno.test("a legacy timeout probe cannot block provider transport", async () => 
   }
 });
 
-Deno.test("a bounded retry that proves quota keeps its quota retry classification", async () => {
+test("a bounded retry that proves quota keeps its quota retry classification", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -286,7 +293,7 @@ Deno.test("a bounded retry that proves quota keeps its quota retry classificatio
   assert.equal(initial.kind, "eligible");
 
   await markCodexUpstreamTimeout(initial.accounts[0], fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
-  globalThis.fetch = async () => {
+  globalThis.fetch = createFetchMock(async () => {
     inferenceCalls += 1;
     if (inferenceCalls === 1) {
       return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -302,7 +309,7 @@ Deno.test("a bounded retry that proves quota keeps its quota retry classificatio
       });
     }
     return new Response("unexpected extra transport", { status: 200 });
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "timeout-probe-quota-retry" }, { retrySleep: () => Promise.resolve() });
@@ -321,7 +328,7 @@ Deno.test("a bounded retry that proves quota keeps its quota retry classificatio
   }
 });
 
-Deno.test("a timeout during bounded retry refresh preserves only the quota fence", async () => {
+test("a timeout during bounded retry refresh preserves only the quota fence", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -334,7 +341,7 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
@@ -357,7 +364,7 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
     if (inferenceCalls === 2) return Promise.resolve(new Response("{}", { status: 401 }));
     controller.abort(new DOMException("bounded retry timeout", "TimeoutError"));
     return Promise.reject(abortReasonError(init?.signal?.reason ?? controller.signal.reason));
-  };
+  });
 
   try {
     await assert.rejects(
@@ -385,7 +392,7 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
   }
 });
 
-Deno.test("an already-aborted timeout signal does not open or dispatch an account circuit", async () => {
+test("an already-aborted timeout signal does not open or dispatch an account circuit", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -398,10 +405,10 @@ Deno.test("an already-aborted timeout signal does not open or dispatch an accoun
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   controller.abort(new DOMException("deadline elapsed before dispatch", "TimeoutError"));
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.reject(new DOMException("transport should not start", "TimeoutError"));
-  };
+  });
 
   try {
     await assert.rejects(
@@ -421,7 +428,7 @@ Deno.test("an already-aborted timeout signal does not open or dispatch an accoun
   }
 });
 
-Deno.test("a 429 retry that proves invalid credentials remains quarantined", async () => {
+test("a 429 retry that proves invalid credentials remains quarantined", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -445,7 +452,7 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
     now
   );
   now += 1_001;
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
@@ -461,7 +468,7 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
       );
     }
     return Promise.resolve(new Response("{}", { status: 401 }));
-  };
+  });
 
   try {
     const first = await fetchCodexResponses({ input: "retry-invalid" }, { retrySleep: () => Promise.resolve() });
@@ -478,7 +485,7 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
   }
 });
 
-Deno.test("a 401 after proactive refresh does not refresh the same account twice", async () => {
+test("a 401 after proactive refresh does not refresh the same account twice", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -489,7 +496,7 @@ Deno.test("a 401 after proactive refresh does not refresh the same account twice
   kv.auth = pool(staleAuth("one"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0]) => {
     const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
@@ -505,7 +512,7 @@ Deno.test("a 401 after proactive refresh does not refresh the same account twice
     }
     inferenceCalls += 1;
     return Promise.resolve(new Response("{}", { status: 401 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "one-refresh-only" });
@@ -520,7 +527,7 @@ Deno.test("a 401 after proactive refresh does not refresh the same account twice
   }
 });
 
-Deno.test("every admission strongly reads the current durable credentials", async () => {
+test("every admission strongly reads the current durable credentials", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -528,12 +535,12 @@ Deno.test("every admission strongly reads the current durable credentials", asyn
   const accountIds: string[] = [];
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     authorizations.push(request.headers.get("authorization") ?? "");
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     kv.auth = pool(auth("old"));
@@ -571,7 +578,7 @@ Deno.test("every admission strongly reads the current durable credentials", asyn
   }
 });
 
-Deno.test("a valid persisted Codex pool is not overlaid by a local configured seed", async () => {
+test("a valid persisted Codex pool is not overlaid by a local configured seed", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -594,11 +601,11 @@ Deno.test("a valid persisted Codex pool is not overlaid by a local configured se
   kv.extra.clear();
   const versionBefore = kv.authVersion;
   resetCodexAuthCacheForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     authorizations.push(request.headers.get("authorization") ?? "");
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses({ input: "persisted-authority" });
@@ -615,7 +622,7 @@ Deno.test("a valid persisted Codex pool is not overlaid by a local configured se
   }
 });
 
-Deno.test("banked reset exhausts normal routing, verifies, and retries the redeemed account once", async () => {
+test("banked reset exhausts normal routing, verifies, and retries the redeemed account once", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -627,7 +634,7 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length === 1) {
@@ -639,7 +646,7 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -649,7 +656,7 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-happy",
         },
@@ -668,7 +675,7 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
   }
 });
 
-Deno.test("a partially blocked cohort is served by ordinary capacity with no reset-provider contact", async () => {
+test("a partially blocked cohort is served by ordinary capacity with no reset-provider contact", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -681,7 +688,7 @@ Deno.test("a partially blocked cohort is served by ordinary capacity with no res
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = createFetchMock(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     requests.push({
       url: request.url,
@@ -718,7 +725,7 @@ Deno.test("a partially blocked cohort is served by ordinary capacity with no res
       return Response.json({ code: "reset", windows_reset: 1 });
     }
     throw new Error(`unexpected request ${request.method} ${request.url}`);
-  };
+  });
 
   try {
     const seeded = await fetchCodexResponses({ input: "seed-partial-block" }, bankedResetRequestOptions("seed-partial-block"));
@@ -751,7 +758,7 @@ Deno.test("a partially blocked cohort is served by ordinary capacity with no res
   }
 });
 
-Deno.test("persistent live never arms a partially blocked cohort while ordinary capacity serves", async () => {
+test("persistent live never arms a partially blocked cohort while ordinary capacity serves", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -767,7 +774,7 @@ Deno.test("persistent live never arms a partially blocked cohort while ordinary 
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   await seedStableBankedResetBlock();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     if (request.url.endsWith("/backend-api/codex/responses")) {
@@ -788,7 +795,7 @@ Deno.test("persistent live never arms a partially blocked cohort while ordinary 
       return Promise.resolve(Response.json({ code: "reset", windows_reset: 1 }));
     }
     throw new Error(`unexpected request ${request.method} ${request.url}`);
-  };
+  });
 
   try {
     const first = await fetchCodexResponses({ input: "persistent-live-partial-arm" }, bankedResetRequestOptions("persistent-live-partial-arm"));
@@ -811,7 +818,7 @@ Deno.test("persistent live never arms a partially blocked cohort while ordinary 
   }
 });
 
-Deno.test("persistent live auto-arms an all-blocked cohort before one later consume and reset retry", async () => {
+test("persistent live auto-arms an all-blocked cohort before one later consume and reset retry", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -832,7 +839,7 @@ Deno.test("persistent live auto-arms an all-blocked cohort before one later cons
   resetCodexAccountRoutingForTest();
   await seedStableBankedResetBlock("account-one");
   await seedStableBankedResetBlock("account-two");
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = createFetchMock(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     const accountId = request.headers.get("chatgpt-account-id") ?? "";
     if (request.url.endsWith("/backend-api/codex/responses")) {
@@ -859,14 +866,14 @@ Deno.test("persistent live auto-arms an all-blocked cohort before one later cons
       return Response.json({ code: "reset", windows_reset: 1 });
     }
     throw new Error(`unexpected request ${request.method} ${request.url}`);
-  };
+  });
 
   const options = (requestId: string) => ({
     clientVersion: "0.145.0",
     requestId,
     bankedReset: {
       config: persistentLiveConfig,
-      kv: kv as unknown as Deno.Kv,
+      kv: kv as unknown as Kv,
       now: () => fixedStartMs,
       newOwnerToken: () => `owner-${requestId}`,
     },
@@ -903,7 +910,7 @@ Deno.test("persistent live auto-arms an all-blocked cohort before one later cons
   }
 });
 
-Deno.test("post-reset response probes retain their tombstone until an explicit completed outcome", async () => {
+test("post-reset response probes retain their tombstone until an explicit completed outcome", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -929,7 +936,7 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
     kv.extra.clear();
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
-    globalThis.fetch = () => {
+    globalThis.fetch = createFetchMock(() => {
       inferenceCalls += 1;
       return Promise.resolve(
         inferenceCalls === 1
@@ -937,16 +944,19 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
               status: 429,
               headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
             })
-          : new Response('data: {"type":"response.completed","response":{"output":[]}}\n\n', { status: 200, headers: { "Content-Type": "text/event-stream" } })
+          : new Response('data: {"type":"response.completed","response":{"output":[]}}\n\n', {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            })
       );
-    };
+    });
     const response = await fetchCodexResponses(
       { input: `post-reset-probe-${owner}` },
       {
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => owner,
         },
@@ -1012,7 +1022,7 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
   }
 });
 
-Deno.test("simultaneous gateway requests share one durable banked-reset submission", async () => {
+test("simultaneous gateway requests share one durable banked-reset submission", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1035,7 +1045,7 @@ Deno.test("simultaneous gateway requests share one durable banked-reset submissi
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     if (inferenceCalls === 1) {
       return Promise.resolve(
@@ -1046,12 +1056,12 @@ Deno.test("simultaneous gateway requests share one durable banked-reset submissi
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-concurrent-reset" }), { status: 200 }));
-  };
+  });
 
   const bankedReset = {
     config: liveBankedResetConfig(),
     provider: reset.provider,
-    kv: kv as unknown as Deno.Kv,
+    kv: kv as unknown as Kv,
     now: () => fixedStartMs,
     newOwnerToken: () => "owner-concurrent-gateway-reset",
   };
@@ -1084,7 +1094,7 @@ Deno.test("simultaneous gateway requests share one durable banked-reset submissi
   }
 });
 
-Deno.test("an already-redeemed reset is independently verified before one same-account retry", async () => {
+test("an already-redeemed reset is independently verified before one same-account retry", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1096,7 +1106,7 @@ Deno.test("an already-redeemed reset is independently verified before one same-a
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = createFetchMock((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
     if (accountIds.length === 1) {
@@ -1108,7 +1118,7 @@ Deno.test("an already-redeemed reset is independently verified before one same-a
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-already-redeemed" }), { status: 200 }));
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -1118,7 +1128,7 @@ Deno.test("an already-redeemed reset is independently verified before one same-a
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-already-redeemed",
         },
@@ -1137,7 +1147,7 @@ Deno.test("an already-redeemed reset is independently verified before one same-a
   }
 });
 
-Deno.test("an auth rotation after verification fences off the post-reset retry", async () => {
+test("an auth rotation after verification fences off the post-reset retry", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1158,7 +1168,7 @@ Deno.test("an auth rotation after verification fences off the post-reset retry",
       kv.authVersion += 1;
     },
   });
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -1166,7 +1176,7 @@ Deno.test("an auth rotation after verification fences off the post-reset retry",
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -1175,7 +1185,7 @@ Deno.test("an auth rotation after verification fences off the post-reset retry",
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-auth-rotation",
         },
@@ -1193,7 +1203,7 @@ Deno.test("an auth rotation after verification fences off the post-reset retry",
   }
 });
 
-Deno.test("an auth rotation inside the final dispatch hook fences off a post-reset retry", async () => {
+test("an auth rotation inside the final dispatch hook fences off a post-reset retry", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1208,7 +1218,7 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   const reset = scriptedResetProvider();
-  globalThis.fetch = () => {
+  globalThis.fetch = createFetchMock(() => {
     inferenceCalls += 1;
     return Promise.resolve(
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -1216,7 +1226,7 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
       })
     );
-  };
+  });
 
   try {
     const response = await fetchCodexResponses(
@@ -1248,7 +1258,7 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
         bankedReset: {
           config: liveBankedResetConfig(),
           provider: reset.provider,
-          kv: kv as unknown as Deno.Kv,
+          kv: kv as unknown as Kv,
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-dispatch-race",
         },
@@ -1268,3 +1278,6 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
   }
 });
+
+beforeEach(installHarness);
+afterEach(cleanupHarness);

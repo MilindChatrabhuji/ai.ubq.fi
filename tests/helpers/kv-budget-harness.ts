@@ -1,3 +1,6 @@
+import { setKvForTest } from "../../src/kv.ts";
+import { KvU64 } from "#kv";
+import type { AtomicOperation, Kv, KvCommitResult, KvEntry, KvEntryMaybe, KvKey, KvListIterator, KvListSelector } from "#kv";
 // Shared harness for this suite, moved out of the original test file.
 
 import assert from "node:assert/strict";
@@ -6,17 +9,9 @@ import assert from "node:assert/strict";
 // hooks must not run in the background while it measures them.
 const { setProviderCapacitySampleTriggerForTest } = await import("../../src/provider/capacity-events.ts");
 const { setPaidFallbackTerminalSweepForTest } = await import("../../src/paid-fallback/index.ts");
-setProviderCapacitySampleTriggerForTest(() => {});
-setPaidFallbackTerminalSweepForTest(() => {});
 import { sha256Base64Url } from "../../src/utils.ts";
 
-if (typeof Deno.KvU64 !== "function") {
-  (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
-    constructor(readonly value: bigint) {}
-  } as typeof Deno.KvU64;
-}
-
-const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const encodeKey = (key: KvKey): string => JSON.stringify(key);
 const textEncoder = new TextEncoder();
 
 const kvFingerprint = (value: unknown): string => JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? `${item}n` : item));
@@ -41,8 +36,7 @@ const toPublicKeyPem = (spki: Uint8Array): string => {
   return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
 };
 
-type CountingKvMutation =
-  { kind: "set"; key: Deno.KvKey; value: unknown } | { kind: "delete"; key: Deno.KvKey } | { kind: "sum"; key: Deno.KvKey; value: bigint };
+type CountingKvMutation = { kind: "set"; key: KvKey; value: unknown } | { kind: "delete"; key: KvKey } | { kind: "sum"; key: KvKey; value: bigint };
 
 const isSumMutation = (mutation: CountingKvMutation): boolean => mutation.kind === "sum";
 
@@ -96,10 +90,10 @@ class CountingKv {
   onApiKeyV3DispatchCommit: (() => void) | null = null;
   retries = 0;
   listCalls = 0;
-  readonly readKeys: Deno.KvKey[] = [];
-  readonly writeKeys: Deno.KvKey[] = [];
+  readonly readKeys: KvKey[] = [];
+  readonly writeKeys: KvKey[] = [];
 
-  private _versionstamp(key: Deno.KvKey): string | null {
+  private _versionstamp(key: KvKey): string | null {
     const encoded = encodeKey(key);
     if (!this.values.has(encoded)) return null;
     const fingerprint = kvFingerprint(this.values.get(encoded));
@@ -112,13 +106,13 @@ class CountingKv {
     return String(existing.revision).padStart(20, "0");
   }
 
-  private _write(key: Deno.KvKey, value: unknown): void {
+  private _write(key: KvKey, value: unknown): void {
     const encoded = encodeKey(key);
     this.values.set(encoded, value);
     this._versions.set(encoded, { fingerprint: kvFingerprint(value), revision: this._nextRevision++ });
   }
 
-  private _remove(key: Deno.KvKey): void {
+  private _remove(key: KvKey): void {
     const encoded = encodeKey(key);
     this.values.delete(encoded);
     this._versions.delete(encoded);
@@ -146,7 +140,7 @@ class CountingKv {
     this.writeKeys.length = 0;
   }
 
-  async get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
+  async get<T>(key: KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
     if (this.kernelQuotaReadGate && key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2") {
       await this.kernelQuotaReadGate;
     }
@@ -166,13 +160,13 @@ class CountingKv {
       key,
       value: value ?? null,
       versionstamp: this._versionstamp(key),
-    } as Deno.KvEntryMaybe<T>;
+    } as KvEntryMaybe<T>;
   }
 
   getMany<T extends readonly unknown[]>(
-    keys: readonly Deno.KvKey[],
+    keys: readonly KvKey[],
     _options?: { consistency?: "strong" | "eventual" }
-  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+  ): Promise<{ [K in keyof T]: KvEntryMaybe<T[K]> }> {
     if (this.failApiKeyV3Reads && keys.some((key) => key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3")) {
       return Promise.reject(new Error("injected API-key V3 ledger read failure"));
     }
@@ -189,55 +183,55 @@ class CountingKv {
         versionstamp: this._versionstamp(key),
       };
     });
-    return Promise.resolve(entries as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
+    return Promise.resolve(entries as { [K in keyof T]: KvEntryMaybe<T[K]> });
   }
 
-  set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
+  set(key: KvKey, value: unknown): Promise<KvCommitResult> {
     this._write(key, value);
     this.writes += 1;
     this.writeKeys.push(key);
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
 
-  delete(key: Deno.KvKey): Promise<void> {
+  delete(key: KvKey): Promise<void> {
     this._remove(key);
     this.writes += 1;
     this.writeKeys.push(key);
     return Promise.resolve();
   }
 
-  list<T>(selector: Deno.KvListSelector): Deno.KvListIterator<T> {
+  list<T>(selector: KvListSelector): KvListIterator<T> {
     this.listCalls += 1;
     const prefix = "prefix" in selector ? selector.prefix : [];
     const entries = [...this.values].filter(([encoded]) => {
-      const key = JSON.parse(encoded) as Deno.KvKey;
+      const key = JSON.parse(encoded) as KvKey;
       return prefix.every((part, index) => part === key[index]);
     });
     return (function* () {
       for (const [encoded, value] of entries) {
-        const key = JSON.parse(encoded) as Deno.KvKey;
-        yield { key, value, versionstamp: "00000000000000000001" } as Deno.KvEntry<T>;
+        const key = JSON.parse(encoded) as KvKey;
+        yield { key, value, versionstamp: "00000000000000000001" } as KvEntry<T>;
       }
-    })() as unknown as Deno.KvListIterator<T>;
+    })() as unknown as KvListIterator<T>;
   }
 
-  atomic(): Deno.AtomicOperation {
-    const checks: Deno.KvEntryMaybe<unknown>[] = [];
+  atomic(): AtomicOperation {
+    const checks: KvEntryMaybe<unknown>[] = [];
     const mutations: CountingKvMutation[] = [];
     const operation = {
-      check: (entry: Deno.KvEntryMaybe<unknown>) => {
+      check: (entry: KvEntryMaybe<unknown>) => {
         checks.push(entry);
         return operation;
       },
-      set: (key: Deno.KvKey, value: unknown) => {
+      set: (key: KvKey, value: unknown) => {
         mutations.push({ kind: "set", key, value });
         return operation;
       },
-      delete: (key: Deno.KvKey) => {
+      delete: (key: KvKey) => {
         mutations.push({ kind: "delete", key });
         return operation;
       },
-      sum: (key: Deno.KvKey, value: bigint) => {
+      sum: (key: KvKey, value: bigint) => {
         mutations.push({ kind: "sum", key, value });
         return operation;
       },
@@ -269,7 +263,7 @@ class CountingKv {
         return { ok: true, versionstamp: "00000000000000000001" };
       },
     };
-    return operation as unknown as Deno.AtomicOperation;
+    return operation as unknown as AtomicOperation;
   }
 
   private async _commitSumMutation(): Promise<void> {
@@ -288,8 +282,8 @@ class CountingKv {
     if (mutation.kind === "delete") this._remove(mutation.key);
     else if (mutation.kind === "set") this._write(mutation.key, mutation.value);
     else {
-      const current = this.values.get(encoded) as Deno.KvU64 | undefined;
-      this._write(mutation.key, new Deno.KvU64((current?.value ?? 0n) + mutation.value));
+      const current = this.values.get(encoded) as KvU64 | undefined;
+      this._write(mutation.key, new KvU64((current?.value ?? 0n) + mutation.value));
       this.sums += 1;
     }
     this.writes += 1;
@@ -298,10 +292,6 @@ class CountingKv {
 }
 
 const kv = new CountingKv();
-Object.defineProperty(Deno, "openKv", {
-  value: () => Promise.resolve(kv as unknown as Deno.Kv),
-  configurable: true,
-});
 
 const { default: handler } = await import("../../src/handler/index.ts");
 const { authenticateAdmin, authenticateClient } = await import("../../src/auth/index.ts");
@@ -724,3 +714,19 @@ export {
 export type { CountingKvMutation };
 export { sha256Hex } from "../../src/utils.ts";
 export { sha256Base64Url } from "../../src/utils.ts";
+
+/** Reinstall this fixture explicitly when a Bun test file uses the cached harness. */
+export const installHarness = (): void => {
+  setProviderCapacitySampleTriggerForTest(() => {});
+  setPaidFallbackTerminalSweepForTest(() => {});
+  setKvForTest(kv as unknown as Kv);
+};
+export const resetHarness = (): void => {
+  kv.values.clear();
+  installHarness();
+};
+export const cleanupHarness = (): void => {
+  setProviderCapacitySampleTriggerForTest(null);
+  setPaidFallbackTerminalSweepForTest(null);
+  setKvForTest(null);
+};

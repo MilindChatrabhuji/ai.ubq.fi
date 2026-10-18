@@ -50,12 +50,12 @@ const readModelDiscoveryApiKey = (): string | null => {
   let openLuxApiKey: string | null = null;
   let meteredApiKey: string | null = null;
   try {
-    openLuxApiKey = nonEmptyString(Deno.env.get(OPENLUX_API_KEY_ENV));
+    openLuxApiKey = nonEmptyString(process.env[OPENLUX_API_KEY_ENV]);
   } catch {
     // The deployment may grant only the legacy Metered key permission.
   }
   try {
-    meteredApiKey = nonEmptyString(Deno.env.get(METERED_API_KEY_ENV));
+    meteredApiKey = nonEmptyString(process.env[METERED_API_KEY_ENV]);
   } catch {
     // Keep discovery unavailable only when neither credential is readable.
   }
@@ -175,6 +175,8 @@ export const fetchMeteredModels = async (
     if (meteredModelsFetchInFlight === request) meteredModelsFetchInFlight = null;
   }
 };
+
+export const meteredModelsSnapshot = (): MeteredModelsSnapshot | null => meteredModelsCache;
 
 export const resetMeteredModelsCacheForTest = (): void => {
   meteredModelsFetchInFlight = null;
@@ -363,7 +365,7 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
 
 export const readMeteredApiKey = (): string | null => {
   try {
-    return nonEmptyString(Deno.env.get(METERED_API_KEY_ENV)) ?? nonEmptyString(Deno.env.get(OPENLUX_API_KEY_ENV));
+    return nonEmptyString(process.env[METERED_API_KEY_ENV]) ?? nonEmptyString(process.env[OPENLUX_API_KEY_ENV]);
   } catch {
     return null;
   }

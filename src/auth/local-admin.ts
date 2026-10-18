@@ -1,3 +1,5 @@
+import type { Addr } from "#http";
+import { config } from "../config.ts";
 export type ServeRuntimeOptions = Readonly<{
   disableAdminAuth: boolean;
 }>;
@@ -7,7 +9,10 @@ const DISABLE_ADMIN_AUTH_FLAG = "--disable-admin-auth";
 const formatArgumentError = (argument: string): Error =>
   new Error(`[ai.ubq.fi] Unknown server argument '${argument}'. Supported arguments: ${DISABLE_ADMIN_AUTH_FLAG}`);
 
-export const parseServeRuntimeOptions = (args: readonly string[], options: Readonly<{ isDeploy: boolean }>): ServeRuntimeOptions => {
+export const parseServeRuntimeOptions = (
+  args: readonly string[],
+  options: Readonly<{ isDeploy: boolean; isProductionTimeline: boolean }>
+): ServeRuntimeOptions => {
   let disableAdminAuth = false;
 
   for (const argument of args) {
@@ -20,6 +25,10 @@ export const parseServeRuntimeOptions = (args: readonly string[], options: Reado
 
   if (disableAdminAuth && options.isDeploy) {
     throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} is unavailable in Deno Deploy.`);
+  }
+  // The production VPS serves Caddy-proxied public traffic on its loopback listener (#262).
+  if (disableAdminAuth && options.isProductionTimeline) {
+    throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} is unavailable on the production timeline (DENO_TIMELINE=production).`);
   }
 
   return Object.freeze({ disableAdminAuth });
@@ -47,16 +56,15 @@ const isNumericLoopbackHostname = (value: string): boolean => {
   return hostname === "::1" || hostname === "0:0:0:0:0:0:0:1" || isIpv4Loopback(hostname);
 };
 
-const formatListenerAddress = (address: Deno.Addr): string => {
+const formatListenerAddress = (address: Addr): string => {
   if (address.transport === "tcp" || address.transport === "udp") {
     const hostname = address.hostname.includes(":") ? `[${address.hostname}]` : address.hostname;
     return `${address.transport}://${hostname}:${address.port}`;
   }
-  if (address.transport === "unix") return `unix://${address.path}`;
-  return address.transport;
+  return "path" in address ? `unix://${address.path}` : address.transport;
 };
 
-export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, address: Deno.Addr): boolean => {
+export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, address: Addr): boolean => {
   if (!options.disableAdminAuth) return false;
   if (address.transport !== "tcp" || !isNumericLoopbackHostname(address.hostname)) {
     throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} requires a loopback TCP listener; got ${formatListenerAddress(address)}.`);
@@ -65,7 +73,9 @@ export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, 
 };
 
 let adminAuthDisabled = false;
-let adminAuthPeer: Deno.Addr | null = null;
+let adminAuthPeer: Addr | null = null;
+/** Set only by the Mac companion's listener; see `isMacCompanionServiceListener`. */
+let macCompanionListener = false;
 /**
  * Request-scoped peers for a LAN-facing listener. Routing awaits before it
  * authenticates, so a single process-wide slot can be overwritten by a
@@ -73,12 +83,13 @@ let adminAuthPeer: Deno.Addr | null = null;
  * belongs to someone else's connection. A peer bound to the request object
  * itself cannot be moved to another request.
  */
-const adminAuthRequestPeers = new WeakMap<Request, Deno.Addr>();
+const adminAuthRequestPeers = new WeakMap<Request, Addr>();
 
-export const configureAdminAuthForListener = (options: ServeRuntimeOptions, address: Deno.Addr): boolean => {
+export const configureAdminAuthForListener = (options: ServeRuntimeOptions, address: Addr): boolean => {
   const disabled = shouldDisableAdminAuthForListener(options, address);
   adminAuthDisabled = disabled;
   adminAuthPeer = null;
+  macCompanionListener = false;
   return disabled;
 };
 
@@ -88,7 +99,7 @@ export const configureAdminAuthForListener = (options: ServeRuntimeOptions, addr
  * Mac listener); without it the peer is the process-wide binding the loopback
  * development server has always used.
  */
-export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null, request?: Request): void => {
+export const configureAdminAuthPeerForRequest = (peer: Addr | null, request?: Request): void => {
   if (request) {
     if (peer === null) adminAuthRequestPeers.delete(request);
     else adminAuthRequestPeers.set(request, peer);
@@ -107,19 +118,32 @@ export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null, request
  */
 const MAC_LAN_LISTENER_HOSTNAME = "0.0.0.0";
 
-export const configureMacLocalAdminAuthBypassForListener = (address: Deno.Addr): boolean => {
+export const configureMacLocalAdminAuthBypassForListener = (address: Addr): boolean => {
   if (address.transport !== "tcp" || address.hostname !== MAC_LAN_LISTENER_HOSTNAME) {
     throw new Error(`[ai.ubq.fi] the Mac local admin bypass requires the ${MAC_LAN_LISTENER_HOSTNAME} TCP listener; got ${formatListenerAddress(address)}.`);
   }
   adminAuthDisabled = true;
   adminAuthPeer = null;
+  macCompanionListener = true;
   return true;
 };
 
-const isLoopbackPeer = (peer: Deno.Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
+/**
+ * True only in the Mac companion service process: `scripts/serve-mac.ts` is the
+ * one caller of `configureMacLocalAdminAuthBypassForListener`. A development
+ * server (`bun run dev`, `dev:local`) configures its loopback bypass through
+ * `configureAdminAuthForListener`, which clears this signal. Work that must run
+ * only on the real Mac service, such as pushing its capacity samples to the VPS
+ * chart, gates on this rather than on the request-level loopback bypass.
+ */
+export const isMacCompanionServiceListener = (): boolean => macCompanionListener;
+
+const isLoopbackPeer = (peer: Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
 
 export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
-  if (!adminAuthDisabled) return false;
+  // The production timeline never grants a development bypass, however a
+  // launcher enabled one: its loopback peers are the public proxy (#262).
+  if (!adminAuthDisabled || config.isProductionTimeline) return false;
   // The bypass must be granted only to an actual loopback peer, never to a
   // forwarded, tunneled, or port-forwarded request whose URL hostname is
   // client-controlled. Fail closed when the peer is unknown (for example a

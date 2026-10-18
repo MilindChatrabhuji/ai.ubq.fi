@@ -108,7 +108,7 @@ const renderNetworkTrace = (originKey) => {
       () => {
         trace.remove();
       },
-      { once: true },
+      { once: true }
     );
     return trace;
   };
@@ -134,7 +134,7 @@ const installNetworkTrace = () => {
     void responsePromise
       .then(
         () => recordDuration(originKey, startMs),
-        () => recordDuration(originKey, startMs),
+        () => recordDuration(originKey, startMs)
       )
       .catch(() => {});
     return responsePromise;

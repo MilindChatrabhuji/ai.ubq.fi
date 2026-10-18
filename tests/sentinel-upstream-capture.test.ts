@@ -1,3 +1,5 @@
+import { test } from "bun:test";
+import { openKv, type Kv } from "#kv";
 import assert from "node:assert/strict";
 import { setKvForTest } from "../src/kv.ts";
 import {
@@ -22,8 +24,6 @@ import {
   type SentinelFailureObservation,
 } from "../src/sentinel/replay-capture.ts";
 import { base64UrlDecode, base64UrlEncode } from "../src/utils.ts";
-
-const kvAvailable = typeof Deno.openKv === "function";
 
 const encoder = new TextEncoder();
 
@@ -80,7 +80,7 @@ const v2Trace = (attempt: Record<string, unknown>): Record<string, unknown> => (
   chunks_truncated: false,
 });
 
-Deno.test("frozen trace relationship: status and content_type are null together", () => {
+test("frozen trace relationship: status and content_type are null together", () => {
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), status: null, content_type: "application/json" })), /content type/);
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), status: 204, content_type: null })), /content type/);
   // A pending pre-header attempt is exactly null/null with no chunks.
@@ -99,7 +99,7 @@ Deno.test("frozen trace relationship: status and content_type are null together"
   assert.equal(preHeader.attempts[0]?.terminal, "pending");
 });
 
-Deno.test("frozen trace relationship: fetch_error and header-bearing terminals", () => {
+test("frozen trace relationship: fetch_error and header-bearing terminals", () => {
   const fetchError = invalidTrace({
     provider: "metered",
     status: null,
@@ -176,7 +176,7 @@ Deno.test("frozen trace relationship: fetch_error and header-bearing terminals",
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), status: 600 })), /status is invalid/);
 });
 
-Deno.test("strict parser rejects provider enum, keys, version, canonical base64, and attempt bounds", () => {
+test("strict parser rejects provider enum, keys, version, canonical base64, and attempt bounds", () => {
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), provider: "codex" })), /provider/);
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), content_type: "text/plain" })), /content type/);
   // A version-2 trace must carry the version-2 attempt key set; a version-1
@@ -209,7 +209,7 @@ Deno.test("strict parser rejects provider enum, keys, version, canonical base64,
   assert.equal(isSentinelUpstreamTrace(emptySentinelUpstreamTrace()), true);
 });
 
-Deno.test("normalizeSentinelUpstreamContentType maps MIME before semicolon to fixed literals", () => {
+test("normalizeSentinelUpstreamContentType maps MIME before semicolon to fixed literals", () => {
   assert.equal(normalizeSentinelUpstreamContentType("text/event-stream; charset=utf-8"), "text/event-stream");
   assert.equal(normalizeSentinelUpstreamContentType("TEXT/EVENT-STREAM"), "text/event-stream");
   assert.equal(normalizeSentinelUpstreamContentType("application/json; charset=utf-8"), "application/json");
@@ -218,7 +218,7 @@ Deno.test("normalizeSentinelUpstreamContentType maps MIME before semicolon to fi
   assert.equal(normalizeSentinelUpstreamContentType(null), null);
 });
 
-Deno.test("recorder wrapper is lazy, forwards bytes, and records a complete EOF trace", async () => {
+test("recorder wrapper is lazy, forwards bytes, and records a complete EOF trace", async () => {
   const recorder = createSentinelUpstreamRecorder();
   const sourceParts = ["data: one\n\n", "data: two\n\n"];
   let sourcePulls = 0;
@@ -278,7 +278,7 @@ Deno.test("recorder wrapper is lazy, forwards bytes, and records a complete EOF 
   recorder.dispose();
 });
 
-Deno.test("recorder maps missing Content-Type on a real response to other and bodyless to EOF", () => {
+test("recorder maps missing Content-Type on a real response to other and bodyless to EOF", () => {
   const recorder = createSentinelUpstreamRecorder();
   const bodyless = recorder.startAttempt("chatgpt_codex").wrap(new Response(null, { status: 204 }));
   assert.equal(bodyless.status, 204);
@@ -290,7 +290,7 @@ Deno.test("recorder maps missing Content-Type on a real response to other and bo
   recorder.dispose();
 });
 
-Deno.test("recorder preserves the original read error object and marks the trace read_error", async () => {
+test("recorder preserves the original read error object and marks the trace read_error", async () => {
   const recorder = createSentinelUpstreamRecorder();
   const readError = new Error("original upstream read error");
   const source = new ReadableStream<Uint8Array>(
@@ -317,7 +317,7 @@ Deno.test("recorder preserves the original read error object and marks the trace
   recorder.dispose();
 });
 
-Deno.test("recorder forwards cancellation with the exact reason and surfaces reader cancel rejections", async () => {
+test("recorder forwards cancellation with the exact reason and surfaces reader cancel rejections", async () => {
   const recorder = createSentinelUpstreamRecorder();
   let sourceCancelReason: unknown = null;
   const blocking = new ReadableStream<Uint8Array>(
@@ -360,7 +360,7 @@ Deno.test("recorder forwards cancellation with the exact reason and surfaces rea
   recorderReject.dispose();
 });
 
-Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncation flags", async () => {
+test("recorder bounds: attempts, chunks, and bytes with permanent truncation flags", async () => {
   const recorder = createSentinelUpstreamRecorder();
   const handles = Array.from({ length: SENTINEL_UPSTREAM_MAX_ATTEMPTS + 1 }, () => recorder.startAttempt("surplus"));
   const response = new Response(null, { status: 200 });
@@ -430,7 +430,7 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
   assert.equal(firstAttempt(byteTrace).chunks_base64.length, 2);
 });
 
-Deno.test("recorder bounds: simultaneous chunk and byte exhaustion discloses both limits", async () => {
+test("recorder bounds: simultaneous chunk and byte exhaustion discloses both limits", async () => {
   const recorder = createSentinelUpstreamRecorder();
   let chunkIndex = 0;
   const source = new ReadableStream<Uint8Array>(
@@ -464,7 +464,7 @@ Deno.test("recorder bounds: simultaneous chunk and byte exhaustion discloses bot
   recorder.dispose();
 });
 
-Deno.test("sealed snapshot is immutable and repeated snapshots return the same trace", () => {
+test("sealed snapshot is immutable and repeated snapshots return the same trace", () => {
   const recorder = createSentinelUpstreamRecorder();
   recorder.startAttempt("chatgpt_codex").wrap(new Response("ok", { status: 200, headers: { "Content-Type": "application/json" } }));
   const first = recorder.snapshotAndSeal();
@@ -483,7 +483,7 @@ Deno.test("sealed snapshot is immutable and repeated snapshots return the same t
   assert.deepEqual(recorder.snapshotAndSeal(), first);
 });
 
-Deno.test("canonical upstream JSON is deterministic and matches the v2 frame encoding", async () => {
+test("canonical upstream JSON is deterministic and matches the v2 frame encoding", async () => {
   const recorder = createSentinelUpstreamRecorder();
   const source = new ReadableStream<Uint8Array>(
     {
@@ -544,7 +544,7 @@ const syntheticInput = (bytes: Uint8Array<ArrayBuffer>, requestId: string): Acce
 
 const exportRoundTrip = async (
   stored: Extract<Awaited<ReturnType<typeof persistEncryptedSentinelReplay>>, { status: "stored" }>,
-  kv: Deno.Kv
+  kv: Kv
 ): Promise<ExportedSentinelReplayCapture> => {
   const rows: Uint8Array<ArrayBuffer>[] = [];
   for (let index = 0; index < stored.manifest.chunk_count; index += 1) {
@@ -581,157 +581,139 @@ const buildRecordedTrace = async (terminal: "eof" | "cancelled"): Promise<Return
   return recorder.snapshotAndSeal();
 };
 
-Deno.test({
-  name: "v2 fingerprint binds the exact upstream trace: partial vs complete differ, case-group stays v1-identical",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-    const now = () => 1_700_000_000_000;
-    const input = syntheticInput(encoder.encode('{"model":"gpt-5.6-sol","stream":false,"input":"same-request"}'), "v2-fingerprint-binding");
-    try {
-      const complete = await buildRecordedTrace("eof");
-      const partial = await buildRecordedTrace("cancelled");
-      assert.equal(firstAttempt(complete).terminal, "eof");
-      assert.equal(firstAttempt(partial).terminal, "cancelled");
-      assert.notEqual(canonicalSentinelUpstreamJson(complete), canonicalSentinelUpstreamJson(partial));
-      const storedComplete = await persistEncryptedSentinelReplay({ ...input, upstream: complete }, failureObservation(), {
-        kv,
-        keyBytes,
-        now,
-        randomUuid: () => "capture-complete",
-      });
-      const storedPartial = await persistEncryptedSentinelReplay({ ...input, upstream: partial }, failureObservation(), {
-        kv,
-        keyBytes,
-        now,
-        randomUuid: () => "capture-partial",
-      });
-      assert.equal(storedComplete.status, "stored");
-      assert.equal(storedPartial.status, "stored", "partial and complete must not suppress one another");
-      assert.notEqual(storedComplete.manifest.fingerprint, storedPartial.manifest.fingerprint);
-      assert.equal(
-        storedComplete.manifest.case_group_digest,
-        storedPartial.manifest.case_group_digest,
-        "case-group identity must remain the request-only v1 HMAC"
-      );
-      const completePlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(storedComplete, kv), keyBytes);
-      assert.equal(completePlaintext.version, 3);
-      // This synthetic observation carries no observed downstream body, so the
-      // capture reports that omission instead of claiming full coverage.
-      assert.equal(completePlaintext.capture_status, "incomplete");
-      assert.equal(completePlaintext.replay_coverage, "partial");
-      assert.equal(completePlaintext.unavailable?.includes("downstream_terminal_body_unavailable"), true);
-      assert.deepEqual(completePlaintext.upstream, complete);
-      const partialPlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(storedPartial, kv), keyBytes);
-      assert.deepEqual(partialPlaintext.upstream, partial);
-    } finally {
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+test("v2 fingerprint binds the exact upstream trace: partial vs complete differ, case-group stays v1-identical", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+  const now = () => 1_700_000_000_000;
+  const input = syntheticInput(encoder.encode('{"model":"gpt-5.6-sol","stream":false,"input":"same-request"}'), "v2-fingerprint-binding");
+  try {
+    const complete = await buildRecordedTrace("eof");
+    const partial = await buildRecordedTrace("cancelled");
+    assert.equal(firstAttempt(complete).terminal, "eof");
+    assert.equal(firstAttempt(partial).terminal, "cancelled");
+    assert.notEqual(canonicalSentinelUpstreamJson(complete), canonicalSentinelUpstreamJson(partial));
+    const storedComplete = await persistEncryptedSentinelReplay({ ...input, upstream: complete }, failureObservation(), {
+      kv,
+      keyBytes,
+      now,
+      randomUuid: () => "capture-complete",
+    });
+    const storedPartial = await persistEncryptedSentinelReplay({ ...input, upstream: partial }, failureObservation(), {
+      kv,
+      keyBytes,
+      now,
+      randomUuid: () => "capture-partial",
+    });
+    assert.equal(storedComplete.status, "stored");
+    assert.equal(storedPartial.status, "stored", "partial and complete must not suppress one another");
+    assert.notEqual(storedComplete.manifest.fingerprint, storedPartial.manifest.fingerprint);
+    assert.equal(
+      storedComplete.manifest.case_group_digest,
+      storedPartial.manifest.case_group_digest,
+      "case-group identity must remain the request-only v1 HMAC"
+    );
+    const completePlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(storedComplete, kv), keyBytes);
+    assert.equal(completePlaintext.version, 3);
+    // This synthetic observation carries no observed downstream body, so the
+    // capture reports that omission instead of claiming full coverage.
+    assert.equal(completePlaintext.capture_status, "incomplete");
+    assert.equal(completePlaintext.replay_coverage, "partial");
+    assert.equal(completePlaintext.unavailable?.includes("downstream_terminal_body_unavailable"), true);
+    assert.deepEqual(completePlaintext.upstream, complete);
+    const partialPlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(storedPartial, kv), keyBytes);
+    assert.deepEqual(partialPlaintext.upstream, partial);
+  } finally {
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test({
-  name: "strict v2 metadata: invalid upstream traces are rejected and tampered ciphertext fails closed",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-    const now = () => 1_700_000_000_000;
-    const input = syntheticInput(encoder.encode('{"model":"gpt-5.6-sol","stream":false,"input":"tamper"}'), "v2-tamper");
-    const encoderTrace = () => {
-      const recorder = createSentinelUpstreamRecorder();
-      recorder.startAttempt("chatgpt_codex").wrap(new Response("upstream-500", { status: 500, headers: { "Content-Type": "application/json" } }));
-      const trace = recorder.snapshotAndSeal();
-      recorder.dispose();
-      return trace;
+test("strict v2 metadata: invalid upstream traces are rejected and tampered ciphertext fails closed", async () => {
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+  const now = () => 1_700_000_000_000;
+  const input = syntheticInput(encoder.encode('{"model":"gpt-5.6-sol","stream":false,"input":"tamper"}'), "v2-tamper");
+  const encoderTrace = () => {
+    const recorder = createSentinelUpstreamRecorder();
+    recorder.startAttempt("chatgpt_codex").wrap(new Response("upstream-500", { status: 500, headers: { "Content-Type": "application/json" } }));
+    const trace = recorder.snapshotAndSeal();
+    recorder.dispose();
+    return trace;
+  };
+  try {
+    const trace = encoderTrace();
+    // A tainted upstream trace must fail closed at persistence.
+    const tainted = trace as unknown as Record<string, unknown>;
+    await assert.rejects(
+      persistEncryptedSentinelReplay(
+        {
+          ...input,
+          upstream: {
+            ...tainted,
+            attempts: [
+              {
+                ...(tainted.attempts as Record<string, unknown>[])[0],
+                status: null,
+                content_type: "application/json",
+              },
+            ],
+          },
+        } as unknown as AcceptedSentinelReplayInput,
+        failureObservation(),
+        { kv, keyBytes, now, randomUuid: () => "capture-taint" }
+      )
+    );
+    // A truthful capture round-trips, then an authenticated tamper fails closed.
+    const stored = await persistEncryptedSentinelReplay({ ...input, upstream: trace }, failureObservation(), {
+      kv,
+      keyBytes,
+      now,
+      randomUuid: () => "capture-tamper",
+      randomBytes: () => new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+    });
+    assert.equal(stored.status, "stored");
+    const good = await exportRoundTrip(stored, kv);
+    const tampered: ExportedSentinelReplayCapture = {
+      manifest: good.manifest,
+      chunks: good.chunks.map((chunk, index) => {
+        if (index !== 0) return chunk;
+        const bytes = base64UrlDecode(chunk);
+        bytes[0] ^= 0xff;
+        return base64UrlEncode(bytes);
+      }),
     };
-    try {
-      const trace = encoderTrace();
-      // A tainted upstream trace must fail closed at persistence.
-      const tainted = trace as unknown as Record<string, unknown>;
-      await assert.rejects(
-        persistEncryptedSentinelReplay(
-          {
-            ...input,
-            upstream: {
-              ...tainted,
-              attempts: [
-                {
-                  ...(tainted.attempts as Record<string, unknown>[])[0],
-                  status: null,
-                  content_type: "application/json",
-                },
-              ],
-            },
-          } as unknown as AcceptedSentinelReplayInput,
-          failureObservation(),
-          { kv, keyBytes, now, randomUuid: () => "capture-taint" }
-        )
-      );
-      // A truthful capture round-trips, then an authenticated tamper fails closed.
-      const stored = await persistEncryptedSentinelReplay({ ...input, upstream: trace }, failureObservation(), {
-        kv,
-        keyBytes,
-        now,
-        randomUuid: () => "capture-tamper",
-        randomBytes: () => new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
-      });
-      assert.equal(stored.status, "stored");
-      const good = await exportRoundTrip(stored, kv);
-      const tampered: ExportedSentinelReplayCapture = {
-        manifest: good.manifest,
-        chunks: good.chunks.map((chunk, index) => {
-          if (index !== 0) return chunk;
-          const bytes = base64UrlDecode(chunk);
-          bytes[0] ^= 0xff;
-          return base64UrlEncode(bytes);
-        }),
-      };
-      await assert.rejects(decryptExportedSentinelReplay(tampered, keyBytes));
-    } finally {
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+    await assert.rejects(decryptExportedSentinelReplay(tampered, keyBytes));
+  } finally {
+    kv.close();
+    setKvForTest(null);
+  }
 });
 
-Deno.test({
-  name: "request-only inputs emit the required empty upstream trace and never claim coverage",
-  ignore: !kvAvailable,
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
-    const empty = emptySentinelUpstreamTrace();
-    assert.deepEqual(empty.attempts, []);
-    assert.equal(empty.attempts_truncated, false);
-    assert.equal(empty.bytes_truncated, false);
-    assert.equal(empty.chunks_truncated, false);
-    assert.equal(JSON.stringify(empty).includes("captured"), false);
-    const kv = await Deno.openKv(":memory:");
-    setKvForTest(kv);
-    try {
-      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
-      const input = syntheticInput(encoder.encode('{"input":"request-only"}'), "request-only-empty-trace");
-      const stored = await persistEncryptedSentinelReplay(input, failureObservation(), {
-        kv,
-        keyBytes,
-        now: () => 1_700_000_000_000,
-        randomUuid: () => "request-only-capture",
-      });
-      assert.equal(stored.status, "stored");
-      const plaintext = await decryptExportedSentinelReplay(await exportRoundTrip(stored, kv), keyBytes);
-      assert.deepEqual(plaintext.upstream, empty);
-    } finally {
-      kv.close();
-      setKvForTest(null);
-    }
-  },
+test("request-only inputs emit the required empty upstream trace and never claim coverage", async () => {
+  const empty = emptySentinelUpstreamTrace();
+  assert.deepEqual(empty.attempts, []);
+  assert.equal(empty.attempts_truncated, false);
+  assert.equal(empty.bytes_truncated, false);
+  assert.equal(empty.chunks_truncated, false);
+  assert.equal(JSON.stringify(empty).includes("captured"), false);
+  const kv = await openKv(":memory:");
+  setKvForTest(kv);
+  try {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+    const input = syntheticInput(encoder.encode('{"input":"request-only"}'), "request-only-empty-trace");
+    const stored = await persistEncryptedSentinelReplay(input, failureObservation(), {
+      kv,
+      keyBytes,
+      now: () => 1_700_000_000_000,
+      randomUuid: () => "request-only-capture",
+    });
+    assert.equal(stored.status, "stored");
+    const plaintext = await decryptExportedSentinelReplay(await exportRoundTrip(stored, kv), keyBytes);
+    assert.deepEqual(plaintext.upstream, empty);
+  } finally {
+    kv.close();
+    setKvForTest(null);
+  }
 });

@@ -56,7 +56,7 @@ const stateLabel = (session) => {
   if (session.waitingOnApproval) flags.push("approval");
   if (session.waitingOnUserInput) flags.push("input");
   const unknownFlags = (Array.isArray(session.activeFlags) ? session.activeFlags : []).filter(
-    (flag) => !/approval|user.?input|input.?request|needsinput/i.test(flag),
+    (flag) => !/approval|user.?input|input.?request|needsinput/i.test(flag)
   );
   for (const flag of unknownFlags) flags.push(flag);
   return flags.length > 0 ? `${base} · waiting on ${flags.join(", ")}` : base;
@@ -139,20 +139,48 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
   providersCard.append(providersHeader, providersBody);
   section.append(providersCard);
 
+  let providersHasRendered = false;
+
   const providerStateLabel = (health) => {
     const state = typeof health?.state === "string" && health.state ? health.state : "unknown";
     return health?.stale === true ? `${state} · stale` : state;
   };
 
-  const renderProviders = (selection, healthSnapshot) => {
+  const markProvidersUnavailable = () => {
+    const item = document.createElement("div");
+    item.dataset.providerUnavailable = "";
+    item.setAttribute("role", "listitem");
+    item.textContent = providersHasRendered
+      ? "Provider health unavailable; previous observations cleared."
+      : "Provider health unavailable; no observations available.";
+    providersList.replaceChildren(item);
+  };
+
+  const renderProviders = (selection, healthSnapshot, healthUnavailable = false) => {
     const entries = Array.isArray(selection?.data?.providers) ? selection.data.providers : [];
-    if (entries.length === 0) return;
+    if (entries.length === 0) {
+      markProvidersUnavailable();
+      return;
+    }
+    const selectedProviderIds = Array.isArray(selection?.data?.selection?.provider_ids)
+      ? selection.data.selection.provider_ids
+          .filter((id) => typeof id === "string" && id.trim().length > 0)
+          .map((id) => id.trim())
+      : [];
+    // An empty (including blank-only) selection is deliberately no filter:
+    // every provider remains routable, just as it does on the inference path.
+    const filterActive = selection?.data?.filter_active === true && selectedProviderIds.length > 0;
     const rows = entries.map((entry) => {
-      const health = typeof entry?.health_key === "string" && entry.health_key
-        ? healthSnapshot?.[entry.health_key]
-        : null;
-      const configured = health ? health.configured !== false : entry.configured === true;
+      const health =
+        typeof entry?.health_key === "string" && entry.health_key ? healthSnapshot?.[entry.health_key] : null;
+      let configured = entry.configured === true;
+      if (health) configured = health.configured !== false;
+      else if (healthUnavailable) configured = entry.configured !== false;
       const state = health ? (typeof health.state === "string" ? health.state : health.health?.state) : null;
+      const routingEnabled =
+        !filterActive ||
+        selectedProviderIds.includes(entry.id) ||
+        (entry.id === "codex" && selectedProviderIds.some((id) => id.startsWith("codex:")));
       const row = document.createElement("div");
       row.dataset.providerEntry = "";
       row.dataset.providerId = entry.id;
@@ -167,12 +195,20 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       const tier = document.createElement("span");
       tier.dataset.providerTierBadge = entry.tier;
       tier.textContent = entry.tier_label ?? entry.tier;
+      const activation = document.createElement("span");
+      activation.dataset.providerActivationBadge = routingEnabled ? "selected" : "disabled";
+      activation.textContent = routingEnabled ? "Routing selected" : "Routing disabled";
       const badge = document.createElement("span");
       badge.dataset.providerHealthBadge = configured ? (state ?? "unknown") : "unknown";
-      badge.textContent = configured
-        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.stale === true })}`
-        : "Not configured";
-      badges.append(tier, badge);
+      if (!configured) badge.textContent = "Not configured";
+      else if (healthUnavailable) badge.textContent = "Health unknown · refresh failed";
+      else {
+        badge.textContent = `Health ${providerStateLabel({
+          state: state ?? "unknown",
+          stale: health?.health?.stale === true,
+        })}`;
+      }
+      badges.append(tier, activation, badge);
       body.append(name, badges);
       const detail = document.createElement("span");
       detail.dataset.providerDetail = "";
@@ -186,28 +222,61 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       return row;
     });
     providersList.replaceChildren(...rows);
+    providersHasRendered = true;
   };
 
   const loadProviders = async () => {
     if (!active) return;
+    if (providerController) providerController.abort();
+    const request = new AbortController();
+    providerController = request;
+    const loadId = ++providerLoadId;
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(REFRESH_MS - 1000)]);
     const token = typeof getToken === "function" ? getToken() : "";
+    const selectionTarget = apiUrl("/admin/providers/selection");
+    const healthTarget = apiUrl("/admin/providers");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const isCurrent = () =>
+      loadId === providerLoadId &&
+      providerController === request &&
+      !request.signal.aborted &&
+      active &&
+      selectionTarget === apiUrl("/admin/providers/selection") &&
+      healthTarget === apiUrl("/admin/providers") &&
+      token === (typeof getToken === "function" ? getToken() : "");
+    const canRender = () => {
+      if (!isCurrent()) return false;
+      if (!signal.aborted) return true;
+      markProvidersUnavailable();
+      return false;
+    };
     try {
       const [selectionResponse, healthResponse] = await Promise.all([
-        fetch(apiUrl("/admin/providers/selection"), { headers, credentials: "include", cache: "no-store" }),
-        fetch(apiUrl("/admin/providers"), { headers, credentials: "include", cache: "no-store" }),
+        fetch(selectionTarget, { headers, credentials: "include", cache: "no-store", signal }),
+        fetch(healthTarget, { headers, credentials: "include", cache: "no-store", signal }),
       ]);
+      if (!canRender()) return;
       const selection = selectionResponse.ok ? await selectionResponse.json().catch(() => null) : null;
+      if (!canRender()) return;
       const healthSnapshot = healthResponse.ok ? await healthResponse.json().catch(() => null) : null;
-      if (selection) renderProviders(selection, healthSnapshot);
+      if (!canRender()) return;
+      if (selection && healthSnapshot) renderProviders(selection, healthSnapshot);
+      else if (selection) renderProviders(selection, null, true);
+      else markProvidersUnavailable();
     } catch {
-      // Best effort: the sessions panel already reports its own load state.
+      if (!isCurrent()) return;
+      request.abort();
+      markProvidersUnavailable();
+    } finally {
+      if (providerController === request) providerController = null;
     }
   };
 
   let active = false;
   let timer = 0;
   let controller = null;
+  let providerController = null;
+  let providerLoadId = 0;
   let snapshot = null;
   const rows = new Map();
   const filters = { search: "", machine: "all", state: "active" };
@@ -291,13 +360,13 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
         lines.push(
           `${source.name} is unavailable: ${
             source.reason ?? "unknown reason"
-          }. Its rows below are persisted metadata, not live state.`,
+          }. Its rows below are persisted metadata, not live state.`
         );
       } else if (source.kind === "local" && source.metadata && source.metadata.available === false) {
         lines.push(
           `${source.name}: persisted branch and token usage are unavailable (${
             source.metadata.reason ?? "metadata unavailable"
-          }); other fields still come from its live session list.`,
+          }); other fields still come from its live session list.`
         );
       }
     }
@@ -323,9 +392,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
         if (reset) parts.push(`· resets ${reset}`);
         if (typeof source.quota?.resetCreditsAvailable === "number" && source.quota.resetCreditsAvailable > 0) {
           parts.push(
-            `· ${source.quota.resetCreditsAvailable} reset credit${
-              source.quota.resetCreditsAvailable === 1 ? "" : "s"
-            }`,
+            `· ${source.quota.resetCreditsAvailable} reset credit${source.quota.resetCreditsAvailable === 1 ? "" : "s"}`
           );
         }
         lines.push(`${source.name} · ${parts.join(" ")}`);
@@ -427,8 +494,8 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     }
     if (path) setText(path, text(session.cwd) ?? "cwd unavailable");
     if (model) {
-      const bits = [session.model, session.effort, session.sourceKind].filter((value) =>
-        typeof value === "string" && value.length > 0
+      const bits = [session.model, session.effort, session.sourceKind].filter(
+        (value) => typeof value === "string" && value.length > 0
       );
       setText(model, bits.length > 0 ? bits.join(" · ") : "model unavailable");
     }
@@ -463,8 +530,8 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     }
   };
 
-  const visibleSessions =
-    () => (snapshot ? snapshot.sessions.filter((session) => matchesFilters(session, filters)) : []);
+  const visibleSessions = () =>
+    snapshot ? snapshot.sessions.filter((session) => matchesFilters(session, filters)) : [];
 
   const render = () => {
     const sessions = visibleSessions();
@@ -490,7 +557,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     empty.hidden = sessions.length > 0;
     if (sessions.length === 0) {
       empty.textContent = snapshot
-        ? filters.search ? "No session matches the current search." : "No session matches the current filters."
+        ? filters.search
+          ? "No session matches the current search."
+          : "No session matches the current filters."
         : "Waiting for the first sample.";
     }
   };
@@ -572,7 +641,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     const turn = followTurnStatus ? `turn ${followTurnStatus}` : "turn status unknown";
     setFollowStatus(
       `Recorded output · ${turn} · updated ${age}. Updates as Codex records output, not a token-level stream.`,
-      "ok",
+      "ok"
     );
     if (stickToBottom) followLog.scrollTop = followLog.scrollHeight;
   };
@@ -585,7 +654,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
     }
     if (dataLines.length === 0) return;
-    let payload = null;
+    let payload;
     try {
       payload = JSON.parse(dataLines.join("\n"));
     } catch {
@@ -757,7 +826,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       setBadge("ok", `Sampled ${formatClock(snapshot.sampledAtMs)}`);
       setText(
         updated,
-        `Last sampled ${formatClock(snapshot.sampledAtMs)} · refreshes every 15s while this tab is visible`,
+        `Last sampled ${formatClock(snapshot.sampledAtMs)} · refreshes every 15s while this tab is visible`
       );
       if (followKey && !snapshot.sessions.some((session) => `${session.sourceId}:${session.id}` === followKey)) {
         stopFollow("Selected session left the sampled inventory.");
@@ -786,6 +855,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     if (document.hidden) {
       if (controller) controller.abort();
       controller = null;
+      if (providerController) providerController.abort();
+      providerController = null;
+      providerLoadId += 1;
       stopFollow("Follow stopped while the tab was hidden.");
       return;
     }
@@ -816,7 +888,7 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
         },
         () => {
           button.textContent = "Copy failed";
-        },
+        }
       );
       return;
     }
@@ -875,6 +947,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       timer = 0;
       if (controller) controller.abort();
       controller = null;
+      if (providerController) providerController.abort();
+      providerController = null;
+      providerLoadId += 1;
       stopFollow();
       return;
     }

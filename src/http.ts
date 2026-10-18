@@ -9,6 +9,7 @@ const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-request-id",
   "x-uos-provider-request-id",
   "x-uos-upstream",
+  "x-uos-attempted-providers",
   "x-uos-router-revision",
   "x-uos-git-sha",
   "x-uos-deployment-id",
@@ -49,8 +50,19 @@ export const corsHeaders = (req?: Request): HeadersInit => {
   };
 };
 
+const isAdminPath = (req?: Request): boolean => {
+  if (!req) return false;
+  try {
+    const path = new URL(req.url).pathname;
+    return path === "/admin" || path.startsWith("/admin/");
+  } catch {
+    return false;
+  }
+};
+
 export const withCors = (response: Response, req?: Request): Response => {
   const headers = new Headers(response.headers);
+  if (isAdminPath(req)) headers.set("Cache-Control", "no-store");
   headers.set("x-uos-git-sha", runtimeGitSha());
   headers.set("x-uos-deployment-id", runtimeDeploymentId());
   if (!headers.has("x-uos-request-id")) headers.set("x-uos-request-id", crypto.randomUUID());

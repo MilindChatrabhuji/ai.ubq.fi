@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { STANDARD_RATE_LIMIT_HEADERS } from "../src/http.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES } from "../src/request.ts";
@@ -54,7 +55,7 @@ const rejectWhenAborted = (signal: AbortSignal): Promise<never> =>
     if (signal.aborted) rejectOnAbort();
   });
 
-Deno.test("an images request forces one image-generation tool call", () => {
+test("an images request forces one image-generation tool call", () => {
   const built = buildImageResponsesRequest(
     {
       model: "gpt-image-2",
@@ -81,7 +82,7 @@ Deno.test("an images request forces one image-generation tool call", () => {
   assert.deepEqual(built.tool_choice, { type: "image_generation" });
 });
 
-Deno.test("JSON edits preserve image URL references and user", () => {
+test("JSON edits preserve image URL references and user", () => {
   const built = buildImageResponsesRequest(
     {
       prompt: "make it blue",
@@ -113,7 +114,7 @@ Deno.test("JSON edits preserve image URL references and user", () => {
   assert.deepEqual(built.tool_choice, { type: "image_generation" });
 });
 
-Deno.test("image response items preserve revised_prompt but omit output_format", () => {
+test("image response items preserve revised_prompt but omit output_format", () => {
   const payload = {
     id: "resp_1",
     output: [
@@ -134,7 +135,7 @@ Deno.test("image response items preserve revised_prompt but omit output_format",
   assert.deepEqual(extractImagesFromResponses(null), []);
 });
 
-Deno.test("a successful generation returns the OpenAI Images shape", async () => {
+test("a successful generation returns the OpenAI Images shape", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const seen: Record<string, unknown>[] = [];
     const dispatch = async (request: Request): Promise<Response> => {
@@ -174,7 +175,7 @@ Deno.test("a successful generation returns the OpenAI Images shape", async () =>
   });
 });
 
-Deno.test("image prompt limits count Unicode code points", async () => {
+test("image prompt limits count Unicode code points", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const prompt = "😀".repeat(20_000);
     let nestedPrompt: unknown = null;
@@ -189,7 +190,7 @@ Deno.test("image prompt limits count Unicode code points", async () => {
   });
 });
 
-Deno.test("multipart edits become JSON Responses input with a binary mask", async () => {
+test("multipart edits become JSON Responses input with a binary mask", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const form = new FormData();
     form.append("model", "gpt-image-2");
@@ -243,7 +244,7 @@ Deno.test("multipart edits become JSON Responses input with a binary mask", asyn
   });
 });
 
-Deno.test("multipart edits reject DALL-E-only quality before Responses dispatch", async () => {
+test("multipart edits reject DALL-E-only quality before Responses dispatch", async () => {
   const form = new FormData();
   form.append("prompt", "edit the source");
   form.append("image", new File([new Uint8Array([1])], "source.png", { type: "image/png" }));
@@ -260,7 +261,7 @@ Deno.test("multipart edits reject DALL-E-only quality before Responses dispatch"
   assert.equal(dispatches, 0);
 });
 
-Deno.test("multipart edits reject JSON-only moderation before dispatch", async () => {
+test("multipart edits reject JSON-only moderation before dispatch", async () => {
   const form = new FormData();
   form.append("prompt", "edit the source");
   form.append("image", new File([new Uint8Array([1])], "source.png", { type: "image/png" }));
@@ -277,7 +278,7 @@ Deno.test("multipart edits reject JSON-only moderation before dispatch", async (
   assert.equal(dispatches, 0);
 });
 
-Deno.test("multipart edits reject unsupported source and mask files before dispatch", async () => {
+test("multipart edits reject unsupported source and mask files before dispatch", async () => {
   const cases = [
     {
       source: new File([new Uint8Array([1])], "source.gif", { type: "image/gif" }),
@@ -308,7 +309,7 @@ Deno.test("multipart edits reject unsupported source and mask files before dispa
   assert.equal(dispatches, 0);
 });
 
-Deno.test("multipart edits accept PNG masks above the legacy 4 MiB limit", async () => {
+test("multipart edits accept PNG masks above the legacy 4 MiB limit", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const form = new FormData();
     form.append("prompt", "edit with a larger mask");
@@ -326,10 +327,12 @@ Deno.test("multipart edits accept PNG masks above the legacy 4 MiB limit", async
   });
 });
 
-Deno.test("multipart edits validate file limits before reading file bytes", async () => {
+test("multipart edits validate file limits before reading file bytes", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const originalSize = Object.getOwnPropertyDescriptor(Blob.prototype, "size");
     const originalArrayBuffer = Object.getOwnPropertyDescriptor(Blob.prototype, "arrayBuffer");
+    const originalFormData = Object.getOwnPropertyDescriptor(Request.prototype, "formData");
+    if (!originalFormData || typeof originalFormData.value !== "function") throw new TypeError("Missing native Request.formData");
     assert.ok(originalSize && "get" in originalSize);
     assert.ok(originalArrayBuffer?.value);
     let arrayBufferReads = 0;
@@ -341,12 +344,19 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
           return originalArrayBuffer.value.call(this) as Promise<ArrayBuffer>;
         },
       });
-      if (reportedSize !== undefined) {
-        Object.defineProperty(Blob.prototype, "size", {
-          ...originalSize,
-          get: () => reportedSize,
-        });
-      }
+      Request.prototype.formData = async function (this: Request): Promise<FormData> {
+        const form = await (originalFormData.value.call(this) as Promise<FormData>);
+        if (reportedSize === undefined) return form;
+        const controlled = new FormData();
+        const bytes = new Uint8Array(reportedSize);
+        for (const [name, entry] of form.entries()) {
+          const value: unknown = entry;
+          if (typeof value === "string") controlled.append(name, value);
+          else if (value instanceof File) controlled.append(name, new File([bytes], value.name, { type: value.type }));
+          else throw new TypeError("Unexpected multipart fixture entry");
+        }
+        return controlled;
+      };
       try {
         return await handleImages(request, "edits", undefined, {
           dispatch: () => {
@@ -354,7 +364,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
           },
         });
       } finally {
-        Object.defineProperty(Blob.prototype, "size", originalSize);
+        Object.defineProperty(Request.prototype, "formData", originalFormData);
         Object.defineProperty(Blob.prototype, "arrayBuffer", originalArrayBuffer);
       }
     };
@@ -432,7 +442,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
   });
 });
 
-Deno.test("multipart edits retain the documented file allowance after internal base64 conversion", async () => {
+test("multipart edits retain the documented file allowance after internal base64 conversion", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const form = new FormData();
     form.append("prompt", "preserve a large source image");
@@ -449,7 +459,7 @@ Deno.test("multipart edits retain the documented file allowance after internal b
   });
 });
 
-Deno.test("multipart image failures retain raw bodies within the Sentinel replay cap", async () => {
+test("multipart image failures retain raw bodies within the Sentinel replay cap", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const form = new FormData();
     form.append("prompt", "replay this multipart failure");
@@ -477,7 +487,7 @@ Deno.test("multipart image failures retain raw bodies within the Sentinel replay
   });
 });
 
-Deno.test("malformed multipart image bodies are not retained for Sentinel replay", async () => {
+test("malformed multipart image bodies are not retained for Sentinel replay", async () => {
   const request = new Request("http://127.0.0.1/v1/images/edits", {
     method: "POST",
     headers: { "content-type": "multipart/form-data" },
@@ -493,7 +503,7 @@ Deno.test("malformed multipart image bodies are not retained for Sentinel replay
   assert.equal(materializeSentinelReplayInput(candidate), null);
 });
 
-Deno.test("JSON edits normalize case-insensitive inline image data URLs", async () => {
+test("JSON edits normalize case-insensitive inline image data URLs", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const nestedBodies: Record<string, unknown>[] = [];
     const response = await handleImages(
@@ -529,7 +539,7 @@ Deno.test("JSON edits normalize case-insensitive inline image data URLs", async 
   });
 });
 
-Deno.test("JSON edits reject remote masks and unbound file IDs before dispatch", async () => {
+test("JSON edits reject remote masks and unbound file IDs before dispatch", async () => {
   let dispatches = 0;
   const dispatch = () => {
     dispatches += 1;
@@ -569,7 +579,7 @@ Deno.test("JSON edits reject remote masks and unbound file IDs before dispatch",
   assert.equal(dispatches, 0);
 });
 
-Deno.test("JSON edits reject malformed source image URLs before dispatch", async () => {
+test("JSON edits reject malformed source image URLs before dispatch", async () => {
   let dispatches = 0;
   const dispatch = () => {
     dispatches += 1;
@@ -585,7 +595,7 @@ Deno.test("JSON edits reject malformed source image URLs before dispatch", async
   assert.equal(dispatches, 0);
 });
 
-Deno.test("case-insensitive inline images obey the n fan-out work budget", async () => {
+test("case-insensitive inline images obey the n fan-out work budget", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     let dispatches = 0;
     const response = await handleImages(
@@ -611,7 +621,7 @@ Deno.test("case-insensitive inline images obey the n fan-out work budget", async
   });
 });
 
-Deno.test("remote image references obey the n fan-out work budget", async () => {
+test("remote image references obey the n fan-out work budget", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     let dispatches = 0;
     const response = await handleImages(
@@ -637,7 +647,7 @@ Deno.test("remote image references obey the n fan-out work budget", async () => 
   });
 });
 
-Deno.test("JSON edits enforce the official image_url character limit", async () => {
+test("JSON edits enforce the official image_url character limit", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const oversizedUrl = `https://example.com/${"a".repeat(20_971_520)}`;
     let dispatches = 0;
@@ -663,7 +673,7 @@ Deno.test("JSON edits enforce the official image_url character limit", async () 
   });
 });
 
-Deno.test("n fans out forced Responses calls and aggregates one image per call", async () => {
+test("n fans out forced Responses calls and aggregates one image per call", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const seen: Record<string, unknown>[] = [];
     let releaseFirst!: () => void;
@@ -719,7 +729,7 @@ Deno.test("n fans out forced Responses calls and aggregates one image per call",
   });
 });
 
-Deno.test("image fan-out aborts siblings and waits for every child after a hard failure", async () => {
+test("image fan-out aborts siblings and waits for every child after a hard failure", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const failure = new Error("first child failed");
     const cleanup = new AbortController();
@@ -759,7 +769,7 @@ Deno.test("image fan-out aborts siblings and waits for every child after a hard 
   });
 });
 
-Deno.test("image fan-out preserves the first non-OK response after aborting and settling siblings", async () => {
+test("image fan-out preserves the first non-OK response after aborting and settling siblings", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const leaderBody = { error: { message: "leader quota exhausted", type: "rate_limit_error" } };
     let resolveLeader!: (response: Response) => void;
@@ -821,7 +831,7 @@ Deno.test("image fan-out preserves the first non-OK response after aborting and 
   });
 });
 
-Deno.test("image fan-out creates isolated JSON child requests", async () => {
+test("image fan-out creates isolated JSON child requests", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const childHeaders: Headers[] = [];
     const response = await handleImages(
@@ -853,7 +863,7 @@ Deno.test("image fan-out creates isolated JSON child requests", async () => {
   });
 });
 
-Deno.test("image JSON ingress rejects declared and chunked oversized bodies before dispatch", async () => {
+test("image JSON ingress rejects declared and chunked oversized bodies before dispatch", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     let dispatches = 0;
     const dispatch = () => {
@@ -886,7 +896,7 @@ Deno.test("image JSON ingress rejects declared and chunked oversized bodies befo
   });
 });
 
-Deno.test("fan-out dispatch coordination never refunds after a sibling transport starts", async () => {
+test("fan-out dispatch coordination never refunds after a sibling transport starts", async () => {
   let releaseLeader!: () => void;
   const leaderGate = new Promise<void>((resolve) => {
     releaseLeader = resolve;
@@ -921,7 +931,7 @@ Deno.test("fan-out dispatch coordination never refunds after a sibling transport
   assert.equal(cancellations, 0);
 });
 
-Deno.test("fan-out child cancellations settle locally before the outer refund", async () => {
+test("fan-out child cancellations settle locally before the outer refund", async () => {
   let admissionCalls = 0;
   let transportStarts = 0;
   let cancellations = 0;
@@ -955,7 +965,7 @@ Deno.test("fan-out child cancellations settle locally before the outer refund", 
   assert.equal(cancellations, 1);
 });
 
-Deno.test("fan-out dispatch coordination can refund after all calls settle without transport", async () => {
+test("fan-out dispatch coordination can refund after all calls settle without transport", async () => {
   let admissionCalls = 0;
   let cancellations = 0;
   const coordinator = createImageFanoutDispatchCoordinator(2, () => {
@@ -980,7 +990,7 @@ Deno.test("fan-out dispatch coordination can refund after all calls settle witho
   assert.equal(cancellations, 1);
 });
 
-Deno.test("nullable generation options use hosted tool defaults", async () => {
+test("nullable generation options use hosted tool defaults", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const seen: Record<string, unknown>[] = [];
     const response = await handleImages(
@@ -1011,7 +1021,7 @@ Deno.test("nullable generation options use hosted tool defaults", async () => {
   });
 });
 
-Deno.test("style is rejected before Responses translation", async () => {
+test("style is rejected before Responses translation", async () => {
   let dispatches = 0;
   for (const style of ["natural", "vivid"]) {
     const response = await handleImages(imagesRequest({ prompt: "styled image", style }), "generations", undefined, {
@@ -1026,7 +1036,7 @@ Deno.test("style is rejected before Responses translation", async () => {
   assert.equal(dispatches, 0);
 });
 
-Deno.test("image responses preserve only approved retry and rate-limit headers", async () => {
+test("image responses preserve only approved retry and rate-limit headers", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const upstreamHeaders = new Headers({
       "Retry-After": "17",
@@ -1050,7 +1060,7 @@ Deno.test("image responses preserve only approved retry and rate-limit headers",
   });
 });
 
-Deno.test("fan-out image responses preserve a retry header only when every call agrees", async () => {
+test("fan-out image responses preserve a retry header only when every call agrees", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     let calls = 0;
     const response = await handleImages(imagesRequest({ prompt: "two circles", n: 2 }), "generations", undefined, {
@@ -1083,7 +1093,7 @@ Deno.test("fan-out image responses preserve a retry header only when every call 
   });
 });
 
-Deno.test("upstream quota and roster errors pass through unchanged", async () => {
+test("upstream quota and roster errors pass through unchanged", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const dispatch = () =>
       Promise.resolve(
@@ -1100,7 +1110,7 @@ Deno.test("upstream quota and roster errors pass through unchanged", async () =>
   });
 });
 
-Deno.test("a reply with no image is reported instead of returning an empty success", async () => {
+test("a reply with no image is reported instead of returning an empty success", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const dispatch = () => Promise.resolve(new Response(JSON.stringify({ output: [{ type: "message", content: [] }] }), { status: 200 }));
     const response = await handleImages(imagesRequest({ model: "gpt-image-2", prompt: "a circle" }), "generations", undefined, { dispatch });
@@ -1110,7 +1120,7 @@ Deno.test("a reply with no image is reported instead of returning an empty succe
   });
 });
 
-Deno.test("malformed image requests are rejected before any dispatch", async () => {
+test("malformed image requests are rejected before any dispatch", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     let dispatches = 0;
     const dispatch = () => {

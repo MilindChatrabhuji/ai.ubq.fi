@@ -577,6 +577,7 @@ export const configuredOpenRouterModels = (): Record<string, unknown>[] =>
 export const configuredOpenRouterModelCapabilities = (): Record<string, unknown>[] =>
   openRouterServedModels().map((model) => {
     const resolved = resolveModelMetadata(model.id);
+    const defaultReasoningEffort = model.id === OPENROUTER_SERVED_MODEL_ID ? "none" : resolved.default_reasoning_effort;
     return {
       id: model.id,
       object: "uos.model_capabilities",
@@ -585,7 +586,9 @@ export const configuredOpenRouterModelCapabilities = (): Record<string, unknown>
       upstream_provider: "openrouter",
       supported_endpoints: [...model.endpoints],
       supported_reasoning_levels: model.id === OPENROUTER_SERVED_MODEL_ID ? ["none"] : (resolved.supported_reasoning_levels ?? ["none"]),
-      default_reasoning_effort: model.id === OPENROUTER_SERVED_MODEL_ID ? "none" : (resolved.default_reasoning_effort ?? "none"),
+      ...(defaultReasoningEffort === null && resolved.supported_reasoning_levels !== null
+        ? {}
+        : { default_reasoning_effort: defaultReasoningEffort ?? "none" }),
       reasoning_effort_wire_map: {},
       context_window_tokens: model.id === OPENROUTER_SERVED_MODEL_ID ? null : resolved.context_window_tokens,
       max_context_window_tokens: model.id === OPENROUTER_SERVED_MODEL_ID ? null : resolved.max_context_window_tokens,
@@ -640,7 +643,10 @@ const normalizeResponseTextContentItem = (
   if (partType === "output_text" && role !== "assistant") {
     return invalidNormalizedField(`${param}.type`, `${param}.type is only valid for assistant messages`);
   }
-  const unknown = findUnknownContentField(value, partType === "output_text" ? ["type", "text", "annotations"] : ["type", "text", "prompt_cache_breakpoint"]);
+  const unknown = findUnknownContentField(
+    value,
+    partType === "output_text" ? ["type", "text", "annotations", "logprobs"] : ["type", "text", "prompt_cache_breakpoint"]
+  );
   if (unknown) return invalidNormalizedField(`${param}.${unknown}`, `Unknown content field: ${unknown}`);
   if (typeof value.text !== "string") {
     return invalidNormalizedField(`${param}.text`, `${param}.text must be a string`);
@@ -648,6 +654,10 @@ const normalizeResponseTextContentItem = (
   if (partType === "output_text" && value.annotations !== undefined && !Array.isArray(value.annotations)) {
     return invalidNormalizedField(`${param}.annotations`, `${param}.annotations must be an array`);
   }
+  if (partType === "output_text" && value.logprobs !== undefined && !Array.isArray(value.logprobs)) {
+    return invalidNormalizedField(`${param}.logprobs`, `${param}.logprobs must be an array`);
+  }
+  // Replayed output metadata is accepted but does not belong in provider input.
   if (partType === "output_text") return { ok: true, value: { type: partType, text: value.text } };
   const breakpoint = normalizePromptCacheBreakpoint(value.prompt_cache_breakpoint, `${param}.prompt_cache_breakpoint`);
   if (!breakpoint.ok) return breakpoint;

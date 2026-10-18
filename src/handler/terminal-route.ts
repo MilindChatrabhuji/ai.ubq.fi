@@ -78,7 +78,16 @@ const reserveUsageAdmission = async (
   const admission = await reserveApiKeyUsageV3(policy, requestId, route, { deferWhenFull: true });
   if (admission.ok) return { reservation: admission.reservation };
   const response = withCorsHeaders(withRequestId(admission.response, requestId), req);
-  return { rejection: await withRejectionTerminalLog(response, route, { requestId, startedAtMonotonicMs, delivery, onSettled, admissionWaitMs }) };
+  return {
+    rejection: await withRejectionTerminalLog(response, route, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs,
+      delivery,
+      onSettled,
+      admissionWaitMs,
+    }),
+  };
 };
 
 /** Reserves kernel usage for a repository-scoped route; a refusal is returned as a response. */
@@ -105,6 +114,7 @@ const reserveKernelAdmission = async (
   const response = withCorsHeaders(withRequestId(admission.response, input.requestId), input.req);
   const rejection = await withRejectionTerminalLog(response, input.route, {
     requestId: input.requestId,
+    admissionStage: "pre_admission",
     startedAtMonotonicMs: input.startedAtMonotonicMs,
     delivery: input.delivery,
     onSettled: input.onSettled,
@@ -160,6 +170,13 @@ export const persistInferenceExceptionReplay = async (
   if (!scheduleSentinelBackgroundTask(persistence, options.waitUntil)) await persistence;
 };
 
+/** Terminal UOS dispatch metadata; prefix paths are published as `{id}` routes by the contract test. */
+export const UOS_TERMINAL_ROUTES = [
+  { method: "POST", path: "/uos/embeddings", prefix: false, handler: "embeddings" },
+  { method: "POST", path: "/uos/embedding-jobs", prefix: false, handler: "embeddingJobCreate" },
+  { method: "GET", path: "/uos/embedding-jobs/", prefix: true, handler: "embeddingJobGet" },
+] as const;
+
 /**
  * Authenticates, admits, and dispatches one terminal inference request.  Every
  * response that leaves here already carries CORS headers, the request id, quota
@@ -178,7 +195,12 @@ const handleTerminalRoute = async (
   const authResult = await authenticateClient(req);
   if (!authResult.ok) {
     const response = withCors(withRequestId(authResult.response, requestId));
-    return await withRejectionTerminalLog(response, terminalRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+    return await withRejectionTerminalLog(response, terminalRoute, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+    });
   }
   // Authenticated state, not a client header or session id: a caller cannot
   // rename itself to escape the waiting turn its principal was served in.
@@ -224,7 +246,12 @@ const handleTerminalRoute = async (
         ? openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null })
         : localOverloadResponse(admitted.cause);
     const response = withCors(withRequestId(refusal, requestId));
-    return await withRejectionTerminalLog(response, admissionRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+    return await withRejectionTerminalLog(response, admissionRoute, {
+      requestId,
+      admissionStage: "pre_admission",
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+    });
   };
   const admissionRefusal = await acquireProcessPermit();
   if (admissionRefusal) return admissionRefusal;
@@ -398,6 +425,7 @@ const handleTerminalRoute = async (
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestStartedAtMs,
         requestId,
+        admissionStage: "accepted",
         onTerminal: trackKernelTerminal ? settleKernelQuota : undefined,
         onSettled: releaseProcessPermit,
         deliveryCompleted: delivery?.completed,
@@ -530,11 +558,13 @@ const handleTerminalRoute = async (
   // Terminal routes in wire order. The conditions are pure, so the first match
   // owns the response exactly as the original if/else chain did.
   const dispatchTerminalRoute = async (): Promise<Response> => {
+    const uosHandlers = { embeddings: runEmbeddingsRoute, embeddingJobCreate: runEmbeddingJobCreateRoute, embeddingJobGet: runEmbeddingJobGetRoute };
     const terminalRoutes: readonly (readonly [boolean, () => Promise<Response>])[] = [
       [req.method === "GET" && path === "/v1/models", runModelsRoute],
-      [req.method === "POST" && path === "/uos/embeddings", runEmbeddingsRoute],
-      [req.method === "POST" && path === "/uos/embedding-jobs", runEmbeddingJobCreateRoute],
-      [req.method === "GET" && path.startsWith("/uos/embedding-jobs/"), runEmbeddingJobGetRoute],
+      ...UOS_TERMINAL_ROUTES.map((route): readonly [boolean, () => Promise<Response>] => [
+        req.method === route.method && (route.prefix ? path.startsWith(route.path) : path === route.path),
+        uosHandlers[route.handler],
+      ]),
       [req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits"), runImagesRoute],
       [req.method === "POST" && path === "/v1/chat/completions", runChatCompletionsRoute],
       [req.method === "POST" && path === "/v1/responses", runResponsesRoute],
@@ -571,6 +601,7 @@ const handleTerminalRoute = async (
     const response = withCors(withRequestId(refusal, requestId));
     return await withRejectionTerminalLog(response, terminalRoute, {
       requestId,
+      admissionStage: "accepted",
       startedAtMonotonicMs: requestStartedAtMonotonicMs,
       delivery,
       onSettled: releaseProcessPermit,

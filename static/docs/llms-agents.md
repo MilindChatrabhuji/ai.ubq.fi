@@ -36,13 +36,13 @@ For app integrations, name the client credential `UOS_AI_TOKEN` or another gatew
 The gateway never forwards your client token upstream. It uses Codex CLI auth configured on the server.
 
 Administrators can upload a fresh Codex `auth.json` through the repository helper. Run these commands from an existing
-`ai.ubq.fi` checkout (the directory containing `deno.json` and `scripts/upload-codex-auth.ts`):
+`ai.ubq.fi` checkout (the directory containing `package.json` and `scripts/upload-codex-auth.ts`):
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
-deno task upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
-deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
+bun run upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
+bun run upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
 ```
 
 Treat `auth.json` as a secret because it contains refresh tokens. The helper sends it only to the authenticated admin
@@ -52,9 +52,10 @@ route; never put its contents in a client request or commit it.
 
 When using a GitHub token for any `/v1/*` route, include:
 
-- `X-GitHub-Owner: <owner>`
-- `X-GitHub-Repo: <repo>`
 - `X-Ubiquity-Kernel-Token: <jwt>`
+
+The attestation names the repository. `X-GitHub-Owner: <owner>` and `X-GitHub-Repo: <repo>` are optional cross-checks:
+when both are sent, they must equal the repository the attestation names.
 
 If the kernel attestation includes `installation_id`, also send:
 
@@ -116,6 +117,7 @@ Codex compatibility endpoints:
 UOS gateway endpoints:
 
 - `GET /uos/auth`
+- `GET /uos/models/catalog` (public, no bearer token)
 - `GET /uos/models/capabilities`
 - `POST /uos/embeddings`
 - `POST /uos/embedding-jobs`
@@ -293,9 +295,7 @@ Input formats:
 - Array of message items:
 
 ```json
-[
-  { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Hello" }] }
-]
+[{ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Hello" }] }]
 ```
 
 - Array of content items (coalesced into user messages):
@@ -567,9 +567,12 @@ attestation.
 Required headers:
 
 - `Authorization: Bearer <github_token>`
+- `X-Ubiquity-Kernel-Token: <jwt>`
+
+Optional cross-check headers, compared with the attested repository only when both are sent:
+
 - `X-GitHub-Owner: <owner>`
 - `X-GitHub-Repo: <repo>`
-- `X-Ubiquity-Kernel-Token: <jwt>`
 
 If the kernel attestation includes `installation_id`, also send:
 
@@ -647,9 +650,7 @@ responses normalized by the gateway:
 UOS, admin, or health/debug routes should still be parsed defensively by integrations that call them directly:
 
 ```ts
-const message = body?.error?.message ??
-  body?.detail ??
-  response.statusText;
+const message = body?.error?.message ?? body?.detail ?? response.statusText;
 ```
 
 Common status codes:

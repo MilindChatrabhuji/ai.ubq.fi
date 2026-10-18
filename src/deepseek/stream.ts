@@ -154,7 +154,7 @@ const createDeepSeekStreamSession = (
 };
 
 /** Races one upstream read against the composed cancellation/deadline signal. */
-const raceReaderRead = async (reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): Promise<ReadableStreamReadResult<Uint8Array>> => {
+const raceReaderRead = async (reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): Promise<Awaited<ReturnType<typeof reader.read>>> => {
   let onAbort = (): void => {};
   const aborted = new Promise<never>((_, reject) => {
     onAbort = () => {
