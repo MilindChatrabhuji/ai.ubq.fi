@@ -43,15 +43,15 @@ pub struct RequestResources {
 async fn dispatch_attempts(
     session: Rc<Session>,
     cancellation: &crate::transport::outbound::Cancellation,
-) -> Result<(Response, PreparedAttempt), GatewayError> {
+) -> Result<(Response, PreparedAttempt), gateway_routing_runtime::RoutingError> {
     loop {
-        let attempt = match session.next_attempt().await.map_err(|error| *error.error)? {
+        let attempt = match session.next_attempt().await? {
             Some(attempt) => attempt,
             None => {
                 return Err(GatewayError::unavailable(
                     "No eligible provider remains for this request.",
                     "provider_routing_unavailable",
-                ));
+                ).into());
             }
         };
         let target = PinnedDestination::new(&attempt.request.url)?;
@@ -75,8 +75,7 @@ async fn dispatch_attempts(
             Ok(response) => {
                 session
                     .transport_started(&attempt)
-                    .await
-                    .map_err(|error| *error.error)?;
+                    .await?;
                 response
             }
             Err(failure) => {
@@ -111,12 +110,11 @@ async fn dispatch_attempts(
                             cancelled: cancellation.signal().aborted(),
                         },
                     )
-                    .await
-                    .map_err(|error| *error.error)?;
+                    .await?;
                 if decision == RefusalDecision::Continue {
                     continue;
                 }
-                return Err(failure.error);
+                return Err(failure.error.into());
             }
         };
         if response.status_code() < 400 {
@@ -162,7 +160,7 @@ async fn dispatch_attempts(
             Ok(decision) => decision,
             Err(error) => {
                 body::discard_response(&mut response);
-                return Err(*error.error);
+                return Err(error);
             }
         };
         if decision == RefusalDecision::Continue {
@@ -171,7 +169,7 @@ async fn dispatch_attempts(
         }
         if decision == RefusalDecision::Abort {
             body::discard_response(&mut response);
-            return Err(gateway_admission::cancellation_error());
+            return Err(gateway_admission::cancellation_error().into());
         }
         return Ok((response, attempt));
     }
@@ -331,7 +329,16 @@ pub async fn run(
                 .finish(Default::default())
                 .await
                 .map_err(|error| *error.error)?;
-            return Err(error);
+            if let Some(body) = error.source_body {
+                let mut response = Response::from_bytes(body.as_bytes().to_vec())
+                    .map_err(|_| invalid("The routing refusal could not be rendered."))?
+                    .with_status(error.error.status);
+                response.headers_mut().set("content-type", "application/json").map_err(|_| invalid("Invalid routing refusal header."))?;
+                response.headers_mut().set("cache-control", "no-store").map_err(|_| invalid("Invalid routing refusal header."))?;
+                for (name,value) in error.headers { response.headers_mut().set(&name,&value).map_err(|_| invalid("Invalid routing refusal header."))?; }
+                return Ok(response);
+            }
+            return Err(*error.error);
         }
     };
     let status = upstream.status_code();

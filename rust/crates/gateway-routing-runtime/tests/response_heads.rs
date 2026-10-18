@@ -276,3 +276,16 @@ fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() {
         }
     });
 }
+
+#[test]
+fn source_cooldown_refusal_retains_lone_surrogate_json_and_never_dispatches() {
+    run(async {
+        let store=Store::new();seed_key(&store);let mut host=Host::new(&store);
+        let wire=r#"{"error":{"message":"held \ud800","type":"rate_limit_error","code":"claude_code_cooldown"}}"#;
+        host.claude_refused=Some((429,BTreeMap::from([("Retry-After".into(),"9".into())]),gateway_core::source_json::SourceJson::parse(wire).unwrap()));
+        let session=RoutingSession::begin(request("raw-cooldown",false),store.clone(),host.clone(),store.clone(),store.clone()).await.unwrap();
+        let error=session.next_attempt().await.err().unwrap();assert_eq!(error.error.status,429);assert_eq!(error.headers["Retry-After"],"9");
+        assert_eq!(error.source_body.unwrap().as_bytes(),wire.as_bytes());
+        session.finish(TransportObservation::default()).await.unwrap();assert_eq!(window(&store)["committed_requests"],0);assert_eq!(host.claude_heads.load(Ordering::SeqCst),0);
+    });
+}

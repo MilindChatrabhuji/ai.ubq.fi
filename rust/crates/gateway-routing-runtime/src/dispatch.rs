@@ -305,6 +305,11 @@ impl<
         failure: AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let (row, record) = self.observed_attempt(attempt).await?;
+        if matches!(record.fence, CredentialFence::Claude { .. })
+            && failure.origin == FailureOrigin::Provider
+        {
+            return Err(journal::unavailable("Claude refusals require the consumed actual response-head capability.").into());
+        }
         if failure.transport == TransportState::NotStarted && record.transport_started {
             return Err(journal::unavailable(
                 "NotStarted report conflicts with durable transport intent.",
@@ -426,13 +431,6 @@ impl<
                     .into());
                 }
             }
-        } else if matches!(record.fence, CredentialFence::Claude { .. })
-            && failure.origin == FailureOrigin::Provider
-        {
-            return Err(journal::unavailable(
-                "Claude refusals require the consumed actual response-head capability.",
-            )
-            .into());
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
             if gateway_providers::policy::paid_should_advance(
                 failure.status,
