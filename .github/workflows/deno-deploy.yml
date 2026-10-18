@@ -5,11 +5,16 @@ on:
   push:
     branches: [development]
   pull_request:
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
-  group: ai-ubq-fi-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # pull_request and workflow_dispatch: one group per ref, and a newer run cancels the superseded one.
+  # push and merge_group: one group per event and commit, so a later push or queue entry never cancels
+  # or replaces the run for a development or merge-group commit, and every such commit finishes CI.
+  group: ai-ubq-fi-ci-${{ (github.event_name == 'push' || github.event_name == 'merge_group') && format('{0}-{1}', github.event_name, github.sha) || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' && github.event_name != 'merge_group' }}
 
 permissions:
   contents: read
