@@ -32,7 +32,8 @@ pub async fn publication(
 ) -> Result<Option<Publication>, GatewayError> {
     let generation = super::generation();
     let snapshot = generation.snapshot();
-    let roster = claude::load_roster(store, platform, &platform::bootstrap(platform)?).await?;
+    let seed = platform::bootstrap_for_source(store, platform).await?;
+    let roster = claude::load_roster(store, platform, &seed).await?;
     let Some(account) = claude::active_binding(&roster.roster).cloned() else {
         return Ok(None);
     };
