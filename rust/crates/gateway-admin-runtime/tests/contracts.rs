@@ -846,8 +846,24 @@ fn supervisor_follow_dispatches_only_validated_finite_identifiers() {
 
 #[test]
 fn defaults_work_from_runtime_catalog_without_optional_full_snapshot() {
-    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);seed_catalog(&store,true);
+    let store = Store::default();
+    let host = Host::default();
+    let config = RuntimeConfig::default();
+    let service = runtime(&store, &host, &config);
+    seed_catalog(&store, true);
     store.rows.borrow_mut().remove(&codex_snapshot_key().0);
-    let response=run(service.execute(AdminOperation::DefaultsSet,input(json!({"model":"gpt-source","reasoning_effort":"future-tier"})))).unwrap();assert_eq!(response.body["defaults"]["model"],"gpt-source");
-    assert_eq!(run(service.paid_key_policy(&json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1}))).unwrap_err().status,503);
+    let response = run(service.execute(
+        AdminOperation::DefaultsSet,
+        input(json!({"model":"gpt-source","reasoning_effort":"future-tier"})),
+    ))
+    .unwrap();
+    assert_eq!(response.body["defaults"]["model"], "gpt-source");
+    assert_eq!(
+        run(service.paid_key_policy(
+            &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})
+        ))
+        .unwrap_err()
+        .status,
+        503
+    );
 }

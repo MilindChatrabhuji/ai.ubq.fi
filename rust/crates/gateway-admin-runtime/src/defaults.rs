@@ -119,7 +119,8 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 }
                 // Source loadCodexModelsSnapshot reads the compact runtime catalog. The
                 // optional full snapshot is required for paid exposure, not defaults edits.
-                let snapshot: ModelSnapshot = runtime.as_ref()
+                let snapshot: ModelSnapshot = runtime
+                    .as_ref()
                     .and_then(|value| value.get("codex_models"))
                     .cloned()
                     .and_then(|value| serde_json::from_value(value).ok())
