@@ -662,6 +662,24 @@ const toChatTools = (
   return { ok: true, value: { tools: collector.tools, toolNames: collector.toolNames, customToolNames: collector.customNames } };
 };
 
+const chatToolName = (name: string, namespace: string | null, toolNames: ReadonlyMap<string, OriginalToolName>): string => {
+  // Preserve the compatibility form's existing reverse lookup when it already
+  // supplies a flattened Chat name. A namespace-aware choice below is the
+  // forward lookup from the original Responses identity to that Chat name.
+  if (namespace === null) {
+    for (const [chatName, original] of toolNames) {
+      if (original.name === name && original.namespace === null) return chatName;
+    }
+    return originalToolName(name, toolNames);
+  }
+  // A namespace-aware choice must be resolved from the original identity so
+  // a colliding namespaced function gets its synthesized Chat name.
+  for (const [chatName, original] of toolNames) {
+    if (original.name === name && original.namespace === namespace) return chatName;
+  }
+  return name;
+};
+
 const toChatToolChoice = (value: unknown, toolNames: ReadonlyMap<string, OriginalToolName>): DeepSeekResponsesResult<unknown> => {
   if (value === undefined || value === null) return { ok: true, value: undefined };
   if (typeof value === "string") {
@@ -669,9 +687,11 @@ const toChatToolChoice = (value: unknown, toolNames: ReadonlyMap<string, Origina
     return failure("tool_choice", `tool_choice '${value}' is not supported`);
   }
   if (!isRecord(value) || Array.isArray(value)) return failure("tool_choice", "tool_choice must be a string or an object");
-  const name = getString(value.name) ?? (isRecord(value.function) ? getString(value.function.name) : null);
+  const nestedFunction = isRecord(value.function) && !Array.isArray(value.function) ? value.function : null;
+  const name = getString(value.name) ?? getString(nestedFunction?.name);
   if (!name) return failure("tool_choice.name", "a named tool_choice requires a name");
-  return { ok: true, value: { type: "function", function: { name: originalToolName(name, toolNames) } } };
+  const namespace = value.namespace === undefined ? getString(nestedFunction?.namespace) : getString(value.namespace);
+  return { ok: true, value: { type: "function", function: { name: chatToolName(name, namespace, toolNames) } } };
 };
 
 /** Responses nests the output format under `text.format`; Chat has one flat field. */
