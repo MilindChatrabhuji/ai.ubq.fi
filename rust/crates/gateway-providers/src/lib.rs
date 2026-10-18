@@ -2,6 +2,7 @@
 //! Callers own authoritative admission and must mark transport dispatch immediately before fetch.
 pub mod anthropic;
 pub mod chat;
+mod claude_chat_stream;
 pub mod extras;
 pub mod policy;
 pub mod replay;

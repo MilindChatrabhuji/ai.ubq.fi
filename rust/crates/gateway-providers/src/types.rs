@@ -33,13 +33,15 @@ pub struct PrepareOptions {
     pub native_reasoning_efforts: Option<Vec<String>>,
     pub supports_native_effort: bool,
     pub supports_disabled_thinking: bool,
-    pub supports_parallel_tools: bool,
+    pub supports_parallel_tools: Option<bool>,
+    /// Random per request unless a verified native-session identity is supplied.
+    pub conversation_id: Option<String>,
     pub reasoning_summary: Option<String>,
     /// Restored by ReplayStore in the same authenticated context, never by client input.
     pub restored_native_messages: Option<Vec<Value>>,
 }
 impl Default for PrepareOptions {
-    fn default() -> Self { Self { auth: AuthMaterial::default(), client_version: "0.100.0".into(), native_session_id: None, response_id: "resp_gateway".into(), created_at: 0, allowed_models: Vec::new(), catalog_max_output_tokens: None, native_reasoning_efforts: None, supports_native_effort: false, supports_disabled_thinking: false, supports_parallel_tools: false, reasoning_summary: None, restored_native_messages: None } }
+    fn default() -> Self { Self { auth: AuthMaterial::default(), client_version: "0.100.0".into(), native_session_id: None, response_id: "resp_gateway".into(), created_at: 0, allowed_models: Vec::new(), catalog_max_output_tokens: None, native_reasoning_efforts: None, supports_native_effort: false, supports_disabled_thinking: false, supports_parallel_tools: None, conversation_id: None, reasoning_summary: None, restored_native_messages: None } }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecodePlan {

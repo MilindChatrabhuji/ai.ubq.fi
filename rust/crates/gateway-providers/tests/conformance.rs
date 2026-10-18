@@ -84,3 +84,11 @@ fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary
     let system=extras::prepare_systemone(&json!({"state":{},"questions":{"go":{"type":"noul"}}}),&options()).unwrap();assert_eq!(system.body["model"],"~typesafe/jev-latest");assert_eq!(system.url,"https://openrouter.ai/api/v1/systemone");
     let image=extras::prepare_image(&json!({"prompt":"edit","images":[{"image_url":"https://example.test/image.png"}],"n":2}),"gpt-fixture",true,"request").unwrap();assert!(image.codex_only);assert_eq!(image.responses["tools"][0]["model"],"gpt-image-1.5");assert_eq!(image.request_ids,vec!["request","request:image:edits:2"]);assert!(extras::prepare_image(&json!({"prompt":"x","stream":true}),"gpt-fixture",false,"request").is_err());
 }
+#[test]
+fn direct_chat_empty_stop_is_preserved_while_responses_rejects_it(){
+    let mut plan=plan(ChatProfile::Deepseek);plan.surface=ClientSurface::Chat;plan.decode=ResponseDecode::Chat;let completion=json!({"id":"chat_1","created":1,"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}]});let decoded=decode_response(&plan,200,&Headers::new(),&serde_json::to_vec(&completion).unwrap()).unwrap();assert_eq!(decoded.body["choices"][0]["message"]["content"],"");plan.surface=ClientSurface::Responses;plan.decode=ResponseDecode::ChatToResponses(ChatProfile::Deepseek);assert!(decode_response(&plan,200,&Headers::new(),&serde_json::to_vec(&completion).unwrap()).is_err());
+}
+#[test]
+fn signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning(){
+    let mut plan=plan(ChatProfile::Claude);plan.decode=ResponseDecode::AnthropicChatToResponses;let mut decoder=StreamDecoder::new(plan);let mut events=decoder.push(&frame(&chunk(json!({"reasoning_content":"think","reasoning_details":[{"index":0,"type":"reasoning.text","text":"think","signature":"private"}]}),Value::Null))).unwrap();events.extend(decoder.push(&frame(&chunk(json!({"content":"answer"}),json!("stop")))).unwrap());events.extend(decoder.push(b"data: [DONE]\n\n").unwrap());assert_eq!(events.last().unwrap().data["response"]["output"][0]["summary"][0]["text"],"think");assert!(!json!(events.iter().map(|e|e.data.clone()).collect::<Vec<_>>()).to_string().contains("private"));assert_eq!(decoder.native_replay().unwrap()["reasoning_details"][0]["signature"],"private");
+}
