@@ -103,7 +103,7 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse() {
     let store = SqliteStore::open(&path);
     assert!(run(export_latest(&store, 2300)).is_err());
     let latest = run(export_native_latest(&store, 2300)).unwrap();
-    assert_eq!(latest.entries.len(), 11);
+    assert_eq!(latest.entries.len(), input.entries.len());
     assert_eq!(latest.data_revision.version, "51");
     let changed = latest
         .entries
