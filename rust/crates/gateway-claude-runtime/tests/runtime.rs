@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
+mod oracle;
 use gateway_admin_runtime::{
     claude::{self, AccountUpdate},
     claude_access,
