@@ -503,6 +503,37 @@ fn split_surrogate_detail_survives_quota_storage_and_the_next_cooldown_response(
     assert_eq!(parsed.error.code, "claude_code_cooling_down");
 }
 #[test]
+fn imported_cooldown_statuses_match_pinned_bun_constructor_and_never_authorize_paid() {
+    let oracle: Value = serde_json::from_str(include_str!("fixtures/cooldown-status.json")).unwrap();
+    assert_eq!(oracle["runtime"], "1.4.0");
+    let cases = oracle["observations"].as_array().unwrap();
+    assert_eq!(cases.len(), 10);
+    for case in cases {
+        let store = Store::new();
+        let account = account(1);
+        let config = seed(&store, vec![account.clone()]);
+        let host = Host::new(&store);
+        store.put(&quota_key(&account), "imported-source", json!({
+            "updated_at_ms":NOW,"cooldown_until_ms":NOW+1000,
+            "last_error":{"kind":"forbidden","status":case["input"],"message":"source cooldown","at_ms":NOW}
+        }));
+        let before = store.get(&quota_key(&account)).unwrap();
+        let result = run(ClaudePoolSession::new(config).select(&store, &host, SelectionInput { key_id:KEY, model:MODEL, raw:&raw(), selection:None })).unwrap();
+        if let Some(expected) = case["status"].as_u64() {
+            let PoolSelection::Refused { status, body, .. } = result else { panic!("expected the source JSON cooldown"); };
+            assert_eq!(u64::from(status), expected);
+            assert_eq!(body.deserialize::<Value>().unwrap()["error"]["code"], "claude_code_cooling_down");
+        } else {
+            assert_eq!(case["error"], "RangeError");
+            assert!(matches!(result, PoolSelection::InternalServerError));
+        }
+        assert_eq!(store.get(&quota_key(&account)).unwrap(), before);
+        assert!(quota::applicable_proof(store.quota(&account).as_ref(), &account, MODEL, NOW).is_none());
+        assert!(host.accepted.borrow().is_empty());
+        assert!(host.health.borrow().is_empty());
+    }
+}
+#[test]
 fn valid_source_negative_zero_does_not_disable_quota_or_full_pool_proof() {
     let store = Store::new();
     let account = account(1);

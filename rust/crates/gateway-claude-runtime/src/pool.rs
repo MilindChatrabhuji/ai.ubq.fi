@@ -121,9 +121,12 @@ impl ClaudePoolSession {
                 let error = quota.as_ref().and_then(|q| q.last_error.as_ref());
                 let status = error
                     .and_then(|e| e.status)
-                    .filter(|n| n.fract() == 0.0 && (100.0..=599.0).contains(n))
-                    .map(|n| n as u16)
-                    .unwrap_or(429);
+                    .unwrap_or(429.0)
+                    .trunc();
+                if !(200.0..=599.0).contains(&status) {
+                    return Ok(PoolSelection::InternalServerError);
+                }
+                let status = status as u16;
                 let message = error.and_then(|e| e.message.clone()).unwrap_or_else(|| {
                     JsString16::from(
                         "The Claude subscription is cooling down after an upstream rejection.",

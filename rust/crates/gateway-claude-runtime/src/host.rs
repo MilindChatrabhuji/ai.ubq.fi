@@ -81,6 +81,9 @@ pub enum PoolSelection {
     NotApplicable,
     Eligible(Box<SelectedAccount>),
     Unavailable,
+    /// Source HTTP constructor rejection: fixed 500 text/plain UTF8 response,
+    /// exact body "Internal Server Error". This carries no quota or paid meaning.
+    InternalServerError,
     Refused {
         status: u16,
         headers: Headers,

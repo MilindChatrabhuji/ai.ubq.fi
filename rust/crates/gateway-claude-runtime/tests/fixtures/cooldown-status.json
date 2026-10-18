@@ -1,0 +1,45 @@
+{
+  "runtime": "1.4.0",
+  "observations": [
+    {
+      "input": 100,
+      "error": "RangeError"
+    },
+    {
+      "input": 199,
+      "error": "RangeError"
+    },
+    {
+      "input": 200,
+      "status": 200
+    },
+    {
+      "input": 200.9,
+      "status": 200
+    },
+    {
+      "input": 403.5,
+      "status": 403
+    },
+    {
+      "input": 599.9,
+      "status": 599
+    },
+    {
+      "input": 600,
+      "error": "RangeError"
+    },
+    {
+      "input": -1,
+      "error": "RangeError"
+    },
+    {
+      "input": 65939,
+      "error": "RangeError"
+    },
+    {
+      "input": 131501,
+      "error": "RangeError"
+    }
+  ]
+}
