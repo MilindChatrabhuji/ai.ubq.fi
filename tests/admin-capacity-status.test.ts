@@ -138,7 +138,7 @@ test("provider selection save ignores a response after the gateway target change
   assert.notEqual(saveSource, "", "the provider-selection saver must stay discoverable");
 
   type TestResponse = { ok: boolean; json: () => Promise<unknown> };
-  let resolveResponse: ((response: TestResponse) => void) | null = null;
+  let resolveResponse!: (response: TestResponse) => void;
   const context = {
     getAdminToken: () => "old-token",
     hasAdminCredential: () => true,
@@ -175,9 +175,7 @@ test("provider selection save ignores a response after the gateway target change
   context.providerSelection = new Set(["new-provider"]);
   context.providersSavedSelection = new Set(["new-provider"]);
   context.providerSelectionLoadedAt = 2;
-  const resolveSaveResponse = resolveResponse;
-  if (!resolveSaveResponse) throw new Error("the save request did not reach the test fetch");
-  resolveSaveResponse({ ok: true, json: async () => ({ provider_ids: ["old-provider"] }) });
+  resolveResponse({ ok: true, json: () => Promise.resolve({ provider_ids: ["old-provider"] }) });
   await savePromise;
 
   assert.deepEqual([...context.providerSelection], ["new-provider"]);
@@ -939,6 +937,7 @@ const providerPicker = (selection: string[], { tier = "all", onlyActive = false 
     providersVisibleIds: new Set<string>(),
     providerTierFilter: tier,
     providerSelectionSaving: false,
+    providerSelectionLoadId: 0,
     providerSelectionLoadedAt: 1,
     providerSelectionSaveError: "",
     providersSummary: new TestElement(),
