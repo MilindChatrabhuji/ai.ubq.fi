@@ -366,6 +366,43 @@ async function agentMessageCases(url: (path: string) => string, cases: string[])
   cases.push("actual_kernel_rs256_github_auth_and_message_scope");
 }
 
+async function refusalCases(
+  post: (path: string, body: unknown) => Promise<Response>,
+  lifecycle: (id: string) => Promise<Record<string, unknown>>,
+  cases: string[]
+): Promise<void> {
+  const refusal = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:refusal-progressive" });
+  assert.equal(refusal.status, 418);
+  assert.equal(refusal.headers.get("content-type"), "application/octet-stream");
+  assert.equal(refusal.headers.get("x-fixture-refusal"), "raw");
+  assert.equal(refusal.headers.get("x-uos-provider-request-id"), "fixture-refusal-id");
+  assert.deepEqual(refusal.headers.getSetCookie(), ["first=1; Secure; HttpOnly", "second=2; Secure; HttpOnly"]);
+  assert(refusal.body);
+  const refusalReader = refusal.body.getReader();
+  const refusalFirst = await refusalReader.read();
+  assert.deepEqual(refusalFirst.value, new Uint8Array([0xef, 0xbb, 0xbf, 0xff, 0x00, 0x41]));
+  const refusalBytes = Array.from(refusalFirst.value);
+  for (;;) {
+    const part = await refusalReader.read();
+    if (part.done) break;
+    refusalBytes.push(...part.value);
+  }
+  assert.deepEqual(refusalBytes, [0xef, 0xbb, 0xbf, 0xff, 0x00, 0x41, 0x42, 0xfe, 0x43]);
+  const refusalId = refusal.headers.get("x-uos-request-id");
+  assert(refusalId);
+  const refusalState = await lifecycle(refusalId);
+  assert.equal(refusalState.semantic_committed, false);
+  assert(isObject(refusalState.terminal_intent));
+  assert.equal(refusalState.terminal_intent.semantic_terminal, null);
+  assert.equal(refusalState.terminal_intent.delivery, "unobserved");
+  cases.push("provider_refusal_preserves_progressive_raw_bytes_status_and_headers");
+  const emptyRefusal = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:refusal-empty" });
+  assert.equal(emptyRefusal.status, 416);
+  assert.equal(emptyRefusal.headers.get("x-fixture-refusal"), "empty");
+  assert.equal((await emptyRefusal.arrayBuffer()).byteLength, 0);
+  cases.push("empty_provider_refusal_keeps_original_status");
+}
+
 async function inner(): Promise<void> {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
@@ -446,6 +483,7 @@ async function inner(): Promise<void> {
       assert.equal((await fetch(url(`/v1/models?${query}`), { headers: { authorization: "Bearer fixture-access" } })).status, 400);
     }
     cases.push("invalid_and_duplicate_client_versions_refused");
+    await refusalCases(post, lifecycle, cases);
     const response = await post("/v1/responses", { model: "deepseek-flash", input: "fixture:json", stream: false });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-provider-request-id"), "provider-fixture-id");

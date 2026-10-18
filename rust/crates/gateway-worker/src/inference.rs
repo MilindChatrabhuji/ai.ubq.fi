@@ -16,7 +16,7 @@ use gateway_schema::{
     request::{self},
 };
 use serde_json::{Value, json};
-use worker::{Context, Method, Request, Response};
+use worker::{Context, Method, Request, Response, ResponseBody};
 
 use crate::{
     authority::RemoteAuthorityStore,
@@ -127,12 +127,20 @@ async fn dispatch_attempts(
             .headers()
             .entries()
             .collect::<gateway_providers::Headers>();
-        let bytes = body::response_bytes(
-            &mut response,
-            body::INFERENCE_JSON_MAX_BYTES,
-            &cancellation.signal(),
-        )
-        .await?;
+        // Provider origin is fixed at header receipt, before a clone/body await.
+        let capture = match (attempt.request.decode.provider, status) {
+            (UpstreamProvider::ChatgptCodex, 400) => {
+                body::refusal_probe(&mut response, cancellation, 250).await
+            }
+            (UpstreamProvider::ChatgptCodex, 429)
+            | (UpstreamProvider::Metered, 403)
+            | (UpstreamProvider::Surplus, 402) => {
+                body::refusal_probe(&mut response, cancellation, body::REFUSAL_PROBE_TIMEOUT_MS).await
+            }
+            // Claude's owner supplies a separate complete-prefix capture
+            // contract; it is not a generic bounded quota-body probe.
+            _ => body::ResponseCapture::default(),
+        };
         let decision = session
             .refusal(
                 &attempt,
@@ -140,32 +148,31 @@ async fn dispatch_attempts(
                     origin: FailureOrigin::Provider,
                     status: Some(status),
                     headers: headers.clone(),
-                    body: bytes.clone(),
-                    body_complete: true,
+                    body: capture.bytes,
+                    body_complete: capture.complete,
                     failure: gateway_providers::policy::HopFailure::Status(status),
                     transport: TransportState::Started,
                     semantic_committed: false,
                     cancelled: cancellation.signal().aborted(),
                 },
             )
-            .await
-            .map_err(|error| *error.error)?;
+            .await;
+        let decision = match decision {
+            Ok(decision) => decision,
+            Err(error) => {
+                body::discard_response(&mut response);
+                return Err(*error.error);
+            }
+        };
         if decision == RefusalDecision::Continue {
+            body::discard_response(&mut response);
             continue;
         }
         if decision == RefusalDecision::Abort {
+            body::discard_response(&mut response);
             return Err(gateway_admission::cancellation_error());
         }
-        let mut preserved = Response::from_bytes(bytes)
-            .map_err(|_| invalid("Upstream refusal cannot be retained."))?
-            .with_status(status);
-        for (name, value) in headers {
-            preserved
-                .headers_mut()
-                .set(&name, &value)
-                .map_err(|_| invalid("Invalid upstream refusal header."))?;
-        }
-        return Ok((preserved, attempt));
+        return Ok((response, attempt));
     }
 }
 
@@ -347,30 +354,27 @@ pub async fn run(
     let finish = finish_hook(lifecycle.clone(), usage.clone(), permit);
     if status >= 400 {
         let observation = ObservationHandle::default();
-        let bytes = body::response_bytes(
-            &mut upstream,
-            body::INFERENCE_JSON_MAX_BYTES,
-            &host.cancellation.signal(),
-        )
-        .await?;
+        let (builder, raw_body) = upstream.into_parts();
+        let source: std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = worker::Result<Vec<u8>>>>,
+        > = match raw_body {
+            ResponseBody::Empty => Box::pin(futures_util::stream::empty()),
+            ResponseBody::Body(bytes) => Box::pin(futures_util::stream::iter([Ok(bytes)])),
+            ResponseBody::Stream(source) => Box::pin(worker::ByteStream::from(source)),
+        };
         let stream = ObservedStream::new(
-            futures_util::stream::iter(vec![Ok(bytes)]),
+            source,
             observation,
             context,
             host.cancellation.clone(),
             Some(deadline),
             finish,
         );
-        let mut response = stream
+        let (_, raw_body) = stream
             .into_response()
             .map_err(|_| invalid("The downstream refusal body is unavailable."))?
-            .with_status(status);
-        for (name, value) in &headers {
-            response
-                .headers_mut()
-                .set(name, value)
-                .map_err(|_| invalid("Invalid upstream refusal header."))?;
-        }
+            .into_parts();
+        let mut response = builder.body(raw_body);
         provider_correlation(&mut response, provider, &headers)?;
         apply_warnings(&mut response, &prepared.warnings)?;
         return Ok(response);
@@ -463,12 +467,13 @@ pub async fn run(
                                 observe_event(&state.observation, &event);
                                 state.queue.push_back(event.encode_sse().into_bytes());
                             }
+                            let terminal_usage = state.usage.borrow().clone();
                             if state.observation.snapshot().semantic_terminal.is_some()
                                 && let Err(error) = state
                                     .lifecycle
                                     .observe_terminal(
                                         state.observation.snapshot(),
-                                        state.usage.borrow().clone(),
+                                        terminal_usage,
                                     )
                                     .await
                             {
@@ -496,11 +501,12 @@ pub async fn run(
                                     SemanticTerminal::Failed
                                 },
                             );
+                            let terminal_usage = state.usage.borrow().clone();
                             if let Err(error) = state
                                 .lifecycle
                                 .observe_terminal(
                                     state.observation.snapshot(),
-                                    state.usage.borrow().clone(),
+                                    terminal_usage,
                                 )
                                 .await
                             {

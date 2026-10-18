@@ -32,6 +32,31 @@ async function upstream(request, env, context) {
   if (url.pathname !== (cerebras ? "/v1/chat/completions" : "/chat/completions")) return new Response("Unexpected upstream path", { status: 400 });
   if (request.headers.get("authorization") !== "Bearer fixture-provider-secret") return new Response("Unexpected credential", { status: 401 });
   await log(env, { kind: "dispatch", hostname: url.hostname, path: url.pathname, body });
+  if (prompt.includes("fixture:refusal-empty")) return new Response(null, { status: 416, headers: { "x-fixture-refusal": "empty" } });
+  if (prompt.includes("fixture:refusal-progressive")) {
+    let timer;
+    let finish;
+    const lifetime = new Promise((resolve) => (finish = resolve));
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0xef, 0xbb, 0xbf, 0xff, 0x00, 0x41]));
+        timer = setTimeout(() => {
+          controller.enqueue(new Uint8Array([0x42, 0xfe, 0x43]));
+          controller.close();
+          finish();
+        }, 350);
+      },
+      cancel() {
+        clearTimeout(timer);
+        finish();
+      },
+    });
+    context.waitUntil(lifetime);
+    const headers = new Headers({ "content-type": "application/octet-stream", "x-fixture-refusal": "raw", "x-request-id": "fixture-refusal-id" });
+    headers.append("set-cookie", "first=1; Secure; HttpOnly");
+    headers.append("set-cookie", "second=2; Secure; HttpOnly");
+    return new Response(stream, { status: 418, headers });
+  }
   if (body.stream !== true) {
     return Response.json(
       {
