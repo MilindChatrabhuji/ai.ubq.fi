@@ -258,8 +258,8 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
             // -37 -> PS256
             // -257 -> RS256 aka RSASSA-PKCS1-v1_5 with SHA-256
 
-            // -1 -> n 256 bytes
-            // -2 -> e 3 bytes
+            // -1 -> n, source-compatible variable-length modulus
+            // -2 -> e, source-compatible variable-length exponent
 
             let n_value = m
                 .get(&serde_cbor_2::Value::Integer(-1))
@@ -275,7 +275,7 @@ impl TryFrom<&serde_cbor_2::Value> for COSEKey {
                 return Err(WebauthnError::COSEKeyRSANEInvalid);
             }
 
-            // Set the n and e, we know they are proper sizes.
+            // Preserve parameters; the maintained RSA constructor validates them.
             let e_temp = e.to_vec();
 
             // Right, now build the struct.

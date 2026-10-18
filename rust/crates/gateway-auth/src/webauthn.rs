@@ -114,12 +114,18 @@ pub struct CosePublicKey {
 impl CosePublicKey {
     /// Source EC verification selects the real curve independently of the COSE hash ID.
     pub fn import_algorithm(&self) -> Value {
-        if self.jwk["kty"] == "EC" { json!({"name":"ECDSA","namedCurve":self.jwk["crv"]}) }
-        else { self.algorithm.import_algorithm() }
+        if self.jwk["kty"] == "EC" {
+            json!({"name":"ECDSA","namedCurve":self.jwk["crv"]})
+        } else {
+            self.algorithm.import_algorithm()
+        }
     }
     pub fn verify_algorithm(&self) -> Value {
-        if self.jwk["kty"] == "EC" { json!({"name":"ECDSA","hash":{"name":self.algorithm.hash_name()}}) }
-        else { self.algorithm.verify_algorithm() }
+        if self.jwk["kty"] == "EC" {
+            json!({"name":"ECDSA","hash":{"name":self.algorithm.hash_name()}})
+        } else {
+            self.algorithm.verify_algorithm()
+        }
     }
 }
 #[derive(Clone, Debug)]
@@ -379,9 +385,18 @@ pub async fn verify_assertion<C: WebAuthnCrypto>(
     let key = parse_cose_key(&decode_base64url(&input.credential.public_key)?)?;
     let signature = encoded_field(&input.response, "signature")?;
     let signature = match (key.jwk["kty"].as_str(), key.jwk["crv"].as_str()) {
-        (Some("EC"),Some("P-256")) => p256::ecdsa::Signature::from_der(&signature).map_err(|_| invalid("Invalid passkey ECDSA signature"))?.to_bytes().to_vec(),
-        (Some("EC"),Some("P-384")) => p384::ecdsa::Signature::from_der(&signature).map_err(|_| invalid("Invalid passkey ECDSA signature"))?.to_bytes().to_vec(),
-        (Some("EC"),Some("P-521")) => p521::ecdsa::Signature::from_der(&signature).map_err(|_| invalid("Invalid passkey ECDSA signature"))?.to_bytes().to_vec(),
+        (Some("EC"), Some("P-256")) => p256::ecdsa::Signature::from_der(&signature)
+            .map_err(|_| invalid("Invalid passkey ECDSA signature"))?
+            .to_bytes()
+            .to_vec(),
+        (Some("EC"), Some("P-384")) => p384::ecdsa::Signature::from_der(&signature)
+            .map_err(|_| invalid("Invalid passkey ECDSA signature"))?
+            .to_bytes()
+            .to_vec(),
+        (Some("EC"), Some("P-521")) => p521::ecdsa::Signature::from_der(&signature)
+            .map_err(|_| invalid("Invalid passkey ECDSA signature"))?
+            .to_bytes()
+            .to_vec(),
         _ => signature,
     };
     let mut verification = data;
@@ -445,7 +460,7 @@ pub async fn verify_registration<C: WebAuthnCrypto>(
     }
     consume_extensions(data, key_end, flags)?;
     crypto.validate_key(&parsed).await?;
-    if now_ms < 0 || now_ms > 9_007_199_254_740_991 {
+    if !(0..=9_007_199_254_740_991).contains(&now_ms) {
         return Err(GatewayError::unavailable(
             "Host clock is invalid",
             "auth_clock_unavailable",

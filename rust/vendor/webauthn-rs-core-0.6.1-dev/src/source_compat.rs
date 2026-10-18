@@ -28,8 +28,13 @@ impl RevocationCheck {
         x509_parser::parse_x509_crl(der)
             .ok()
             .is_some_and(|(_, crl)| {
-                crl.iter_revoked_certificates()
-                    .any(|entry| entry.raw_serial().iter().skip_while(|b| **b == 0).eq(self.serial.iter().skip_while(|b| **b == 0)))
+                crl.iter_revoked_certificates().any(|entry| {
+                    entry
+                        .raw_serial()
+                        .iter()
+                        .skip_while(|b| **b == 0)
+                        .eq(self.serial.iter().skip_while(|b| **b == 0))
+                })
             })
     }
 }
@@ -92,7 +97,9 @@ fn cert_time(cert: &Certificate, now: SystemTime) -> Result<(), WebauthnError> {
     }
     Ok(())
 }
-pub(crate) fn certificate_signature_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, WebauthnError> {
+pub(crate) fn certificate_signature_algorithm(
+    cert: &Certificate,
+) -> Result<COSEAlgorithm, WebauthnError> {
     algorithm_oid(&cert.tbs_certificate.signature.oid.to_string())
 }
 fn signature_algorithm(cert: &Certificate) -> Result<COSEAlgorithm, WebauthnError> {
@@ -303,12 +310,20 @@ pub fn verify_attestation_at_time(
                 let chain = certificates(&att.att_stmt)?;
                 cert_time(chain.first().ok_or_else(failure)?, now)?;
             } else {
-                let alg = cbor_try_i128!(statement.get(&Value::Text("alg".into())).ok_or(WebauthnError::AttestationStatementAlgMissing)?)?;
+                let alg = cbor_try_i128!(statement
+                    .get(&Value::Text("alg".into()))
+                    .ok_or(WebauthnError::AttestationStatementAlgMissing)?)?;
                 let mut key = COSEKey::try_from(&acd.credential_pk)?;
-                key.type_ = COSEAlgorithm::try_from(alg).map_err(|_| WebauthnError::COSEKeyInvalidAlgorithm)?;
-                let signature = cbor_try_bytes!(statement.get(&Value::Text("sig".into())).ok_or(WebauthnError::AttestationStatementSigMissing)?)?;
-                let mut signed = att.auth_data_bytes.clone(); signed.extend(hash);
-                if !key.verify_signature(signature, &signed)? { return Err(WebauthnError::AttestationStatementSigInvalid); }
+                key.type_ = COSEAlgorithm::try_from(alg)
+                    .map_err(|_| WebauthnError::COSEKeyInvalidAlgorithm)?;
+                let signature = cbor_try_bytes!(statement
+                    .get(&Value::Text("sig".into()))
+                    .ok_or(WebauthnError::AttestationStatementSigMissing)?)?;
+                let mut signed = att.auth_data_bytes.clone();
+                signed.extend(hash);
+                if !key.verify_signature(signature, &signed)? {
+                    return Err(WebauthnError::AttestationStatementSigInvalid);
+                }
             }
             Ok(vec![])
         }
@@ -318,7 +333,10 @@ pub fn verify_attestation_at_time(
         }
         "tpm" => {
             verify_source_tpm_attestation(acd, &att, hash)?;
-            cert_time(certificates(&att.att_stmt)?.first().ok_or_else(failure)?, now)?;
+            cert_time(
+                certificates(&att.att_stmt)?.first().ok_or_else(failure)?,
+                now,
+            )?;
             Ok(vec![])
         }
         "apple" => {
@@ -332,12 +350,25 @@ pub fn verify_attestation_at_time(
         "android-key" => {
             verify_source_android_key_attestation(acd, &att, hash)?;
             let chain = certificates(&att.att_stmt)?;
-            let root_pems = [include_str!("../source-roots/Google_Hardware_Attestation_Root_1.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_2.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_3.pem"),include_str!("../source-roots/Google_Hardware_Attestation_Root_4.pem")];
+            let root_pems = [
+                include_str!("../source-roots/Google_Hardware_Attestation_Root_1.pem"),
+                include_str!("../source-roots/Google_Hardware_Attestation_Root_2.pem"),
+                include_str!("../source-roots/Google_Hardware_Attestation_Root_3.pem"),
+                include_str!("../source-roots/Google_Hardware_Attestation_Root_4.pem"),
+            ];
             let root = chain.last().ok_or_else(failure)?;
             let encoded = STANDARD.encode(root.to_der().map_err(|_| failure())?);
-            let lines = encoded.as_bytes().chunks(64).map(|line| std::str::from_utf8(line).map_err(|_| failure())).collect::<Result<Vec<_>,_>>()?.join("\n");
-            let root_pem = format!("-----BEGIN CERTIFICATE-----\n{lines}\n-----END CERTIFICATE-----\n");
-            if !root_pems.contains(&root_pem.as_str()) { return Err(WebauthnError::AttestationTrustFailure); }
+            let lines = encoded
+                .as_bytes()
+                .chunks(64)
+                .map(|line| std::str::from_utf8(line).map_err(|_| failure()))
+                .collect::<Result<Vec<_>, _>>()?
+                .join("\n");
+            let root_pem =
+                format!("-----BEGIN CERTIFICATE-----\n{lines}\n-----END CERTIFICATE-----\n");
+            if !root_pems.contains(&root_pem.as_str()) {
+                return Err(WebauthnError::AttestationTrustFailure);
+            }
             trusted_chain(&chain, std::slice::from_ref(root), now)
         }
         "android-safetynet" => safetynet(&att, hash, now),
