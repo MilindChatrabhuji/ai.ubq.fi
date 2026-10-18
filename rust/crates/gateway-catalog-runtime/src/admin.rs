@@ -309,29 +309,26 @@ impl CatalogRuntime {
                 Some("invalid_request_error"),
             ));
         }
-        for _ in 0..3 {
-            let current = state::read_json(store, &state::whitelist_key()).await?;
-            let now = host.now_ms();
-            if store
-                .commit(AtomicTransition {
-                    checks: vec![state::check(state::whitelist_key(), current.as_ref())],
-                    mutations: vec![RecordMutation::Put {
-                        key: state::whitelist_key(),
-                        record: StoredRecord::json(
-                            host.unique_id(),
-                            json!({"model_ids":ids,"updated_at_ms":now}),
-                            None,
-                        ),
-                    }],
-                })
-                .await?
-                == CommitOutcome::Committed
-            {
-                return Ok(AdminCatalogResponse::json(
-                    json!({"ok":true,"stored":true,"model_ids":ids,"updated_at_ms":host.now_ms()}),
-                    false,
-                ));
-            }
+        let now = host.now_ms();
+        if store
+            .commit(AtomicTransition {
+                checks: vec![],
+                mutations: vec![RecordMutation::Put {
+                    key: state::whitelist_key(),
+                    record: StoredRecord::json(
+                        host.unique_id(),
+                        json!({"model_ids":ids,"updated_at_ms":now}),
+                        None,
+                    ),
+                }],
+            })
+            .await?
+            == CommitOutcome::Committed
+        {
+            return Ok(AdminCatalogResponse::json(
+                json!({"ok":true,"stored":true,"model_ids":ids,"updated_at_ms":host.now_ms()}),
+                false,
+            ));
         }
         Err(persist_error(
             "Deno KV is not available; cannot persist model whitelist",

@@ -486,11 +486,12 @@ fn replacement_upload_preserves_verified_negative_prompt_cache_evidence() {
 }
 
 #[test]
-fn whitelist_unknown_ids_survive_replacement_conflict_and_empty_list_clears_filter() {
+fn whitelist_source_write_is_unconditional_retains_unknown_ids_and_empty_list_clears_filter() {
     let runtime = CatalogRuntime::new();
     let store = Store::default();
     let host = Host::new();
     let raced = store.clone();
+    *store.fail_key.borrow_mut() = Some(state::whitelist_key());
     *store.before_commit.borrow_mut() = Some(Rc::new(move || {
         raced.put(
             state::whitelist_key(),
@@ -507,7 +508,8 @@ fn whitelist_unknown_ids_survive_replacement_conflict_and_empty_list_clears_filt
         },
     );
     assert_eq!(result.body["model_ids"], json!(["missing"]));
-    assert_eq!(store.attempts.get(), 2);
+    assert_eq!(store.attempts.get(), 1);
+    *store.fail_key.borrow_mut() = None;
     assert_eq!(
         invoke(&runtime, &store, &host, AdminCatalogOperation::WhitelistGet).body["data"]["model_ids"],
         json!(["missing"])
