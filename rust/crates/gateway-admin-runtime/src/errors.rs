@@ -66,8 +66,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let limit = match parse::first(&input.query, "limit") {
             None => 100,
             Some(s) => {
-                let n=gateway_admin_data::profile::js_number(&Value::String(s.into()));
-                if !n.is_finite() || n.fract()!=0.0 || !(1.0..=500.0).contains(&n) { return Err(invalid("limit must be an integer from 1 to 500")) }
+                let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));
+                if !n.is_finite() || n.fract() != 0.0 || !(1.0..=500.0).contains(&n) {
+                    return Err(invalid("limit must be an integer from 1 to 500"));
+                }
                 n as usize
             }
         };

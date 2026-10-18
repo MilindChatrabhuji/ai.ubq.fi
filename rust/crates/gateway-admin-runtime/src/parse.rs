@@ -19,16 +19,18 @@ pub fn text(value: Option<&Value>) -> Option<String> {
         .map(str::to_owned)
 }
 pub fn integer(value: &Value) -> Option<i64> {
-    if !value.is_number() && !value.is_string() { return None }
+    if !value.is_number() && !value.is_string() {
+        return None;
+    }
     let n = gateway_admin_data::profile::js_number(value);
     (n.is_finite() && n.abs() <= MAX_SAFE_INTEGER as f64).then_some(n.trunc() as i64)
 }
 
 pub fn limit(value: &Value) -> Option<i64> {
-    if value
-        .as_str()
-        .is_some_and(|s| s.trim_matches(gateway_schema::util::js_whitespace).eq_ignore_ascii_case("unlimited"))
-    {
+    if value.as_str().is_some_and(|s| {
+        s.trim_matches(gateway_schema::util::js_whitespace)
+            .eq_ignore_ascii_case("unlimited")
+    }) {
         return Some(-1);
     }
     integer(value).filter(|v| *v >= -1)
@@ -37,10 +39,18 @@ pub fn positive(value: &Value) -> Option<i64> {
     integer(value).filter(|v| *v > 0)
 }
 pub fn truth(value: Option<&str>) -> bool {
-    value.is_some_and(|s| ["1", "true", "yes", "on"].contains(&s.trim_matches(gateway_schema::util::js_whitespace).to_lowercase().as_str()))
+    value.is_some_and(|s| {
+        ["1", "true", "yes", "on"].contains(
+            &s.trim_matches(gateway_schema::util::js_whitespace)
+                .to_lowercase()
+                .as_str(),
+        )
+    })
 }
 fn boolean(value: Option<&str>) -> Option<bool> {
-    let s = value?.trim_matches(gateway_schema::util::js_whitespace).to_lowercase();
+    let s = value?
+        .trim_matches(gateway_schema::util::js_whitespace)
+        .to_lowercase();
     if ["1", "true", "yes", "on"].contains(&s.as_str()) {
         Some(true)
     } else if ["0", "false", "no", "off"].contains(&s.as_str()) {
@@ -150,10 +160,14 @@ pub fn capture(input: &AdminInput, incidents: bool) -> Result<CaptureRequest, Ga
         });
     }
     let number = |name, fallback| {
-        first(q,name).filter(|s|!s.is_empty()).map(|s| {
-            let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));
-            (n.is_finite() && n.fract()==0.0 && n>=0.0 && n<=MAX_SAFE_INTEGER as f64).then_some(n as i64)
-        }).unwrap_or(Some(fallback))
+        first(q, name)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));
+                (n.is_finite() && n.fract() == 0.0 && n >= 0.0 && n <= MAX_SAFE_INTEGER as f64)
+                    .then_some(n as i64)
+            })
+            .unwrap_or(Some(fallback))
     };
     let after = number("after_ms", 0).ok_or_else(|| invalid("Invalid replay interval"))?;
     let before = number("before_ms", -1).ok_or_else(|| invalid("Invalid replay interval"))?;
@@ -193,7 +207,10 @@ pub fn migration(input: &AdminInput) -> Result<MigrationImport, GatewayError> {
         ));
     }
     let q = &input.query;
-    let profile = match first(q, "profile").unwrap_or("").trim_matches(gateway_schema::util::js_whitespace) {
+    let profile = match first(q, "profile")
+        .unwrap_or("")
+        .trim_matches(gateway_schema::util::js_whitespace)
+    {
         "" | "prod" => MigrationProfile::Prod,
         "local" => MigrationProfile::Local,
         _ => return Err(invalid("profile must be local or prod")),
@@ -246,9 +263,16 @@ pub fn claude(body: &Value) -> Result<ClaudeSubmission, GatewayError> {
         Some(Value::Null) => Some(None),
         Some(Value::String(s)) if s.is_empty() => Some(None),
         Some(Value::String(s))
-            if s.trim_matches(gateway_schema::util::js_whitespace).starts_with("wrkspc_") && s.trim_matches(gateway_schema::util::js_whitespace).encode_utf16().count() <= 256 =>
+            if s.trim_matches(gateway_schema::util::js_whitespace)
+                .starts_with("wrkspc_")
+                && s.trim_matches(gateway_schema::util::js_whitespace)
+                    .encode_utf16()
+                    .count()
+                    <= 256 =>
         {
-            Some(Some(s.trim_matches(gateway_schema::util::js_whitespace).into()))
+            Some(Some(
+                s.trim_matches(gateway_schema::util::js_whitespace).into(),
+            ))
         }
         _ => return Err(invalid("workspace_id must be a wrkspc_ workspace id")),
     };

@@ -174,7 +174,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         "admin_raw_body_unavailable",
                     )
                 })?;
-                if !body.trim_matches(gateway_schema::util::js_whitespace).is_empty() {
+                if !body
+                    .trim_matches(gateway_schema::util::js_whitespace)
+                    .is_empty()
+                {
                     return Err(invalid(
                         "Prompt-cache scope experiment does not accept request fields",
                     ));
@@ -323,7 +326,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .filter(|n| [7, 30, 90].contains(n))
                     .unwrap_or(30);
                 let balance = parse::first(&input.query, "balance_window_days")
-                    .and_then(|s| s.trim_matches(gateway_schema::util::js_whitespace).parse::<f64>().ok())
+                    .and_then(|s| {
+                        s.trim_matches(gateway_schema::util::js_whitespace)
+                            .parse::<f64>()
+                            .ok()
+                    })
                     .filter(|n| [7.0, 30.0, 90.0, 365.0].contains(n))
                     .unwrap_or(7.0) as u32;
                 self.capabilities

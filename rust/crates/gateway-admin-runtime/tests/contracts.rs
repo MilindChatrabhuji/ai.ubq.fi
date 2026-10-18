@@ -808,7 +808,8 @@ fn supervisor_follow_dispatches_only_validated_finite_identifiers() {
             else {
                 panic!("wrong finite operation")
             };
-            self.0.replace(Some((source_id, thread_id, cursor.unwrap_or_default())));
+            self.0
+                .replace(Some((source_id, thread_id, cursor.unwrap_or_default())));
             Err(GatewayError::unavailable(
                 "Native source is offline",
                 "fixture_native_source_offline",
@@ -1153,35 +1154,122 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
 #[test]
 fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() {
     use gateway_auth::native::AuthStream;
-    enum Reply { Prepared, JsonOnly, WrongSource }
+    enum Reply {
+        Prepared,
+        JsonOnly,
+        WrongSource,
+    }
     struct Native(Reply);
     impl RuntimeCapabilities for Native {
-        async fn native(&self,request:NativeRequest,_:Context)->Result<AuthResponse,GatewayError>{
-            let NativeRequest::SupervisorOutput{source_id,thread_id,cursor}=request else{panic!("wrong finite operation")};
-            let response=AuthResponse::json(200,Value::Null);
-            Ok(match self.0{
-                Reply::Prepared=>response.with_stream(AuthStream::SupervisorFollow{source_id,thread_id,cursor}),
-                Reply::JsonOnly=>response,
-                Reply::WrongSource=>response.with_stream(AuthStream::SupervisorFollow{source_id:"unselected-source".into(),thread_id,cursor}),
+        async fn native(
+            &self,
+            request: NativeRequest,
+            _: Context,
+        ) -> Result<AuthResponse, GatewayError> {
+            let NativeRequest::SupervisorOutput {
+                source_id,
+                thread_id,
+                cursor,
+            } = request
+            else {
+                panic!("wrong finite operation")
+            };
+            let response = AuthResponse::json(200, Value::Null);
+            Ok(match self.0 {
+                Reply::Prepared => response.with_stream(AuthStream::SupervisorFollow {
+                    source_id,
+                    thread_id,
+                    cursor,
+                }),
+                Reply::JsonOnly => response,
+                Reply::WrongSource => response.with_stream(AuthStream::SupervisorFollow {
+                    source_id: "unselected-source".into(),
+                    thread_id,
+                    cursor,
+                }),
             })
         }
     }
-    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();
-    for reply in [Reply::Prepared,Reply::JsonOnly,Reply::WrongSource]{
-        let prepared=matches!(reply,Reply::Prepared);let native=Native(reply);let service=AdminRuntime{store:&store,host:&host,capabilities:&native,config:&config};
-        let mut request=input(Value::Null);request.query.insert("source".into(),vec!["trusted-source".into()]);request.query.insert("id".into(),vec!["thread".into()]);
-        let result=run(service.execute(AdminOperation::SupervisorOutput,request));
-        if prepared{assert_eq!(result.unwrap().stream,Some(AuthStream::SupervisorFollow{source_id:"trusted-source".into(),thread_id:"thread".into(),cursor:None}));}
-        else{assert_eq!(result.unwrap_err().envelope.error.code.as_deref(),Some("native_protocol_invalid"));}
+    let store = Store::default();
+    let host = Host::default();
+    let config = RuntimeConfig::default();
+    for reply in [Reply::Prepared, Reply::JsonOnly, Reply::WrongSource] {
+        let prepared = matches!(reply, Reply::Prepared);
+        let native = Native(reply);
+        let service = AdminRuntime {
+            store: &store,
+            host: &host,
+            capabilities: &native,
+            config: &config,
+        };
+        let mut request = input(Value::Null);
+        request
+            .query
+            .insert("source".into(), vec!["trusted-source".into()]);
+        request.query.insert("id".into(), vec!["thread".into()]);
+        let result = run(service.execute(AdminOperation::SupervisorOutput, request));
+        if prepared {
+            assert_eq!(
+                result.unwrap().stream,
+                Some(AuthStream::SupervisorFollow {
+                    source_id: "trusted-source".into(),
+                    thread_id: "thread".into(),
+                    cursor: None
+                })
+            );
+        } else {
+            assert_eq!(
+                result.unwrap_err().envelope.error.code.as_deref(),
+                Some("native_protocol_invalid")
+            );
+        }
     }
 }
 
 #[test]
 fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
-    let store=Store::default();let host=Host::default();let config=RuntimeConfig::default();let service=runtime(&store,&host,&config);
-    let response=run(service.execute(AdminOperation::DebugSet,input(json!({"scenario":"\u{feff}codex_429\u{feff}","duration_ms":["16"]})))).unwrap();assert_eq!(response.body["routing"]["expires_at_ms"],1000016);
-    let response=run(service.execute(AdminOperation::ClaudeAccessSet,input(json!({"allowed_key_ids":["\u{0085}key\u{0085}"]})))).unwrap();assert_eq!(response.body["data"]["allowed_key_ids"],json!(["\u{0085}key\u{0085}"]));
-    let mut request=input(Value::Null);request.query.insert("after_ms".into(),vec![" \u{feff}0x10\u{feff} ".into()]);request.query.insert("before_ms".into(),vec!["0x20".into()]);request.query.insert("limit".into(),vec!["0b1".into()]);
-    assert_eq!(gateway_admin_runtime::parse::capture(&request,false).unwrap(),CaptureRequest::Interval{after_ms:16,before_ms:32,cursor:None});
-    request.query.insert("after_ms".into(),vec!["\u{0085}16\u{0085}".into()]);assert_eq!(gateway_admin_runtime::parse::capture(&request,false).unwrap_err().status,400);
+    let store = Store::default();
+    let host = Host::default();
+    let config = RuntimeConfig::default();
+    let service = runtime(&store, &host, &config);
+    let response = run(service.execute(
+        AdminOperation::DebugSet,
+        input(json!({"scenario":"\u{feff}codex_429\u{feff}","duration_ms":["16"]})),
+    ))
+    .unwrap();
+    assert_eq!(response.body["routing"]["expires_at_ms"], 1000016);
+    let response = run(service.execute(
+        AdminOperation::ClaudeAccessSet,
+        input(json!({"allowed_key_ids":["\u{0085}key\u{0085}"]})),
+    ))
+    .unwrap();
+    assert_eq!(
+        response.body["data"]["allowed_key_ids"],
+        json!(["\u{0085}key\u{0085}"])
+    );
+    let mut request = input(Value::Null);
+    request
+        .query
+        .insert("after_ms".into(), vec![" \u{feff}0x10\u{feff} ".into()]);
+    request
+        .query
+        .insert("before_ms".into(), vec!["0x20".into()]);
+    request.query.insert("limit".into(), vec!["0b1".into()]);
+    assert_eq!(
+        gateway_admin_runtime::parse::capture(&request, false).unwrap(),
+        CaptureRequest::Interval {
+            after_ms: 16,
+            before_ms: 32,
+            cursor: None
+        }
+    );
+    request
+        .query
+        .insert("after_ms".into(), vec!["\u{0085}16\u{0085}".into()]);
+    assert_eq!(
+        gateway_admin_runtime::parse::capture(&request, false)
+            .unwrap_err()
+            .status,
+        400
+    );
 }
