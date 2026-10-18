@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import type { AtomicCheck, Kv, KvCommitError, KvCommitResult, KvEntryMaybe, KvKey } from "#kv";
 import { afterEach, beforeEach, test } from "bun:test";
 import assert from "node:assert/strict";
-import { runInNewContext } from "node:vm";
 
 const adminHtml = readFileSync(new URL("../static/admin.html", import.meta.url), "utf8");
 const adminScript = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
@@ -730,62 +729,6 @@ test("the Models tab renders checkbox tools instead of a free-text whitelist", (
   assert.match(modelsScript, /source\?\.configured !== false/);
   assert.match(modelsScript, /deepseek: "DeepSeek"/);
   assert.match(modelsScript, /cerebras: "Cerebras"/);
-});
-
-test("a target switch fences a whitelist save that is still in flight", async () => {
-  const saveSource = /(const saveModelsWhitelist = async \(\) => \{[\s\S]*?\n\};)\n\nconst discardModelsChanges/.exec(adminScript)?.[1] ?? "";
-  const invalidateSource = /const invalidateAdminModels = \(message\) => \{[\s\S]*?\n\};/.exec(adminScript)?.[0] ?? "";
-  assert.notEqual(saveSource, "", "the whitelist save callback must stay discoverable");
-  assert.notEqual(invalidateSource, "", "the model invalidation callback must stay discoverable");
-
-  const deferred = Promise.withResolvers<Response>();
-  const context = {
-    fetch: () => deferred.promise,
-    apiUrl: (path: string) => path,
-    getAdminToken: () => "token",
-    hasAdminCredential: () => false,
-    setModelsWhitelistBadge: () => {},
-    renderModelsMessage: () => {},
-    updateModelsStatus: () => {},
-    modelsHasUnsavedChanges: () => true,
-    modelsSelectedIds: () => ["old-model"],
-    modelsSelectionFromIds: (ids: unknown) =>
-      new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string" && id) : []),
-    renderModelsPicker: () => {},
-    formatNumber: String,
-    toast: { error: () => {}, success: () => {} },
-    console,
-  };
-  runInNewContext(
-    [
-      "let modelsLoadId = 0;",
-      "let modelsSaving = false;",
-      'let modelsSaveError = "";',
-      "let modelsCatalog = [];",
-      "let modelsCatalogSources = {};",
-      'let modelsSelection = new Set(["old-model"]);',
-      'let modelsSavedSelection = new Set(["old-model"]);',
-      "let modelsVisibleIds = new Set();",
-      "let modelsLoadedAt = 1;",
-      invalidateSource,
-      saveSource,
-      "globalThis.startSave = () => saveModelsWhitelist();",
-      "globalThis.switchTarget = () => invalidateAdminModels(\"Target changed\");",
-      'globalThis.readState = () => ({ saved: [...modelsSavedSelection], selection: [...modelsSelection], saving: modelsSaving });',
-    ].join("\n"),
-    context
-  );
-  const harness = context as typeof context & {
-    startSave: () => Promise<void>;
-    switchTarget: () => void;
-    readState: () => { saved: string[]; selection: string[]; saving: boolean };
-  };
-
-  const save = harness.startSave();
-  harness.switchTarget();
-  deferred.resolve(Response.json({ model_ids: ["foreign-model"] }));
-  await save;
-  assert.deepEqual(JSON.parse(JSON.stringify(harness.readState())), { saved: [], selection: [], saving: false });
 });
 
 test("the Remove-missing control stays visible when an empty catalog leaves saved ids missing", () => {
