@@ -160,10 +160,10 @@ pub async fn authenticate<S: AuthorityStore>(
     if row.expires_at_ms.is_some_and(|exp| exp <= now) {
         return Err(unauthorized());
     }
-    if row.value.get("revoked_at_ms") != Some(&serde_json::Value::Null) {
+    if row.json_value()?.get("revoked_at_ms") != Some(&serde_json::Value::Null) {
         return Err(unauthorized());
     }
-    let record = serde_json::from_value(row.value).map_err(|_| {
+    let record = serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
         GatewayError::unavailable("API key quota migration is incomplete", "server_error")
     })?;
     // Authentication reads policy only. Admission/dispatch owns V3 quota reservations.

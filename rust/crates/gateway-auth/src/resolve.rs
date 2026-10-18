@@ -273,15 +273,15 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 .await?;
             if let Some(row) = row {
                 row.validate_version()?;
-                if row.value.get("revoked_at_ms") == Some(&Value::Null)
+                if row.json_value()?.get("revoked_at_ms") == Some(&Value::Null)
                     && let (Some(hash), Some(id)) = (
-                        row.value.get("hash").and_then(Value::as_str),
-                        row.value.get("id").and_then(Value::as_str),
+                        row.json_value()?.get("hash").and_then(Value::as_str),
+                        row.json_value()?.get("id").and_then(Value::as_str),
                     ) {
                         let hash_row = self.store.read(&api_keys::hash_key(hash)).await?;
                         if let Some(hash_row) = hash_row {
                             hash_row.validate_version()?;
-                            let record = serde_json::from_value(hash_row.value).map_err(|_| {
+                            let record = serde_json::from_value(hash_row.json_value()?.clone()).map_err(|_| {
                                 GatewayError::unavailable(
                                     "Local API key quota migration is incomplete",
                                     "server_error",
@@ -484,7 +484,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 let mut key = json!({"id":key_id});
                 if let Some(row) = self.store.read(&api_keys::id_key(key_id)).await? {
                     row.validate_version()?;
-                    let record = row.value;
+                    let record = row.json_value()?.clone();
                     let wk = crate::store::key(json!([
                         "uos_ai",
                         "api_key_usage",
@@ -498,7 +498,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                         None => 0,
                         Some(row) => {
                             row.validate_version()?;
-                            row.value
+                            row.json_value()?
                                 .get("committed_requests")
                                 .and_then(Value::as_i64)
                                 .filter(|n| *n >= 0)

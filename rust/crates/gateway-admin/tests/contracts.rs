@@ -228,7 +228,7 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             .rows
             .borrow()
             .values()
-            .find_map(|row| serde_json::from_value::<KeyChange>(row.value.clone()).ok())
+            .find_map(|row| serde_json::from_value::<KeyChange>(row.json_value().unwrap().clone()).ok())
             .unwrap();
         assert_eq!(audit.action, "create");
         assert!(!serde_json::to_string(&audit).unwrap().contains(token));
@@ -353,7 +353,7 @@ fn revoked_deletion_never_discards_pending_billing() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(policy.value["expires_at_ms"], json!(1_000_000));
+        assert_eq!(policy.json_value().unwrap()["expires_at_ms"], json!(1_000_000));
     });
 }
 

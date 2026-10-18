@@ -15,6 +15,16 @@ use gateway_auth::{
 use gateway_core::state::*;
 use serde_json::json;
 
+#[test]
+fn authentication_requires_declared_json_and_never_guesses_profile_tags() {
+    let ambiguous = json!({"type":"binary","value":{"kind":"Uint8Array","bytes":[1,2],"byte_offset":0,"byte_length":2}});
+    let plain = StoredRecord::json("plain", ambiguous.clone(), None);
+    assert_eq!(gateway_auth::store::decode::<serde_json::Value>(Some(&plain), 1).unwrap(), Some(ambiguous.clone()));
+    let typed = StoredRecord::profile("typed", gateway_core::value::PortableValue::from_json(&ambiguous), None).unwrap();
+    let error = gateway_auth::store::decode::<serde_json::Value>(Some(&typed), 1).unwrap_err();
+    assert_eq!(error.envelope.error.code.as_deref(), Some("incompatible_value_encoding"));
+}
+
 fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
@@ -110,12 +120,7 @@ fn request(url: &str) -> AuthRequest {
 fn insert<T: serde::Serialize>(store: &Store, key: RecordKey, value: &T) {
     store.rows.borrow_mut().insert(
         key.0,
-        StoredRecord {
-            schema_version: 1,
-            revision: "fixture-revision".into(),
-            value: serde_json::to_value(value).unwrap(),
-            expires_at_ms: None,
-        },
+        StoredRecord::json("fixture-revision", serde_json::to_value(value).unwrap(), None),
     );
 }
 
@@ -208,7 +213,7 @@ fn anonymous_budget_and_challenge_count_are_bounded() {
                 .rows
                 .borrow()
                 .values()
-                .filter(|row| row.value.get("type") == Some(&json!("authentication")))
+                .filter(|row| row.json_value().unwrap().get("type") == Some(&json!("authentication")))
                 .count(),
             10
         );

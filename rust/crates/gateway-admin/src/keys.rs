@@ -438,7 +438,8 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     // Never overwrite a live reservation when a reset shares its exact clock/window identity.
                     if wr
                         .as_ref()
-                        .and_then(|row| row.value.get("reserved_requests"))
+                        .map(|row| row.json_value()).transpose()?
+                        .and_then(|row| row.get("reserved_requests"))
                         .and_then(Value::as_u64)
                         .is_some_and(|n| n > 0)
                     {

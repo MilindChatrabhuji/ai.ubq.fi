@@ -1,5 +1,5 @@
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey,
     RecordMutation, RevisionCheck, StoredRecord,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -30,7 +30,7 @@ pub fn decode<T: DeserializeOwned>(
     if record.expires_at_ms.is_some_and(|expiry| expiry <= now) {
         return Ok(None);
     }
-    serde_json::from_value(record.value.clone())
+    serde_json::from_value(record.json_value()?.clone())
         .map(Some)
         .map_err(|_| {
             GatewayError::unavailable("Authentication state is corrupt", "auth_state_corrupt")
@@ -58,12 +58,7 @@ pub fn put<T: Serialize>(
     })?;
     Ok(RecordMutation::Put {
         key,
-        record: StoredRecord {
-            schema_version: PORTABLE_STATE_VERSION,
-            revision: revision.to_owned(),
-            value,
-            expires_at_ms: expiry,
-        },
+        record: StoredRecord::json(revision, value, expiry),
     })
 }
 
