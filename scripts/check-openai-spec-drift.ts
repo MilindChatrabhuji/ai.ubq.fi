@@ -140,6 +140,7 @@ export const verifySpecAgainstPin = (pin: OpenAiSpecPin, specText: string): stri
 };
 
 type SpecDriftDependencies = Readonly<{
+  githubToken?: string;
   readSpec?: (location: string) => Promise<string>;
   readGitHub?: (location: string) => Promise<unknown>;
   writePin?: (pin: OpenAiSpecPin) => Promise<void>;
@@ -156,10 +157,10 @@ const sleepFor = (milliseconds: number): Promise<void> => new Promise((resolve) 
 class PermanentFetchFailure extends Error {}
 
 /** Fetches one specification URL, retrying network failures, timeouts, 429 and 5xx; any other refusal is final. */
-const fetchSpecText = async (location: string, sleep: (milliseconds: number) => Promise<void>): Promise<string> => {
+const fetchSpecText = async (location: string, sleep: (milliseconds: number) => Promise<void>, options?: RequestInit): Promise<string> => {
   for (let attempt = 1; ; attempt += 1) {
     try {
-      const response = await fetch(location, { signal: AbortSignal.timeout(FETCH_ATTEMPT_TIMEOUT_MS) });
+      const response = await fetch(location, { ...options, signal: AbortSignal.timeout(FETCH_ATTEMPT_TIMEOUT_MS) });
       const failure = `Failed to fetch OpenAI spec: ${response.status} ${response.statusText}`;
       if (response.ok) return await response.text();
       await response.body?.cancel();
@@ -170,6 +171,19 @@ const fetchSpecText = async (location: string, sleep: (milliseconds: number) => 
     }
     await sleep(FETCH_RETRY_DELAY_MS * attempt);
   }
+};
+
+/** Credentials belong only to the two official ancestry requests, never a specification URL or redirect. */
+const githubRequestOptions = (location: string, token?: string): RequestInit | undefined => {
+  if (!token) return undefined;
+  if (!/^[\x21-\x7e]+$/.test(token)) throw new Error("Invalid GitHub API token");
+  const url = new URL(location);
+  const repositoryPath = `/repos/${OFFICIAL_REPOSITORY}`;
+  const comparison = /^\/repos\/openai\/openai-openapi\/compare\/[0-9a-f]{40}\.\.\.[^/]+$/.test(url.pathname);
+  if (url.origin !== "https://api.github.com" || url.username || url.password || url.search || url.hash || (url.pathname !== repositoryPath && !comparison)) {
+    throw new Error("GitHub API token requires an official specification ancestry URL");
+  }
+  return { headers: { Authorization: `Bearer ${token}` }, redirect: "error" };
 };
 
 const readSpecLocation = async (location: string, sleep: (milliseconds: number) => Promise<void>): Promise<string> =>
@@ -260,7 +274,9 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
     });
   const sleep = dependencies.sleep ?? sleepFor;
   const readSpec = dependencies.readSpec ?? ((location: string) => readSpecLocation(location, sleep));
-  const readGitHub = dependencies.readGitHub ?? (async (location: string): Promise<unknown> => JSON.parse(await fetchSpecText(location, sleep)));
+  const readGitHub =
+    dependencies.readGitHub ??
+    (async (location: string): Promise<unknown> => JSON.parse(await fetchSpecText(location, sleep, githubRequestOptions(location, dependencies.githubToken))));
   const parsed = parseArguments(args);
   if (parsed.error !== null) {
     error(parsed.error);
@@ -305,4 +321,4 @@ export const runSpecDriftCheck = async (args: readonly string[], dependencies: S
   return 0;
 };
 
-if (import.meta.main) process.exitCode = await runSpecDriftCheck(process.argv.slice(2));
+if (import.meta.main) process.exitCode = await runSpecDriftCheck(process.argv.slice(2), { githubToken: process.env.GITHUB_TOKEN });

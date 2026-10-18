@@ -308,7 +308,7 @@ export const handleOpenRouterResponses = async (
   const hasAnswerBearingOutput = responsesPayloadHasAnswerBearingOutput(payload);
   if (hasAnswerBearingOutput) markChatSemanticOutput(usageContext);
   const usage = extractUsageTokens(payload.usage);
-  if (payload.status !== "incomplete" && !hasAnswerBearingOutput)
+  if (payload.status === "completed" && !hasAnswerBearingOutput)
     return respondOpenRouterEmptyBufferedCompletion(usageContext, usage, dispatched.providerRequestId);
   let terminalType: ResponseStreamTerminalType = "response.completed";
   if (payload.status === "incomplete") terminalType = "response.incomplete";

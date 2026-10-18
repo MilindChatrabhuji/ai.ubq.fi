@@ -73,7 +73,12 @@ const filesBelow = (directory: string): string[] => {
 };
 const group = (profile: string, files: readonly string[], environment: readonly string[] = []): Group => ({ profile, files, environment });
 const measurement = (): Group => group("measurement", ["tests/usage-optimization-measurement.test.ts"], ["UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN"]);
-const quality = (): Group => group("quality", ["scripts/quality-contract.test.ts", "scripts/test-native-kv.test.ts", "scripts/test-scope.test.ts"], ["PATH"]);
+const quality = (): Group =>
+  group(
+    "quality",
+    ["scripts/quality-contract.test.ts", "scripts/test-native-kv.test.ts", "scripts/test-scope.test.ts", "scripts/rust-verify.test.ts"],
+    ["PATH"]
+  );
 const allGroupsFor = (segment: string, explicitFiles: readonly string[]): Group[] => {
   switch (segment) {
     case "main":

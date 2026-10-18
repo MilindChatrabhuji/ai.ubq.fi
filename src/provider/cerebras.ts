@@ -344,7 +344,7 @@ export const collapseCerebrasSystemMessages = (messages: unknown): unknown => {
   return [{ ...systems[0], content: texts.join("\n\n") }, ...messages.filter((message) => !isCerebrasSystemMessage(message))];
 };
 
-const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
+export const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
   // The Chat wire's `developer` mapping and the system-message collapse both
   // live here, so every dispatch through this transport carries exactly one
   // leading `system` message whichever wire built the body.

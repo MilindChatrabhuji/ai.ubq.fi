@@ -6,6 +6,7 @@ afterEach(cleanupHarness);
 // openai-compat suite, part 10 of 12: tests moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
+import { BUFFERED_INFERENCE_DEADLINE_MS } from "../src/inference-deadline.ts";
 import { deepSeekChatBodyDiagnostic } from "../src/upstream-wire.ts";
 import {
   DEEPSEEK_CHAT_COMPLETIONS_URL,
@@ -25,7 +26,37 @@ import {
   specialProviderResponsesRequest,
   sseResponse,
   withFetchMock,
+  withProviderSelection,
 } from "./helpers/openai-compat-harness.ts";
+
+test("openai: DeepSeek thinking is rejected when the direct provider is disabled", async () =>
+  runSequence(async (step) => {
+    await step("rejects before dispatch", async () => {
+      await withProviderSelection(["codex"], async () => {
+        let dispatched = false;
+        const response = await withFetchMock(
+          () => {
+            dispatched = true;
+            throw new Error("a disabled DeepSeek route must not reach the ordinary bridge");
+          },
+          () =>
+            handleChatCompletions(
+              specialProviderChatRequest({
+                model: DEEPSEEK_V4_FLASH_MODEL,
+                messages: [{ role: "user", content: "Say hello." }],
+                thinking: { type: "enabled" },
+                stream: false,
+              })
+            )
+        );
+        assert.equal(response.status, 400);
+        const payload = (await response.json()) as { error: { message?: unknown; type?: unknown } };
+        assert.equal(payload.error.type, "invalid_request_error");
+        assert.match(String(payload.error.message), /thinking/);
+        assert.equal(dispatched, false);
+      });
+    });
+  }));
 
 test("openai: DeepSeek official Chat Completions adapter streams natively and stays content-safe", async () =>
   runSequence(async (step) => {
@@ -470,6 +501,47 @@ test("openai: DeepSeek official Chat Completions adapter streams natively and st
         assert.equal(observed.rest, "data: [DONE]\n\n");
       });
 
+      await step("keeps a producing stream alive past the buffered deadline", async () => {
+        const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+        const originalTimeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
+        const bufferedDeadline = new AbortController();
+        const deadlineTimer = setTimeout(() => {
+          bufferedDeadline.abort(new DOMException("buffered deadline", "TimeoutError"));
+        }, 20);
+        const firstFrame = `data: ${JSON.stringify(streamChunk({ content: "first" }))}\n\n`;
+        const secondFrame = `data: ${JSON.stringify(streamChunk({ content: "second" }, { finish_reason: "stop" }))}\n\n`;
+        let cancelled = false;
+        const upstream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(TEXT_ENCODER.encode(firstFrame));
+            await new Promise<void>((resolve) => setTimeout(resolve, 60));
+            if (cancelled) return;
+            controller.enqueue(TEXT_ENCODER.encode(`${secondFrame}data: [DONE]\n\n`));
+            controller.close();
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+
+        try {
+          (AbortSignal as unknown as { timeout: (milliseconds: number) => AbortSignal }).timeout = (milliseconds) =>
+            milliseconds === BUFFERED_INFERENCE_DEADLINE_MS ? bufferedDeadline.signal : originalTimeout(milliseconds);
+          const response = await withFetchMock(
+            () => new Response(upstream, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+            () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: true }))
+          );
+          assert.equal(response.status, 200);
+          assert.equal(await response.text(), `${firstFrame}${secondFrame}data: [DONE]\n\n`);
+          assert.equal(bufferedDeadline.signal.aborted, true, "the producing stream must outlive the simulated buffered deadline");
+          // The stream path must not install the buffered signal; its reader's
+          // first-event watchdog becomes renewable inactivity instead.
+        } finally {
+          clearTimeout(deadlineTimer);
+          if (originalTimeoutDescriptor !== undefined) Object.defineProperty(AbortSignal, "timeout", originalTimeoutDescriptor);
+        }
+      });
+
       await step("forwards the bounded upstream error without relaying unlisted provider headers", async () => {
         const response = await withFetchMock(
           () =>
@@ -769,6 +841,33 @@ test("openai: DeepSeek official Responses adapter serves the Codex wire protocol
 
     process.env[envKey] = fakeApiKey;
     try {
+      await step("Responses sampling reaches the provider or returns an ignored-field warning", async () => {
+        for (const effort of ["none", "high"]) {
+          const upstreamBodies: Record<string, unknown>[] = [];
+          const response = await withFetchMock(
+            (url, bodyText) => {
+              assert.equal(url, DEEPSEEK_CHAT_COMPLETIONS_URL);
+              upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+              return Response.json(chatCompletion({ role: "assistant", content: "sampled" }));
+            },
+            () => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", reasoning: { effort }, temperature: 0, top_p: 0.4, stream: false }))
+          );
+          assert.equal(response.status, 200);
+          assert.equal(upstreamBodies.length, 1);
+          assert.equal(upstreamBodies[0].reasoning_effort, effort);
+          if (effort === "none") {
+            assert.equal(upstreamBodies[0].temperature, 0);
+            assert.equal(upstreamBodies[0].top_p, 0.4);
+            assert.equal(response.headers.get("x-uos-warning"), null);
+          } else {
+            assert.equal(Object.hasOwn(upstreamBodies[0], "temperature"), false);
+            assert.equal(Object.hasOwn(upstreamBodies[0], "top_p"), false);
+            assert.equal(response.headers.get("x-uos-warning"), "temperature_ignored, top_p_ignored");
+          }
+          assert.equal(((await response.json()) as { status: string }).status, "completed");
+        }
+      });
+
       await step("translates a Responses request before the Codex catalog lookup", async () => {
         const upstreamCalls: { url: string; body: Record<string, unknown> }[] = [];
         const response = await withFetchMock(

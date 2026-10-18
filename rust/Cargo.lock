@@ -866,6 +866,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "time",
  "url",
  "uuid",
  "webauthn-rs-core",
@@ -888,7 +889,11 @@ dependencies = [
 name = "gateway-catalog-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-auth",
+ "gateway-authority",
  "gateway-core",
+ "gateway-native",
+ "gateway-providers",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -903,6 +908,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-extras-runtime"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "chrono",
+ "futures-util",
+ "gateway-auth",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "gateway-native"
 version = "0.1.0"
 dependencies = [
@@ -910,6 +932,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-publication",
  "rusqlite",
  "serde",
  "serde_json",
@@ -926,6 +949,17 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "gateway-publication"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

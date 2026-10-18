@@ -14,6 +14,23 @@ const deferred = <T>() => {
   return { promise, resolve, reject };
 };
 
+test("HTTP admin handler failures are marked no-store", async () => {
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, () => {
+    throw new Error("fixture handler failure");
+  });
+  try {
+    const address = await server.ready;
+    for (const path of ["/admin/fixture-failure", "/admin.html"]) {
+      const response = await fetch(`http://127.0.0.1:${address.port}${path}`);
+      assert.equal(response.status, 500, path);
+      assert.equal(response.headers.get("cache-control"), "no-store", path);
+      assert.equal(await response.text(), "Internal Server Error", path);
+    }
+  } finally {
+    await server.shutdown();
+  }
+});
+
 test("HTTP sends fragmented streams, preserves cookies and observes transport completion", async () => {
   const credentialNames = ["UOS_AI_TOKEN", "DENO_DEPLOY_TOKEN", "CODEX_AUTH_JSON_B64", "OPENROUTER_API_KEY", "SURPLUS_API_KEY", "METERED_API_KEY"];
   const credentialsPresent = credentialNames.some((name) => Boolean(process.env[name]));

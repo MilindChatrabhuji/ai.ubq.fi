@@ -12,6 +12,7 @@ serde_json.workspace = true
 base64 = "=0.22.1"
 sha2 = "=0.10.9"
 hmac = "=0.12.1"
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
 url = "=2.5.8"
 rsa = { version = "=0.9.10", features = ["sha2", "pem"] }
 ciborium = "=0.2.2"
