@@ -1,173 +1,75 @@
-import type { Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
-// Paid-fallback ledger v3: state layer, split out of src/paid_fallback_ledger.ts.
-
+import type { Kv, KvEntry, KvKey } from "#kv";
 import { getKv } from "../kv.ts";
-import { type PaidFallbackProvider, type PaidFallbackProviderUsageV3, type PaidFallbackRequestV3, type PaidFallbackWindowV3 } from "../types.ts";
-import { isRecord } from "../utils.ts";
-
-const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
-const MAX_CAS_ATTEMPTS = 128;
-const RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 600_000, 3_600_000, 21_600_000] as const;
-const UNRESOLVED_AFTER_MS = 24 * 60 * 60_000;
-const RECONCILIATION_LEASE_MS = 60_000;
-const PAID_FALLBACK_BACKFILL_LEASE_MS = 5 * 60_000;
-const PAID_FALLBACK_AUTOMATIC_BACKFILL_LIMIT = 5_000;
-
-/**
- * Raw paid-fallback request rows are retained for one year from request
- * creation, then expire. Research that needs older data reads the compact
- * per-hour usage rollups (paid_fallback_rollups.ts), which never expire.
- */
-export const PAID_FALLBACK_REQUEST_LOG_RETENTION_MS = 365 * 24 * 60 * 60_000;
-
-export const requestRowExpireIn = (row: PaidFallbackRequestV3, nowMs: number): number =>
-  Math.max(1, row.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
-
-const isSafeUsageCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-
-const isPositiveSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-
-const isApiKeyId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 200;
-
-/**
- * Window rows expire one year after their reset so they never outlive the
- * request rows that validate them; the per-request detail is gone by then.
- */
-const windowExpireIn = (window: PaidFallbackWindowV3, nowMs: number): number =>
-  Math.max(1, window.window_reset_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
-
-export const isPaidFallbackWindowV3 = (value: unknown): value is PaidFallbackWindowV3 => {
-  if (!isRecord(value)) return false;
-  return (
-    value.v === 3 &&
-    isApiKeyId(value.key_id) &&
-    typeof value.policy_version === "string" &&
-    value.policy_version.length > 0 &&
-    isPositiveSafeInteger(value.window_reset_at_ms) &&
-    (value.limit_microcredits === -1 || isPositiveSafeInteger(value.limit_microcredits)) &&
-    isSafeUsageCount(value.settled_microcredits) &&
-    isSafeUsageCount(value.reserved_microcredits) &&
-    isSafeUsageCount(value.pending_count) &&
-    isPositiveSafeInteger(value.updated_at_ms)
-  );
+import type { PaidFallbackProvider, PaidFallbackProviderUsageV3, PaidFallbackRequestV3, PaidFallbackWindowV3 } from "../types.ts";
+import {
+  MAX_CAS_ATTEMPTS,
+  PAID_FALLBACK_AUTOMATIC_BACKFILL_LIMIT,
+  PAID_FALLBACK_BACKFILL_LEASE_MS,
+  RECONCILIATION_LEASE_MS,
+  RETRY_DELAYS_MS,
+  UNRESOLVED_AFTER_MS,
+  PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
+  requestRowExpireIn,
+  windowExpireIn,
+  isPositiveSafeInteger,
+  isPaidFallbackWindowV3,
+  paidFallbackWindowV3Key,
+  paidFallbackRequestV3Key,
+  paidFallbackPendingV3Key,
+  paidFallbackWindowV3Prefix,
+  paidFallbackRequestV3Prefix,
+  paidFallbackRequestV3GlobalPrefix,
+  paidFallbackWindowV3GlobalPrefix,
+  paidFallbackPendingV3Prefix,
+  paidFallbackPendingV3GlobalPrefix,
+  paidFallbackReconciliationGateV3Key,
+  paidFallbackReconciliationLeaseV3Key,
+  paidFallbackBackfillCursorV3Key,
+  paidFallbackBackfillWindowCursorV3Key,
+  paidFallbackBackfillLeaseV3Key,
+  paidFallbackBackfillStateV3Key,
+  paidFallbackDeletionGuardV3Key,
+  isPaidFallbackReconciliationGate,
+  paidFallbackReconciliationGateDueNow,
+  paidFallbackReconciliationGateNeedsArm,
+  planPaidFallbackGateAfterScanV3,
+} from "../authority/native-paid.ts";
+import type {
+  NativePaidAdmissionInput,
+  PaidFallbackAdmissionV3,
+  PaidFallbackWindowProjectionV3,
+  PaidFallbackOutstandingV3,
+  PaidFallbackPendingV3,
+  PaidFallbackReconciliationGateV3,
+  PaidFallbackReconciliationLeaseV3,
+  PaidFallbackBackfillLeaseV3,
+  PaidFallbackBackfillStateV3,
+  PaidFallbackDeletionGuardV3,
+} from "../authority/native-paid-contracts.ts";
+export {
+  PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
+  requestRowExpireIn,
+  isPaidFallbackWindowV3,
+  paidFallbackWindowV3Key,
+  paidFallbackRequestV3Key,
+  paidFallbackPendingV3Key,
+  paidFallbackRequestV3GlobalPrefix,
+  paidFallbackReconciliationGateV3Key,
+  paidFallbackReconciliationLeaseV3Key,
+  paidFallbackBackfillCursorV3Key,
+  paidFallbackBackfillWindowCursorV3Key,
+  paidFallbackBackfillLeaseV3Key,
+  paidFallbackBackfillStateV3Key,
+  paidFallbackDeletionGuardV3Key,
 };
-
-export const paidFallbackWindowV3Key = (keyId: string, resetAtMs: number): KvKey => [...PREFIX, "window", keyId, resetAtMs];
-export const paidFallbackRequestV3Key = (keyId: string, requestId: string): KvKey => [...PREFIX, "request", keyId, requestId];
-export const paidFallbackPendingV3Key = (keyId: string, requestId: string): KvKey => [...PREFIX, "pending", keyId, requestId];
-const paidFallbackWindowV3Prefix = (keyId: string): KvKey => [...PREFIX, "window", keyId];
-const paidFallbackRequestV3Prefix = (keyId: string): KvKey => [...PREFIX, "request", keyId];
-export const paidFallbackRequestV3GlobalPrefix: KvKey = [...PREFIX, "request"];
-const paidFallbackWindowV3GlobalPrefix: KvKey = [...PREFIX, "window"];
-const paidFallbackPendingV3Prefix = (keyId: string): KvKey => [...PREFIX, "pending", keyId];
-const paidFallbackPendingV3GlobalPrefix: KvKey = [...PREFIX, "pending"];
-export const paidFallbackReconciliationGateV3Key = (): KvKey => [...PREFIX, "reconciliation_gate"];
-export const paidFallbackReconciliationLeaseV3Key = (keyId: string): KvKey => [...PREFIX, "reconciliation_lease", keyId];
-export const paidFallbackBackfillCursorV3Key = (): KvKey => [...PREFIX, "rollup_backfill_cursor"];
-export const paidFallbackBackfillWindowCursorV3Key = (): KvKey => [...PREFIX, "rollup_backfill_window_cursor"];
-export const paidFallbackBackfillLeaseV3Key = (): KvKey => [...PREFIX, "rollup_backfill_lease"];
-export const paidFallbackBackfillStateV3Key = (): KvKey => [...PREFIX, "rollup_backfill_state"];
-export const paidFallbackDeletionGuardV3Key = (keyId: string): KvKey => [...PREFIX, "deletion_guard", keyId];
-
-type PaidFallbackPendingV3 = Readonly<{
-  created_at_ms: number;
-  next_reconciliation_at_ms: number;
-}>;
-
-export type PaidFallbackReconciliationGateV3 = Readonly<{
-  next_due_at_ms: number | null;
-}>;
-
-type PaidFallbackReconciliationJobV3 = Readonly<{
-  key_id: string;
-}>;
-
-type PaidFallbackReconciliationLeaseV3 = Readonly<{
-  token: string;
-  expires_at_ms: number;
-}>;
-
-type PaidFallbackBackfillLeaseV3 = Readonly<{
-  token: string;
-  expires_at_ms: number;
-}>;
-
-type PaidFallbackBackfillStateV3 = Readonly<{
-  v: 1;
-  completed_at_ms: number;
-}>;
-
-type PaidFallbackDeletionGuardV3 = Readonly<{
-  created_at_ms: number;
-}>;
-
-export type PaidFallbackAdmissionV3 = Readonly<{
-  key_id: string;
-  request_id: string;
-  created_at_ms: number;
-  reserved_microcredits: number;
-  quota_per_credit: number;
-  window_reset_at_ms: number;
-  quota_used_percent: number | null;
-}>;
-
-export type PaidFallbackWindowProjectionV3 = Readonly<{
-  key_id: string;
-  policy_version: string | null;
-  window_reset_at_ms: number;
-  limit_microcredits: number;
-  settled_microcredits: number;
-  reserved_microcredits: number;
-  pending_count: number;
-  updated_at_ms: number | null;
-}>;
-
-export type PaidFallbackOutstandingV3 = Readonly<{
-  pending_requests: number;
-  unresolved_requests: number;
-  pending_markers: number;
-  has_outstanding: boolean;
-}>;
-
-type AdmissionInput = Readonly<{
-  keyId: string;
-  requestId: string;
-  createdAtMs: number;
-  policyVersion: string;
-  limitMicrocredits: number;
-  maximumExposureMicrocredits: number | null;
-  initialSettledMicrocredits: number;
-  quotaPerCredit: number;
-  windowResetAtMs: number;
-  model: string;
-  route: string;
-  path: string;
-  stream: boolean;
-  reasoning: string | null;
-  dispatchIntent?: boolean;
-  // Present for real gateway admissions. It fences the immutable API-key
-  // policy snapshot that authorized paid exposure; direct ledger tests may
-  // omit it because they do not represent an API-key admission path.
-  policyCheck?: Readonly<{ key: KvKey; versionstamp: string | null }>;
-}>;
-
+export type { PaidFallbackAdmissionV3, PaidFallbackWindowProjectionV3, PaidFallbackOutstandingV3, PaidFallbackReconciliationGateV3 };
+type PaidFallbackReconciliationJobV3 = Readonly<{ key_id: string }>;
+type AdmissionInput = NativePaidAdmissionInput &
+  Readonly<{
+    // Native routing owns the immutable authenticated H-row key and revision.
+    policyCheck?: Readonly<{ key: KvKey; versionstamp: string | null }>;
+  }>;
 const resolveKv = async (kvOverride: Kv | null | undefined): Promise<Kv | null> => (kvOverride === undefined ? await getKv() : kvOverride);
-
-const isPaidFallbackReconciliationGate = (value: unknown): value is PaidFallbackReconciliationGateV3 =>
-  value !== null &&
-  typeof value === "object" &&
-  "next_due_at_ms" in value &&
-  (value.next_due_at_ms === null || (typeof value.next_due_at_ms === "number" && Number.isSafeInteger(value.next_due_at_ms) && value.next_due_at_ms >= 0));
-
-const paidFallbackReconciliationGateDueNow = (entry: KvEntryMaybe<PaidFallbackReconciliationGateV3>, now: number): PaidFallbackReconciliationGateV3 => {
-  const current = isPaidFallbackReconciliationGate(entry.value) ? entry.value.next_due_at_ms : null;
-  return { next_due_at_ms: current === null ? now : Math.min(current, now) };
-};
-
-const paidFallbackReconciliationGateNeedsArm = (entry: KvEntryMaybe<PaidFallbackReconciliationGateV3>, now: number): boolean => {
-  if (!isPaidFallbackReconciliationGate(entry.value)) return true;
-  return entry.value.next_due_at_ms === null || entry.value.next_due_at_ms > now;
-};
 
 type PendingMarkerScan = Readonly<{
   entries: readonly KvEntry<PaidFallbackPendingV3>[];
@@ -191,11 +93,8 @@ export const recomputePaidFallbackReconciliationGateV3 = async (kv: Kv): Promise
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const gateEntry = await kv.get<PaidFallbackReconciliationGateV3>(gateKey, { consistency: "strong" });
     const scan = await scanPaidFallbackPendingMarkers(kv);
-    const commit = await kv
-      .atomic()
-      .check(gateEntry)
-      .set(gateKey, { next_due_at_ms: scan.earliest_due_at_ms } satisfies PaidFallbackReconciliationGateV3)
-      .commit();
+    const plan = planPaidFallbackGateAfterScanV3(gateEntry, scan.earliest_due_at_ms);
+    const commit = await kv.atomic().check(gateEntry).set(gateKey, plan.gate).commit();
     if (commit.ok) return scan.earliest_due_at_ms;
   }
   throw new Error("Paid fallback reconciliation gate changed concurrently.");
