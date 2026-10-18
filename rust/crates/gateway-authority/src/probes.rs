@@ -64,8 +64,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let next_generation = next_generation(slot.generation)?;
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
-                generation: next_generation,
-                quota_class: admission.quota_class,
+                generation: next_generation as i64,
+                circuit: crate::routing::ProbeCircuit::Quota,
+                quota_class: Some(admission.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
@@ -113,10 +114,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             slot.probe_lease = None;
             if recovered {
-                slot.quota_blocks.remove(class_name(admission.quota_class));
+                slot.remove_quota_class(admission.quota_class);
                 if slot.quota_blocks.is_empty() {
                     slot.retained_reset_at_ms = None;
                     slot.reset_identity_ambiguous = false;
+                    slot.reset_identity_stable = false;
+                    slot.recovery_pending = false;
                 }
             }
             tx.put(&keys::routing(), &view.state, None)?;
@@ -199,8 +202,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             slot.generation = next_generation(slot.generation)?;
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
-                generation: slot.generation,
-                quota_class: proof.quota_class,
+                generation: slot.generation as i64,
+                circuit: crate::routing::ProbeCircuit::Quota,
+                quota_class: Some(proof.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
@@ -291,7 +295,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         now: i64,
     ) -> Result<bool, GatewayError> {
         nonnegative(block.blocked_until_ms)?;
-        nonnegative(block.observed_at_ms)?;
+        if let Some(at) = block.observed_at_ms {
+            nonnegative(at)?;
+        }
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let mut view = read_view(&mut tx).await?;
@@ -302,8 +308,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(false);
             }
             let row = &mut view.state.slots[slot];
-            row.quota_blocks
-                .insert(class_name(probe.quota_class).to_owned(), block.clone());
+            row.insert_quota_block(probe.quota_class, block.clone());
             row.probe_lease = None;
             row.generation = next_generation(row.generation)?;
             view.state.updated_at_ms = now;

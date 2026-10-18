@@ -2,19 +2,25 @@ use crate::{
     Context, HealthProvider, HealthTarget, ObservabilityHost, ObservabilityRuntime,
     health::{aggregate_states, binding_current, unknown_health},
     host_types::*,
+    completion::Completion,
     store,
-};
-use futures_util::{
-    FutureExt,
-    future::{LocalBoxFuture, Shared},
 };
 use gateway_auth::AuthResponse;
 use gateway_core::{GatewayError, query::QueryStore};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
-type ActiveFuture = Shared<LocalBoxFuture<'static, Result<AuthResponse, GatewayError>>>;
+type ActiveReceipt = Completion<Result<AuthResponse, GatewayError>>;
 #[derive(Clone, Default)]
-pub(crate) struct ActiveHealth(Rc<RefCell<Option<ActiveFuture>>>);
+pub(crate) struct ActiveHealth(Rc<RefCell<Option<ActiveReceipt>>>);
+struct ActiveCompletion {state:ActiveHealth,receipt:ActiveReceipt,finished:bool}
+impl ActiveCompletion {
+    fn complete(&self,result:Result<AuthResponse,GatewayError>){
+        {let mut current=self.state.0.borrow_mut();if current.as_ref().is_some_and(|c|c.same(&self.receipt)){current.take();}}
+        self.receipt.finish(result);
+    }
+    fn finish(mut self,result:Result<AuthResponse,GatewayError>)->Result<AuthResponse,GatewayError>{self.complete(result.clone());self.finished=true;result}
+}
+impl Drop for ActiveCompletion {fn drop(&mut self){if !self.finished{self.complete(Err(GatewayError::unavailable("Active upstream health probe was interrupted.","active_upstream_health_interrupted")))}}}
 fn auth_view(meta: &CodexAuthMetadata, now: i64) -> Value {
     let expired = |time: Option<i64>| time.map(|t| t <= now);
     let refresh = |time: Option<i64>| time.map(|t| t - now < 120000);
@@ -183,24 +189,22 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Ok(response)
     }
 }
-impl<S: QueryStore + 'static, H: ObservabilityHost + 'static> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub async fn upstream_health_response(&self) -> Result<AuthResponse, GatewayError> {
         let pending = self.active_health.0.borrow().clone();
         if let Some(pending) = pending {
             return pending.await;
         }
-        let runtime = self.clone();
-        let future=async move{
-            let response=async{
-            let at=store::now(runtime.host.as_ref())?;let evidence=runtime.host.probe_upstream_health(at+3000).await?;
+        let receipt=Completion::new();
+        *self.active_health.0.borrow_mut()=Some(receipt.clone());
+        let completion=ActiveCompletion{state:self.active_health.clone(),receipt,finished:false};
+        let response=async{
+            let at=store::now(self.host.as_ref())?;let evidence=self.host.probe_upstream_health(at+3000).await?;
             if !matches!(evidence.codex.provider,ProbeProvider::ChatgptCodex)||evidence.metered_quota.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::MeteredQuota))||evidence.claude_subscription.as_ref().is_some_and(|p|!matches!(p.provider,ProbeProvider::ClaudeSubscription)){return Err(store::error("Active health probe identity mismatch"))}
             let failures:Vec<u16>=[Some(evidence.codex.status),evidence.metered_quota.as_ref().map(|p|p.status)].into_iter().flatten().filter(|s|*s>=400).collect();let status=if failures.is_empty(){200}else if failures.contains(&401){401}else{503};
-            let body=json!({"status":status,"auth":evidence.auth.as_ref().map(|a|auth_view(a,runtime.host.now_ms())),"probes":{"codex":evidence.codex,"metered_quota":evidence.metered_quota,"claude_subscription":evidence.claude_subscription,"claude_workspace":evidence.claude_workspace}});
-            let mut response=AuthResponse::json(status,body);identity_headers(&mut response,runtime.host.build_identity()?)?;Ok(response)
-            }.await;
-            runtime.active_health.0.borrow_mut().take();response
-        }.boxed_local().shared();
-        *self.active_health.0.borrow_mut() = Some(future.clone());
-        future.await
+            let body=json!({"status":status,"auth":evidence.auth.as_ref().map(|a|auth_view(a,self.host.now_ms())),"probes":{"codex":evidence.codex,"metered_quota":evidence.metered_quota,"claude_subscription":evidence.claude_subscription,"claude_workspace":evidence.claude_workspace}});
+            let mut response=AuthResponse::json(status,body);identity_headers(&mut response,self.host.build_identity()?)?;Ok(response)
+        }.await;
+        completion.finish(response)
     }
 }

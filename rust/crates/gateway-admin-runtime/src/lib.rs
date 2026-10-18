@@ -1,4 +1,5 @@
 //! Source administrative runtime over the common authority. External effects are finite injected capabilities.
+pub mod brief;
 pub mod capabilities;
 pub mod claude;
 pub mod claude_access;

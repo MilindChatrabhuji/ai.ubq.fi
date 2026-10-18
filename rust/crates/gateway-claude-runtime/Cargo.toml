@@ -1,0 +1,23 @@
+[package]
+name = "gateway-claude-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core = { path = "../gateway-core" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-admin-runtime = { path = "../gateway-admin-runtime" }
+gateway-admin-data = { path = "../gateway-admin-data" }
+gateway-catalog-runtime = { path = "../gateway-catalog-runtime" }
+gateway-providers = { path = "../gateway-providers" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+
+[lints]
+workspace = true
