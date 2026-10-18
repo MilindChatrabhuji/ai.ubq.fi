@@ -185,9 +185,12 @@ export const detectTestSelection = (): TestSelection => {
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
 
-export const ciScopeForSelection = (selection: TestSelection): CiScope => {
+export const ciScopeForSelection = (selection: TestSelection, root = ROOT): CiScope => {
   const docsOnly = selection.reason === "documentation-only";
-  const needsNativeKv = selection.runAll || selection.paths.some((path) => NATIVE_PATH.test(path));
+  const needsNativeKv =
+    selection.runAll ||
+    selection.paths.some((path) => NATIVE_PATH.test(path)) ||
+    (!docsOnly && selection.affectedTests.some((path) => testRequiresNativeKv(path, root)));
   const needsArtifact = !docsOnly && selection.paths.some((path) => RELEASE_PATH.test(path));
   return {
     ...selection,
