@@ -15,6 +15,8 @@ pub mod ledger;
 pub mod ledger_stats;
 pub mod prompt;
 pub mod prompt_gate;
+pub mod records;
+pub mod replay_crypto;
 pub mod providers;
 pub mod remote_capacity;
 pub mod settings;

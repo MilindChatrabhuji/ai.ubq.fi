@@ -296,10 +296,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 200,
                 self.prompt_analytics(&group_by).await?,
             )),
-            AnalyticsRequest::PaidHistory { key_id, limit } => Ok(AuthResponse::json(
-                200,
-                json!({"data":self.request_logs(&key_id,limit).await?}),
-            )),
+            AnalyticsRequest::PaidHistory{key_id,limit}=>{
+                #[derive(serde::Serialize)]struct History{data:Vec<gateway_core::source_json::SourceJson>}
+                let data=self.request_logs(&key_id,limit).await?;Ok(AuthResponse::source_json(200,gateway_core::source_json::SourceJson::from_serializable(&History{data})?))
+            }
             AnalyticsRequest::QuotaProjection {
                 window_days,
                 balance_window_days,

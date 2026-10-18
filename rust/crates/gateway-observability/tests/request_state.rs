@@ -200,7 +200,7 @@ fn active_health_coalesces_only_a_receipt_and_never_reuses_an_old_io_host() {
     let response = run(b.upstream_health_response()).unwrap();
     assert_eq!(response.status, 200);
     assert_eq!(
-        response.body["probes"]["claude_subscription"]["status"],
+        response.body.as_json().unwrap()["probes"]["claude_subscription"]["status"],
         503
     );
     assert_eq!(b_probes.get(), 1);
