@@ -13,10 +13,6 @@ export type PaidFallbackReconciliationGateV3 = Readonly<{
   next_due_at_ms: number | null;
 }>;
 
-export type PaidFallbackReconciliationJobV3 = Readonly<{
-  key_id: string;
-}>;
-
 export type PaidFallbackReconciliationLeaseV3 = Readonly<{
   token: string;
   expires_at_ms: number;

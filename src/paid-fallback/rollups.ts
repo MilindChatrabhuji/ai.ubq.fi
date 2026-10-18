@@ -3,7 +3,6 @@ import { getKv } from "../kv.ts";
 import {
   PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
   PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
-  PAID_FALLBACK_USAGE_ROLLUP_SHARD_COUNT,
   PAID_FALLBACK_SETTLED_PROVIDERS,
   paidFallbackUsageRollupShard,
   paidFallbackUsageRollupKey,
@@ -12,18 +11,17 @@ import {
   paidFallbackTerminalUsageV3,
   paidFallbackTerminalRollupV3,
 } from "../authority/native-paid.ts";
-import type { PaidFallbackUsageRollup, PaidFallbackUsageRollupInput, TerminalUsageRollupInput } from "../authority/native-paid-contracts.ts";
+import type { PaidFallbackUsageRollup, TerminalUsageRollupInput } from "../authority/native-paid-contracts.ts";
 export {
   PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
   PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
-  PAID_FALLBACK_USAGE_ROLLUP_SHARD_COUNT,
   PAID_FALLBACK_SETTLED_PROVIDERS,
   paidFallbackUsageRollupShard,
   paidFallbackUsageRollupKey,
   isPaidFallbackUsageRollup,
   mergePaidFallbackUsageRollup,
 };
-export type { PaidFallbackUsageRollup, PaidFallbackUsageRollupInput, TerminalUsageRollupInput };
+export type { PaidFallbackUsageRollup, TerminalUsageRollupInput };
 const MAX_TERMINAL_USAGE_ROLLUP_WRITE_ATTEMPTS = 3;
 
 /**

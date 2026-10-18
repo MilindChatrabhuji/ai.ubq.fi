@@ -48,11 +48,6 @@ export const kernelRepoReservationKey = (owner: string, repo: string, windowCrea
 export const kernelOrgReservationKey = (owner: string, windowCreatedAtMs: number, requestId: string) =>
   [...KERNEL_ORG_RESERVATION_V2_PREFIX, owner, windowCreatedAtMs, requestId] as const;
 
-// Existing admin and queue call sites retain these names, but they now point
-// only at policy records. Usage is deliberately never co-located with policy.
-export const kernelLimitKey = kernelRepoPolicyKey;
-export const kernelOrgLimitKey = kernelOrgPolicyKey;
-
 /**
  * Repo-scope keys are only ever built once a repo is known to be present. The
  * invariant is asserted here so a missing repo fails loudly instead of reaching

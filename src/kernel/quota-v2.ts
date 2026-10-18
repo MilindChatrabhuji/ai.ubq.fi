@@ -10,7 +10,6 @@ import { getKv } from "../kv.ts";
 import type { KernelAuthLimitRecord, KernelOrgLimitRecord } from "../types.ts";
 
 import {
-  KERNEL_QUOTA_V2_PREFIX,
   KERNEL_REPO_POLICY_V2_PREFIX,
   KERNEL_ORG_POLICY_V2_PREFIX,
   KERNEL_REPO_WINDOW_V2_PREFIX,
@@ -21,7 +20,6 @@ import {
   KERNEL_QUOTA_RESERVATION_LEASE_MS,
   KERNEL_QUOTA_RESERVATION_RENEWAL_MS,
   KERNEL_QUOTA_RESERVATION_RETENTION_MS,
-  KERNEL_DEFAULT_WINDOW_CUTOVER_LEASE_MS,
   KERNEL_QUOTA_SETTLEMENT_RETRY_MS,
   MAX_KV_RETRIES,
   kernelRepoPolicyKey,
@@ -30,25 +28,18 @@ import {
   kernelOrgWindowKey,
   kernelRepoReservationKey,
   kernelOrgReservationKey,
-  kernelLimitKey,
-  kernelOrgLimitKey,
   kernelRepoPart,
   kernelScopedPolicyKey,
   kernelScopedWindowKey,
   kernelPolicyKeys,
   hasLiveKernelReservations,
-  positiveSafeInteger,
-  nonNegativeSafeInteger,
   normalizeWindow,
-  validIdentity,
-  newWindow,
   windowForEffectivePolicy,
   normalizeUsageLimit as pureNormalizeUsageLimit,
   normalizeExpiration as pureNormalizeExpiration,
   normalizeKernelQuotaPolicyV2 as pureNormalizeKernelQuotaPolicyV2,
   normalizeKernelQuotaWindowV2,
   policyFor as purePolicyFor,
-  isExpired as pureIsExpired,
 } from "../authority/native-kernel.ts";
 import type {
   KernelQuotaScope,
@@ -61,7 +52,6 @@ import type {
   KernelQuotaRead,
 } from "../authority/native-kernel-contracts.ts";
 export {
-  KERNEL_QUOTA_V2_PREFIX,
   KERNEL_REPO_POLICY_V2_PREFIX,
   KERNEL_ORG_POLICY_V2_PREFIX,
   KERNEL_REPO_WINDOW_V2_PREFIX,
@@ -77,8 +67,8 @@ export {
   kernelOrgWindowKey,
   kernelRepoReservationKey,
   kernelOrgReservationKey,
-  kernelLimitKey,
-  kernelOrgLimitKey,
+  kernelRepoPolicyKey as kernelLimitKey,
+  kernelOrgPolicyKey as kernelOrgLimitKey,
   normalizeKernelQuotaWindowV2,
 };
 export type { KernelQuotaPolicyV2, KernelQuotaWindowV2, KernelQuotaReservationRowV2 };
@@ -122,7 +112,6 @@ const policyFor = (
   repo: string | undefined,
   defaults: KernelDefaults
 ): KernelQuotaEffectivePolicy => purePolicyFor(kernelQuotaRead(entry), scope, owner, repo, defaults, KERNEL_QUOTA_CONSTANTS);
-const isExpired = (expiresAtMs: number, nowMs: number): boolean => pureIsExpired(expiresAtMs, nowMs, API_KEY_NO_EXPIRATION_MS);
 
 const loadDefaults = async (kv: Kv): Promise<KernelDefaults> => {
   const [limitEntry, windowEntry] = await Promise.all([
@@ -280,27 +269,21 @@ export const listKernelOrgUsageLimits = async (): Promise<KernelOrgLimitRecord[]
 };
 
 export {
-  KERNEL_DEFAULT_WINDOW_CUTOVER_LEASE_MS,
   KERNEL_QUOTA_RESERVATION_RETENTION_MS,
   KERNEL_QUOTA_SETTLEMENT_RETRY_MS,
   MAX_KV_RETRIES,
   hasLiveKernelReservations,
-  isExpired,
   kernelPolicyKeys,
   kernelRepoPart,
   kernelScopedPolicyKey,
   kernelScopedWindowKey,
   loadDefaults,
-  newWindow,
-  nonNegativeSafeInteger,
   normalizeExpiration,
   normalizeUsageLimit,
   normalizeWindow,
   orgRecord,
   policyFor,
-  positiveSafeInteger,
   repoRecord,
-  validIdentity,
   windowForEffectivePolicy,
 };
 export type { KernelDefaultWindowCutoverV2, KernelDefaults, KernelQuotaEffectivePolicy, KernelQuotaEffectiveWindow, KernelQuotaScope };

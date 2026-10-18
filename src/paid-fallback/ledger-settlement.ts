@@ -10,7 +10,6 @@ import {
   paidFallbackLeaseActiveV3,
   paidFallbackReconciliationLeaseV3,
   paidFallbackLeaseOwnedV3,
-  isBillableRequestV3,
 } from "../authority/native-paid.ts";
 import type { NativePaidSettlementPlan } from "../authority/native-paid-contracts.ts";
 import { MICROCREDITS_PER_CREDIT } from "../api-keys.ts";
@@ -320,7 +319,6 @@ export {
   _expeditePaidFallbackReconciliationV3,
   acquireReconciliationLease,
   deferPaidFallbackReconciliationV3,
-  isBillableRequestV3,
   releaseReconciliationLease,
   settlePaidFallbackRequestV3,
 };
