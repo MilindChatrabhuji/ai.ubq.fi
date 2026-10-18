@@ -352,6 +352,9 @@ const appendMessageItem = (
   if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
     return failure("input.role", `input role '${role}' is not supported`);
   }
+  // A user turn starts a new reasoning scope; do not carry reasoning without a
+  // message across it to a later assistant or tool turn.
+  if (role === "user") pending.reasoning = "";
   const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
@@ -442,6 +445,7 @@ const appendInputItem = (
     const content = boundedForwardedText(rawItem, path, reduction, elisions);
     if (!content.ok) return content;
     messages.push({ role: "user", content: content.value });
+    pending.reasoning = "";
     return { ok: true, value: undefined };
   }
   if (!isRecord(rawItem) || Array.isArray(rawItem)) return failure("input", "input items must be objects");
@@ -470,6 +474,7 @@ const appendInputItem = (
       const agentMessage = chatAgentMessageItem(rawItem, reduction, `${path}.content`, elisions);
       if (!agentMessage.ok) return agentMessage;
       messages.push(agentMessage.value);
+      pending.reasoning = "";
       return { ok: true, value: undefined };
     }
     case "message":
