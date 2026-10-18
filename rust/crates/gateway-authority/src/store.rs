@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
-use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
+    RecordMutation, RevisionCheck, StoredRecord,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -25,22 +28,56 @@ pub struct Authority<S, I> {
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
-    pub fn new(store: S, tokens: I) -> Self { Self { store, tokens, clock: None } }
+    pub fn new(store: S, tokens: I) -> Self {
+        Self {
+            store,
+            tokens,
+            clock: None,
+        }
+    }
 
-    pub fn with_clock(store:S,tokens:I,clock:impl AuthorityClock+'static)->Self{Self{store,tokens,clock:Some(Box::new(clock))}}
+    pub fn with_clock(store: S, tokens: I, clock: impl AuthorityClock + 'static) -> Self {
+        Self {
+            store,
+            tokens,
+            clock: Some(Box::new(clock)),
+        }
+    }
 
-    pub(crate) fn fresh_time(&self,started_at:i64)->Result<i64,GatewayError>{
-        let now=self.clock.as_ref().ok_or_else(|| crate::unavailable("authority_clock_unavailable","Live reset submission requires a trusted current clock."))?.now_ms()?;
+    pub(crate) fn fresh_time(&self, started_at: i64) -> Result<i64, GatewayError> {
+        let now = self
+            .clock
+            .as_ref()
+            .ok_or_else(|| {
+                crate::unavailable(
+                    "authority_clock_unavailable",
+                    "Live reset submission requires a trusted current clock.",
+                )
+            })?
+            .now_ms()?;
         validate_time(now)?;
-        if now<started_at{return Err(crate::unavailable("invalid_clock","Authority clock moved backwards."));}
+        if now < started_at {
+            return Err(crate::unavailable(
+                "invalid_clock",
+                "Authority clock moved backwards.",
+            ));
+        }
         Ok(now)
     }
 
-    pub fn store(&self) -> &S { &self.store }
+    pub fn store(&self) -> &S {
+        &self.store
+    }
 
     pub(crate) fn transaction(&self, now: i64) -> Result<Transaction<'_, S, I>, GatewayError> {
         validate_time(now)?;
-        Ok(Transaction { store: &self.store, tokens: &self.tokens, now, reads: BTreeMap::new(), writes: BTreeMap::new() })
+        Ok(Transaction {
+            store: &self.store,
+            tokens: &self.tokens,
+            now,
+            reads: BTreeMap::new(),
+            writes: BTreeMap::new(),
+        })
     }
 }
 
@@ -53,23 +90,37 @@ pub(crate) struct Transaction<'a, S, I> {
 }
 
 impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
-    pub async fn read<T: DeserializeOwned>(&mut self, key: &RecordKey) -> Result<Option<T>, GatewayError> {
+    pub async fn read<T: DeserializeOwned>(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<T>, GatewayError> {
         if !self.reads.contains_key(&key.0) {
             let record = self.store.read(key).await?;
             if let Some(value) = &record {
                 value.validate_version()?;
                 text(&value.revision)?;
-                if let Some(expiry) = value.expires_at_ms { validate_time(expiry)?; }
+                if let Some(expiry) = value.expires_at_ms {
+                    validate_time(expiry)?;
+                }
             }
             self.reads.insert(key.0.clone(), record);
         }
         let raw = self.reads.get(&key.0).and_then(Option::as_ref);
-        if raw.is_some_and(|row| row.expires_at_ms.is_some_and(|expiry| expiry <= self.now)) { return Ok(None); }
-        raw.map(|row| serde_json::from_value(row.value.clone()).map_err(|_| invalid("Malformed authority record."))).transpose()
+        if raw.is_some_and(|row| row.expires_at_ms.is_some_and(|expiry| expiry <= self.now)) {
+            return Ok(None);
+        }
+        raw.map(|row| {
+            serde_json::from_value(row.value.clone())
+                .map_err(|_| invalid("Malformed authority record."))
+        })
+        .transpose()
     }
 
     pub fn revision(&self, key: &RecordKey) -> Option<String> {
-        self.reads.get(&key.0).and_then(Option::as_ref).map(|row| row.revision.clone())
+        self.reads
+            .get(&key.0)
+            .and_then(Option::as_ref)
+            .map(|row| row.revision.clone())
     }
 
     pub fn expect(&self, key: &RecordKey, revision: &Option<String>) -> bool {
@@ -77,32 +128,79 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
     }
 
     pub fn checks(&self) -> Vec<RevisionCheck> {
-        self.reads.iter().map(|(key, record)| RevisionCheck { key: RecordKey(key.clone()), expected_revision: record.as_ref().map(|row| row.revision.clone()) }).collect()
+        self.reads
+            .iter()
+            .map(|(key, record)| RevisionCheck {
+                key: RecordKey(key.clone()),
+                expected_revision: record.as_ref().map(|row| row.revision.clone()),
+            })
+            .collect()
     }
 
     pub fn post_checks(&self) -> Vec<RevisionCheck> {
-        self.checks().into_iter().map(|mut check| {
-            if let Some(mutation) = self.writes.get(&check.key.0) {
-                check.expected_revision = match mutation { RecordMutation::Put { record, .. } => Some(record.revision.clone()), RecordMutation::Delete { .. } => None };
-            }
-            check
-        }).collect()
+        self.checks()
+            .into_iter()
+            .map(|mut check| {
+                if let Some(mutation) = self.writes.get(&check.key.0) {
+                    check.expected_revision = match mutation {
+                        RecordMutation::Put { record, .. } => Some(record.revision.clone()),
+                        RecordMutation::Delete { .. } => None,
+                    };
+                }
+                check
+            })
+            .collect()
     }
 
-    pub fn put<T: Serialize>(&mut self, key: &RecordKey, value: &T, expiry: Option<i64>) -> Result<(), GatewayError> {
-        if !self.reads.contains_key(&key.0) { return Err(invalid("A mutation is missing its strong-read precondition.")); }
-        if let Some(expiry) = expiry { validate_time(expiry)?; }
+    pub fn put<T: Serialize>(
+        &mut self,
+        key: &RecordKey,
+        value: &T,
+        expiry: Option<i64>,
+    ) -> Result<(), GatewayError> {
+        if !self.reads.contains_key(&key.0) {
+            return Err(invalid(
+                "A mutation is missing its strong-read precondition.",
+            ));
+        }
+        if let Some(expiry) = expiry {
+            validate_time(expiry)?;
+        }
         let revision = self.tokens.next_token()?;
         text(&revision)?;
-        if self.reads.values().flatten().any(|row| row.revision == revision) { return Err(invalid("Token source reused an existing revision.")); }
-        let record = StoredRecord { schema_version: PORTABLE_STATE_VERSION, revision, value: serde_json::to_value(value).map_err(|_| invalid("Authority serialization failed."))?, expires_at_ms: expiry };
-        self.writes.insert(key.0.clone(), RecordMutation::Put { key: key.clone(), record });
+        if self
+            .reads
+            .values()
+            .flatten()
+            .any(|row| row.revision == revision)
+        {
+            return Err(invalid("Token source reused an existing revision."));
+        }
+        let record = StoredRecord {
+            schema_version: PORTABLE_STATE_VERSION,
+            revision,
+            value: serde_json::to_value(value)
+                .map_err(|_| invalid("Authority serialization failed."))?,
+            expires_at_ms: expiry,
+        };
+        self.writes.insert(
+            key.0.clone(),
+            RecordMutation::Put {
+                key: key.clone(),
+                record,
+            },
+        );
         Ok(())
     }
 
     pub fn delete(&mut self, key: &RecordKey) -> Result<(), GatewayError> {
-        if !self.reads.contains_key(&key.0) { return Err(invalid("A deletion is missing its strong-read precondition.")); }
-        self.writes.insert(key.0.clone(), RecordMutation::Delete { key: key.clone() });
+        if !self.reads.contains_key(&key.0) {
+            return Err(invalid(
+                "A deletion is missing its strong-read precondition.",
+            ));
+        }
+        self.writes
+            .insert(key.0.clone(), RecordMutation::Delete { key: key.clone() });
         Ok(())
     }
 
@@ -111,9 +209,18 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         let mut revisions = BTreeSet::new();
         for mutation in self.writes.values() {
             if let RecordMutation::Put { record, .. } = mutation {
-                if !revisions.insert(record.revision.clone()) { return Err(invalid("Token source duplicated a mutation revision.")); }
+                if !revisions.insert(record.revision.clone()) {
+                    return Err(invalid("Token source duplicated a mutation revision."));
+                }
             }
         }
-        Ok(self.store.commit(AtomicTransition { checks, mutations: self.writes.into_values().collect() }).await? == CommitOutcome::Committed)
+        Ok(self
+            .store
+            .commit(AtomicTransition {
+                checks,
+                mutations: self.writes.into_values().collect(),
+            })
+            .await?
+            == CommitOutcome::Committed)
     }
 }

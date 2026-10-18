@@ -1,9 +1,12 @@
 //! Source-shaped serial routing records and proof capabilities.
-use std::collections::BTreeMap;
-use gateway_core::identity::{AccountBinding,ActiveSelection,CredentialVersion,PoolVersionstamp,RoutingAccountHash,SubscriptionSelectionHash};
+use gateway_core::identity::{
+    AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
+    SubscriptionSelectionHash,
+};
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::RevisionCheck;
-use serde::{Deserialize,Serialize};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PoolAccount {
@@ -33,7 +36,10 @@ pub struct QuotaBlock {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum QuotaBlockSource { BodyResetsAt, HeaderRetryAfter }
+pub enum QuotaBlockSource {
+    BodyResetsAt,
+    HeaderRetryAfter,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProbeLease {
@@ -64,13 +70,21 @@ pub struct RoutingState {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-pub struct CapacityStore { pub observations: Vec<CapacityObservation> }
+pub struct CapacityStore {
+    pub observations: Vec<CapacityObservation>,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CapacityWindow { pub used_percent: Option<f64>, pub reset_at_ms: Option<i64> }
+pub struct CapacityWindow {
+    pub used_percent: Option<f64>,
+    pub reset_at_ms: Option<i64>,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ModelCapacity { pub model: String, pub windows: Vec<CapacityWindow> }
+pub struct ModelCapacity {
+    pub model: String,
+    pub windows: Vec<CapacityWindow>,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CapacityObservation {
@@ -82,10 +96,16 @@ pub struct CapacityObservation {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct AccountCatalog { pub client_version: String, pub models: Vec<String> }
+pub struct AccountCatalog {
+    pub client_version: String,
+    pub models: Vec<String>,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct UnsupportedModel { pub observed_at_ms: i64, pub detail: String }
+pub struct UnsupportedModel {
+    pub observed_at_ms: i64,
+    pub detail: String,
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ModelAvailability {
@@ -105,7 +125,10 @@ pub struct AdmittedAccount {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ScopedOverageProbe {
-    pub binding: AccountBinding, pub requested_model: String, pub quota_class: CodexQuotaClass, pub probe: ProbeLease,
+    pub binding: AccountBinding,
+    pub requested_model: String,
+    pub quota_class: CodexQuotaClass,
+    pub probe: ProbeLease,
 }
 
 /// Constructed only by a successful strong selection. Never deserialize an external proof.
@@ -120,20 +143,39 @@ pub struct CohortProof {
 }
 
 impl CohortProof {
-    pub fn full_cohort_exhausted(&self) -> bool { self.exhausted }
-    pub fn full_cohort_unavailable(&self) -> bool { self.unavailable }
-    pub fn selected_count(&self) -> usize { self.bindings.len() }
-    pub fn model(&self) -> &str { &self.model }
-    pub fn account_bindings(&self) -> &[AccountBinding] { &self.bindings }
-    pub fn quota_class(&self) -> CodexQuotaClass { self.quota_class }
+    pub fn full_cohort_exhausted(&self) -> bool {
+        self.exhausted
+    }
+    pub fn full_cohort_unavailable(&self) -> bool {
+        self.unavailable
+    }
+    pub fn selected_count(&self) -> usize {
+        self.bindings.len()
+    }
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+    pub fn account_bindings(&self) -> &[AccountBinding] {
+        &self.bindings
+    }
+    pub fn quota_class(&self) -> CodexQuotaClass {
+        self.quota_class
+    }
 }
 
 #[derive(Clone, Debug)]
 pub enum RouteSelection {
     Eligible(AdmittedAccount),
-    QuotaBlocked { retry_at_ms: Option<i64>, proof: CohortProof },
-    CredentialsInvalid { proof: CohortProof },
-    ModelUnavailable { model: String, detail: Option<String> },
+    QuotaBlocked {
+        retry_at_ms: Option<i64>,
+        proof: CohortProof,
+    },
+    CredentialsInvalid {
+        proof: CohortProof,
+    },
+    ModelUnavailable {
+        model: String,
+        detail: Option<String>,
+    },
     RoutingUnavailable,
 }
-
