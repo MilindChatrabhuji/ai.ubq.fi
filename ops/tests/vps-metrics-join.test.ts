@@ -353,7 +353,6 @@ const savedCheckpoint = async (fixture: Awaited<ReturnType<typeof metricsFixture
 
 test("VPS joins: a PID 1 exit/restart bounds a lost terminal, persists unavailability and releases its slices", async () => {
   for (const message of [
-    "Started ai-ubq-fi.service - ai.ubq.fi gateway.",
     "Stopped ai-ubq-fi.service - ai.ubq.fi gateway.",
     "ai-ubq-fi.service: Main process exited, code=killed, status=9/KILL",
     "ai-ubq-fi.service: Deactivated successfully.",
@@ -399,7 +398,7 @@ test("VPS joins: lifecycle markers survive checkpoint reconstruction and are sha
   const source = journal([
     ...productionRequest(1, start + 1_000, 84_000),
     productionRow(true, start + 40_000, "lost-terminal"),
-    managerRow(start + 65_000, "Started ai-ubq-fi.service - ai.ubq.fi gateway."),
+    managerRow(start + 65_000, "Stopped ai-ubq-fi.service - ai.ubq.fi gateway."),
   ]);
   const fixture = await metricsFixture(identity, source, () => now);
   assert.equal((await fixture.metrics.sample(input)).requestCount, 1, "a joined request is not refused by a lifecycle row");
@@ -431,11 +430,15 @@ test("VPS joins: lifecycle markers survive checkpoint reconstruction and are sha
 test("VPS joins: an earlier restart and non-terminal PID 1 messages do not cut short a live request", async () => {
   let now = start + 65_000;
   const source = journal([
-    managerRow(start + 500, "Started ai-ubq-fi.service - ai.ubq.fi gateway."),
+    managerRow(start + 500, "Stopped ai-ubq-fi.service - ai.ubq.fi gateway."),
     ...productionRequest(1, start + 1_000, 64_000),
-    ...["Stopping ai-ubq-fi.service...", "Starting ai-ubq-fi.service...", "Reloaded ai-ubq-fi.service.", null].map((message, index) =>
-      managerRow(start + 35_000 + index, message)
-    ),
+    ...[
+      "Stopping ai-ubq-fi.service...",
+      "Starting ai-ubq-fi.service...",
+      "Started ai-ubq-fi.service - ai.ubq.fi gateway.",
+      "Reloaded ai-ubq-fi.service.",
+      null,
+    ].map((message, index) => managerRow(start + 35_000 + index, message)),
   ]);
   const fixture = await metricsFixture(identity, source, () => now);
   assert.equal((await fixture.metrics.sample(input)).coverage, "incomplete");

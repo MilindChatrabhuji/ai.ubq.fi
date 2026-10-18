@@ -67,11 +67,13 @@ function checkedRow(line: string, proof: VpsJournalCoverage): { message: string;
   const at = Number(row.__REALTIME_TIMESTAMP) / 1000;
   if (!Number.isFinite(at) || at < proof.windowStart || at >= proof.windowEnd) return incomplete();
   if (row._SYSTEMD_UNIT !== proof.unit) {
-    // PID 1 rows are never requests. Completed exits/restarts bound lost terminals; a mere "Stopping" does not.
+    // PID 1 rows are never requests. Completed exits/restarts bound lost terminals. With Type=simple,
+    // "Started" can follow a live admission from the new process, so startup notices cannot end its cohort.
     if (row._PID === "1" && row.UNIT === proof.unit) {
       const message = typeof row.MESSAGE === "string" ? row.MESSAGE : "";
-      const lifecycle =
-        /^(?:Started |Stopped |ai-ubq-fi\.service: (?:Main process exited|Deactivated successfully\.|Failed with result |Scheduled restart job))/.test(message);
+      const lifecycle = /^(?:Stopped |ai-ubq-fi\.service: (?:Main process exited|Deactivated successfully\.|Failed with result |Scheduled restart job))/.test(
+        message
+      );
       return { message: "", at, cursor: row.__CURSOR, lifecycle };
     }
     return incomplete();
