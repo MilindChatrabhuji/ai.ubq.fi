@@ -282,6 +282,15 @@ export default tsEslint.config(
     },
   },
   {
+    // Cloudflare config uses generated Worker globals, isolated from Bun/Node.
+    // Measured 2026-10-18: the application project excludes these two files;
+    // retain every typed rule while selecting their strict runtime project.
+    files: ["cloudflare.config.ts", "wrangler.config.ts"],
+    languageOptions: {
+      parserOptions: { project: ["./tsconfig.cloudflare.json"] },
+    },
+  },
+  {
     // ---------------------------------------------------------------------
     // Test doubles legitimately need no-op stubs: fake clocks, `save` callbacks
     // for paths that intentionally do not persist, stream sinks that only record
