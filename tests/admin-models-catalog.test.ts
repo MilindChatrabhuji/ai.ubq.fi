@@ -791,7 +791,7 @@ test("the Providers tab renders a provider picker next to the Analytics tab", ()
   // The routing contract the panel has to explain: nothing checked is a removed
   // filter, not a gateway with every provider switched off.
   assert.match(adminHtml, /Saving an empty selection removes the filter/);
-  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| providersSelectionIsEmpty\(\)/);
+  assert.match(adminScript, /providersSelectionSave\.disabled = saving \|\| !unsaved \|\| !providersHasActiveTier\(\)/);
   assert.match(adminScript, /providersEmptyWarning/);
   // The waterfall order is fixed, so the picker must never claim to reorder it.
   assert.match(adminHtml, /The waterfall order itself never changes/);

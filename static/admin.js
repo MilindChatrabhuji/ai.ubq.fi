@@ -9781,6 +9781,8 @@ const providersHasUnsavedChanges = () =>
 
 const providersSelectionIsEmpty = () => providerSelection.size === 0;
 
+const providersHasActiveTier = () => providersRosterIds().some((id) => isProviderChecked(id));
+
 /**
  * Selected ids in roster order, then the narrowed subscriptions, then staged
  * ids the roster no longer describes, or an empty list when every active
@@ -10135,7 +10137,7 @@ const updateProvidersStatus = () => {
   else if (providerSelectionSaveError) setProvidersSelectionBadge("bad", providerSelectionSaveError);
   else if (unsaved) setProvidersSelectionBadge("warning", "Unsaved changes");
   else if (providerSelectionLoadedAt) {
-    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id)).length;
+    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
     setProvidersSelectionBadge("ok", filterActive ? `${formatNumber(activeTiers)} active` : "No filter");
   } else setProvidersSelectionBadge("unknown", "Not loaded");
 
@@ -10157,9 +10159,9 @@ const updateProvidersStatus = () => {
     : "Remove missing";
   providersDropMissingBtn.hidden = providerRoster.length === 0;
   providersDiscardBtn.disabled = saving || !unsaved;
-  // Saving nothing is not a state the API can store: an empty list clears the
-  // filter, so the button stays disabled until at least one provider is checked.
-  providersSelectionSave.disabled = saving || !unsaved || providersSelectionIsEmpty();
+  // Empty lists clear the filter, and missing-only selections cannot route.
+  // Require at least one checked roster tier before saving either restriction.
+  providersSelectionSave.disabled = saving || !unsaved || !providersHasActiveTier();
 };
 
 const renderProvidersPicker = () => {
@@ -10286,7 +10288,7 @@ const saveProviderSelection = async () => {
     setProvidersSelectionBadge("bad", "Missing token");
     return;
   }
-  if (providerSelectionSaving || !providersHasUnsavedChanges() || providersSelectionIsEmpty()) return;
+  if (providerSelectionSaving || !providersHasUnsavedChanges() || !providersHasActiveTier()) return;
   const submittedSelection = new Set(providerSelection);
   const submittedIds = providersSelectedIds();
   providerSelectionSaving = true;
@@ -10393,7 +10395,13 @@ const setProviderChecked = (providerId, checked) => {
   }
   for (const subscription of providerSubscriptions()) providerSelection.delete(subscription.id);
   if (checked) providerSelection.add("codex");
-  else providerSelection.delete("codex");
+  else {
+    providerSelection.delete("codex");
+    // Turning the tier off also covers subscriptions no longer in the roster.
+    for (const id of providerSelection) {
+      if (id.startsWith("codex:")) providerSelection.delete(id);
+    }
+  }
 };
 
 /** Narrowing to one subscription expands the umbrella, then drops that account. */
