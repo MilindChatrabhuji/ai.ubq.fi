@@ -408,21 +408,19 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 }) {
                     continue;
                 }
-                view.state.slots[slot].insert_quota_block(
-                    class,
-                    QuotaBlock {
-                        legacy_fallback: false,
-                        blocked_until_ms: reset,
-                        source: QuotaBlockSource::HeaderRetryAfter,
-                        observed_at_ms: Some(observation.snapshot_at_ms),
-                        reset_at_ms: Some(reset),
-                        reset_is_stable: true,
-                        reset_ambiguous: false,
-                        recovery_pending: false,
-                    },
-                );
-                view.state.slots[slot].generation =
-                    next_generation(view.state.slots[slot].generation)?;
+                let current = &mut view.state.slots[slot];
+                let foreign_probe = current.probe_lease.as_ref().is_some_and(|lease| {
+                    lease.circuit == ProbeCircuit::Quota
+                        && lease.quota_class.is_some_and(|c| c != class)
+                });
+                if current.probe_lease.is_some() && !foreign_probe {
+                    continue;
+                }
+                let block = current.capacity_quota_block(class, reset, now);
+                current.insert_quota_block(class, block);
+                if !foreign_probe {
+                    current.generation = next_generation(current.generation)?;
+                }
                 changed = true;
             }
             if changed {
