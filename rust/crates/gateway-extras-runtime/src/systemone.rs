@@ -70,7 +70,7 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
         .await;
     match result {
         Err(failure) => {
-            if failure.quota_refusal {
+            if failure.origin == DispatchFailureOrigin::Gateway {
                 let mut r = ExtrasResponse::error(failure.error.as_ref().clone());
                 r.headers.extend(failure.headers.clone());
                 r.upstream_errors.push(failure);
@@ -101,6 +101,7 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
                 ));
                 r.health.push(observed(result.status));
                 r.upstream_errors.push(DispatchFailure {
+                    origin: DispatchFailureOrigin::Upstream,
                     error: Box::new(GatewayError::new(
                         status,
                         "System One upstream error",

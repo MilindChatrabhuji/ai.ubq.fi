@@ -1015,3 +1015,71 @@ fn cache_timestamp_projection_preserves_source_negative_zero_key_identity() {
     };
     assert_eq!(at.to_bits(), (-0.0f64).to_bits());
 }
+
+#[test]
+fn gateway_origin_preserves_admission_and_started_ledger_failures_without_provider_health() {
+    for before_transport in [true, false] {
+        let (store, host, auth, ctx) = setup();
+        let mut failure = DispatchFailure::gateway(
+            GatewayError::unavailable("ledger unavailable", "ledger_unavailable"),
+            before_transport,
+        );
+        failure.headers.insert("Retry-After".into(), "3".into());
+        host.0.replies.borrow_mut().push_back(Err(failure));
+        let result = run(ExtrasRuntime::new(store, host).handle(request(
+            ExtrasRoute::SystemOne,
+            json!({"state":{},"questions":{"go":{"type":"noul"}}}),
+            &auth,
+            &ctx,
+        )))
+        .unwrap();
+        assert_eq!(result.status, 503);
+        assert_eq!(result.headers["Retry-After"], "3");
+        assert!(result.health.is_empty());
+        assert_eq!(
+            result.upstream_errors[0].origin,
+            DispatchFailureOrigin::Gateway
+        );
+        assert_eq!(result.upstream_errors[0].before_transport, before_transport);
+        assert!(!result.upstream_errors[0].quota_refusal);
+    }
+}
+
+#[test]
+fn actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins() {
+    let (store, host, auth, ctx) = setup();
+    let mut quota = DispatchFailure::gateway(
+        GatewayError::new(429, "quota", Some("api_key_quota_exceeded")),
+        true,
+    );
+    quota.quota_refusal = true;
+    host.0.replies.borrow_mut().push_back(Err(quota));
+    let result = run(ExtrasRuntime::new(store, host).handle(request(
+        ExtrasRoute::SystemOne,
+        json!({"state":{},"questions":{"go":{"type":"noul"}}}),
+        &auth,
+        &ctx,
+    )))
+    .unwrap();
+    assert_eq!(result.status, 429);
+    assert!(result.health.is_empty());
+    assert!(result.upstream_errors[0].quota_refusal);
+    let (store, host, auth, ctx) = setup();
+    host.0
+        .replies
+        .borrow_mut()
+        .push_back(Err(DispatchFailure::transport(error("network"))));
+    let result = run(ExtrasRuntime::new(store, host).handle(request(
+        ExtrasRoute::SystemOne,
+        json!({"state":{},"questions":{"go":{"type":"noul"}}}),
+        &auth,
+        &ctx,
+    )))
+    .unwrap();
+    assert_eq!(result.status, 502);
+    assert_eq!(result.health[0].kind, HealthKind::UpstreamError);
+    assert_eq!(
+        result.upstream_errors[0].origin,
+        DispatchFailureOrigin::Transport
+    );
+}

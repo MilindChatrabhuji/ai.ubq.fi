@@ -221,6 +221,17 @@ impl CatalogHost for Host {
         format!("m24-{id}")
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
+        let mut yielded = false;
+        poll_fn(|context| {
+            if yielded {
+                Poll::Ready(())
+            } else {
+                yielded = true;
+                context.waker().wake_by_ref();
+                Poll::Pending
+            }
+        })
+        .await;
         self.now.set(self.now.get() + i64::from(milliseconds));
         Ok(())
     }
@@ -721,7 +732,7 @@ fn cold_picker_starts_three_normal_discoveries_concurrently_and_only_schedules_e
         (CatalogProvider::Surplus, json!({"data":[{"id":"a"}]})),
         (
             CatalogProvider::ClaudeCode,
-            json!({"data":[{"id":"A","type":"model","created_at":"2026-01-01T00:00:00Z"}],"has_more":false}),
+            json!({"data":[{"id":"claude-a","type":"model","created_at":"2026-01-01T00:00:00Z"}],"has_more":false}),
         ),
     ] {
         host.configure(provider, provider.id());
@@ -757,7 +768,7 @@ fn cold_picker_starts_three_normal_discoveries_concurrently_and_only_schedules_e
         .iter()
         .map(|row| row["id"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec!["a", "A", "ubiquity/deepseek-flash", "z"]);
+    assert_eq!(ids, vec!["a", "claude-a", "ubiquity/deepseek-flash", "z"]);
     invoke(&runtime, &store, &host, AdminCatalogOperation::Catalog);
     assert_eq!(host.warmed.get(), 2);
     assert_eq!(host.requests.borrow().len(), 3);

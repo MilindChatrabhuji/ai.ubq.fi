@@ -13,6 +13,16 @@ use std::{
     task::{Context as TaskContext, Poll, Waker},
 };
 
+// Assertions inspect the actual JSON wire of either explicit response arm.
+trait WireBody {
+    fn wire_json(&self) -> Value;
+}
+impl WireBody for AuthResponseBody {
+    fn wire_json(&self) -> Value {
+        serde_json::from_slice(&self.to_bytes().unwrap()).unwrap()
+    }
+}
+
 fn run<F: Future>(future: F) -> F::Output {
     let mut cx = TaskContext::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
@@ -281,14 +291,15 @@ fn debug_expiry_and_unknown_scenarios_follow_source() {
         input(json!({"scenario":"codex_503","duration_ms":10})),
     ))
     .unwrap();
-    assert_eq!(before.body["routing"]["expires_at_ms"], 1000010);
+    assert_eq!(before.body.wire_json()["routing"]["expires_at_ms"], 1000010);
     host.now.set(1000020);
     let mut request = input(Value::Null);
     request.now_ms = 1000020;
     assert_eq!(
         run(service.execute(AdminOperation::DebugGet, request))
             .unwrap()
-            .body["routing"]["scenario"],
+            .body
+            .wire_json()["routing"]["scenario"],
         "normal"
     );
     assert_eq!(
@@ -314,7 +325,7 @@ fn provider_selection_is_ordered_and_codex_absorbs_subscriptions() {
     ))
     .unwrap();
     assert_eq!(
-        response.body["provider_ids"],
+        response.body.wire_json()["provider_ids"],
         json!(["codex", "surplus", "openlux"])
     );
     assert_eq!(
@@ -349,7 +360,8 @@ fn claude_empty_access_is_authoritative_and_corruption_never_seeds() {
     assert_eq!(
         run(service.execute(AdminOperation::ClaudeAccessGet, input(Value::Null)))
             .unwrap()
-            .body["data"]["allowed_key_ids"],
+            .body
+            .wire_json()["data"]["allowed_key_ids"],
         json!([])
     );
     store.put(
@@ -371,7 +383,10 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
     seed_catalog(&store, true);
     let service = runtime(&store, &host, &config);
     let response=run(service.execute(AdminOperation::DefaultsSet,input(json!({"model":"gpt-source","reasoning_effort":"future-tier","kernel_policy_limit_requests":25})))).unwrap();
-    assert_eq!(response.body["defaults"]["reasoning_effort"], "future-tier");
+    assert_eq!(
+        response.body.wire_json()["defaults"]["reasoning_effort"],
+        "future-tier"
+    );
     assert_eq!(
         store
             .get(json!(["uos_ai", "authority", "v1", "kernel_defaults"]))
@@ -395,7 +410,8 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
             input(json!({"model":"gpt-source"}))
         ))
         .unwrap()
-        .body["defaults"]["reasoning_effort"],
+        .body
+        .wire_json()["defaults"]["reasoning_effort"],
         "none"
     );
 }
@@ -619,8 +635,14 @@ fn errors_limit_does_not_truncate_five_xx_buckets() {
     let mut request = input(Value::Null);
     request.query.insert("limit".into(), vec!["1".into()]);
     let response = run(service.execute(AdminOperation::Errors, request)).unwrap();
-    assert_eq!(response.body["data"].as_array().unwrap().len(), 1);
-    assert_eq!(response.body["five_xx_buckets"][0]["count"], 205);
+    assert_eq!(
+        response.body.wire_json()["data"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        response.body.wire_json()["five_xx_buckets"][0]["count"],
+        205
+    );
 }
 
 #[test]
@@ -785,10 +807,11 @@ fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
         .query
         .insert("include_usage".into(), vec!["true".into()]);
     let result = run(service.execute(AdminOperation::KernelUsageGet, request)).unwrap();
-    let series = result.body["usage"]["daily_requests"].as_array().unwrap();
+    let body = result.body.wire_json();
+    let series = body["usage"]["daily_requests"].as_array().unwrap();
     assert_eq!(series.len(), 30);
     assert_eq!(series[29], 5);
-    assert_eq!(result.body["usage"]["input_tokens"], 0);
+    assert_eq!(result.body.wire_json()["usage"]["input_tokens"], 0);
 }
 
 #[test]
@@ -858,7 +881,7 @@ fn defaults_work_from_runtime_catalog_without_optional_full_snapshot() {
         input(json!({"model":"gpt-source","reasoning_effort":"future-tier"})),
     ))
     .unwrap();
-    assert_eq!(response.body["defaults"]["model"], "gpt-source");
+    assert_eq!(response.body.wire_json()["defaults"]["model"], "gpt-source");
     assert_eq!(
         run(service.paid_key_policy(
             &json!({"paid_fallback_enabled":true,"paid_fallback_limit_credits":1})
@@ -1099,7 +1122,7 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
     let created = run(admin.handle_route(&request, "create-key"))
         .unwrap()
         .unwrap();
-    let id = created.body["id"].as_str().unwrap().to_owned();
+    let id = created.body.wire_json()["id"].as_str().unwrap().to_owned();
     assert_eq!(created.status, 200);
     request.url = "https://ai.ubq.fi/admin/api-keys/revoke".into();
     request.body = serde_json::to_vec(&json!({"id":id})).unwrap();
@@ -1237,14 +1260,17 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
         input(json!({"scenario":"\u{feff}codex_429\u{feff}","duration_ms":["16"]})),
     ))
     .unwrap();
-    assert_eq!(response.body["routing"]["expires_at_ms"], 1000016);
+    assert_eq!(
+        response.body.wire_json()["routing"]["expires_at_ms"],
+        1000016
+    );
     let response = run(service.execute(
         AdminOperation::ClaudeAccessSet,
         input(json!({"allowed_key_ids":["\u{0085}key\u{0085}"]})),
     ))
     .unwrap();
     assert_eq!(
-        response.body["data"]["allowed_key_ids"],
+        response.body.wire_json()["data"]["allowed_key_ids"],
         json!(["\u{0085}key\u{0085}"])
     );
     let mut request = input(Value::Null);
@@ -1316,8 +1342,8 @@ fn public_supervisor_brief_uses_final_operation_and_never_leaks_native_context()
         } else {
             let response = response.unwrap();
             assert_eq!(response.status, 200);
-            assert_eq!(response.body["model"], Value::Null);
-            assert!(response.body.get("turns").is_none());
+            assert_eq!(response.body.wire_json()["model"], Value::Null);
+            assert!(response.body.wire_json().get("turns").is_none());
         }
     }
 }
