@@ -308,15 +308,12 @@ const refillEvents = (quota: MeteredQuotaRunwayView, history: readonly MeteredQu
   return events;
 };
 
-const refillProjection = (
-  quota: MeteredQuotaRunwayView,
-  balanceQuota: number | null,
-  burnQuotaPerHour: number | null,
-  history: readonly MeteredQuotaBalanceSample[] | null,
-  nowMs: number
-): RefillProjection => {
-  const events = refillEvents(quota, history, nowMs);
+type RefillAmount = Readonly<{
+  amountQuota: number | null;
+  amountCredits: number | null;
+}>;
 
+const refillAmount = (quota: MeteredQuotaRunwayView, events: readonly RefillEvent[]): RefillAmount => {
   const observedAmountQuota =
     positiveFinite(quota.latest_refill_amount_credits) && positiveFinite(quota.quota_per_credit)
       ? quota.latest_refill_amount_credits * quota.quota_per_credit
@@ -326,7 +323,15 @@ const refillProjection = (
   const amountQuota = amountFromObservation ?? inferredAmountQuota;
   const amountCreditsFromObservation = positiveFinite(quota.latest_refill_amount_credits) ? quota.latest_refill_amount_credits : null;
   const amountCreditsFromHistory = amountQuota !== null && positiveFinite(quota.quota_per_credit) ? amountQuota / quota.quota_per_credit : null;
-  const amountCredits = amountCreditsFromObservation ?? amountCreditsFromHistory;
+  return { amountQuota, amountCredits: amountCreditsFromObservation ?? amountCreditsFromHistory };
+};
+
+type RefillCadence = Readonly<{
+  cadenceMs: number | null;
+  rateQuotaPerHour: number | null;
+}>;
+
+const refillCadence = (events: readonly RefillEvent[], amountQuota: number | null): RefillCadence => {
   const intervals = events
     .slice(1)
     .map((event, index) => event.atMs - (events[index]?.atMs ?? event.atMs))
@@ -334,6 +339,28 @@ const refillProjection = (
   const cadenceMs = median(intervals);
   const calculatedRateQuotaPerHour = amountQuota !== null && cadenceMs !== null ? amountQuota / (cadenceMs / HOUR_MS) : null;
   const rateQuotaPerHour = positiveFinite(calculatedRateQuotaPerHour) ? calculatedRateQuotaPerHour : null;
+  return { cadenceMs, rateQuotaPerHour };
+};
+
+const nextRefillAt = (events: readonly RefillEvent[], cadenceMs: number, nowMs: number): number | null => {
+  const latestEventAtMs = events.at(-1)?.atMs ?? null;
+  if (latestEventAtMs === null) return null;
+  let periodsUntilNext = 0;
+  if (latestEventAtMs < nowMs) periodsUntilNext = Math.ceil((nowMs - latestEventAtMs) / cadenceMs);
+  else if (latestEventAtMs === nowMs) periodsUntilNext = 1;
+  return latestEventAtMs + periodsUntilNext * cadenceMs;
+};
+
+const refillProjection = (
+  quota: MeteredQuotaRunwayView,
+  balanceQuota: number | null,
+  burnQuotaPerHour: number | null,
+  history: readonly MeteredQuotaBalanceSample[] | null,
+  nowMs: number
+): RefillProjection => {
+  const events = refillEvents(quota, history, nowMs);
+  const { amountQuota, amountCredits } = refillAmount(quota, events);
+  const { cadenceMs, rateQuotaPerHour } = refillCadence(events, amountQuota);
   const unknown: RefillProjection = {
     status: "unknown",
     timeRemainingMs: null,
@@ -355,12 +382,8 @@ const refillProjection = (
     return history === null ? unknown : noRefill;
   }
 
-  const latestEventAtMs = events.at(-1)?.atMs ?? null;
-  if (latestEventAtMs === null) return history === null ? unknown : noRefill;
-  let periodsUntilNext = 0;
-  if (latestEventAtMs < nowMs) periodsUntilNext = Math.ceil((nowMs - latestEventAtMs) / cadenceMs);
-  else if (latestEventAtMs === nowMs) periodsUntilNext = 1;
-  const nextRefillAtMs = latestEventAtMs + periodsUntilNext * cadenceMs;
+  const nextRefillAtMs = nextRefillAt(events, cadenceMs, nowMs);
+  if (nextRefillAtMs === null) return history === null ? unknown : noRefill;
   const hoursUntilNextRefill = Math.max(0, (nextRefillAtMs - nowMs) / HOUR_MS);
   const balanceAtNextRefill = balanceQuota - burnQuotaPerHour * hoursUntilNextRefill;
   if (balanceAtNextRefill < 0) {
@@ -388,8 +411,7 @@ const refillProjection = (
 
   const balanceAfterFirstRefill = balanceAtNextRefill + amountQuota;
   const cycleLossQuota = cycleBurnQuota - amountQuota;
-  const cyclesUntilExhaustion =
-    balanceAfterFirstRefill < cycleBurnQuota ? 0 : Math.floor((balanceAfterFirstRefill - cycleBurnQuota) / cycleLossQuota) + 1;
+  const cyclesUntilExhaustion = balanceAfterFirstRefill < cycleBurnQuota ? 0 : Math.floor((balanceAfterFirstRefill - cycleBurnQuota) / cycleLossQuota) + 1;
   const balanceBeforeExhaustion = balanceAfterFirstRefill - cyclesUntilExhaustion * cycleLossQuota;
   const exhaustedAtMs = Math.trunc(nextRefillAtMs + cyclesUntilExhaustion * cadenceMs + (balanceBeforeExhaustion / burnQuotaPerHour) * HOUR_MS);
   const timeRemainingMs = Math.max(0, exhaustedAtMs - nowMs);
