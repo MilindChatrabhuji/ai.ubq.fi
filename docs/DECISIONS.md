@@ -2200,3 +2200,9 @@ Enable [Surplus Secret Masking](https://www.surplusintelligence.ai/docs/guides/s
 Reason: the owner requested the announced feature. Surplus can globally pause masking and forward requests without protection or a receipt, so this opt-in does not guarantee that every request is masked. The gateway does not require or parse a masking receipt.
 
 Reversal risk: removing the header returns request-level enablement to the provider's defaults.
+
+## Deployment-guard fixtures retain complete bounded coverage - 2026-10-18
+
+CI run `39168411070` passed 33 of the 45 deployment/recovery cases and began the next controlled launcher before the existing ten-minute per-file cap stopped it. The complete `tests/vps-deploy-guards.test.ts` file receives a bounded twenty-minute default; every other file keeps ten minutes, individual Bun test deadlines stay five minutes, and an explicit `--file-timeout-ms` remains capped at ten minutes and overrides the default. No case, assertion, fixture isolation or process-group settlement rule is removed.
+
+Knip treats `cloudflare.config.ts`, `wrangler.config.ts` and `tools/cloudflare/generate-types.ts` as actual external-tool entry points. The configured CLI consumes the two default config exports; `cf` and `wrangler` remain pinned dependencies. Prettier excludes vendored Rust bytes and continues to own the supported first-party formats.

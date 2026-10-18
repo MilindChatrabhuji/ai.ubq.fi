@@ -30,3 +30,6 @@ benchmarks/provider-waterfall/cost/
 
 # Integrity-bound benchmark corpus fixture; its bytes are pinned in corpus-v1.manifest.json.
 benchmarks/provider-waterfall/fixtures/codex-tools-0.160.1.json
+
+# Vendored Rust dependencies retain their accepted upstream bytes.
+rust/vendor/
