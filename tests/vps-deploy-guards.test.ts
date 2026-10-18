@@ -88,7 +88,7 @@ const relocateDeployScript = async (root: string): Promise<string> => {
  */
 const relocateRetentionModule = async (root: string): Promise<void> => {
   await copyOps(root);
-  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts"])
+  for (const name of ["vps-release-store.ts", "vps-release-journal.ts", "vps-release-contract.ts", "vps-ingress.ts"])
     await writeFile(`${root}/${name}`, await readFile(new URL("../ops/" + name, import.meta.url)));
 };
 
@@ -1004,6 +1004,73 @@ withLauncher(
     const trace = (await calls(f)).slice(before);
     assert.ok(!trace.includes(RESTART_COMMAND) && !trace.includes(RELOAD_COMMAND));
     assert.equal(await pathExists(f.root + "/.data/current"), false);
+  },
+  "bootstrap"
+);
+/** Rewrites the private receipt in place, as an interrupted run would have left it on disk. */
+const editRecovery = async (f: Fixture, edit: (receipt: Record<string, unknown>) => void): Promise<void> => {
+  const path = f.root + "/.data/deploy-recovery.json";
+  const receipt = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  edit(receipt);
+  await writeFile(path, JSON.stringify(receipt) + "\n");
+};
+for (const phase of ["prepared", "selected"] as const)
+  withLauncher(
+    `VPS first deployment retries an unstarted candidate whose restoration stopped before recording rolled_back (${phase})`,
+    async (f, a) => {
+      await write(f.root, "daemon-refused", "fault\n");
+      assertUnaccepted(await runDeployFixture(f, a.options), /fixture daemon-reload refused/);
+      assert.equal(await pathExists(f.root + "/.data/current"), false);
+      // The selector is already cleared; only the rolled_back record is missing.
+      await editRecovery(f, (receipt) => {
+        receipt.phase = phase;
+      });
+      await rm(f.root + "/daemon-refused");
+      const accepted = await runDeployFixture(f, a.options);
+      assert.equal(accepted.code, 0, accepted.stderr);
+      assert.equal(await identity(await a.publicHealth()), a.sha);
+      assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+      assert.equal(await pathExists(f.root + "/.data/deploy-recovery.json"), false);
+      assert.equal((await calls(f)).filter((line) => line === RESTART_COMMAND).length, 1);
+    },
+    "bootstrap"
+  );
+withLauncher(
+  "VPS first deployment still refuses an unselected candidate once a gateway restart was issued for it",
+  async (f, a) => {
+    await write(f.root, "restart-refused", "fault\n");
+    assertUnaccepted(await runDeployFixture(f, a.options), /fixture restart refused/);
+    assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+    assert.equal(await recoveryPhase(f), "selected");
+    await rm(f.root + "/restart-refused");
+    await rm(f.root + "/.data/current");
+    const before = (await calls(f)).length;
+    const run = await runDeployFixture(f, a.options);
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /no proven rollback disposition/);
+    assert.ok(!(await calls(f)).slice(before).includes(RESTART_COMMAND));
+  },
+  "bootstrap"
+);
+withLauncher(
+  "VPS first deployment keeps ingress_applied when a retry has to restart an unready candidate",
+  async (f, a) => {
+    await write(f.root, "public-refused", "fault\n");
+    assertUnaccepted(await runDeployFixture(f, a.options), /public route/);
+    assert.equal(await recoveryPhase(f), "ingress_applied");
+    await rm(f.root + "/public-refused");
+    // The running candidate stops answering, and the retry's restart of it fails.
+    await write(f.root, "readiness-refused", "fault\n");
+    await write(f.root, "restart-refused", "fault\n");
+    assertUnaccepted(await runDeployFixture(f, a.options), /fixture restart refused/);
+    assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+    assert.equal(await recoveryPhase(f), "ingress_applied", "the receipt still records the applied Caddy configuration");
+    await rm(f.root + "/readiness-refused");
+    await rm(f.root + "/restart-refused");
+    const accepted = await runDeployFixture(f, a.options);
+    assert.equal(accepted.code, 0, accepted.stderr);
+    assert.equal(await identity(await a.publicHealth()), a.sha);
+    assert.equal(await pathExists(f.root + "/.data/deploy-recovery.json"), false);
   },
   "bootstrap"
 );
