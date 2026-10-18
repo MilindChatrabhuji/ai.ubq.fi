@@ -45,7 +45,7 @@ pub fn js_number(value: &Value) -> f64 {
         Value::Number(v) => v.as_f64().unwrap_or(f64::NAN),
         _ => {
             let text = js_string(value);
-            let text = text.trim();
+            let text = gateway_schema::util::js_trim(&text);
             if text.is_empty() {
                 return 0.0;
             }
