@@ -11,9 +11,11 @@ type RedactionSpan = { start: number; end: number };
 
 const MARKER = "[redacted]";
 
+const PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
+
 /** Credential shapes recognized without a key. */
 const TOKEN_PATTERNS: readonly RegExp[] = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  PRIVATE_KEY_PATTERN,
   /\b[Bb]earer\s+[A-Za-z0-9._~+/=-]{12,}/g,
   /\b(?:sk|ghp|gho|ghu|ghs|dsk)-[A-Za-z0-9_-]{12,}/g,
   /(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{12,}/g,
@@ -35,19 +37,20 @@ const CREDENTIAL_KEY = /\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1(?:[.-]
 const MIN_BARE_VALUE = 8;
 
 const WHITESPACE = /\s/;
+const QUOTED_BARE_END = /[\s,\]};]/;
 
-/** End of a double-quoted or backtick-quoted value, where a backslash escapes the next character. */
-const quotedEnd = (text: string, openQuote: number): number => {
+/** End of a quoted value where a backslash escapes the next character. */
+const quotedEnd = (text: string, openQuote: number, closedOnly = false): number => {
   for (let index = openQuote + 1; index < text.length; index += 1) {
     if (text[index] === "\\") index += 1;
     else if (text[index] === text[openQuote]) return index + 1;
   }
-  // A value with no closing quote was clipped, so redact its whole tail.
-  return text.length;
+  // Only a per-record reading may redact an unclosed value through its tail.
+  return closedOnly ? -1 : text.length;
 };
 
 /** End of the scalar read as YAML: `''` is an escaped quote and a backslash is content. */
-const yamlScalarEnd = (text: string, openQuote: number): number => {
+const yamlScalarEnd = (text: string, openQuote: number, closedOnly = false): number => {
   for (let index = openQuote + 1; index < text.length; index += 1) {
     if (text[index] !== "'") continue;
     if (text[index + 1] === "'") {
@@ -56,12 +59,12 @@ const yamlScalarEnd = (text: string, openQuote: number): number => {
     }
     return index + 1;
   }
-  // A scalar with no closing quote was clipped, so redact its whole tail.
-  return text.length;
+  // Only a per-record reading may redact an unclosed scalar through its tail.
+  return closedOnly ? -1 : text.length;
 };
 
 /** End of the scalar read with the pre-existing rule that `\x` escapes the next character. */
-const escapedScalarEnd = (text: string, openQuote: number): number => {
+const escapedScalarEnd = (text: string, openQuote: number, closedOnly = false): number => {
   for (let index = openQuote + 1; index < text.length; index += 1) {
     const character = text[index];
     if (character === "\\") {
@@ -75,7 +78,7 @@ const escapedScalarEnd = (text: string, openQuote: number): number => {
     }
     return index + 1;
   }
-  return text.length;
+  return closedOnly ? -1 : text.length;
 };
 
 /**
@@ -87,15 +90,17 @@ const escapedScalarEnd = (text: string, openQuote: number): number => {
  * spans are kept, so a reading that misreads a quote can only widen a
  * redaction, never narrow it.
  */
-type QuoteReading = { yamlSingleQuotes: boolean; flowScalars: boolean };
+type QuoteReading = { yamlSingleQuotes: boolean; flowScalars: boolean; templateLiterals: boolean };
 
 const QUOTE_READINGS: readonly QuoteReading[] = [
-  // JSON, Python and JavaScript: a backslash escapes in every string kind.
-  { yamlSingleQuotes: false, flowScalars: false },
+  // Keep the JSON/Python reading: a backtick is plain text, as before.
+  { yamlSingleQuotes: false, flowScalars: false, templateLiterals: false },
   // YAML quoting, with every quote opening a string.
-  { yamlSingleQuotes: true, flowScalars: false },
+  { yamlSingleQuotes: true, flowScalars: false, templateLiterals: false },
   // YAML flow: a quote opens a string only where a scalar starts.
-  { yamlSingleQuotes: true, flowScalars: true },
+  { yamlSingleQuotes: true, flowScalars: true, templateLiterals: false },
+  // JavaScript adds template literals without narrowing any existing reading.
+  { yamlSingleQuotes: false, flowScalars: false, templateLiterals: true },
 ];
 
 /** A character after which a YAML flow scalar, and so a quoted string, can start. */
@@ -103,13 +108,13 @@ const SCALAR_START = new Set(["[", "{", ",", ":"]);
 
 const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
 
-/** Python, C and SQL string prefixes, such as `b'…'`, `rb'…'`, `u8'…'` and `N'…'`. */
-const STRING_PREFIX = /^(?:[bfrtulnex]|br|rb|fr|rf|tr|rt|u8)$/i;
+/** Python/C/SQL prefixes plus Perl, Ruby and Elixir forms such as `q'…'`, `%q'…'` and `~s'…'`. */
+const STRING_PREFIX = /^(?:[bfrtulnexqs]|br|rb|fr|rf|tr|rt|u8|qq)$/i;
 
 /**
  * Whether an apostrophe opens a string: always, unless it follows a word
  * character. There it never does in JSON, JavaScript or YAML, and in Python,
- * C or SQL only after a string prefix. Prose and comments write one inside a
+ * C, SQL, Perl, Ruby or Elixir only after a string prefix. Prose and comments write one inside a
  * word (`it's`, `don't`, `users'`), and reading it as a string would carry
  * the value on to the end of the text.
  */
@@ -124,7 +129,7 @@ const apostropheOpensString = (text: string, index: number): boolean => {
 /** Whether the quote character at `index` opens a string in this reading. */
 const opensString = (text: string, index: number, reading: QuoteReading, scalarStart: boolean): boolean => {
   const character = text[index];
-  if (character === "`") return !reading.yamlSingleQuotes;
+  if (character === "`") return reading.templateLiterals;
   if (character !== '"' && character !== "'") return false;
   if (reading.flowScalars) return scalarStart;
   return character === '"' || apostropheOpensString(text, index);
@@ -224,10 +229,10 @@ const bracketedValues = (text: string, openings: readonly ValueOpening[], readin
 /** The non-whitespace run starting at `from`, remembered so that keys sharing one run read it once. */
 type RunCache = { start: number; end: number };
 
-const runEnd = (text: string, from: number, cache: RunCache): number => {
+const runEnd = (text: string, from: number, cache: RunCache, stop: RegExp = WHITESPACE): number => {
   if (from >= cache.start && from < cache.end) return cache.end;
   let end = from;
-  while (end < text.length && !WHITESPACE.test(text[end])) end += 1;
+  while (end < text.length && !stop.test(text[end])) end += 1;
   cache.start = from;
   cache.end = end;
   return end;
@@ -242,17 +247,52 @@ const skipWhitespace = (text: string, from: number): number => {
 /** A credential key: where it starts, where its separator is, and whether it closed a quote. */
 type CredentialKey = { start: number; separator: number; quoted: boolean };
 
-const credentialKeys = (text: string): CredentialKey[] =>
-  [...text.matchAll(CREDENTIAL_KEY)].map((match) => ({ start: match.index, separator: match.index + match[0].length, quoted: match[2] !== "" }));
+/** Commas inside a call/parameter list, not commas separating hash entries. */
+const parameterCommas = (text: string): ReadonlySet<number> => {
+  const commas = new Set<number>();
+  if (!text.includes("=>")) return commas;
+  const brackets: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index];
+    if ("\"'`".includes(character)) {
+      index = quotedEnd(text, index);
+      continue;
+    }
+    if ("([{".includes(character)) brackets.push(character);
+    else if (")]}".includes(character)) brackets.pop();
+    else if (character === "," && brackets.at(-1) === "(") commas.add(index);
+    index += 1;
+  }
+  return commas;
+};
+
+/** A bare key in parameter position before `=>` is not a hash key. */
+const isArrowParameter = (text: string, key: CredentialKey, commas: ReadonlySet<number>): boolean => {
+  if (key.quoted || !text.startsWith("=>", key.separator)) return false;
+  let before = key.start - 1;
+  while (before >= 0 && WHITESPACE.test(text[before])) before -= 1;
+  return text[before] === "(" || commas.has(before);
+};
+
+const credentialKeys = (text: string): CredentialKey[] => {
+  const commas = parameterCommas(text);
+  return [...text.matchAll(CREDENTIAL_KEY)]
+    .map((match) => ({ start: match.index, separator: match.index + match[0].length, quoted: match[2] !== "" }))
+    .filter((key) => !isArrowParameter(text, key, commas));
+};
 
 /**
  * Where a key's value can start: past the separator and any whitespace. `=>`
- * (PHP, Perl, Ruby) is read both as one separator and as `=` followed by a
- * value that starts with `>`, which is how a bare value was read before.
+ * (PHP, Perl, Ruby) also retains the old `=` reading for unquoted keys,
+ * where a bare value started with `>`. Arrow parameters are excluded above.
  */
 const valueStarts = (text: string, key: CredentialKey): number[] => {
   const starts = [skipWhitespace(text, key.separator + 1)];
-  if (text.startsWith("=>", key.separator)) starts.push(skipWhitespace(text, key.separator + 2));
+  if (text.startsWith("=>", key.separator)) {
+    if (key.quoted) return [skipWhitespace(text, key.separator + 2)];
+    starts.push(skipWhitespace(text, key.separator + 2));
+  }
   return starts;
 };
 
@@ -260,42 +300,104 @@ const patternSpans = (text: string, pattern: RegExp): RedactionSpan[] =>
   [...text.matchAll(pattern)].map((match) => ({ start: match.index, end: match.index + match[0].length }));
 
 /** Each key's double-quoted value or JavaScript template literal, through the end of the text when it never closes. */
-const quotedValueSpans = (text: string, keys: readonly CredentialKey[]): RedactionSpan[] => {
+const quotedValueSpans = (text: string, keys: readonly CredentialKey[], closedOnly = false): RedactionSpan[] => {
   const spans: RedactionSpan[] = [];
   for (const key of keys) {
     for (const value of valueStarts(text, key)) {
-      if (text[value] === '"' || text[value] === "`") spans.push({ start: key.start, end: quotedEnd(text, value) });
+      if (text[value] === '"' || text[value] === "`") {
+        const end = quotedEnd(text, value, closedOnly);
+        if (end > value) spans.push({ start: key.start, end });
+      }
     }
   }
   return spans;
 };
 
-/** Each key's single-quoted scalar, read both ways, and after an unquoted key any token-like run. */
-const scalarValueSpans = (text: string, keys: readonly CredentialKey[]): RedactionSpan[] => {
-  const spans: RedactionSpan[] = [];
+/** Each key's single-quoted scalar, read both ways, or token-like bare value. */
+const scalarValueSpans = (text: string, keys: readonly CredentialKey[], closedOnly = false): RedactionSpan[] => {
   const cache: RunCache = { start: 0, end: 0 };
-  for (const key of keys) {
-    for (const value of valueStarts(text, key)) {
-      if (text[value] === "'") spans.push({ start: key.start, end: yamlScalarEnd(text, value) }, { start: key.start, end: escapedScalarEnd(text, value) });
-      if (key.quoted || value === text.length) continue;
-      const end = runEnd(text, value, cache);
+  const quotedCache: RunCache = { start: 0, end: 0 };
+  return keys.flatMap((key) =>
+    valueStarts(text, key).flatMap((value) => {
+      const spans =
+        text[value] === "'"
+          ? [yamlScalarEnd(text, value, closedOnly), escapedScalarEnd(text, value, closedOnly)]
+              .filter((end) => end > value)
+              .map((end) => ({ start: key.start, end }))
+          : [];
+      if (closedOnly || value === text.length) return spans;
+      // Quoted keys may have bare YAML/JSON/PHP values, but their fallback
+      // must not eat an adjacent field or reinterpret a quoted/flow value.
+      if (key.quoted && "\"'`[{".includes(text[value])) return spans;
+      const end = key.quoted ? runEnd(text, value, quotedCache, QUOTED_BARE_END) : runEnd(text, value, cache);
       if (end - value >= MIN_BARE_VALUE) spans.push({ start: key.start, end });
+      return spans;
+    })
+  );
+};
+
+/** For each string-content position, the end of its string, or -1 if it is clipped. */
+const stringContentEnds = (text: string, quote: string, yamlSingleQuotes: boolean): Int32Array => {
+  const ends = new Int32Array(text.length + 2).fill(-1);
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    if (text[index] === "\\" && !(quote === "'" && yamlSingleQuotes)) ends[index] = ends[index + 2];
+    else if (text[index] === quote) ends[index] = quote === "'" && text[index + 1] === "'" ? ends[index + 2] : index + 1;
+    else ends[index] = ends[index + 1];
+  }
+  return ends;
+};
+
+const flowScalarStartsAt = (text: string, index: number): boolean => {
+  let before = index - 1;
+  while (before >= 0 && text[before] <= " ") before -= 1;
+  return SCALAR_START.has(text[before]);
+};
+
+const followingClose = (ends: Int32Array, end: number): number => (end < 0 ? -1 : ends[end]);
+
+/**
+ * Closed values only, in linear time. Resolve suffixes backwards so a clipped
+ * outer value cannot absorb the scan for a closed nested credential. This is
+ * the bounded reading used across records, never across prompt framing.
+ */
+const nextBracketCloses = (text: string, reading: QuoteReading): Int32Array => {
+  const quotes = reading.templateLiterals ? ['"', "'", "`"] : ['"', "'"];
+  const stringEnds = new Map(quotes.map((quote) => [quote, stringContentEnds(text, quote, reading.yamlSingleQuotes)]));
+  const nextClose = new Int32Array(text.length + 1).fill(-1);
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    const character = text[index];
+    const quoted = stringEnds.get(character);
+    if (quoted && opensString(text, index, reading, flowScalarStartsAt(text, index))) {
+      nextClose[index] = followingClose(nextClose, quoted[index + 1]);
+    } else if (character === "[" || character === "{") {
+      nextClose[index] = followingClose(nextClose, nextClose[index + 1]);
+    } else {
+      nextClose[index] = character === "]" || character === "}" ? index + 1 : nextClose[index + 1];
     }
   }
-  return spans;
+  return nextClose;
+};
+
+const closedBracketedValues = (text: string, openings: readonly ValueOpening[], reading: QuoteReading): RedactionSpan[] => {
+  const nextClose = nextBracketCloses(text, reading);
+  return openings.flatMap((opening) => {
+    const end = nextClose[opening.bracket + 1];
+    return end < 0 ? [] : [{ start: opening.start, end }];
+  });
 };
 
 /** Each key's array or object value, read every quote way. */
-const bracketedValueSpans = (text: string, keys: readonly CredentialKey[]): RedactionSpan[] => {
+const bracketedValueSpans = (text: string, keys: readonly CredentialKey[], closedOnly = false): RedactionSpan[] => {
   const openings: ValueOpening[] = [];
   for (const key of keys) {
     for (const value of valueStarts(text, key)) {
       if (text[value] === "[" || text[value] === "{") openings.push({ start: key.start, bracket: value });
     }
   }
+  if (openings.length === 0) return [];
   // The scan walks the text once, so it takes the openings in bracket order.
   openings.sort((left, right) => left.bracket - right.bracket);
-  return QUOTE_READINGS.flatMap((reading) => bracketedValues(text, openings, reading));
+  return QUOTE_READINGS.flatMap((reading) => (closedOnly ? closedBracketedValues(text, openings, reading) : bracketedValues(text, openings, reading)));
 };
 
 /** Merge overlapping spans so one replacement can never cut through another secret. */
@@ -365,6 +467,14 @@ const PREVIOUS_BRACKETED_OPENING = /\b(?=\w*(?:key|token|secret|password))(?=(\w
 
 const previousQuotedRule: Rule = (text) => patternSpans(text, PREVIOUS_QUOTED_ASSIGNMENT);
 
+// The legacy bare rule must also leave no-space arrow parameters alone.
+const previousBareRule: Rule = (text) => {
+  const commas = parameterCommas(text);
+  return [...text.matchAll(PREVIOUS_BARE_ASSIGNMENT)]
+    .filter((match) => !isArrowParameter(text, { start: match.index, separator: skipWhitespace(text, match.index + match[1].length), quoted: false }, commas))
+    .map((match) => ({ start: match.index, end: match.index + match[0].length }));
+};
+
 /**
  * The first pass the bracketed rule made before: each array or object value
  * of a key in the previous shapes, merged with every token and previous-shape
@@ -376,7 +486,7 @@ const previousBracketedComponents = (text: string): RedactionSpan[] => {
   const openings = patternSpans(text, PREVIOUS_BRACKETED_OPENING).map((span) => ({ start: span.start, bracket: span.end - 1 }));
   const values = mergeSpans(QUOTE_READINGS.flatMap((reading) => bracketedValues(text, openings, reading)));
   const scalars = [...TOKEN_RULES, previousQuotedRule].flatMap((rule) => rule(text));
-  scalars.push(...patternSpans(text, PREVIOUS_BARE_ASSIGNMENT));
+  scalars.push(...previousBareRule(text));
   for (const opening of patternSpans(text, PREVIOUS_SINGLE_QUOTED_OPENING)) {
     const quote = opening.end - 1;
     scalars.push({ start: opening.start, end: yamlScalarEnd(text, quote) }, { start: opening.start, end: escapedScalarEnd(text, quote) });
@@ -418,6 +528,23 @@ const sequentialMask = (text: string, mask: readonly RedactionSpan[], rules: rea
   return { mask: current, count };
 };
 
+/** Union the full per-record rules with any projected cross-record spans. */
+const redactSecrets = (text: string, additionalSpans: readonly RedactionSpan[] = []): { text: string; redactions: number } => {
+  const keys = credentialKeys(text);
+  const tokens = TOKEN_RULES.flatMap((rule) => rule(text));
+  const everyRule = [...tokens, ...quotedValueSpans(text, keys), ...scalarValueSpans(text, keys), ...bracketedValueSpans(text, keys)];
+  const previousOrder = sequentialMask(text, [], PREVIOUS_ORDER).mask;
+  const components = previousBracketedComponents(text);
+  const afterBracketedValues = sequentialMask(text, components, PREVIOUS_ORDER);
+  const mask = mergeSpans([...everyRule, ...previousOrder, ...afterBracketedValues.mask, ...additionalSpans]);
+  let next = 0;
+  const added = mask.filter((span) => {
+    while (next < afterBracketedValues.mask.length && afterBracketedValues.mask[next].end <= span.start) next += 1;
+    return next === afterBracketedValues.mask.length || afterBracketedValues.mask[next].start >= span.end;
+  }).length;
+  return { text: render(text, mask).text, redactions: components.length + afterBracketedValues.count + added };
+};
+
 /**
  * Replace credential-shaped spans with a marker and report how many were
  * removed. A replacement can hide a key from a later rule, and it
@@ -430,22 +557,41 @@ const sequentialMask = (text: string, mask: readonly RedactionSpan[], rules: rea
  * - the previous order of the token and scalar rules;
  * - the same order after the first pass the bracketed rule made before.
  *
- * The result removes everything any one of them would. The count is the one
- * the rules have always reported, each step of the last order counting the
+ * The result removes everything any one of them would. The count follows
+ * the previous rules' steps, each step of the last order counting the
  * separate spans it found, plus one for each span only another order found.
+ * Rare structured inputs can differ by one from the previous count even
+ * when the redacted text is identical; this is not a count of merged spans.
  */
-export const redactSupervisorSecrets = (text: string): { text: string; redactions: number } => {
+export const redactSupervisorSecrets = (text: string): { text: string; redactions: number } => redactSecrets(text);
+
+/**
+ * Redact record texts before any of them is clipped or loses a credential key.
+ * Only closed PEM/quoted/flow values may cross records. Project their spans
+ * back onto the original records and union with each record's full rules, so
+ * neither a cross-record replacement nor an unclosed value can hide a match.
+ */
+export const redactSupervisorSecretParts = (parts: readonly string[]): { text: string; redactions: number }[] => {
+  if (parts.length < 2) return parts.map(redactSupervisorSecrets);
+  const text = parts.join("\n");
   const keys = credentialKeys(text);
-  const tokens = TOKEN_RULES.flatMap((rule) => rule(text));
-  const everyRule = [...tokens, ...quotedValueSpans(text, keys), ...scalarValueSpans(text, keys), ...bracketedValueSpans(text, keys)];
-  const previousOrder = sequentialMask(text, [], PREVIOUS_ORDER).mask;
-  const components = previousBracketedComponents(text);
-  const afterBracketedValues = sequentialMask(text, components, PREVIOUS_ORDER);
-  const mask = mergeSpans([...everyRule, ...previousOrder, ...afterBracketedValues.mask]);
+  const mask = mergeSpans([
+    ...patternSpans(text, PRIVATE_KEY_PATTERN),
+    ...quotedValueSpans(text, keys, true),
+    ...scalarValueSpans(text, keys, true),
+    ...bracketedValueSpans(text, keys, true),
+  ]);
+  let offset = 0;
   let next = 0;
-  const added = mask.filter((span) => {
-    while (next < afterBracketedValues.mask.length && afterBracketedValues.mask[next].end <= span.start) next += 1;
-    return next === afterBracketedValues.mask.length || afterBracketedValues.mask[next].start >= span.end;
-  }).length;
-  return { text: render(text, mask).text, redactions: components.length + afterBracketedValues.count + added };
+  return parts.map((part) => {
+    const start = offset;
+    offset += part.length + 1;
+    const end = start + part.length;
+    while (next < mask.length && mask[next].end <= start) next += 1;
+    const spans: RedactionSpan[] = [];
+    for (let at = next; at < mask.length && mask[at].start < end; at += 1) {
+      spans.push({ start: Math.max(start, mask[at].start) - start, end: Math.min(end, mask[at].end) - start });
+    }
+    return redactSecrets(part, spans);
+  });
 };
