@@ -338,6 +338,9 @@ impl ExperimentIo for Host<'_> {
                 }
             })
             .await;
+            if head.cancellation.signal().aborted() {
+                return Err(failed("Prompt-cache scope experiment stream failed."));
+            }
             let eof = next.is_none();
             let frames = match next {
                 Some(Ok(bytes)) => parser.push(&bytes),
