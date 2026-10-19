@@ -1216,6 +1216,6 @@ fn source_paid_observation_and_projection_preserve_opaque_models_without_new_aut
     assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
     println!(
         "M42_PAID_PROJECTION_WRITER_FIXTURE={}",
-        serde_json::to_string(&(keys::paid_routing(), row)).unwrap()
+        serde_json::to_string(&(keys::paid_routing().0, row)).unwrap()
     );
 }

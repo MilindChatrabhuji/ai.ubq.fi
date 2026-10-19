@@ -1,5 +1,5 @@
 use crate::{AdminRuntime, capabilities::RuntimeCapabilities, store};
-use gateway_admin::PaidKeyFields;
+use gateway_admin::{PaidKeyFields, source_input as input};
 use gateway_auth::{
     AuthHost, conflict, invalid,
     store::{check, commit, put},
@@ -12,7 +12,10 @@ use gateway_core::{
     GatewayError,
     identity::MAX_SAFE_INTEGER,
     lifecycle::BillingState,
+    model::ModelId,
     query::QueryStore,
+    source_control::decode_source_control_record,
+    source_json::SourceJson,
     state::{RecordMutation, RevisionCheck},
 };
 use gateway_schema::{catalog_store::codex_snapshot_key, snapshot::ModelSnapshot};
@@ -31,19 +34,24 @@ fn outstanding() -> GatewayError {
 }
 
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    pub(crate) async fn paid_policy(&self, body: &Value) -> Result<PaidKeyFields, GatewayError> {
-        if body
-            .get("paid_fallback_enabled")
-            .is_some_and(|v| !v.is_boolean())
+    pub(crate) async fn paid_policy(
+        &self,
+        body: &SourceJson,
+    ) -> Result<PaidKeyFields, GatewayError> {
+        if input::member(body, "paid_fallback_enabled")
+            .as_ref()
+            .is_some_and(|value| input::boolean(value).is_none())
         {
             return Err(invalid("paid_fallback_enabled must be a boolean"));
         }
-        let enabled = body.get("paid_fallback_enabled") == Some(&Value::Bool(true));
-        let limit = match body.get("paid_fallback_limit_credits") {
+        let enabled = input::member(body, "paid_fallback_enabled")
+            .as_ref()
+            .and_then(input::boolean)
+            == Some(true);
+        let limit = match input::member(body, "paid_fallback_limit_credits") {
             None => 0,
-            Some(v) => {
-                let credits = v
-                    .as_f64()
+            Some(value) => {
+                let credits = input::number(&value)
                     .filter(|n| n.is_finite() && (*n >= 0.0 || *n == -1.0))
                     .ok_or_else(|| {
                         invalid("paid_fallback_limit_credits must be a non-negative number or -1")
@@ -72,21 +80,23 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             result.quota_per_credit = 0;
             return Ok(result);
         }
-        let snapshot:ModelSnapshot=store::read(self.store,&codex_snapshot_key(),self.host.now_ms()).await?.map(|v|serde_json::from_value(v).map_err(|_|pricing_error("Stored full Codex model catalog is invalid"))).transpose()?.ok_or_else(||pricing_error("Metered paid fallback cannot be enabled before the Codex model catalog is initialized."))?;
+        let snapshot_row = self.store.read(&codex_snapshot_key()).await?;
+        let snapshot = snapshot_row.as_ref().filter(|row| row.expires_at_ms.is_none_or(|expiry| expiry > self.host.now_ms())).map(|row| decode_source_control_record(row)?.deserialize::<ModelSnapshot>().map_err(|_| pricing_error("Stored full Codex model catalog is invalid"))).transpose()?.ok_or_else(|| pricing_error("Metered paid fallback cannot be enabled before the Codex model catalog is initialized."))?;
         let mut models = Vec::new();
         let mut seen = BTreeSet::new();
         let mut contexts = BTreeMap::new();
         for model in snapshot.models {
             let id = ["slug", "id", "model", "name"]
                 .into_iter()
-                .find_map(|field| model.get(field).and_then(Value::as_str))
-                .map(gateway_schema::util::js_trim)
-                .filter(|s| !s.is_empty());
+                .find_map(|field| input::member(&model, field).as_ref().and_then(input::text))
+                .map(|id| input::trim(&id))
+                .filter(|id| !id.as_units().is_empty())
+                .map(ModelId::from_source);
             let Some(id) = id else { continue };
-            if !seen.insert(id.to_owned()) {
+            if !seen.insert(id.clone()) {
                 continue;
             }
-            models.push(id.to_owned());
+            models.push(id.clone());
             let context = [
                 "context_window",
                 "max_context_window",
@@ -94,14 +104,20 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             ]
             .into_iter()
             .filter_map(|field| {
-                model
-                    .get(field)
-                    .and_then(Value::as_i64)
-                    .filter(|n| *n > 0 && *n <= MAX_SAFE_INTEGER)
+                input::member(&model, field)
+                    .as_ref()
+                    .and_then(input::number)
+                    .filter(|n| {
+                        n.is_finite()
+                            && n.fract() == 0.0
+                            && *n > 0.0
+                            && *n <= MAX_SAFE_INTEGER as f64
+                    })
+                    .map(|n| n as i64)
             })
             .max();
             if let Some(context) = context {
-                contexts.insert(id.to_owned(), context);
+                contexts.insert(id, context);
             }
         }
         if models.is_empty() {
@@ -160,9 +176,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let now = self.host.now_ms();
         let id_key = gateway_auth::api_keys::id_key(id);
         let id_row = self.store.read(&id_key).await?;
-        let value = store::value(id_row.as_ref(), now)?
+        let value = gateway_admin::keys::current_record(&id_key, id_row.as_ref(), now)?
             .ok_or_else(|| GatewayError::new(404, "Not found", Some("not_found")))?;
-        if value.get("revoked_at_ms").is_none_or(Value::is_null) {
+        if value.policy.revoked_at_ms.is_none() {
             return Err(invalid("Only revoked keys can be deleted"));
         }
         let dk = keys::paid_deletion(id);
@@ -414,10 +430,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let guard = self.deletion_fence(id, prepared).await?;
         let id_key = gateway_auth::api_keys::id_key(id);
         let id_row = self.store.read(&id_key).await?;
-        let Some(key_value) = store::value(id_row.as_ref(), self.host.now_ms())? else {
+        let Some(key_value) =
+            gateway_admin::keys::current_record(&id_key, id_row.as_ref(), self.host.now_ms())?
+        else {
             return Ok(());
         };
-        if key_value.get("revoked_at_ms").is_none_or(Value::is_null) {
+        if key_value.policy.revoked_at_ms.is_none() {
             return Ok(());
         }
         let key = keys::paid_deletion(id);
