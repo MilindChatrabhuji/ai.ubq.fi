@@ -12,6 +12,7 @@ pub mod prompt_cache;
 pub mod provider_catalog;
 pub mod reasoning;
 pub mod request;
+pub mod source_request;
 pub mod runtime_config;
 pub mod selection;
 pub mod snapshot;
