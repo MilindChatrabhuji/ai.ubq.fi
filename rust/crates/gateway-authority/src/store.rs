@@ -142,6 +142,15 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .transpose()
     }
 
+    /// Preserve the full source value and custody for this one audit family.
+    pub(crate) async fn read_full_pool_reset_audit(
+        &mut self,
+        episode_hash: &str,
+    ) -> Result<Option<StoredRecord>, GatewayError> {
+        let key = crate::keys::reset_shadow(episode_hash);
+        Ok(self.cached_record(&key).await?.cloned())
+    }
+
     pub fn revision(&self, key: &RecordKey) -> Option<String> {
         self.reads
             .get(&key.0)
