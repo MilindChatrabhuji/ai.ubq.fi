@@ -76,12 +76,11 @@ pub fn validate_request_fields(
     Ok(())
 }
 pub fn parse_stream(value: Option<&Value>) -> Result<bool, GatewayError> {
-    match value {
-        None | Some(Value::Bool(false)) => Ok(false),
-        Some(Value::Bool(true)) => Ok(true),
-        _ => Err(invalid("stream must be a boolean", Some("stream"))),
-    }
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::parse_stream(value.as_ref())
+        .map_err(crate::source_request::SourceRequestError::into_scalar)
 }
+
 pub fn parse_chat_stream_options(value: Option<&Value>) -> Result<bool, GatewayError> {
     let Some(value) = value else { return Ok(false) };
     let Some(record) = value.as_object() else {
@@ -110,18 +109,23 @@ pub fn parse_max_completion_tokens(value: Option<&Value>) -> Result<Option<i64>,
     }
 }
 pub fn resolve_model(value: Option<&Value>, default: Option<&str>) -> Result<String, GatewayError> {
-    if value.is_some_and(|v| !v.is_null() && !v.is_string()) {
-        return Err(invalid("model must be a string", None));
-    }
-    normalized_string(value).or_else(|| default.map(str::to_owned)).ok_or_else(|| GatewayError::new(503,"Default model is unavailable: no configured default model or Codex model snapshot.",Some("server_error")))
+    let value = crate::source_request::scalar_value(value)?;
+    crate::source_request::resolve_model(value.as_ref(), default)
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+        .try_utf8()
 }
 pub fn parse_instructions(value: Option<&Value>) -> Result<Option<String>, GatewayError> {
-    match value {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(s)) => Ok(Some(s.clone())),
-        _ => Err(invalid("instructions must be a string", None)),
+    let value = crate::source_request::scalar_value(value)?;
+    match crate::source_request::parse_instructions(value.as_ref())
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+    {
+        crate::source_request::SourceField::Missing | crate::source_request::SourceField::Null => {
+            Ok(None)
+        }
+        crate::source_request::SourceField::Value(value) => value.try_utf8().map(Some),
     }
 }
+
 pub fn validate_cache_control(control: &Value) -> Result<(), GatewayError> {
     if !control.is_object() {
         return Err(invalid(
@@ -323,10 +327,8 @@ pub fn normalize_tool_choice_for_codex(value: &Value) -> Value {
 /// TextDecoder's lossy UTF-8 and initial BOM handling precede JSON.parse in src/request.ts.
 /// arbitrary_precision carries exponent overflow until JS numeric checks/stringification handle it.
 pub fn parse_json_body(bytes: &[u8]) -> Result<Value, GatewayError> {
-    if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 {
-        return Err(invalid("Invalid JSON body", None));
-    }
-    let text = String::from_utf8_lossy(bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    serde_json::from_str(text).map_err(|_| invalid("Invalid JSON body", None))
+    crate::source_request::parse_http_body(bytes)
+        .map_err(crate::source_request::SourceRequestError::into_scalar)?
+        .deserialize()
+        .map_err(|_| invalid("Invalid JSON body", None))
 }

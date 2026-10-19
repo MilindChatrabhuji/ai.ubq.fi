@@ -9,7 +9,7 @@ fn doc(raw: &str) -> SourceRequestDocument {
 }
 #[test]
 fn literal_lone_instructions_and_input_are_not_scalar_parsed() {
-    let raw = r#"{"model":"fixture","input":"\ud800","instructions":"x\udfffy"}"#;
+    let raw = r#"{"model":" \ud800 ","input":"\ud800","instructions":"x\udfffy"}"#;
     let parsed = source_request::parse_http_body(raw.as_bytes()).unwrap();
     let document = SourceRequestDocument::new(parsed.clone()).unwrap();
     assert_eq!(document.original_source(), &parsed);
@@ -19,7 +19,7 @@ fn literal_lone_instructions_and_input_are_not_scalar_parsed() {
     );
     assert_eq!(
         document.model_request().unwrap(),
-        SourceModelRequest::Named(JsString16::from_utf8("fixture"))
+        SourceModelRequest::Named(JsString16::from_units(vec![0xd800]))
     );
 }
 #[test]

@@ -6,7 +6,7 @@ use serde::Serialize;
 pub struct SourceRequestError {
     pub status: u16,
     body: SourceJson,
-    diagnostic: GatewayError,
+    diagnostic: Box<GatewayError>,
 }
 impl SourceRequestError {
     pub fn invalid(message: impl Into<JsString16>, param: Option<JsString16>) -> Self {
@@ -35,11 +35,20 @@ impl SourceRequestError {
         Self {
             status: 400,
             body,
-            diagnostic: GatewayError::new(
+            diagnostic: Box::new(GatewayError::new(
                 400,
                 "Invalid source request.",
                 Some("invalid_request_error"),
-            ),
+            )),
+        }
+    }
+    pub(crate) fn from_scalar(error: GatewayError) -> Self {
+        let body = SourceJson::from_serializable(&error.envelope)
+            .expect("Scalar error fields are valid JSON");
+        Self {
+            status: error.status,
+            body,
+            diagnostic: Box::new(error),
         }
     }
     pub fn body(&self) -> &SourceJson {
@@ -79,7 +88,7 @@ impl SourceRequestError {
                 }
                 error
             }
-            Err(_) => self.diagnostic,
+            Err(_) => *self.diagnostic,
         }
     }
 }
