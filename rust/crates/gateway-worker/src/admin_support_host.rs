@@ -6,7 +6,6 @@ use gateway_admin_runtime::{
 use gateway_auth::{AuthResponse, native::NativeReadRequest};
 use gateway_catalog_runtime::admin::AdminCatalogOperation;
 use gateway_core::GatewayError;
-use gateway_observability::ObservabilityHost;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use worker::Method;
@@ -28,7 +27,7 @@ impl Binding {
             observations,
         }
     }
-    pub async fn provider_picker(&self, context: Context) -> Result<Value, GatewayError> {
+    pub async fn provider_picker(&self, _: Context) -> Result<Value, GatewayError> {
         let response = crate::catalog::service()
             .admin_catalog(
                 &self.catalog.store,
@@ -36,14 +35,10 @@ impl Binding {
                 AdminCatalogOperation::Catalog,
             )
             .await?;
-        let inventory = self
-            .observations
-            .host()
-            .provider_inventory(&context)
-            .await?;
+        let subscriptions = picker::subscriptions(&self.catalog.store).await;
         picker::project(
             &response.body["data"],
-            &inventory,
+            subscriptions,
             &crate::catalog_host::secrets(&self.catalog.env),
         )
     }
