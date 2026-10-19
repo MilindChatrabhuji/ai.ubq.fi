@@ -540,3 +540,24 @@ fn kernel_public_source_row_stays_listable_before_crypto_projection() {
         );
     });
 }
+
+impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+    async fn validate_key(
+        &self,
+        _: &gateway_auth::webauthn::CosePublicKey,
+    ) -> Result<(), GatewayError> {
+        Err(GatewayError::unavailable(
+            "Fixture verifier absent",
+            "fixture_verifier_absent",
+        ))
+    }
+    async fn verify_signature(
+        &self,
+        _: gateway_auth::webauthn::SignatureInput,
+    ) -> Result<bool, GatewayError> {
+        Err(GatewayError::unavailable(
+            "Fixture verifier absent",
+            "fixture_verifier_absent",
+        ))
+    }
+}
