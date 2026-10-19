@@ -1,6 +1,6 @@
 //! Existing finite provider body/control transformations over source JSON.
 use crate::{source as s, types::*};
-use gateway_core::{js_string::JsString16, source_json::SourceJson, source_serialization as json};
+use gateway_core::{model::ModelId,js_string::JsString16, source_json::SourceJson, source_serialization as json};
 use gateway_schema::source_request::{SourceField, SourceRequestDocument};
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) fn replay(input: &SourceJson) -> SourceJson {
@@ -92,12 +92,12 @@ pub(crate) fn codex(raw: &SourceJson) -> s::Result<SourceJson> {
 pub(crate) fn ordinary(
     raw: &SourceJson,
     surface: ClientSurface,
-    model: &str,
+    model: &ModelId,
     context: Option<&OrdinaryPreparationContext>,
 ) -> s::Result<SourceJson> {
     let document = SourceRequestDocument::new(raw.clone())?;
     let model_raw = match document.model_request()? {
-        gateway_schema::source_request::SourceModelRequest::Default => JsString16::from_utf8(model),
+        gateway_schema::source_request::SourceModelRequest::Default => model.as_js_string().clone(),
         gateway_schema::source_request::SourceModelRequest::Named(name) => name,
     };
     let mut body = if surface == ClientSurface::Chat {
@@ -128,7 +128,7 @@ pub(crate) fn ordinary(
         let normalized = document.normalize_chat_for_codex()?;
         validate_cache(context, &model_raw, raw, &normalized.input, "messages")?;
         let mut body = s::object(vec![
-            ("model", s::text(model)),
+            ("model", s::quoted(model.as_js_string())),
             ("input", s::array(&normalized.input)),
             ("stream", s::generated(&stream)),
             ("store", s::generated(&false)),
@@ -149,7 +149,7 @@ pub(crate) fn ordinary(
             }
         }
         let effort = effort
-            .or_else(|| context.map(|context| JsString16::from_utf8(context.default_effort())));
+            .or_else(|| context.map(|context| context.default_effort().clone()));
         if let Some(effort) = effort {
             s::set(
                 &mut body,
@@ -187,7 +187,7 @@ pub(crate) fn ordinary(
                 s::object(vec![(
                     "effort",
                     map_effort(
-                        &JsString16::from_utf8(context.default_effort()),
+                        &context.default_effort().clone(),
                         Some(context),
                     ),
                 )])
@@ -207,18 +207,11 @@ pub(crate) fn ordinary(
         }
         body
     };
-    s::set(&mut body, "model", s::text(model));
+    s::set(&mut body, "model", s::quoted(model.as_js_string()));
     Ok(body)
 }
-fn map_effort(effort: &JsString16, context: Option<&OrdinaryPreparationContext>) -> SourceJson {
-    // A catalog wire-map key is scalar metadata. An unknown source-unit tier stays verbatim.
-    let mapped = context.and_then(|context| {
-        effort
-            .try_utf8()
-            .ok()
-            .map(|effort| gateway_schema::reasoning::effort_for_codex(&effort, context.reasoning()))
-    });
-    mapped.as_deref().map_or_else(|| s::quoted(effort), s::text)
+fn map_effort(effort:&JsString16,context:Option<&OrdinaryPreparationContext>)->SourceJson {
+    s::quoted(&context.map_or_else(||effort.clone(),|context|gateway_schema::reasoning::effort_for_codex(effort,context.reasoning())))
 }
 fn validate_cache(
     context: Option<&OrdinaryPreparationContext>,
@@ -258,9 +251,9 @@ pub(crate) fn roles(body: &mut SourceJson, field: &str, remove_reasoning: bool) 
         s::set(body, field, s::array(&messages));
     }
 }
-pub(crate) fn openrouter(body: &mut SourceJson, model: &str) {
-    if (model.starts_with("openai/") || model.starts_with("~openai/"))
-        && !model.split(':').any(|v| v == "batch")
+pub(crate) fn openrouter(body: &mut SourceJson, model: &ModelId) {
+    if (s::starts(model.as_js_string(),"openai/") || s::starts(model.as_js_string(),"~openai/"))
+        && !model.as_js_string().as_units().split(|&unit|unit==58).any(|part|part.iter().copied().eq("batch".encode_utf16()))
         && s::present(body, "tool_choice").is_none_or(|v| s::is(&v, "auto"))
         && s::present(body, "functions").is_none()
         && s::present(body, "function_call").is_none()
@@ -283,7 +276,7 @@ pub(crate) fn openrouter(body: &mut SourceJson, model: &str) {
         }
         s::set(body, "tools", s::array(&tools));
     }
-    if (model.starts_with("anthropic/claude-") || model.starts_with("~anthropic/claude-"))
+    if (s::starts(model.as_js_string(),"anthropic/claude-") || s::starts(model.as_js_string(),"~anthropic/claude-"))
         && s::present(body, "cache_control").is_none()
         && !s::is(
             &s::path(body, &["prompt_cache_options", "mode"]),

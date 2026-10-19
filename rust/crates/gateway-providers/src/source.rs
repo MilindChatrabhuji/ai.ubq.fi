@@ -130,3 +130,5 @@ pub(crate) fn scalar_error(error: SourceRequestError) -> gateway_core::GatewayEr
     }
     scalar
 }
+
+pub(crate) fn starts(value:&JsString16,prefix:&str)->bool {value.as_units().starts_with(&prefix.encode_utf16().collect::<Vec<_>>())}

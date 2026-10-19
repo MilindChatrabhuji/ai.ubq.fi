@@ -285,8 +285,9 @@ impl StreamDecoder {
                 }
                 ResponseDecode::Chat => {
                     validate_chat_chunk(&value)?;
-                    value["model"] = json!(self.plan.model);
-                    events.push(ProviderEvent::chat(value));
+                    let mut body=crate::source::generated(&value);
+                    crate::source::set(&mut body,"model",crate::source::quoted(self.plan.model.as_js_string()));
+                    events.push(ProviderEvent::chat_source(body));
                 }
                 ResponseDecode::AnthropicToResponses => {
                     let translated = self.native_event(&value)?;

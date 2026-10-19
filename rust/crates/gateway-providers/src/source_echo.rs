@@ -14,7 +14,7 @@ pub(crate) fn envelope(plan: &DecodePlan, status: &str) -> SourceJson {
         ("object", s::text("response")),
         ("created_at", s::generated(&plan.created_at)),
         ("status", s::text(status)),
-        ("model", s::text(&plan.model)),
+        ("model", s::quoted(plan.model.as_js_string())),
         ("output", s::array(&[])),
         ("error", s::null()),
         ("incomplete_details", s::null()),

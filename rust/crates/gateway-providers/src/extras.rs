@@ -37,7 +37,7 @@ fn prepared(
             surface,
             decode,
             model: raw["model"].as_str().unwrap_or(&model).into(),
-            upstream_model: model,
+            upstream_model: model.into(),
             response_id: options.response_id.clone(),
             created_at: options.created_at,
             stream: false,

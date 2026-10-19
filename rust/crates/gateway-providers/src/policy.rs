@@ -1,5 +1,6 @@
 //! Routing policy only. Authoritative pool/credential/paid admission remains external.
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
+use gateway_core::{provider::{PaidProvider,UpstreamProvider},model::ModelId,source_json::SourceJson,js_string::JsString16,source_serialization as source};
+use crate::source as s;
 use serde_json::Value;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HopFailure {
@@ -203,7 +204,7 @@ pub fn direct_provider_label(provider: UpstreamProvider) -> &'static str {
 /// Catalog/capability evidence used by the existing paid router, before authority admission.
 #[derive(Clone, Debug)]
 pub struct PaidRoutingInput {
-    pub model: String,
+    pub model: ModelId,
     pub endpoint_type: String,
     pub request_uses_tools: bool,
     pub codex_model_known: bool,
@@ -212,8 +213,8 @@ pub struct PaidRoutingInput {
     pub openlux_enabled: bool,
     pub surplus_configured: bool,
     pub openlux_configured: bool,
-    pub surplus_catalog: Option<Vec<Value>>,
-    pub openlux_catalog: Option<Vec<Value>>,
+    pub surplus_catalog: Option<Vec<SourceJson>>,
+    pub openlux_catalog: Option<Vec<SourceJson>>,
     pub allowed_paid_providers: Option<Vec<PaidProvider>>,
     /// Server-owned scope; never derive this from a client JSON field.
     pub synthetic_hop: Option<DeepseekHop>,
@@ -225,39 +226,29 @@ pub struct PaidRoutingPlan {
     pub paid_model_known: bool,
     pub metered_only: bool,
     pub codex_enabled: bool,
-    pub surplus_billing: Option<Value>,
+    pub surplus_billing: Option<SourceJson>,
 }
-fn supports_endpoint(row: Option<&Value>, endpoint: &str) -> bool {
-    row.and_then(|r| r["supported_endpoint_types"].as_array())
-        .is_some_and(|a| a.iter().any(|e| e == endpoint))
+fn supports_endpoint(row:Option<&SourceJson>,endpoint:&str)->bool {
+    row.and_then(|row|source::array(&s::get(row,"supported_endpoint_types"))).is_some_and(|values|values.iter().any(|value|s::is(value,endpoint)))
 }
-fn valid_price(value: &Value) -> Option<f64> {
-    value.as_f64().filter(|v| v.is_finite() && *v >= 0.0)
+fn valid_price(value:&SourceJson)->Option<f64>{source::number(value).filter(|value|value.is_finite()&&*value>=0.0)}
+fn flash_paid_id(model:&ModelId)->bool {
+    // Only the finite ASCII slug grammar is observed; an opaque vendor prefix remains untouched.
+    let units=model.as_js_string().as_units().rsplit(|&unit|unit==47).next().unwrap_or_default();
+    let Ok(slug)=String::from_utf16(units) else {return false;};let slug=slug.to_lowercase();
+    let Some(rest)=slug.strip_prefix("deepseek-v") else {return false;};let Some((version,tail))=rest.split_once("-flash")else{return false;};
+    !version.is_empty()&&version.chars().all(|c|c.is_ascii_digit()||c=='.')&&(tail.is_empty()||tail.strip_prefix('-').is_some_and(|d|(d.len()==4||d.len()==8)&&d.chars().all(|c|c.is_ascii_digit())))
 }
-fn flash_paid_id(model: &str) -> bool {
-    let slug = model.rsplit('/').next().unwrap_or(model).to_lowercase();
-    let Some(rest) = slug.strip_prefix("deepseek-v") else {
-        return false;
-    };
-    let Some((version, tail)) = rest.split_once("-flash") else {
-        return false;
-    };
-    !version.is_empty()
-        && version.chars().all(|c| c.is_ascii_digit() || c == '.')
-        && (tail.is_empty()
-            || tail.strip_prefix('-').is_some_and(|d| {
-                (d.len() == 4 || d.len() == 8) && d.chars().all(|c| c.is_ascii_digit())
-            }))
-}
+fn row_matches(row:&SourceJson,model:&ModelId)->bool {source::string(&s::get(row,"id")).is_some_and(|id|id==*model.as_js_string())}
 pub fn resolve_paid_route(input: &PaidRoutingInput) -> PaidRoutingPlan {
     let surplus = input
         .surplus_catalog
         .as_ref()
-        .and_then(|a| a.iter().find(|r| r["id"] == input.model));
+        .and_then(|a| a.iter().find(|row|row_matches(row,&input.model)));
     let openlux = input
         .openlux_catalog
         .as_ref()
-        .and_then(|a| a.iter().find(|r| r["id"] == input.model));
+        .and_then(|a| a.iter().find(|row|row_matches(row,&input.model)));
     let pinned = match input.synthetic_hop {
         Some(DeepseekHop::Surplus) => Some(PaidProvider::Surplus),
         Some(DeepseekHop::Openlux) => Some(PaidProvider::Metered),
@@ -276,13 +267,17 @@ pub fn resolve_paid_route(input: &PaidRoutingInput) -> PaidRoutingPlan {
             && pinned == Some(PaidProvider::Metered)
             && supports_endpoint(openlux, "openai"));
     let surplus_route = supports_endpoint(surplus, &input.endpoint_type);
-    let surplus_billing=surplus.and_then(|row|{let input_price=valid_price(&row["input_price_per_token"])?;let output_price=valid_price(&row["output_price_per_token"])?;let mut value=serde_json::json!({"input_price_per_token":input_price,"output_price_per_token":output_price});for key in ["cache_read_price_per_token","cache_write_price_per_token"]{if let Some(price)=row.get(key){value[key]=price.clone();}}Some(value)});
+    let surplus_billing=surplus.and_then(|row|{
+        let input_price=valid_price(&s::get(row,"input_price_per_token"))?;let output_price=valid_price(&s::get(row,"output_price_per_token"))?;
+        let mut value=s::object(vec![("input_price_per_token",s::generated(&input_price)),("output_price_per_token",s::generated(&output_price))]);
+        for key in ["cache_read_price_per_token","cache_write_price_per_token"]{if let Some(price)=source::member(row,key){s::set(&mut value,key,price);}}Some(value)
+    });
     let surplus_ok = (input.surplus_enabled
         || (verified_hop && pinned == Some(PaidProvider::Surplus)))
         && input.surplus_configured
         && surplus_route
         && surplus_billing.is_some()
-        && (!input.request_uses_tools || surplus.is_some_and(|r| r["supports_tools"] == true));
+        && (!input.request_uses_tools || surplus.is_some_and(|row|s::boolean(&s::get(row,"supports_tools"))==Some(true)));
     let openlux_ok = (input.openlux_enabled
         || (verified_hop && pinned == Some(PaidProvider::Metered)))
         && input.openlux_configured
@@ -325,21 +320,12 @@ pub fn paid_entry(plan: &PaidRoutingPlan) -> PaidEntry {
         PaidEntry::CodexPrimary
     }
 }
-pub fn validate_flash_effort(raw: &Value) -> Result<(), gateway_core::GatewayError> {
-    let effort = raw["reasoning"]["effort"]
-        .as_str()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            raw["reasoning_effort"]
-                .as_str()
-                .filter(|s| !s.trim().is_empty())
-        });
-    if let Some(effort) = effort
-        && !["low", "high", "max"].contains(&effort.trim())
-    {
-        return Err(gateway_core::GatewayError::new(400,format!("The model 'ubiquity/deepseek-flash' supports reasoning efforts low, high, max; '{effort}' is not supported."),Some("unsupported_reasoning_effort")).with_param(Some("reasoning.effort")));
-    }
-    Ok(())
+pub fn validate_flash_effort(raw:&Value)->Result<(),gateway_core::GatewayError>{validate_source_flash_effort(&s::generated(raw)).map_err(s::scalar_error)}
+pub fn validate_source_flash_effort(raw:&SourceJson)->Result<(),gateway_schema::source_request::SourceRequestError>{
+    let effort=source::string(&s::path(raw,&["reasoning","effort"])).filter(|value|!s::trim(value).as_units().is_empty()).or_else(||source::string(&s::get(raw,"reasoning_effort")).filter(|value|!s::trim(value).as_units().is_empty()));
+    if let Some(effort)=effort && !["low","high","max"].iter().any(|level|s::trim(&effort).as_units().iter().copied().eq(level.encode_utf16())) {
+        return Err(gateway_schema::source_request::SourceRequestError::new(400,s::concat(&[&JsString16::from_utf8("The model 'ubiquity/deepseek-flash' supports reasoning efforts low, high, max; '"),&effort,&JsString16::from_utf8("' is not supported.")]),"invalid_request_error",Some("unsupported_reasoning_effort"),Some(Some(JsString16::from_utf8("reasoning.effort")))));
+    }Ok(())
 }
 pub fn deepseek_plan(configured: &[DeepseekHop], ubiquity_enabled: bool) -> Vec<DeepseekHop> {
     if !ubiquity_enabled {
