@@ -20,7 +20,7 @@ pub(crate) struct Lifecycle {
     pub(crate) provider_request_id: Option<String>,
     pub(crate) status: u16,
     pub(crate) store: RemoteAuthorityStore,
-    pub(crate) pricing: Option<Value>,
+    pub(crate) pricing: Option<gateway_core::source_json::SourceJson>,
 }
 
 impl Lifecycle {
