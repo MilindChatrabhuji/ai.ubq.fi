@@ -31,6 +31,11 @@ struct CaptureHost {
     revision: Rc<RefCell<String>>,
 }
 impl ObservabilityHost for CaptureHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.clock.source_string_collator()
+    }
     fn now_ms(&self) -> i64 {
         self.clock.now_ms()
     }
