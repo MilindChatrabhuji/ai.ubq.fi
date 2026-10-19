@@ -461,3 +461,126 @@ fn defaults_model_effort_source_record_and_reflected_errors_never_scalarize() {
         assert_eq!(*store.rows.borrow(), before);
     });
 }
+
+// Typed forwarding probe only. Status/phase expectations come from the actual
+// extracted Bun handler with controlled lookup/clear dependencies; actual
+// Worker guard clearing and its lookup policy remain M05 acceptance.
+struct ClearProbe {
+    seen: RefCell<Vec<Option<SourceJson>>>,
+    status: u16,
+}
+impl RuntimeCapabilities for ClearProbe {
+    async fn claude(
+        &self,
+        request: gateway_admin_runtime::capabilities::ClaudeRequest,
+        _: gateway_admin_runtime::capabilities::Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        let gateway_admin_runtime::capabilities::ClaudeRequest::ClearQuota { cohort_id, .. } =
+            request
+        else {
+            return Err(GatewayError::unavailable(
+                "Unexpected probe request",
+                "fixture_request_invalid",
+            ));
+        };
+        self.seen.borrow_mut().push(cohort_id);
+        Ok(AuthResponse::json(
+            self.status,
+            json!({"fixture":"typed forwarding only"}),
+        ))
+    }
+}
+#[test]
+fn clear_quota_named_leaf_preserves_source_presence_before_owner_lookup() {
+    // Actual source oracle SHA256 5f03ce1a68bd7982447200bdd76e20f3cd64cb15c90d021a717641a0d2337edb.
+    let cases: [(&str, &str, Option<&str>, u16); 10] = [
+        ("absent", "{}", None, 200),
+        (
+            "present-null",
+            "{\"account_cohort_id\":null}",
+            Some("null"),
+            409,
+        ),
+        (
+            "present-number",
+            "{\"account_cohort_id\":3}",
+            Some("3"),
+            409,
+        ),
+        (
+            "present-current",
+            "{\"account_cohort_id\":\"00000000-0000-4000-8000-000000000002\"}",
+            Some("\"00000000-0000-4000-8000-000000000002\""),
+            200,
+        ),
+        (
+            "target-missing-cohort",
+            "{\"account_id\":\"00000000-0000-4000-8000-000000000001\"}",
+            None,
+            400,
+        ),
+        (
+            "target-null-cohort",
+            "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"account_cohort_id\":null}",
+            Some("null"),
+            400,
+        ),
+        (
+            "target-current",
+            "{\"account_id\":\"00000000-0000-4000-8000-000000000001\",\"account_cohort_id\":\"00000000-0000-4000-8000-000000000002\"}",
+            Some("\"00000000-0000-4000-8000-000000000002\""),
+            200,
+        ),
+        (
+            "unknown-before-required",
+            "{\"account_id\":\"00000000-0000-4000-8000-000000000099\"}",
+            None,
+            404,
+        ),
+        (
+            "opaque-cohort",
+            "{\"account_cohort_id\":\"\\ud800\"}",
+            Some("\"\\ud800\""),
+            409,
+        ),
+        (
+            "no-active-null",
+            "{\"account_cohort_id\":null}",
+            Some("null"),
+            200,
+        ),
+    ];
+    for (name, body, cohort, status) in cases {
+        run(async {
+            let store = Store::default();
+            let host = Host::default();
+            let config = RuntimeConfig::default();
+            let probe = ClearProbe {
+                seen: RefCell::new(Vec::new()),
+                status,
+            };
+            let runtime = AdminRuntime {
+                store: &store,
+                host: &host,
+                capabilities: &probe,
+                config: &config,
+            };
+            let response = runtime
+                .execute(
+                    AdminOperation::ClaudeQuotaClear,
+                    input(SourceJson::parse(body).unwrap()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status, status, "{name}");
+            let seen = probe.seen.borrow();
+            assert_eq!(seen.len(), 1, "{name}: no early cohort refusal");
+            assert_eq!(
+                seen[0],
+                cohort.map(|value| SourceJson::parse(value).unwrap()),
+                "{name}: original named leaf"
+            );
+            assert!(store.rows.borrow().is_empty());
+        });
+    }
+}

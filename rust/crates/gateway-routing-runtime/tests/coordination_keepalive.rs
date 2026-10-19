@@ -39,7 +39,7 @@ fn local_input(store: &Store, id: &str, kernel: bool) -> LocalAdmissionInput {
     if kernel {
         store.seed(
             keys::kernel_policy("owner", Some("repo")),
-            KernelPolicy {
+            KernelPolicy::<String, i64> {
                 v: 2,
                 owner: "owner".into(),
                 repo: Some("repo".into()),

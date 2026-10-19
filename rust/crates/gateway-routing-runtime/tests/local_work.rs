@@ -68,6 +68,27 @@ fn begin_local(store: &Store, id: &str) -> LocalHandle {
     .unwrap()
 }
 
+fn finish_built(local: LocalHandle) -> gateway_routing_runtime::RecoveredSession {
+    let mut built = local.retain_built_response().unwrap();
+    let mut selected = run(built.select_response()).unwrap();
+    assert_eq!(
+        selected.take_wire_decision().unwrap().kind(),
+        LocalWireKind::OriginalSuccess
+    );
+    selected
+        .observation_sink()
+        .observe(
+            Some(ReaderTermination::Eof),
+            Some(BodyOutcome::Drained),
+            DeliveryOutcome::Unobserved,
+        )
+        .unwrap();
+    match run(selected.attempt_terminal()) {
+        LocalAccountingProgress::Confirmed(result) => result,
+        _ => panic!("genuine source terminal callback must confirm"),
+    }
+}
+
 fn observation(semantic: LocalSemanticOutcome) -> LocalTerminalObservation {
     LocalTerminalObservation {
         semantic,
@@ -122,16 +143,7 @@ fn local_success_reserves_before_any_ordinary_plan_and_releases_only_unused_disp
     assert_eq!(journal["attempts"], json!([]));
     assert!(journal["active"].is_null());
     assert_custody(&store);
-    let mut pending = local.mark_local_completed().unwrap();
-    let LocalCompletionAdvance::Ready(mut delivery) = run(pending.advance()).unwrap() else {
-        panic!("genuine completion must be confirmed");
-    };
-    let settled = run(delivery.finish_delivery(
-        Some(ReaderTermination::Eof),
-        Some(BodyOutcome::Drained),
-        DeliveryOutcome::Unobserved,
-    ))
-    .unwrap();
+    let settled = finish_built(local);
     assert!(settled.settled);
     assert_eq!(settled.observation.delivery, DeliveryOutcome::Unobserved);
     assert!(settled.observation.semantic_terminal.is_none());
@@ -262,7 +274,7 @@ fn changed_owner_or_released_api_cannot_reuse_a_local_handle() {
 fn kernel_input(store: &Store, id: &str) -> LocalAdmissionInput {
     store.seed(
         keys::kernel_policy("owner", Some("repo")),
-        KernelPolicy {
+        KernelPolicy::<String, i64> {
             v: 2,
             owner: "owner".into(),
             repo: Some("repo".into()),
@@ -295,16 +307,7 @@ fn genuine_local_completion_commits_kernel_without_provider_usage_or_native_deli
     .unwrap();
     let lease = run(local.checkpoint()).unwrap();
     assert_eq!(lease.kernel_expires_at_ms(), Some(NOW + REQUEST_LEASE_MS));
-    let mut pending = local.mark_local_completed().unwrap();
-    let LocalCompletionAdvance::Ready(mut delivery) = run(pending.advance()).unwrap() else {
-        panic!("genuine completion must be confirmed");
-    };
-    run(delivery.finish_delivery(
-        Some(ReaderTermination::Eof),
-        Some(BodyOutcome::Drained),
-        DeliveryOutcome::Unobserved,
-    ))
-    .unwrap();
+    finish_built(local);
     let row = store.value(key("session", "local-kernel"));
     let kernel = store.value(keys::kernel_request(
         "owner",
