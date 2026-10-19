@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, future::Future};
 pub struct RoutingInput {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
-    pub raw: Value,
+    pub raw: gateway_core::source_json::SourceJson,
     pub surface: ClientSurface,
     pub catalog: CatalogInput,
     pub runtime: Option<Value>,
@@ -28,6 +28,48 @@ pub struct RoutingInput {
     pub native_session_id: Option<String>,
     /// Existing server-side request retry policy; never read from client JSON.
     pub retry_prohibited: bool,
+}
+
+impl RoutingInput {
+    /// Neutral data construction only; validation remains in source-defined planning phases.
+    pub fn from_source_request(
+        metadata: crate::local_work::LocalRequestMetadata,
+        request: gateway_schema::source_request::OrdinarySourceRequest,
+    ) -> Self {
+        Self {
+            context: metadata.context,
+            principal: metadata.principal,
+            raw: request.original_source().clone(),
+            surface: match request.surface() {
+                gateway_schema::request::RequestSurface::Responses => ClientSurface::Responses,
+                gateway_schema::request::RequestSurface::ChatCompletions => ClientSurface::Chat,
+            },
+            catalog: metadata.catalog,
+            runtime: metadata.runtime,
+            client_version: metadata.client_version,
+            native_session_id: metadata.native_session_id,
+            retry_prohibited: metadata.retry_prohibited,
+        }
+    }
+    pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
+        &self.raw
+    }
+    pub fn source_member(&self, name: &str) -> Option<gateway_core::source_json::SourceJson> {
+        gateway_core::source_serialization::member(&self.raw, name)
+    }
+    pub fn streamed(&self) -> bool {
+        self.source_member("stream")
+            .is_some_and(|value| value.as_str() == "true")
+    }
+    pub fn requested_reasoning(&self) -> Option<gateway_core::js_string::JsString16> {
+        self.source_member("reasoning")
+            .and_then(|value| gateway_core::source_serialization::member(&value, "effort"))
+            .and_then(|value| gateway_core::source_serialization::string(&value))
+            .or_else(|| {
+                self.source_member("reasoning_effort")
+                    .and_then(|value| gateway_core::source_serialization::string(&value))
+            })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +99,15 @@ impl From<GatewayError> for RoutingError {
             error: Box::new(error),
             headers: BTreeMap::new(),
             source_body: None,
+        }
+    }
+}
+impl From<gateway_schema::source_request::SourceRequestError> for RoutingError {
+    fn from(error: gateway_schema::source_request::SourceRequestError) -> Self {
+        Self {
+            error: Box::new(error.diagnostic().clone()),
+            headers: BTreeMap::new(),
+            source_body: Some(SourceRefusalBody::Json(error.body().clone())),
         }
     }
 }
@@ -217,7 +268,7 @@ pub trait RoutingHost {
         &self,
         principal: &AuthPrincipal,
         model: &str,
-        raw: &Value,
+        raw: &gateway_core::source_json::SourceJson,
     ) -> impl Future<Output = Result<ClaudeSelection, GatewayError>>;
     fn observe_claude_response(
         &self,

@@ -1,11 +1,50 @@
 use crate::{
     policy,
-    types::{PublishedCredential, RoutingInput},
+    types::{PublishedCredential, RoutingInput, RoutingResult},
 };
-use gateway_core::{GatewayError, provider::UpstreamProvider};
-use gateway_providers::{ClientSurface, prepare_request};
-use gateway_schema::reasoning::{ModelReasoning, effort_for_codex};
-use serde_json::{Value, json};
+use gateway_core::{
+    js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
+    source_serialization as source,
+};
+use gateway_providers::{ClientSurface, prepare_source_request};
+use gateway_schema::{
+    reasoning::ModelReasoning,
+    source_request::{self, SourceRequestError},
+};
+/// A derived per-hop object, never a mutation of the authoritative original request.
+pub(crate) fn set(
+    raw: &mut SourceJson,
+    key: &str,
+    value: SourceJson,
+) -> Result<(), SourceRequestError> {
+    let mut fields = source::entries(raw)
+        .ok_or_else(|| SourceRequestError::invalid("Inference request must be an object.", None))?;
+    if let Some((_, old)) = fields
+        .iter_mut()
+        .find(|(name, _)| name.as_units().iter().copied().eq(key.encode_utf16()))
+    {
+        *old = value;
+    } else {
+        fields.push((JsString16::from_utf8(key), value));
+    }
+    *raw = source::object_keys(fields).map_err(SourceRequestError::from_gateway)?;
+    Ok(())
+}
+fn effort_for_codex(effort: JsString16, model: &ModelReasoning) -> JsString16 {
+    if effort.as_units().iter().copied().eq("none".encode_utf16()) {
+        return effort;
+    }
+    if effort.as_units().iter().copied().eq("ultra".encode_utf16()) {
+        return JsString16::from_utf8("max");
+    }
+    model
+        .wire_efforts
+        .iter()
+        .find(|(name, _)| effort.as_units().iter().copied().eq(name.encode_utf16()))
+        .and_then(|(_, value)| value.as_str())
+        .map(JsString16::from_utf8)
+        .unwrap_or(effort)
+}
 pub(crate) fn prepare(
     input: &RoutingInput,
     conversation_id: &str,
@@ -14,7 +53,7 @@ pub(crate) fn prepare(
     model: &str,
     publication: &PublishedCredential,
     nonce: &str,
-) -> Result<gateway_providers::PreparedRequest, GatewayError> {
+) -> RoutingResult<gateway_providers::PreparedRequest> {
     let mut options = publication.options.clone();
     options.auth = publication.material.clone();
     options.client_version = input.client_version.clone();
@@ -24,52 +63,37 @@ pub(crate) fn prepare(
     options.created_at = now / 1000;
     options.allowed_models = policy::provider_ids(input, provider);
     let mut raw = input.raw.clone();
-    if !raw.is_object() {
-        return Err(GatewayError::new(
-            400,
-            "Inference request must be an object.",
-            Some("invalid_request_error"),
-        ));
-    }
-    raw["model"] = json!(model);
-    gateway_schema::request::validate_request_fields(
-        &raw,
-        if input.surface == ClientSurface::Chat {
-            gateway_schema::request::RequestSurface::ChatCompletions
-        } else {
-            gateway_schema::request::RequestSurface::Responses
-        },
-        &gateway_schema::request::RequestExtensions {
-            deepseek_thinking: provider == UpstreamProvider::Deepseek,
-            openrouter_cache_control: provider == UpstreamProvider::Openrouter,
-        },
+    set(
+        &mut raw,
+        "model",
+        source::quoted(&JsString16::from_utf8(model))?,
     )?;
+    // Common-envelope validation belongs to planning, not this pure per-provider adapter.
     if provider == UpstreamProvider::ChatgptCodex {
-        let meta = ModelReasoning::from_record(input.catalog.codex().and_then(|s| s.find(model)));
-        let raw_effort = if input.surface == ClientSurface::Chat {
-            raw.get("reasoning_effort")
+        let metadata =
+            ModelReasoning::from_record(input.catalog.codex().and_then(|s| s.find(model)));
+        let field = if input.surface == ClientSurface::Chat {
+            "reasoning_effort"
         } else {
-            raw.get("reasoning").and_then(|v| v.get("effort"))
+            "reasoning.effort"
         };
-        let effort = gateway_schema::reasoning::parse_effort(
-            raw_effort,
+        let raw_effort = if input.surface == ClientSurface::Chat {
+            source::member(&raw, "reasoning_effort")
+        } else {
+            source::member(&raw, "reasoning").and_then(|value| source::member(&value, "effort"))
+        };
+        if let Some(effort) = source_request::parse_effort(raw_effort.as_ref(), field)? {
+            let effort = source::quoted(&effort_for_codex(effort, &metadata))?;
             if input.surface == ClientSurface::Chat {
-                "reasoning_effort"
+                set(&mut raw, "reasoning_effort", effort)?;
             } else {
-                "reasoning.effort"
-            },
-        )?;
-        if let Some(effort) = effort {
-            let effort = effort_for_codex(&effort, &meta);
-            if input.surface == ClientSurface::Chat {
-                raw["reasoning_effort"] = json!(effort);
-            } else {
-                if raw.get("reasoning").is_none_or(Value::is_null) {
-                    raw["reasoning"] = json!({});
-                }
-                raw["reasoning"]["effort"] = json!(effort);
+                let mut reasoning = source::member(&raw, "reasoning")
+                    .filter(|value| value.as_str() != "null")
+                    .unwrap_or(SourceJson::parse("{}")?);
+                set(&mut reasoning, "effort", effort)?;
+                set(&mut raw, "reasoning", reasoning)?;
             }
         }
     }
-    prepare_request(provider, input.surface, &raw, &options)
+    prepare_source_request(provider, input.surface, &raw, model, &options).map_err(Into::into)
 }
