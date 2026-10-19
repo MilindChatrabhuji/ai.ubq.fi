@@ -12,7 +12,7 @@ impl<T: SourceStringCollator + ?Sized> SourceStringCollator for std::sync::Arc<T
     }
 }
 /// Stable fallible merge sort. Comparator failure escapes before any result is published.
-pub(crate) fn sort_source<T, F>(mut values: Vec<T>, compare: &F) -> Result<Vec<T>, GatewayError>
+pub fn sort_source<T, F>(mut values: Vec<T>, compare: &F) -> Result<Vec<T>, GatewayError>
 where
     F: Fn(&T, &T) -> Result<Ordering, GatewayError>,
 {
@@ -52,19 +52,9 @@ pub const LITHOS_IDS: &[&str] = &[
 pub const DEEPSEEK_IDS: &[&str] = &["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"];
 fn lower_units(model: &ModelId) -> Vec<u16> {
     let units = crate::source_request::trim(model.as_js_string());
-    let mut lower = Vec::new();
-    for scalar in char::decode_utf16(units.as_units().iter().copied()) {
-        match scalar {
-            Ok(c) => {
-                for c in c.to_lowercase() {
-                    let mut buf = [0; 2];
-                    lower.extend_from_slice(c.encode_utf16(&mut buf));
-                }
-            }
-            Err(e) => lower.push(e.unpaired_surrogate()),
-        }
-    }
-    lower
+    gateway_core::js_string_case::lowercase_source(&units)
+        .as_units()
+        .to_vec()
 }
 pub fn direct_deepseek_model(model: &ModelId) -> Option<ModelId> {
     let lower = lower_units(model);

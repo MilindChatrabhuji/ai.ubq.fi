@@ -5,7 +5,6 @@ use gateway_admin_runtime::{
 };
 use gateway_auth::{
     AuthHost,
-    crypto::Secret,
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
@@ -13,6 +12,7 @@ use gateway_catalog_runtime::ProviderBinding;
 use gateway_claude_runtime::*;
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
     },
@@ -27,6 +27,7 @@ use std::{
     future::Future,
     path::Path,
     rc::Rc,
+    sync::Arc,
     task::{Context, Poll, Waker},
 };
 
@@ -72,7 +73,9 @@ impl Store {
         }
     }
     pub fn put(&self, key: &RecordKey, rev: &str, value: Value) {
-        let row = StoredRecord::json(rev, value, None);
+        self.put_record(key, StoredRecord::json(rev, value, None));
+    }
+    pub fn put_record(&self, key: &RecordKey, row: StoredRecord) {
         self.db.borrow().execute("INSERT INTO records(key,payload) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload",params![key.0,serde_json::to_string(&row).unwrap()]).unwrap();
     }
     pub fn get(&self, key: &RecordKey) -> Option<StoredRecord> {
@@ -90,7 +93,12 @@ impl Store {
             .filter(|r| r.expires_at_ms.is_none_or(|at| at > self.now.get()))
     }
     pub fn roster(&self) -> AccountStore {
-        claude::parse_roster(&self.get(&claude::account_store_key()).unwrap().value).unwrap()
+        claude::decode_roster_record(
+            &self.get(&claude::account_store_key()).unwrap(),
+            self.now.get(),
+        )
+        .unwrap()
+        .unwrap()
     }
     pub fn quota(&self, account: &AccountBinding) -> Option<quota::QuotaState> {
         self.get(&quota_key(account))
@@ -162,7 +170,9 @@ impl AuthorityStore for Store {
 pub fn account(n: u8) -> AccountBinding {
     let credential = Credential {
         kind: CredentialKind::Oauth,
-        secret: Secret::new(format!("fixture-secret-{n}")),
+        secret: Arc::new(claude::ClaudeSourceSecret::from_source(
+            JsString16::from_utf8(&format!("fixture-secret-{n}")),
+        )),
         hint: "configured".into(),
         label: None,
         source: "kv".into(),
@@ -178,7 +188,17 @@ pub fn account(n: u8) -> AccountBinding {
     }
 }
 pub fn seed(store: &Store, accounts: Vec<AccountBinding>) -> PoolConfig {
-    store.put(&claude::account_store_key(),"roster-1",json!({"v":1,"active_account_id":accounts.first().map(|a|a.account_id.clone()),"accounts":accounts,"active_reason":"first_configured","updated_at_ms":NOW}));
+    let roster = AccountStore {
+        v: 1,
+        active_account_id: accounts.first().map(|a| a.account_id.clone()),
+        accounts,
+        active_reason: "first_configured".into(),
+        updated_at_ms: NOW,
+    };
+    store.put_record(
+        &claude::account_store_key(),
+        claude::encode_roster_record("roster-1", &roster, None).unwrap(),
+    );
     store.put(&native_key(), "native-1", json!({"fixture":"owner"}));
     store.allow(json!([KEY]));
     PoolConfig {
@@ -256,9 +276,21 @@ impl AuthHost for Host {
     }
 }
 impl ClaudePoolHost for Host {
-    fn compare_principals(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
-        assert!(left.is_ascii() && right.is_ascii());
-        Ok(left.cmp(right))
+    fn compare_principals(
+        &self,
+        left: &JsString16,
+        right: &JsString16,
+    ) -> Result<Ordering, GatewayError> {
+        // This fixture has one principal. Its exact same-operand result is
+        // known; every other operand is outside this finite source oracle.
+        let principal = JsString16::from_utf8(KEY);
+        if left != &principal || right != &principal {
+            return Err(GatewayError::unavailable(
+                "Unknown finite Claude principal oracle operand.",
+                "fixture_claude_principal_oracle_unknown_operand",
+            ));
+        }
+        Ok(Ordering::Equal)
     }
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64> {
         (raw == "fixture-date").then_some(NOW + 1234)

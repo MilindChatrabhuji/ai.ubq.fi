@@ -9,11 +9,13 @@ use gateway_admin_runtime::{
 };
 use gateway_auth::AuthHost;
 use gateway_catalog_runtime::ProviderBinding;
-use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson, state::RevisionCheck};
-use gateway_providers::{AuthMaterial, Headers, PrepareOptions};
+use gateway_core::{
+    GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
+    source_serialization as source, state::RevisionCheck,
+};
+use gateway_providers::{Headers, PrepareOptions};
 use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
 use serde::Serialize;
-use serde_json::Value;
 use std::{cmp::Ordering, future::Future};
 
 #[derive(Clone, Debug, Default)]
@@ -63,16 +65,14 @@ impl SelectedAccount {
     pub fn replay_scope(&self) -> &str {
         &self.replay_scope
     }
-    /// Base transport identity/client fields remain adapter-owned; Claude credentials and proven flags do not.
+    /// Copy proven capabilities only. Actual auth must be derived by the host
+    /// from this same immutable binding at its preparation/header boundary.
+    /// This method grants no credential validity or transport authorization.
     pub fn prepare_options(&self, mut base: PrepareOptions) -> PrepareOptions {
-        base.auth = self.options.auth.clone();
         base.supports_native_effort = self.options.supports_native_effort;
         base.supports_disabled_thinking = self.options.supports_disabled_thinking;
         base.native_reasoning_efforts = self.options.native_reasoning_efforts.clone();
         base
-    }
-    pub fn auth_material(&self) -> AuthMaterial {
-        self.options.auth.clone()
     }
 }
 
@@ -135,7 +135,7 @@ pub struct AcceptedObservation {
     pub account_id: String,
     pub account_cohort_id: String,
     pub credential_kind: String,
-    pub workspace_id: Option<String>,
+    pub workspace_id: Option<JsString16>,
     pub source_observed_at_ms: Option<i64>,
     pub sampled_at_ms: i64,
     pub response_status: Option<u16>,
@@ -144,8 +144,39 @@ pub struct AcceptedObservation {
 }
 impl AcceptedObservation {
     /// Source JSON number spelling also supports m19's integer timestamp DTO.
-    pub fn source_value(&self) -> Value {
-        crate::quota::source_value(self)
+    pub fn source_value(&self) -> SourceJson {
+        let mut fields = source::entries(
+            &SourceJson::from_serializable(self).expect("finite source Claude observation"),
+        )
+        .expect("Claude observation is an object");
+        let observation = fields
+            .iter_mut()
+            .find(|(name, _)| name == &JsString16::from_utf8("observation"))
+            .expect("Claude observation field");
+        let mut observation_fields =
+            source::entries(&observation.1).expect("quota observation is an object");
+        let standard = observation_fields
+            .iter_mut()
+            .find(|(name, _)| name == &JsString16::from_utf8("standard"))
+            .expect("standard observation field");
+        let mut remaining =
+            source::entries(&standard.1).expect("standard observation is an object");
+        let mut ordered = Vec::new();
+        // Actual observeClaudeCodeQuota producer order, not arbitrary consumer input order.
+        for family in crate::quota::STANDARD_FAMILIES {
+            if let Some(index) = remaining
+                .iter()
+                .position(|(name, _)| name == &JsString16::from_utf8(family))
+            {
+                ordered.push(remaining.remove(index));
+            }
+        }
+        ordered.extend(remaining);
+        standard.1 = source::object_keys(ordered).expect("finite standard observation");
+        observation.1 = source::object_keys(observation_fields).expect("finite quota observation");
+        source::object_keys(fields)
+            .and_then(|value| source::canonical(&value))
+            .expect("finite source Claude observation")
     }
 }
 
@@ -166,7 +197,11 @@ pub struct WorkspaceResponse {
 
 pub trait ClaudePoolHost: AuthHost {
     /// The real source localeCompare primitive, not byte ordering.
-    fn compare_principals(&self, left: &str, right: &str) -> Result<Ordering, GatewayError>;
+    fn compare_principals(
+        &self,
+        left: &JsString16,
+        right: &JsString16,
+    ) -> Result<Ordering, GatewayError>;
     /// Source Date.parse for Retry-After's date form; invalid text returns None.
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64>;
     /// Bind the existing source/native owner. Missing enforcement is explicit unavailability.
@@ -198,4 +233,68 @@ pub trait ClaudePoolHost: AuthHost {
 
 pub(crate) struct CommittedOutcome {
     pub state: QuotaState,
+}
+
+#[cfg(test)]
+mod producer_order_tests {
+    use super::*;
+    #[test]
+    fn accepted_standard_families_follow_actual_source_producer_order() {
+        let mut quota = QuotaObservation::empty(1_800_000_000_000);
+        for (index, family) in crate::quota::STANDARD_FAMILIES.into_iter().enumerate() {
+            quota.standard.insert(
+                family.into(),
+                crate::quota::StandardWindow {
+                    limit: Some((index + 1) as f64),
+                    remaining: None,
+                    reset_at_ms: None,
+                    observed_at_ms: quota.observed_at_ms,
+                },
+            );
+        }
+        let event = AcceptedObservation {
+            v: 1,
+            observation_id: "fixture-observation".into(),
+            account_id: "fixture-account".into(),
+            account_cohort_id: "fixture-cohort".into(),
+            credential_kind: "api_key".into(),
+            workspace_id: Some(JsString16::from_units(vec![119, 0xd800])),
+            source_observed_at_ms: Some(1_800_000_000_000),
+            sampled_at_ms: 1_800_000_000_000,
+            response_status: Some(200),
+            state: "available".into(),
+            observation: quota,
+        };
+        let document = event.source_value();
+        let observation = source::member(&document, "observation").unwrap();
+        let standard = source::member(&observation, "standard").unwrap();
+        let fields = source::entries(&standard).unwrap();
+        assert_eq!(
+            fields
+                .iter()
+                .map(|(name, _)| name.try_utf8().unwrap())
+                .collect::<Vec<_>>(),
+            crate::quota::STANDARD_FAMILIES
+        );
+        for (index, (_, value)) in fields.iter().enumerate() {
+            assert_eq!(
+                source::number(&source::member(value, "limit").unwrap()),
+                Some((index + 1) as f64)
+            );
+        }
+        assert_eq!(
+            source::string(&source::member(&document, "workspace_id").unwrap()),
+            event.workspace_id
+        );
+        // Serialization must not mutate the in-memory map or any consumer's source JSON.
+        assert_eq!(
+            event
+                .observation
+                .standard
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["input-tokens", "output-tokens", "requests"]
+        );
+    }
 }

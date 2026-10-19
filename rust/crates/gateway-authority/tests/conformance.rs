@@ -121,14 +121,14 @@ fn mixed_pool_proof_is_not_quota_only_and_expires_with_the_quota_deadline() {
     let second = admitted(&authority);
     run(authority.mark_credential_invalid(&second, NOW)).unwrap();
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
     else {
         panic!("missing mixed proof")
     };
     assert!(proof.full_cohort_unavailable());
     assert!(!proof.full_cohort_exhausted());
     let mut input = paid_request("mixed-paid", PaidProvider::Surplus);
-    input.model = "gpt-test".to_owned();
+    input.model = "gpt-test".into();
     assert!(
         run(reserve_paid(
             &authority,
@@ -167,7 +167,9 @@ fn invalid_active_and_unknown_capacity_never_authorize_failover() {
         keys::active(),
         &serde_json::json!({"v":1,"generation":"corrupt"}),
     );
-    assert!(run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).is_err());
+    assert!(
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).is_err()
+    );
     assert_eq!(
         store.row(&keys::active()).unwrap().value["generation"],
         "corrupt"
@@ -180,7 +182,9 @@ fn exact_model_entitlement_rotates_but_generic_model_errors_do_not() {
     seed_pool(&store, &pool());
     let authority = authority(&store);
     let first = admitted(&authority);
-    assert!(!run(authority.learn_model_unavailable(&first, "model unavailable", NOW)).unwrap());
+    assert!(
+        !run(authority.learn_model_unavailable(&first, &"model unavailable".into(), NOW)).unwrap()
+    );
     assert_eq!(
         admitted(&authority).binding.account_id_hash,
         first.binding.account_id_hash
@@ -473,7 +477,7 @@ fn reset_candidate(store: &MemoryStore, authority: &TestAuthority) -> ResetCandi
     let second = admitted(authority);
     run(authority.record_quota_block(&second, block(), NOW)).unwrap();
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
     else {
         panic!("quota-only proof missing")
     };
@@ -623,7 +627,7 @@ fn overage_off_is_a_hard_gate_and_enabled_probe_blocks_other_requests() {
     let second = admitted(&authority);
     run(authority.record_quota_block(&second, block(), NOW)).unwrap();
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
     else {
         panic!("quota proof missing")
     };
@@ -637,7 +641,7 @@ fn overage_off_is_a_hard_gate_and_enabled_probe_blocks_other_requests() {
         &serde_json::json!({"allow":true}),
     );
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
     else {
         panic!("quota proof missing")
     };
@@ -838,8 +842,9 @@ fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
         }],
     }))
     .unwrap();
-    let error = run(authority(&store).select_account("gpt-test", CodexQuotaClass::Standard, NOW))
-        .unwrap_err();
+    let error =
+        run(authority(&store).select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW))
+            .unwrap_err();
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("incompatible_value_encoding")

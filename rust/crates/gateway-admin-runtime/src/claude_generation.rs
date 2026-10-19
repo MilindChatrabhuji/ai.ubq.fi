@@ -3,7 +3,9 @@ use std::{cell::Cell, rc::Rc};
 
 use crate::claude::{AccountBinding, Credential, CredentialKind};
 use gateway_auth::crypto::sha256_hex;
-use serde_json::json;
+use gateway_core::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 
 /// Clone this handle across requests for the same KV object in the same isolate.
 /// A new isolate/KV object starts at zero, as the source WeakMap does.
@@ -49,7 +51,7 @@ impl StateGeneration {
         snapshot: &StateSnapshot,
         account: Option<&AccountBinding>,
         credential: &Credential,
-        workspace_id: Option<&str>,
+        workspace_id: Option<&JsString16>,
     ) -> Option<String> {
         if !self.is_current(snapshot) {
             return None;
@@ -58,15 +60,20 @@ impl StateGeneration {
             CredentialKind::ApiKey => "api_key",
             CredentialKind::Oauth => "oauth",
         };
-        let bytes = serde_json::to_vec(&json!([
-            account.map(|value| value.account_id.as_str()),
-            account.map(|value| value.account_cohort_id.as_str()),
-            kind,
-            credential.secret.expose(),
-            workspace_id,
-            snapshot.number
-        ]))
-        .expect("source JSON tuple");
+        let fields = [
+            SourceJson::from_serializable(&account.map(|value| value.account_id.as_str()))
+                .expect("source account ID"),
+            SourceJson::from_serializable(&account.map(|value| value.account_cohort_id.as_str()))
+                .expect("source cohort ID"),
+            SourceJson::from_serializable(kind).expect("source credential kind"),
+            credential.secret.source_json(),
+            SourceJson::from_serializable(&workspace_id).expect("source workspace data"),
+            SourceJson::from_serializable(&snapshot.number).expect("source generation"),
+        ];
+        let tuple = source::json_array(&fields).expect("source JSON tuple");
+        let bytes = source::canonical(&tuple)
+            .expect("source stringify")
+            .into_bytes();
         let identity = sha256_hex(&bytes);
         self.is_current(snapshot).then_some(identity)
     }

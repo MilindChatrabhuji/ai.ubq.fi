@@ -178,3 +178,27 @@ fn comparator_failure_never_publishes_a_partial_catalog() {
     assert!(build_catalog_snapshot(&input, &Refuse).is_err());
     assert!(public_catalog(&input, &Refuse).is_err());
 }
+
+#[test]
+fn capabilities_source_label_is_exact_utf16_with_only_missing_snapshot_default() {
+    let original = vec![0xd800, 0, 0xdc00, 0xfffd];
+    let mut uploaded = snapshot(vec![document(r#"{"slug":"a"}"#)]);
+    uploaded.source = JsString16::from_units(original.clone());
+    let input = CatalogInput {
+        snapshot: Some(uploaded),
+        ..Default::default()
+    };
+    assert_eq!(units(&member(&capabilities(&input), "source")), original);
+
+    let mut empty = snapshot(Vec::new());
+    empty.source = JsString16::default();
+    let input = CatalogInput {
+        snapshot: Some(empty),
+        ..Default::default()
+    };
+    assert!(units(&member(&capabilities(&input), "source")).is_empty());
+    assert_eq!(
+        units(&member(&capabilities(&CatalogInput::default()), "source")),
+        "stored_codex_models".encode_utf16().collect::<Vec<_>>()
+    );
+}

@@ -130,6 +130,7 @@ pub enum RoutingLeaseState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObservedRoutingLease {
     observed_at_ms: i64,
+    // Request-journal coordination only; never a caller or API/kernel deadline.
     request_expires_at_ms: i64,
     kernel_expires_at_ms: Option<i64>,
     state: RoutingLeaseState,
@@ -138,6 +139,7 @@ impl ObservedRoutingLease {
     pub fn observed_at_ms(&self) -> i64 {
         self.observed_at_ms
     }
+    /// Actual journal coordination expiry, not a source client-abort deadline.
     pub fn request_expires_at_ms(&self) -> i64 {
         self.request_expires_at_ms
     }
@@ -240,6 +242,9 @@ impl<
 > RoutingCurrentness<'_, S, I, C, H>
 {
     pub async fn checkpoint(&self) -> RoutingResult<ObservedRoutingLease> {
+        Ok(self.observe().await?.0)
+    }
+    async fn observe(&self) -> RoutingResult<(ObservedRoutingLease, Journal, Vec<RevisionCheck>)> {
         let session = self.session;
         let (record, row) = journal::load(&session.store, session.id()).await?;
         if row.context != session.input.context
@@ -333,7 +338,7 @@ impl<
         if session
             .store
             .commit(AtomicTransition {
-                checks,
+                checks: checks.clone(),
                 mutations: Vec::new(),
             })
             .await?
@@ -353,11 +358,105 @@ impl<
                 return Err(invalid().into());
             }
         }
-        Ok(ObservedRoutingLease {
-            observed_at_ms: now,
-            request_expires_at_ms: row.lease_expires_at_ms,
-            kernel_expires_at_ms: kernel_expiry,
-            state,
-        })
+        Ok((
+            ObservedRoutingLease {
+                observed_at_ms: now,
+                request_expires_at_ms: row.lease_expires_at_ms,
+                kernel_expires_at_ms: kernel_expiry,
+                state,
+            },
+            row,
+            checks,
+        ))
+    }
+    /// Source operation-time validation; never infer a lease from acknowledgement time.
+    pub async fn renew_kernel(&self) -> RoutingResult<ObservedRoutingLease> {
+        let session = self.session;
+        let (observed, row, mut checks) = self.observe().await?;
+        if observed.state == RoutingLeaseState::Settled {
+            return Ok(observed);
+        }
+        let operation_at = session.now()?;
+        if observed.state == RoutingLeaseState::Live {
+            if session.host.cancelled() {
+                return Err(session.host.cancellation_error().into());
+            }
+            if row.lease_expires_at_ms <= operation_at
+                || observed
+                    .kernel_expires_at_ms
+                    .is_some_and(|expiry| expiry <= operation_at)
+            {
+                return Err(invalid().into());
+            }
+        }
+        let expiry = if let Some(kernel) = &row.kernel {
+            let key = keys::kernel_request(
+                &kernel.owner,
+                kernel.repo.as_deref(),
+                kernel.window_created_at_ms,
+                &kernel.request_id.0,
+            );
+            let before = session.store.read(&key).await?.ok_or_else(invalid)?;
+            let actual: KernelReservation = decode(&before)?;
+            if !same_kernel_identity(&actual, kernel) {
+                return Err(invalid().into());
+            }
+            if actual.state.is_some() {
+                return self.checkpoint().await;
+            }
+            let expiry = session
+                .authority()
+                .renew_kernel(kernel, operation_at)
+                .await?;
+            let record = session.store.read(&key).await?.ok_or_else(invalid)?;
+            let actual: KernelReservation = decode(&record)?;
+            if !same_kernel_identity(&actual, kernel)
+                || actual.state.is_some()
+                || actual.lease_expires_at_ms != expiry
+            {
+                return Err(invalid().into());
+            }
+            let check = checks
+                .iter_mut()
+                .find(|check| check.key == key)
+                .ok_or_else(invalid)?;
+            check.expected_revision = Some(record.revision);
+            expiry
+        } else {
+            operation_at
+                .checked_add(gateway_authority::REQUEST_LEASE_MS)
+                .ok_or_else(invalid)?
+        };
+        let checks: Vec<crate::types::RevisionCheckWire> = checks
+            .iter()
+            .map(crate::types::RevisionCheckWire::from)
+            .collect();
+        journal::change(
+            &session.store,
+            &session.tokens,
+            session.id(),
+            operation_at,
+            &checks,
+            |current| {
+                if current.context != session.input.context
+                    || !session.admission.matches(current)
+                    || classification(current)?.0 != observed.state
+                {
+                    return Err(invalid());
+                }
+                if observed.state == RoutingLeaseState::Live
+                    && (session.host.cancelled() || current.lease_expires_at_ms <= operation_at)
+                {
+                    return Err(invalid());
+                }
+                current.lease_expires_at_ms = expiry;
+                if let Some(kernel) = &mut current.kernel {
+                    kernel.lease_expires_at_ms = expiry;
+                }
+                Ok(())
+            },
+        )
+        .await?;
+        self.checkpoint().await
     }
 }

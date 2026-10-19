@@ -2,6 +2,7 @@ mod support;
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     GatewayError,
+    source_json::SourceJson,
     state::{RecordKey, StoredRecord},
     tuple_key::TupleKey,
 };
@@ -36,6 +37,11 @@ struct AdminHost {
     raw: Vec<u8>,
 }
 impl ObservabilityHost for AdminHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.base.source_string_collator()
+    }
     fn now_ms(&self) -> i64 {
         self.base.now_ms()
     }
@@ -124,17 +130,19 @@ fn reset_settings_reject_an_old_account_without_a_write_and_show_unknown_diagnos
     };
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
     assert_eq!(
-        run(runtime
-            .reset_settings_response(Some(&json!({"account_id_hash":"retired","enabled":true}))))
+        run(runtime.reset_settings_response(Some(
+            &SourceJson::from_serializable(&json!({"account_id_hash":"retired","enabled":true}))
+                .unwrap()
+        )))
         .unwrap_err()
         .status,
         409
     );
     assert_eq!(memory.commits.get(), 0);
     let hash = sha256_hex(b"fixture-account");
-    let response = run(
-        runtime.reset_settings_response(Some(&json!({"account_id_hash":hash,"enabled":false})))
-    )
+    let response = run(runtime.reset_settings_response(Some(
+        &SourceJson::from_serializable(&json!({"account_id_hash":hash,"enabled":false})).unwrap(),
+    )))
     .unwrap();
     assert_eq!(response.body.as_json().unwrap()["enabled"], false);
     let response = run(runtime.reset_settings_response(None)).unwrap();
@@ -155,8 +163,13 @@ fn raw_capacity_body_limit_cannot_be_replaced_by_a_small_reserialization() {
     let mut raw = serde_json::to_vec(&document).unwrap();
     raw.resize(4 * 1024 * 1024 + 1, b' ');
     let runtime = ObservabilityRuntime::new(memory.clone(), AdminHost { base: clock, raw });
-    let response =
-        run(runtime.provider(ProviderRequest::Observations { document }, context())).unwrap_err();
+    let response = run(runtime.provider(
+        ProviderRequest::Observations {
+            document: SourceJson::from_serializable(&document).unwrap(),
+        },
+        context(),
+    ))
+    .unwrap_err();
     assert_eq!(response.status, 413);
     assert_eq!(memory.commits.get(), 0);
 }
@@ -186,7 +199,8 @@ fn request_body_binding_rejects_a_different_document() {
     assert_eq!(
         run(runtime.provider(
             ProviderRequest::Observations {
-                document: json!({"host":"two","history":[]})
+                document: SourceJson::from_serializable(&json!({"host":"two","history":[]}))
+                    .unwrap()
             },
             context()
         ))
@@ -225,35 +239,16 @@ fn projection_distinguishes_failed_scans_and_retains_both_ends_of_long_balance_h
         );
     }
     let response = run(runtime.quota_projection_response(30, 365)).unwrap();
-    assert_eq!(
-        response.body.as_json().unwrap()["balance_history"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["balance_history_scan"],
-        "ok"
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["retention"]["balance_history_bucket_ms"],
-        25 * 3600000
-    );
+    let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
+    assert_eq!(body["balance_history"].as_array().unwrap().len(), 2);
+    assert_eq!(body["balance_history_scan"], "ok");
+    assert_eq!(body["retention"]["balance_history_bucket_ms"], 25 * 3600000);
     memory.unavailable.set(true);
     let response = run(runtime.quota_projection_response(30, 365)).unwrap();
-    assert_eq!(
-        response.body.as_json().unwrap()["rollup_scan"],
-        "unavailable"
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["balance_history_scan"],
-        "unavailable"
-    );
-    assert_eq!(
-        response.body.as_json().unwrap()["ledger_growth"]["scan"],
-        "unavailable"
-    );
+    let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
+    assert_eq!(body["rollup_scan"], "unavailable");
+    assert_eq!(body["balance_history_scan"], "unavailable");
+    assert_eq!(body["ledger_growth"]["scan"], "unavailable");
 }
 #[test]
 fn resampling_keeps_newest_observation_without_changing_its_time() {

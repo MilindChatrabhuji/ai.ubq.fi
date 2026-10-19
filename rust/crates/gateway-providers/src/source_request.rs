@@ -28,44 +28,19 @@ pub fn prepare_source_request(
     selected_model: &ModelId,
     options: &PrepareOptions,
 ) -> s::Result<PreparedRequest> {
-    let document = SourceRequestDocument::new(raw.clone())?;
+    let (document, client_stream, requested, model) = source_prelude(
+        provider,
+        surface,
+        raw,
+        selected_model,
+        &options.allowed_models,
+    )?;
     let schema_surface = if surface == ClientSurface::Chat {
         RequestSurface::ChatCompletions
     } else {
         RequestSurface::Responses
     };
     let view = document.for_surface(schema_surface);
-    // The caller owns the common envelope phase; selected-provider preparation must not repeat it.
-    let native_openrouter = provider == UpstreamProvider::Openrouter;
-    // OpenRouter's native wire uses `=== true`, not ordinary parse_stream.
-    let client_stream = if native_openrouter {
-        s::boolean(&s::get(raw, "stream")) == Some(true)
-    } else if surface == ClientSurface::Responses {
-        view.stream()?
-    } else {
-        false
-    };
-    let requested = match view.model_request()? {
-        SourceModelRequest::Default => selected_model.clone(),
-        SourceModelRequest::Named(name) => ModelId::from_source(name),
-    };
-    if surface == ClientSurface::Chat {
-        view.max_completion_tokens()?;
-    }
-    let model = canonical_source_model(provider, selected_model, &options.allowed_models)
-        .ok_or_else(|| {
-            SourceRequestError::new(
-                404,
-                s::concat(&[
-                    &JsString16::from_utf8("The model '"),
-                    requested.as_js_string(),
-                    &JsString16::from_utf8("' does not exist or is not available."),
-                ]),
-                "invalid_request_error",
-                Some("model_not_found"),
-                None,
-            )
-        })?;
     if options.auth.secret.trim().is_empty() {
         return Err(unavailable(
             "The requested provider is not configured.",
@@ -74,6 +49,12 @@ pub fn prepare_source_request(
                 crate::policy::direct_provider_label(provider)
             ),
         ));
+    }
+    if provider == UpstreamProvider::ClaudeCode {
+        let body_options = ClaudeBodyOptions::from_scalar(options);
+        let body =
+            prepare_claude_resolved(surface, raw, requested, model, client_stream, &body_options)?;
+        return Ok(finalize_scalar_claude(body, &options.auth));
     }
     let direct = matches!(
         provider,
@@ -255,7 +236,7 @@ pub fn prepare_source_request(
                 })?;
             headers.insert("conversation_id".into(), conversation.clone());
         }
-        UpstreamProvider::Surplus | UpstreamProvider::Metered | UpstreamProvider::ClaudeCode => {
+        UpstreamProvider::Surplus | UpstreamProvider::Metered => {
             let normalized =
                 controls::ordinary(raw, surface, &model, options.ordinary_preparation.as_ref())?;
             if surface == ClientSurface::Chat {
@@ -288,52 +269,13 @@ pub fn prepare_source_request(
                 }
             } else {
                 let mut native_options = options.clone();
-                if provider == UpstreamProvider::ClaudeCode {
-                    native_options.catalog_max_output_tokens = Some(32_000);
-                    native_options.supports_native_effort = native_options
-                        .native_reasoning_efforts
-                        .as_ref()
-                        .is_some_and(|v| !v.is_empty());
-                } else {
-                    native_options.supports_native_effort = false;
-                    native_options.supports_disabled_thinking = false;
-                }
+                native_options.supports_native_effort = false;
+                native_options.supports_disabled_thinking = false;
                 if let Some(native) = source_anthropic::native(&normalized, &native_options) {
                     body = native;
-                    url = if provider == UpstreamProvider::ClaudeCode {
-                        "https://api.anthropic.com/v1/messages"
-                    } else {
-                        "https://api.openlux.ai/v1/messages"
-                    }
-                    .into();
+                    url = "https://api.openlux.ai/v1/messages".into();
                     decode = ResponseDecode::AnthropicToResponses;
                     headers.insert("anthropic-version".into(), "2023-06-01".into());
-                    if provider == UpstreamProvider::ClaudeCode {
-                        controls::claude_transport(&mut body, options);
-                        if options.auth.api_key {
-                            headers.remove("Authorization");
-                            headers.insert("x-api-key".into(), options.auth.secret.clone());
-                        } else {
-                            headers.insert("anthropic-beta".into(), "oauth-2025-04-20".into());
-                        }
-                        if let Some(workspace) = &options.auth.workspace_id {
-                            headers.insert("anthropic-workspace-id".into(), workspace.clone());
-                        }
-                        headers.insert(
-                            "Accept".into(),
-                            if s::boolean(&s::get(&body, "stream")) == Some(true) {
-                                "text/event-stream"
-                            } else {
-                                "application/json"
-                            }
-                            .into(),
-                        );
-                    }
-                } else if provider == UpstreamProvider::ClaudeCode {
-                    return Err(invalid(
-                        "Claude request cannot be represented losslessly with the current credential/workspace capability proof",
-                        "reasoning",
-                    ));
                 } else {
                     url = "https://api.openlux.ai/v1/responses".into();
                     if model.matches_scalar("gpt-5.6-sol")
@@ -392,6 +334,141 @@ pub fn prepare_source_request(
         decode: plan,
         warnings,
     })
+}
+fn source_prelude(
+    provider: UpstreamProvider,
+    surface: ClientSurface,
+    raw: &SourceJson,
+    selected_model: &ModelId,
+    allowed_models: &[ModelId],
+) -> s::Result<(SourceRequestDocument, bool, ModelId, ModelId)> {
+    let document = SourceRequestDocument::new(raw.clone())?;
+    let schema_surface = if surface == ClientSurface::Chat {
+        RequestSurface::ChatCompletions
+    } else {
+        RequestSurface::Responses
+    };
+    let view = document.for_surface(schema_surface);
+    // The caller owns the common envelope phase; selected-provider preparation must not repeat it.
+    let native_openrouter = provider == UpstreamProvider::Openrouter;
+    // OpenRouter's native wire uses `=== true`, not ordinary parse_stream.
+    let client_stream = if native_openrouter {
+        s::boolean(&s::get(raw, "stream")) == Some(true)
+    } else if surface == ClientSurface::Responses {
+        view.stream()?
+    } else {
+        false
+    };
+    let requested = match view.model_request()? {
+        SourceModelRequest::Default => selected_model.clone(),
+        SourceModelRequest::Named(name) => ModelId::from_source(name),
+    };
+    if surface == ClientSurface::Chat {
+        view.max_completion_tokens()?;
+    }
+    let model =
+        canonical_source_model(provider, selected_model, allowed_models).ok_or_else(|| {
+            SourceRequestError::new(
+                404,
+                s::concat(&[
+                    &JsString16::from_utf8("The model '"),
+                    requested.as_js_string(),
+                    &JsString16::from_utf8("' does not exist or is not available."),
+                ]),
+                "invalid_request_error",
+                Some("model_not_found"),
+                None,
+            )
+        })?;
+    Ok((document, client_stream, requested, model))
+}
+
+impl PreparedClaudeBody {
+    /// Complete pure source body validation/stringification before actual headers.
+    pub fn prepare(
+        surface: ClientSurface,
+        raw: &SourceJson,
+        selected_model: &ModelId,
+        options: &ClaudeBodyOptions,
+    ) -> s::Result<Self> {
+        let (_, stream, requested, model) = source_prelude(
+            UpstreamProvider::ClaudeCode,
+            surface,
+            raw,
+            selected_model,
+            &options.allowed_models,
+        )?;
+        prepare_claude_resolved(surface, raw, requested, model, stream, options)
+    }
+}
+fn prepare_claude_resolved(
+    surface: ClientSurface,
+    raw: &SourceJson,
+    requested: ModelId,
+    model: ModelId,
+    mut client_stream: bool,
+    options: &ClaudeBodyOptions,
+) -> s::Result<PreparedClaudeBody> {
+    let normalized =
+        controls::ordinary(raw, surface, &model, options.ordinary_preparation.as_ref())?;
+    if surface == ClientSurface::Chat {
+        client_stream = s::boolean(&s::get(&normalized, "stream")).unwrap_or(false);
+    }
+    let mut body = source_anthropic::native_claude(&normalized, options).ok_or_else(|| invalid(
+        "Claude request cannot be represented losslessly with the current credential/workspace capability proof",
+        "reasoning",
+    ))?;
+    controls::claude_transport(&mut body, options.kind);
+    let stream = s::boolean(&s::get(&body, "stream")) == Some(true);
+    let body = s::canonical(&body)?;
+    Ok(PreparedClaudeBody {
+        body,
+        kind: options.kind,
+        stream,
+        warnings: Vec::new(),
+        decode: DecodePlan {
+            provider: UpstreamProvider::ClaudeCode,
+            surface,
+            decode: ResponseDecode::AnthropicToResponses,
+            model: requested,
+            upstream_model: model,
+            response_id: options.response_id.clone(),
+            created_at: options.created_at,
+            stream: client_stream,
+            request: raw.clone(),
+            tool_names: ToolMap::new(),
+            reasoning_summary: options.reasoning_summary.clone(),
+        },
+    })
+}
+fn finalize_scalar_claude(body: PreparedClaudeBody, auth: &AuthMaterial) -> PreparedRequest {
+    let mut headers = bearer_headers(
+        &auth.secret,
+        if body.stream {
+            "text/event-stream"
+        } else {
+            "application/json"
+        },
+    );
+    headers.insert("anthropic-version".into(), "2023-06-01".into());
+    if auth.api_key {
+        headers.remove("Authorization");
+        headers.insert("x-api-key".into(), auth.secret.clone());
+    } else {
+        headers.insert("anthropic-beta".into(), "oauth-2025-04-20".into());
+    }
+    if let Some(workspace) = &auth.workspace_id {
+        headers.insert("anthropic-workspace-id".into(), workspace.clone());
+    }
+    PreparedRequest {
+        provider: UpstreamProvider::ClaudeCode,
+        url: body.url().into(),
+        method: body.method().into(),
+        headers,
+        body: body.body,
+        decode: body.decode,
+        warnings: body.warnings,
+    }
 }
 fn profile(provider: UpstreamProvider) -> ChatProfile {
     match provider {

@@ -23,7 +23,10 @@ fn authoritative_refusal_rotates_durable_active_and_all_current_accounts_prove_p
         OutcomeDecision::Retry
     ));
     assert_eq!(store.roster().active_account_id, Some(b.account_id.clone()));
-    assert_eq!(store.roster().active_reason, "authoritative_unavailability");
+    assert_eq!(
+        store.roster().active_reason,
+        "authoritative_unavailability".into()
+    );
     let next = selected(&session, &store, &host, &raw);
     assert_eq!(next.binding().account_id, b.account_id);
     assert!(matches!(
@@ -242,7 +245,9 @@ fn credential_replacement_rejects_old_quota_and_health_without_touching_other_ac
     let raw = raw();
     let first = selected(&session, &store, &host, &raw);
     let mut credential = a.credential.clone();
-    credential.secret = gateway_auth::crypto::Secret::new("fixture-new-secret".into());
+    credential.secret = std::sync::Arc::new(claude::ClaudeSourceSecret::from_source(
+        "fixture-new-secret".into(),
+    ));
     run(claude::update_account(
         &store,
         &host,
@@ -361,7 +366,7 @@ fn workspace_retry_selects_default_rotates_cohort_and_does_not_refetch_effort_ca
     };
     assert_eq!(
         next.binding().workspace.as_ref().unwrap().id,
-        "wrkspc_default"
+        "wrkspc_default".into()
     );
     assert_ne!(next.binding().account_cohort_id, a.account_cohort_id);
     assert_eq!(host.catalog_calls.get(), 1);
@@ -687,6 +692,162 @@ fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
     );
     println!(
         "M35_CLAUDE_ROW_FIXTURE={}",
-        serde_json::to_string(&(quota_key(&account), stored)).unwrap()
+        serde_json::to_string(&(quota_key(&account).0, stored)).unwrap()
     );
+}
+
+#[test]
+fn source_binding_snapshot_named_rotation_and_clear_preserve_units_without_scalar_grant() {
+    use gateway_core::{
+        js_string::JsString16, source_serialization as source, value::ValueEncoding,
+    };
+    use std::sync::Arc;
+    let store = Store::new();
+    let mut a = account(1);
+    a.credential.secret = Arc::new(claude::ClaudeSourceSecret::from_source(
+        JsString16::from_units(vec![115, 0xd800, 107]),
+    ));
+    a.credential.hint = JsString16::from_units(vec![104, 0xdc00]);
+    a.credential.label = Some(JsString16::from_units(vec![108, 0xd801]));
+    let mut workspace_id = "wrkspc_".encode_utf16().collect::<Vec<_>>();
+    workspace_id.push(0xdc01);
+    a.workspace = Some(claude::Workspace {
+        id: JsString16::from_units(workspace_id),
+        name: Some(JsString16::from_units(vec![110, 0xd802])),
+        source: "kv".into(),
+        discovered_at_ms: None,
+        verified_at_ms: Some(NOW),
+        last_error: None,
+    });
+    a.credential_fingerprint = claude::fingerprint(&a.credential, a.workspace.as_ref());
+    let b = account(2);
+    let config = seed(&store, vec![a.clone(), b.clone()]);
+    let original = store.get(&claude::account_store_key()).unwrap();
+    assert_eq!(original.value_encoding, ValueEncoding::ProfileV2);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let first = selected(&session, &store, &host, &raw);
+    assert_eq!(first.binding(), &a);
+    assert!(
+        first
+            .binding()
+            .credential
+            .secret
+            .try_scalar_secret()
+            .is_err()
+    );
+    assert!(Arc::ptr_eq(
+        &first.binding().credential.secret,
+        &first.clone().binding().credential.secret
+    ));
+    assert!(store.quota(&a).is_none());
+    assert_eq!(store.get(&claude::account_store_key()).unwrap(), original);
+    assert!(matches!(
+        apply(&session, &store, &host, &first, 429, exhausted(NOW), NOW),
+        OutcomeDecision::Retry
+    ));
+    let rotated = store.roster();
+    assert_eq!(rotated.active_account_id, Some(b.account_id));
+    assert_eq!(rotated.accounts[0], a);
+    let events = host.accepted.borrow();
+    let event = events.first().unwrap();
+    let document = event.source_value();
+    assert_eq!(
+        source::string(&source::member(&document, "workspace_id").unwrap()),
+        a.workspace.as_ref().map(|workspace| workspace.id.clone())
+    );
+    drop(events);
+    let cleared = run(clear_guards(&store, &host, &a)).unwrap().unwrap();
+    assert!(cleared.pool_proofs.unwrap().is_empty());
+    let current = store.roster();
+    assert_eq!(current.accounts[0].credential, a.credential);
+    assert_eq!(current.accounts[0].workspace, a.workspace);
+    assert_ne!(
+        current.accounts[0].evidence_generation,
+        a.evidence_generation
+    );
+    assert_eq!(
+        store
+            .get(&claude::account_store_key())
+            .unwrap()
+            .value_encoding,
+        ValueEncoding::ProfileV2
+    );
+}
+
+#[test]
+fn source_workspace_discovery_retains_raw_json_units_and_default_selection() {
+    use gateway_core::js_string::JsString16;
+    let store = Store::new();
+    let a = account(1);
+    let config = seed(&store, vec![a.clone()]);
+    let host = Host::new(&store);
+    host.workspace.borrow_mut().body = r#"{"data":[{"id":"wrkspc_archived","name":"Default","archived_at":1},{"id":"wrkspc_\ud800","name":" Other\udc00 "},{"id":" wrkspc_\ud801 ","name":" DEFAULT ","archived_at":null}]}"#.into();
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let first = selected(&session, &store, &host, &raw);
+    let observed =
+        run(session.observe_response(&store, &host, &first, head(400, Headers::new(), NOW)))
+            .unwrap();
+    let outcome = run(session.after_outcome(
+        &store,
+        &host,
+        observed,
+        error_evidence(
+            Some("not scoped to a workspace".encode_utf16().collect()),
+            true,
+        ),
+    ))
+    .unwrap();
+    let OutcomeDecision::WorkspaceContinuation(next) = outcome else {
+        panic!("expected same-admission workspace continuation")
+    };
+    let mut id = "wrkspc_".encode_utf16().collect::<Vec<_>>();
+    id.push(0xd801);
+    let workspace = next.binding().workspace.as_ref().unwrap();
+    assert_eq!(workspace.id, JsString16::from_units(id));
+    assert_eq!(workspace.name, Some("DEFAULT".into()));
+    assert_eq!(next.binding().credential, a.credential);
+    assert_ne!(next.binding().account_cohort_id, a.account_cohort_id);
+    assert_eq!(
+        store.roster().accounts[0].workspace.as_ref(),
+        Some(workspace)
+    );
+    assert_eq!(host.workspace_calls.get(), 1);
+    assert!(store.quota(&a).is_none());
+    run(session.ensure_current(&store, &host, &next, KEY, &MODEL.into(), &raw)).unwrap();
+}
+
+#[test]
+fn source_capability_options_preserve_actual_same_binding_scalar_auth() {
+    let store = Store::new();
+    let a = account(1);
+    let config = seed(&store, vec![a]);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let first = selected(&session, &store, &host, &raw);
+    let binding = first.binding();
+    let secret = binding.credential.secret.try_scalar_secret().unwrap();
+    let base = gateway_providers::PrepareOptions {
+        auth: gateway_providers::AuthMaterial {
+            secret: secret.expose().into(),
+            api_key: binding.credential.kind == claude::CredentialKind::ApiKey,
+            account_id: Some(binding.account_id.clone()),
+            workspace_id: binding
+                .workspace
+                .as_ref()
+                .map(|workspace| workspace.id.try_utf8().unwrap()),
+        },
+        ..Default::default()
+    };
+    let prepared = first.prepare_options(base);
+    assert_eq!(prepared.auth.secret, secret.expose());
+    assert_eq!(
+        prepared.auth.account_id.as_deref(),
+        Some(binding.account_id.as_str())
+    );
+    assert_eq!(prepared.auth.workspace_id, None);
+    assert!(!prepared.supports_native_effort);
 }

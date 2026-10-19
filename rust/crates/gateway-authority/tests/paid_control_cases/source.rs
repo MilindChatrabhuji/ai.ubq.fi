@@ -98,7 +98,10 @@ fn source_policy_keys_and_reasoning_round_trip_without_logical_model_conflation(
     .unwrap();
     println!(
         "M19_SOURCE_POLICY_FIXTURE {}",
-        serde_json::to_string(&(keys::api_policy("key-a"), stored)).unwrap()
+        serde_json::to_string(
+            &serde_json::json!({"key":keys::api_policy("key-a").0,"record":stored})
+        )
+        .unwrap()
     );
 }
 

@@ -95,7 +95,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                         Some("invalid_request_error"),
                     ));
                 }
-                if serde_json::from_slice::<Value>(&raw).ok().as_ref() != Some(&document) {
+                // Same Request.text()/TextDecoder boundary as the authoritative AdminInput:
+                // replace malformed UTF8 and consume exactly one leading UTF8 BOM.
+                let bytes = raw.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&raw);
+                let decoded = String::from_utf8_lossy(bytes);
+                if SourceJson::parse(&decoded).ok().as_ref() != Some(&document) {
                     return Err(store::invalid(
                         "Capacity observations do not match the request-bound body",
                     ));

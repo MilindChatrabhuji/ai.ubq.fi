@@ -34,7 +34,7 @@ fn kernel_input(store: &Store, id: &str) -> gateway_routing_runtime::RoutingInpu
     seed_pool(store);
     store.seed(
         keys::kernel_policy("owner", Some("repo")),
-        KernelPolicy {
+        KernelPolicy::<String, i64> {
             v: 2,
             owner: "owner".into(),
             repo: Some("repo".into()),
@@ -248,5 +248,32 @@ fn changed_original_or_actual_api_reservation_is_not_current() {
             store.seed(journal_key("api-identity"), row);
         }
         assert!(run(session.currentness().checkpoint()).is_err());
+        assert_eq!(window(&store)["committed_requests"], 1);
     }
+}
+
+#[test]
+fn renewal_returns_actual_confirmed_deadline_and_refuses_expired_original_without_revival() {
+    let store = Store::new();
+    let host = Host::new(&store);
+    let session = begin_kernel(&store, "actual-renew", host.clone());
+    let old = run(session.currentness().checkpoint()).unwrap();
+    store.advance(1000);
+    let renewed = run(session.currentness().renew_kernel()).unwrap();
+    assert_eq!(
+        renewed.kernel_expires_at_ms(),
+        Some(NOW + 1000 + REQUEST_LEASE_MS)
+    );
+    assert_eq!(
+        renewed.request_expires_at_ms(),
+        renewed.kernel_expires_at_ms().unwrap()
+    );
+    assert!(renewed.request_expires_at_ms() > old.request_expires_at_ms());
+    store.advance(REQUEST_LEASE_MS);
+    let before = store.value(journal_key("actual-renew"));
+    assert!(run(session.currentness().renew_kernel()).is_err());
+    assert_eq!(store.value(journal_key("actual-renew")), before);
+    host.cancelled.store(true, Ordering::SeqCst);
+    assert!(run(session.renew()).is_err());
+    assert!(host.cancelled.load(Ordering::SeqCst));
 }

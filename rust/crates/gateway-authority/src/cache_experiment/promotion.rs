@@ -2,13 +2,15 @@
 use super::{
     model::*,
     state::{CyclePermit, record_key},
-    target::{catalog_key, runtime_key},
+    target::{catalog_key, json as source_json, runtime_key, set_member},
 };
 use crate::{Authority, TokenSource};
 use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_core::{GatewayError, state::AuthorityStore};
+use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson, state::AuthorityStore};
 use gateway_schema::{
-    runtime_config::{build_runtime_config, normalize_runtime_config},
+    runtime_config::{
+        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+    },
     snapshot::ModelSnapshot,
 };
 use serde_json::{Value, json};
@@ -36,14 +38,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let catalog_key = catalog_key();
             let runtime_key = runtime_key();
             let lease_key = record_key("cycle_lease", target);
-            let raw = tx.read::<Value>(&catalog_key).await?;
-            let runtime = tx.read::<Value>(&runtime_key).await?;
+            let raw = tx.read_source_control::<SourceJson>(&catalog_key).await?;
+            let runtime = tx.read_source_control::<SourceJson>(&runtime_key).await?;
             let lease = tx.read::<Value>(&lease_key).await?;
             let _: Option<Value> = tx.read(&codex_source_pool_key()).await?;
             let current = self.fresh_time(now)?;
             let snapshot = raw
                 .as_ref()
-                .and_then(|v| serde_json::from_value::<ModelSnapshot>(v.clone()).ok());
+                .and_then(|v| v.deserialize::<ModelSnapshot>().ok());
             let normalized = runtime.as_ref().and_then(normalize_runtime_config);
             let reason = if !super::state::owns(&lease, &permit.cycle_owner, current) {
                 Some(Reason::PromotionConflict)
@@ -52,8 +54,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             {
                 Some(Reason::AuthPoolDrift)
             } else if snapshot.as_ref().is_none_or(|s| {
-                s.source
-                    .trim_matches(gateway_schema::util::js_whitespace)
+                gateway_schema::reasoning::js_trim_source(&s.source)
+                    .as_units()
                     .is_empty()
                     || s.updated_at_ms <= 0
             }) {
@@ -61,7 +63,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             } else if tx.revision(&catalog_key).as_deref()
                 != Some(target.catalog_versionstamp.as_str())
                 || snapshot.as_ref().is_none_or(|s| {
-                    s.unique(&target.model).is_none() || !s.scope_experiment_eligible(&target.model)
+                    s.unique(&ModelId::from_scalar(&target.model)).is_none()
+                        || !s.scope_experiment_eligible(&ModelId::from_scalar(&target.model))
                 })
             {
                 Some(Reason::TargetCatalogDrift)
@@ -89,23 +92,26 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .ok_or_else(|| failed("Prompt-cache scope experiment snapshot is unavailable."))?;
             let normalized = normalized
                 .ok_or_else(|| failed("Prompt-cache scope experiment runtime is unavailable."))?;
-            let default = snapshot.preserve_default(normalized["default_model"].as_str());
+            let default = snapshot.preserve_default(default_model(&normalized).as_ref());
             let mut published = serde_json::to_value(scope)
                 .map_err(|_| failed("Prompt-cache scope experiment scope is invalid."))?;
             published["reproducible_cycles"] = json!(3);
             published["source"] = json!("live_probe");
             published["verified_at_ms"] = json!(current);
-            let next_snapshot =
-                snapshot.with_prompt_cache_scope(&target.model, PROVIDER, &published);
+            let next_snapshot = snapshot.with_prompt_cache_scope(
+                &ModelId::from_scalar(&target.model),
+                PROVIDER,
+                &source_json(&published),
+            );
             let next_runtime =
                 default
-                    .as_deref()
+                    .as_ref()
                     .zip(next_snapshot.as_ref())
                     .and_then(|(default, snapshot)| {
                         build_runtime_config(
                             snapshot,
                             Some(default),
-                            normalized["default_reasoning_effort"].as_str(),
+                            default_reasoning_effort(&normalized).as_ref(),
                             current,
                         )
                         .ok()
@@ -123,9 +129,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             };
             let mut next_raw = raw
                 .ok_or_else(|| failed("Prompt-cache scope experiment snapshot is unavailable."))?;
-            next_raw["models"] = json!(next_snapshot.models);
-            tx.put(&catalog_key, &next_raw, None)?;
-            tx.put(&runtime_key, &next_runtime, None)?;
+            set_member(&mut next_raw, "models", source_json(&next_snapshot.models))?;
+            tx.put_source_control(&catalog_key, &next_raw, None)?;
+            tx.put_source_control(&runtime_key, &next_runtime, None)?;
             tx.put(
                 &lease_key,
                 &json!({"owner":permit.cycle_owner,"lease_until_ms":crate::add(current,LEASE_MS)?}),

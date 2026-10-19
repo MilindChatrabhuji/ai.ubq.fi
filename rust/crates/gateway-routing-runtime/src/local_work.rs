@@ -23,7 +23,16 @@ use gateway_core::{
     state::{AuthorityStore, StoredRecord},
 };
 use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
-use serde_json::Value;
+
+#[path = "local_completion_runtime.rs"]
+mod completion;
+#[path = "local_coordination.rs"]
+mod coordination;
+pub use completion::{
+    BuiltLocalResponse, LocalAccountingProgress, LocalCompletionAdvance, LocalCompletionChoice,
+    LocalCompletionRefusal, LocalObservationSink, LocalSelectedResponse, LocalWireDecision,
+    LocalWireKind, PendingLocalCompletion,
+};
 
 /// Existing request metadata only. No caller supplies a replacement normalized body.
 pub struct LocalRequestMetadata {
@@ -68,7 +77,8 @@ pub(crate) struct LocalProviderParts<S, I, C, H> {
     pub(crate) plan: RoutePlan,
 }
 pub struct LocalDeliveryHandle<S, I, C, H> {
-    original: LocalWorkHandle<S, I, C, H>,
+    completed: bool,
+    original: Box<LocalWorkHandle<S, I, C, H>>,
 }
 pub struct LocalWorkCurrentness<'a, S, I, C, H> {
     original: &'a LocalWorkHandle<S, I, C, H>,
@@ -76,6 +86,7 @@ pub struct LocalWorkCurrentness<'a, S, I, C, H> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocalWorkLease {
     observed_at_ms: i64,
+    // Request-journal coordination only; never a caller or API/kernel deadline.
     request_expires_at_ms: i64,
     kernel_expires_at_ms: Option<i64>,
 }
@@ -83,6 +94,7 @@ impl LocalWorkLease {
     pub fn observed_at_ms(&self) -> i64 {
         self.observed_at_ms
     }
+    /// Actual journal coordination expiry, not a source client-abort deadline.
     pub fn request_expires_at_ms(&self) -> i64 {
         self.request_expires_at_ms
     }
@@ -221,7 +233,15 @@ impl<
                     body: None,
                     delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
                 },
-                Some((context, &nonce, &digest)),
+                Some(completion::OriginalBinding {
+                    context,
+                    nonce: &nonce,
+                    digest: &digest,
+                    api: &row.api,
+                    kernel: &row.kernel,
+                    allow_unbound_admission: true,
+                    api_release_done: false,
+                }),
             )
             .await?;
             return Err(error.into());
@@ -252,7 +272,7 @@ impl<
                     body: None,
                     delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
                 },
-                Some((handle.original_context(), &handle.nonce, &handle.digest)),
+                Some(completion::binding(&handle)),
             )
             .await?;
             return Err(error);
@@ -331,6 +351,7 @@ impl<
         self.checkpoint_phase(
             &[LocalWorkPhase::Running, LocalWorkPhase::ResponsePending],
             None,
+            false,
         )
         .await
     }
@@ -338,7 +359,11 @@ impl<
         &self,
         phases: &[LocalWorkPhase],
         next: Option<LocalWorkPhase>,
+        refresh_coordination: bool,
     ) -> RoutingResult<LocalWorkLease> {
+        if refresh_coordination && self.kernel.is_some() {
+            return Err(invalid().into());
+        }
         if self.host.cancelled() {
             return Err(self.host.cancellation_error().into());
         }
@@ -431,6 +456,11 @@ impl<
                 {
                     return Err(invalid());
                 }
+                if refresh_coordination {
+                    current.lease_expires_at_ms = at
+                        .checked_add(gateway_authority::REQUEST_LEASE_MS)
+                        .ok_or_else(invalid)?;
+                }
                 if let Some(next) = next {
                     current.local_work.as_mut().ok_or_else(invalid)?.phase = next;
                 }
@@ -454,46 +484,13 @@ impl<
             kernel_expires_at_ms: kernel_expires,
         })
     }
-    pub async fn renew_kernel(&self) -> RoutingResult<LocalWorkLease> {
-        self.checkpoint().await?;
-        if let Some(kernel) = &self.kernel {
-            let expiry =
-                Authority::with_clock(self.store.clone(), self.tokens.clone(), self.clock.clone())
-                    .renew_kernel(kernel, self.now()?)
-                    .await?;
-            journal::change(
-                &self.store,
-                &self.tokens,
-                self.id(),
-                self.now()?,
-                &[],
-                |row| {
-                    self.owned(row)?;
-                    if row.lease_expires_at_ms <= self.now()?
-                        || row.local_work.as_ref().is_none_or(|v| {
-                            !matches!(
-                                v.phase,
-                                LocalWorkPhase::Running | LocalWorkPhase::ResponsePending
-                            )
-                        })
-                    {
-                        return Err(invalid());
-                    }
-                    row.kernel.as_mut().ok_or_else(invalid)?.lease_expires_at_ms = expiry;
-                    row.lease_expires_at_ms = self
-                        .now()?
-                        .checked_add(gateway_authority::REQUEST_LEASE_MS)
-                        .ok_or_else(invalid)?;
-                    Ok(())
-                },
-            )
-            .await?;
-        }
-        self.checkpoint().await
-    }
     pub async fn resume_original(self) -> RoutingResult<LocalProviderAdmission<S, I, C, H>> {
         if let Err(error) = self
-            .checkpoint_phase(&[LocalWorkPhase::Running], Some(LocalWorkPhase::Planning))
+            .checkpoint_phase(
+                &[LocalWorkPhase::Running],
+                Some(LocalWorkPhase::Planning),
+                false,
+            )
             .await
         {
             finish_local_record(
@@ -507,7 +504,7 @@ impl<
                     body: None,
                     delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
                 },
-                Some((self.original_context(), &self.nonce, &self.digest)),
+                Some(completion::binding(&self)),
             )
             .await?;
             return Err(error);
@@ -519,6 +516,7 @@ impl<
             .checkpoint_phase(
                 &[LocalWorkPhase::Running],
                 Some(LocalWorkPhase::ResponsePending),
+                false,
             )
             .await
         {
@@ -533,12 +531,15 @@ impl<
                     body: None,
                     delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
                 },
-                Some((self.original_context(), &self.nonce, &self.digest)),
+                Some(completion::binding(&self)),
             )
             .await?;
             return Err(error);
         }
-        Ok(LocalDeliveryHandle { original: self })
+        Ok(LocalDeliveryHandle {
+            original: Box::new(self),
+            completed: false,
+        })
     }
 }
 
@@ -581,6 +582,7 @@ impl<
             .checkpoint_phase(
                 &[LocalWorkPhase::Planning],
                 Some(LocalWorkPhase::ProviderPlanned),
+                false,
             )
             .await?;
         let LocalWorkHandle {
@@ -642,11 +644,7 @@ impl<
             &original.clock,
             original.id(),
             observed,
-            Some((
-                original.original_context(),
-                &original.nonce,
-                &original.digest,
-            )),
+            Some(completion::binding(&original)),
         )
         .await?)
     }
@@ -662,11 +660,23 @@ impl<
         self.original.currentness()
     }
     pub async fn finish(
-        self,
+        mut self,
         observation: LocalTerminalObservation,
     ) -> RoutingResult<RecoveredSession> {
+        if self.completed {
+            if observation.semantic != LocalSemanticOutcome::Completed {
+                return Err(invalid().into());
+            }
+            return self
+                .finish_delivery(
+                    observation.reader_termination,
+                    observation.body,
+                    observation.delivery,
+                )
+                .await;
+        }
         if observation.semantic == LocalSemanticOutcome::Completed {
-            self.original.checkpoint().await?;
+            return Err(invalid().into());
         }
         let now = self.original.now()?;
         journal::change(
@@ -691,11 +701,7 @@ impl<
             &self.original.clock,
             self.original.id(),
             observation,
-            Some((
-                self.original.original_context(),
-                &self.original.nonce,
-                &self.original.digest,
-            )),
+            Some(completion::binding(&self.original)),
         )
         .await?)
     }
@@ -712,13 +718,14 @@ pub(crate) async fn finish_local_record<
     clock: &C,
     id: &str,
     observation: LocalTerminalObservation,
-    expected: Option<(&RequestContext, &str, &str)>,
+    expected: Option<completion::OriginalBinding<'_>>,
 ) -> Result<RecoveredSession, GatewayError> {
     let (_, old) = journal::load(store, id).await?;
     let local = old.local_work.as_ref().ok_or_else(invalid)?;
-    if expected.is_some_and(|(context, nonce, digest)| {
-        context != &old.context || nonce != local.owner_nonce || digest != old.input_digest
-    }) {
+    if expected
+        .as_ref()
+        .is_some_and(|binding| !binding.matches(&old))
+    {
         return Err(invalid());
     }
     let context = old.context.clone();
@@ -727,18 +734,16 @@ pub(crate) async fn finish_local_record<
     if local.phase == LocalWorkPhase::ProviderPlanned {
         return Err(invalid());
     }
+    let observation = completion::merge_observation(local.terminal, observation)?;
     if old.finished {
-        if local.terminal != Some(observation) {
-            return Err(invalid());
-        }
-        return Ok(RecoveredSession {
-            request_id: id.into(),
-            observation: local_transport(observation),
-            settled: true,
-        });
+        return completion::refine_finished_record(store, tokens, clock, id, &old, observation)
+            .await;
     }
     let intent = journal::change(store, tokens, id, clock.now_ms()?, &[], |row| {
-        if row.context != context
+        if expected
+            .as_ref()
+            .is_some_and(|binding| !binding.matches(row))
+            || row.context != context
             || row.input_digest != digest
             || row
                 .local_work
@@ -757,30 +762,30 @@ pub(crate) async fn finish_local_record<
         if local.phase == LocalWorkPhase::ProviderPlanned {
             return Err(invalid());
         }
-        match local.terminal {
-            Some(existing) if existing != observation => return Err(invalid()),
-            Some(_) => {}
-            None => {
-                local.terminal = Some(observation);
-                local.phase = LocalWorkPhase::TerminalPending;
-            }
-        }
+        local.terminal = Some(completion::merge_observation(local.terminal, observation)?);
+        local.phase = LocalWorkPhase::TerminalPending;
         Ok(())
     })
     .await?;
+    let observation = intent
+        .local_work
+        .as_ref()
+        .and_then(|local| local.terminal)
+        .ok_or_else(invalid)?;
     if intent.finished {
-        return Ok(RecoveredSession {
-            request_id: id.into(),
-            observation: local_transport(observation),
-            settled: true,
-        });
+        return completion::refine_finished_record(store, tokens, clock, id, &intent, observation)
+            .await;
     }
     let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
-    if let Some(api) = &intent.api {
+    if let Some(api) = &intent.api
+        && expected
+            .as_ref()
+            .is_none_or(|binding| !binding.api_release_done)
+    {
         authority
             .release_api_key(
                 api,
-                true,
+                false,
                 "local_work_without_provider_dispatch",
                 clock.now_ms()?,
             )
@@ -852,7 +857,8 @@ mod factory_tests {
         // This matching scalar source fixture exercises the real existing planner;
         // it is not a product Value adapter or acceptance of the pending M05 factory.
         let source = SourceJson::parse(&serde_json::to_string(&fixture.raw).unwrap()).unwrap();
-        let plan = crate::policy::plan(&fixture, NOW).unwrap();
+        let collator = Host::new(store).source_string_collator();
+        let plan = crate::policy::plan(&fixture, NOW, collator.as_ref()).unwrap();
         let local = run(RoutingSession::begin_local_compaction(
             LocalAdmissionInput {
                 metadata: LocalRequestMetadata {
@@ -888,7 +894,7 @@ mod factory_tests {
         );
         let parts = run(admission.attest_plan(plan)).unwrap();
         assert_eq!(parts.input.original.original_source(), &original);
-        assert_eq!(parts.plan.model, "gpt-test");
+        assert!(parts.plan.model.matches_scalar("gpt-test"));
         let after = parts.store.value(journal::key("factory-owner"));
         assert_eq!(after["local_work"]["phase"], "provider_planned");
         for field in ["context", "input_digest", "api", "kernel", "attempts"] {
