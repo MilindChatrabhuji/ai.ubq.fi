@@ -66,3 +66,15 @@ fn scalar_surplus_prices_and_source_text_filter_are_unchanged() {
     assert_eq!(row["output_price_per_token"], 0.25);
     assert_eq!(row["supports_tools"], true);
 }
+
+#[test]
+fn metadata_join_uses_the_shared_contextual_lowercase_and_preserves_opaque_exact_tiers(){
+ use gateway_core::model::ModelId;
+ let rows=vec![parse(r#"{"id":"vendor/ΟΣ\ud800","context_window_tokens":10}"#),parse(r#"{"id":"vendor/other\udc00","context_window_tokens":20}"#)];
+ let id=ModelId::from_source(JsString16::from_units("vendor/ος".encode_utf16().chain([0xd800]).collect()));
+ assert_eq!(providers::match_openrouter(&rows,&id),Some(&rows[0]));
+ assert!(providers::match_openrouter(&rows,&r"vendor/ος\ud800".into()).is_none());
+ let ambiguous=vec![parse(r#"{"id":"a/model"}"#),parse(r#"{"id":"b/model"}"#)];
+ assert!(providers::match_openrouter(&ambiguous,&"model".into()).is_none());
+ assert_eq!(providers::match_openrouter(&ambiguous,&"a/model".into()),Some(&ambiguous[0]));
+}
