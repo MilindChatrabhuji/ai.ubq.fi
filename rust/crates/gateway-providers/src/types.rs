@@ -56,6 +56,34 @@ impl std::fmt::Debug for AuthMaterial {
             .finish_non_exhaustive()
     }
 }
+/// Immutable Rust-only selected-model observations, never request JSON or authority.
+#[derive(Clone, Debug)]
+pub struct OrdinaryPreparationContext {
+    prompt_cache: Option<Value>,
+    reasoning: gateway_schema::reasoning::ModelReasoning,
+    default_effort: String,
+}
+impl OrdinaryPreparationContext {
+    pub fn from_metadata(
+        metadata: &gateway_schema::catalog::RequestModelMetadata,
+        default_effort: &str,
+    ) -> Self {
+        Self {
+            prompt_cache: metadata.record.as_ref().and_then(|record| record.get("prompt_cache")).cloned(),
+            reasoning: metadata.reasoning.clone(),
+            default_effort: default_effort.to_owned(),
+        }
+    }
+    pub fn prompt_cache(&self) -> Option<&Value> {
+        self.prompt_cache.as_ref()
+    }
+    pub fn reasoning(&self) -> &gateway_schema::reasoning::ModelReasoning {
+        &self.reasoning
+    }
+    pub fn default_effort(&self) -> &str {
+        &self.default_effort
+    }
+}
 #[derive(Clone, Debug)]
 pub struct PrepareOptions {
     pub auth: AuthMaterial,
@@ -75,6 +103,8 @@ pub struct PrepareOptions {
     pub reasoning_summary: Option<String>,
     /// Restored by ReplayStore in the same authenticated context, never by client input.
     pub restored_native_messages: Option<Vec<Value>>,
+    /// Runtime callers supply Some even for unknown metadata. None is the legacy pure adapter contract.
+    pub ordinary_preparation: Option<OrdinaryPreparationContext>,
 }
 impl Default for PrepareOptions {
     fn default() -> Self {
@@ -93,6 +123,7 @@ impl Default for PrepareOptions {
             conversation_id: None,
             reasoning_summary: None,
             restored_native_messages: None,
+            ordinary_preparation: None,
         }
     }
 }
