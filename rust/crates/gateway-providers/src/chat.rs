@@ -1,7 +1,7 @@
 //! Responses -> Chat-only request translation, preserving provider-specific boundaries.
 use crate::tools::{flatten_tools, project_tool_choice};
 use crate::types::{ChatProfile, Elision, ToolMap, invalid};
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, js_string::JsString16};
 use serde_json::{Value, json};
 pub const FORWARD_LIMIT: usize = 65_536;
 pub const FORWARD_VERSION: &str = "deepseek-forwarded-payload/v1";
@@ -13,46 +13,89 @@ pub struct ChatProjection {
     pub elisions: Vec<Elision>,
     pub warnings: Vec<String>,
 }
+/// Source utf16Head: preserve the exact code-unit prefix, dropping a cut high surrogate.
+fn utf16_head(value: &[u16], length: usize) -> &[u16] {
+    let mut end = length.min(value.len());
+    if end < value.len() && end > 0 && (0xd800..=0xdbff).contains(&value[end - 1]) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+/// TextEncoder counts unpaired units as U+FFFD without replacing the stored source string.
+fn text_encoder_len(value: &[u16]) -> usize {
+    char::decode_utf16(value.iter().copied())
+        .map(|value| value.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
+        .sum()
+}
+
+fn bound_source(
+    text: &JsString16,
+    path: &str,
+    call_id: Option<&str>,
+    kind: &str,
+    reject: bool,
+    elisions: &mut Vec<Elision>,
+) -> Result<JsString16, GatewayError> {
+    let original_bytes = text_encoder_len(text.as_units());
+    if original_bytes <= FORWARD_LIMIT {
+        return Ok(text.clone());
+    }
+    if reject {
+        let call_note = call_id.map_or_else(String::new, |id| format!(" (tool call {id})"));
+        return Err(GatewayError::new(
+            400,
+            format!("input item {path}{call_note} carries {original_bytes} bytes; this route forwards at most {FORWARD_LIMIT} bytes per message under {FORWARD_VERSION}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction."),
+            Some("context_length_exceeded"),
+        ).with_param(Some(path)));
+    }
+    // Source utf8Head starts with a code-unit budget, not a UTF8 byte offset.
+    let mut head = utf16_head(text.as_units(), FORWARD_LIMIT);
+    while !head.is_empty() && text_encoder_len(head) > FORWARD_LIMIT {
+        head = utf16_head(head, (head.len() as f64 * 0.9).floor() as usize);
+    }
+    loop {
+        let head_bytes = text_encoder_len(head);
+        let omitted = original_bytes - head_bytes;
+        let marker = format!(
+            "\n[gateway: {FORWARD_VERSION} elided {omitted} bytes omitted; the model did not receive the elided bytes; this route forwards at most {FORWARD_LIMIT} bytes per message because the provider counts forwarded payloads as text tokens]"
+        );
+        if head.is_empty() || head_bytes + marker.len() <= FORWARD_LIMIT {
+            let mut units = head.to_vec();
+            units.extend(marker.encode_utf16());
+            elisions.push(Elision {
+                path: path.into(),
+                call_id: call_id.map(str::to_owned),
+                kind: kind.into(),
+                original_bytes,
+                forwarded_bytes: head_bytes + marker.len(),
+                omitted_bytes: omitted,
+            });
+            return Ok(JsString16::from_units(units));
+        }
+        head = utf16_head(head, (head.len() as f64 * 0.9).floor() as usize);
+    }
+}
+
 fn bound(
     text: &str,
     path: &str,
+    call_id: Option<&str>,
     kind: &str,
     reject: bool,
     elisions: &mut Vec<Elision>,
 ) -> Result<String, GatewayError> {
-    if text.len() <= FORWARD_LIMIT {
-        return Ok(text.into());
-    }
-    if reject {
-        return Err(GatewayError::new(400,format!("{path} exceeds the declared {FORWARD_VERSION} limit: {} bytes exceeds {FORWARD_LIMIT} bytes",text.len()),Some("context_length_exceeded")).with_param(Some(path)));
-    }
-    let mut count = FORWARD_LIMIT.min(text.len());
-    while !text.is_char_boundary(count) {
-        count -= 1;
-    }
-    loop {
-        let omitted = text.len() - count;
-        let marker = format!(
-            "\n[gateway: {FORWARD_VERSION} elided {omitted} bytes omitted; the model did not receive the elided bytes; this route forwards at most {FORWARD_LIMIT} bytes per message because the provider counts forwarded payloads as text tokens]"
-        );
-        if count + marker.len() <= FORWARD_LIMIT {
-            let result = format!("{}{marker}", &text[..count]);
-            elisions.push(Elision {
-                path: path.into(),
-                call_id: None,
-                kind: kind.into(),
-                original_bytes: text.len(),
-                forwarded_bytes: result.len(),
-                omitted_bytes: omitted,
-            });
-            return Ok(result);
-        }
-        count = (count as f64 * 0.9).floor() as usize;
-        while !text.is_char_boundary(count) {
-            count -= 1;
-        }
-    }
+    bound_source(
+        &JsString16::from_utf8(text),
+        path,
+        call_id,
+        kind,
+        reject,
+        elisions,
+    )?
+    .try_utf8()
 }
+
 fn content(
     value: &Value,
     role: &str,
@@ -62,7 +105,7 @@ fn content(
 ) -> Result<Value, GatewayError> {
     if let Some(text) = value.as_str() {
         return Ok(Value::String(bound(
-            text, path, "message", reject, elisions,
+            text, path, None, "message", reject, elisions,
         )?));
     }
     let parts = value.as_array().ok_or_else(|| {
@@ -134,7 +177,7 @@ fn content(
     }
     if images.is_empty() {
         return Ok(Value::String(bound(
-            &text, path, "message", reject, elisions,
+            &text, path, None, "message", reject, elisions,
         )?));
     }
     // Account for every image byte, removing whole images rather than broken data URLs.
@@ -170,7 +213,7 @@ fn content(
             break;
         }
     }
-    let text = bound(&text, path, "message", reject, elisions)?;
+    let text = bound(&text, path, None, "message", reject, elisions)?;
     if !text.is_empty() {
         images.insert(0, json!({"type":"text","text":text}));
     }
@@ -211,7 +254,7 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
         .as_str()
         .filter(|s| !s.trim().is_empty())
     {
-        messages.push(json!({"role":"system","content":bound(instructions,"instructions","message",reject,&mut elisions)?}));
+        messages.push(json!({"role":"system","content":bound(instructions,"instructions",None,"message",reject,&mut elisions)?}));
     }
     let input = raw.get("input").unwrap_or(&Value::Null);
     let items = if let Some(text) = input.as_str() {
@@ -228,7 +271,7 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
         if let Some(text) = item.as_str() {
             pending.clear();
             messages.push(
-                json!({"role":"user","content":bound(text,&path,"message",reject,&mut elisions)?}),
+                json!({"role":"user","content":bound(text,&path,None,"message",reject,&mut elisions)?}),
             );
             continue;
         }
@@ -294,7 +337,7 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
                 } else {
                     output.to_string()
                 };
-                messages.push(json!({"role":"tool","tool_call_id":call_id,"content":bound(&text,&format!("{path}.output"),"tool_output",reject,&mut elisions)?}));
+                messages.push(json!({"role":"tool","tool_call_id":call_id,"content":bound(&text,&format!("{path}.output"),Some(call_id),"tool_output",reject,&mut elisions)?}));
             }
             "agent_message" => {
                 pending.clear();
@@ -324,7 +367,7 @@ pub fn responses_messages(raw: &Value) -> Result<(Vec<Value>, Vec<Elision>), Gat
                     "[agent message] {author} -> {recipient}:\n{}{notice}",
                     texts.join("\n")
                 );
-                messages.push(json!({"role":"user","content":bound(&text,&path,"agent_message",reject,&mut elisions)?}));
+                messages.push(json!({"role":"user","content":bound(&text,&path,None,"agent_message",reject,&mut elisions)?}));
             }
             _ => {
                 return Err(invalid(
@@ -398,6 +441,7 @@ pub fn project_responses(
                 messages[index]["content"] = json!(bound(
                     &text,
                     "instructions",
+                    None,
                     "message",
                     raw["truncation"] == "disabled",
                     &mut elisions
@@ -503,3 +547,7 @@ pub fn validate_thinking_choice(body: &Value, field: &str) -> Result<(), Gateway
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "chat_unicode_tests.rs"]
+mod unicode_tests;
