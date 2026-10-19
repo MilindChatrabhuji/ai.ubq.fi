@@ -117,6 +117,44 @@ pub fn health_response() -> Result<gateway_auth::AuthResponse, GatewayError> {
     Ok(response)
 }
 
+/// Source /admin/defaults diagnostics use the same configured monitoring identity and cache.
+pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value, GatewayError> {
+    let host = runtime.host();
+    let configured = inventory::monitoring_key(&host.platform.env).is_some();
+    let snapshot = if configured {
+        let deadline = crate::storage::now_ms()?
+            .checked_add(10_000)
+            .ok_or_else(|| unavailable("Metered diagnostics deadline is invalid."))?;
+        host.metered_quota_snapshot(false, deadline).await?
+    } else {
+        None
+    };
+    Ok(gateway_observability::metered::diagnostics(
+        configured,
+        snapshot.as_ref(),
+    ))
+}
+/// Retention maintenance and host-log diagnostics belong to this same administrative request.
+pub async fn error_diagnostics(
+    runtime: &Runtime,
+    context: &gateway_observability::Context,
+) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
+    if context.request_id != runtime.host().request_id {
+        return Err(GatewayError::unavailable(
+            "The administrative diagnostic receipt does not match this request.",
+            "admin_body_receipt_mismatch",
+        ));
+    }
+    Ok(gateway_admin_runtime::capabilities::ErrorDiagnostics {
+        retention: runtime.error_retention_diagnostics().await,
+        // Source leaves unmeasured host text logs unknown, including platforms without paths.
+        log_files: serde_json::json!({
+            "scope":"host_text_logs", "platform":"cloudflare-workers", "files":[],
+            "total_bytes":null, "warning":false,
+        }),
+    })
+}
+
 #[derive(Clone, Copy)]
 pub struct Host;
 
