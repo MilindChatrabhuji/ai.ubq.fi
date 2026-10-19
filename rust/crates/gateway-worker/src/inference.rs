@@ -474,6 +474,7 @@ pub async fn run(
             .headers()
             .entries()
             .collect::<gateway_providers::Headers>();
+        let decode_plan = gateway_providers::response::response_plan(prepared.decode(), &headers);
         capture.correlate(correlation(provider, &headers));
         let pricing = crate::inference_source::pricing_metadata(
             session.surplus_billing(),
@@ -529,8 +530,8 @@ pub async fn run(
                 .map_err(|_| invalid("Upstream stream is unavailable."))?;
             let relay = Relay {
                 source,
-                plan: prepared.decode().clone(),
-                decoder: StreamDecoder::new(prepared.decode().clone()),
+                plan: decode_plan.clone(),
+                decoder: StreamDecoder::new(decode_plan.clone()),
                 queue: VecDeque::new(),
                 done: false,
                 observation: observation.clone(),
@@ -704,7 +705,7 @@ pub async fn run(
                 return Err(error);
             }
         };
-        let decoded = match decode_response(prepared.decode(), status, &headers, &bytes) {
+        let decoded = match decode_response(&decode_plan, status, &headers, &bytes) {
             Ok(decoded) => decoded,
             Err(error) => {
                 lifecycle.finish(Default::default(), None).await?;
