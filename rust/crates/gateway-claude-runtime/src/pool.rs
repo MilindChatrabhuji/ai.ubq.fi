@@ -176,7 +176,7 @@ impl ClaudePoolSession {
             options.native_reasoning_efforts = Some(Vec::new());
             options.supports_native_effort = false;
             options.supports_disabled_thinking = false;
-            if let Some(effort) = effort {
+            if effort.is_some() {
                 let catalog = host
                     .catalog(
                         &binding,
