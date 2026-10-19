@@ -243,8 +243,18 @@ fn named_source_validators_keep_complete_key_version_numeric_flags_and_encoding_
             ])
         };
         assert!(validate(&key(parts.clone()), &record).is_err());
-        for index in 0..parts.as_array().unwrap().len() {
-            let mut wrong = parts.clone();
+        let original = oracle()
+            .cases
+            .into_iter()
+            .nth(1)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|expected| key(expected.key.clone()) == raw_key)
+            .unwrap()
+            .key;
+        for index in 0..original.as_array().unwrap().len() {
+            let mut wrong = original.clone();
             wrong[index] = wrong[index]
                 .as_f64()
                 .map_or_else(|| json!("wrong"), |n| json!(n + 1.0));
@@ -297,7 +307,7 @@ fn source_history_point_validation_retains_utf16_length_and_complete_window_stan
             replace(&windows, "five_hour", invalid)
         )));
     }
-    for bad in ["-1", "101", "1.1e30"] {
+    for bad in ["-1", "600", "1.1e30"] {
         assert!(!valid_history_point_source(&replace(
             &p,
             "response_status",
