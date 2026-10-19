@@ -991,6 +991,7 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-native",
+ "gateway-routing-runtime",
  "gateway-schema",
  "rusqlite",
  "serde",
