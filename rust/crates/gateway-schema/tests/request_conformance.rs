@@ -1,3 +1,4 @@
+use gateway_core::{js_string::JsString16, source_json::SourceJson};
 use gateway_schema::{
     allowlists::*, content::*, prompt_cache::*, reasoning::*, request::*, util::*,
 };
@@ -115,24 +116,42 @@ fn scoped_extensions_do_not_widen_other_routes() {
 }
 #[test]
 fn none_custom_and_ultra_efforts_preserve_request_labels() {
-    let model = ModelReasoning::from_record(Some(
-        &json!({"supported_reasoning_levels":["low","Future Tier"],"reasoning_effort_wire_map":{"none":"max","ultra":"low","Future Tier":"future-wire"}}),
-    ));
-    assert!(!model.levels.contains(&"none".to_owned()));
-    assert_eq!(effort_for_codex("none", &model), "none");
-    assert_eq!(effort_for_codex("ultra", &model), "max");
-    assert_eq!(effort_for_codex("Future Tier", &model), "future-wire");
+    let record = SourceJson::from_serializable(&json!({"supported_reasoning_levels":["low","Future Tier"],"reasoning_effort_wire_map":{"none":"max","ultra":"low","Future Tier":"future-wire"}})).unwrap();
+    let model = ModelReasoning::from_record(Some(&record));
+    assert!(!model.levels.contains(&JsString16::from_utf8("none")));
+    assert_eq!(
+        effort_for_codex(&"none".into(), &model),
+        JsString16::from_utf8("none")
+    );
+    assert_eq!(
+        effort_for_codex(&"ultra".into(), &model),
+        JsString16::from_utf8("max")
+    );
+    assert_eq!(
+        effort_for_codex(&"Future Tier".into(), &model),
+        JsString16::from_utf8("future-wire")
+    );
     let resolved = resolve_reasoning(
-        Some(&json!({"effort":" ultra ","context":"opaque"})),
+        Some(
+            &SourceJson::from_serializable(&json!({"effort":" ultra ","context":"opaque"}))
+                .unwrap(),
+        ),
         &model,
-        "medium",
+        &"medium".into(),
     )
     .unwrap();
-    assert_eq!(resolved.label, "ultra");
-    assert_eq!(resolved.value["effort"], "max");
-    assert_eq!(resolved.value["context"], "opaque");
-    let summary = resolve_reasoning(Some(&json!({"summary":"auto"})), &model, "medium").unwrap();
-    assert!(summary.value.get("effort").is_none());
+    assert_eq!(resolved.label, JsString16::from_utf8("ultra"));
+    let view: Value = resolved.value.deserialize().unwrap();
+    assert_eq!(view["effort"], "max");
+    assert_eq!(view["context"], "opaque");
+    let summary = resolve_reasoning(
+        Some(&SourceJson::from_serializable(&json!({"summary":"auto"})).unwrap()),
+        &model,
+        &"medium".into(),
+    )
+    .unwrap();
+    let summary: Value = summary.value.deserialize().unwrap();
+    assert!(summary.get("effort").is_none());
     assert_eq!(
         parse_effort(Some(&Value::Null), "reasoning_effort").unwrap(),
         None

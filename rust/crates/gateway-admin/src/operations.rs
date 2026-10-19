@@ -1,6 +1,5 @@
 use gateway_auth::{AuthPrincipal, AuthResponse};
-use gateway_core::GatewayError;
-use serde_json::Value;
+use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson};
 use std::{collections::BTreeMap, future::Future};
 
 use crate::AdminOperation;
@@ -9,7 +8,7 @@ use crate::AdminOperation;
 pub struct AdminInput {
     pub parameter: Option<String>,
     pub query: BTreeMap<String, Vec<String>>,
-    pub body: Value,
+    pub body: SourceJson,
     pub actor: AuthPrincipal,
     pub request_id: String,
     pub now_ms: i64,
@@ -53,7 +52,7 @@ pub trait AdminHost {
     /// Source pricing/exposure discovery belongs before the atomic key-policy write, outside the transaction.
     fn paid_key_policy(
         &self,
-        body: &Value,
+        body: &SourceJson,
     ) -> impl Future<Output = Result<PaidKeyFields, GatewayError>>;
 }
 
@@ -61,9 +60,9 @@ pub trait AdminHost {
 pub struct PaidKeyFields {
     pub enabled: bool,
     pub limit_microcredits: i64,
-    pub model_ids: Vec<String>,
+    pub model_ids: Vec<ModelId>,
     pub quota_per_credit: i64,
-    pub max_exposure_microcredits: BTreeMap<String, i64>,
+    pub max_exposure_microcredits: BTreeMap<ModelId, i64>,
     pub pricing_checked_at_ms: Option<i64>,
 }
 

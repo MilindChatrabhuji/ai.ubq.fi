@@ -12,10 +12,24 @@ use gateway_providers::ClientSurface;
 use serde_json::{Value, json};
 use support::*;
 pub fn context(input: &PaidRequest) -> PaidRequestContext {
-    let mut body = json!({"model":input.model,"stream":input.stream});
+    let mut fields = vec![
+        ("model", input.model.to_source_json().unwrap()),
+        (
+            "stream",
+            gateway_core::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
+        ),
+    ];
     if let Some(effort) = &input.reasoning {
-        body["reasoning"] = json!({"effort":effort});
+        fields.push((
+            "reasoning",
+            gateway_core::source_serialization::object(vec![(
+                "effort",
+                effort.to_source_json().unwrap(),
+            )])
+            .unwrap(),
+        ));
     }
+    let body = gateway_core::source_serialization::object(fields).unwrap();
     PaidRequestContext {
         original_model: input.model.clone(),
         body,
@@ -34,7 +48,11 @@ fn revision(store: &MemoryStore, key: &RecordKey) -> Option<String> {
 
 pub fn republish(store: &MemoryStore) {
     let row = store.row(&keys::paid_routing()).unwrap();
-    let mut projection: PaidRoutingProjection = serde_json::from_value(row.value).unwrap();
+    let mut projection: PaidRoutingProjection =
+        gateway_core::source_control::decode_source_control_record(&row)
+            .unwrap()
+            .deserialize()
+            .unwrap();
     projection.provenance.owner_revision = revision(store, &keys::paid_control_owner()).unwrap();
     projection.provenance.config_revision = revision(store, &keys::paid_control_config()).unwrap();
     projection.provenance.surplus_observation_revision = revision(
@@ -52,7 +70,7 @@ pub fn republish(store: &MemoryStore) {
             key: key.0,
         })
         .collect();
-    store.seed(keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
 }
 
 pub fn seed_controls(store: &MemoryStore) {
@@ -80,7 +98,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     );
-    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).collect();
+    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_core::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         store.seed(
             keys::paid_control_observation(provider),
@@ -136,7 +154,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     };
-    store.seed(keys::paid_routing(), &projection);
+    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
     republish(store);
 }
 
@@ -702,7 +720,15 @@ fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() 
             .row(&super::paid_original::journal_key(&input.request_id.0))
             .unwrap()
             .value;
-        assert_eq!(journal_local_work(&row).unwrap().unwrap().phase, phase);
+        assert_eq!(
+            journal_local_work(
+                &gateway_core::source_json::SourceJson::from_serializable(&row).unwrap()
+            )
+            .unwrap()
+            .unwrap()
+            .phase,
+            phase
+        );
         assert!(
             run(authority.bind_paid_original_request(
                 &fresh_route(&authority, &input),

@@ -5,6 +5,7 @@ use gateway_core::identity::{
 };
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::RevisionCheck;
+use gateway_core::{js_string::JsString16, model::ModelId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -158,27 +159,27 @@ impl Default for CapacityStore {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountCatalog {
     pub client_version: String,
-    pub models: Vec<String>,
+    pub models: Vec<ModelId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnsupportedModel {
     pub observed_at_ms: i64,
-    pub detail: String,
+    pub detail: JsString16,
 }
 
 /// Transient hash-keyed view; the source account-model row uses raw account IDs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModelAvailability {
     pub catalogs: BTreeMap<String, AccountCatalog>,
-    pub unsupported: BTreeMap<String, BTreeMap<String, UnsupportedModel>>,
+    pub unsupported: BTreeMap<String, BTreeMap<ModelId, UnsupportedModel>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AdmittedAccount {
     pub binding: AccountBinding,
     pub active_generation: u64,
-    pub requested_model: String,
+    pub requested_model: ModelId,
     pub quota_class: CodexQuotaClass,
     pub probe_required: bool,
     pub probe: Option<ProbeLease>,
@@ -187,7 +188,7 @@ pub struct AdmittedAccount {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ScopedOverageProbe {
     pub binding: AccountBinding,
-    pub requested_model: String,
+    pub requested_model: ModelId,
     pub quota_class: CodexQuotaClass,
     pub probe: ProbeLease,
 }
@@ -196,7 +197,7 @@ pub struct ScopedOverageProbe {
 #[derive(Clone, Debug)]
 pub struct CohortProof {
     pub(crate) checks: Vec<RevisionCheck>,
-    pub(crate) model: String,
+    pub(crate) model: ModelId,
     pub(crate) quota_class: CodexQuotaClass,
     pub(crate) exhausted: bool,
     pub(crate) unavailable: bool,
@@ -213,7 +214,7 @@ impl CohortProof {
     pub fn selected_count(&self) -> usize {
         self.bindings.len()
     }
-    pub fn model(&self) -> &str {
+    pub fn model(&self) -> &ModelId {
         &self.model
     }
     pub fn account_bindings(&self) -> &[AccountBinding] {
@@ -235,8 +236,8 @@ pub enum RouteSelection {
         proof: CohortProof,
     },
     ModelUnavailable {
-        model: String,
-        detail: Option<String>,
+        model: ModelId,
+        detail: Option<JsString16>,
     },
     RoutingUnavailable,
 }

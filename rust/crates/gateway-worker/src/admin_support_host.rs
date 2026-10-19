@@ -45,26 +45,12 @@ impl Binding {
     pub async fn metered_diagnostics(&self) -> Result<Value, GatewayError> {
         crate::observability_host::metered_diagnostics(&self.observations).await
     }
-    pub async fn pricing(&self, models: &[String]) -> Result<PricingSnapshot, GatewayError> {
-        let headers = BTreeMap::from([("Accept".into(), "application/json".into())]);
-        let ratios = self
-            .fixed_json(
-                "https://api.openlux.ai/api/ratio_config",
-                Method::Get,
-                &headers,
-                &[],
-                None,
-            )
-            .await?;
-        let status = self
-            .fixed_json(
-                "https://api.openlux.ai/api/status",
-                Method::Get,
-                &headers,
-                &[],
-                None,
-            )
-            .await?;
+    pub async fn pricing(
+        &self,
+        models: &[gateway_core::model::ModelId],
+    ) -> Result<PricingSnapshot, GatewayError> {
+        let ratios = pricing::fetch(self, pricing::Metadata::Ratios).await?;
+        let status = pricing::fetch(self, pricing::Metadata::Status).await?;
         pricing::project(models, &ratios, &status, crate::storage::now_ms()?)
     }
     pub async fn error_diagnostics(

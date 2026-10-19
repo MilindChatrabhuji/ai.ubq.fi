@@ -23,7 +23,10 @@ fn authoritative_refusal_rotates_durable_active_and_all_current_accounts_prove_p
         OutcomeDecision::Retry
     ));
     assert_eq!(store.roster().active_account_id, Some(b.account_id.clone()));
-    assert_eq!(store.roster().active_reason, "authoritative_unavailability");
+    assert_eq!(
+        store.roster().active_reason,
+        "authoritative_unavailability".into()
+    );
     let next = selected(&session, &store, &host, &raw);
     assert_eq!(next.binding().account_id, b.account_id);
     assert!(matches!(
@@ -37,7 +40,7 @@ fn authoritative_refusal_rotates_durable_active_and_all_current_accounts_prove_p
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw,
                 selection: None
             }
@@ -84,7 +87,9 @@ fn generic_429_cools_down_but_never_rotates_and_no_reset_limit_has_no_proof() {
             apply(&session, &store, &host, &first, 429, headers, NOW),
             OutcomeDecision::Preserve
         ));
-        assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW).is_none());
+        assert!(
+            quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_none()
+        );
         assert_eq!(store.roster().active_account_id, Some(a.account_id));
         if quota::cooling_down(store.quota(first.binding()).as_ref(), NOW) {
             let next = ClaudePoolSession::new(config);
@@ -93,7 +98,7 @@ fn generic_429_cools_down_but_never_rotates_and_no_reset_limit_has_no_proof() {
                 &host,
                 SelectionInput {
                     key_id: KEY,
-                    model: MODEL,
+                    model: &MODEL.into(),
                     raw: &raw,
                     selection: None,
                 },
@@ -125,12 +130,14 @@ fn a_success_is_recorded_at_head_receipt_before_any_clone_and_clears_older_proof
     let older =
         run(session.observe_response(&store, &host, &first, head(200, Headers::new(), NOW - 1)))
             .unwrap();
-    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW).is_some());
+    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_some());
     drop(older);
     let newer =
         run(session.observe_response(&store, &host, &first, head(200, Headers::new(), NOW + 1)))
             .unwrap();
-    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW + 1).is_none());
+    assert!(
+        quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW + 1).is_none()
+    );
     drop(newer);
 }
 #[test]
@@ -143,7 +150,7 @@ fn principal_revocation_and_current_catalog_generation_change_refuse_before_disp
     let first = selected(&session, &store, &host, &raw);
     store.allow(json!([]));
     assert_eq!(
-        run(session.ensure_current(&store, &host, &first, KEY, MODEL, &raw))
+        run(session.ensure_current(&store, &host, &first, KEY, &MODEL.into(), &raw))
             .unwrap_err()
             .status,
         403
@@ -153,7 +160,7 @@ fn principal_revocation_and_current_catalog_generation_change_refuse_before_disp
         .generation
         .record_success(gateway_admin_runtime::claude_generation::StateChange::CredentialStored);
     assert_eq!(
-        run(session.ensure_current(&store, &host, &first, KEY, MODEL, &raw))
+        run(session.ensure_current(&store, &host, &first, KEY, &MODEL.into(), &raw))
             .unwrap_err()
             .status,
         400
@@ -172,7 +179,7 @@ fn a_persisted_empty_deny_and_roster_tombstone_cannot_bootstrap_an_account() {
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw,
                 selection: None
             }
@@ -188,7 +195,7 @@ fn a_persisted_empty_deny_and_roster_tombstone_cannot_bootstrap_an_account() {
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw,
                 selection: None
             }
@@ -238,7 +245,9 @@ fn credential_replacement_rejects_old_quota_and_health_without_touching_other_ac
     let raw = raw();
     let first = selected(&session, &store, &host, &raw);
     let mut credential = a.credential.clone();
-    credential.secret = gateway_auth::crypto::Secret::new("fixture-new-secret".into());
+    credential.secret = std::sync::Arc::new(claude::ClaudeSourceSecret::from_source(
+        "fixture-new-secret".into(),
+    ));
     run(claude::update_account(
         &store,
         &host,
@@ -273,7 +282,7 @@ fn optional_history_and_health_failure_do_not_undo_accepted_quota_or_proof() {
         apply(&session, &store, &host, &first, 429, exhausted(NOW), NOW),
         OutcomeDecision::Paid
     ));
-    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, MODEL, NOW).is_some());
+    assert!(quota::applicable_proof(store.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_some());
     assert_eq!(host.accepted.borrow().len(), 1);
 }
 #[test]
@@ -357,13 +366,13 @@ fn workspace_retry_selects_default_rotates_cohort_and_does_not_refetch_effort_ca
     };
     assert_eq!(
         next.binding().workspace.as_ref().unwrap().id,
-        "wrkspc_default"
+        "wrkspc_default".into()
     );
     assert_ne!(next.binding().account_cohort_id, a.account_cohort_id);
     assert_eq!(host.catalog_calls.get(), 1);
     assert!(store.quota(&a).is_none());
     assert_ne!(first.replay_scope(), next.replay_scope());
-    run(session.ensure_current(&store, &host, &next, KEY, MODEL, &raw)).unwrap();
+    run(session.ensure_current(&store, &host, &next, KEY, &MODEL.into(), &raw)).unwrap();
     assert_eq!(host.catalog_calls.get(), 1);
 }
 #[test]
@@ -471,7 +480,7 @@ fn split_surrogate_detail_survives_quota_storage_and_the_next_cooldown_response(
         &host,
         SelectionInput {
             key_id: KEY,
-            model: MODEL,
+            model: &MODEL.into(),
             raw: &raw,
             selection: None,
         },
@@ -527,7 +536,7 @@ fn imported_cooldown_statuses_match_pinned_bun_constructor_and_never_authorize_p
             &host,
             SelectionInput {
                 key_id: KEY,
-                model: MODEL,
+                model: &MODEL.into(),
                 raw: &raw(),
                 selection: None,
             },
@@ -548,7 +557,8 @@ fn imported_cooldown_statuses_match_pinned_bun_constructor_and_never_authorize_p
         }
         assert_eq!(store.get(&quota_key(&account)).unwrap(), before);
         assert!(
-            quota::applicable_proof(store.quota(&account).as_ref(), &account, MODEL, NOW).is_none()
+            quota::applicable_proof(store.quota(&account).as_ref(), &account, &MODEL.into(), NOW)
+                .is_none()
         );
         assert!(host.accepted.borrow().is_empty());
         assert!(host.health.borrow().is_empty());
@@ -575,7 +585,7 @@ fn valid_source_negative_zero_does_not_disable_quota_or_full_pool_proof() {
         quota.windows["5h"].utilization.unwrap().to_bits(),
         (-0.0f64).to_bits()
     );
-    assert!(quota::applicable_proof(Some(&quota), &account, MODEL, NOW).is_some());
+    assert!(quota::applicable_proof(Some(&quota), &account, &MODEL.into(), NOW).is_some());
 }
 #[test]
 fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted() {
@@ -624,7 +634,220 @@ fn real_sqlite_close_reopen_retains_global_active_and_quota() {
     {
         let reopened = Store::open(&path);
         assert_eq!(reopened.roster().active_account_id, Some(b.account_id));
-        assert!(quota::applicable_proof(reopened.quota(&a).as_ref(), &a, MODEL, NOW).is_some());
+        assert!(
+            quota::applicable_proof(reopened.quota(&a).as_ref(), &a, &MODEL.into(), NOW).is_some()
+        );
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
+    use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+    let store = Store::new();
+    let account = account(1);
+    let config = seed(&store, vec![account.clone()]);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config);
+    let model = ModelId::from_source(JsString16::from_units(
+        "claude-".encode_utf16().chain([0xd800]).collect(),
+    ));
+    let raw = SourceJson::parse(r#"{"model":"claude-\ud800","input":"fixture"}"#).unwrap();
+    let PoolSelection::Eligible(selected) = run(session.select(
+        &store,
+        &host,
+        SelectionInput {
+            key_id: KEY,
+            model: &model,
+            raw: &raw,
+            selection: None,
+        },
+    ))
+    .unwrap() else {
+        panic!("source model remains eligible");
+    };
+    run(session.ensure_current(&store, &host, &selected, KEY, &model, &raw)).unwrap();
+    let received =
+        run(session.observe_response(&store, &host, &selected, head(429, exhausted(NOW), NOW)))
+            .unwrap();
+    assert!(matches!(
+        run(session.after_outcome(&store, &host, received, error_evidence(None, false))).unwrap(),
+        OutcomeDecision::Paid
+    ));
+    let state = store.quota(&account).unwrap();
+    assert_eq!(
+        quota::applicable_proof(Some(&state), &account, &model, NOW)
+            .unwrap()
+            .model_id
+            .as_ref(),
+        Some(&model)
+    );
+    assert!(
+        quota::applicable_proof(Some(&state), &account, &r"claude-\ud800".into(), NOW).is_none()
+    );
+    let stored = store.get(&quota_key(&account)).unwrap();
+    assert_eq!(
+        stored.value_encoding,
+        gateway_core::value::ValueEncoding::ProfileV2
+    );
+    println!(
+        "M35_CLAUDE_ROW_FIXTURE={}",
+        serde_json::to_string(&(quota_key(&account).0, stored)).unwrap()
+    );
+}
+
+#[test]
+fn source_binding_snapshot_named_rotation_and_clear_preserve_units_without_scalar_grant() {
+    use gateway_core::{
+        js_string::JsString16, source_serialization as source, value::ValueEncoding,
+    };
+    use std::sync::Arc;
+    let store = Store::new();
+    let mut a = account(1);
+    a.credential.secret = Arc::new(claude::ClaudeSourceSecret::from_source(
+        JsString16::from_units(vec![115, 0xd800, 107]),
+    ));
+    a.credential.hint = JsString16::from_units(vec![104, 0xdc00]);
+    a.credential.label = Some(JsString16::from_units(vec![108, 0xd801]));
+    let mut workspace_id = "wrkspc_".encode_utf16().collect::<Vec<_>>();
+    workspace_id.push(0xdc01);
+    a.workspace = Some(claude::Workspace {
+        id: JsString16::from_units(workspace_id),
+        name: Some(JsString16::from_units(vec![110, 0xd802])),
+        source: "kv".into(),
+        discovered_at_ms: None,
+        verified_at_ms: Some(NOW),
+        last_error: None,
+    });
+    a.credential_fingerprint = claude::fingerprint(&a.credential, a.workspace.as_ref());
+    let b = account(2);
+    let config = seed(&store, vec![a.clone(), b.clone()]);
+    let original = store.get(&claude::account_store_key()).unwrap();
+    assert_eq!(original.value_encoding, ValueEncoding::ProfileV2);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let first = selected(&session, &store, &host, &raw);
+    assert_eq!(first.binding(), &a);
+    assert!(
+        first
+            .binding()
+            .credential
+            .secret
+            .try_scalar_secret()
+            .is_err()
+    );
+    assert!(Arc::ptr_eq(
+        &first.binding().credential.secret,
+        &first.clone().binding().credential.secret
+    ));
+    assert!(store.quota(&a).is_none());
+    assert_eq!(store.get(&claude::account_store_key()).unwrap(), original);
+    assert!(matches!(
+        apply(&session, &store, &host, &first, 429, exhausted(NOW), NOW),
+        OutcomeDecision::Retry
+    ));
+    let rotated = store.roster();
+    assert_eq!(rotated.active_account_id, Some(b.account_id));
+    assert_eq!(rotated.accounts[0], a);
+    let events = host.accepted.borrow();
+    let event = events.first().unwrap();
+    let document = event.source_value();
+    assert_eq!(
+        source::string(&source::member(&document, "workspace_id").unwrap()),
+        a.workspace.as_ref().map(|workspace| workspace.id.clone())
+    );
+    drop(events);
+    let cleared = run(clear_guards(&store, &host, &a)).unwrap().unwrap();
+    assert!(cleared.pool_proofs.unwrap().is_empty());
+    let current = store.roster();
+    assert_eq!(current.accounts[0].credential, a.credential);
+    assert_eq!(current.accounts[0].workspace, a.workspace);
+    assert_ne!(
+        current.accounts[0].evidence_generation,
+        a.evidence_generation
+    );
+    assert_eq!(
+        store
+            .get(&claude::account_store_key())
+            .unwrap()
+            .value_encoding,
+        ValueEncoding::ProfileV2
+    );
+}
+
+#[test]
+fn source_workspace_discovery_retains_raw_json_units_and_default_selection() {
+    use gateway_core::js_string::JsString16;
+    let store = Store::new();
+    let a = account(1);
+    let config = seed(&store, vec![a.clone()]);
+    let host = Host::new(&store);
+    host.workspace.borrow_mut().body = r#"{"data":[{"id":"wrkspc_archived","name":"Default","archived_at":1},{"id":"wrkspc_\ud800","name":" Other\udc00 "},{"id":" wrkspc_\ud801 ","name":" DEFAULT ","archived_at":null}]}"#.into();
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let first = selected(&session, &store, &host, &raw);
+    let observed =
+        run(session.observe_response(&store, &host, &first, head(400, Headers::new(), NOW)))
+            .unwrap();
+    let outcome = run(session.after_outcome(
+        &store,
+        &host,
+        observed,
+        error_evidence(
+            Some("not scoped to a workspace".encode_utf16().collect()),
+            true,
+        ),
+    ))
+    .unwrap();
+    let OutcomeDecision::WorkspaceContinuation(next) = outcome else {
+        panic!("expected same-admission workspace continuation")
+    };
+    let mut id = "wrkspc_".encode_utf16().collect::<Vec<_>>();
+    id.push(0xd801);
+    let workspace = next.binding().workspace.as_ref().unwrap();
+    assert_eq!(workspace.id, JsString16::from_units(id));
+    assert_eq!(workspace.name, Some("DEFAULT".into()));
+    assert_eq!(next.binding().credential, a.credential);
+    assert_ne!(next.binding().account_cohort_id, a.account_cohort_id);
+    assert_eq!(
+        store.roster().accounts[0].workspace.as_ref(),
+        Some(workspace)
+    );
+    assert_eq!(host.workspace_calls.get(), 1);
+    assert!(store.quota(&a).is_none());
+    run(session.ensure_current(&store, &host, &next, KEY, &MODEL.into(), &raw)).unwrap();
+}
+
+#[test]
+fn source_capability_options_preserve_actual_same_binding_scalar_auth() {
+    let store = Store::new();
+    let a = account(1);
+    let config = seed(&store, vec![a]);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let first = selected(&session, &store, &host, &raw);
+    let binding = first.binding();
+    let secret = binding.credential.secret.try_scalar_secret().unwrap();
+    let base = gateway_providers::PrepareOptions {
+        auth: gateway_providers::AuthMaterial {
+            secret: secret.expose().into(),
+            api_key: binding.credential.kind == claude::CredentialKind::ApiKey,
+            account_id: Some(binding.account_id.clone()),
+            workspace_id: binding
+                .workspace
+                .as_ref()
+                .map(|workspace| workspace.id.try_utf8().unwrap()),
+        },
+        ..Default::default()
+    };
+    let prepared = first.prepare_options(base);
+    assert_eq!(prepared.auth.secret, secret.expose());
+    assert_eq!(
+        prepared.auth.account_id.as_deref(),
+        Some(binding.account_id.as_str())
+    );
+    assert_eq!(prepared.auth.workspace_id, None);
+    assert!(!prepared.supports_native_effort);
 }

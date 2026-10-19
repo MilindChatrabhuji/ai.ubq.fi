@@ -73,8 +73,17 @@ impl LocalWorkRecord {
         }
         let canonical = source::canonical(value).map_err(|_| invalid())?;
         let row: Self = canonical.deserialize().map_err(|_| invalid())?;
-        let encoded = SourceJson::from_serializable(&row).map_err(|_| invalid())?;
-        if source::canonical(&encoded).map_err(|_| invalid())? != canonical
+        // Option fields must be present, but object insertion order is not a shape rule.
+        // The closed DTO rejects unknown fields; the old Value equality ignored key order.
+        let terminal = source::member(value, "terminal").ok_or_else(invalid)?;
+        if terminal.as_str() != "null" {
+            for key in ["semantic", "reader_termination", "body", "delivery"] {
+                if source::member(&terminal, key).is_none() {
+                    return Err(invalid());
+                }
+            }
+        }
+        if row.binding_version != SOURCE_REQUEST_BINDING_VERSION
             || row.owner_nonce.trim().is_empty()
             || row.owner_nonce.len() > 512
             || matches!(
@@ -263,5 +272,20 @@ mod tests {
         ] {
             assert!(LocalWorkRecord::parse(&SourceJson::parse(text).unwrap()).is_err());
         }
+    }
+    #[test]
+    fn local_object_field_reordering_is_not_a_new_custody_restriction() {
+        let value=SourceJson::parse(r#"{"terminal":null,"phase":"running","binding_version":2,"owner_nonce":"source-owner","kind":"codex_responses_compaction"}"#).unwrap();
+        assert_eq!(
+            LocalWorkRecord::parse(&value).unwrap().phase,
+            LocalWorkPhase::Running
+        );
+        let value=SourceJson::parse(r#"{"terminal":{"delivery":"unobserved","body":"drained","semantic":"completed","reader_termination":"eof"},"phase":"terminal_pending","binding_version":2,"owner_nonce":"source-owner","kind":"codex_responses_compaction"}"#).unwrap();
+        assert_eq!(
+            LocalWorkRecord::parse(&value).unwrap().phase,
+            LocalWorkPhase::TerminalPending
+        );
+        let missing=SourceJson::parse(r#"{"terminal":{"delivery":"unobserved","semantic":"completed","reader_termination":"eof"},"phase":"terminal_pending","binding_version":2,"owner_nonce":"source-owner","kind":"codex_responses_compaction"}"#).unwrap();
+        assert!(LocalWorkRecord::parse(&missing).is_err());
     }
 }

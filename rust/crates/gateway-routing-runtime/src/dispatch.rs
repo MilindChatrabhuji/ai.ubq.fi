@@ -89,14 +89,11 @@ impl<
                     "/v1/responses"
                 }
                 .into(),
-                stream: self.input.raw["stream"] == true,
-                reasoning: self.input.raw["reasoning"]["effort"]
-                    .as_str()
-                    .or_else(|| self.input.raw["reasoning_effort"].as_str())
-                    .map(str::to_owned),
+                stream: self.input.streamed(),
+                reasoning: self.input.requested_reasoning(),
                 created_at_ms: self.input.context.started_at_ms,
             };
-            let context = self.paid_context(reservation.provider, synthetic);
+            let context = self.paid_context(reservation.provider, synthetic)?;
             let receipt = self
                 .authority()
                 .authorize_paid_route(&input, &context, self.now()?)
@@ -144,6 +141,7 @@ impl<
                 .dispatch_api_key(reservation, record.provider, self.now()?)
                 .await?;
         }
+        self.admission.capture_resolved_api(api.as_ref())?;
         let checks = match &record.fence {
             CredentialFence::Codex {
                 source_key,
@@ -223,21 +221,7 @@ impl<
         Ok(())
     }
     pub async fn renew(&self) -> RoutingResult<()> {
-        let (_, row) = journal::load(&self.store, self.id()).await?;
-        settlement::ensure_active(&row)?;
-        if let Some(kernel) = &row.kernel {
-            self.authority().renew_kernel(kernel, self.now()?).await?;
-        }
-        let expiry = self
-            .now()?
-            .checked_add(gateway_authority::REQUEST_LEASE_MS)
-            .ok_or_else(|| journal::unavailable("Lease overflow."))?;
-        self.change(|j| {
-            settlement::ensure_active(j)?;
-            j.lease_expires_at_ms = expiry;
-            Ok(())
-        })
-        .await?;
+        self.currentness().renew_kernel().await?;
         Ok(())
     }
     pub async fn observe_terminal(
@@ -433,15 +417,7 @@ impl<
                     .await?;
                     decision = RefusalDecision::Continue;
                 } else {
-                    return Err(GatewayError::new(
-                        404,
-                        format!(
-                            "The model '{}' is not available for these subscriptions.",
-                            record.model
-                        ),
-                        Some("model_not_found"),
-                    )
-                    .into());
+                    return Err(classify::model_unavailable_error(&record.model).into());
                 }
             }
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {

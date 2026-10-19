@@ -1,0 +1,7 @@
+{
+  "scope": "Ephemeral synthetic RSA fixture, no user/provider credential; public PEM and signed fixed JWT only",
+  "token": "ghp_fixture",
+  "now_ms": 1000000,
+  "pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxfGf8N2hKC8JRxJ9u2dr\nGpn67l7E7qGSae4YknoCGaSeNvENGo424mwtb34R4UmWqPzAvULfMC+1qUQ97Kzw\ndCScrmadPmCfUyJntClbLddh/xXG1Gy3ICHHib+ZpxPwN3f8RnT0KiFvE/MA5Pzx\nws5tq46utquDhuVZ/z7g8D2jS1CzHLr1ddba8hcWlxdQSXqKRAx/y0t+EVjPumIB\nUOsNl1vOBLAk0QyL+jiwM77PdLzHneR1BfvfoCGWqXL2RkyGUSpJF/QhASY2Zidf\nqlTPc8SiyLOWyC0dxyKTAO6+yNXuHmwewmZUA1cCYOpJJh80ydUGn6ZwmImu58IH\nhwIDAQAB\n-----END PUBLIC KEY-----\n",
+  "jwt": "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJ1YmlxdWl0eS1vcy1rZXJuZWwiLCJhdWQiOiJhaS51YnEuZmkiLCJvd25lciI6Im93bmVyIiwicmVwbyI6InJlcG8iLCJzdGF0ZV9pZCI6InN0YXRlIiwianRpIjoiZml4dHVyZS1qdGkiLCJpYXQiOjkwMCwiZXhwIjoxMTAwLCJhdXRoX3Rva2VuX3NoYTI1NiI6InhVUllwRUJQWGdpYmdoNXpOaVJhZ1ZkWDhURlg4SVNXUS1Fa01HYWI5MkUifQ.USWo099mLNKTvi8EnYswaNstmcYYw2EKv6LLdEKrwppubbwkHad-pd4CsB1jypEbmgys3iKXGAtk1MkzxPOeOciaie1cDkXfyOd6PSdI69QAUS8G2tzXmi8Yhi8TnWaC5u5bdi4sZdFnW30DNKsTMKiuUXzVx_SEMzyirm1OgF2MBXntH8GxV-egt0OR74C60nFJ28Oz3TVWPFASb_BxYY-il0o8N2Vo_Ynk5gdZYaI7bYXOzXc3tDOoLRwKqrPX6euWJqpZfvR8Zjd_mZFlXfBOetV0C0sl65wCJHLaLpD3qW4-Kj__Nl3C71tRl4s_nnQNLFh5W8nYmWnKSrZuug"
+}

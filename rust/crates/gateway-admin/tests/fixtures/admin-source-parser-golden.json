@@ -1,0 +1,445 @@
+{
+  "scope": "Exact bounded source request JSON reader + actual isRecord/getString + extracted actual name validator only; no invented full admin endpoint, no provider/KV calls",
+  "bun": "1.4.0",
+  "revision": "34cbb9a40b4bd1bd767d134a7065e66c2432a676",
+  "cap": 33554432,
+  "source_files": {
+    "src/request.ts": "01e4281f713f7549cd5fe032a983582e9bbd596908da197c9cb1ed03f01e99f1",
+    "src/utils.ts": "600174311bb74dda4729a26ee2fb34811d118db4ce882ed3d99ab10868317b7f",
+    "src/authority/native-api-key-policy.ts": "d4f13eb5287bfa9b90ce0e8a58d7b34b6cece7eb5b072db7a2c6e3dbe29dd73c"
+  },
+  "name_chunk_sha256": "2f019c34013e2e8416d49a9f50b98752fc93e6459dbbda7ad6340098999a006f",
+  "rows": [
+    {
+      "name": "empty",
+      "input_bytes": [],
+      "input_length": 0,
+      "headers": {},
+      "reader_ok": false,
+      "reader_kind": "empty",
+      "source_is_record": false,
+      "value": null,
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "whitespace",
+      "input_bytes": [32, 10, 9],
+      "input_length": 3,
+      "headers": {},
+      "reader_ok": false,
+      "reader_kind": "invalid",
+      "source_is_record": false,
+      "value": null,
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "object",
+      "input_bytes": [123, 125],
+      "input_length": 2,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": []
+      },
+      "create_next_phase": "name_validation",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": "id_required"
+    },
+    {
+      "name": "array",
+      "input_bytes": [91, 93],
+      "input_length": 2,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "array",
+        "items": []
+      },
+      "create_next_phase": "name_validation",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": "id_required"
+    },
+    {
+      "name": "null",
+      "input_bytes": [110, 117, 108, 108],
+      "input_length": 4,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": false,
+      "value": {
+        "kind": "null"
+      },
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "string",
+      "input_bytes": [34, 120, 34],
+      "input_length": 3,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": false,
+      "value": {
+        "kind": "string",
+        "units": [120]
+      },
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "number",
+      "input_bytes": [49],
+      "input_length": 1,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": false,
+      "value": {
+        "kind": "number",
+        "value": 1
+      },
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "boolean",
+      "input_bytes": [116, 114, 117, 101],
+      "input_length": 4,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": false,
+      "value": {
+        "kind": "boolean",
+        "value": true
+      },
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "opaque-model",
+      "input_bytes": [
+        123, 34, 110, 97, 109, 101, 34, 58, 34, 107, 92, 117, 100, 56, 48, 48, 34, 44, 34, 109, 111, 100, 101, 108, 115,
+        34, 58, 91, 34, 92, 117, 100, 56, 48, 48, 34, 93, 44, 34, 102, 117, 116, 117, 114, 101, 34, 58, 123, 34, 92,
+        117, 100, 99, 48, 48, 34, 58, 34, 92, 117, 100, 56, 48, 48, 34, 125, 125
+      ],
+      "input_length": 67,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": [
+          {
+            "key": [110, 97, 109, 101],
+            "value": {
+              "kind": "string",
+              "units": [107, 55296]
+            }
+          },
+          {
+            "key": [109, 111, 100, 101, 108, 115],
+            "value": {
+              "kind": "array",
+              "items": [
+                {
+                  "kind": "string",
+                  "units": [55296]
+                }
+              ]
+            }
+          },
+          {
+            "key": [102, 117, 116, 117, 114, 101],
+            "value": {
+              "kind": "object",
+              "entries": [
+                {
+                  "key": [56320],
+                  "value": {
+                    "kind": "string",
+                    "units": [55296]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "create_next_phase": "next_create_fields",
+      "known_status": null,
+      "normalized_name": [107, 55296],
+      "id_phase": "id_required"
+    },
+    {
+      "name": "bom",
+      "input_bytes": [239, 187, 191, 123, 125],
+      "input_length": 5,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": []
+      },
+      "create_next_phase": "name_validation",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": "id_required"
+    },
+    {
+      "name": "double-bom",
+      "input_bytes": [239, 187, 191, 239, 187, 191, 123, 125],
+      "input_length": 8,
+      "headers": {},
+      "reader_ok": false,
+      "reader_kind": "invalid",
+      "source_is_record": false,
+      "value": null,
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "invalid-utf8-string",
+      "input_bytes": [123, 34, 110, 97, 109, 101, 34, 58, 34, 255, 34, 125],
+      "input_length": 12,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": [
+          {
+            "key": [110, 97, 109, 101],
+            "value": {
+              "kind": "string",
+              "units": [65533]
+            }
+          }
+        ]
+      },
+      "create_next_phase": "next_create_fields",
+      "known_status": null,
+      "normalized_name": [65533],
+      "id_phase": "id_required"
+    },
+    {
+      "name": "surrogate-utf8-string",
+      "input_bytes": [123, 34, 110, 97, 109, 101, 34, 58, 34, 237, 160, 128, 34, 125],
+      "input_length": 14,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": [
+          {
+            "key": [110, 97, 109, 101],
+            "value": {
+              "kind": "string",
+              "units": [65533, 65533, 65533]
+            }
+          }
+        ]
+      },
+      "create_next_phase": "next_create_fields",
+      "known_status": null,
+      "normalized_name": [65533, 65533, 65533],
+      "id_phase": "id_required"
+    },
+    {
+      "name": "invalid-utf8-outside",
+      "input_bytes": [255],
+      "input_length": 1,
+      "headers": {},
+      "reader_ok": false,
+      "reader_kind": "invalid",
+      "source_is_record": false,
+      "value": null,
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "duplicate",
+      "input_bytes": [
+        123, 34, 110, 97, 109, 101, 34, 58, 34, 102, 105, 114, 115, 116, 34, 44, 34, 110, 97, 109, 101, 34, 58, 34, 108,
+        97, 115, 116, 92, 117, 100, 56, 48, 48, 34, 44, 34, 105, 100, 34, 58, 34, 92, 117, 100, 99, 48, 48, 34, 125
+      ],
+      "input_length": 50,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": [
+          {
+            "key": [110, 97, 109, 101],
+            "value": {
+              "kind": "string",
+              "units": [108, 97, 115, 116, 55296]
+            }
+          },
+          {
+            "key": [105, 100],
+            "value": {
+              "kind": "string",
+              "units": [56320]
+            }
+          }
+        ]
+      },
+      "create_next_phase": "next_create_fields",
+      "known_status": null,
+      "normalized_name": [108, 97, 115, 116, 55296],
+      "id_phase": "key_lookup"
+    },
+    {
+      "name": "unpaired-id",
+      "input_bytes": [
+        123, 34, 110, 97, 109, 101, 34, 58, 34, 118, 97, 108, 105, 100, 34, 44, 34, 105, 100, 34, 58, 34, 92, 117, 100,
+        56, 48, 48, 34, 125
+      ],
+      "input_length": 30,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": [
+          {
+            "key": [110, 97, 109, 101],
+            "value": {
+              "kind": "string",
+              "units": [118, 97, 108, 105, 100]
+            }
+          },
+          {
+            "key": [105, 100],
+            "value": {
+              "kind": "string",
+              "units": [55296]
+            }
+          }
+        ]
+      },
+      "create_next_phase": "next_create_fields",
+      "known_status": null,
+      "normalized_name": [118, 97, 108, 105, 100],
+      "id_phase": "key_lookup"
+    },
+    {
+      "name": "ignored-overflow",
+      "input_bytes": [
+        123, 34, 110, 97, 109, 101, 34, 58, 34, 118, 97, 108, 105, 100, 34, 44, 34, 105, 103, 110, 111, 114, 101, 100,
+        34, 58, 49, 101, 57, 57, 57, 125
+      ],
+      "input_length": 32,
+      "headers": {},
+      "reader_ok": true,
+      "reader_kind": "parsed",
+      "source_is_record": true,
+      "value": {
+        "kind": "object",
+        "entries": [
+          {
+            "key": [110, 97, 109, 101],
+            "value": {
+              "kind": "string",
+              "units": [118, 97, 108, 105, 100]
+            }
+          },
+          {
+            "key": [105, 103, 110, 111, 114, 101, 100],
+            "value": {
+              "kind": "number",
+              "value": "Infinity"
+            }
+          }
+        ]
+      },
+      "create_next_phase": "next_create_fields",
+      "known_status": null,
+      "normalized_name": [118, 97, 108, 105, 100],
+      "id_phase": "id_required"
+    },
+    {
+      "name": "invalid-announced",
+      "input_bytes": [123, 125],
+      "input_length": 2,
+      "headers": {
+        "content-length": "0002"
+      },
+      "reader_ok": false,
+      "reader_kind": "invalid",
+      "source_is_record": false,
+      "value": null,
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "oversize-announced",
+      "input_bytes": [123, 125],
+      "input_length": 2,
+      "headers": {
+        "content-length": "33554433"
+      },
+      "reader_ok": false,
+      "reader_kind": "too_large",
+      "source_is_record": false,
+      "value": null,
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    },
+    {
+      "name": "actual-oversize",
+      "input_bytes": null,
+      "input_length": 33554433,
+      "headers": {},
+      "reader_ok": false,
+      "reader_kind": "too_large",
+      "source_is_record": false,
+      "value": null,
+      "create_next_phase": "invalid_json",
+      "known_status": 400,
+      "normalized_name": null,
+      "id_phase": null
+    }
+  ]
+}

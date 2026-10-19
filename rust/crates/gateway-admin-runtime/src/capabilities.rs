@@ -1,6 +1,6 @@
 //! Finite native/provider capabilities. No URL, process, path, SQL, or Bun relay interface.
-use gateway_auth::{AuthResponse, crypto::Secret};
-use gateway_core::GatewayError;
+use gateway_auth::AuthResponse;
+use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
@@ -20,9 +20,9 @@ pub struct Context {
 
 pub enum CatalogRequest {
     CodexModelsGet,
-    CodexModelsSet { document: Value },
+    CodexModelsSet { document: SourceJson },
     WhitelistGet,
-    WhitelistSet { document: Value },
+    WhitelistSet { document: SourceJson },
     Catalog,
     Refresh,
 }
@@ -30,11 +30,11 @@ pub enum CatalogRequest {
 pub enum CodexRequest {
     /// The native credential owner validates ownership, refresh effects, fingerprint and upstream auth.
     ImportCredentials {
-        document: Value,
+        document: SourceJson,
     },
     ResetSettings,
     SetResetSettings {
-        document: Value,
+        document: SourceJson,
     },
     /// Exact selected subscription; the host must mint current authenticated admin authority.
     ConsumeReset {
@@ -42,7 +42,7 @@ pub enum CodexRequest {
     },
     OverageSettings,
     SetOverageSettings {
-        document: Value,
+        document: SourceJson,
     },
     ShadowDecisions,
     Recheck {
@@ -61,7 +61,7 @@ pub enum ProviderRequest {
         live: bool,
     },
     Observations {
-        document: Value,
+        document: SourceJson,
     },
     Rollups {
         query: BTreeMap<String, Vec<String>>,
@@ -69,10 +69,10 @@ pub enum ProviderRequest {
 }
 
 pub struct ClaudeSubmission {
-    pub credential: Option<Secret>,
-    pub label: Option<String>,
+    pub credential: Option<std::sync::Arc<crate::claude::ClaudeSourceSecret>>,
+    pub label: Option<gateway_core::js_string::JsString16>,
     /// None means unchanged; Some(None) explicitly removes the workspace pin.
-    pub workspace_id: Option<Option<String>>,
+    pub workspace_id: Option<Option<gateway_core::js_string::JsString16>>,
     pub account_id: Option<String>,
     pub create_new: bool,
     pub activate: bool,
@@ -82,14 +82,14 @@ pub enum ClaudeRequest {
     State,
     SetCredential(ClaudeSubmission),
     DeleteAccount {
-        account_id: Option<String>,
+        account_id: Option<gateway_core::js_string::JsString16>,
     },
     SelectAccount {
-        account_id: String,
+        account_id: gateway_core::js_string::JsString16,
     },
     ClearQuota {
-        account_id: Option<String>,
-        cohort_id: Option<String>,
+        account_id: Option<gateway_core::js_string::JsString16>,
+        cohort_id: Option<gateway_core::js_string::JsString16>,
     },
 }
 
@@ -153,9 +153,9 @@ pub enum AnalyticsRequest {
 
 #[derive(Clone, Debug)]
 pub struct PricingSnapshot {
-    pub eligible_model_ids: Vec<String>,
+    pub eligible_model_ids: Vec<ModelId>,
     pub quota_per_credit: i64,
-    pub model_quota_coefficients: BTreeMap<String, f64>,
+    pub model_quota_coefficients: BTreeMap<ModelId, f64>,
     pub checked_at_ms: i64,
 }
 
@@ -170,7 +170,11 @@ fn unavailable(name: &str) -> GatewayError {
 /// Defaults fail closed; an unbound capability cannot return an empty or successful placeholder.
 pub trait RuntimeCapabilities {
     /// Source String.localeCompare for operator labels; an unbound collation never substitutes byte order.
-    fn compare_admin_labels(&self, _: &str, _: &str) -> Result<std::cmp::Ordering, GatewayError> {
+    fn compare_admin_labels(
+        &self,
+        _: &gateway_core::js_string::JsString16,
+        _: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(unavailable("admin_label_collation"))
     }
     fn catalog(
@@ -246,7 +250,10 @@ pub trait RuntimeCapabilities {
         async { Err(unavailable("metered_quota")) }
     }
     /// Reads only configured paid-provider pricing. It must never issue inference or buy credits.
-    fn pricing(&self, _: &[String]) -> impl Future<Output = Result<PricingSnapshot, GatewayError>> {
+    fn pricing(
+        &self,
+        _: &[ModelId],
+    ) -> impl Future<Output = Result<PricingSnapshot, GatewayError>> {
         async { Err(unavailable("paid_fallback_pricing")) }
     }
     /// Independent retention status and stat-only host log diagnostics used by /admin/errors.

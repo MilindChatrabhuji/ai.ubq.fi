@@ -235,7 +235,7 @@ fn c_conflict_merges_fresh_destination_but_retains_original_source_fences() {
 fn c_survives_stopped_r_step_and_existing_event_retries_after_store_restart() {
     let (store, authority) = setup();
     run(authority.select_account(
-        "gpt-test",
+        &"gpt-test".into(),
         gateway_core::provider::CodexQuotaClass::Standard,
         NOW,
     ))
@@ -274,7 +274,7 @@ fn c_survives_stopped_r_step_and_existing_event_retries_after_store_restart() {
 fn accepted_c_is_not_rolled_back_or_applied_to_successor_r() {
     let (store, authority) = setup();
     run(authority.select_account(
-        "gpt-test",
+        &"gpt-test".into(),
         gateway_core::provider::CodexQuotaClass::Standard,
         NOW,
     ))
@@ -315,14 +315,14 @@ fn unavailable_and_stale_samples_cannot_mint_quota_invalidity_reset_or_paid_auth
         .unwrap();
         assert!(
             !run(authority.materialize_capacity_quota_blocks(
-                "gpt-test",
+                &"gpt-test".into(),
                 gateway_core::provider::CodexQuotaClass::Standard,
                 NOW
             ))
             .unwrap()
         );
         let RouteSelection::Eligible(a) = run(authority.select_account(
-            "gpt-test",
+            &"gpt-test".into(),
             gateway_core::provider::CodexQuotaClass::Standard,
             NOW,
         ))
@@ -383,7 +383,7 @@ fn fetch_binding_exposes_only_original_fixed_roster_identity() {
 fn capacity_materialization_keeps_stable_ambiguous_reset_lookup_only() {
     let (store, authority) = setup();
     run(authority.select_account(
-        "gpt-test",
+        &"gpt-test".into(),
         gateway_core::provider::CodexQuotaClass::Standard,
         NOW,
     ))
@@ -399,7 +399,7 @@ fn capacity_materialization_keeps_stable_ambiguous_reset_lookup_only() {
     store.inner.clock(NOW + 1000);
     assert!(
         run(authority.materialize_capacity_quota_blocks(
-            "gpt-test",
+            &"gpt-test".into(),
             gateway_core::provider::CodexQuotaClass::Standard,
             NOW + 1000
         ))
@@ -427,7 +427,7 @@ fn capacity_materialization_refuses_owned_probe_and_preserves_foreign_class_leas
     use gateway_core::provider::CodexQuotaClass;
     for class in [CodexQuotaClass::Standard, CodexQuotaClass::Spark] {
         let (store, authority) = setup();
-        run(authority.select_account("gpt-test", CodexQuotaClass::Standard, NOW)).unwrap();
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap();
         let mut state =
             parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
         let lease = ProbeLease {
@@ -444,7 +444,7 @@ fn capacity_materialization_refuses_owned_probe_and_preserves_foreign_class_leas
         run(authority.record_codex_capacity_observations(&fence, &[sample(NOW, 100.0)])).unwrap();
         assert_eq!(
             run(authority.materialize_capacity_quota_blocks(
-                "gpt-test",
+                &"gpt-test".into(),
                 CodexQuotaClass::Standard,
                 NOW
             ))

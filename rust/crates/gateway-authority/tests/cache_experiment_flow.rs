@@ -294,6 +294,121 @@ fn source_inventory_fingerprints_and_nondefault_target_match_actual_typescript()
     );
     assert_eq!(binding.model, "fixture-a");
 }
+
+#[test]
+fn scalar_campaign_preserves_opaque_unrelated_catalog_metadata_through_promotion() {
+    use gateway_core::{
+        js_string::JsString16, source_control, source_json::SourceJson,
+        source_serialization as source, value::ValueEncoding,
+    };
+    let (store, authority, now) = setup();
+    let fixture = source_fixture();
+    let raw = SourceJson::from_serializable(&fixture["input"]["snapshot"]).unwrap();
+    let mut fields = source::entries(&raw).unwrap();
+    let opaque = SourceJson::parse(r#""\ud800""#).unwrap();
+    fields
+        .iter_mut()
+        .find(|(key, _)| key == &JsString16::from_utf8("source"))
+        .unwrap()
+        .1 = opaque.clone();
+    fields.push((
+        JsString16::from_utf8("opaque_unrelated_metadata"),
+        opaque.clone(),
+    ));
+    let raw = source::object_keys(fields).unwrap();
+    let catalog_key = key(&["ubq_ai", "codex_models"]);
+    store.seed_record(
+        catalog_key.clone(),
+        source_control::encode_source_control_record("catalog-1", &raw, None).unwrap(),
+    );
+    let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
+    assert_eq!(
+        prepared.binding().capability_fingerprint,
+        fixture["inventory"]["targets"][0]["capability_fingerprint"]
+    );
+    assert_eq!(
+        prepared.binding().inventory_fingerprint,
+        fixture["inventory"]["inventory_fingerprint"]
+    );
+    let io = Io::new(&store);
+    let mut prepared = Some(prepared);
+    for index in 0..3 {
+        let target = prepared.take().unwrap_or_else(|| {
+            run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap()
+        });
+        let result = run(authority.run_cache_experiment(target, &io, now)).unwrap();
+        assert_eq!(
+            result["status"],
+            if index == 2 {
+                "completed"
+            } else {
+                "in_progress"
+            }
+        );
+    }
+    let row = store.row(&catalog_key).unwrap();
+    assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
+    let published = source_control::decode_source_control_record(&row).unwrap();
+    assert_eq!(source::member(&published, "source"), Some(opaque.clone()));
+    assert_eq!(
+        source::member(&published, "opaque_unrelated_metadata"),
+        Some(opaque.clone())
+    );
+    let runtime = source_control::decode_source_control_record(
+        &store
+            .row(&key(&["uos_ai", "runtime_config", "v2"]))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        source::member(&source::member(&runtime, "codex_models").unwrap(), "source"),
+        Some(opaque)
+    );
+    assert_eq!(
+        source::string(&source::member(&runtime, "default_model").unwrap()).unwrap(),
+        JsString16::from_utf8("fixture-z")
+    );
+    assert!(store.row(&gateway_authority::keys::active()).is_none());
+    assert_eq!(io.calls.borrow().len(), 30);
+}
+
+#[test]
+fn lone_model_refuses_only_at_source_uri_target_phase_before_any_campaign_effect() {
+    use gateway_core::{source_control, source_json::SourceJson};
+    // Actual pinned Bun target-id function bef7ecfb throws URIError for both lone units.
+    // src/admin/codex.ts:139-152 maps that unknown failure to this sanitized 503.
+    for replacement in [r#""\ud800""#, r#""\udc00""#] {
+        let (store, authority, now) = setup();
+        let fixture = source_fixture();
+        let raw = SourceJson::parse(
+            &serde_json::to_string(&fixture["input"]["snapshot"])
+                .unwrap()
+                .replace("\"fixture-a\"", replacement),
+        )
+        .unwrap();
+        let catalog_key = key(&["ubq_ai", "codex_models"]);
+        store.seed_record(
+            catalog_key.clone(),
+            source_control::encode_source_control_record("catalog-lone", &raw, None).unwrap(),
+        );
+        let before = store.row(&catalog_key).unwrap();
+        let error = match run(authority.prepare_cache_experiment(&"1".repeat(40), now)) {
+            Ok(_) => panic!("source URI construction must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.status, 503);
+        assert_eq!(
+            error.envelope.error.code.as_deref(),
+            Some("prompt_cache_scope_experiment_failed")
+        );
+        assert_eq!(
+            error.envelope.error.message,
+            "Prompt-cache scope experiment could not run."
+        );
+        assert_eq!(store.row(&catalog_key).unwrap(), before);
+        assert!(store.row(&gateway_authority::keys::active()).is_none());
+    }
+}
 #[test]
 fn unrelated_malformed_active_selection_never_blocks_or_changes_a_pinned_experiment() {
     for quota in [false, true] {

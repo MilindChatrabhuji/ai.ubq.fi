@@ -5,6 +5,8 @@ use super::{
 };
 use gateway_core::{
     GatewayError,
+    source_control::decode_source_control_record,
+    source_serialization as source,
     state::{RecordKey, StoredRecord},
     tuple_key::{DecodedKeyPart, TupleKey},
 };
@@ -82,7 +84,16 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
             slot,
         } => {
             crate::text(attempt_id)?;
-            crate::text(model)?;
+            // Source models are already selected nonblank JSON strings, not
+            // bounded scalar authority identifiers. Whole signed frames retain
+            // their protocol bounds; custody must not invent a model-only cap.
+            if model
+                .as_js_string()
+                .sanitize_js_whitespace_prefix(1)
+                .is_none()
+            {
+                return Err(fail());
+            }
             hash(original_admission_digest)?;
             if *slot > gateway_core::identity::MAX_SAFE_INTEGER as u64 {
                 return Err(fail());
@@ -196,16 +207,20 @@ pub fn validate_native_control_custody(
     if rows::key(kind, id) != *key {
         return Err(fail());
     }
-    let value = record.json_value()?;
     match kind.as_str() {
         "action" => {
-            let row: ActionRow = serde_json::from_value(value.clone()).map_err(|_| fail())?;
+            let value = decode_source_control_record(record)?;
+            let row: ActionRow = value.deserialize().map_err(|_| fail())?;
             if row.v != 2 || row.action_ref != *id || row.fence.principal != row.actor.principal() {
                 return Err(fail());
             }
             hash(id)?;
             fence(&row.fence)?;
-            actor_shape(&value["actor"])?;
+            let actor = source::member(&value, "actor")
+                .ok_or_else(fail)?
+                .deserialize::<Value>()
+                .map_err(|_| fail())?;
+            actor_shape(&actor)?;
             time(row.created_at_ms)?;
             time(row.deadline_ms)?;
             if row.deadline_ms <= row.created_at_ms
@@ -226,6 +241,7 @@ pub fn validate_native_control_custody(
             }
         }
         "operation" => {
+            let value = record.json_value()?;
             let row: OperationRow = serde_json::from_value(value.clone()).map_err(|_| fail())?;
             if row.v != 1 || row.operation_id != *id {
                 return Err(fail());
@@ -253,6 +269,7 @@ pub fn validate_native_control_custody(
             }
         }
         "generation" => {
+            let value = record.json_value()?;
             let row: GenerationEffect =
                 serde_json::from_value(value.clone()).map_err(|_| fail())?;
             if row.v != 1 {

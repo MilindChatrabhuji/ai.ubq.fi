@@ -13,13 +13,13 @@ use gateway_authority::{
     routing::{AdmittedAccount, RouteSelection},
 };
 use gateway_core::{
-    GatewayError, identity::ApiKeyId, provider::UpstreamProvider, query::QueryStore,
+    GatewayError, identity::ApiKeyId, model::ModelId, provider::UpstreamProvider, query::QueryStore,
 };
 use gateway_providers::policy::{LithosWindows, WaitBudget};
-use serde_json::Value;
 use std::cell::RefCell;
 
 pub struct RoutingSession<S, I, C, H> {
+    pub(crate) admission: crate::currentness::OriginalRoutingAdmission,
     pub(crate) store: S,
     pub(crate) tokens: I,
     pub(crate) clock: C,
@@ -30,6 +30,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
     pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
+    pub(crate) source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
     pub(crate) extra_lock: std::rc::Rc<futures_util::lock::Mutex<()>>,
 }
 impl<
@@ -39,6 +40,14 @@ impl<
     H: RoutingHost,
 > RoutingSession<S, I, C, H>
 {
+    /// Selected data from this genuine planned session; grants no new admission or plan.
+    pub fn selected_model(&self) -> &ModelId {
+        &self.plan.model
+    }
+    /// Pricing metadata from this genuine plan; policy stays with the usage owner.
+    pub fn surplus_billing(&self) -> Option<&gateway_core::source_json::SourceJson> {
+        self.plan.paid.surplus_billing.as_ref()
+    }
     pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
         self.input.original_source()
     }
@@ -50,6 +59,7 @@ impl<
     }
     pub(crate) fn authority(&self) -> Authority<S, I> {
         Authority::with_clock(self.store.clone(), self.tokens.clone(), self.clock.clone())
+            .with_source_string_collator(self.source_collator.clone())
     }
     pub(crate) fn now(&self) -> Result<i64, GatewayError> {
         let now = self.clock.now_ms()?;
@@ -91,10 +101,11 @@ impl<
         {
             return Err(journal::unavailable("Invalid original request identity or clock.").into());
         }
+        let source_collator = host.source_string_collator();
         let plan = if family.is_some() {
             policy::admission_plan(&input)
         } else {
-            policy::plan(&input, now)?
+            policy::plan(&input, now, source_collator.as_ref())?
         };
         let streamed = input.streamed();
         let mut row = Journal {
@@ -173,7 +184,15 @@ impl<
             return Err(error.into());
         }
         let conversation_id = tokens.next_token()?;
+        let admission = crate::currentness::OriginalRoutingAdmission::capture(
+            row.v,
+            row.input_digest,
+            row.api,
+            row.kernel,
+            None,
+        );
         Ok(Self {
+            admission,
             store,
             tokens,
             clock,
@@ -187,6 +206,7 @@ impl<
                 streamed,
             }),
             conversation_id,
+            source_collator,
             elapsed_wait_ms: std::cell::Cell::new(0),
             extra_lock: std::rc::Rc::new(futures_util::lock::Mutex::new(())),
         })
@@ -212,6 +232,7 @@ impl<
                 .original
                 .for_surface(gateway_schema::request::RequestSurface::Responses),
         );
+        let source_collator = admission.original.host.source_string_collator();
         let planned: RoutingResult<(RoutePlan, String)> = (|| {
             if admission.original.host.cancelled() {
                 return Err(admission.original.host.cancellation_error().into());
@@ -222,7 +243,7 @@ impl<
                     journal::unavailable("Invalid original request identity or clock.").into(),
                 );
             }
-            let plan = policy::plan(&input, now)?;
+            let plan = policy::plan(&input, now, source_collator.as_ref())?;
             let conversation = admission.original.tokens.next_token()?;
             Ok((plan, conversation))
         })();
@@ -244,6 +265,7 @@ impl<
         debug_assert_eq!(parts.input.metadata.context, input.context);
         let streamed = input.streamed();
         Ok(Self {
+            admission: parts.admission,
             store: parts.store,
             tokens: parts.tokens,
             clock: parts.clock,
@@ -257,6 +279,7 @@ impl<
                 streamed,
             }),
             conversation_id,
+            source_collator,
             elapsed_wait_ms: std::cell::Cell::new(0),
             extra_lock: std::rc::Rc::new(futures_util::lock::Mutex::new(())),
         })
@@ -288,14 +311,14 @@ impl<
     pub(crate) async fn credential(
         &self,
         provider: UpstreamProvider,
-        model: &str,
+        model: &ModelId,
         codex: Option<AdmittedAccount>,
     ) -> Result<PublishedCredential, GatewayError> {
         let publication = self
             .host
             .credential(CredentialRequest {
                 provider,
-                model: model.into(),
+                model: model.clone(),
                 codex: codex.clone(),
             })
             .await?;
@@ -346,7 +369,7 @@ impl<
     pub(crate) fn prepare(
         &self,
         provider: UpstreamProvider,
-        model: &str,
+        model: &ModelId,
         publication: &PublishedCredential,
         nonce: &str,
     ) -> RoutingResult<gateway_providers::PreparedRequest> {
@@ -364,10 +387,10 @@ impl<
         &self,
         provider: gateway_core::provider::PaidProvider,
         synthetic: bool,
-    ) -> PaidRequestContext {
+    ) -> RoutingResult<PaidRequestContext> {
         let mut body = self.input.raw.clone();
-        body["model"] = Value::String(self.plan.model.clone());
-        PaidRequestContext {
+        crate::wire::set(&mut body, "model", self.plan.model.to_source_json()?)?;
+        Ok(PaidRequestContext {
             original_model: self.plan.model.clone(),
             body,
             surface: self.input.surface,
@@ -375,7 +398,7 @@ impl<
                 gateway_core::provider::PaidProvider::Surplus => PaidSyntheticHop::Surplus,
                 gateway_core::provider::PaidProvider::Metered => PaidSyntheticHop::Openlux,
             }),
-        }
+        })
     }
     pub(crate) fn check_paid_credential(
         fence: &CredentialFence,

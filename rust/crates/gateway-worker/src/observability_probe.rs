@@ -3,7 +3,9 @@ use super::{RequestHost, unavailable};
 use crate::transport::outbound::{Cancellation, Deadline, PinnedDestination, send_http};
 use gateway_admin_runtime::claude;
 use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
-use gateway_core::{GatewayError, js_string::JsString16};
+use gateway_core::{
+    GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use gateway_observability::{HealthEvent, HealthTarget, host_types::*};
 use std::collections::BTreeMap;
 use worker::{Method, Response};
@@ -232,10 +234,7 @@ impl RequestHost {
             }
             if (200..300).contains(&status) {
                 let bytes = reply.response.bytes().await.ok();
-                let parsed = bytes
-                    .as_deref()
-                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
-                if parsed.as_ref().is_some_and(|v| v["models"].is_array()) {
+                if bytes.as_deref().is_some_and(has_models_array) {
                     contributed = true;
                 }
             }
@@ -525,5 +524,28 @@ impl RequestHost {
             None
         };
         Ok(CapacityProbe::Http { status, json })
+    }
+}
+
+fn has_models_array(bytes: &[u8]) -> bool {
+    SourceJson::parse_bytes(bytes)
+        .ok()
+        .and_then(|document| source::member(&document, "models"))
+        .and_then(|models| source::array(&models))
+        .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_models_array;
+
+    #[test]
+    fn models_probe_retains_source_units_and_original_shape_predicate() {
+        assert!(has_models_array(br#"{"models":[{"id":"model-\ud800"}]}"#));
+        assert!(has_models_array(br#"{"models":null,"models":[]}"#));
+        assert!(!has_models_array(br#"{"models":[],"models":null}"#));
+        assert!(!has_models_array(br#"{"models":{}}"#));
+        assert!(!has_models_array(b"not JSON"));
+        assert!(!has_models_array(b"{\"models\":[\"\xff\"]}"));
     }
 }

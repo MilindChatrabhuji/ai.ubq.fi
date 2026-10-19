@@ -2,6 +2,7 @@
 pub mod wire;
 
 use gateway_core::{GatewayError, query::QueryStore};
+pub use gateway_migration::MigrationError;
 pub use gateway_migration::operational::{NativeMigrationRequest, NativeMigrationResponse};
 
 pub async fn execute_profile<S: QueryStore>(
@@ -64,6 +65,6 @@ impl gateway_migration::profile_runtime::ProfileHost for ProfileHost {
 pub async fn execute_native<S: QueryStore>(
     store: &S,
     request: NativeMigrationRequest,
-) -> Result<NativeMigrationResponse, GatewayError> {
+) -> Result<NativeMigrationResponse, MigrationError> {
     gateway_migration::operational::execute_native(store, request).await
 }

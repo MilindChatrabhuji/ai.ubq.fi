@@ -138,6 +138,9 @@ fn run<F: Future>(future: F) -> F::Output {
         }
     }
 }
+fn decode_json<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, GatewayError> {
+    gateway_core::source_json::SourceJson::from_serializable(&value)?.deserialize()
+}
 fn request(id: &str, settled: bool) -> Value {
     json!({"v":3,"reservation":{"key_id":"key","request_id":format!("original-{id}"),"attempt_id":id,"provider":"metered","window_reset_at_ms":NOW,"created_at_ms":NOW-1000,"reserved_microcredits":10},
         "policy_version":"v1","model":" model ","route":"responses","path":"/v1/responses","stream":false,"reasoning":null,"quota_per_credit":1_000_000,"provider_request_id":id,
@@ -288,7 +291,7 @@ fn rollup_race_stops_before_failed_row_and_later_success_cannot_skip_it() {
     for id in ["a", "b", "c"] {
         store.put(key(id), request(id, true));
     }
-    let row: PaidAttempt = serde_json::from_value(request("b", true)).unwrap();
+    let row: PaidAttempt = decode_json(request("b", true)).unwrap();
     let mut racing = values::merge_rollup(
         None,
         &row,
@@ -478,7 +481,7 @@ fn invalid_clock_and_request_identity_never_mutate_paid_state() {
 }
 #[test]
 fn source_valid_rollup_preserves_identity_and_accumulates_exact_fields() {
-    let row: PaidAttempt = serde_json::from_value(request("a", true)).unwrap();
+    let row: PaidAttempt = decode_json(request("a", true)).unwrap();
     assert_eq!(row.reservation.provider, PaidProvider::Metered);
     let first = values::merge_rollup(None, &row, "model", "metered", 100, NOW).unwrap();
     let second =
@@ -505,7 +508,7 @@ fn generated_backfill_rollup_roundtrips_the_existing_live_settlement_dto() {
     store.put(key("a"), request("a", true));
     assert_eq!(backfill(&store, 10).requests.rollups_written, 1);
     let raw = store.value(&rollup_key("a"));
-    let typed: crate::paid::PaidRollup = serde_json::from_value(raw.clone()).unwrap();
+    let typed: crate::paid::PaidRollup = decode_json(raw.clone()).unwrap();
     assert_eq!(typed.provider_quota, 1.5);
     assert_eq!(typed.spend_microcredits, 5.0);
     let restored = serde_json::to_value(typed).unwrap();
@@ -525,7 +528,7 @@ fn generated_backfill_rollup_roundtrips_the_existing_live_settlement_dto() {
 
 #[test]
 fn genuine_fractional_source_rollup_spend_is_not_rounded_to_fit_the_live_dto() {
-    let row: PaidAttempt = serde_json::from_value(request("a", true)).unwrap();
+    let row: PaidAttempt = decode_json(request("a", true)).unwrap();
     let mut existing = values::merge_rollup(None, &row, "model", "metered", 100, NOW).unwrap();
     existing["spend_microcredits"] = json!(0.25);
     let merged = values::merge_rollup(Some(&existing), &row, "model", "metered", 100, NOW).unwrap();
@@ -536,7 +539,7 @@ fn genuine_fractional_source_rollup_spend_is_not_rounded_to_fit_the_live_dto() {
 fn pending_for_live_settlement(store: &Store, model: &str) -> PaidAttempt {
     let mut raw = request("a", false);
     raw["model"] = json!(model);
-    let row: PaidAttempt = serde_json::from_value(raw.clone()).unwrap();
+    let row: PaidAttempt = decode_json(raw.clone()).unwrap();
     store.put(key("a"), raw);
     store.put(
         keys::paid_pending("key", "a"),
@@ -653,14 +656,19 @@ fn shared_surplus_usage_adapter_matches_all_actual_source_pricing_cases() {
     assert_eq!(cases.len(), 26);
     for case in cases {
         let name = case["name"].as_str().unwrap();
-        let mut row: PaidAttempt = serde_json::from_value(request("a", false)).unwrap();
+        let mut row: PaidAttempt = decode_json(request("a", false)).unwrap();
         row.reservation.provider = PaidProvider::Surplus;
         row.reservation.attempt_id.0 = case["attempt_id"].as_str().unwrap().into();
         row.model = case["model"].as_str().unwrap().into();
         row.quota_per_credit = case["quota_per_credit"].as_i64().unwrap();
         let usage = gateway_core::source_usage::extract_usage_tokens(Some(&case["raw"]));
-        let pricing = case.get("pricing").filter(|value| !value.is_null());
-        let actual = crate::paid::surplus_usage_from_source(&row, usage.as_ref(), pricing);
+        let pricing = case
+            .get("pricing")
+            .filter(|value| !value.is_null())
+            .map(gateway_core::source_json::SourceJson::from_serializable)
+            .transpose()
+            .unwrap();
+        let actual = crate::paid::surplus_usage_from_source(&row, usage.as_ref(), pricing.as_ref());
         let expected = &case["expected"];
         if expected.is_null() {
             assert!(actual.is_none(), "{name}: unexpected billing input");
@@ -718,19 +726,22 @@ fn fractional_aggregate_spend_does_not_widen_counters_request_or_window_billing(
         let mut invalid = raw.clone();
         invalid[field] = json!(0.25);
         assert!(
-            serde_json::from_value::<crate::paid::PaidRollup>(invalid).is_err(),
+            decode_json::<crate::paid::PaidRollup>(invalid).is_err(),
             "{field}"
         );
     }
     for value in [json!(-0.25), json!("0.25"), Value::Null] {
         let mut invalid = raw.clone();
         invalid["spend_microcredits"] = value;
-        assert!(serde_json::from_value::<crate::paid::PaidRollup>(invalid).is_err());
+        assert!(decode_json::<crate::paid::PaidRollup>(invalid).is_err());
     }
     let mut invalid_request = request("a", true);
     invalid_request["spend_microcredits"] = json!(0.25);
-    assert!(serde_json::from_value::<PaidAttempt>(invalid_request).is_err());
+    assert!(decode_json::<PaidAttempt>(invalid_request).is_err());
     let mut invalid_window = window(NOW);
     invalid_window["settled_microcredits"] = json!(0.25);
-    assert!(serde_json::from_value::<crate::paid::PaidWindow>(invalid_window).is_err());
+    assert!(decode_json::<crate::paid::PaidWindow>(invalid_window).is_err());
 }
+
+#[path = "paid_source_control_tests.rs"]
+mod source_control;

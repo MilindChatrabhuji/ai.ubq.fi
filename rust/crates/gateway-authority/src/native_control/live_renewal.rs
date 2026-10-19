@@ -137,7 +137,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 &current.fence.source_native_generation,
             ))?;
             let key = rows::key("action", &reference);
-            let prior: Option<ActionRow> = tx.read(&key).await?;
+            let prior: Option<ActionRow> = tx.read_source_control(&key).await?;
             let row = if let Some(row) = prior {
                 if row.v != 2
                     || row.actor != *actor.stored()
@@ -160,7 +160,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                     account_digests: current.account_digests,
                     operation_id: None,
                 };
-                tx.put(&key, &row, None)?;
+                tx.put_source_control(&key, &row, None)?;
                 row
             };
             self.current(&mut tx, &row).await?;
@@ -203,7 +203,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             ScalarKeyPart::String("v2"),
         ])
         .to_record_key();
-        let _: Option<Value> = tx.read(&runtime_key).await?;
+        tx.observe_revision(&runtime_key).await?;
         if config.v != PAID_CONTROL_CONFIG_VERSION
             || config.owner_id != owner.owner_id
             || config.owner_epoch != owner.owner_epoch

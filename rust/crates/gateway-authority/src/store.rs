@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use gateway_core::GatewayError;
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
@@ -7,6 +8,7 @@ use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
     StoredRecord,
 };
+use gateway_schema::aliases::SourceStringCollator;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -27,6 +29,22 @@ pub struct Authority<S, I> {
     pub(crate) store: S,
     pub(crate) tokens: I,
     clock: Option<Box<dyn AuthorityClock>>,
+    source_string_collator: Option<Arc<dyn SourceStringCollator>>,
+}
+
+struct MissingSourceStringCollator;
+static MISSING_SOURCE_STRING_COLLATOR: MissingSourceStringCollator = MissingSourceStringCollator;
+impl SourceStringCollator for MissingSourceStringCollator {
+    fn compare(
+        &self,
+        _left: &gateway_core::js_string::JsString16,
+        _right: &gateway_core::js_string::JsString16,
+    ) -> Result<std::cmp::Ordering, GatewayError> {
+        Err(GatewayError::unavailable(
+            "Source string comparison requires the trusted runtime capability.",
+            "source_string_collation_unavailable",
+        ))
+    }
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -35,6 +53,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             store,
             tokens,
             clock: None,
+            source_string_collator: None,
         }
     }
 
@@ -43,7 +62,20 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             store,
             tokens,
             clock: Some(Box::new(clock)),
+            source_string_collator: None,
         }
+    }
+
+    /// Trusted source-runtime comparison capability, never a request/token field.
+    pub fn with_source_string_collator(mut self, collator: Arc<dyn SourceStringCollator>) -> Self {
+        self.source_string_collator = Some(collator);
+        self
+    }
+
+    pub(crate) fn source_string_collator(&self) -> &dyn SourceStringCollator {
+        self.source_string_collator
+            .as_deref()
+            .unwrap_or(&MISSING_SOURCE_STRING_COLLATOR)
     }
 
     pub(crate) fn fresh_time(&self, started_at: i64) -> Result<i64, GatewayError> {
@@ -83,6 +115,23 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 }
 
+/// Only the named local release adapter observes this private read origin.
+pub(crate) enum ApiReleaseReadError {
+    Backend(GatewayError),
+    Record(GatewayError),
+}
+impl ApiReleaseReadError {
+    fn into_error(self) -> GatewayError {
+        match self {
+            Self::Backend(error) | Self::Record(error) => error,
+        }
+    }
+}
+fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {
+    serde_json::from_value(row.json_value()?.clone())
+        .map_err(|_| invalid("Malformed authority record."))
+}
+
 pub(crate) struct Transaction<'a, S, I> {
     store: &'a S,
     tokens: &'a I,
@@ -96,13 +145,27 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         &mut self,
         key: &RecordKey,
     ) -> Result<Option<&StoredRecord>, GatewayError> {
+        self.cached_record_classified(key)
+            .await
+            .map_err(ApiReleaseReadError::into_error)
+    }
+    async fn cached_record_classified(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<&StoredRecord>, ApiReleaseReadError> {
         if !self.reads.contains_key(&key.0) {
-            let record = self.store.read(key).await?;
+            let record = self
+                .store
+                .read(key)
+                .await
+                .map_err(ApiReleaseReadError::Backend)?;
             if let Some(value) = &record {
-                value.validate_version()?;
-                text(&value.revision)?;
+                value
+                    .validate_version()
+                    .map_err(ApiReleaseReadError::Record)?;
+                text(&value.revision).map_err(ApiReleaseReadError::Record)?;
                 if let Some(expiry) = value.expires_at_ms {
-                    validate_time(expiry)?;
+                    validate_time(expiry).map_err(ApiReleaseReadError::Record)?;
                 }
             }
             self.reads.insert(key.0.clone(), record);
@@ -112,6 +175,17 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             return Ok(None);
         }
         Ok(raw)
+    }
+    /// Same read/cache/revision operation as read; only origin is retained for
+    /// the finite local-release error adapter. It exposes no mutation or I/O grant.
+    pub(crate) async fn read_api_release<T: DeserializeOwned>(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<T>, ApiReleaseReadError> {
+        self.cached_record_classified(key)
+            .await?
+            .map(|row| decode_json_record(row).map_err(ApiReleaseReadError::Record))
+            .transpose()
     }
 
     /// Establish only the existing cached metadata/revision precondition. This
@@ -127,10 +201,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
     ) -> Result<Option<T>, GatewayError> {
         self.cached_record(key)
             .await?
-            .map(|row| {
-                serde_json::from_value(row.json_value()?.clone())
-                    .map_err(|_| invalid("Malformed authority record."))
-            })
+            .map(decode_json_record)
             .transpose()
     }
 
@@ -154,7 +225,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         &mut self,
         account_id: &str,
         cohort_id: &str,
-    ) -> Result<Option<serde_json::Value>, GatewayError> {
+    ) -> Result<Option<SourceJson>, GatewayError> {
         let key = crate::keys::claude_quota(account_id, cohort_id);
         self.cached_record(&key)
             .await?
@@ -162,7 +233,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
                 gateway_core::value::ValueEncoding::ProfileV2 => Ok(
                     crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
                 ),
-                _ => row.json_value().cloned(),
+                _ => SourceJson::from_serializable(row.json_value()?),
             })
             .transpose()
     }
@@ -291,6 +362,73 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             RecordMutation::Put {
                 key: key.clone(),
                 record,
+            },
+        );
+        Ok(())
+    }
+
+    /// The one finite routing-local completion writer. Its data plan fixes both
+    /// keys, the only allowed patch, None retention and the :pending revision.
+    pub(crate) fn put_local_completed_journal(
+        &mut self,
+        plan: &gateway_core::local_completion::LocalCompletedJournalPlan,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        use gateway_core::local_completion::LocalCompletedJournalState;
+        let journal_key = plan.journal_key();
+        let pending_key = plan.pending_key();
+        let journal = self
+            .reads
+            .get(&journal_key.0)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| invalid("Local journal has no strong-read precondition."))?;
+        let pending = self
+            .reads
+            .get(&pending_key.0)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| invalid("Local pending marker has no strong-read precondition."))?;
+        if now != self.now
+            || journal.revision != plan.expected_revision()
+            || journal.expires_at_ms.is_some()
+            || pending.expires_at_ms.is_some()
+            || pending.revision != format!("{}:pending", journal.revision)
+            || *pending.json_value()?
+                != serde_json::json!({"request_id":plan.context().request_id.0})
+            || plan.classify(&decode_source_control_record(journal)?)?
+                != LocalCompletedJournalState::Prepared
+            || self.writes.contains_key(&journal_key.0)
+            || self.writes.contains_key(&pending_key.0)
+        {
+            return Err(invalid("Local completion journal custody conflicts."));
+        }
+        let document = plan.completed_document(now)?;
+        self.put_source_control(&journal_key, &document, None)?;
+        let Some(RecordMutation::Put { record, .. }) = self.writes.get(&journal_key.0) else {
+            return Err(invalid("Local completion journal write is missing."));
+        };
+        let pending_revision = format!("{}:pending", record.revision);
+        text(&pending_revision)?;
+        if self
+            .reads
+            .values()
+            .flatten()
+            .any(|row| row.revision == pending_revision)
+            || self.writes.values().any(|mutation| {
+                matches!(mutation,
+                RecordMutation::Put { record, .. } if record.revision == pending_revision)
+            })
+        {
+            return Err(invalid("Local completion reused an existing revision."));
+        }
+        self.writes.insert(
+            pending_key.0.clone(),
+            RecordMutation::Put {
+                key: pending_key,
+                record: StoredRecord::json(
+                    pending_revision,
+                    serde_json::json!({"request_id":plan.context().request_id.0}),
+                    None,
+                ),
             },
         );
         Ok(())
