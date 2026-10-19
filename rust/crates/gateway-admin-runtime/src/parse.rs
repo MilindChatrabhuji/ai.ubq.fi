@@ -1,7 +1,9 @@
 use crate::capabilities::*;
-use gateway_admin::AdminInput;
-use gateway_auth::{crypto::Secret, invalid};
-use gateway_core::{GatewayError, identity::MAX_SAFE_INTEGER};
+use gateway_admin::{AdminInput, source_input as source_body};
+use gateway_auth::invalid;
+use gateway_core::{
+    GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16, source_json::SourceJson,
+};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,6 +19,65 @@ pub fn text(value: Option<&Value>) -> Option<String> {
         .map(gateway_schema::util::js_trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
+}
+/// Source field view: opaque strings remain UTF16 data until a finite field consumes them.
+pub fn source_text(value: Option<&SourceJson>) -> Option<JsString16> {
+    value
+        .and_then(source_body::text)
+        .map(|text| source_body::trim(&text))
+        .filter(|text| !text.as_units().is_empty())
+}
+pub fn source_integer(value: &SourceJson) -> Option<i64> {
+    let n = if let Some(number) = source_body::number(value) {
+        number
+    } else {
+        let text = source_text(Some(value))?;
+        // An unpaired unit cannot be in a valid finite Number spelling.
+        // Only this consumed numeric string is projected, never the body.
+        let text = text.try_utf8().ok()?;
+        gateway_admin_data::profile::js_number(&Value::String(text))
+    };
+    (n.is_finite() && n.abs() <= MAX_SAFE_INTEGER as f64).then_some(n.trunc() as i64)
+}
+pub fn source_limit(value: &SourceJson) -> Option<i64> {
+    if source_text(Some(value)).is_some_and(|text| {
+        gateway_core::js_string_case::lowercase_source(&text)
+            .as_units()
+            .iter()
+            .copied()
+            .eq("unlimited".encode_utf16())
+    }) {
+        return Some(-1);
+    }
+    source_integer(value).filter(|number| *number >= -1)
+}
+pub fn source_positive(value: &SourceJson) -> Option<i64> {
+    source_integer(value).filter(|number| *number > 0)
+}
+/// Existing Number coercion for a consumed numeric field only. JSON strings or
+/// array strings with unpaired units cannot form a finite numeric grammar;
+/// they reach the original numeric validation error, not a body-wide refusal.
+pub fn source_coerced_number(value: &SourceJson) -> f64 {
+    source_body::number(value).unwrap_or_else(|| {
+        value
+            .deserialize::<Value>()
+            .ok()
+            .as_ref()
+            .map(gateway_admin_data::profile::js_number)
+            .unwrap_or(f64::NAN)
+    })
+}
+/// Source Object.keys semantics for the already validated admin record/array.
+pub fn source_entries(value: &SourceJson) -> Option<Vec<(JsString16, SourceJson)>> {
+    gateway_core::source_serialization::entries(value).or_else(|| {
+        value.array_items().ok().map(|items| {
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| (JsString16::from_utf8(&index.to_string()), value))
+                .collect()
+        })
+    })
 }
 pub fn integer(value: &Value) -> Option<i64> {
     if !value.is_number() && !value.is_string() {
@@ -193,7 +254,7 @@ pub fn capture(input: &AdminInput, incidents: bool) -> Result<CaptureRequest, Ga
 }
 
 pub fn migration(input: &AdminInput) -> Result<MigrationImport, GatewayError> {
-    let ndjson = input.body.as_str().ok_or_else(|| {
+    let ndjson: String = input.body.deserialize().map_err(|_| {
         GatewayError::unavailable(
             "Migration import requires the preserved raw NDJSON body",
             "admin_raw_body_unavailable",
@@ -220,7 +281,7 @@ pub fn migration(input: &AdminInput) -> Result<MigrationImport, GatewayError> {
         return Err(invalid("dry_run and write are mutually exclusive"));
     }
     Ok(MigrationImport {
-        ndjson: ndjson.into(),
+        ndjson,
         profile,
         include_cache: truth(first(q, "include_cache")),
         include_legacy: boolean(first(q, "include_legacy"))
@@ -231,81 +292,117 @@ pub fn migration(input: &AdminInput) -> Result<MigrationImport, GatewayError> {
 }
 
 pub fn claude(body: &Value) -> Result<ClaudeSubmission, GatewayError> {
-    let credential = body
-        .get("credential")
-        .and_then(Value::as_str)
-        .or_else(|| body.get("api_key").and_then(Value::as_str))
-        .map(gateway_schema::util::js_trim);
-    if credential.is_some_and(|s| s.is_empty()) {
+    // Compatibility only for callers that actually own a scalar Value.
+    claude_source(&SourceJson::from_serializable(body)?)
+}
+pub fn claude_source(body: &SourceJson) -> Result<ClaudeSubmission, GatewayError> {
+    let credential = source_body::member(body, "credential")
+        .as_ref()
+        .and_then(source_body::text)
+        .or_else(|| {
+            source_body::member(body, "api_key")
+                .as_ref()
+                .and_then(source_body::text)
+        })
+        .map(|text| source_body::trim(&text));
+    if credential
+        .as_ref()
+        .is_some_and(|text| text.as_units().is_empty())
+    {
         return Err(invalid("credential must not be blank"));
     }
-    if credential.is_some_and(|s| s.encode_utf16().count() > 512) {
+    if credential
+        .as_ref()
+        .is_some_and(|text| text.as_units().len() > 512)
+    {
         return Err(invalid("credential is too long"));
     }
-    if credential.is_some_and(|s| !s.starts_with("sk-ant-")) {
+    if credential.as_ref().is_some_and(|text| {
+        !text
+            .as_units()
+            .starts_with(&"sk-ant-".encode_utf16().collect::<Vec<_>>())
+    }) {
         return Err(invalid(
             "credential must be an Anthropic API key or Claude Code OAuth token",
         ));
     }
-    let label = body
-        .get("label")
-        .and_then(Value::as_str)
-        .map(gateway_schema::util::js_trim)
-        .map(str::to_owned);
+    let label = source_body::member(body, "label")
+        .as_ref()
+        .and_then(source_body::text)
+        .map(|text| source_body::trim(&text));
     if label
         .as_ref()
-        .is_some_and(|s| s.encode_utf16().count() > 64)
+        .is_some_and(|text| text.as_units().len() > 64)
     {
         return Err(invalid("label is too long"));
     }
-    let workspace_id = match body.get("workspace_id") {
+    let workspace_id = match source_body::member(body, "workspace_id") {
         None => None,
-        Some(Value::Null) => Some(None),
-        Some(Value::String(s)) if s.is_empty() => Some(None),
-        Some(Value::String(s))
-            if s.trim_matches(gateway_schema::util::js_whitespace)
-                .starts_with("wrkspc_")
-                && s.trim_matches(gateway_schema::util::js_whitespace)
-                    .encode_utf16()
-                    .count()
-                    <= 256 =>
-        {
-            Some(Some(
-                s.trim_matches(gateway_schema::util::js_whitespace).into(),
-            ))
+        Some(value) if value.as_str() == "null" => Some(None),
+        Some(value) => {
+            let text = source_body::text(&value)
+                .ok_or_else(|| invalid("workspace_id must be a wrkspc_ workspace id"))?;
+            if text.as_units().is_empty() {
+                Some(None)
+            } else {
+                let text = source_body::trim(&text);
+                if text.as_units().len() > 256
+                    || !text
+                        .as_units()
+                        .starts_with(&"wrkspc_".encode_utf16().collect::<Vec<_>>())
+                {
+                    return Err(invalid("workspace_id must be a wrkspc_ workspace id"));
+                }
+                Some(Some(text))
+            }
         }
-        _ => return Err(invalid("workspace_id must be a wrkspc_ workspace id")),
     };
     if credential.is_none() && workspace_id.is_none() {
         return Err(invalid("credential or workspace_id is required"));
     }
-    let account_id = match body.get("account_id") {
+    let account_id = match source_body::member(body, "account_id") {
         None => None,
-        Some(Value::String(s))
-            if s.len() == 36
-                && s.bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-') =>
-        {
-            Some(s.clone())
+        Some(value) => {
+            let id = source_body::text(&value)
+                .filter(|text| {
+                    text.as_units().len() == 36
+                        && text.as_units().iter().all(|unit| {
+                            (48..=57).contains(unit) || (97..=102).contains(unit) || *unit == 45
+                        })
+                })
+                .ok_or_else(|| invalid("account_id is invalid"))?;
+            Some(
+                String::from_utf16(id.as_units())
+                    .expect("closed upload account ID ASCII predicate"),
+            )
         }
-        _ => return Err(invalid("account_id is invalid")),
     };
     for name in ["create_new", "activate"] {
-        if body.get(name).is_some_and(|v| !v.is_boolean()) {
+        if source_body::member(body, name)
+            .as_ref()
+            .is_some_and(|value| source_body::boolean(value).is_none())
+        {
             return Err(invalid(&format!("{name} must be boolean")));
         }
     }
-    let create_new = body.get("create_new") == Some(&Value::Bool(true));
+    let create_new = source_body::member(body, "create_new")
+        .as_ref()
+        .and_then(source_body::boolean)
+        == Some(true);
     if create_new && account_id.is_some() {
         return Err(invalid("create_new cannot target an existing account"));
     }
     Ok(ClaudeSubmission {
-        credential: credential.map(|s| Secret::new(s.into())),
+        credential: credential
+            .map(|text| std::sync::Arc::new(crate::claude::ClaudeSourceSecret::from_source(text))),
         label,
         workspace_id,
         account_id,
         create_new,
-        activate: body.get("activate") == Some(&Value::Bool(true)),
+        activate: source_body::member(body, "activate")
+            .as_ref()
+            .and_then(source_body::boolean)
+            == Some(true),
     })
 }
 
