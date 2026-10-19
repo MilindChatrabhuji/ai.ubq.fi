@@ -75,6 +75,17 @@ export class NativeAuthorityApi {
       after = page[page.length - 1].encoded;
     }
   }
+  private _ownsReservation(row: NativeRequest, policy: ApiKeyPolicy, now: number): boolean {
+    const owners = this._sql.page("request_lifetime", now, "", 2, { parent: nativeKey(requestKey(policy, row.requestId)) });
+    const original = owners[0]?.row.value;
+    return (
+      owners.length === 1 &&
+      original?.handle === row.handle &&
+      original.runtimeBindingId === row.runtimeBindingId &&
+      original.principalId === row.principalId &&
+      original.keyId === row.keyId
+    );
+  }
   reserve(cap: NativeCapability, args: NativeArguments["reserveApiUsage"], now: number): NativeReply {
     const row = this.request(cap, args.handle, now);
     if (!row.apiApplicable) return { kind: "not_applicable", handle: row.handle };
@@ -103,6 +114,7 @@ export class NativeAuthorityApi {
       plan = planApiKeyUsageReservation(policy, row.requestId, row.route, snapshot(), now);
     }
     if (plan.kind !== "write" && plan.kind !== "reuse") return { kind: plan.kind, detail: plan };
+    if (plan.kind === "reuse" && !this._ownsReservation(row, policy, now)) return { kind: "unavailable", detail: "identity_conflict" };
     if (plan.kind === "write") this._write(policy, plan, now);
     this.save({ ...row, api: policy });
     return { kind: plan.kind === "write" ? "reserved" : "reuse", handle: row.handle, detail: { policy } };
