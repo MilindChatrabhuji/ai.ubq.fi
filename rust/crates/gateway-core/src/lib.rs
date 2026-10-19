@@ -4,6 +4,7 @@ pub mod claude;
 pub mod error;
 pub mod health;
 pub mod identity;
+pub mod local_work;
 pub mod js_string;
 pub mod lifecycle;
 pub mod provider;
