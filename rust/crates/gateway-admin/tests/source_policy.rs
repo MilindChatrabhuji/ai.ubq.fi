@@ -530,11 +530,11 @@ fn scalar_kernel_public_key_uses_actual_json_writer_and_public_pem_projection() 
         let records = kernel_keys::decode_records(&row).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].added_at_ms, NOW);
-        assert_eq!(records[0].pem, JsString16::from_utf8(pem));
+        assert_eq!(records[0].pem, JsString16::from_utf8(pem.trim()));
         assert_eq!(records[0].owner, JsString16::from_utf8("fixture"));
         assert_eq!(
             kernel_keys::public_pems(&store, NOW).await.unwrap(),
-            vec![pem]
+            vec![pem.trim()]
         );
         let listed = kernel_keys::list(&store, NOW).await.unwrap();
         let data = input::member(&response_source(&listed), "data").unwrap();
