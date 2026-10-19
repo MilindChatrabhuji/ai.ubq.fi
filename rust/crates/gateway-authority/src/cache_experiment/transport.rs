@@ -98,7 +98,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     ) -> Result<bool, GatewayError> {
         self.record_bound_quota_block(
             &dispatch.binding,
-            model_quota_class(&dispatch.model),
+            model_quota_class(&gateway_core::model::ModelId::from_scalar(&dispatch.model)),
             dispatch.probe.as_ref(),
             block,
             now,
@@ -227,8 +227,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let evaluation = crate::routing::evaluate(
                 &view,
                 index,
-                &target.model,
-                model_quota_class(&target.model),
+                &gateway_core::model::ModelId::from_scalar(&target.model),
+                model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
                 current,
             );
             if !evaluation.eligible {
@@ -252,7 +252,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     token: self.tokens.next_token()?,
                     generation: row.generation as i64,
                     circuit: ProbeCircuit::Quota,
-                    quota_class: Some(model_quota_class(&target.model)),
+                    quota_class: Some(model_quota_class(
+                        &gateway_core::model::ModelId::from_scalar(&target.model),
+                    )),
                     expires_at_ms: crate::add(current, crate::PROBE_LEASE_MS)?,
                 };
                 row.probe_lease = Some(lease.clone());
@@ -298,7 +300,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             row.probe_lease = None;
             match expected.circuit {
                 ProbeCircuit::Quota => {
-                    let class = model_quota_class(&dispatch.model);
+                    let class = model_quota_class(&gateway_core::model::ModelId::from_scalar(
+                        &dispatch.model,
+                    ));
                     let retained = (row.retained_reset_at_ms, row.reset_identity_stable);
                     let recovering = row.recovery_pending;
                     let block = row.quota_block_for(class);
@@ -356,8 +360,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             || !crate::routing::evaluate(
                 &view,
                 0,
-                &target.model,
-                model_quota_class(&target.model),
+                &gateway_core::model::ModelId::from_scalar(&target.model),
+                model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
                 current,
             )
             .eligible

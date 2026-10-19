@@ -7,6 +7,9 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     if crate::paid_controls::forward(row)? {
         return Ok(());
     }
+    if crate::source_metadata::retain_raw(row)? {
+        return Ok(());
+    }
     let p = &row.parts;
     if starts(p, &["uos_ai", "codex_reset_shadow_decision"]) {
         gateway_authority::full_pool_reset::FullPoolShadowDecision::validate_record(

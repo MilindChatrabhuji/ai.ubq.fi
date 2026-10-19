@@ -1,6 +1,6 @@
 //! Finite native/provider capabilities. No URL, process, path, SQL, or Bun relay interface.
 use gateway_auth::{AuthResponse, crypto::Secret};
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, source_json::SourceJson};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
@@ -20,9 +20,9 @@ pub struct Context {
 
 pub enum CatalogRequest {
     CodexModelsGet,
-    CodexModelsSet { document: Value },
+    CodexModelsSet { document: SourceJson },
     WhitelistGet,
-    WhitelistSet { document: Value },
+    WhitelistSet { document: SourceJson },
     Catalog,
     Refresh,
 }
