@@ -156,6 +156,39 @@ fn shadow_episode(candidate: &ResetCandidate) -> String {
 }
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    /// Preserve the original audit (including expiry) so inspection cannot revive or arm it.
+    pub async fn read_reset_shadow(
+        &self,
+        candidate: &ResetCandidate,
+    ) -> Result<Option<ResetShadow>, GatewayError> {
+        for _ in 0..3 {
+            let now = self.fresh_time(0)?;
+            let mut tx = self.transaction(now)?;
+            reset_fences(&mut tx, candidate).await?;
+            let config: ResetConfig = tx.read(&keys::reset_config()).await?.unwrap_or_default();
+            if !config.enabled || config.mode == ResetMode::Disabled {
+                return Err(unavailable(
+                    "feature_disabled",
+                    "Reset policy forbids observations.",
+                ));
+            }
+            let row: Option<ResetShadow> = tx
+                .read(&keys::reset_shadow(&shadow_episode(candidate)))
+                .await?;
+            if row.as_ref().is_some_and(|r| r.v != 1) {
+                return Err(invalid("Malformed reset shadow audit."));
+            }
+            self.fresh_time(now)?;
+            if tx.commit().await? {
+                return Ok(row);
+            }
+        }
+        Err(unavailable(
+            "routing_fence_stale",
+            "Reset audit changed concurrently.",
+        ))
+    }
+
     /// Finite pre-inventory projection; the fixed host rechecks again before every effect.
     pub async fn reset_candidates(
         &self,
