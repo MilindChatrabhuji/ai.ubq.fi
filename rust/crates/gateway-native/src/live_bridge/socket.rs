@@ -82,7 +82,7 @@ impl Write for DeadlineSocket {
 pub(super) type UpstreamSocket = StreamOwned<ClientConnection, DeadlineSocket>;
 pub(super) enum DialResult {
     Connected(Box<WebSocket<UpstreamSocket>>),
-    Rejected(LiveAuthorization, u16),
+    Rejected(Box<LiveAuthorization>, u16),
     Failed,
 }
 
@@ -169,7 +169,7 @@ pub(super) fn dial(
     })();
     match result {
         Ok(Ok(socket)) => DialResult::Connected(Box::new(socket)),
-        Ok(Err(status)) => DialResult::Rejected(authorization, status),
+        Ok(Err(status)) => DialResult::Rejected(Box::new(authorization), status),
         Err(_) => DialResult::Failed,
     }
 }

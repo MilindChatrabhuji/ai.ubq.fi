@@ -362,7 +362,7 @@ fn actual_pipelined_close_before_dial_makes_zero_upstream_connections() {
     };
     let (address, bridge) = start(service);
     let request = request(address);
-    let mut raw = format!("GET /v1/native/live HTTP/1.1\r\n").into_bytes();
+    let mut raw = b"GET /v1/native/live HTTP/1.1\r\n".to_vec();
     for (name, value) in request.headers() {
         raw.extend_from_slice(format!("{name}: {}\r\n", value.to_str().unwrap()).as_bytes());
     }
