@@ -248,7 +248,7 @@ fn existing_import_uses_actual_admin_source_before_header_and_body_proof() {
 #[test]
 fn import_source_owner_action_epoch_and_expiry_replacement_refuse_mint() {
     run(async {
-        for changed in ["source", "owner", "action", "expiry"] {
+        for changed in ["source", "owner", "action", "expiry", "session", "race"] {
             let store = Store::default();
             let id = identity();
             let hash = seed(&store, &id);
@@ -294,6 +294,15 @@ fn import_source_owner_action_epoch_and_expiry_replacement_refuse_mint() {
                         .value
                         .clone();
                     store.seed(key, "source-replaced", value);
+                }
+                "session" => {
+                    let key = session_index::index_key(&session_index::digest(&token)).unwrap();
+                    store.rows.lock().unwrap().remove(&key.0);
+                }
+                "race" => {
+                    let key = codex_source_pool_key();
+                    let row = store.rows.lock().unwrap().get(&key.0).unwrap().clone();
+                    store.race(key, Some(StoredRecord::json("source-raced", row.value, None)));
                 }
                 "owner" => store.seed(
                     keys::paid_control_owner(),
