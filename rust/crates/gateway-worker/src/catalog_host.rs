@@ -78,13 +78,6 @@ fn binding(provider: &str, secret: &str) -> ProviderBinding {
 }
 
 impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
-    fn compare_model_ids(
-        &self,
-        left: &str,
-        right: &str,
-    ) -> Result<std::cmp::Ordering, GatewayError> {
-        crate::admin_host::compare_labels(left, right)
-    }
     fn warm_openrouter(&self) {
         let service = crate::catalog::service();
         let mut host = self.clone();
@@ -116,6 +109,11 @@ impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
 }
 
 impl CatalogHost for Host {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
     fn now_ms(&self) -> i64 {
         now_ms().unwrap_or(i64::MAX)
     }
