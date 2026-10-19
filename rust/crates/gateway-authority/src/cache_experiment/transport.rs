@@ -6,14 +6,14 @@ use super::{
 };
 use crate::{
     Authority, TokenSource,
-    routing::{AccountBinding, ProbeCircuit, ProbeLease, model_quota_class, read_view},
+    routing::{ProbeCircuit, ProbeLease, model_quota_class, read_view},
     store::Transaction,
 };
 use gateway_auth::{
     crypto::Secret,
     provider_credentials::{CodexSourcePool, codex_source_pool_key, parse_codex_source_pool},
 };
-use gateway_core::{GatewayError, state::AuthorityStore};
+use gateway_core::{GatewayError, identity::AccountBinding, state::AuthorityStore};
 use serde_json::Value;
 
 pub(super) struct Session {
