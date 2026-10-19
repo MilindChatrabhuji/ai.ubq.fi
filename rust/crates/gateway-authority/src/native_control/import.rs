@@ -11,7 +11,10 @@ use gateway_auth::native_import::{
 };
 use gateway_core::{GatewayError, state::AuthorityStore};
 use serde::{Deserialize, Serialize};
+mod custody;
+mod effects;
 mod sources;
+pub use effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart};
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ImportActionRow {
@@ -86,7 +89,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             let mut tx = self.authority.transaction(now)?;
             let current = sources::read(self, &mut tx, actor.stored(), &target).await?;
             let reference = super::facts::digest(&(
-                "uos-native-import-action-v1",
+                "uos-native-import-action-v2",
                 actor.context(),
                 actor.policy_digest(),
                 &target,
@@ -95,7 +98,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             let key = rows::key("action", &reference);
             let prior: Option<ImportActionRow> = tx.read_source_control(&key).await?;
             let row = if let Some(row) = prior {
-                if row.v != 1
+                if row.v != 2
                     || row.actor != *actor.stored()
                     || row.context != *actor.context()
                     || row.target != target
@@ -112,7 +115,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 };
                 metadata.validate()?;
                 let row = ImportActionRow {
-                    v: 1,
+                    v: 2,
                     kind: target.kind(),
                     metadata,
                     target: target.clone(),
@@ -162,7 +165,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 .read_source_control(&rows::key("action", &metadata.action_ref))
                 .await?
                 .ok_or_else(unavailable)?;
-            if row.v != 1
+            if row.v != 2
                 || row.kind != NativeImportKind::CodexAuth
                 || row.kind != row.target.kind()
                 || row.metadata != *metadata
@@ -245,57 +248,9 @@ fn unavailable() -> GatewayError {
     )
 }
 
-/// DATA-ONLY exact import row validation; never reconstructs any live actor/proof.
-pub(super) fn validate_custody(
-    value: &gateway_core::source_json::SourceJson,
-    id: &str,
-) -> Result<(), GatewayError> {
-    let row: ImportActionRow = value.deserialize().map_err(|_| unavailable())?;
-    row.metadata.validate()?;
-    row.target.validate()?;
-    let NativeImportTarget::ExistingAccount { account_id_hash } = &row.target else {
-        return Err(unavailable());
-    };
-    if row.v != 1
-        || row.kind != NativeImportKind::CodexAuth
-        || row.metadata.action_ref != id
-        || row.facts.account_id_hash != *account_id_hash
-        || row.actor.scope() != NativeActorScope::Admin
-        || row.context.principal.0 != row.actor.principal()
-        || row.facts.slot > gateway_core::identity::MAX_SAFE_INTEGER as u64
-        || row.deadline_ms != crate::add(row.created_at_ms, OWNER_RENEWAL_MAX_MS)?
-    {
-        return Err(unavailable());
-    }
-    for hash in [
-        id,
-        account_id_hash,
-        &row.facts.credential_version,
-        &row.facts.native_generation,
-        &row.facts.checks_digest,
-    ] {
-        super::custody::hash(hash)?;
-    }
-    for text in [
-        &row.facts.owner_id,
-        &row.facts.owner_epoch,
-        &row.facts.native_owner_id,
-        &row.context.request_id.0,
-        &row.context.route,
-    ] {
-        crate::text(text)?;
-    }
-    for time in [
-        row.created_at_ms,
-        row.deadline_ms,
-        row.context.started_at_ms,
-    ] {
-        crate::validate_time(time)?;
-    }
-    let scalar: serde_json::Value = value.deserialize().map_err(|_| unavailable())?;
-    if serde_json::to_value(&row).map_err(|_| unavailable())? != scalar {
-        return Err(unavailable());
-    }
-    super::custody::actor_shape(&scalar["actor"])?;
-    Ok(())
+fn required_nullable<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    Option::<T>::deserialize(d)
 }
+pub(super) use custody::validate_custody;

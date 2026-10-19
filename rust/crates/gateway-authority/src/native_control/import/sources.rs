@@ -19,7 +19,15 @@ pub(super) struct ImportFacts {
     pub slot: u64,
     pub account_id_hash: String,
     pub credential_version: String,
-    pub native_generation: String,
+    pub access_generation: String,
+    pub source_native_generation: String,
+    pub owner_revision: String,
+    pub source_revision: String,
+    pub normalized_revision: String,
+    #[serde(deserialize_with = "required_nullable")]
+    pub runtime_revision: Option<String>,
+    pub control_checks_digest: String,
+    pub account_digests: Vec<String>,
     pub checks_digest: String,
 }
 pub(super) async fn read<
@@ -35,10 +43,8 @@ pub(super) async fn read<
     let NativeImportTarget::ExistingAccount { account_id_hash } = target else {
         return Err(unavailable());
     };
-    let owner: PaidControlOwner = tx
-        .read(&keys::paid_control_owner())
-        .await?
-        .ok_or_else(unavailable)?;
+    let owner_key = keys::paid_control_owner();
+    let owner: PaidControlOwner = tx.read(&owner_key).await?.ok_or_else(unavailable)?;
     if owner.v != 1
         || owner.owner_id != control.identity.owner_id()
         || owner.owner_epoch != control.identity.owner_epoch()
@@ -76,7 +82,11 @@ pub(super) async fn read<
         return Err(unavailable());
     }
     let mut selected = None;
+    let mut account_digests = Vec::new();
     for (index, account) in source.accounts.iter().enumerate() {
+        account_digests.push(super::super::facts::digest(
+            &account.private_source_value(),
+        )?);
         let identity = account.identity();
         let projected = &normalized.accounts[index];
         if projected.account_id_hash != identity.routing_account_hash
@@ -95,14 +105,26 @@ pub(super) async fn read<
             {
                 return Err(unavailable());
             }
+            let physical = native
+                .managed_source
+                .as_ref()
+                .filter(|source| {
+                    source.v == gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION
+                })
+                .ok_or_else(unavailable)?;
+            if native.external_user_id.is_some() || !account.refresh_token.expose().is_empty() {
+                return Err(unavailable());
+            }
             selected = Some((
                 index as u64,
                 identity.credential_version.0,
                 native.generation_hash.clone(),
+                physical.generation_hash.clone(),
             ));
         }
     }
-    let (slot, credential_version, native_generation) = selected.ok_or_else(unavailable)?;
+    let (slot, credential_version, access_generation, source_native_generation) =
+        selected.ok_or_else(unavailable)?;
     tx.now = control.time(tx.now)?;
     super::super::actor::validate_current_time(actor, tx.now)?;
     Ok(ImportFacts {
@@ -112,7 +134,29 @@ pub(super) async fn read<
         slot,
         account_id_hash: account_id_hash.clone(),
         credential_version,
-        native_generation,
+        access_generation,
+        source_native_generation,
+        owner_revision: tx.revision(&owner_key).ok_or_else(unavailable)?,
+        source_revision: tx.revision(&key).ok_or_else(unavailable)?,
+        normalized_revision: tx.revision(&keys::pool()).ok_or_else(unavailable)?,
+        runtime_revision: tx.revision(&runtime),
+        control_checks_digest: control_digest(&tx.checks())?,
+        account_digests,
         checks_digest: super::super::facts::checks_digest(&tx.checks())?,
     })
+}
+
+pub(super) fn control_digest(
+    checks: &[gateway_core::state::RevisionCheck],
+) -> Result<String, GatewayError> {
+    let source = codex_source_pool_key();
+    let pool = keys::pool();
+    let runtime = gateway_auth::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
+    super::super::facts::checks_digest(
+        &checks
+            .iter()
+            .filter(|c| c.key != source && c.key != pool && c.key != runtime)
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
 }
