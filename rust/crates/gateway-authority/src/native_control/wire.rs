@@ -164,6 +164,7 @@ pub enum NativeRenewalAuthorityResponse {
         operation_id: String,
         claim_ref: String,
         start_permit: Option<String>,
+        publication_revision: Option<String>,
         mode: NativeRenewalMode,
         deadline_ms: i64,
         fence: NativeRenewalFence,

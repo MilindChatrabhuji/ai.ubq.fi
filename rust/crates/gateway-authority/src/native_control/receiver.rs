@@ -1,11 +1,11 @@
 use super::{
     NativeRenewalAction, NativeRenewalCancellation, NativeRenewalClaim, NativeRenewalControl,
     NativeRenewalFence, NativeRenewalMode, NativeRenewalPublished, OWNER_RENEWAL_MAX_MS, facts,
-    rows::{self, ActionRow, Actor, OperationRow, Phase, conflict, fail},
+    rows::{self, ActionRow, GenerationEffect, OperationRow, Phase, conflict, fail},
 };
 use crate::{Authority, TokenSource, add, store::Transaction, text};
 use gateway_auth::{
-    AuthConfig, AuthHost, AuthMethod, AuthRequest, AuthService,
+    AuthConfig, AuthHost, AuthRequest,
     crypto::sha256_hex,
     native::NATIVE_CONTROL_PATH,
     native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
@@ -35,6 +35,7 @@ pub struct NativeRenewalAuthority<'a, S, I, C> {
     pub(super) authority: &'a Authority<S, I>,
     pub(super) identity: &'a NativeTransportIdentity,
     pub(super) registered: &'a RegisteredRenewalOwner,
+    pub(super) current_config: &'a AuthConfig,
     pub(super) cancellation: &'a C,
 }
 impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
@@ -44,16 +45,18 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         authority: &'a Authority<S, I>,
         identity: &'a NativeTransportIdentity,
         registered: &'a RegisteredRenewalOwner,
+        current_config: &'a AuthConfig,
         cancellation: &'a C,
     ) -> Self {
         Self {
             authority,
             identity,
             registered,
+            current_config,
             cancellation,
         }
     }
-    fn time(&self, anchor: i64) -> Result<i64, GatewayError> {
+    pub(super) fn time(&self, anchor: i64) -> Result<i64, GatewayError> {
         if self.cancellation.cancelled() {
             return Err(GatewayError::new(
                 499,
@@ -82,10 +85,12 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             &row.fence.original_request_id,
             Some(&row.attempt_id),
             self.identity,
+            self.current_config,
             self.registered,
         )
         .await?;
         tx.now = self.time(tx.now)?;
+        super::actor::validate_current_time(&row.actor, tx.now)?;
         if tx.now >= row.deadline_ms
             || current.fence != row.fence
             || current.checks_digest != row.checks_digest
@@ -132,7 +137,11 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             if action.operation_id.as_deref() != Some(operation_id) {
                 return Err(conflict());
             }
-            self.current(&mut tx, &action).await?;
+            if let Some(terminal) = &row.terminal {
+                self.verify_terminal(&mut tx, &action, terminal).await?;
+            } else {
+                self.current(&mut tx, &action).await?;
+            }
             let fresh = row.phase == Phase::Claimed
                 && start_permit.is_some_and(|p| sha256_hex(p.as_bytes()) == row.start_digest);
             if start_permit.is_some() && !fresh {
@@ -153,6 +162,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                         NativeRenewalMode::ReconcileOnly
                     },
                     start_permit: start_permit.map(str::to_owned),
+                    publication_revision: row.publication_revision,
                 });
             }
         }
@@ -180,8 +190,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         Ok((action, operation))
     }
 
-    /// Only the originating trusted Worker calls this with its already-selected request identity.
-    /// AuthService reauthenticates against this exact store. Reverse calls never receive that request.
+    /// Existing routing convenience; all permission comes from actual original AuthService minting.
     pub async fn authenticate_and_prepare<H: AuthHost>(
         &self,
         host: &H,
@@ -189,58 +198,56 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         request: &AuthRequest,
         request_id: &str,
     ) -> Result<NativeRenewalAction, GatewayError> {
-        text(request_id)?;
-        self.time(0)?;
-        let principal = AuthService::new(self.authority.store(), host, config)
-            .authenticate_client(request)
-            .await?;
-        let actor = match principal.method {
-            AuthMethod::KvApiKey { key_id, policy } => Actor::ApiKey {
-                key_id,
-                token_hash: policy.token_hash,
-            },
-            AuthMethod::AuthTokensAllowlist => Actor::Configuration {
-                principal: "auth-method:auth_tokens_allowlist".into(),
-            },
-            AuthMethod::AdminAllowlist => Actor::Configuration {
-                principal: "auth-method:admin_allowlist".into(),
-            },
-            AuthMethod::DenoDeployToken => Actor::Configuration {
-                principal: "auth-method:deno_deploy_token".into(),
-            },
-            AuthMethod::Disabled => Actor::Configuration {
-                principal: principal
-                    .token
-                    .as_ref()
-                    .map(|v| format!("bearer-sha256:{}", sha256_hex(v.expose().as_bytes())))
-                    .unwrap_or_else(|| "local-auth-disabled".into()),
-            },
-            // The separate auth owner must supply a revocation-aware secretless session index.
-            AuthMethod::PasskeySession { .. } => {
-                return Err(GatewayError::unavailable(
-                    "Current secretless session authority is not installed.",
-                    "native_session_fence_unavailable",
-                ));
-            }
-            AuthMethod::GithubToken { .. } => {
-                return Err(GatewayError::unavailable(
-                    "Current kernel request authority is not bound.",
-                    "native_kernel_fence_unavailable",
-                ));
-            }
-        };
+        let mut tx = self.authority.transaction(self.time(0)?)?;
+        let raw: serde_json::Value = tx
+            .read(&rows::session_key(request_id))
+            .await?
+            .ok_or_else(fail)?;
+        let context: gateway_core::identity::RequestContext =
+            serde_json::from_value(raw["context"].clone()).map_err(|_| fail())?;
+        if context.request_id.0 != request_id {
+            return Err(fail());
+        }
+        let actor = super::actor::authenticate_client_actor(
+            self.authority,
+            host,
+            config,
+            request,
+            &context,
+        )
+        .await?;
+        self.prepare_routing(&actor).await
+    }
+    pub async fn prepare_routing(
+        &self,
+        actor: &super::actor::NativeRenewalActor,
+    ) -> Result<NativeRenewalAction, GatewayError> {
+        let request_id = &actor.context().request_id.0;
         for _ in 0..5 {
             let now = self.time(0)?;
             let mut tx = self.authority.transaction(now)?;
+            let raw: serde_json::Value = tx
+                .read(&rows::session_key(request_id))
+                .await?
+                .ok_or_else(fail)?;
+            let context: gateway_core::identity::RequestContext =
+                serde_json::from_value(raw["context"].clone()).map_err(|_| fail())?;
+            if &context != actor.context() {
+                return Err(fail());
+            }
             let current = facts::read(
                 &mut tx,
-                &actor,
+                actor.stored(),
                 request_id,
                 None,
                 self.identity,
+                self.current_config,
                 self.registered,
             )
             .await?;
+            if current.fence.principal_policy_digest != actor.policy_digest() {
+                return Err(fail());
+            }
             let reference = facts::digest(&(
                 "uos-native-renewal-action-v1",
                 request_id,
@@ -250,7 +257,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             let key = rows::key("action", &reference);
             let existing: Option<ActionRow> = tx.read(&key).await?;
             let row = if let Some(row) = existing {
-                if row.actor != actor
+                if row.actor != *actor.stored()
                     || row.fence != current.fence
                     || row.checks_digest != current.checks_digest
                 {
@@ -261,20 +268,26 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 let row = ActionRow {
                     v: 1,
                     action_ref: reference.clone(),
-                    actor: actor.clone(),
+                    actor: actor.stored().clone(),
                     attempt_id: current.attempt_id,
                     created_at_ms: now,
                     deadline_ms: add(now, OWNER_RENEWAL_MAX_MS)?,
                     fence: current.fence,
                     checks_digest: current.checks_digest,
+                    control_checks_digest: current.control_checks_digest,
                     account_digests: current.account_digests,
                     operation_id: None,
                 };
-                // Retention is conservative: no unknown operation can disappear into a new rotation grant.
                 tx.put(&key, &row, None)?;
                 row
             };
             self.current(&mut tx, &row).await?;
+            actor.bind_preparation(&mut tx).await?;
+            tx.now = self.time(tx.now)?;
+            super::actor::validate_current_time(&row.actor, tx.now)?;
+            if tx.now >= row.deadline_ms {
+                return Err(fail());
+            }
             if tx.commit().await? {
                 return Ok(NativeRenewalAction {
                     action_ref: reference,
@@ -319,7 +332,6 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
         for _ in 0..5 {
             let mut tx = self.authority.transaction(self.time(now)?)?;
             let mut action = self.action(&mut tx, reference).await?;
-            self.current(&mut tx, &action).await?;
             if action
                 .operation_id
                 .as_ref()
@@ -329,18 +341,41 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
             }
             let key = rows::key("operation", operation_id);
             let existing: Option<OperationRow> = tx.read(&key).await?;
-            let (operation, mode, start_permit) = if let Some(row) = existing {
+            let generation_key = rows::generation_key(&action.fence)?;
+            let generation: Option<GenerationEffect> = tx.read(&generation_key).await?;
+            if generation.as_ref().is_some_and(|g| g.v != 1) {
+                return Err(fail());
+            }
+            let (operation, mode, start_permit) = if let Some(mut row) = existing {
                 if row.v != 1
                     || row.action_ref != reference
                     || row.operation_id != operation_id
                     || row.request_digest != digest
+                    || generation.is_none()
                 {
                     return Err(conflict());
                 }
+                let terminal = row
+                    .terminal
+                    .clone()
+                    .or_else(|| generation.as_ref().and_then(|g| g.terminal.clone()));
+                if let Some(terminal) = terminal {
+                    self.verify_terminal(&mut tx, &action, &terminal).await?;
+                    if row.terminal.is_none() {
+                        row.phase = Phase::Published;
+                        row.publication_revision = Some(terminal.publication_revision.clone());
+                        row.terminal = Some(terminal);
+                        tx.put(&key, &row, None)?;
+                    }
+                } else {
+                    self.current(&mut tx, &action).await?;
+                }
                 (row, NativeRenewalMode::ReconcileOnly, None)
             } else {
+                self.current(&mut tx, &action).await?;
                 let permit = self.authority.tokens.next_token()?;
                 text(&permit)?;
+                let fresh = generation.is_none();
                 let row = OperationRow {
                     v: 1,
                     action_ref: reference.into(),
@@ -348,19 +383,49 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
                     request_digest: digest.clone(),
                     claim_ref: self.authority.tokens.next_token()?,
                     start_digest: sha256_hex(permit.as_bytes()),
-                    phase: Phase::Claimed,
+                    phase: if fresh {
+                        Phase::Claimed
+                    } else {
+                        Phase::Unknown
+                    },
                     publication_revision: None,
                     native_source_generation: None,
                     access_generation: None,
+                    terminal: None,
                 };
                 tx.put(&key, &row, None)?;
-                (row, NativeRenewalMode::RenewOnce, Some(permit))
+                if fresh {
+                    tx.put(
+                        &generation_key,
+                        &GenerationEffect {
+                            v: 1,
+                            operation_id: operation_id.into(),
+                            claim_ref: row.claim_ref.clone(),
+                            publication_revision: None,
+                            terminal: None,
+                        },
+                        None,
+                    )?;
+                }
+                (
+                    row,
+                    if fresh {
+                        NativeRenewalMode::RenewOnce
+                    } else {
+                        NativeRenewalMode::ReconcileOnly
+                    },
+                    fresh.then_some(permit),
+                )
             };
             if action.operation_id.is_none() {
                 action.operation_id = Some(operation_id.into());
                 tx.put(&rows::key("action", reference), &action, None)?;
             }
-            self.current(&mut tx, &action).await?;
+            if let Some(terminal) = &operation.terminal {
+                self.verify_terminal(&mut tx, &action, terminal).await?;
+            } else {
+                self.current(&mut tx, &action).await?;
+            }
             if tx.commit().await? {
                 return Ok(NativeRenewalClaim {
                     claim_ref: operation.claim_ref,
@@ -372,6 +437,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
                     },
                     mode,
                     start_permit,
+                    publication_revision: operation.publication_revision,
                 });
             }
         }
@@ -388,8 +454,15 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
             let mut tx = self.authority.transaction(self.time(0)?)?;
             let (action, mut operation) = self.operation(&mut tx, claim).await?;
             self.current(&mut tx, &action).await?;
+            let generation: GenerationEffect = tx
+                .read(&rows::generation_key(&action.fence)?)
+                .await?
+                .ok_or_else(fail)?;
             if !can_start
                 || operation.phase != Phase::Claimed
+                || generation.v != 1
+                || generation.operation_id != claim.operation_id
+                || generation.claim_ref != claim.claim_ref
                 || permit
                     .as_ref()
                     .is_none_or(|p| sha256_hex(p.as_bytes()) != operation.start_digest)
@@ -415,10 +488,14 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
     ) -> Result<NativeRenewalFence, GatewayError> {
         for _ in 0..5 {
             let mut tx = self.authority.transaction(self.time(0)?)?;
-            let (action, _) = self.operation(&mut tx, claim).await?;
-            let current = self.current(&mut tx, &action).await?;
+            let (action, operation) = self.operation(&mut tx, claim).await?;
+            let fence = if let Some(terminal) = &operation.terminal {
+                self.verify_terminal(&mut tx, &action, terminal).await?
+            } else {
+                self.current(&mut tx, &action).await?.fence
+            };
             if tx.commit().await? {
-                return Ok(current.fence);
+                return Ok(fence);
             }
         }
         Err(conflict())
@@ -437,7 +514,8 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
         {
             return Err(fail());
         }
-        self.current(&mut tx, &action).await?;
+        let terminal = operation.terminal.as_ref().ok_or_else(fail)?;
+        self.verify_terminal(&mut tx, &action, terminal).await?;
         if !tx.commit().await? {
             return Err(conflict());
         }

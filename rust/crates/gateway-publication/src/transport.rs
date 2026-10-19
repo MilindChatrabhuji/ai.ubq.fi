@@ -53,6 +53,9 @@ impl OwnedNativeAuthHeaders {
             mac: one(NATIVE_MAC_HEADER)?,
         })
     }
+    pub(crate) fn nonce(&self) -> &str {
+        &self.nonce
+    }
     pub fn pairs(&self) -> Vec<(String, String)> {
         vec![
             (NATIVE_VERSION_HEADER.into(), self.version.clone()),
@@ -62,7 +65,7 @@ impl OwnedNativeAuthHeaders {
             (NATIVE_MAC_HEADER.into(), self.mac.clone()),
         ]
     }
-    fn borrowed(&self) -> NativeAuthHeaders<'_> {
+    pub(crate) fn borrowed(&self) -> NativeAuthHeaders<'_> {
         NativeAuthHeaders {
             version: &self.version,
             key_id: &self.key_id,
@@ -334,7 +337,7 @@ impl AccessCredentialSource for ReceivedAccess {
         Ok(self.credentials.clone())
     }
 }
-fn error_response(error: GatewayError) -> PublicationResponse {
+pub(crate) fn error_response(error: GatewayError) -> PublicationResponse {
     PublicationResponse {
         status: error.status,
         headers: vec![
@@ -354,8 +357,8 @@ pub trait PublicationCarrier {
     ) -> impl Future<Output = Result<PublicationResponse, GatewayError>>;
 }
 pub struct NativePublicationSender<'a, C> {
-    identity: &'a NativeTransportIdentity,
-    carrier: &'a C,
+    pub(crate) identity: &'a NativeTransportIdentity,
+    pub(crate) carrier: &'a C,
 }
 impl<'a, C: PublicationCarrier> NativePublicationSender<'a, C> {
     pub fn configured(identity: &'a NativeTransportIdentity, carrier: &'a C) -> Self {
@@ -421,14 +424,17 @@ impl<'a, C: PublicationCarrier> NativePublicationSender<'a, C> {
         Ok(receipt)
     }
 }
-fn unverified() -> GatewayError {
+pub(crate) fn unverified() -> GatewayError {
     GatewayError::unavailable(
         "Native publication response is not an authenticated matching receipt",
         "native_publication_response_unverified",
     )
 }
 
-fn decode_response_error(status: u16, body: &[u8]) -> Result<GatewayError, GatewayError> {
+pub(crate) fn decode_response_error(
+    status: u16,
+    body: &[u8],
+) -> Result<GatewayError, GatewayError> {
     let value: serde_json::Value = serde_json::from_slice(body).map_err(|_| unverified())?;
     let error = value
         .get("error")

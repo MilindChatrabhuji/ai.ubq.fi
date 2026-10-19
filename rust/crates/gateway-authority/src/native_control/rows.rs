@@ -53,23 +53,9 @@ pub(super) fn conflict() -> GatewayError {
     )
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum Actor {
-    ApiKey { key_id: String, token_hash: String },
-    Configuration { principal: String },
-}
+pub(super) use super::actor::StoredNativeActor as Actor;
 
-impl Actor {
-    pub(super) fn principal(&self) -> String {
-        match self {
-            Self::ApiKey { key_id, .. } => format!("api-key:{key_id}"),
-            Self::Configuration { principal } => principal.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ActionRow {
     pub v: u8,
@@ -80,6 +66,7 @@ pub(super) struct ActionRow {
     pub deadline_ms: i64,
     pub fence: NativeRenewalFence,
     pub checks_digest: String,
+    pub control_checks_digest: String,
     pub account_digests: Vec<String>,
     pub operation_id: Option<String>,
 }
@@ -91,6 +78,42 @@ pub(super) enum Phase {
     Started,
     Unknown,
     Published,
+}
+
+/// One fixed native source generation can start at most one refresh across all original requests.
+/// This marker is retained after uncertainty; it is not a routing/accounting ledger or a lease.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GenerationEffect {
+    pub v: u8,
+    pub operation_id: String,
+    pub claim_ref: String,
+    pub publication_revision: Option<String>,
+    pub terminal: Option<TerminalPublication>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TerminalPublication {
+    pub publication_revision: String,
+    pub source_revision: String,
+    pub normalized_revision: String,
+    pub native_source_generation: String,
+    pub access_generation: String,
+    pub credential_version: String,
+    pub publication_request_digest: Option<String>,
+}
+
+pub(super) fn generation_key(fence: &NativeRenewalFence) -> Result<RecordKey, GatewayError> {
+    Ok(key(
+        "generation",
+        &super::facts::digest(&(
+            "uos-native-renewal-generation-v1",
+            &fence.native_owner_id,
+            &fence.account_id_hash,
+            &fence.source_native_generation,
+        ))?,
+    ))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -106,4 +129,5 @@ pub(super) struct OperationRow {
     pub publication_revision: Option<String>,
     pub native_source_generation: Option<String>,
     pub access_generation: Option<String>,
+    pub terminal: Option<TerminalPublication>,
 }
