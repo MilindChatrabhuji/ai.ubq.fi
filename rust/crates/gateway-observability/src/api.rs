@@ -15,7 +15,7 @@ fn signed_safe(v: &Value) -> bool {
         .is_some_and(|n| n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0)
 }
 pub fn valid_usage_rollup(v: &Value) -> bool {
-    v["v"] == 1
+    v["v"].as_f64() == Some(1.0)
         && ["model", "provider"]
             .iter()
             .all(|f| v[f].as_str().is_some_and(|s| !s.is_empty()))
