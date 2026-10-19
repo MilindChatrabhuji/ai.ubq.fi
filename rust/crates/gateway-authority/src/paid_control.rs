@@ -121,7 +121,7 @@ impl Serialize for PaidRoutingProjection {
 }
 impl<'de> Deserialize<'de> for PaidRoutingProjection {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = SourceJson::deserialize(deserializer)?;
+        let raw = <SourceJson as serde::Deserialize>::deserialize(deserializer)?;
         let policy = raw.deserialize().map_err(serde::de::Error::custom)?;
         let provenance = source::member(&raw, "provenance")
             .ok_or_else(|| serde::de::Error::custom("Missing paid provenance"))?
