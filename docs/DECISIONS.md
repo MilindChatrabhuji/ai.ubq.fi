@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Explicit manual banked reset verifies and promotes one account - 2026-10-18
+
+An authenticated admin may use one banked reset for a selected Codex account through `POST /admin/providers/codex/banked-resets/consume`. This explicit manual action works independently of the Automatic resets switch and automatic shadow arming; global `enabled=false` and `mode=disabled` still make zero provider calls. Manual and automatic redemptions share the existing one-per-account-per-UTC-day submission budget, account/window idempotency, exact credential and quota fences, and unknown-consumption refusal. An uncertain consume is never replayed.
+
+After a documented verified consume outcome, the manual action synchronously reads that account's current usage. One atomic transaction stores the fresh account-bound observation, reconciles only quota classes proven recovered, records completed manual promotion and selects that same account with reason `manual_reset`. This explicit operator transition may supersede a healthy active account; ordinary serial routing, provider selection, authentication and model eligibility remain unchanged. Pending propagation or a failed promotion never claims success, and a repeated completed action cannot restore an old priority. The manual intent contains opaque account/credential hashes and quota metadata, never tokens. KV export/import retains the intent together with its authoritative reset-window and account-day ledgers; importing only the intent would lose the consumption and daily-budget proof.
+
+Reason: a manual reset outside the gateway could leave exhausted routing state until a later capacity sample. The button owns verification and promotion directly, without waiting for chart sampling or issuing inference. Acceptance uses isolated upstream fixtures; agents remain forbidden from directly redeeming live credits.
+
 ## Allow overage spending false refuses all overage - 2026-10-18
 
 The per-account `Allow overage spending` setting is a hard gate. With the setting off, the gateway may redeem a banked reset, but it must never dispatch an overage probe, including after the reset preflight returns `no_eligible_credit`, empty or ineligible inventory, `inventory_unavailable`, or `account_day_limit_reached`. That case returns the ordinary `codex_quota_blocked` response. With the setting on, the existing resets-first flow and one bounded overage fallback remain unchanged.
