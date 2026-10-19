@@ -134,9 +134,10 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
         ..Default::default()
     };
     for provider in [UpstreamProvider::Deepseek, UpstreamProvider::Lithos] {
-        let error = prepare_request(provider, ClientSurface::Responses, &raw, &options)
-            .err()
-            .expect("disabled reduction must not produce a dispatchable request");
+        let error = match prepare_request(provider, ClientSurface::Responses, &raw, &options) {
+            Ok(_) => panic!("disabled reduction must not produce a dispatchable request"),
+            Err(error) => error,
+        };
         assert_eq!(error.status, 400);
         assert_eq!(
             error.envelope.error.message,

@@ -137,11 +137,6 @@
     "param": "input[1].output",
     "code": "context_length_exceeded"
   },
-  "inBudgetLoneUnits": [
-    97,
-    55296,
-    98,
-    56320
-  ],
+  "inBudgetLoneUnits": [97, 55296, 98, 56320],
   "credentialEnvironmentKeys": []
 }
