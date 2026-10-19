@@ -1,18 +1,18 @@
 //! Full uploaded snapshot normalization and evidence-preserving refresh projection.
 use crate::{model_control as c, prompt_cache, reasoning::advertised_effort};
-use gateway_core::{model::ModelId, source_json::SourceJson};
+use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelSnapshot {
     pub models: Vec<SourceJson>,
-    pub source: String,
+    pub source: JsString16,
     pub updated_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_version: Option<String>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct SnapshotOverrides {
-    pub source: Option<String>,
+    pub source: Option<JsString16>,
     pub client_version: Option<String>,
     pub updated_at_ms: Option<i64>,
 }
@@ -180,9 +180,9 @@ pub fn normalize_snapshot(
     let source = overrides
         .source
         .as_ref()
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.as_units().is_empty())
         .cloned()
-        .or_else(|| c::scalar(c::get(value, "source").as_ref()))
+        .or_else(|| c::get(value, "source").as_ref().and_then(c::string))
         .unwrap_or_else(|| "codex_cli".into());
     let client_version = overrides
         .client_version
