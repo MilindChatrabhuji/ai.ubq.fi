@@ -155,10 +155,10 @@ fn parse_binding(value: &SourceJson) -> Result<Binding, GatewayError> {
     ) {
         return Err(fail());
     }
-    if let Some(updated) = member(&credential, "updated_at_ms").filter(|v| v.as_str() != "null") {
-        if !source::number(&updated).is_some_and(|v| v.is_finite() && v > 0.0) {
-            return Err(fail());
-        }
+    if let Some(updated) = member(&credential, "updated_at_ms").filter(|v| v.as_str() != "null")
+        && !source::number(&updated).is_some_and(|v| v.is_finite() && v > 0.0)
+    {
+        return Err(fail());
     }
     let workspace = member(value, "workspace").ok_or_else(fail)?;
     let workspace_id = if workspace.as_str() == "null" {
