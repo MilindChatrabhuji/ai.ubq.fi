@@ -298,14 +298,13 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
             let stored_keys: Option<Vec<Value>> =
                 tx.read(&upstream::kernel_public_keys_key()).await?;
             for item in stored_keys.into_iter().flatten() {
-                if let Some(pem) = item.get("pem").and_then(Value::as_str) {
-                    if !configured
+                if let Some(pem) = item.get("pem").and_then(Value::as_str)
+                    && !configured
                         .kernel_public_keys_pem
                         .iter()
                         .any(|key| key == pem)
-                    {
-                        configured.kernel_public_keys_pem.push(pem.into());
-                    }
+                {
+                    configured.kernel_public_keys_pem.push(pem.into());
                 }
             }
             let claims =
