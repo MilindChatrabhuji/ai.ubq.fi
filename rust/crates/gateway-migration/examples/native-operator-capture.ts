@@ -6,6 +6,14 @@ import { validateNativeRow, type NativeRow } from "../../../../src/kv-conversion
 import { encodeNativeCaptureValue, type TypedValue } from "../../../../src/kv-conversion/typed-value.ts";
 
 type NativeValue = { encoding: "source-graph-v1"; value: TypedValue } | { encoding: "counter-le64" | "bytes"; value: number[] };
+type RawJsonNumber = Readonly<{ rawJSON: string }>;
+const isRawJsonNumber = (value: unknown): value is RawJsonNumber =>
+  typeof value === "object" && value !== null && "rawJSON" in value && typeof value.rawJSON === "string" && Boolean(JSON.isRawJSON(value));
+const exactJsonNumber = (value: bigint): RawJsonNumber => {
+  const raw: unknown = JSON.rawJSON(String(value));
+  if (!isRawJsonNumber(raw)) throw new Error("Pinned Bun raw JSON number support is unavailable");
+  return raw;
+};
 export type NativeCapture = {
   v: 2;
   source_git_sha: string;
@@ -19,7 +27,7 @@ export type NativeCapture = {
     raw_key: number[];
     value: NativeValue;
     revision: { version: string; sequence: string };
-    expiration_ms: number | ReturnType<typeof JSON.rawJSON>;
+    expiration_ms: number | RawJsonNumber;
   }[];
 };
 
@@ -37,7 +45,7 @@ export const capturePrivateNativeState = async (source: string, stagingParent: s
       const numericExpiry = Number(row.expiration_ms);
       // Retain the existing i64 JSON number wire beyond JavaScript's safe range.
       // Callers must send these serialized bytes without parsing them through Number.
-      const expiration = Number.isSafeInteger(numericExpiry) ? numericExpiry : JSON.rawJSON(String(row.expiration_ms));
+      const expiration = Number.isSafeInteger(numericExpiry) ? numericExpiry : exactJsonNumber(row.expiration_ms);
       let value: NativeValue;
       if (row.v_encoding === 1n) {
         const decoded: unknown = deserialize(row.v);
