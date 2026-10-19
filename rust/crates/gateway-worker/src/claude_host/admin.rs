@@ -53,12 +53,7 @@ pub async fn admin<H: ObservabilityHost>(
             response(observations, context).await
         }
         ClaudeRequest::DeleteAccount { account_id } => {
-            let account = target(
-                store,
-                platform,
-                account_id.as_ref().filter(|id| !id.as_units().is_empty()),
-            )
-            .await?;
+            let account = target(store, platform, account_id.as_ref()).await?;
             let Some(account) = account else {
                 return if account_id
                     .as_ref()
@@ -83,12 +78,7 @@ pub async fn admin<H: ObservabilityHost>(
             account_id,
             cohort_id,
         } => {
-            let account = target(
-                store,
-                platform,
-                account_id.as_ref().filter(|id| !id.as_units().is_empty()),
-            )
-            .await?;
+            let account = target(store, platform, account_id.as_ref()).await?;
             let Some(account) = account else {
                 if account_id
                     .as_ref()
@@ -98,21 +88,13 @@ pub async fn admin<H: ObservabilityHost>(
                 }
                 return cleared_response(observations, context, false).await;
             };
-            if account_id
-                .as_ref()
-                .is_some_and(|id| !id.as_units().is_empty())
-                && cohort_id.is_none()
-            {
-                return Err(gateway_auth::invalid(
-                    "account_cohort_id is required for a targeted clear",
-                ));
-            }
-            if cohort_id
-                .as_ref()
-                .is_some_and(|id| !selector_matches(id, &account.account_cohort_id))
-            {
-                return Err(changed("Claude account generation changed"));
-            }
+            check_target_cohort(
+                account_id
+                    .as_ref()
+                    .is_some_and(|id| !id.as_units().is_empty()),
+                cohort_id.as_ref(),
+                &account.account_cohort_id,
+            )?;
             let host = super::platform::Host {
                 store: store.clone(),
                 platform: platform.clone(),
@@ -128,6 +110,40 @@ pub async fn admin<H: ObservabilityHost>(
         ClaudeRequest::SetCredential(input) => {
             submit(store, platform, observations, input, context).await
         }
+    }
+}
+
+fn check_target_cohort(
+    targeted: bool,
+    original_leaf: Option<&SourceJson>,
+    actual_cohort: &str,
+) -> Result<(), GatewayError> {
+    let cohort = original_leaf.and_then(source::string);
+    if targeted && cohort.is_none() {
+        return Err(gateway_auth::invalid(
+            "account_cohort_id is required for a targeted clear",
+        ));
+    }
+    if original_leaf.is_some()
+        && cohort
+            .as_ref()
+            .is_none_or(|id| !selector_matches(id, actual_cohort))
+    {
+        return Err(changed("Claude account generation changed"));
+    }
+    Ok(())
+}
+
+fn matching_target<'a>(
+    roster: &'a claude::AccountStore,
+    id: Option<&JsString16>,
+) -> Option<&'a AccountBinding> {
+    match id {
+        Some(id) => roster
+            .accounts
+            .iter()
+            .find(|account| selector_matches(id, &account.account_id)),
+        None => claude::active_binding(roster),
     }
 }
 
@@ -162,14 +178,7 @@ async fn target(
 ) -> Result<Option<AccountBinding>, GatewayError> {
     let seed = super::platform::bootstrap_for_source(store, platform).await?;
     let roster = claude::load_roster(store, platform, &seed).await?;
-    Ok(match id {
-        Some(id) => roster
-            .roster
-            .accounts
-            .into_iter()
-            .find(|account| selector_matches(id, &account.account_id)),
-        None => claude::active_binding(&roster.roster).cloned(),
-    })
+    Ok(matching_target(&roster.roster, id).cloned())
 }
 
 async fn submit<H: ObservabilityHost>(
@@ -512,6 +521,70 @@ mod tests {
                 .as_str(),
             "null"
         );
+    }
+
+    #[test]
+    fn original_cohort_leaf_is_checked_after_lookup_without_presence_loss() {
+        let actual = "00000000-0000-0000-0000-000000000002";
+        let scalar = SourceJson::from_serializable(actual).unwrap();
+        assert!(check_target_cohort(false, None, actual).is_ok());
+        assert!(check_target_cohort(true, Some(&scalar), actual).is_ok());
+        assert_eq!(
+            check_target_cohort(true, None, actual).unwrap_err().status,
+            400
+        );
+        for raw in ["null", "0", "false", "{}"] {
+            let leaf = SourceJson::parse(raw).unwrap();
+            assert_eq!(
+                check_target_cohort(true, Some(&leaf), actual)
+                    .unwrap_err()
+                    .status,
+                400
+            );
+            assert_eq!(
+                check_target_cohort(false, Some(&leaf), actual)
+                    .unwrap_err()
+                    .status,
+                409
+            );
+        }
+        let empty = SourceJson::parse("\"\"").unwrap();
+        assert_eq!(
+            check_target_cohort(true, Some(&empty), actual)
+                .unwrap_err()
+                .status,
+            409
+        );
+    }
+
+    #[test]
+    fn only_missing_selector_uses_active_account_not_explicit_empty_or_lone_unit() {
+        let credential = claude::submitted_credential(
+            std::sync::Arc::new(claude::ClaudeSourceSecret::from_source(
+                JsString16::from_utf8("sk-ant-api03-synthetic"),
+            )),
+            None,
+            10,
+        )
+        .unwrap();
+        let account = AccountBinding {
+            account_id: "00000000-0000-0000-0000-000000000001".into(),
+            account_cohort_id: "00000000-0000-0000-0000-000000000002".into(),
+            credential_fingerprint: claude::fingerprint(&credential, None),
+            evidence_generation: "00000000-0000-0000-0000-000000000003".into(),
+            credential,
+            workspace: None,
+        };
+        let roster = claude::AccountStore {
+            v: 1,
+            active_account_id: Some(account.account_id.clone()),
+            accounts: vec![account],
+            active_reason: JsString16::from_utf8("admin_selection"),
+            updated_at_ms: 10,
+        };
+        assert!(matching_target(&roster, None).is_some());
+        assert!(matching_target(&roster, Some(&JsString16::from_utf8(""))).is_none());
+        assert!(matching_target(&roster, Some(&JsString16::from_units(vec![0xd800]))).is_none());
     }
 
     #[test]
