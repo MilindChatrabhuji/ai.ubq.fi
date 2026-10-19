@@ -20,7 +20,15 @@ import { pathToFileURL } from "node:url";
 import { deserialize, serialize } from "node:v8";
 import { transcodePersistedCursor, type ConversionDirection } from "./cursors.ts";
 import { fileDigest, openLegacyCodec } from "./legacy-codec.ts";
-import { createNativeSnapshotReader, NATIVE_DDL, validateNativeRow, verifyNativeSchema, type NativeReader, type NativeRow } from "./native-schema.ts";
+import {
+  createNativeSnapshotReader,
+  NATIVE_DDL,
+  validateNativeRow,
+  verifyNativeSchema,
+  type NativeReader,
+  type NativeRevision,
+  type NativeRow,
+} from "./native-schema.ts";
 import { decodeTypedValue, encodeTypedValue } from "./typed-value.ts";
 
 export type ConvertOptions = {
@@ -73,6 +81,42 @@ const openPrivateSnapshot = async (path: string, codec: "deno-v8" | "bun-jsc-v1"
   } catch (error) {
     reader.close();
     throw error;
+  }
+};
+
+/** Read a private consistent codec-marked copy, not proof of a stopped owner.
+ * The caller must independently establish quiescence before state adoption.
+ * Hash/checkpoint guards detect mutation; they do not establish process stoppage.
+ * The callback cannot retain a live reader after this finite operation returns.
+ */
+export const withPrivateConsistentBunSnapshot = async <T>(
+  sourcePath: string,
+  stagingParent: string,
+  read: (reader: NativeReader, revision: NativeRevision) => T | Promise<T>
+): Promise<{ value: T; sourceIdentity: Awaited<ReturnType<typeof snapshotIdentity>> }> => {
+  const source = resolve(sourcePath);
+  const sourceIdentity = await snapshotIdentity(source);
+  const staging = mkdtempSync(join(resolve(stagingParent), ".uos-kv-capture-"));
+  let reader: ReturnType<typeof createNativeSnapshotReader> | undefined;
+  try {
+    chmodSync(staging, 0o700);
+    const snapshot = join(staging, "source.sqlite3");
+    copyFileSync(source, snapshot, constants.COPYFILE_EXCL);
+    chmodSync(snapshot, 0o600);
+    const identity = await privateSnapshotIdentity(snapshot);
+    if (identity.sha256 !== sourceIdentity.sha256 || JSON.stringify(await snapshotIdentity(source)) !== JSON.stringify(sourceIdentity))
+      throw new Error("Source changed during snapshot");
+    const opened = await openPrivateSnapshot(snapshot, "bun-jsc-v1", identity);
+    reader = opened.reader;
+    const value = await read(reader, opened.revision);
+    reader.close();
+    reader = undefined;
+    await privateSnapshotIdentity(snapshot, identity);
+    if (JSON.stringify(await snapshotIdentity(source)) !== JSON.stringify(sourceIdentity)) throw new Error("Source changed during snapshot read");
+    return { value, sourceIdentity };
+  } finally {
+    reader?.close();
+    rmSync(staging, { recursive: true, force: true });
   }
 };
 const digestRows = (db: NativeReader, expiryOnly = false): string => {

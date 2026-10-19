@@ -181,3 +181,104 @@ fn native_generation_and_unknown_operation_remain_private_across_restart() {
     assert_eq!(run(store.read(&generation)).unwrap(), Some(unchanged));
     assert!(run(export_rollback_bundle(&store, 2400, context())).is_ok());
 }
+
+#[test]
+fn complete_selected_and_no_selection_shadow_audits_survive_latest_inverse() {
+    for selected in [false, true] {
+        let directory = Directory::new();
+        let path = directory.file("shadow-audit.sqlite3");
+        let store = SqliteStore::open(&path);
+        let value = json!({"v":1,"episode_hash":"fixture-episode","created_at_ms":2100,"expires_at_ms":2200,"decision_reason":if selected {"selected"} else {"none_eligible"},"selected_account_id_hash":if selected {Some("account-a")} else {None},"selected_credit_id_hash":if selected {Some("credit-a")} else {None},"selected_credit_expires_at_ms":null,"fences":[{"slot":0,"account_id_hash":"account-a","quota_generation":"generation-a","routing_generation":1,"quota_reset_at_ms":9000},{"slot":1,"account_id_hash":"account-b","quota_generation":"generation-b","routing_generation":2,"quota_reset_at_ms":9500}]});
+        let entry = source(
+            json!([
+                "uos_ai",
+                "codex_reset_shadow_decision",
+                "v1",
+                "fixture-episode"
+            ]),
+            value.clone(),
+        );
+        let capture = PrivateCapture {
+            v: 1,
+            source_git_sha: "6d4d4790a7c06514b92938ff677dbfd52764461d".into(),
+            captured_at_ms: 2300,
+            entries: vec![entry.clone()],
+        };
+        run(adopt_empty(
+            &store,
+            &prepare(&capture, &CanonicalDates).unwrap(),
+        ))
+        .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path);
+        let exported = run(export_latest(&store, 2400)).unwrap();
+        assert_eq!(exported.entries.len(), 1);
+        assert_eq!(exported.entries[0].value, entry.value);
+        assert_eq!(exported.entries[0].expires_at_ms, None);
+        let mut malformed = capture.clone();
+        let mut old = value;
+        old.as_object_mut().unwrap().remove("fences");
+        malformed.entries[0].value = to_source_profile(&PortableValue::from_json(&old)).unwrap();
+        let error = prepare(&malformed, &CanonicalDates).err().unwrap();
+        assert_eq!(
+            error.envelope.error.code.as_deref(),
+            Some("codex_reset_shadow_schema_invalid")
+        );
+        let mut expiring = capture;
+        expiring.entries[0].expires_at_ms = Some(9000);
+        assert!(prepare(&expiring, &CanonicalDates).is_err());
+    }
+}
+
+#[test]
+fn session_and_full_routing_custody_are_validated_before_private_inverse() {
+    let directory = Directory::new();
+    let store = SqliteStore::open(&directory.file("private-sessions.sqlite3"));
+    let capture: PrivateCapture =
+        serde_json::from_str(include_str!("fixtures/offline-source.json")).unwrap();
+    run(adopt_empty(
+        &store,
+        &prepare(&capture, &CanonicalDates).unwrap(),
+    ))
+    .unwrap();
+    let digest = "a".repeat(64);
+    let session_key = gateway_auth::session_index::index_key(&digest).unwrap();
+    let session = StoredRecord::json(
+        "source-session",
+        json!({"v":1,"session_digest":digest,"user_id":"fixture-user","session_revision":"source-session","expires_at_ms":9000}),
+        Some(9000),
+    );
+    let journal_key = gateway_auth::store::key(json!([
+        "uos_ai",
+        "routing_runtime",
+        "v1",
+        "session",
+        "custody-request"
+    ]));
+    // Exact current Journal shape from its owning crate's custody regression.
+    let journal = StoredRecord::json(
+        "journal-current",
+        json!({"v":1,"context":{"request_id":"custody-request","principal":"fixture-principal","key_id":null,"route":"responses","started_at_ms":2100},"input_digest":gateway_auth::crypto::sha256_hex(b"{}"),"api":null,"kernel":null,"cursor":0,"attempts":[],"active":null,"model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,"semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,"lease_expires_at_ms":6000,"updated_at_ms":2100,"extras_family":null,"extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null}),
+        None,
+    );
+    store.put(session_key.clone(), session.clone());
+    store.put(journal_key.clone(), journal.clone());
+    let bundle = run(export_rollback_bundle(&store, 2400, context())).unwrap();
+    for (key, record) in [(&session_key, &session), (&journal_key, &journal)] {
+        assert!(
+            bundle
+                .rust_controls
+                .iter()
+                .any(|r| r.key == key.0 && r.record == *record)
+        );
+    }
+    let mut malformed = journal.clone();
+    malformed.value.as_object_mut().unwrap().remove("api");
+    store.put(journal_key.clone(), malformed);
+    assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
+    store.put(journal_key, journal);
+    let mut malformed = session;
+    malformed.value["unknown"] = json!(true);
+    store.put(session_key, malformed);
+    assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
+}
