@@ -27,6 +27,7 @@ pub struct Host {
     pub store: RemoteAuthorityStore,
     pub env: Env,
     pub platform: PlatformHost,
+    context: std::rc::Rc<worker::Context>,
     claude: crate::claude_host::Binding,
     original: gateway_core::identity::RequestContext,
 }
@@ -78,6 +79,17 @@ impl RoutingHost for Host {
         &self,
         input: CredentialRequest,
     ) -> Result<PublishedCredential, GatewayError> {
+        prepare_credential_catalog(
+            input.provider,
+            &self.store,
+            &crate::catalog_host::Host {
+                store: self.store.clone(),
+                env: self.env.clone(),
+                platform: self.platform.clone(),
+                context: self.context.clone(),
+            },
+        )
+        .await?;
         if let Some(provider) = provider_name(input.provider) {
             let secret = crate::catalog_host::secrets(&self.env)
                 .remove(provider)
@@ -301,11 +313,13 @@ impl Host {
         context: std::rc::Rc<worker::Context>,
         original: gateway_core::identity::RequestContext,
     ) -> Self {
-        let claude = crate::claude_host::Binding::new(store.clone(), platform.clone(), context);
+        let claude =
+            crate::claude_host::Binding::new(store.clone(), platform.clone(), context.clone());
         Self {
             store,
             env: platform.env.clone(),
             platform,
+            context,
             claude,
             original,
         }
@@ -417,3 +431,28 @@ impl Host {
 fn unavailable(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "provider_routing_unavailable")
 }
+
+// Source paid-fallback/health.ts prepares real catalogs at the selected paid hop.
+// Never call this from paid_credential: receipt/currentness rechecks are read-only.
+async fn prepare_credential_catalog<
+    S: gateway_core::query::QueryStore,
+    H: gateway_catalog_runtime::CatalogHost,
+>(
+    provider: UpstreamProvider,
+    store: &S,
+    host: &H,
+) -> Result<(), GatewayError> {
+    if matches!(
+        provider,
+        UpstreamProvider::Surplus | UpstreamProvider::Metered
+    ) {
+        crate::catalog::service()
+            .publish_paid_routing(store, host)
+            .await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "routing_paid_catalog_tests.rs"]
+mod paid_catalog_tests;
