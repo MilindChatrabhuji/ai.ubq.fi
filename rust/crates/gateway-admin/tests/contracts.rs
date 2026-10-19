@@ -936,9 +936,9 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
         observed_at_ms: host.now_ms(),
         source_valid_until_ms: None,
         stale: false,
-        models: vec![
-            source(&json!({"id":"paid-model","supported_endpoint_types":["openai-response"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})),
-        ],
+        models: vec![source(
+            &json!({"id":"paid-model","supported_endpoint_types":["openai-response"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002}),
+        )],
         source_checks: Vec::new(),
     };
     store.rows.borrow_mut().insert(
