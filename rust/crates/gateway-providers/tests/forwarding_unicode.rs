@@ -133,8 +133,16 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
         },
         ..Default::default()
     };
-    for provider in [UpstreamProvider::Deepseek, UpstreamProvider::Lithos] {
-        let error = match prepare_request(provider, ClientSurface::Responses, &raw, &options) {
+    for (provider, model) in [
+        (UpstreamProvider::Deepseek, "deepseek-flash"),
+        (
+            UpstreamProvider::Lithos,
+            gateway_providers::request::LITHOS_MODELS[0],
+        ),
+    ] {
+        let mut current = raw.clone();
+        current["model"] = json!(model);
+        let error = match prepare_request(provider, ClientSurface::Responses, &current, &options) {
             Ok(_) => panic!("disabled reduction must not produce a dispatchable request"),
             Err(error) => error,
         };
