@@ -132,11 +132,10 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
             return Err(invalid());
         }
         match &attempt.fence {
-            CredentialFence::Direct { provider } => {
-                if *provider != attempt.provider {
-                    return Err(invalid());
-                }
+            CredentialFence::Direct { provider } if *provider != attempt.provider => {
+                return Err(invalid());
             }
+            CredentialFence::Direct { .. } => {}
             CredentialFence::Paid {
                 provider,
                 owner_id,

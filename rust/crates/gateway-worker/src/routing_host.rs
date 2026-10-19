@@ -240,12 +240,19 @@ impl RoutingHost for Host {
     }
     async fn recover_codex(
         &self,
-        _proof: &CohortProof,
-        _model: &str,
+        proof: &CohortProof,
+        model: &str,
     ) -> Result<CodexRecovery, GatewayError> {
-        Err(unavailable(
-            "The native reset/redemption capability is not yet configured.",
-        ))
+        crate::codex_admin_host::recover_full_pool(
+            &self.store,
+            &self.platform,
+            &self.platform.original,
+            &crate::host::auth_config(&self.platform.env),
+            &self.original,
+            proof,
+            model,
+        )
+        .await
     }
     async fn lookup_paid(
         &self,

@@ -1,5 +1,6 @@
 // Test-only controlled upstream and private binding driver. Never deployed.
 import { DurableObject } from "cloudflare:workers";
+import { handleProviderMatrix } from "./provider-matrix.mjs";
 
 export class FixtureControl extends DurableObject {
   constructor(state, env) {
@@ -146,12 +147,58 @@ async function extrasUpstream(request, env) {
   return new Response("Unexpected extras upstream path", { status: 400 });
 }
 
+function fixtureCodexAccount(request) {
+  const token = request.headers.get("authorization")?.replace(/^Bearer /u, "");
+  try {
+    const parts = token?.split(".");
+    if (!parts || parts.length !== 3 || parts[2] !== "fixture") return null;
+    const parse = (part) => JSON.parse(atob(part.replaceAll("-", "+").replaceAll("_", "/")));
+    const header = parse(parts[0]);
+    const claims = parse(parts[1]);
+    const auth = claims["https://api.openai.com/auth"];
+    if (
+      header.alg !== "none" ||
+      header.typ !== "JWT" ||
+      claims.iss !== "uos-runtime-matrix" ||
+      !Number.isSafeInteger(claims.exp) ||
+      claims.exp <= Date.now() / 1000 + 120
+    )
+      return null;
+    if (
+      auth?.chatgpt_user_id !== "fixture-matrix-user" ||
+      auth?.chatgpt_plan_type !== "plus" ||
+      !["fixture-matrix-a", "fixture-matrix-b"].includes(auth.chatgpt_account_id)
+    )
+      return null;
+    return request.headers.get("chatgpt-account-id") === auth.chatgpt_account_id ? auth.chatgpt_account_id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function liveUpstream(request, env) {
+  if (!fixtureCodexAccount(request)) return new Response(null, { status: 401 });
+  const body = await request.json();
+  if (
+    body.sdp !== "fixture SDP offer" ||
+    body.session?.unknown !== "\ud800" ||
+    request.headers.get("x-session-id") !== "fixture-live-session" ||
+    request.headers.get("openai-alpha") !== "quicksilver=v2"
+  )
+    return new Response("Unexpected live translation", { status: 400 });
+  await log(env, { kind: "live_dispatch", body });
+  return new Response("fixture SDP answer\u0000tail", {
+    status: 201,
+    statusText: "Fixture Accepted",
+    headers: { "content-type": "application/sdp", location: "https://chatgpt.com/realtime/calls/rtc_fixture_live" },
+  });
+}
+
 async function imageUpstream(request, env) {
   const url = new URL(request.url);
-  if (request.headers.get("authorization") !== "Bearer fixture-provider-secret" || request.headers.get("chatgpt-account-id") !== "fixture-image-account")
-    return new Response(null, { status: 401 });
+  if (!fixtureCodexAccount(request)) return new Response(null, { status: 401 });
   if (request.method === "GET" && url.pathname === "/backend-api/codex/models")
-    return Response.json({ models: [{ slug: "gpt-test", supported_reasoning_levels: [{ effort: "none" }], default_reasoning_level: "none" }] });
+    return Response.json({ models: [{ slug: "gpt-matrix-test", supported_reasoning_levels: [{ effort: "none" }], default_reasoning_level: "none" }] });
   if (url.pathname !== "/backend-api/codex/responses") return new Response("Unexpected Codex path", { status: 400 });
   const body = await request.json();
   await log(env, { kind: "image_dispatch", body });
@@ -159,7 +206,7 @@ async function imageUpstream(request, env) {
     id: "resp_fixture_image",
     object: "response",
     created_at: 1800000000,
-    model: "gpt-test",
+    model: "gpt-matrix-test",
     status: "completed",
     output: [{ id: "ig_fixture", type: "image_generation_call", status: "completed", result: "aW1hZ2U=", output_format: "png" }],
     usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
@@ -173,6 +220,8 @@ async function imageUpstream(request, env) {
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
+    const matrix = await handleProviderMatrix(request, env, context, (event) => log(env, event));
+    if (matrix) return matrix;
     if (url.hostname === "api.github.com" && url.pathname === "/repos/fixture-owner/fixture-repo") {
       if (request.headers.get("authorization") !== "Bearer ghs_fixture_kernel_access") return new Response(null, { status: 401 });
       if (request.headers.get("accept") !== "application/vnd.github+json" || request.headers.get("x-github-api-version") !== "2022-11-28")
@@ -181,6 +230,7 @@ export default {
     }
     if (["api.deepseek.com", "api.cerebras.ai"].includes(url.hostname)) return upstream(request, env, context);
     if (["api.voyageai.com", "openrouter.ai"].includes(url.hostname)) return extrasUpstream(request, env);
+    if (url.hostname === "chatgpt.com" && url.pathname === "/backend-api/codex/realtime/calls") return liveUpstream(request, env);
     if (url.hostname === "chatgpt.com") return imageUpstream(request, env);
     if (url.pathname.startsWith("/public/")) {
       if (request.headers.get("x-fixture-disconnect") === "1") {
