@@ -217,11 +217,11 @@ async fn submit<H: ObservabilityHost>(
     )
     .ok_or_else(|| gateway_auth::invalid("credential is invalid"))?;
     let workspace_id = match &input.workspace_id {
-        Some(id) => id.as_deref(),
+        Some(id) => id.as_ref(),
         None => old
             .as_ref()
             .and_then(|account| account.workspace.as_ref())
-            .map(|workspace| workspace.id.as_str()),
+            .map(|workspace| &workspace.id),
     };
     let validation = validate(platform, &candidate, workspace_id).await?;
     if validation.status == Some(401) || validation.status == Some(403) {
@@ -299,7 +299,7 @@ async fn submit<H: ObservabilityHost>(
 async fn validate(
     platform: &PlatformHost,
     credential: &Credential,
-    workspace: Option<&str>,
+    workspace: Option<&JsString16>,
 ) -> Result<Validation, GatewayError> {
     let cancellation = Cancellation::background()?;
     let _deadline = cancellation.set_timeout_ms(8_000)?;
@@ -409,12 +409,12 @@ fn subscription_block(body: AuthResponseBody) -> Result<SourceJson, GatewayError
 }
 fn submitted_workspace(
     previous: Option<&Workspace>,
-    id: &str,
+    id: &JsString16,
     requested: bool,
     status: Option<u16>,
     at: i64,
 ) -> Workspace {
-    let previous = previous.filter(|workspace| workspace.id == id);
+    let previous = previous.filter(|workspace| &workspace.id == id);
     let source = if requested {
         "kv".into()
     } else {
@@ -423,7 +423,7 @@ fn submitted_workspace(
             .unwrap_or_else(|| "kv".into())
     };
     Workspace {
-        id: id.into(),
+        id: id.clone(),
         name: previous.and_then(|workspace| workspace.name.clone()),
         discovered_at_ms: if source == "discovered" {
             Some(at)
@@ -606,6 +606,24 @@ mod tests {
     }
 
     #[test]
+    fn submitted_workspace_merge_keeps_exact_source_units_without_scalar_projection() {
+        let id = JsString16::from_units(vec![119, 114, 107, 115, 112, 99, 95, 0xd800]);
+        let name = JsString16::from_units(vec![0xdc00]);
+        let previous = Workspace {
+            id: id.clone(),
+            name: Some(name.clone()),
+            source: "kv".into(),
+            discovered_at_ms: Some(10),
+            verified_at_ms: Some(20),
+            last_error: None,
+        };
+        let merged = submitted_workspace(Some(&previous), &id, false, None, 30);
+        assert_eq!(merged.id, id);
+        assert_eq!(merged.name, Some(name));
+        assert_eq!(merged.verified_at_ms, Some(20));
+    }
+
+    #[test]
     fn source_workspace_merge_preserves_or_replaces_generation_timestamps() {
         let previous = Workspace {
             id: "wrkspc_old".into(),
@@ -615,7 +633,13 @@ mod tests {
             verified_at_ms: Some(120),
             last_error: Some("old error".into()),
         };
-        let inherited = submitted_workspace(Some(&previous), "wrkspc_old", false, Some(429), 500);
+        let inherited = submitted_workspace(
+            Some(&previous),
+            &JsString16::from_utf8("wrkspc_old"),
+            false,
+            Some(429),
+            500,
+        );
         assert_eq!(
             (
                 inherited.source.as_str(),
@@ -625,7 +649,13 @@ mod tests {
             ),
             ("discovered", Some(500), Some(120), None)
         );
-        let explicit = submitted_workspace(Some(&previous), "wrkspc_old", true, Some(200), 500);
+        let explicit = submitted_workspace(
+            Some(&previous),
+            &JsString16::from_utf8("wrkspc_old"),
+            true,
+            Some(200),
+            500,
+        );
         assert_eq!(
             (
                 explicit.source.as_str(),
@@ -634,7 +664,13 @@ mod tests {
             ),
             ("kv", Some(100), Some(500))
         );
-        let replacement = submitted_workspace(Some(&previous), "wrkspc_new", true, None, 500);
+        let replacement = submitted_workspace(
+            Some(&previous),
+            &JsString16::from_utf8("wrkspc_new"),
+            true,
+            None,
+            500,
+        );
         assert_eq!(
             (
                 replacement.name,
