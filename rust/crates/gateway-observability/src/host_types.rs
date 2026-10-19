@@ -1,6 +1,6 @@
 //! Fixed secretless receipts from native publication and the actual Worker transport.
 use crate::{HealthProvider, HealthTarget};
-use gateway_core::GatewayError;
+use gateway_core::{GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -52,8 +52,8 @@ pub enum CredentialSource {
 pub struct CredentialMetadata {
     pub kind: CredentialKind,
     pub source: String,
-    pub hint: String,
-    pub label: Option<String>,
+    pub hint: JsString16,
+    pub label: Option<JsString16>,
     pub updated_at_ms: Option<i64>,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -64,20 +64,20 @@ pub enum CredentialKind {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct WorkspaceMetadata {
-    pub id: String,
-    pub name: Option<String>,
+    pub id: JsString16,
+    pub name: Option<JsString16>,
     pub source: Option<String>,
     pub pinned_by_env: bool,
     pub discovered_at_ms: Option<i64>,
     pub verified_at_ms: Option<i64>,
-    pub last_error: Option<Value>,
+    pub last_error: Option<SourceJson>,
 }
 #[derive(Clone, Debug)]
 pub struct ClaudeAccountReadback {
     pub target: HealthTarget,
     pub account_id: String,
     pub account_cohort_id: String,
-    pub label: Option<String>,
+    pub label: Option<JsString16>,
     pub credential: CredentialMetadata,
     pub workspace: Option<WorkspaceMetadata>,
     /// Validated source quota state, without pool proof or credential fields.
@@ -87,14 +87,14 @@ pub struct ClaudeAccountReadback {
 pub struct ClaudeRosterReadback {
     pub accounts: Vec<ClaudeAccountReadback>,
     pub active_account_id: Option<String>,
-    pub active_reason: Option<String>,
+    pub active_reason: Option<JsString16>,
     pub access: Option<ClaudeAccessReadback>,
     pub enabled: bool,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct ClaudeAccessReadback {
     pub source: String,
-    pub allowed_key_ids: Vec<String>,
+    pub allowed_key_ids: Vec<JsString16>,
     pub updated_at_ms: Option<i64>,
 }
 #[derive(Clone, Debug)]
@@ -128,7 +128,7 @@ pub struct UpstreamHealthEvidence {
     pub codex: ActiveProbe,
     pub metered_quota: Option<ActiveProbe>,
     pub claude_subscription: Option<ActiveProbe>,
-    pub claude_workspace: Option<Value>,
+    pub claude_workspace: Option<SourceJson>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,12 +181,17 @@ pub struct ClaudeAcceptedObservation {
     pub account_id: String,
     pub account_cohort_id: String,
     pub credential_kind: CredentialKind,
-    pub workspace_id: Option<String>,
+    pub workspace_id: Option<JsString16>,
     pub source_observed_at_ms: Option<i64>,
     pub sampled_at_ms: i64,
     pub response_status: Option<u16>,
     pub state: ClaudeObservationState,
-    pub observation: ClaudeQuotaObservation,
+    pub observation: SourceJson,
+}
+impl ClaudeAcceptedObservation {
+    pub fn from_source(value: &SourceJson) -> Result<Self, GatewayError> {
+        value.deserialize()
+    }
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
