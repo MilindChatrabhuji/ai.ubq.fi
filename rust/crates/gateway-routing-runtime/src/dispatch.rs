@@ -141,6 +141,7 @@ impl<
                 .dispatch_api_key(reservation, record.provider, self.now()?)
                 .await?;
         }
+        self.admission.capture_resolved_api(api.as_ref())?;
         let checks = match &record.fence {
             CredentialFence::Codex {
                 source_key,

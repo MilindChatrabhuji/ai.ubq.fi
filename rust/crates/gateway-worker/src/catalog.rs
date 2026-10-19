@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use gateway_catalog_runtime::{CatalogHost, CatalogRuntime};
 use gateway_core::GatewayError;
+use gateway_core::source_json::SourceJson;
 use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
-use serde_json::Value;
 use worker::{Context, Env, Request};
 
 use crate::{
@@ -48,7 +48,7 @@ pub async fn public_response(
 
 pub struct CatalogState {
     pub input: CatalogInput,
-    pub runtime: Option<Value>,
+    pub runtime: Option<SourceJson>,
     service: CatalogRuntime,
     host: Host,
 }

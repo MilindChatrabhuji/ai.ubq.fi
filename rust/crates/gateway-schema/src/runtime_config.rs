@@ -114,7 +114,7 @@ pub fn build_runtime_config(
         return Err(SourceRequestError::new(
             503,
             c::concat(&[&prefix, &model]),
-            "server_error",
+            "invalid_request_error",
             Some("runtime_config_invalid"),
             None,
         ));

@@ -10,12 +10,13 @@ use gateway_auth::{AuthMethod, AuthPrincipal};
 use gateway_claude_runtime::{
     ClaudePoolSession, OutcomeDecision, PoolConfig, PoolSelection, SelectedAccount, SelectionInput,
 };
-use gateway_core::{GatewayError, claude::ClaudeErrorEvidence};
+use gateway_core::{
+    GatewayError, claude::ClaudeErrorEvidence, model::ModelId, source_json::SourceJson,
+};
 use gateway_routing_runtime::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PublishedCredential, ResponseHead,
 };
 use gateway_schema::selection::ProviderSelection;
-use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 
 thread_local! {
@@ -30,8 +31,8 @@ pub fn generation() -> StateGeneration {
 struct RequestState {
     principal: String,
     key_id: String,
-    model: String,
-    raw: Value,
+    model: ModelId,
+    raw: SourceJson,
     session: ClaudePoolSession,
     selected: RefCell<Option<SelectedAccount>>,
 }
@@ -72,10 +73,10 @@ impl Binding {
     fn selected(
         &self,
         fence: &CredentialFence,
-        model: &str,
+        model: &ModelId,
     ) -> Result<(Rc<RequestState>, SelectedAccount), GatewayError> {
         let request = self.request()?;
-        if request.model != model {
+        if &request.model != model {
             return Err(invalid("Claude model changed within the request."));
         }
         let selected = request
@@ -93,13 +94,13 @@ impl Binding {
     pub async fn select(
         &self,
         principal: &AuthPrincipal,
-        model: &str,
-        raw: &Value,
+        model: &ModelId,
+        raw: &SourceJson,
     ) -> Result<ClaudeSelection, GatewayError> {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);
         };
-        if !gateway_providers::anthropic::is_claude(model) {
+        if !gateway_providers::anthropic::is_claude_model(model) {
             return Ok(ClaudeSelection::NotApplicable);
         }
         let selection = gateway_catalog_runtime::state::read_json(
@@ -135,7 +136,7 @@ impl Binding {
             Some(request) => {
                 if request.principal != principal_id
                     || request.key_id != *key_id
-                    || request.model != model
+                    || &request.model != model
                     || &request.raw != raw
                 {
                     return Err(invalid(
@@ -155,7 +156,7 @@ impl Binding {
                 let request = Rc::new(RequestState {
                     principal: principal_id.clone(),
                     key_id: key_id.clone(),
-                    model: model.into(),
+                    model: model.clone(),
                     raw: raw.clone(),
                     session: ClaudePoolSession::new(config),
                     selected: RefCell::default(),
@@ -165,7 +166,7 @@ impl Binding {
                 let chosen = self.state.borrow_mut().get_or_insert(request).clone();
                 if chosen.principal != principal_id
                     || chosen.key_id != *key_id
-                    || chosen.model != model
+                    || &chosen.model != model
                     || &chosen.raw != raw
                 {
                     return Err(invalid("Concurrent Claude selection inputs changed."));
@@ -210,7 +211,7 @@ impl Binding {
         &self,
         fence: &CredentialFence,
         principal: &AuthPrincipal,
-        model: &str,
+        model: &ModelId,
     ) -> Result<(), GatewayError> {
         let (request, selected) = self.selected(fence, model)?;
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
@@ -236,7 +237,7 @@ impl Binding {
     pub async fn observe(
         &self,
         fence: &CredentialFence,
-        model: &str,
+        model: &ModelId,
         response: ResponseHead,
     ) -> Result<Head, GatewayError> {
         let (request, selected) = self.selected(fence, model)?;

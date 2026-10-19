@@ -5,6 +5,8 @@ use crate::{
 };
 use gateway_core::{
     GatewayError,
+    source_control::{decode_source_control_record, encode_source_control_record},
+    source_json::SourceJson,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
         StoredRecord,
@@ -417,12 +419,12 @@ pub async fn prune_catalog_versions<S: AuthorityStore>(
 }
 /// Normalized publication plan must be committed with generation, snapshot and runtime revision checks.
 pub fn normalized_snapshot_plan(
-    parsed: &Value,
+    parsed: &SourceJson,
     version: &str,
     current: Option<&ModelSnapshot>,
-    runtime: &Value,
+    runtime: &SourceJson,
     updated_at_ms: i64,
-) -> Option<(ModelSnapshot, Value)> {
+) -> Option<(ModelSnapshot, SourceJson)> {
     if let Some(current_version) = current
         .and_then(|s| s.client_version.as_deref())
         .filter(|s| !s.is_empty())
@@ -441,19 +443,17 @@ pub fn normalized_snapshot_plan(
     )?
     .merge_prompt_cache(current);
     let current_runtime = crate::runtime_config::normalize_runtime_config(runtime);
-    let default = next.preserve_default(
-        current_runtime
-            .as_ref()
-            .and_then(|r| r.get("default_model"))
-            .and_then(Value::as_str),
-    );
+    let previous_model = current_runtime
+        .as_ref()
+        .and_then(crate::runtime_config::default_model);
+    let previous_effort = current_runtime
+        .as_ref()
+        .and_then(crate::runtime_config::default_reasoning_effort);
+    let default = next.preserve_default(previous_model.as_ref());
     let runtime = crate::runtime_config::build_runtime_config(
         &next,
-        default.as_deref(),
-        current_runtime
-            .as_ref()
-            .and_then(|r| r.get("default_reasoning_effort"))
-            .and_then(Value::as_str),
+        default.as_ref(),
+        previous_effort.as_ref(),
         updated_at_ms,
     )
     .ok()?;
@@ -469,30 +469,33 @@ pub fn runtime_config_key() -> RecordKey {
 /// A rich refresh can update the compact runtime only through the same authority transaction.
 pub async fn publish_normalized_snapshot<S: AuthorityStore>(
     store: &S,
-    parsed: &Value,
+    parsed: &SourceJson,
     version: &str,
     expected_generation: &str,
     revision: &str,
     updated_at_ms: i64,
-) -> Result<Option<Value>, GatewayError> {
+) -> Result<Option<SourceJson>, GatewayError> {
     for _ in 0..3 {
         let generation = read(store, &auth_generation_key()).await?;
         if generation.as_ref().and_then(|r| r.value.as_str()) != Some(expected_generation) {
             return Ok(None);
         }
-        let snapshot_record = read(store, &codex_snapshot_key()).await?;
-        let runtime_record = read(store, &runtime_config_key()).await?;
+        let snapshot_record = store.read(&codex_snapshot_key()).await?;
+        let runtime_record = store.read(&runtime_config_key()).await?;
         let current = match &snapshot_record {
             Some(record) => Some(
-                serde_json::from_value::<ModelSnapshot>(record.value.clone())
+                decode_source_control_record(record)?
+                    .deserialize::<ModelSnapshot>()
                     .map_err(|_| cache_error("Stored Codex model snapshot is corrupt"))?,
             ),
             None => None,
         };
-        let runtime = runtime_record
+        let runtime_source = runtime_record
             .as_ref()
-            .map(|r| &r.value)
-            .unwrap_or(&Value::Null);
+            .map(decode_source_control_record)
+            .transpose()?;
+        let empty_runtime = SourceJson::parse("null")?;
+        let runtime = runtime_source.as_ref().unwrap_or(&empty_runtime);
         let Some((next, next_runtime)) =
             normalized_snapshot_plan(parsed, version, current.as_ref(), runtime, updated_at_ms)
         else {
@@ -501,18 +504,28 @@ pub async fn publish_normalized_snapshot<S: AuthorityStore>(
         let transition = AtomicTransition {
             checks: vec![
                 check(auth_generation_key(), generation.as_ref()),
-                check(codex_snapshot_key(), snapshot_record.as_ref()),
-                check(runtime_config_key(), runtime_record.as_ref()),
+                RevisionCheck {
+                    key: codex_snapshot_key(),
+                    expected_revision: snapshot_record.as_ref().map(|r| r.revision.clone()),
+                },
+                RevisionCheck {
+                    key: runtime_config_key(),
+                    expected_revision: runtime_record.as_ref().map(|r| r.revision.clone()),
+                },
             ],
             mutations: vec![
-                put(
-                    codex_snapshot_key(),
-                    serde_json::to_value(&next)
-                        .map_err(|_| cache_error("Codex snapshot could not be encoded"))?,
-                    revision,
-                    None,
-                ),
-                put(runtime_config_key(), next_runtime.clone(), revision, None),
+                RecordMutation::Put {
+                    key: codex_snapshot_key(),
+                    record: encode_source_control_record(
+                        revision,
+                        &SourceJson::from_serializable(&next)?,
+                        None,
+                    )?,
+                },
+                RecordMutation::Put {
+                    key: runtime_config_key(),
+                    record: encode_source_control_record(revision, &next_runtime, None)?,
+                },
             ],
         };
         if store.commit(transition).await? == CommitOutcome::Committed {

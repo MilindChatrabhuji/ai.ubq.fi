@@ -1,8 +1,14 @@
 mod support;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
     query::{QueryPage, QueryRequest, QueryStore},
+    source_json::SourceJson,
+    source_serialization as source,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
@@ -31,6 +37,11 @@ struct CaptureHost {
     revision: Rc<RefCell<String>>,
 }
 impl ObservabilityHost for CaptureHost {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.clock.source_string_collator()
+    }
     fn now_ms(&self) -> i64 {
         self.clock.now_ms()
     }
@@ -344,4 +355,85 @@ fn success_and_cancelled_transport_never_write_capture_or_incident_rows() {
     );
     assert_eq!(store.reads.get(), 0);
     assert_eq!(store.commits.get(), 0);
+}
+
+#[test]
+fn raw_error_param_retains_units_but_stored_ascii_policy_and_body_evidence_are_unchanged() {
+    let cases = [
+        (JsString16::from_utf8("input[0].content"), true),
+        (JsString16::from_utf8("a_.:-[]"), true),
+        (JsString16::from_units(vec![97; 128]), true),
+        (JsString16::from_units(vec![97; 129]), false),
+        (JsString16::from_units(vec![105, 0xd800]), false),
+        (JsString16::from_utf8("é"), false),
+        (JsString16::from_utf8("input value"), false),
+        (JsString16::from_utf8("input/value"), false),
+        (JsString16::from_utf8(""), false),
+    ];
+    for (param, allowed) in cases {
+        let store = Memory::default();
+        let host = host();
+        let runtime = ObservabilityRuntime::new(store, host.clone());
+        let limits = RetentionLimits::for_fixture(16 * 1024 * 1024);
+        ready(&runtime, limits);
+        let key = key();
+        let failure = failure();
+        let mut client = ClientFailureObservation::from_internal(&failure);
+        client.error_param = Some(param.clone());
+        let raw = SourceJson::from_serializable(&client).unwrap();
+        let observed: JsString16 = source::member(&raw, "error_param")
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert_eq!(observed, param);
+        let terminal = source::object(vec![(
+            "error",
+            source::object(vec![("param", param.to_source_json().unwrap())]).unwrap(),
+        )])
+        .unwrap();
+        client.observed_body(terminal.as_bytes());
+        let result = run(runtime.persist_failure_with_limits(
+            input(&host, "param", body()),
+            failure,
+            client,
+            Some(&key),
+            limits,
+        ))
+        .unwrap();
+        let PersistResult::Stored { manifest, .. } = result else {
+            panic!("stored parameter fixture")
+        };
+        let response = run(runtime.export_capture_request("param")).unwrap();
+        let exported: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
+        let mut encrypted = Vec::new();
+        for chunk in exported["data"][0]["chunks"].as_array().unwrap() {
+            encrypted.extend(URL_SAFE_NO_PAD.decode(chunk.as_str().unwrap()).unwrap());
+        }
+        let iv: [u8; 12] = URL_SAFE_NO_PAD
+            .decode(&manifest.iv)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let plain = key.decrypt(&iv, &manifest.fingerprint, &encrypted).unwrap();
+        let length = u32::from_be_bytes(plain[..4].try_into().unwrap()) as usize;
+        let metadata =
+            SourceJson::parse(std::str::from_utf8(&plain[4..4 + length]).unwrap()).unwrap();
+        let client = source::member(&metadata, "client_observation").unwrap();
+        let stored: Option<JsString16> = source::member(&client, "error_param")
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert_eq!(stored, allowed.then_some(param));
+        let downstream = source::member(&metadata, "downstream").unwrap();
+        let downstream_param: Option<JsString16> = source::member(&downstream, "error_param")
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert_eq!(downstream_param, stored);
+        let encoded: String = source::member(&downstream, "body_base64")
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert_eq!(STANDARD.decode(encoded).unwrap(), terminal.as_bytes());
+    }
 }

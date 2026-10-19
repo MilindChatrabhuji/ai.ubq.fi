@@ -221,6 +221,10 @@ pub enum CatalogMaintenance {
 /// Implementations own cancellation and actual response bounds. Fetches must bind the
 /// exact current reference before sending; a different credential may not be substituted.
 pub trait CatalogHost {
+    /// Same trusted constructor-owned source ordering used by routing/authority; never request data.
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
     fn now_ms(&self) -> i64;
     fn unique_id(&self) -> String;
     fn wait(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;

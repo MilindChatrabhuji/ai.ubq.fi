@@ -932,6 +932,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 id,
                 &admission.requested_model,
                 now,
+                self.source_string_collator(),
             )?;
             tx.put_source_control(&keys::models(), &models, None)?;
             if tx.commit().await? {

@@ -44,6 +44,11 @@ fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
 
 impl RoutingHost for Host {
     type ClaudeHead = crate::claude_host::Head;
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        crate::source_collator::shared()
+    }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
     }
@@ -135,7 +140,7 @@ impl RoutingHost for Host {
         &self,
         fence: &CredentialFence,
         principal: &AuthPrincipal,
-        model: &str,
+        model: &gateway_core::model::ModelId,
     ) -> Result<(), GatewayError> {
         match fence {
             CredentialFence::Claude { .. } => {
@@ -144,7 +149,7 @@ impl RoutingHost for Host {
             CredentialFence::Direct { provider } if provider_name(*provider).is_some() => {
                 self.credential(CredentialRequest {
                     provider: *provider,
-                    model: String::new(),
+                    model: model.clone(),
                     codex: None,
                 })
                 .await?;
@@ -218,15 +223,15 @@ impl RoutingHost for Host {
     async fn select_claude(
         &self,
         principal: &AuthPrincipal,
-        model: &str,
-        raw: &Value,
+        model: &gateway_core::model::ModelId,
+        raw: &gateway_core::source_json::SourceJson,
     ) -> Result<ClaudeSelection, GatewayError> {
         self.claude.select(principal, model, raw).await
     }
     async fn observe_claude_response(
         &self,
         fence: &CredentialFence,
-        model: &str,
+        model: &gateway_core::model::ModelId,
         response: gateway_routing_runtime::ResponseHead,
     ) -> Result<Self::ClaudeHead, GatewayError> {
         self.claude.observe(fence, model, response).await
@@ -241,7 +246,7 @@ impl RoutingHost for Host {
     async fn recover_codex(
         &self,
         proof: &CohortProof,
-        model: &str,
+        model: &gateway_core::model::ModelId,
     ) -> Result<CodexRecovery, GatewayError> {
         crate::codex_admin_host::recover_full_pool(
             &self.store,

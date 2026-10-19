@@ -635,3 +635,58 @@ fn real_sqlite_close_reopen_retains_global_active_and_quota() {
     }
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
+    use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+    let store = Store::new();
+    let account = account(1);
+    let config = seed(&store, vec![account.clone()]);
+    let host = Host::new(&store);
+    let session = ClaudePoolSession::new(config);
+    let model = ModelId::from_source(JsString16::from_units(
+        "claude-".encode_utf16().chain([0xd800]).collect(),
+    ));
+    let raw = SourceJson::parse(r#"{"model":"claude-\ud800","input":"fixture"}"#).unwrap();
+    let PoolSelection::Eligible(selected) = run(session.select(
+        &store,
+        &host,
+        SelectionInput {
+            key_id: KEY,
+            model: &model,
+            raw: &raw,
+            selection: None,
+        },
+    ))
+    .unwrap() else {
+        panic!("source model remains eligible");
+    };
+    run(session.ensure_current(&store, &host, &selected, KEY, &model, &raw)).unwrap();
+    let received =
+        run(session.observe_response(&store, &host, &selected, head(429, exhausted(NOW), NOW)))
+            .unwrap();
+    assert!(matches!(
+        run(session.after_outcome(&store, &host, received, error_evidence(None, false))).unwrap(),
+        OutcomeDecision::Paid
+    ));
+    let state = store.quota(&account).unwrap();
+    assert_eq!(
+        quota::applicable_proof(Some(&state), &account, &model, NOW)
+            .unwrap()
+            .model_id
+            .as_ref(),
+        Some(&model)
+    );
+    assert!(
+        quota::applicable_proof(Some(&state), &account, &r"claude-\ud800".into(), NOW).is_none()
+    );
+    let stored = store.get(&quota_key(&account)).unwrap();
+    assert_eq!(
+        stored.value_encoding,
+        gateway_core::value::ValueEncoding::ProfileV2
+    );
+    println!(
+        "M35_CLAUDE_ROW_FIXTURE={}",
+        serde_json::to_string(&(quota_key(&account), stored)).unwrap()
+    );
+}

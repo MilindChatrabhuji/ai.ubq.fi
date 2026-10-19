@@ -11,10 +11,7 @@ use gateway_routing_runtime::{
     AttemptFailure, FailureOrigin, PreparedAttempt, RefusalDecision, RoutingInput, RoutingSession,
     TransportState,
 };
-use gateway_schema::{
-    content,
-    request::{self},
-};
+use gateway_schema::source_request::{SourceRequestDocument, parse_http_body};
 use serde_json::{Value, json};
 use worker::{Context, Method, Request, Response, ResponseBody};
 
@@ -315,36 +312,12 @@ pub async fn run(
         context.clone(),
     );
     let result = async {
-        let mut raw = request::parse_json_body(&bytes)?;
-        let default = catalog
-            .runtime
-            .as_ref()
-            .and_then(|value| value.get("default_model"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| {
-                catalog
-                    .input
-                    .snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.default_model())
-            });
-        let model = request::resolve_model(raw.get("model"), default.as_deref())?;
-        raw["model"] = json!(model);
-        let client_stream = request::parse_stream(raw.get("stream"))?;
-        if responses {
-            raw["input"] = json!(content::normalize_responses_input(raw.get("input"))?);
-            request::parse_instructions(raw.get("instructions"))?;
-            gateway_schema::reasoning::parse_reasoning(raw.get("reasoning"))?;
-        } else {
-            content::normalize_chat_messages(raw.get("messages").unwrap_or(&Value::Null))?;
-            request::parse_chat_stream_options(raw.get("stream_options"))?;
-            request::parse_max_completion_tokens(raw.get("max_completion_tokens"))?;
-            gateway_schema::reasoning::parse_effort(
-                raw.get("reasoning_effort"),
-                "reasoning_effort",
-            )?;
-        }
+        let document = match parse_http_body(&bytes).and_then(SourceRequestDocument::new) {
+            Ok(document) => document,
+            Err(error) => {
+                return crate::inference_source::error_response(error.into(), &capture).await;
+            }
+        };
         let original = gateway_core::identity::RequestContext {
             request_id,
             principal: gateway_core::identity::PrincipalId(crate::lifecycle::principal_id(
@@ -359,39 +332,49 @@ pub async fn run(
             route: route.to_owned(),
             started_at_ms: now_ms()?,
         };
-        capture.begin(&original, &model, &raw, client_stream).await;
-        let surplus_models = catalog
-            .input
-            .providers
-            .get("surplus")
-            .map(|provider| provider.models.clone())
-            .unwrap_or_default();
-        let session = Rc::new(
-            RoutingSession::begin(
-                RoutingInput {
-                    context: original.clone(),
-                    principal: principal.clone(),
-                    raw,
-                    surface,
-                    catalog: catalog.input,
-                    runtime: catalog.runtime,
-                    client_version,
-                    native_session_id: None,
-                    retry_prohibited: false,
-                },
-                store.clone(),
-                routing_host::Host::new(
-                    store.clone(),
-                    host.clone(),
-                    context.clone(),
-                    original.clone(),
-                ),
-                PlatformClock,
-                PlatformTokens,
-            )
-            .await
-            .map_err(|error| *error.error)?,
+        let metadata = gateway_routing_runtime::local_work::LocalRequestMetadata {
+            context: original.clone(),
+            principal: principal.clone(),
+            catalog: catalog.input,
+            runtime: catalog.runtime,
+            client_version,
+            native_session_id: None,
+            retry_prohibited: false,
+        };
+        let input = RoutingInput::from_source_request(
+            metadata,
+            document.for_surface(if responses {
+                gateway_schema::request::RequestSurface::Responses
+            } else {
+                gateway_schema::request::RequestSurface::ChatCompletions
+            }),
         );
+        let client_stream = input.streamed();
+        let session = match RoutingSession::begin(
+            input,
+            store.clone(),
+            routing_host::Host::new(
+                store.clone(),
+                host.clone(),
+                context.clone(),
+                original.clone(),
+            ),
+            PlatformClock,
+            PlatformTokens,
+        )
+        .await
+        {
+            Ok(session) => Rc::new(session),
+            Err(error) => return crate::inference_source::error_response(error, &capture).await,
+        };
+        capture
+            .begin(
+                &original,
+                session.selected_model(),
+                document.original_source(),
+                client_stream,
+            )
+            .await;
         let deadline = host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
         let (mut upstream, attempt) =
             match dispatch_attempts(session.clone(), host.cancellation.clone(), capture.clone())
@@ -403,28 +386,7 @@ pub async fn run(
                         .finish(Default::default())
                         .await
                         .map_err(|error| *error.error)?;
-                    if let Some(body) = error.source_body {
-                        let mut response = Response::from_bytes(body.as_bytes().to_vec())
-                            .map_err(|_| invalid("The routing refusal could not be rendered."))?
-                            .with_status(error.error.status);
-                        response
-                            .headers_mut()
-                            .set("content-type", "application/json")
-                            .map_err(|_| invalid("Invalid routing refusal header."))?;
-                        response
-                            .headers_mut()
-                            .set("cache-control", "no-store")
-                            .map_err(|_| invalid("Invalid routing refusal header."))?;
-                        capture.immediate(error.error.status, body.as_bytes()).await;
-                        for (name, value) in error.headers {
-                            response
-                                .headers_mut()
-                                .set(&name, &value)
-                                .map_err(|_| invalid("Invalid routing refusal header."))?;
-                        }
-                        return Ok(response);
-                    }
-                    return Err(*error.error);
+                    return crate::inference_source::error_response(error, &capture).await;
                 }
             };
         let status = upstream.status_code();
@@ -435,30 +397,17 @@ pub async fn run(
             .entries()
             .collect::<gateway_providers::Headers>();
         capture.correlate(correlation(provider, &headers));
+        let pricing = crate::inference_source::pricing_metadata(
+            session.surplus_billing(),
+            prepared.url.ends_with("/messages"),
+        )?;
         let lifecycle = Rc::new(Lifecycle {
             session,
             attempt,
             provider_request_id: correlation(provider, &headers).map(str::to_owned),
             status,
             store: store.clone(),
-            pricing: surplus_models
-                .into_iter()
-                .find(|row| {
-                    row.get("id").and_then(Value::as_str)
-                        == Some(prepared.decode.upstream_model.as_str())
-                })
-                .map(|mut row| {
-                    if prepared.url.ends_with("/messages") {
-                        row["require_provider_cost"] = json!(true);
-                    }
-                    row
-                })
-                .or_else(|| {
-                    prepared
-                        .url
-                        .ends_with("/messages")
-                        .then(|| json!({"require_provider_cost":true}))
-                }),
+            pricing,
         });
         let event_stream = headers.iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("content-type") && value.contains("text/event-stream")
