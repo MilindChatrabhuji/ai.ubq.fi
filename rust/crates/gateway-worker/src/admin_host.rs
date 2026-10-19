@@ -260,8 +260,12 @@ impl RuntimeCapabilities for Capabilities {
         self.measured_body_bytes(&context)?;
         self.observations.analytics(request, context).await
     }
-    fn compare_admin_labels(&self, left: &str, right: &str) -> Result<Ordering, GatewayError> {
-        compare_labels(left, right)
+    fn compare_admin_labels(
+        &self,
+        left: &gateway_core::js_string::JsString16,
+        right: &gateway_core::js_string::JsString16,
+    ) -> Result<Ordering, GatewayError> {
+        crate::source_collator::shared().compare(left, right)
     }
 }
 
