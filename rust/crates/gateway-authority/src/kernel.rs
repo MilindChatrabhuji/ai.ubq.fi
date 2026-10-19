@@ -835,7 +835,7 @@ pub(crate) async fn stage_kernel_terminal_intent<S: AuthorityStore, I: TokenSour
         row.lease_expires_at_ms = add(now, REQUEST_LEASE_MS)?;
         let window_key = keys::kernel_window(&row.owner, row.repo.as_deref());
         if let Some(mut window) =
-            read_kernel_window(&mut tx, &window_key, &row.owner, row.repo.as_deref()).await?
+            read_kernel_window(tx, &window_key, &row.owner, row.repo.as_deref()).await?
         {
             validate_kernel_window(&window, &row.owner, row.repo.as_deref())?;
             if window.created_at_ms == row.window_created_at_ms {
