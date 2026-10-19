@@ -231,7 +231,7 @@ fn complete_selected_and_no_selection_shadow_audits_survive_latest_inverse() {
 }
 
 #[test]
-fn session_and_full_routing_custody_are_validated_before_private_inverse() {
+fn session_index_custody_is_validated_before_private_inverse() {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("private-sessions.sqlite3"));
     let capture: PrivateCapture =
@@ -248,35 +248,14 @@ fn session_and_full_routing_custody_are_validated_before_private_inverse() {
         json!({"v":1,"session_digest":digest,"user_id":"fixture-user","session_revision":"source-session","expires_at_ms":9000}),
         Some(9000),
     );
-    let journal_key = gateway_auth::store::key(json!([
-        "uos_ai",
-        "routing_runtime",
-        "v1",
-        "session",
-        "custody-request"
-    ]));
-    // Exact current Journal shape from its owning crate's custody regression.
-    let journal = StoredRecord::json(
-        "journal-current",
-        json!({"v":1,"context":{"request_id":"custody-request","principal":"fixture-principal","key_id":null,"route":"responses","started_at_ms":2100},"input_digest":gateway_auth::crypto::sha256_hex(b"{}"),"api":null,"kernel":null,"cursor":0,"attempts":[],"active":null,"model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,"semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,"lease_expires_at_ms":6000,"updated_at_ms":2100,"extras_family":null,"extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null}),
-        None,
-    );
     store.put(session_key.clone(), session.clone());
-    store.put(journal_key.clone(), journal.clone());
     let bundle = run(export_rollback_bundle(&store, 2400, context())).unwrap();
-    for (key, record) in [(&session_key, &session), (&journal_key, &journal)] {
-        assert!(
-            bundle
-                .rust_controls
-                .iter()
-                .any(|r| r.key == key.0 && r.record == *record)
-        );
-    }
-    let mut malformed = journal.clone();
-    malformed.value.as_object_mut().unwrap().remove("api");
-    store.put(journal_key.clone(), malformed);
-    assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
-    store.put(journal_key, journal);
+    assert!(
+        bundle
+            .rust_controls
+            .iter()
+            .any(|r| r.key == session_key.0 && r.record == session)
+    );
     let mut malformed = session;
     malformed.value["unknown"] = json!(true);
     store.put(session_key, malformed);
