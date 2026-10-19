@@ -30,11 +30,11 @@ pub enum CatalogRequest {
 pub enum CodexRequest {
     /// The native credential owner validates ownership, refresh effects, fingerprint and upstream auth.
     ImportCredentials {
-        document: Value,
+        document: SourceJson,
     },
     ResetSettings,
     SetResetSettings {
-        document: Value,
+        document: SourceJson,
     },
     /// Exact selected subscription; the host must mint current authenticated admin authority.
     ConsumeReset {
@@ -42,7 +42,7 @@ pub enum CodexRequest {
     },
     OverageSettings,
     SetOverageSettings {
-        document: Value,
+        document: SourceJson,
     },
     ShadowDecisions,
     Recheck {
@@ -61,7 +61,7 @@ pub enum ProviderRequest {
         live: bool,
     },
     Observations {
-        document: Value,
+        document: SourceJson,
     },
     Rollups {
         query: BTreeMap<String, Vec<String>>,
