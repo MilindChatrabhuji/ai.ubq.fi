@@ -18,7 +18,7 @@ use gateway_authority::{
     },
     native_control::actor::{NativeActorScope, NativeRenewalActor},
 };
-use gateway_core::{GatewayError, source_json::SourceJson};
+use gateway_core::{GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
 use gateway_observability::{HealthEvent, HealthTarget, ObservabilityHost, ObservabilityRuntime};
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
@@ -385,7 +385,7 @@ impl ExperimentIo for Host<'_> {
             }
         }
     }
-    async fn refresh(&self, permit: RefreshPermit) -> Result<(), GatewayError> {
+    async fn refresh(&self, permit: RefreshPermit) -> Result<PoolVersionstamp, GatewayError> {
         let mut platform = self.platform.clone();
         platform.cancellation = self.cancellation()?;
         let config = crate::host::auth_config(&platform.env);
