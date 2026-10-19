@@ -7,6 +7,10 @@ use gateway_auth::{
 };
 use gateway_core::{
     GatewayError,
+    js_string::JsString16,
+    model::ModelId,
+    source_json::SourceJson,
+    source_serialization as source,
     state::{AuthorityStore, RecordKey},
     tuple_key::{ScalarKeyPart::String as Text, TupleKey},
 };
@@ -23,32 +27,59 @@ pub(super) fn catalog_key() -> RecordKey {
 pub(super) fn runtime_key() -> RecordKey {
     key(&["uos_ai", "runtime_config", "v2"])
 }
-pub(super) fn canonical(value: &Value) -> String {
-    match value {
-        Value::Object(object) => {
-            let mut keys = object.keys().collect::<Vec<_>>();
-            keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-            format!(
-                "{{{}}}",
-                keys.into_iter()
-                    .map(|k| format!(
-                        "{}:{}",
-                        serde_json::to_string(k).expect("string serialization"),
-                        canonical(&object[k])
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        }
-        Value::Array(array) => format!(
+pub(super) fn json<T: serde::Serialize + ?Sized>(value: &T) -> SourceJson {
+    SourceJson::from_serializable(value).expect("typed cache control is valid source JSON")
+}
+pub(super) fn set_member(
+    value: &mut SourceJson,
+    key: &str,
+    next: SourceJson,
+) -> Result<(), GatewayError> {
+    let key = JsString16::from_utf8(key);
+    let mut fields = source::entries(value)
+        .ok_or_else(|| failed("Prompt-cache scope experiment catalog is malformed."))?;
+    if let Some((_, old)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *old = next;
+    } else {
+        fields.push((key, next));
+    }
+    *value = source::object_keys(fields)?;
+    Ok(())
+}
+// The existing application fingerprint recipe sorts every object key by UTF16 units,
+// unlike ordinary JSON.stringify numeric-key ordering. Only the source view changed.
+pub(super) fn canonical(value: &SourceJson) -> Result<String, GatewayError> {
+    if let Some(mut fields) = source::entries(value) {
+        fields.sort_by(|(a, _), (b, _)| a.as_units().cmp(b.as_units()));
+        let fields = fields
+            .iter()
+            .map(|(key, value)| {
+                Ok(format!(
+                    "{}:{}",
+                    key.to_source_json()?.as_str(),
+                    canonical(value)?
+                ))
+            })
+            .collect::<Result<Vec<_>, GatewayError>>()?;
+        Ok(format!("{{{}}}", fields.join(",")))
+    } else if let Some(array) = source::array(value) {
+        Ok(format!(
             "[{}]",
-            array.iter().map(canonical).collect::<Vec<_>>().join(",")
-        ),
-        _ => gateway_schema::util::json_stringify(value),
+            array
+                .iter()
+                .map(canonical)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(",")
+        ))
+    } else {
+        Ok(source::canonical(value)?.as_str().to_owned())
     }
 }
-fn digest(value: &Value) -> String {
-    format!("sha256:{}", sha256_hex(canonical(value).as_bytes()))
+fn digest(value: &SourceJson) -> Result<String, GatewayError> {
+    Ok(format!(
+        "sha256:{}",
+        sha256_hex(canonical(value)?.as_bytes())
+    ))
 }
 fn encoded(value: &str) -> String {
     let mut result = String::new();
@@ -61,12 +92,11 @@ fn encoded(value: &str) -> String {
     }
     result
 }
-fn text(value: Option<&Value>) -> Option<String> {
+fn text(value: Option<&SourceJson>) -> Option<JsString16> {
     value
-        .and_then(Value::as_str)
-        .map(gateway_schema::util::js_trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
+        .and_then(source::string)
+        .map(|s| gateway_schema::reasoning::js_trim_source(&s))
+        .filter(|s| !s.as_units().is_empty())
 }
 pub(super) struct Inventory {
     pub targets: Vec<TargetBinding>,
@@ -74,12 +104,12 @@ pub(super) struct Inventory {
 pub(super) async fn inventory<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<Inventory, GatewayError> {
-    let raw: Value = tx.read(&catalog_key()).await?.ok_or_else(|| unavailable("Prompt-cache scope experiment requires a current full target inventory and runtime configuration."))?;
-    let snapshot: ModelSnapshot = serde_json::from_value(raw.clone())
+    let raw: SourceJson = tx.read_source_control(&catalog_key()).await?.ok_or_else(|| unavailable("Prompt-cache scope experiment requires a current full target inventory and runtime configuration."))?;
+    let snapshot: ModelSnapshot = raw
+        .deserialize()
         .map_err(|_| unavailable("Prompt-cache scope experiment catalog is malformed."))?;
-    if snapshot
-        .source
-        .trim_matches(gateway_schema::util::js_whitespace)
+    if gateway_schema::reasoning::js_trim_source(&snapshot.source)
+        .as_units()
         .is_empty()
         || snapshot.updated_at_ms < 0
         || snapshot.models.is_empty()
@@ -88,8 +118,8 @@ pub(super) async fn inventory<S: AuthorityStore, I: TokenSource>(
             "Prompt-cache scope experiment catalog is malformed.",
         ));
     }
-    let runtime: Value = tx
-        .read(&runtime_key())
+    let runtime: SourceJson = tx
+        .read_source_control(&runtime_key())
         .await?
         .ok_or_else(|| unavailable("Prompt-cache scope experiment runtime is unavailable."))?;
     if normalize_runtime_config(&runtime).is_none() {
@@ -103,9 +133,9 @@ pub(super) async fn inventory<S: AuthorityStore, I: TokenSource>(
     let pool = parse_codex_source_pool(&source)?.ok_or_else(|| {
         unavailable("Codex auth pool is unavailable for the prompt-cache scope experiment.")
     })?;
-    let identity = digest(
+    let identity = digest(&json(
         &json!({"v":"codex-auth-pool-identity-v1","ordered_account_ids":pool.accounts.iter().map(|a| &a.account_id).collect::<Vec<_>>()}),
-    );
+    ))?;
     let catalog_revision = tx
         .revision(&catalog_key())
         .ok_or_else(|| unavailable("Prompt-cache catalog binding is unavailable."))?;
@@ -115,32 +145,65 @@ pub(super) async fn inventory<S: AuthorityStore, I: TokenSource>(
     let pool_revision = tx
         .revision(&codex_source_pool_key())
         .ok_or_else(|| unavailable("Prompt-cache auth binding is unavailable."))?;
-    let mut models: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    let mut models: BTreeMap<JsString16, Vec<&SourceJson>> = BTreeMap::new();
     for record in &snapshot.models {
-        if !record.is_object() {
+        if !record.as_str().starts_with('{') {
             return Err(unavailable(
                 "Prompt-cache scope experiment catalog is malformed.",
             ));
         }
         let id = ["slug", "id", "model", "name"]
             .into_iter()
-            .find_map(|k| text(record.get(k)))
+            .find_map(|k| text(source::member(record, k).as_ref()))
             .ok_or_else(|| unavailable("Prompt-cache scope experiment catalog is malformed."))?;
         models.entry(id).or_default().push(record);
     }
     let mut rows = Vec::new();
     let mut bindings = Vec::new();
     for (model, records) in models {
-        let qualified = records.len() == 1 && snapshot.scope_experiment_eligible(&model);
+        // Source scope-targets.ts builds the URI target ID before capability hashing.
+        // Successful encodeURIComponent requires paired UTF16; this proof applies only
+        // to the campaign model, never source labels, efforts or other catalog controls.
+        let scalar_model = model
+            .try_utf8()
+            .map_err(|_| failed("Prompt-cache scope experiment could not run."))?;
+        let id = format!(
+            "prompt-cache-scope-targets-v3:{PROVIDER}:{TELEMETRY_PROVIDER}:codex_account_pool:{PROFILE}:{}",
+            encoded(&scalar_model)
+        );
+        let qualified = records.len() == 1
+            && snapshot.scope_experiment_eligible(&ModelId::from_source(model.clone()));
         let capability = if records.len() == 1 {
-            gateway_schema::prompt_cache::normalize_capabilities(records[0].get("prompt_cache"))
-                .and_then(|c| {
-                    c["providers"]
-                        .as_array()
-                        .and_then(|ps| ps.iter().find(|p| p["id"] == PROVIDER))
-                        .cloned()
+            source::member(records[0], "prompt_cache")
+                .as_ref()
+                .and_then(|cache| {
+                    gateway_schema::prompt_cache::normalize_capabilities_source(Some(cache))
                 })
-                .map(|p| json!({"id":p["id"],"controls":p.get("controls").unwrap_or(&Value::Null)}))
+                .and_then(|cache| {
+                    source::member(&cache, "providers")
+                        .as_ref()
+                        .and_then(source::array)
+                })
+                .and_then(|providers| {
+                    providers.into_iter().find(|p| {
+                        source::member(p, "id")
+                            .as_ref()
+                            .and_then(source::string)
+                            .is_some_and(|id| {
+                                id.as_units().iter().copied().eq(PROVIDER.encode_utf16())
+                            })
+                    })
+                })
+                .map(|p| {
+                    source::object(vec![
+                        ("id", source::member(&p, "id").expect("matched provider")),
+                        (
+                            "controls",
+                            source::member(&p, "controls").unwrap_or_else(|| json(&())),
+                        ),
+                    ])
+                    .expect("cache capability object")
+                })
         } else {
             None
         };
@@ -149,21 +212,36 @@ pub(super) async fn inventory<S: AuthorityStore, I: TokenSource>(
         } else {
             "unqualified"
         };
-        let fingerprint = digest(
-            &json!({"version":"prompt-cache-scope-targets-v3","provider":PROVIDER,"telemetry_provider":TELEMETRY_PROVIDER,"topology_kind":"codex_account_pool","model":model,"probe_profile":PROFILE,"catalog_entry":if records.len()==1{"unique"}else{"ambiguous"},"codex_cache_qualification":qualification,"codex_prompt_cache_capability":capability}),
-        );
-        let id = format!(
-            "prompt-cache-scope-targets-v3:{PROVIDER}:{TELEMETRY_PROVIDER}:codex_account_pool:{PROFILE}:{}",
-            encoded(&model)
-        );
-        rows.push(json!({"id":id,"provider":PROVIDER,"telemetry_provider":TELEMETRY_PROVIDER,"model":model,"model_family_id":model,"model_family_source":"exact_model","probe_profile":PROFILE,"catalog_model_present":true,"codex_cache_qualification":qualification,"topology":{"kind":"codex_account_pool","configured_slot_count":if pool.accounts.len()==2{2}else if pool.accounts.len()==1{1}else{0}},"capability_fingerprint":fingerprint}));
+        let fingerprint = digest(&source::object(vec![
+            ("version", json("prompt-cache-scope-targets-v3")),
+            ("provider", json(PROVIDER)),
+            ("telemetry_provider", json(TELEMETRY_PROVIDER)),
+            ("topology_kind", json("codex_account_pool")),
+            ("model", json(&model)),
+            ("probe_profile", json(PROFILE)),
+            (
+                "catalog_entry",
+                json(if records.len() == 1 {
+                    "unique"
+                } else {
+                    "ambiguous"
+                }),
+            ),
+            ("codex_cache_qualification", json(qualification)),
+            ("codex_prompt_cache_capability", json(&capability)),
+        ])?)?;
+        rows.push(source::object(vec![
+            ("id", json(&id)), ("provider", json(PROVIDER)), ("telemetry_provider", json(TELEMETRY_PROVIDER)), ("model", json(&model)), ("model_family_id", json(&model)),
+            ("model_family_source", json("exact_model")), ("probe_profile", json(PROFILE)), ("catalog_model_present", json(&true)), ("codex_cache_qualification", json(qualification)),
+            ("topology", json(&json!({"kind":"codex_account_pool","configured_slot_count":if pool.accounts.len()==2{2}else if pool.accounts.len()==1{1}else{0}}))), ("capability_fingerprint", json(&fingerprint)),
+        ])?);
         if qualified && pool.accounts.len() == 2 {
             bindings.push(TargetBinding {
                 id,
                 provider: PROVIDER.into(),
                 telemetry_provider: TELEMETRY_PROVIDER.into(),
                 topology_kind: "codex_account_pool".into(),
-                model,
+                model: scalar_model,
                 probe_profile: PROFILE.into(),
                 capability_fingerprint: fingerprint,
                 inventory_fingerprint: String::new(),
@@ -181,15 +259,28 @@ pub(super) async fn inventory<S: AuthorityStore, I: TokenSource>(
         }
     }
     rows.sort_by(|a, b| {
-        a["id"]
-            .as_str()
-            .unwrap_or_default()
-            .encode_utf16()
-            .cmp(b["id"].as_str().unwrap_or_default().encode_utf16())
+        source::member(a, "id")
+            .as_ref()
+            .and_then(source::string)
+            .expect("target id")
+            .as_units()
+            .cmp(
+                source::member(b, "id")
+                    .as_ref()
+                    .and_then(source::string)
+                    .expect("target id")
+                    .as_units(),
+            )
     });
-    let fingerprint = digest(
-        &json!({"version":"prompt-cache-scope-targets-v3","probe_profile":PROFILE,"metered_fallback_roster":{"status":"unknown","model_ids":[],"non_catalog_model_ids":[]},"targets":rows}),
-    );
+    let fingerprint = digest(&source::object(vec![
+        ("version", json("prompt-cache-scope-targets-v3")),
+        ("probe_profile", json(PROFILE)),
+        (
+            "metered_fallback_roster",
+            json(&json!({"status":"unknown","model_ids":[],"non_catalog_model_ids":[]})),
+        ),
+        ("targets", json(&rows)),
+    ])?)?;
     bindings.sort_by(|a, b| a.id.encode_utf16().cmp(b.id.encode_utf16()));
     for target in &mut bindings {
         target.inventory_fingerprint.clone_from(&fingerprint);
