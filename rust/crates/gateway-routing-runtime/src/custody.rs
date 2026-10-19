@@ -586,7 +586,7 @@ mod tests {
             validate_journal_rows(records.iter().map(|(key, record)| (key, record))).unwrap();
             println!(
                 "ROUTING_WRITER_CUSTODY_FIXTURE={}",
-                json!({"v": version, "rows": records.iter().map(|(key, record)| json!({"key":key,"record":record})).collect::<Vec<_>>()})
+                json!({"v": version, "rows": records.iter().map(|(key, record)| json!({"key":key.0,"record":record})).collect::<Vec<_>>()})
             );
             run(journal::change(
                 &writer,
@@ -615,7 +615,7 @@ mod tests {
             assert_eq!(finished.len(), 1);
             println!(
                 "ROUTING_WRITER_CUSTODY_FIXTURE={}",
-                json!({"v": version, "phase": "finished", "rows": finished.iter().map(|(key, record)| json!({"key":RecordKey(key.clone()),"record":record})).collect::<Vec<_>>()})
+                json!({"v": version, "phase": "finished", "rows": finished.iter().map(|(key, record)| json!({"key":key,"record":record})).collect::<Vec<_>>()})
             );
             let session = finished.get(&journal::key("custody-request").0).unwrap();
             assert_eq!(
