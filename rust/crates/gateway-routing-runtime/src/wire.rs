@@ -6,7 +6,7 @@ use gateway_core::{
     js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_providers::prepare_source_request;
+use gateway_providers::{ClientSurface, OrdinaryPreparationContext, prepare_source_request};
 use gateway_schema::source_request::SourceRequestError;
 /// A derived per-hop object, never a mutation of the authoritative original request.
 pub(crate) fn set(
@@ -44,6 +44,28 @@ pub(crate) fn prepare(
     options.conversation_id = Some(conversation_id.to_owned());
     options.created_at = now / 1000;
     options.allowed_models = policy::provider_ids(input, provider);
+    let mut catalog = input.catalog.clone();
+    catalog.snapshot = input.catalog.codex().cloned();
+    let metadata = gateway_schema::catalog::request_model_metadata(
+        &catalog,
+        model,
+        input.surface != ClientSurface::Chat,
+        now,
+    );
+    // src/openai.ts getDefaultReasoningEffort: runtime default, otherwise the
+    // existing source default `medium`, never a selected model's default tier.
+    let default_effort = input
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.get("default_reasoning_effort"))
+        .and_then(serde_json::Value::as_str)
+        .map(gateway_schema::util::js_trim)
+        .filter(|effort| !effort.is_empty())
+        .unwrap_or("medium");
+    options.ordinary_preparation = Some(OrdinaryPreparationContext::from_metadata(
+        &metadata,
+        default_effort,
+    ));
     let mut raw = input.raw.clone();
     set(
         &mut raw,
