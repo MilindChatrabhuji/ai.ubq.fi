@@ -103,14 +103,14 @@ fn ready(authority: &TestAuthority, at: i64) -> (AutomaticResetPermit, String) {
                 }
             })
             .collect();
-        match run(authority.finish_full_pool_reset(plan, &observations, &NoCreditTie)).unwrap() {
+        match run(authority.finish_full_pool_reset(*plan, &observations, &NoCreditTie)).unwrap() {
             FullPoolEvaluation::Shadow {
                 decision,
                 duplicate: false,
             } => {
                 episode = decision.episode_hash;
             }
-            FullPoolEvaluation::Ready(permit) => return (permit, episode),
+            FullPoolEvaluation::Ready(permit) => return (*permit, episode),
             other => panic!("expected first-arm or current permit, got {other:?}"),
         }
     }
