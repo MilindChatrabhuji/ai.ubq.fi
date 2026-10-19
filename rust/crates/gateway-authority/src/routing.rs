@@ -1,4 +1,5 @@
 //! Global serial subscription selection; source routing-serial.ts and routing-evaluation.ts.
+use gateway_core::{js_string::JsString16, model::ModelId};
 use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_core::GatewayError;
@@ -25,7 +26,7 @@ pub use crate::routing_codec::{normalize as normalize_routing_state, parse_routi
 pub use crate::routing_rules::apply_capacity_observation;
 pub use crate::routing_types::*;
 
-pub fn model_quota_class(model: &str) -> CodexQuotaClass {
+pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
     let model = model.trim().to_ascii_lowercase();
     if model == "gpt-5.3-codex-spark" {
         CodexQuotaClass::Spark
@@ -105,9 +106,9 @@ fn unavailable_model(
     models: &ModelAvailability,
     pool: &SubscriptionPool,
     account: &RoutingAccountHash,
-    model: &str,
+    model: &ModelId,
     now: i64,
-) -> Option<Option<String>> {
+) -> Option<Option<JsString16>> {
     if let Some(learned) = models
         .unsupported
         .get(&account.0)
@@ -273,13 +274,13 @@ pub(crate) struct Evaluation {
     pub(crate) eligible: bool,
     pub(crate) probe: bool,
     pub(crate) retry: Option<i64>,
-    pub(crate) detail: Option<String>,
+    pub(crate) detail: Option<JsString16>,
 }
 
 pub(crate) fn evaluate(
     view: &RoutingView,
     slot: usize,
-    model: &str,
+    model: &ModelId,
     class: CodexQuotaClass,
     now: i64,
 ) -> Evaluation {
@@ -403,7 +404,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Event-owned reset preflight materializes capacity evidence before selecting new proof.
     pub async fn materialize_capacity_quota_blocks(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<bool, GatewayError> {
@@ -474,7 +475,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
     pub async fn select_account(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<RouteSelection, GatewayError> {
@@ -591,7 +592,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
 
     async fn select_account_source(
         &self,
-        model: &str,
+        model: &ModelId,
         class: CodexQuotaClass,
         now: i64,
     ) -> Result<RouteSelection, GatewayError> {

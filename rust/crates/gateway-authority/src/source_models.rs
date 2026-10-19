@@ -3,14 +3,14 @@ use crate::routing::{AccountCatalog, ModelAvailability, SubscriptionPool, Unsupp
 use crate::store::Transaction;
 use crate::{TokenSource, invalid, keys, unavailable};
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_core::{GatewayError, state::AuthorityStore};
+use gateway_core::{GatewayError, model::ModelId, source_json::SourceJson, state::AuthorityStore};
 use gateway_schema::selection::AccountModelsStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub(crate) struct SourceModels {
     pub models: ModelAvailability,
-    pub raw: Value,
+    pub raw: SourceJson,
     pub ids: BTreeMap<String, String>,
 }
 
@@ -74,7 +74,12 @@ pub(crate) async fn load<S: AuthorityStore, I: TokenSource>(
     Ok(SourceModels { models, raw, ids })
 }
 
-pub(crate) fn learn(raw: &Value, id: &str, model: &str, now: i64) -> Result<Value, GatewayError> {
+pub(crate) fn learn(
+    raw: &SourceJson,
+    id: &str,
+    model: &ModelId,
+    now: i64,
+) -> Result<SourceJson, GatewayError> {
     let parsed = AccountModelsStore::parse(raw)
         .unwrap_or_default()
         .record_unsupported(id, model, now);
